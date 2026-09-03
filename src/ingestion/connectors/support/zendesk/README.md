@@ -6,9 +6,6 @@ Extracts Zendesk tickets, satisfaction ratings, and agent directory into the Bro
 
 **Auth model**: HTTP Basic Auth — `{email}/token:{api_token}` Base64-encoded. Token created under Admin → Apps & Integrations → Zendesk API.
 
-## Specification
-
-
 ## Prerequisites
 
 1. The customer has a Zendesk account with API token access enabled (Admin → Apps & Integrations → Zendesk API → Token Access: ON).
@@ -63,30 +60,44 @@ These fields are added to every record by the connector — do **not** put them 
 
 | Stream | Endpoint | Sync Mode | Cursor | `unique_key` |
 |--------|----------|-----------|--------|-------------|
-| `support_tickets` | `GET /api/v2/incremental/tickets.json?include=metric_sets` | Incremental (lookback P1D) | `updated_at` (Unix ts) | `{tenant}-{source}-{ticket_id}` |
-| `support_ticket_ids` | `GET /api/v2/incremental/tickets.json` (id + updated_at only) | Incremental | `updated_at` (Unix ts) | `{tenant}-{source}-{ticket_id}` |
+| `support_tickets` | `GET /api/v2/incremental/tickets/cursor.json?include=metric_sets` | Incremental (lookback P1D) | `updated_at` (Unix ts) | `{tenant}-{source}-{ticket_id}` |
+| `support_ticket_ids` | `GET /api/v2/incremental/tickets/cursor.json` (id + updated_at only) | Incremental | `updated_at` (Unix ts) | `{tenant}-{source}-{ticket_id}` |
 | `support_agents` | `GET /api/v2/users?role[]=agent&role[]=admin` | Full refresh | — | `{tenant}-{source}-{agent_id}` |
 | `zendesk_satisfaction_ratings` | `GET /api/v2/satisfaction_ratings` | Incremental (lookback P1D) | `updated_at` (Unix ts) | `{tenant}-{source}-{rating_id}` |
-| `support_ticket_events` | `GET /api/v2/tickets/{id}/audits` | Incremental (substream over `support_ticket_ids`, `incremental_dependency`) | parent `updated_at` | `{tenant}-{source}-{audit_id}` |
+| `support_ticket_events` | `GET /api/v2/tickets/{id}/audits` | Incremental (substream over `support_ticket_ids`, `incremental_dependency`) | `created_at` (formal — see below) | `{tenant}-{source}-{audit_id}` |
+
+Pagination: the two ticket streams use Zendesk's **cursor-based** incremental
+export (`cursor` parameter, `after_cursor` / `end_of_stream` in the response);
+`support_agents` and `zendesk_satisfaction_ratings` use Zendesk **cursor
+pagination** (`page[size]` / `page[after]`, `meta.after_cursor` /
+`meta.has_more`). Neither offset paging (`per_page` / `next_page`) nor the
+time-based export is used: mixing either with a cursor-shaped paginator yields
+an empty token and ends the read after one page without an error.
 
 ### Notes
 
-- **`support_tickets`**: uses Zendesk's incremental export endpoint (1000 tickets/page). Sideloads `metric_sets` to retrieve timing fields without extra API calls. Both business-hours and calendar-hours timing variants are stored (`first_reply_time_seconds` / `first_reply_time_calendar_seconds` and `full_resolution_time_seconds` / `full_resolution_time_calendar_seconds`).
-- **`support_agents`**: full refresh on every run — agent roster is small and Zendesk does not expose a reliable incremental endpoint for users. `group_name` is NULL in Phase 1 (group enrichment deferred); `is_active` is stored as an int.
+- **`support_tickets`**: uses Zendesk's cursor-based incremental export endpoint (1000 tickets/page). Sideloads `metric_sets` to retrieve timing fields without extra API calls. Both business-hours and calendar-hours timing variants are stored (`first_reply_time_seconds` / `first_reply_time_calendar_seconds` and `full_resolution_time_seconds` / `full_resolution_time_calendar_seconds`).
+- **`support_agents`**: full refresh on every run — agent roster is small and Zendesk does not expose a reliable incremental endpoint for users. `group_name` is NULL in Phase 1 (group enrichment deferred); `is_active` is stored as an int and is true only for a user who is both `active` and not `suspended`.
 - **`support_ticket_ids`**: slim incremental parent (id + `updated_at` only, no metadata) that drives the `support_ticket_events` SubstreamPartitionRouter. Kept separate from `support_tickets` so the audit fan-out only re-fetches tickets whose `updated_at` advanced.
 - **`zendesk_satisfaction_ratings`**: CSAT ratings stored as a separate stream preserving full history. `support_tickets.satisfaction_score` is NULL in Phase 1; Silver layer derives per-ticket CSAT from this stream.
-- **`support_ticket_events`** (SHIPPED): per-ticket audit log from `GET /api/v2/tickets/{id}/audits`, fanned out over `support_ticket_ids` with `incremental_dependency` (concurrency_level=4). 404 / RATE_LIMITED responses are handled (IGNORE) so a single bad ticket does not fail the sync.
+- **`support_ticket_events`**: per-ticket audit log from `GET /api/v2/tickets/{id}/audits`, fanned out over `support_ticket_ids` with `incremental_dependency` (concurrency_level=4). 404 / RATE_LIMITED responses are handled (IGNORE) so a single bad ticket does not fail the sync. Its `created_at` cursor is *formal*: the endpoint takes no time filter and nothing is dropped client-side. It exists so the stream is stateful, which is the only thing that lets `incremental_dependency` persist the parent's cursor — without it every sync re-enumerates the whole `start_date` window, one request per ticket.
 - **`zendesk_ticket_ext`** (Phase 2, deferred): custom field key-value pairs from `ticket.custom_fields[]`.
 
-## Silver / Gold Targets
+## Silver targets
 
-Silver and Gold transformations are SHIPPED as `dbt/` models tagged `zendesk`. They populate:
-- `staging.zendesk__support_activity` — per-person per-day metrics (updates / public_comments / private_comments / solved [distinct tickets] / csat_good / csat_total / kb [honest-NULL]) derived by exploding and classifying audits by ACTOR
-- `silver.class_support_activity` — unified support domain Silver table (Zendesk + JSM)
+The `dbt/` models tagged `zendesk` populate:
+- `staging.zendesk__support_event` — event-grain, actor-attributed audit facts (an intermediate of this connector; `updates` are counted as distinct audits, not distinct field changes)
+- `staging.zendesk__support_activity` — per-person per-day metrics (updates / public_comments / private_comments / solved [distinct tickets] / csat_good / csat_total / kb [honest-NULL])
+- `silver.class_support_activity` — the cross-vendor support class relation
 - `silver.dim_support_agent`, `silver.dim_support_ticket` — support dimensions
-- Gold: `support_bullet_rows` → `support_person_period` → `support_company_stats`
 
-`dbt_select` in `descriptor.yaml` is scoped to `tag:zendesk+` — it selects the shipped `zendesk`-tagged models (and their downstream Gold) while keeping the Silver run from touching other connectors' models.
+**There is no Gold layer for support.** Nothing reads `class_support_activity`,
+so no support metric reaches the product yet: the domain was built against the
+`*_bullet_rows` gold contract, which was removed when metrics moved to the
+unified `*_metric_observations` / `*_metric_evidence` relations. Support is the
+one domain that was not ported across.
+
+`dbt_select` in `descriptor.yaml` is scoped to `tag:zendesk+` — it selects the `zendesk`-tagged models and their downstream silver unions while keeping the run from touching other connectors' models.
 
 ## Validation
 
@@ -95,6 +106,13 @@ Silver and Gold transformations are SHIPPED as `dbt/` models tagged `zendesk`. T
 ./src/ingestion/tools/declarative-connector/source.sh validate        support/zendesk
 ```
 
+Mock tests (no credentials needed):
+
+```bash
+cd src/ingestion/tests/connectors
+.venv/bin/pytest ../../connectors/support/zendesk/tests
+```
+
 ## Related
 
-- `jsm` — Jira Service Management connector; same unified `support_*` Bronze tables with `data_source = "insight_jsm"`. JSM also collects `support_ticket_events` (SHIPPED for Zendesk too) and `support_sla` (Phase 2 for Zendesk).
+- The `support_*` bronze tables and the `silver.class_support_activity` contract are cross-vendor by design; a second support connector would land beside this one rather than replace it. None exists today.

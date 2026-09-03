@@ -9,6 +9,12 @@ sources:
         description: Ticket snapshot (current state). Context only — not for activity attribution.
       - name: support_agents
         description: Internal agents/admins. Carries the email used as the person FK.
+      - name: support_ticket_ids
+        description: >
+          Slim id-only mirror of support_tickets — the substream parent for the
+          audit fan-out. Nothing reads it downstream; the destination keys it on
+          unique_key (append_dedup), so the nightly lookback re-delivery
+          collapses instead of accumulating.
       - name: zendesk_satisfaction_ratings
         description: CSAT ratings. Attributed to the ticket assignee (CSAT exception, PRD §4).
       - name: support_ticket_events
@@ -61,10 +67,21 @@ models:
       EVENT-GRAIN actor-attributed audit fact — one row per classified Ticket
       Audit event (public_comment / private_comment / solved / update),
       exploded from support_ticket_events.events[]. Source of the activity
-      counts in zendesk__support_activity.
+      counts in zendesk__support_activity. Materialises in `staging` — it is an
+      intermediate of this connector, not a class-contract contributor, so it
+      carries no `silver:` tag and no silver placeholder is created for it.
     columns:
       - name: unique_key
+        description: MD5(tenant_id, insight_source_id, audit_id, event_id) — instance-scoped, so audit ids cannot collide across sources.
         tests: [unique, not_null]
+      - name: source_audit_id
+        description: >
+          Native Zendesk audit id. The grain of a ticket UPDATE — one audit can
+          carry many field changes, so update counts are distinct audits, not
+          distinct events.
+        tests: [not_null]
+      - name: ticket_key
+        description: MD5(tenant_id, insight_source_id, ticket_id) — same formula as zendesk__support_ticket.unique_key, so the two join.
       - name: actor_person_key
         description: lower(email) of the audit author (the actor) → FK insight.people.
         tests: [not_null]

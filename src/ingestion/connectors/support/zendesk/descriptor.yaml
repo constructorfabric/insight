@@ -43,17 +43,30 @@ name: zendesk
 #   the manifest.) PATCH: no schema/stream change.
 # 1.3.2: review #1304 (CodeRabbit) — add support_ticket_ids to
 #   metadata.autoImportSchema (was omitted when the stream was added). PATCH.
-# `nocode` = declarative-manifest connector (connector.yaml published to the
-# Airbyte builder), as opposed to `cdk` (a pre-built Python image registered
-# from images.cdk.image). MUST be `nocode`/absent for declarative connectors:
-# reconcile only branches on `nocode` vs `cdk` — any other value (e.g.
-# `declarative`) falls through to the cdk image path and fails with no image.
 # 1.4.0: connections carry destinationSyncMode append_dedup with
 #   primaryKey unique_key, so the Airbyte destination owns the bronze table
 #   shape and the RMT promotion step is gone (#2877). MINOR per ADR-0015:
 #   reconcile must republish this connector so the connection catalog is
 #   refreshed; nothing already stored changes meaning.
-version: "1.4.0"
+# 2.0.0: pagination and grain corrections found by an audit of the manifest
+#   against the Zendesk API. The ticket streams read the TIME-based incremental
+#   export with a CURSOR-based paginator, so the token was always empty and the
+#   sync stopped after one page (1000 tickets) and advanced its cursor past the
+#   rest; support_agents mixed offset paging with a cursor paginator the same
+#   way (100 agents). Both now speak one protocol. support_ticket_events gains a
+#   formal cursor so the stream is stateful and incremental_dependency can
+#   actually persist parent state. Ids are emitted as real strings, satisfaction
+#   ratings move off offset paging (400 past 10k records), every stream inherits
+#   a Retry-After error handler, and zendesk__support_event keys on
+#   tenant+source (an id-only key deleted the other instance's rows) and
+#   materialises in `staging`. MAJOR: the bronze key set and the silver grain
+#   both change, so reconcile must dispatch a dbt --full-refresh.
+# `nocode` = declarative-manifest connector (connector.yaml published to the
+# Airbyte builder), as opposed to `cdk` (a pre-built Python image registered
+# from images.cdk.image). MUST be `nocode`/absent for declarative connectors:
+# reconcile only branches on `nocode` vs `cdk` — any other value (e.g.
+# `declarative`) falls through to the cdk image path and fails with no image.
+version: "2.0.0"
 type: nocode
 schedule: "0 5 * * *"       # 05:00 UTC daily
 workflow: sync               # Argo workflow template: ingestion-pipeline
@@ -61,9 +74,9 @@ workflow: sync               # Argo workflow template: ingestion-pipeline
 # Scope the dbt step to this connector's models (and their downstream) so the
 # Silver run never touches other connectors' models. Selects zendesk__* staging
 # (support_agent/ticket/activity) + the event-grain
-# zendesk__support_event (tagged ['zendesk','silver'] now that the Ticket
-# Audits stream is live, so it IS in tag:zendesk+) + their downstream silver
-# unions (class_support_activity, dim_support_*).
+# zendesk__support_event (tagged ['zendesk'], an intermediate of this connector
+# materialised in staging) + their downstream silver unions
+# (class_support_activity, dim_support_*).
 dbt_select: "tag:zendesk+"
 
 connection:

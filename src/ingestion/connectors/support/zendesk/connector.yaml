@@ -1,15 +1,25 @@
 # Airbyte Declarative Source for zendesk — INSIGHT-459.
 #
 # Streams:
-#   1.  support_tickets              — incremental, DatetimeBasedCursor on updated_at
+#   1.  support_tickets              — cursor-based incremental export,
+#                                      DatetimeBasedCursor on updated_at
 #   1b. support_ticket_ids           — slim (id + updated_at only) mirror of stream 1;
 #                                      the substream parent for stream 4 (keeps the
 #                                      CDK parent-record cache tiny — no metadata payload)
-#   2.  support_agents               — full refresh
-#   3.  zendesk_satisfaction_ratings — incremental, DatetimeBasedCursor on updated_at
+#   2.  support_agents               — full refresh, Zendesk cursor pagination
+#   3.  zendesk_satisfaction_ratings — incremental, DatetimeBasedCursor on updated_at,
+#                                      Zendesk cursor pagination
 #   4.  support_ticket_events        — per-ticket audit log (SubstreamPartitionRouter
 #                                      over support_ticket_ids, incremental_dependency);
 #                                      actor-attributed activity
+#
+# Pagination: the two ticket streams use Zendesk's CURSOR-based incremental
+# export (incremental/tickets/cursor.json + `cursor`), and the two list streams
+# use Zendesk cursor pagination (page[size] + page[after] + meta.after_cursor).
+# Mixing the two protocols — an offset-paginated request read with a
+# cursor-shaped paginator — yields an empty token and ends pagination after one
+# page, silently, which is how this manifest used to truncate at 1000 tickets
+# and 100 agents.
 #
 # Not yet implemented (schema locked in zendesk.md):
 #   5. zendesk_ticket_ext           — custom field key-value pairs
@@ -22,6 +32,26 @@ version: "7.0.4"
 type: DeclarativeSource
 
 definitions:
+  # Zendesk caps the incremental-export endpoints at 10 requests/minute,
+  # separately from the account-wide limit, and answers with Retry-After. The
+  # CDK default (exponential backoff, no header) can retry inside the reset
+  # window and burn all 5 attempts, so every stream shares this handler.
+  # 401/403 FAIL rather than retry: an expired token is not a transient error,
+  # and retrying it hides the cause behind retry exhaustion.
+  base_error_handler: &base_error_handler
+    type: DefaultErrorHandler
+    backoff_strategies:
+      - type: WaitTimeFromHeader
+        header: Retry-After
+    response_filters:
+      - type: HttpResponseFilter
+        action: RATE_LIMITED
+        http_codes: [429, 503]
+      - type: HttpResponseFilter
+        action: FAIL
+        http_codes: [401, 403]
+        error_message: "Zendesk rejected the credentials (check zendesk_email, zendesk_api_token and that Token Access is enabled)."
+
   base_requester: &base_requester
     type: HttpRequester
     url_base: "https://{{ config['zendesk_subdomain'] }}.zendesk.com/api/v2/"
@@ -29,6 +59,7 @@ definitions:
       type: BasicHttpAuthenticator
       username: "{{ config['zendesk_email'] }}/token"
       password: "{{ config['zendesk_api_token'] }}"
+    error_handler: *base_error_handler
 
   standard_fields: &standard_fields
     - type: AddedFieldDefinition
@@ -100,11 +131,19 @@ streams:
           satisfaction_score: { type: ["string", "null"] }
           tags: { type: ["string", "null"] }
           metadata: { type: string }
+        required:
+          - unique_key
     retriever:
       type: SimpleRetriever
       requester:
         <<: *base_requester
-        path: "incremental/tickets.json"
+        # start_time rides in the PATH, not in request_parameters: page 2+ is
+        # addressed by Zendesk's after_url, which the RequestPath paginator
+        # substitutes for the whole path — so the follow-up carries `cursor` and
+        # no start_time, the alternation Zendesk documents. A conditional query
+        # parameter cannot express this: the CDK renders a None-valued
+        # parameter as the literal string "None" rather than dropping it.
+        path: "incremental/tickets/cursor.json?start_time={{ stream_interval['start_time'] }}"
         request_parameters:
           include: "metric_sets"
           per_page: "1000"
@@ -117,12 +156,10 @@ streams:
         type: DefaultPaginator
         pagination_strategy:
           type: CursorPagination
-          cursor_value: "{{ response.get('after_cursor', '') }}"
+          cursor_value: "{{ response.get('after_url', '') }}"
           stop_condition: "{{ response.get('end_of_stream', False) == True }}"
         page_token_option:
-          type: RequestOption
-          field_name: after_cursor
-          inject_into: request_parameter
+          type: RequestPath
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: updated_at
@@ -147,10 +184,6 @@ streams:
         type: MinMaxDatetime
         datetime: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
         datetime_format: "%Y-%m-%dT%H:%M:%SZ"
-      start_time_option:
-        type: RequestOption
-        field_name: start_time
-        inject_into: request_parameter
     transformations:
       - type: AddFields
         fields: *standard_fields
@@ -177,7 +210,10 @@ streams:
             value: "{{ record.get('type') or none }}"
           - type: AddedFieldDefinition
             path: [tags]
-            value: "{{ record.get('tags', []) | join(',') }}"
+            # `(... or [])` not `.get(k, [])` — same trap as metric_set below:
+            # a present-but-null `tags` makes .get return None, and
+            # `None | join` raises, failing the whole stream.
+            value: "{{ (record.get('tags') or []) | join(',') }}"
           - type: AddedFieldDefinition
             # solved_at lives in the embedded metric_set object; null when unresolved.
             # `(... or {})` not `.get(k, {})`: Zendesk computes metric_set
@@ -241,13 +277,15 @@ streams:
           data_source: { type: string }
           ticket_id: { type: string }
           updated_at: { type: string }
+        required:
+          - unique_key
     retriever:
       type: SimpleRetriever
       requester:
         <<: *base_requester
         # No include=metric_sets — this stream only needs ids, keeping the
         # parent payload (and the substream cache) minimal.
-        path: "incremental/tickets.json"
+        path: "incremental/tickets/cursor.json?start_time={{ stream_interval['start_time'] }}"
         request_parameters:
           per_page: "1000"
       record_selector:
@@ -259,12 +297,10 @@ streams:
         type: DefaultPaginator
         pagination_strategy:
           type: CursorPagination
-          cursor_value: "{{ response.get('after_cursor', '') }}"
+          cursor_value: "{{ response.get('after_url', '') }}"
           stop_condition: "{{ response.get('end_of_stream', False) == True }}"
         page_token_option:
-          type: RequestOption
-          field_name: after_cursor
-          inject_into: request_parameter
+          type: RequestPath
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: updated_at
@@ -281,10 +317,6 @@ streams:
         type: MinMaxDatetime
         datetime: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
         datetime_format: "%Y-%m-%dT%H:%M:%SZ"
-      start_time_option:
-        type: RequestOption
-        field_name: start_time
-        inject_into: request_parameter
     transformations:
       - type: AddFields
         fields: *standard_fields
@@ -331,6 +363,8 @@ streams:
           group_id: { type: ["string", "null"] }
           group_name: { type: ["string", "null"] }
           is_active: { type: integer }
+        required:
+          - unique_key
     retriever:
       type: SimpleRetriever
       requester:
@@ -340,7 +374,11 @@ streams:
         # This fetches agents, light_agents, and admins in one pass.
         path: "users?role%5B%5D=agent&role%5B%5D=admin"
         request_parameters:
-          per_page: "100"
+          # page[size], NOT per_page: per_page selects Zendesk's OFFSET
+          # pagination, whose response carries next_page and no `meta` object —
+          # the cursor paginator below would read an empty token and stop after
+          # one page, truncating the roster at 100 agents.
+          page[size]: "100"
       record_selector:
         type: RecordSelector
         extractor:
@@ -357,7 +395,7 @@ streams:
           field_name: "page[after]"
           inject_into: request_parameter
         # page_size_option removed — CursorPagination has no page_size;
-        # per_page=100 is set statically in request_parameters above.
+        # page[size]=100 is set statically in request_parameters above.
     transformations:
       - type: AddFields
         fields: *standard_fields
@@ -384,10 +422,14 @@ streams:
             path: [group_name]
             value: "{{ none }}"
           - type: AddedFieldDefinition
+            # A Zendesk user carries BOTH flags: a deactivated agent is
+            # active=false, suspended=false, so reading `suspended` alone keeps
+            # them flagged active forever (bronze is append-only, so the stale
+            # row never leaves dim_support_agent).
             # emit an integer (schema/Bronze DDL is Int64) — don't rely on the
             # destination coercing the string '0'/'1'.
             path: [is_active]
-            value: "{{ 0 if record.get('suspended') else 1 }}"
+            value: "{{ 1 if record.get('active') and not record.get('suspended') else 0 }}"
             value_type: integer
 
   # ── Stream 3: zendesk_satisfaction_ratings ──────────────────────────
@@ -420,15 +462,19 @@ streams:
           reason: { type: ["string", "null"] }
           created_at: { type: string }
           updated_at: { type: string }
+        required:
+          - unique_key
     retriever:
       type: SimpleRetriever
       requester:
         <<: *base_requester
         path: "satisfaction_ratings"
         request_parameters:
-          sort_by: "updated_at"
-          sort_order: "asc"
-          per_page: "100"
+          # Cursor pagination, not offset: Zendesk caps offset paging at 10,000
+          # records (page 100) and answers 400 beyond it, which would abort any
+          # backfill wider than that. sort_by/sort_order are not parameters this
+          # endpoint accepts (it takes `sort`) and were silently ignored.
+          page[size]: "100"
       record_selector:
         type: RecordSelector
         extractor:
@@ -438,10 +484,12 @@ streams:
         type: DefaultPaginator
         pagination_strategy:
           type: CursorPagination
-          cursor_value: "{{ response.get('next_page', '') }}"
-          stop_condition: "{{ response.get('next_page') is none }}"
+          cursor_value: "{{ response.get('meta', {}).get('after_cursor', '') }}"
+          stop_condition: "{{ response.get('meta', {}).get('has_more', False) == False }}"
         page_token_option:
-          type: RequestPath
+          type: RequestOption
+          field_name: "page[after]"
+          inject_into: request_parameter
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: updated_at
@@ -492,7 +540,10 @@ streams:
             value: "{{ record.get('group_id') | string if record.get('group_id') else None }}"
           - type: AddedFieldDefinition
             path: [reason]
-            value: "{{ record.get('reason') or record.get('reason_code') }}"
+            # `| string` is load-bearing: reason_code is numeric and the CDK
+            # literal-evals a bare rendered value, so without it an int lands
+            # in a column the schema declares as a string.
+            value: "{% set v = record.get('reason') or record.get('reason_code') %}{{ v | string if v is not none else none }}"
           - type: AddedFieldDefinition
             path: [unique_key]
             value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
@@ -532,6 +583,8 @@ streams:
           author_id: { type: ["string", "null"] }
           created_at: { type: string }
           events: { type: string }
+        required:
+          - unique_key
     retriever:
       type: SimpleRetriever
       requester:
@@ -554,13 +607,14 @@ streams:
           response_filters:
             - type: HttpResponseFilter
               action: RATE_LIMITED
-              http_codes:
-                - 429
-                - 503
+              http_codes: [429, 503]
+            - type: HttpResponseFilter
+              action: FAIL
+              http_codes: [401, 403]
+              error_message: "Zendesk rejected the credentials (check zendesk_email, zendesk_api_token and that Token Access is enabled)."
             - type: HttpResponseFilter
               action: IGNORE
-              http_codes:
-                - 404
+              http_codes: [404]
       record_selector:
         type: RecordSelector
         extractor:
@@ -583,6 +637,27 @@ streams:
             partition_field: ticket_id
             # the parent's updated_at cursor drives which tickets are revisited
             incremental_dependency: true
+    # Formal cursor: the audits endpoint accepts no time filter (no request
+    # option is injected below) and nothing is dropped client-side — every
+    # audit of every enumerated ticket is emitted. The cursor exists to make
+    # the stream STATEFUL, which is the only thing that lets
+    # incremental_dependency persist the parent's updated_at as parent_state.
+    # Without it the CDK reports full_refresh only, reconcile assigns
+    # full_refresh, no state survives the run, and every sync re-enumerates the
+    # whole start_date window — one audits request per ticket in it, nightly,
+    # against an endpoint capped at 10 requests/minute. (Same idiom as zoom
+    # meeting_participants and github issue_comments.)
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: created_at
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%SZ"
+        - "%Y-%m-%dT%H:%M:%S.%fZ"
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config.get('start_date') or day_delta(-90, format='%Y-%m-%d') }}"
+        datetime_format: "%Y-%m-%d"
     transformations:
       - type: AddFields
         fields: *standard_fields
@@ -599,9 +674,15 @@ streams:
             path: [author_id]
             value: "{{ record['author_id'] | string if record.get('author_id') else none }}"
           - type: AddedFieldDefinition
-            # nested events[] kept as JSON; Silver explodes + classifies them
+            # nested events[] kept as JSON; Silver explodes + classifies them.
+            # value_type is load-bearing: the CDK literal-evals the rendered
+            # value, and `[]` (or any events array holding no JSON literal the
+            # Python parser rejects) would come back as a real list against a
+            # String column. Pinning the type keeps every audit's events a
+            # string, empty or not.
             path: [events]
-            value: "{{ record.get('events', []) | tojson }}"
+            value: "{{ (record.get('events') or []) | tojson }}"
+            value_type: string
           - type: AddedFieldDefinition
             path: [unique_key]
             value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"

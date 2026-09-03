@@ -6,8 +6,8 @@
     engine='ReplacingMergeTree(_version)',
     order_by=['unique_key'],
     settings={'allow_nullable_key': 1},
-    schema='silver',
-    tags=['zendesk', 'silver']
+    schema='staging',
+    tags=['zendesk']
 ) }}
 
 -- =====================================================================
@@ -31,11 +31,17 @@
 SELECT
     e.tenant_id,
     e.source_id                                   AS insight_source_id,
-    -- per-event key (audit id + Zendesk event id) so multi-event audits don't collide
-    concat('zendesk-', toString(e.audit_id), '-', JSONExtractString(e.ev, 'id')) AS unique_key,
+    -- tenant+source in the key, not just the Zendesk ids: audit and event ids
+    -- are sequential PER INSTANCE, so an id-only key collides across tenants
+    -- and across two Zendesk instances in one install — and since this model
+    -- is delete+insert on unique_key, the collision DELETES the other row.
+    MD5(concat(e.tenant_id, '-', e.source_id, '-', toString(e.audit_id),
+               '-', JSONExtractString(e.ev, 'id'))) AS unique_key,
     'zendesk'                                     AS data_source,
-    concat('zendesk-', toString(e.ticket_id))     AS ticket_key,
+    -- same formula as zendesk__support_ticket.unique_key, so the two join
+    MD5(concat(e.tenant_id, '-', e.source_id, '-', toString(e.ticket_id))) AS ticket_key,
     e.ticket_id                                   AS source_ticket_id,
+    e.audit_id                                    AS source_audit_id,
     ag.person_key                                 AS actor_person_key,     -- KEY OF ATTRIBUTION
     e.author_id                                   AS actor_source_id,
     multiIf(
@@ -55,7 +61,8 @@ SELECT
     toUnixTimestamp64Milli(now64())               AS _version
 FROM (
     SELECT
-        a.tenant_id, a.source_id, a.audit_id, a.ticket_id, a.author_id, a.created_at, ev
+        a.tenant_id, a.source_id, a.audit_id, a.ticket_id, a.author_id, a.created_at,
+        a._airbyte_extracted_at, ev
     FROM (
         -- Read-time dedup of append-only RMT bronze (ADR-0001): one row per audit.
         SELECT * FROM {{ source('bronze_zendesk', 'support_ticket_events') }}
@@ -79,7 +86,18 @@ INNER JOIN {{ ref('zendesk__support_agent') }} ag
        AND ag.source_agent_id = e.author_id
 WHERE ag.person_key != ''
 {% if is_incremental() %}
-  AND toDate(parseDateTimeBestEffortOrNull(e.created_at)) > (
-      SELECT coalesce(max(metric_date), toDate('1970-01-01')) - INTERVAL 3 DAY FROM {{ this }}
+  -- SAFETY: the bronze reads below need no read-time dedup — a duplicate
+  -- row cannot change a max(), which is all they compute.
+  -- Watermark on the source EXTRACT time, not the business date. Audits are
+  -- fanned out per ticket off the parent's updated_at cursor, so a ticket
+  -- created months ago and touched today yields audits with an OLD created_at.
+  -- A business-date boundary only ever rises, so those audits fall below it and
+  -- are stranded permanently — the same failure the slack and zoom models fixed.
+  AND (
+    (SELECT count() FROM {{ this }}) = 0
+    OR e._airbyte_extracted_at > (
+        SELECT max(_airbyte_extracted_at) - INTERVAL 3 DAY
+        FROM {{ source('bronze_zendesk', 'support_ticket_events') }}
+    )
   )
 {% endif %}

@@ -39,7 +39,10 @@ WITH events AS (
         insight_source_id                         AS source_id,
         actor_person_key                          AS person_key,
         metric_date                               AS date,
-        countIf(event_type = 'update')            AS updates,
+        -- DISTINCT audits, not events: one ticket edit touching five fields
+        -- emits five `Change` events and would otherwise report five updates.
+        -- Same reasoning as `solved` below, one grain up.
+        uniqExactIf(source_audit_id, event_type = 'update') AS updates,
         countIf(event_type = 'public_comment')    AS public_comments,
         countIf(event_type = 'private_comment')   AS private_comments,
         -- DISTINCT tickets solved (not solve-events): a reopen→solve on the
@@ -108,9 +111,28 @@ SELECT
     toUnixTimestamp64Milli(now64()) AS _version
 FROM merged
 {% if is_incremental() %}
+-- SAFETY: the bronze reads below need no read-time dedup — they compute a
+-- max() and a set of dates tested with IN; duplicates change neither.
+-- Recompute the person-dates touched by a recent EXTRACT, not the trailing
+-- window of business dates: a late-arriving audit or rating carries an old
+-- business date, and a boundary that only rises would strand it forever.
 WHERE (
-    (SELECT max(date) FROM {{ this }}) IS NULL
-    OR date > (SELECT max(date) - INTERVAL 3 DAY FROM {{ this }})
+    (SELECT count() FROM {{ this }}) = 0
+    OR date IN (
+        SELECT toDate(parseDateTimeBestEffortOrNull(created_at))
+        FROM {{ source('bronze_zendesk', 'support_ticket_events') }}
+        WHERE _airbyte_extracted_at > (
+            SELECT max(_airbyte_extracted_at) - INTERVAL 3 DAY
+            FROM {{ source('bronze_zendesk', 'support_ticket_events') }}
+        )
+        UNION DISTINCT
+        SELECT toDate(parseDateTimeBestEffortOrNull(created_at))
+        FROM {{ source('bronze_zendesk', 'zendesk_satisfaction_ratings') }}
+        WHERE _airbyte_extracted_at > (
+            SELECT max(_airbyte_extracted_at) - INTERVAL 3 DAY
+            FROM {{ source('bronze_zendesk', 'zendesk_satisfaction_ratings') }}
+        )
+    )
 )
 {% endif %}
 GROUP BY tenant_id, source_id, person_key, date
