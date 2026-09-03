@@ -21,7 +21,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GROUPS } from "@/lib/insight/groups";
 import type { NormalizedMetricResult } from "@/lib/metrics/collection";
 import { setPortalShowPlanned } from "@/lib/portal/portal-store";
-import { identityPerson, pid } from "@/test/identity";
+import {
+  identityPerson,
+  peopleFromIdentityTree,
+  pid,
+} from "@/test/identity";
 import type { IdentityPerson } from "@/types/insight";
 
 /* ── module mocks ────────────────────────────────────────────────────── */
@@ -29,6 +33,7 @@ import type { IdentityPerson } from "@/types/insight";
 const mocks = vi.hoisted(() => ({
   personId: null as string | null,
   tree: undefined as IdentityPerson | undefined,
+  roster: [] as import("@/api/identity-client").PeopleListItem[],
   grid: {
     byKey: new Map<string, NormalizedMetricResult>(),
     previousByKey: new Map<string, NormalizedMetricResult>(),
@@ -79,8 +84,7 @@ vi.mock("@/queries/identity-me", () => ({
 }));
 vi.mock("@/queries/visible-roster", () => ({
   useVisibleRoster: () => ({
-    roster: [],
-    truncated: false,
+    roster: mocks.roster,
     isPending: false,
     isError: false,
     retry: () => {},
@@ -198,6 +202,7 @@ const IDS = LABELS.map(pid);
 function seedHappyOrg() {
   mocks.personId = pid("boss");
   mocks.tree = person("boss", {}, LABELS.map((l) => person(l)));
+  mocks.roster = peopleFromIdentityTree(mocks.tree);
   // 4 members, 10+20+30+40 = 100 commits; everyone active.
   mocks.grid.byKey = new Map([
     ["t.commits", metric("t.commits", [[pid("a"), 10], [pid("b"), 20], [pid("c"), 30], [pid("d"), 40]], { short_label: "Commits", unit: "commits" })],
@@ -338,6 +343,7 @@ describe("rule 6: honest not-ingested gate", () => {
 describe("org-scope gates", () => {
   it("shows the empty-roster label instead of a fabricated dashboard", () => {
     mocks.tree = person("boss");
+    mocks.roster = peopleFromIdentityTree(mocks.tree);
     render(<DomainLensView config={HEADLINE_CONFIG} />);
     expect(screen.getByText(/No people in the current scope/)).toBeInTheDocument();
   });
@@ -895,6 +901,7 @@ describe("by-unit auto-section (rule 7: slice cohorts inside scope)", () => {
     mocks.tree = person("boss", {}, labels.map((l) =>
       person(l, { division: l.startsWith("a") ? "R&D" : "Sales" } as never),
     ));
+    mocks.roster = peopleFromIdentityTree(mocks.tree);
     mocks.grid.byKey = new Map([
       ["t.commits", metric("t.commits", labels.map((l) => [pid(l), l.startsWith("a") ? 10 : 30]), { short_label: "Commits" })],
     ]);
@@ -929,6 +936,7 @@ describe("direction-cards / attention sections", () => {
     // 7 healthy + 1 collapsed member
     const labels = ["m1", "m2", "m3", "m4", "m5", "m6", "m7", "z"];
     mocks.tree = person("boss", {}, labels.map((l) => person(l)));
+    mocks.roster = peopleFromIdentityTree(mocks.tree);
     mocks.grid.byKey = new Map([
       ["t.commits", metric("t.commits", labels.map((l) => [pid(l), l === "z" ? 0 : 10]), { label: "Commits" })],
     ]);
@@ -986,6 +994,7 @@ describe("coverage section (#2408)", () => {
 
   it("opens a level into exactly the people at it, and why each is thin", async () => {
     mocks.tree = person("boss", {}, [person("a"), person("b"), person("c")]);
+    mocks.roster = peopleFromIdentityTree(mocks.tree);
     coverageWorld(["a"]);
     render(
       <DomainLensView
@@ -1005,6 +1014,7 @@ describe("coverage section (#2408)", () => {
 
   it("does not open a level nobody is at", async () => {
     mocks.tree = person("boss", {}, [person("a")]);
+    mocks.roster = peopleFromIdentityTree(mocks.tree);
     coverageWorld([]);
     render(
       <DomainLensView

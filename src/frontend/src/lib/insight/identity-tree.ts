@@ -1,6 +1,59 @@
+import type { PeopleListItem } from "@/api/identity-client";
 import type { IdentityPerson } from "@/types/insight";
 
 const toLower = (s: string | undefined | null) => (s ?? "").toLowerCase();
+
+export function rosterTree(
+  roster: readonly PeopleListItem[],
+  viewerPersonId: string,
+): IdentityPerson | null {
+  const byId = new Map(
+    roster.map((person) => [toLower(person.person_id), person]),
+  );
+  const children = new Map<string, PeopleListItem[]>();
+
+  for (const person of roster) {
+    const managerId = toLower(person.manager_person_id);
+    if (!managerId || !byId.has(managerId)) continue;
+    const reports = children.get(managerId) ?? [];
+    reports.push(person);
+    children.set(managerId, reports);
+  }
+
+  const build = (
+    person: PeopleListItem,
+    ancestors: ReadonlySet<string>,
+  ): IdentityPerson => {
+    const personId = toLower(person.person_id);
+    const nextAncestors = new Set(ancestors).add(personId);
+    const manager = person.manager_person_id
+      ? byId.get(toLower(person.manager_person_id))
+      : undefined;
+    const reports = (children.get(personId) ?? []).filter(
+      (report) => !nextAncestors.has(toLower(report.person_id)),
+    );
+
+    return {
+      person_id: person.person_id,
+      email: person.email ?? "",
+      display_name: person.display_name ?? "",
+      first_name: person.first_name ?? undefined,
+      last_name: person.last_name ?? undefined,
+      username: person.username ?? undefined,
+      department: person.attributes.department,
+      division: person.attributes.division,
+      job_title: person.attributes.job_title,
+      status: person.attributes.status,
+      parent_person_id: person.manager_person_id,
+      supervisor_name:
+        manager?.display_name?.trim() || manager?.username?.trim() || null,
+      subordinates: reports.map((report) => build(report, nextAncestors)),
+    };
+  };
+
+  const viewer = byId.get(toLower(viewerPersonId));
+  return viewer ? build(viewer, new Set()) : null;
+}
 
 export function findIdentityNode(
   tree: IdentityPerson | null | undefined,

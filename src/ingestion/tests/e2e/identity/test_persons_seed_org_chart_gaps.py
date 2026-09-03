@@ -292,9 +292,9 @@ def test_seed_org_chart_from_real_bamboohr_connector_pipeline(
         "   AND operation_type = 'UPSERT' ORDER BY value_type",
     )
     assert profile_rows == [
-        ["person_display_name", "Pipeline Report"],
-        ["person_first_name", "Pipeline"],
-        ["person_last_name", "Report"],
+        ("person_display_name", "Pipeline Report"),
+        ("person_first_name", "Pipeline"),
+        ("person_last_name", "Report"),
     ]
 
     res = identity_svc.run_seed_cli(tenant=str(seed.SEED_TENANT), force=True)

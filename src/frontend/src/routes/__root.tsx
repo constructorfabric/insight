@@ -12,14 +12,13 @@ import { FeedbackDialogProvider } from "@/components/feedback-dialog-provider";
 import { MetricEvidenceDialogProvider } from "@/components/metric-evidence-dialog-provider";
 
 // Warms the exact key `useIcPerson` reads, so the shell mounts with the
-// viewer's tree already cached. Keyed by person_id since the identity cutover:
-// an email here would both miss that key and make identity answer 400.
+// viewer's canonical person already cached.
 export async function prefetchViewerIdentity(): Promise<void> {
   const personId = getViewerPersonId();
   if (!personId) return;
   await queryClient.prefetchQuery({
     queryKey: ["identity", "person", normalizePersonId(personId)],
-    queryFn: () => getPerson(personId),
+    queryFn: ({ signal }) => getPerson(personId, signal),
   });
 }
 

@@ -5,18 +5,14 @@ import {
   findIdentityNode,
   flattenSubordinates,
   hasIndirectReports,
+  rosterTree,
   scopeRosterToDirectReports,
   type RosterEntry,
 } from "@/lib/insight/identity-tree";
-import {
-  type OrgScope,
-} from "@/lib/portal/portal-store";
-import {
-  usePortalScope,
-} from "@/lib/portal/portal-nav";
-import type { PersonSummary } from "@/api/identity-client";
+import { usePortalScope } from "@/lib/portal/portal-nav";
+import type { OrgScope } from "@/lib/portal/portal-store";
+import type { PeopleListItem } from "@/api/identity-client";
 import { personDisplayName } from "@/lib/identities/person-display";
-import { useIcPerson } from "@/queries/ic-dashboard";
 import { useVisibilityPolicy } from "@/queries/identity-me";
 import { useVisibleRoster } from "@/queries/visible-roster";
 import type { IdentityPerson } from "@/types/insight";
@@ -56,7 +52,7 @@ export const WHOLE_ORG_LABEL = "Whole organisation";
  * is looking disagrees with the roster listed right beside it (#2724).
  */
 export function flatOrgScope(
-  roster: readonly PersonSummary[] | null,
+  roster: readonly PeopleListItem[] | null,
 ): ResolvedScope {
   if (!roster) {
     return {
@@ -163,26 +159,30 @@ export function useOrgScope(): ResolvedScope & {
   pivotPersonId: string;
 } {
   const { personId } = useViewer();
-  const viewerQ = useIcPerson(personId ?? "");
   const scope = usePortalScope();
   const { isFlat } = useVisibilityPolicy();
-  const flatRoster = useVisibleRoster(isFlat);
+  const visibleRoster = useVisibleRoster(true);
+  const tree = useMemo(
+    () =>
+      visibleRoster.isPending || !personId
+        ? null
+        : rosterTree(visibleRoster.roster, personId),
+    [visibleRoster.isPending, visibleRoster.roster, personId],
+  );
 
   const resolved = useMemo(
     () =>
       isFlat
-        ? flatOrgScope(flatRoster.isPending ? null : flatRoster.roster)
-        : resolveScopeRoster(viewerQ.data ?? null, personId, scope),
-    [isFlat, flatRoster.isPending, flatRoster.roster, viewerQ.data, personId, scope],
+        ? flatOrgScope(visibleRoster.isPending ? null : visibleRoster.roster)
+        : resolveScopeRoster(tree, personId, scope),
+    [isFlat, visibleRoster.isPending, visibleRoster.roster, tree, personId, scope],
   );
 
-  // Under a flat policy the roster IS the org zones' subject, so its failure is
-  // theirs; the identity tree still answers who the viewer is.
   return {
     ...resolved,
-    isLoading: isFlat ? flatRoster.isPending : viewerQ.isLoading,
-    isError: isFlat ? flatRoster.isError : viewerQ.isError,
-    refetch: () => (isFlat ? flatRoster.retry() : void viewerQ.refetch()),
+    isLoading: visibleRoster.isPending,
+    isError: visibleRoster.isError,
+    refetch: visibleRoster.retry,
     pivotPersonId: resolved.pivot?.person_id ?? personId ?? "",
   };
 }

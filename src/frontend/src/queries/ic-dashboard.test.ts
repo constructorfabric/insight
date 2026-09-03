@@ -35,7 +35,8 @@ describe("useIcPerson", () => {
     });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toBe(person);
-    expect(mockGetPerson).toHaveBeenCalledWith("Alice@X.com");
+    expect(mockGetPerson.mock.calls[0]?.[0]).toBe("Alice@X.com");
+    expect(mockGetPerson.mock.calls[0]?.[1]).toBeInstanceOf(AbortSignal);
   });
 
   it("stays disabled for an empty person id", async () => {
