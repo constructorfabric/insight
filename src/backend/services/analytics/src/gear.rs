@@ -48,6 +48,9 @@ impl Gear for AnalyticsApiGear {
         let cfg: GearConfig = ctx.config()?;
         validate_reports_config(&cfg.reports)?;
         crate::mcp::validate_config(&cfg.mcp)?;
+        let mcp = cfg.mcp.clone();
+        let mcp_clickhouse_url = cfg.clickhouse_url.clone();
+        let mcp_clickhouse_database = cfg.clickhouse_database.clone();
         let report_temp_dir = cfg.reports.temp_dir.clone();
         tokio::task::spawn_blocking(move || {
             crate::domain::reports::temp::prepare_temp_dir(&report_temp_dir)
@@ -87,16 +90,6 @@ impl Gear for AnalyticsApiGear {
         }
         let ch = insight_clickhouse::Client::new(ch_config);
 
-        if cfg.mcp.enabled {
-            crate::mcp::start(
-                &cfg.mcp,
-                &cfg.clickhouse_url,
-                &cfg.clickhouse_database,
-                ctx.cancellation_token().child_token(),
-            )
-            .await?;
-        }
-
         // Identity client.
         let identity = infra::identity::IdentityClient::new(&cfg.identity_url)?;
 
@@ -135,6 +128,16 @@ impl Gear for AnalyticsApiGear {
         self.state
             .set(Arc::new(state))
             .map_err(|_| anyhow::anyhow!("{} gear already initialized", Self::MODULE_NAME))?;
+
+        if mcp.enabled {
+            crate::mcp::start(
+                &mcp,
+                &mcp_clickhouse_url,
+                &mcp_clickhouse_database,
+                ctx.cancellation_token().child_token(),
+            )
+            .await?;
+        }
 
         // INVARIANT: periodic and never gating boot — the stamp lands after
         // boot (post-install migrate hook) and a later in-place bump must

@@ -21,7 +21,7 @@ use schemars::JsonSchema;
 use secrecy::ExposeSecret as _;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
-use tokio::sync::{RwLock, Semaphore};
+use tokio::sync::{Mutex, RwLock, Semaphore};
 use tokio_util::sync::CancellationToken;
 
 use crate::config::McpConfig;
@@ -32,6 +32,7 @@ const MAX_SQL_BYTES: usize = 64 * 1024;
 const MAX_RESULT_BYTES: usize = 5 * 1024 * 1024;
 const FETCH_TIMEOUT: Duration = Duration::from_secs(35);
 const MAX_JWKS_BYTES: usize = 1024 * 1024;
+const JWKS_REFRESH_COOLDOWN: Duration = Duration::from_secs(5);
 const MCP_SCOPE: &str = "mcp:query";
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -88,6 +89,12 @@ struct TokenVerifierInner {
     jwks_url: String,
     client: reqwest::Client,
     jwks: RwLock<Option<JwkSet>>,
+    jwks_refresh: Mutex<JwksRefresh>,
+}
+
+#[derive(Default)]
+struct JwksRefresh {
+    last_attempt: Option<Instant>,
 }
 
 #[derive(Debug)]
@@ -109,6 +116,8 @@ enum QueryFailure {
     ClickHouse(#[from] clickhouse::error::Error),
     #[error("ClickHouse returned an invalid JSON response: {0}")]
     InvalidResponse(#[from] serde_json::Error),
+    #[error("query result processing task failed: {0}")]
+    ProcessingTask(#[from] tokio::task::JoinError),
 }
 
 impl QueryFailure {
@@ -117,7 +126,9 @@ impl QueryFailure {
             Self::Busy => "the SQL explorer is busy; retry shortly",
             Self::ResultTooLarge => "query result exceeded the response limit",
             Self::Timeout => "query timed out",
-            Self::ClickHouse(_) | Self::InvalidResponse(_) => "query execution failed",
+            Self::ClickHouse(_) | Self::InvalidResponse(_) | Self::ProcessingTask(_) => {
+                "query execution failed"
+            }
         }
     }
 }
@@ -156,12 +167,17 @@ impl SqlExplorer {
                 }
                 bytes.extend_from_slice(&chunk);
             }
-            Ok(serde_json::from_slice::<ClickHouseJsonResult>(&bytes)?)
+            Ok::<_, QueryFailure>(bytes)
         };
 
-        let result = tokio::time::timeout(FETCH_TIMEOUT, fetch)
+        let bytes = tokio::time::timeout(FETCH_TIMEOUT, fetch)
             .await
             .map_err(|_| QueryFailure::Timeout)??;
+        // INVARIANT: query capacity also bounds CPU-heavy result decoding.
+        let result = tokio::task::spawn_blocking(move || {
+            serde_json::from_slice::<ClickHouseJsonResult>(&bytes)
+        })
+        .await??;
         drop(permit);
 
         let row_count = result.data.len();
@@ -204,10 +220,14 @@ impl SqlExplorer {
                     outcome = "success",
                     "MCP SQL query completed"
                 );
-                match serde_json::to_value(result) {
-                    Ok(value) => CallToolResult::structured(value),
-                    Err(error) => {
+                match tokio::task::spawn_blocking(move || serde_json::to_value(result)).await {
+                    Ok(Ok(value)) => CallToolResult::structured(value),
+                    Ok(Err(error)) => {
                         tracing::error!(query_hash, %error, "failed to serialize MCP SQL result");
+                        tool_error("query result serialization failed")
+                    }
+                    Err(error) => {
+                        tracing::error!(query_hash, %error, "MCP result serialization task failed");
                         tool_error("query result serialization failed")
                     }
                 }
@@ -352,6 +372,7 @@ impl TokenVerifier {
                 issuer,
                 client,
                 jwks: RwLock::new(None),
+                jwks_refresh: Mutex::new(JwksRefresh::default()),
             }),
         })
     }
@@ -364,7 +385,7 @@ impl TokenVerifier {
         let kid = header.kid.ok_or(AuthFailure::Unauthorized)?;
         let mut jwks = self.cached_jwks().await?;
         if jwks.find(&kid).is_none() {
-            jwks = self.fetch_jwks().await?;
+            jwks = self.refresh_jwks(Some(&kid)).await?;
         }
         let jwk = jwks.find(&kid).ok_or(AuthFailure::Unauthorized)?;
         let key = DecodingKey::from_jwk(jwk).map_err(|_| AuthFailure::Unauthorized)?;
@@ -395,6 +416,28 @@ impl TokenVerifier {
         if let Some(jwks) = self.inner.jwks.read().await.clone() {
             return Ok(jwks);
         }
+        self.refresh_jwks(None).await
+    }
+
+    async fn refresh_jwks(&self, expected_kid: Option<&str>) -> Result<JwkSet, AuthFailure> {
+        let mut refresh = self.inner.jwks_refresh.lock().await;
+        let cached = self.inner.jwks.read().await.clone();
+        let cache_satisfies = match expected_kid {
+            Some(kid) => cached.as_ref().is_some_and(|jwks| jwks.find(kid).is_some()),
+            None => cached.is_some(),
+        };
+        if cache_satisfies {
+            return cached.ok_or(AuthFailure::Unavailable);
+        }
+        if refresh
+            .last_attempt
+            .is_some_and(|attempt| attempt.elapsed() < JWKS_REFRESH_COOLDOWN)
+        {
+            return cached.ok_or(AuthFailure::Unavailable);
+        }
+
+        refresh.last_attempt = Some(Instant::now());
+        // INVARIANT: holding the gate across fetch permits only one JWKS refresh.
         self.fetch_jwks().await
     }
 
@@ -491,7 +534,46 @@ fn tool_error(message: impl Into<String>) -> CallToolResult {
 
 #[cfg(test)]
 mod tests {
-    use super::QueryFailure;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use axum::Json;
+    use axum::routing::get;
+
+    use super::{QueryFailure, TokenVerifier};
+
+    #[tokio::test]
+    async fn concurrent_jwks_misses_share_one_refresh() -> anyhow::Result<()> {
+        let requests = Arc::new(AtomicUsize::new(0));
+        let app = axum::Router::new().route(
+            "/.well-known/jwks.json",
+            get({
+                let requests = requests.clone();
+                move || {
+                    let requests = requests.clone();
+                    async move {
+                        requests.fetch_add(1, Ordering::SeqCst);
+                        Json(serde_json::json!({ "keys": [] }))
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        let server = tokio::spawn(async move { axum::serve(listener, app).await });
+        let verifier = TokenVerifier::new(&format!("http://{address}"), false)?;
+
+        let (first, second) = tokio::join!(verifier.cached_jwks(), verifier.cached_jwks());
+
+        assert!(first.is_ok());
+        assert!(second.is_ok());
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+        assert!(verifier.refresh_jwks(Some("missing-key")).await.is_ok());
+        assert!(verifier.refresh_jwks(Some("missing-key")).await.is_ok());
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+        server.abort();
+        Ok(())
+    }
 
     #[test]
     fn backend_failures_have_a_generic_public_message() {

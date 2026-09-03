@@ -299,7 +299,41 @@ fn first_denied_table_function(sql: &str) -> Option<String> {
 mod tests {
     use super::admin_only_database as admin_only;
     use super::validate_custom_observation_sql as custom;
+    use super::validate_mcp_sql as mcp;
     use super::validate_single_select as check;
+
+    #[test]
+    fn mcp_gate_rejects_query_output_controls() {
+        assert_eq!(
+            mcp("SELECT * FROM system.one SETTINGS max_threads = 1"),
+            Err("query-level SETTINGS are not allowed".to_owned())
+        );
+        assert_eq!(
+            mcp("SELECT * FROM system.one FORMAT JSON"),
+            Err("query-level FORMAT is not allowed".to_owned())
+        );
+    }
+
+    #[test]
+    fn mcp_gate_rejects_external_functions_and_non_queries() {
+        assert_eq!(
+            mcp("SELECT * FROM file('/etc/passwd', CSV)"),
+            Err("table function `file` is not allowed".to_owned())
+        );
+        assert!(mcp("DROP TABLE silver.events").is_err());
+        assert!(mcp("SELECT 1; SELECT 2").is_err());
+    }
+
+    #[test]
+    fn mcp_gate_accepts_nested_read_queries() {
+        for sql in [
+            "SELECT name FROM system.tables LIMIT 5",
+            "WITH rows AS (SELECT id FROM silver.events) SELECT * FROM rows",
+            "SELECT * FROM (SELECT 1 AS value)",
+        ] {
+            assert!(mcp(sql).is_ok(), "should accept: {sql}");
+        }
+    }
 
     #[test]
     fn a_read_of_the_usage_event_store_is_admin_only() {

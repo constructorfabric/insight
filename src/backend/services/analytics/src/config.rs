@@ -14,6 +14,22 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use secrecy::SecretString;
 use serde::Deserialize;
 
+const REDACTED_SECRET: &str = "<redacted>";
+
+pub(crate) fn redacted_yaml(config: &toolkit::bootstrap::AppConfig) -> anyhow::Result<String> {
+    let mut redacted = config.clone();
+    if let Some(password) = redacted
+        .gears
+        .get_mut("analytics")
+        .and_then(|gear| gear.get_mut("config"))
+        .and_then(|config| config.get_mut("mcp"))
+        .and_then(|mcp| mcp.get_mut("clickhouse_password"))
+    {
+        *password = serde_json::Value::String(REDACTED_SECRET.to_owned());
+    }
+    redacted.to_yaml()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExternalSourceProvider {
@@ -316,6 +332,26 @@ fn default_clickhouse_database() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn printed_config_redacts_mcp_clickhouse_password() -> anyhow::Result<()> {
+        let password = "mcp-password-that-must-not-print";
+        let mut config = toolkit::bootstrap::AppConfig::default();
+        config.gears.insert(
+            "analytics".to_owned(),
+            serde_json::json!({
+                "config": {
+                    "mcp": { "clickhouse_password": password }
+                }
+            }),
+        );
+
+        let printed = redacted_yaml(&config)?;
+
+        assert!(printed.contains(REDACTED_SECRET));
+        assert!(!printed.contains(password));
+        Ok(())
+    }
 
     #[test]
     fn ai_assist_defaults_to_disabled() -> anyhow::Result<()> {

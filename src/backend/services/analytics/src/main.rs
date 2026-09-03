@@ -108,7 +108,10 @@ async fn main() -> Result<()> {
     config.apply_cli_overrides(cli.verbose);
 
     if cli.print_config {
-        println!("Effective configuration:\n{}", config.to_yaml()?);
+        println!(
+            "Effective configuration:\n{}",
+            config::redacted_yaml(&config)?
+        );
         return Ok(());
     }
 
