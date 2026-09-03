@@ -14,6 +14,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
+import { TEXT_TITLE } from "@/lib/type-scale";
 import { MetricDetail } from "@/components/widgets/metrics-console/metric-detail";
 import { MetricEditorDialog } from "@/components/widgets/metrics-console/metric-editor-dialog";
 import {
@@ -58,9 +59,7 @@ export function MetricsConsoleBody() {
     <>
       <main className="flex flex-1 flex-col p-4 md:p-6">
         <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center gap-3 pb-4">
-          <h2 className="text-lg font-semibold tracking-tight">
-            {t("metrics_console.title")}
-          </h2>
+          <h2 className={TEXT_TITLE}>{t("metrics_console.title")}</h2>
           <Button
             className="ms-auto"
             size="sm"

@@ -260,15 +260,15 @@ describe("identities gate", () => {
 });
 
 describe("Manage · the consoles the legacy shell used to own", () => {
-  it("opens the custom-metric console", () => {
+  it("opens the custom-metric console", async () => {
     render(<ManageView item="custom-metrics" />);
 
-    expect(screen.getByTestId("metrics-console-body")).toBeInTheDocument();
+    expect(await screen.findByTestId("metrics-console-body")).toBeInTheDocument();
   });
 
-  it("opens the saved-query console", () => {
+  it("opens the saved-query console", async () => {
     render(<ManageView item="query-console" />);
 
-    expect(screen.getByTestId("query-console-body")).toBeInTheDocument();
+    expect(await screen.findByTestId("query-console-body")).toBeInTheDocument();
   });
 });

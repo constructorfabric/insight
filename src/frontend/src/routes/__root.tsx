@@ -1,4 +1,4 @@
-import { Outlet, createRootRoute, useRouterState } from "@tanstack/react-router";
+import { Outlet, createRootRoute } from "@tanstack/react-router";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { getPerson } from "@/api/identity-client";
@@ -6,8 +6,6 @@ import { authStore, getViewerPersonId, signIn } from "@/auth";
 import { AuthGate } from "@/components/auth-gate";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { Toaster } from "@/components/ui/sonner";
-import { PortalLayout } from "@/components/portal/portal-layout";
-import { isPortalShellPath } from "@/lib/portal/portal-routes";
 import { normalizePersonId } from "@/lib/metrics/entity";
 import { queryClient } from "@/query-client";
 import { FeedbackDialogProvider } from "@/components/feedback-dialog-provider";
@@ -51,13 +49,13 @@ function RootPending() {
 }
 
 function RootLayout() {
-  const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const portalRoute = isPortalShellPath(pathname);
   return (
     <TooltipProvider>
       <MetricEvidenceDialogProvider>
         <FeedbackDialogProvider>
-          <AuthGate>{portalRoute ? <PortalLayout /> : <Outlet />}</AuthGate>
+          <AuthGate>
+            <Outlet />
+          </AuthGate>
           {/* Outside AuthGate: a toast must survive the surface that raised it
               closing, and the identity verbs report their result by closing the
               case window and toasting. Without this mount every `toast()` call

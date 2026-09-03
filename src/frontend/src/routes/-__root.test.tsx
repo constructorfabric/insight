@@ -32,8 +32,6 @@ vi.mock("@/auth", () => ({
 }));
 
 vi.mock("@/components/auth-gate", () => ({ AuthGate: () => null }));
-vi.mock("@/components/mock-banner", () => ({ MockBanner: () => null }));
-vi.mock("@/components/view-as-banner", () => ({ ViewAsBanner: () => null }));
 
 import { prefetchViewerIdentity } from "./__root";
 
