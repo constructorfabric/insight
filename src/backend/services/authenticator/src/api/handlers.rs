@@ -389,12 +389,16 @@ pub async fn callback(
                 &token,
                 state.cfg.session_ttl_seconds,
             ));
-            let redirect = build_response(
-                StatusCode::FOUND,
-                vec![(LOCATION.clone(), return_to)],
-                Body::empty(),
-            );
-            (jar, redirect).into_response()
+            let response = if is_mcp_oauth_return(&return_to) {
+                crate::mcp_oauth::handlers::login_continuation_page(&return_to)
+            } else {
+                build_response(
+                    StatusCode::FOUND,
+                    vec![(LOCATION.clone(), return_to)],
+                    Body::empty(),
+                )
+            };
+            (jar, response).into_response()
         }
         Err(e) => internal_problem("create_session", &e),
     }

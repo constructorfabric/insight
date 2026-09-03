@@ -673,6 +673,34 @@ fn consent_page(
     response
 }
 
+pub(crate) fn login_continuation_page(return_to: &str) -> Response {
+    let body = format!(
+        r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Continue authorization</title><style>body{{font:16px system-ui;max-width:42rem;margin:4rem auto;padding:0 1rem;color:#17202a}}main{{border:1px solid #d5d8dc;border-radius:12px;padding:2rem}}a{{display:inline-block;background:#17202a;color:white;border-radius:6px;padding:.65rem 1rem;text-decoration:none}}a:focus-visible{{outline:3px solid #5dade2;outline-offset:3px}}</style></head><body><main><h1>Continue authorization</h1><p>You are signed in. Continue to review the read-only data access request.</p><a href="{}">Continue</a></main></body></html>"#,
+        html_escape(return_to),
+    );
+    let mut response = (StatusCode::OK, body).into_response();
+    response.headers_mut().insert(
+        CONTENT_TYPE,
+        HeaderValue::from_static("text/html; charset=utf-8"),
+    );
+    response
+        .headers_mut()
+        .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response.headers_mut().insert(
+        CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(
+            "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+        ),
+    );
+    response
+        .headers_mut()
+        .insert(REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
+    response
+        .headers_mut()
+        .insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+    response
+}
+
 fn redirect_to_login(state: &AppState, request_id: &str) -> Response {
     let Ok(mut url) = Url::parse(&public_origin(state)) else {
         return temporarily_unavailable();
