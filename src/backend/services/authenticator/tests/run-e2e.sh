@@ -200,6 +200,9 @@ APP__gears__authenticator__config__service_tokens__public_key_dir="$SVC_KEYS_DIR
 APP__gears__authenticator__config__idp__refresh_safety_margin_seconds=10 \
 APP__gears__authenticator__config__idp__refresh_due_jitter_seconds=1 \
 APP__gears__authenticator__config__idp__refresher_tick_seconds=1 \
+APP__gears__authenticator__config__mcp_oauth__enabled=true \
+APP__gears__authenticator__config__mcp_oauth__public_url="http://localhost:$AUTH_PORT" \
+APP__gears__authenticator__config__mcp_oauth__allow_insecure_private_network=true \
   ./target/release/authenticator -c "$AUTH_CONFIG" run \
   >/tmp/authenticator-e2e-auth.log 2>&1 &
 pids+=($!)
@@ -277,6 +280,10 @@ export E2E_USER_PASSWORD=insight-dev
 echo "==> run the login loop"
 AUTH_BASE="http://localhost:$AUTH_PORT" E2E_USER="$E2E_USER" \
   cargo test --release -p authenticator --test e2e_login_loop -- --ignored --nocapture
+
+echo "==> run the MCP OAuth lifecycle"
+AUTH_BASE="http://localhost:$AUTH_PORT" E2E_USER="$E2E_USER" \
+  cargo test --release -p authenticator --test e2e_mcp_oauth -- --ignored --nocapture
 
 echo "==> run the refresh rotation-with-grace loop (step 10.1)"
 AUTH_BASE="http://localhost:$AUTH_PORT" E2E_USER="$E2E_USER" \
