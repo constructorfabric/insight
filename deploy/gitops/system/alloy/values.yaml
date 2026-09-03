@@ -120,8 +120,22 @@ alloy:
           endpoint = "0.0.0.0:4318"
         }
         output {
-          metrics = [otelcol.exporter.prometheus.to_victoriametrics.input]
+          metrics = [otelcol.processor.filter.drop_probe_routes.input]
           traces  = [otelcol.exporter.otlp.to_tempo.input]
+        }
+      }
+
+      // Liveness/readiness probes out of the RED metrics: they are traffic
+      // nobody sent, and the toolkit records them with a coarser bucket set
+      // whose merge skews every histogram_quantile over the service.
+      otelcol.processor.filter "drop_probe_routes" {
+        metrics {
+          datapoint = [
+            "IsMatch(attributes[\"http.route\"], \"^/health(z)?$\")",
+          ]
+        }
+        output {
+          metrics = [otelcol.exporter.prometheus.to_victoriametrics.input]
         }
       }
 
