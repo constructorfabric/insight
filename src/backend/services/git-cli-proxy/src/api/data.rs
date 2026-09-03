@@ -159,7 +159,7 @@ pub async fn list_commits(
     let paging = Paging::parse(query.page_token.as_deref(), query.page_size)?;
     let selected = parse_sha_filter(query.sha.as_deref())?;
 
-    let page = read_snapshot(&state, &context, &paging, |guard: RepoGuard| {
+    let (page, _slot) = read_snapshot(&state, &context, &paging, |guard: RepoGuard| {
         let (state, context, paging) = (&state, &context, &paging);
         let since = query.since.as_deref();
         let selected = selected.as_ref();
@@ -251,7 +251,7 @@ pub async fn list_file_changes(
     let include_patch = query.include_patch.unwrap_or(true);
     let max_patch_bytes = clamp_patch_bytes(query.max_patch_bytes);
 
-    let page = read_snapshot(&state, &context, &paging, |guard: RepoGuard| {
+    let (page, _slot) = read_snapshot(&state, &context, &paging, |guard: RepoGuard| {
         let (state, context, paging) = (&state, &context, &paging);
         let since = query.since.as_deref();
         let selected = selected.as_ref();
@@ -409,7 +409,7 @@ pub async fn list_branches(
     let context = RequestContext::from_parts(&headers, repo, state.clone_url_policy())?;
     let paging = Paging::parse(query.page_token.as_deref(), query.page_size)?;
 
-    let page = read_snapshot(&state, &context, &paging, |guard: RepoGuard| {
+    let (page, _slot) = read_snapshot(&state, &context, &paging, |guard: RepoGuard| {
         let (state, context, paging) = (&state, &context, &paging);
         Box::pin(async move {
             let mut all =
@@ -448,7 +448,7 @@ pub async fn list_authors(
     let context = RequestContext::from_parts(&headers, repo, state.clone_url_policy())?;
     let paging = Paging::parse(query.page_token.as_deref(), query.page_size)?;
 
-    let page = read_snapshot(&state, &context, &paging, |guard: RepoGuard| {
+    let (page, _slot) = read_snapshot(&state, &context, &paging, |guard: RepoGuard| {
         let (state, context, paging) = (&state, &context, &paging);
         let since = query.since.as_deref();
         Box::pin(async move {
@@ -553,7 +553,7 @@ async fn read_snapshot<'a, T, F>(
     context: &'a RequestContext,
     paging: &'a Paging,
     read: F,
-) -> Result<Page<T>, ApiError>
+) -> Result<(Page<T>, tokio::sync::OwnedSemaphorePermit), ApiError>
 where
     // INVARIANT: the reader takes the guard BY VALUE, so it is released before
     // promotion is requested. Promotion takes the entry's write lock, and
@@ -561,17 +561,20 @@ where
     F: Fn(RepoGuard) -> BoxFuture<'a, Result<Page<T>, ApiError>>,
 {
     let guard = open(state, context, paging).await?;
-    // INVARIANT: the permit spans the whole serve, including the promotion
-    // retry below — the semaphore IS the cap on concurrent page serves, and
-    // the pod's peak memory is that cap times the heaviest window. Taken
-    // AFTER open, so a slot is never spent waiting on a preparation.
-    // Holding the entry's read guard while queueing here delays only that
-    // entry's own writers, and the long-poll ceiling bounds the queueing.
-    let _slot = serve_slot(state).await?;
+    // INVARIANT: the permit spans the whole serve — the promotion retry below
+    // AND the caller's serialization, which is why it is returned alongside
+    // the page: a serialized patch page holds the whole body in memory, so
+    // dropping the slot before encoding would let bodies stack uncapped. The
+    // semaphore IS the cap on concurrent page serves, and the pod's peak
+    // memory is that cap times the heaviest window. Taken AFTER open, so a
+    // slot is never spent waiting on a preparation; holding the entry's read
+    // guard while queueing here delays only that entry's own writers, and
+    // the long-poll ceiling bounds the queueing.
+    let slot = serve_slot(state).await?;
     let outcome = read(guard).await;
     check_for_drift(state, context);
     match outcome {
-        Ok(page) => return Ok(page),
+        Ok(page) => return Ok((page, slot)),
         Err(e) if !refuses_promisor_wants(&e) => return Err(e),
         Err(_) => {}
     }
@@ -590,7 +593,7 @@ where
     let guard = open(state, context, paging).await?;
     let outcome = read(guard).await;
     check_for_drift(state, context);
-    outcome
+    outcome.map(|page| (page, slot))
 }
 
 /// Take a page-serve slot, or answer 429 when none frees up in time.
@@ -974,6 +977,9 @@ mod tests {
         };
 
         let waiter = tokio::spawn(acquire_within(serves, Duration::from_secs(5)));
+        // Let the waiter reach acquire_owned() so the release below is what
+        // serves it — otherwise the test never exercises the wait path.
+        tokio::task::yield_now().await;
         drop(held);
         match waiter.await {
             Ok(Ok(_)) => {}
