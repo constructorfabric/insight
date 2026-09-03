@@ -64,17 +64,21 @@ struct QuerySqlResult {
 
 #[derive(Debug, Deserialize)]
 struct McpAccessClaims {
-    sub: String,
-    tenant_id: String,
+    #[serde(rename = "sub")]
+    _sub: String,
+    #[serde(rename = "tenant_id")]
+    _tenant_id: String,
     roles: String,
     sub_type: String,
-    sid: String,
+    #[serde(rename = "sid")]
+    _sid: String,
     iss: String,
     aud: String,
     scope: String,
     iat: u64,
     exp: u64,
-    jti: String,
+    #[serde(rename = "jti")]
+    _jti: String,
 }
 
 #[derive(Clone)]
@@ -188,18 +192,8 @@ impl SqlExplorer {
             truncated: false,
         })
     }
-}
 
-#[tool_router]
-impl SqlExplorer {
-    #[tool(
-        name = "query_sql",
-        description = "Run one read-only ClickHouse SELECT/WITH query over bronze_*, staging, silver, gold, identity, and config data. Use system.databases, system.tables, and system.columns to discover schemas. Multiple CTEs, joins, unions, and nested subqueries are allowed; multiple top-level statements, query SETTINGS/FORMAT clauses, and external table functions are rejected."
-    )]
-    async fn query_sql(
-        &self,
-        Parameters(QuerySqlRequest { sql }): Parameters<QuerySqlRequest>,
-    ) -> CallToolResult {
+    async fn run_query_sql(&self, sql: String) -> CallToolResult {
         if sql.len() > MAX_SQL_BYTES {
             return tool_error(format!(
                 "SQL exceeds the {MAX_SQL_BYTES}-byte request limit"
@@ -243,6 +237,20 @@ impl SqlExplorer {
                 tool_error(error.public_message())
             }
         }
+    }
+}
+
+#[tool_router]
+impl SqlExplorer {
+    #[tool(
+        name = "query_sql",
+        description = "Run one read-only ClickHouse SELECT/WITH query over bronze_*, staging, silver, gold, identity, and config data. Use system.databases, system.tables, and system.columns to discover schemas. Multiple CTEs, joins, unions, and nested subqueries are allowed; multiple top-level statements, query SETTINGS/FORMAT clauses, and external table functions are rejected."
+    )]
+    async fn query_sql(
+        &self,
+        Parameters(QuerySqlRequest { sql }): Parameters<QuerySqlRequest>,
+    ) -> CallToolResult {
+        self.run_query_sql(sql).await
     }
 }
 
@@ -336,16 +344,7 @@ async fn authenticate(
         None => Err(AuthFailure::Unauthorized),
     };
     match result {
-        Ok(claims) => {
-            tracing::debug!(
-                subject = %claims.sub,
-                tenant_id = %claims.tenant_id,
-                session_id = %claims.sid,
-                token_id = %claims.jti,
-                "MCP request authenticated"
-            );
-            next.run(request).await
-        }
+        Ok(_) => next.run(request).await,
         Err(AuthFailure::Unauthorized) => {
             verifier.challenge(StatusCode::UNAUTHORIZED, "invalid_token")
         }

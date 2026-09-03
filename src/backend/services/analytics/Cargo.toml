@@ -20,7 +20,7 @@ insight-migration = { workspace = true }
 # but doesn't re-export the row-deserialization derives.
 clickhouse = { workspace = true }
 
-sqlparser = { workspace = true }
+sqlparser = { workspace = true, features = ["visitor"] }
 rmcp = { workspace = true }
 
 axum = { workspace = true }

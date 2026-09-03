@@ -7,7 +7,9 @@
 //! statement. Defense in depth: the `presentation_ro` grants (#1963) are the
 //! real boundary, except for the databases named in [`ADMIN_ONLY_DATABASES`].
 
-use sqlparser::ast::Statement;
+use std::ops::ControlFlow;
+
+use sqlparser::ast::{Query, Statement, Visit as _, Visitor};
 use sqlparser::dialect::ClickHouseDialect;
 use sqlparser::keywords::Keyword;
 use sqlparser::parser::Parser;
@@ -101,17 +103,49 @@ pub fn validate_mcp_sql(sql: &str) -> Result<(), String> {
         _ => return Err("only one statement is allowed on the query path".to_owned()),
     };
 
-    if query.settings.is_some() {
-        return Err("query-level SETTINGS are not allowed".to_owned());
-    }
-    if query.format_clause.is_some() {
-        return Err("query-level FORMAT is not allowed".to_owned());
+    match query_output_control(query) {
+        Some(QueryOutputControl::Settings) => {
+            return Err("query-level SETTINGS are not allowed".to_owned());
+        }
+        Some(QueryOutputControl::Format) => {
+            return Err("query-level FORMAT is not allowed".to_owned());
+        }
+        None => {}
     }
     if let Some(name) = first_denied_table_function(sql) {
         return Err(format!("table function `{name}` is not allowed"));
     }
 
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy)]
+enum QueryOutputControl {
+    Settings,
+    Format,
+}
+
+struct QueryOutputControlVisitor;
+
+impl Visitor for QueryOutputControlVisitor {
+    type Break = QueryOutputControl;
+
+    fn pre_visit_query(&mut self, query: &Query) -> ControlFlow<Self::Break> {
+        if query.settings.is_some() {
+            return ControlFlow::Break(QueryOutputControl::Settings);
+        }
+        if query.format_clause.is_some() {
+            return ControlFlow::Break(QueryOutputControl::Format);
+        }
+        ControlFlow::Continue(())
+    }
+}
+
+fn query_output_control(query: &Query) -> Option<QueryOutputControl> {
+    match query.visit(&mut QueryOutputControlVisitor) {
+        ControlFlow::Break(control) => Some(control),
+        ControlFlow::Continue(()) => None,
+    }
 }
 
 /// Gate a custom observation source's SQL: a single read (as above) that names
@@ -312,6 +346,20 @@ mod tests {
             mcp("SELECT * FROM system.one FORMAT JSON"),
             Err("query-level FORMAT is not allowed".to_owned())
         );
+    }
+
+    #[test]
+    fn mcp_gate_rejects_settings_in_nested_queries() {
+        for sql in [
+            "WITH rows AS (SELECT id FROM silver.events SETTINGS max_threads = 1) SELECT * FROM rows",
+            "SELECT * FROM (SELECT id FROM silver.events SETTINGS max_threads = 1)",
+        ] {
+            assert_eq!(
+                mcp(sql),
+                Err("query-level SETTINGS are not allowed".to_owned()),
+                "should reject: {sql}"
+            );
+        }
     }
 
     #[test]
