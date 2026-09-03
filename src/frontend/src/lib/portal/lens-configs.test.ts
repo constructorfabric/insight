@@ -9,6 +9,7 @@ import {
   lensEntry,
   sectionMetricKeys,
   tenantSectionMetricKeys,
+  visibleLenses,
   visibleSections,
   type LensConfig,
   type SectionSpec,
@@ -313,5 +314,22 @@ describe("visibleSections", () => {
     const gated = visibleSections(config, true, gate(["metric:ai.*"]));
 
     expect(gated.sections).toEqual(config.sections);
+  });
+});
+
+describe("visibleLenses", () => {
+  const dev = DIRECTIONS.find((direction) => direction.id === "dev")!;
+
+  it("keeps the board lenses away from a reader who cannot read them", () => {
+    const lenses = visibleLenses(dev, true, undefined, false);
+
+    expect(lenses).not.toContain("Gear summary");
+    expect(lenses).toContain("Overview");
+  });
+
+  it("offers the board lenses to an admin", () => {
+    const lenses = visibleLenses(dev, true, undefined, true);
+
+    expect(lenses).toContain("Gear summary");
   });
 });

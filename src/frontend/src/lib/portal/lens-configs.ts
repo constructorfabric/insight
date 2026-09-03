@@ -371,13 +371,24 @@ export function lensRoadmap(
   );
 }
 
+/**
+ * A board lens reads bronze, which the backend serves only to an admin. Listing
+ * one for anyone else offers a door that answers 403.
+ */
+function lensNeedsAdmin(dir: string, lens: string): boolean {
+  const entry = lensEntry(dir, lens);
+  return entry !== undefined && "board" in entry;
+}
+
 export function visibleLenses(
   direction: Direction,
   showPlanned: boolean,
-  policy: InstanceNavPolicy = navPolicy()
+  policy: InstanceNavPolicy = navPolicy(),
+  isAdmin = false
 ): string[] {
   return direction.lenses.filter((lens) => {
     if (lensHidden(direction.id, lensSlug(lens), policy)) return false;
+    if (!isAdmin && lensNeedsAdmin(direction.id, lens)) return false;
     return !lensRoadmap(direction, lens, policy) || showPlanned;
   });
 }
@@ -388,12 +399,13 @@ export function visibleLenses(
  */
 export function visibleDirections(
   showPlanned: boolean,
-  policy: InstanceNavPolicy = navPolicy()
+  policy: InstanceNavPolicy = navPolicy(),
+  isAdmin = false
 ): Direction[] {
   return DIRECTIONS.filter(
     (d) =>
       !directionHidden(d.id, policy) &&
-      visibleLenses(d, showPlanned, policy).length > 0
+      visibleLenses(d, showPlanned, policy, isAdmin).length > 0
   );
 }
 

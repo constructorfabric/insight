@@ -66,11 +66,15 @@ describe("configuration-owned planning", () => {
   it("shows every direction and lens when the policy is empty", () => {
     const policy = parseNavPolicy({ hide: [], planned: [] });
 
-    expect(visibleDirections(false, policy).map((direction) => direction.id)).toEqual(
-      DIRECTIONS.map((direction) => direction.id)
-    );
+    // Read as an admin: the claim is that the POLICY hides nothing, and a
+    // board lens withheld by role would otherwise read as a policy that does.
+    expect(
+      visibleDirections(false, policy, true).map((direction) => direction.id)
+    ).toEqual(DIRECTIONS.map((direction) => direction.id));
     for (const direction of DIRECTIONS) {
-      expect(visibleLenses(direction, false, policy)).toEqual(direction.lenses);
+      expect(visibleLenses(direction, false, policy, true)).toEqual(
+        direction.lenses
+      );
     }
   });
 

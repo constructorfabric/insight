@@ -451,7 +451,8 @@ function ItemButton({
 
 function DirectionsNav() {
   const showPlanned = usePortalShowPlanned();
-  const directions = visibleDirections(showPlanned);
+  const { isAdmin } = useIsAdmin();
+  const directions = visibleDirections(showPlanned, undefined, isAdmin);
   return (
     <SidebarGroup>
       <SidebarGroupLabel>
@@ -477,9 +478,10 @@ function DirectionItem({ direction }: { direction: Direction }) {
   const activeDir = usePortalDir();
   const activeLens = usePortalLens();
   const showPlanned = usePortalShowPlanned();
+  const { isAdmin } = useIsAdmin();
   const expanded = activeDir === direction.id;
   const Icon = direction.icon;
-  const lenses = visibleLenses(direction, showPlanned);
+  const lenses = visibleLenses(direction, showPlanned, undefined, isAdmin);
 
   function toggle() {
     if (expanded) {
