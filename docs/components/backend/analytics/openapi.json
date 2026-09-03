@@ -759,123 +759,6 @@
         ],
         "type": "object"
       },
-      "GearDto": {
-        "properties": {
-          "assignee_urls": {
-            "items": {
-              "$ref": "#/components/schemas/AssigneeLink"
-            },
-            "type": "array"
-          },
-          "assignees": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "closed": {
-            "type": "boolean"
-          },
-          "commitment": {
-            "type": "string"
-          },
-          "design_percent": {
-            "format": "int32",
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "effort_man_days": {
-            "format": "double",
-            "type": [
-              "number",
-              "null"
-            ]
-          },
-          "forecast": {
-            "description": "The month the schedule lands the gear in, `YYYY-MM`. Absent for a gear\nwith nothing left to schedule.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "id": {
-            "description": "`{repository}#{issue}` — the number alone repeats across repositories.",
-            "type": "string"
-          },
-          "issue_url": {
-            "description": "Absent when no configured external source claims the gear's repository.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "milestone": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "number": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "placement": {
-            "$ref": "#/components/schemas/Placement"
-          },
-          "priority": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "remaining_man_days": {
-            "format": "double",
-            "type": [
-              "number",
-              "null"
-            ]
-          },
-          "sdk_percent": {
-            "format": "int32",
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "status_percent": {
-            "format": "int32",
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "subsystem": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "title": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "number",
-          "title",
-          "commitment",
-          "placement",
-          "assignees",
-          "closed",
-          "assignee_urls"
-        ],
-        "type": "object"
-      },
       "GearRoadmapResponse": {
         "properties": {
           "capacity_man_days_per_person": {
@@ -884,7 +767,7 @@
           },
           "gears": {
             "items": {
-              "$ref": "#/components/schemas/GearDto"
+              "$ref": "#/components/schemas/RoadmapGearDto"
             },
             "type": "array"
           },
@@ -2934,6 +2817,123 @@
             "type": "object"
           }
         ]
+      },
+      "RoadmapGearDto": {
+        "properties": {
+          "assignee_urls": {
+            "items": {
+              "$ref": "#/components/schemas/AssigneeLink"
+            },
+            "type": "array"
+          },
+          "assignees": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "closed": {
+            "type": "boolean"
+          },
+          "commitment": {
+            "type": "string"
+          },
+          "design_percent": {
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "effort_man_days": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "forecast": {
+            "description": "The month the schedule lands the gear in, `YYYY-MM`. Absent for a gear\nwith nothing left to schedule.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "description": "`{repository}#{issue}` — the number alone repeats across repositories.",
+            "type": "string"
+          },
+          "issue_url": {
+            "description": "Absent when no configured external source claims the gear's repository.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "milestone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "number": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "placement": {
+            "$ref": "#/components/schemas/Placement"
+          },
+          "priority": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "remaining_man_days": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "sdk_percent": {
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "status_percent": {
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "subsystem": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "number",
+          "title",
+          "commitment",
+          "placement",
+          "assignees",
+          "closed",
+          "assignee_urls"
+        ],
+        "type": "object"
       },
       "RollupValueDto": {
         "properties": {

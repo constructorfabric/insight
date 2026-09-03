@@ -2,7 +2,7 @@ use clickhouse::Row;
 use serde::{Deserialize, Serialize};
 
 const LIST_BOARDS_SQL: &str = "SELECT
-        toInt64(project_number) AS number,
+        toInt64(assumeNotNull(project_number)) AS number,
         toUInt64(uniqExact(content_number)) AS cards
     FROM bronze_github.project_items
     WHERE project_number > 0
@@ -60,6 +60,14 @@ mod tests {
     #[test]
     fn a_board_without_a_number_is_not_a_board() {
         assert!(LIST_BOARDS_SQL.contains("project_number > 0"));
+    }
+
+    /// `project_number` is nullable in bronze, and `toInt64` of a nullable is
+    /// still nullable — which the row decoder refuses to read into `i64`. The
+    /// predicate already excludes nulls; the projection has to say so too.
+    #[test]
+    fn the_board_number_is_projected_as_non_null() {
+        assert!(LIST_BOARDS_SQL.contains("toInt64(assumeNotNull(project_number))"));
     }
 
     #[test]

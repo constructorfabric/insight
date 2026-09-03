@@ -953,6 +953,30 @@ class ReportSubject(RootModel[ReportSubject1 | ReportSubject2]):
     root: ReportSubject1 | ReportSubject2
 
 
+class RoadmapGearDto(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    assignee_urls: list[AssigneeLink]
+    assignees: list[str]
+    closed: bool
+    commitment: str
+    design_percent: int | None = Field(None, ge=0)
+    effort_man_days: float | None = None
+    forecast: str | None = Field(None, description='The month the schedule lands the gear in, `YYYY-MM`. Absent for a gear\nwith nothing left to schedule.')
+    id: str = Field(..., description='`{repository}#{issue}` — the number alone repeats across repositories.')
+    issue_url: str | None = Field(None, description="Absent when no configured external source claims the gear's repository.")
+    milestone: str | None = None
+    number: int
+    placement: Placement
+    priority: str | None = None
+    remaining_man_days: float | None = None
+    sdk_percent: int | None = Field(None, ge=0)
+    status_percent: int | None = Field(None, ge=0)
+    subsystem: str | None = None
+    title: str
+
+
 class RollupValueDto(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -1305,30 +1329,6 @@ class CustomMetricSummary(BaseModel):
     subject: str | None = Field(None, description='Grouping subject, so the management list can partition custom metrics\nby topic like the definitions listing; absent when none is declared.')
 
 
-class GearDto(BaseModel):
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    assignee_urls: list[AssigneeLink]
-    assignees: list[str]
-    closed: bool
-    commitment: str
-    design_percent: int | None = Field(None, ge=0)
-    effort_man_days: float | None = None
-    forecast: str | None = Field(None, description='The month the schedule lands the gear in, `YYYY-MM`. Absent for a gear\nwith nothing left to schedule.')
-    id: str = Field(..., description='`{repository}#{issue}` — the number alone repeats across repositories.')
-    issue_url: str | None = Field(None, description="Absent when no configured external source claims the gear's repository.")
-    milestone: str | None = None
-    number: int
-    placement: Placement
-    priority: str | None = None
-    remaining_man_days: float | None = None
-    sdk_percent: int | None = Field(None, ge=0)
-    status_percent: int | None = Field(None, ge=0)
-    subsystem: str | None = None
-    title: str
-
-
 class HistogramValueDto(BaseModel):
     """
     One histogram row. Per-entity shape: `entity_id` set, `dimensions` absent,
@@ -1650,7 +1650,7 @@ class GearRoadmapResponse(BaseModel):
         extra='forbid',
     )
     capacity_man_days_per_person: float
-    gears: list[GearDto]
+    gears: list[RoadmapGearDto]
     lanes: list[LaneDto]
     window_months: int = Field(..., ge=0)
     window_start: str

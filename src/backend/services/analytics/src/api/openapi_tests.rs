@@ -150,3 +150,22 @@ fn the_boards_a_caller_may_name_are_published() -> anyhow::Result<()> {
     );
     Ok(())
 }
+
+/// `GearDto` is the gear-orchestrator's own schema name. Registering a second
+/// definition under it panics the host at boot — after every unit test and
+/// drift gate has passed, because neither boots the orchestrator.
+#[test]
+fn the_contract_claims_no_schema_name_the_host_gears_own() -> anyhow::Result<()> {
+    let json = serde_json::to_value(openapi_document()?)?;
+    let schemas = json["components"]["schemas"]
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("component schemas missing"))?;
+
+    for reserved in ["GearDto"] {
+        assert!(
+            !schemas.contains_key(reserved),
+            "{reserved} belongs to a host gear; give the analytics type its own name"
+        );
+    }
+    Ok(())
+}

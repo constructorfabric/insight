@@ -20,12 +20,12 @@ pub(crate) struct GearRoadmapResponse {
     pub(crate) capacity_man_days_per_person: f64,
     pub(crate) window_start: String,
     pub(crate) window_months: usize,
-    pub(crate) gears: Vec<GearDto>,
+    pub(crate) gears: Vec<RoadmapGearDto>,
     pub(crate) lanes: Vec<LaneDto>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
-pub(crate) struct GearDto {
+pub(crate) struct RoadmapGearDto {
     /// `{repository}#{issue}` — the number alone repeats across repositories.
     pub(crate) id: String,
     pub(crate) number: i64,
@@ -186,8 +186,8 @@ fn gear_dto(
     links: &ExternalSourceRegistry,
     sources: &HashMap<&str, &str>,
     forecasts: &HashMap<String, String>,
-) -> GearDto {
-    GearDto {
+) -> RoadmapGearDto {
+    RoadmapGearDto {
         number: gear.number,
         id: gear.id(),
         title: gear.title.clone(),
