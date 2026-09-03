@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -115,7 +116,7 @@ def ch_migrations_applied(compose_stack: SessionConfig) -> SessionConfig:
 
 
 @pytest.fixture(scope="session")
-def dbt_runner(ch_migrations_applied: SessionConfig, worker_ctx: WorkerContext):
+def dbt_runner(ch_migrations_applied: SessionConfig, worker_ctx: WorkerContext) -> Iterator[DbtRunner]:
     """Parse dbt manifest once per session; expose a runner for per-test builds.
 
     The closure build that follows makes relation existence uniform for the whole

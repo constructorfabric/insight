@@ -1431,6 +1431,7 @@ TEST_STAND_ENV_FILE=".env.compose.test-stand"
 TEST_STAND_REALM_FILE="deploy/compose/keycloak/realm-insight.generated.json"
 TEST_STAND_MANIFEST_FILE="src/ingestion/tools/seed/manifest.json"
 TEST_STAND_DEFAULT_TREE="tests/stand"
+TEST_STAND_TREES=()
 TEST_STAND_INSTANCE=""
 TEST_STAND_PORT_OFFSET=0
 
@@ -2005,7 +2006,7 @@ test_stand_test_in_image() {
   # readable, and from the environment otherwise. Mounting the realm keeps a
   # keycloak stand working with no secret to distribute; the env var stays the
   # path for a stand whose realm this checkout cannot see.
-  local realm="deploy/compose/keycloak/realm-insight.generated.json"
+  local realm="$TEST_STAND_REALM_FILE"
   [[ -f "$realm" ]] && run_args+=(-v "$PWD/${realm}:/workspace/${realm}:ro")
   [[ -n "${INSIGHT_STAND_PERSONA_PASSWORD:-}" ]] && run_args+=(-e INSIGHT_STAND_PERSONA_PASSWORD)
 
@@ -2026,15 +2027,21 @@ test_stand_test_in_image() {
     run_args+=(-e "INSIGHT_STAND_IDENTITY_URL=http://identity-resolution:8082")
   fi
 
+  # The selected trees, image-side. They lead the pytest arguments so the
+  # caller's own flags and node ids follow them exactly as on the host.
+  local tree image_trees=()
+  for tree in "${TEST_STAND_TREES[@]}"; do
+    image_trees+=("/workspace/${tree}")
+  done
+
   echo "=== running the suite in ${image} (namespace: ${TEST_STAND_GATEWAY_CONTAINER}) ==="
   docker run "${run_args[@]}" "$image" sh -ceu '
     python -m pip install --user --no-cache-dir "uv==0.12.0"
     export PATH="$HOME/.local/bin:$PATH"
     uv sync --project /workspace/tests --frozen --no-dev --no-install-project
     export PYTHONPATH="/workspace/tests/lib${PYTHONPATH:+:$PYTHONPATH}"
-    uv run --project /workspace/tests --no-sync \
-      pytest /workspace/tests/stand "$@"
-  ' sh "$@"
+    uv run --project /workspace/tests --no-sync pytest "$@"
+  ' sh "${image_trees[@]}" "$@"
 }
 
 cmd_test_stand() {
@@ -2199,6 +2206,20 @@ cmd_test_stand() {
         esac
       done
       [[ ${#trees[@]} -gt 0 ]] || trees=("$TEST_STAND_DEFAULT_TREE")
+      TEST_STAND_TREES=("${trees[@]}")
+
+      # An in-namespace runner reaches the gateway at its CONTAINER port, but a
+      # named instance pins the authenticator's redirect to its shifted HOST
+      # port, so the login would come back to an address nothing in that
+      # namespace answers. Not a limitation worth engineering around: --image
+      # exists for a locally built runner against the default stand.
+      if [[ -n "$image" && -n "$TEST_STAND_INSTANCE" ]]; then
+        echo "ERROR: --image cannot be aimed at --instance=$TEST_STAND_INSTANCE." >&2
+        echo "       The authenticator redirects the login to the instance's shifted HOST port," >&2
+        echo "       which a runner inside the gateway's namespace cannot reach. Run host-side instead:" >&2
+        echo "         ./dev-compose.sh test-stand test --instance=$TEST_STAND_INSTANCE" >&2
+        return 2
+      fi
 
       [[ -f "$TEST_STAND_ENV_FILE" ]] || {
         echo "ERROR: $TEST_STAND_ENV_FILE not found — this stand was never brought up." >&2

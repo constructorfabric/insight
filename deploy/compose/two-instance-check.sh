@@ -59,6 +59,16 @@ ch_query() {
     --data-binary "$2" | tr -d '[:space:]'
 }
 
+# The names are fixed, so a stand someone raised under either one would be
+# torn down at exit as if this script owned it. Refuse before anything starts.
+for instance in "$INSTANCE_A" "$INSTANCE_B"; do
+  if docker ps -a --filter "label=com.docker.compose.project=insight-${instance}" -q 2>/dev/null | grep -q .; then
+    echo "ERROR: a compose project named insight-${instance} already exists; this check would tear it down." >&2
+    echo "       Remove it first, or wait for the run that owns it: ./dev-compose.sh test-stand down --instance=${instance}" >&2
+    exit 2
+  fi
+done
+
 teardown() {
   [[ "$keep" == true ]] && { echo "== stands left up (--keep) =="; return; }
   echo "== tearing both stands down =="

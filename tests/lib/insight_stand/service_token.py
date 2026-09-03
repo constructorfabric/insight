@@ -118,7 +118,7 @@ def default_token_url(environ: Mapping[str, str] | None = None) -> str:
         return explicit.rstrip("/")
 
     port = DEFAULT_TOKEN_PORT
-    found = _env_file()
+    found = _env_file(env)
     if found is not None:
         port = parse_env_file(found).get(TOKEN_PORT_KEY, "").strip() or DEFAULT_TOKEN_PORT
     return f"http://{PUBLISHED_HOST}:{port}"
@@ -139,7 +139,7 @@ def default_audience(environ: Mapping[str, str] | None = None) -> str:
     if explicit:
         return explicit
 
-    found = _env_file()
+    found = _env_file(env)
     if found is not None:
         configured = parse_env_file(found).get(AUDIENCE_KEY, "").strip()
         if configured:
@@ -173,7 +173,7 @@ def default_identity_url(environ: Mapping[str, str] | None = None) -> str:
         return explicit.rstrip("/")
 
     port = DEFAULT_IDENTITY_PORT
-    found = _env_file()
+    found = _env_file(env)
     if found is not None:
         port = parse_env_file(found).get(IDENTITY_PORT_KEY, "").strip() or DEFAULT_IDENTITY_PORT
     return f"http://{PUBLISHED_HOST}:{port}"
