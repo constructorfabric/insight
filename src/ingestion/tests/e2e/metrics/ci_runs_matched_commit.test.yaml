@@ -36,6 +36,7 @@ bronze:
       author_name: Dev One
       committer_name: Dev One
       committer_email: dev1@example.com
+      authored_date: "2026-03-01T09:00:00Z"
       committed_date: "2026-03-01T09:00:00Z"
 cases:
   - name: only the run whose head commit was collected counts

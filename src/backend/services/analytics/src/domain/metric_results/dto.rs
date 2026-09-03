@@ -282,6 +282,15 @@ pub struct TimeseriesDto {
 pub struct TimeseriesPointDto {
     pub bucket_start: String,
     pub value: Option<f64>,
+    /// What the bucket's ratio was taken from, above the line. Ratio metrics
+    /// only, and absent on a bucket whose numerator measure has no rows —
+    /// a share is argued with its denominator, and a reader who can see
+    /// "6 of 8" can tell a quiet day from a bad one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub numerator: Option<f64>,
+    /// What it was taken from, below the line. Ratio metrics only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub denominator: Option<f64>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]

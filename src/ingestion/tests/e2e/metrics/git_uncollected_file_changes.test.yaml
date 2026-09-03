@@ -31,8 +31,8 @@ bronze:
     # carol: the same content twice. The later commit's own stats exceed the
     # file change it carries, so a fallback that keyed on the DEDUPLICATED set
     # would hand it that difference as an uncollected size.
-    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: c-carol-first, sha: sha-carol-first, committed_date: "2026-10-01T09:00:00Z", author_name: carol, author_email: carol@example.com, committer_name: carol, committer_email: carol@example.com, additions: 10, deletions: 1, is_in_default_branch: true}
-    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: c-carol-repeat, sha: sha-carol-repeat, committed_date: "2026-10-01T15:00:00Z", author_name: carol, author_email: carol@example.com, committer_name: carol, committer_email: carol@example.com, additions: 25, deletions: 1, is_in_default_branch: true}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: c-carol-first, sha: sha-carol-first, authored_date: "2026-10-01T09:00:00Z", committed_date: "2026-10-01T09:00:00Z", author_name: carol, author_email: carol@example.com, committer_name: carol, committer_email: carol@example.com, additions: 10, deletions: 1, is_in_default_branch: true}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: c-carol-repeat, sha: sha-carol-repeat, authored_date: "2026-10-01T15:00:00Z", committed_date: "2026-10-01T15:00:00Z", author_name: carol, author_email: carol@example.com, committer_name: carol, committer_email: carol@example.com, additions: 25, deletions: 1, is_in_default_branch: true}
   bronze_github.file_changes:
     # Only alice's first commit. `.rs` under src/ classifies as code, so Code
     # lines reads off this row alone.

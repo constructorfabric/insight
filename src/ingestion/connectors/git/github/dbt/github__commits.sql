@@ -29,7 +29,15 @@ SELECT
     COALESCE(committer_name, '') AS committer_name,
     COALESCE(committer_email, '') AS committer_email,
     COALESCE(message, '') AS message,
-    parseDateTimeBestEffortOrNull(committed_date) AS date,
+    -- INVARIANT: the AUTHOR date, with the committer date as a fallback, and
+    -- the two PARSES coalesced rather than the two strings — an unparseable
+    -- author date must fall through, not win and yield NULL. The fallback is
+    -- load-bearing: committed_date is the stream's cursor and always present,
+    -- so without it a bad author date drops the commit from every metric. #3153
+    coalesce(
+        parseDateTimeBestEffortOrNull(authored_date),
+        parseDateTimeBestEffortOrNull(committed_date)
+    ) AS date,
     toNullable(COALESCE(changed_files, 0)) AS files_changed,
     toNullable(COALESCE(additions, 0)) AS lines_added,
     toNullable(COALESCE(deletions, 0)) AS lines_removed,
@@ -37,7 +45,8 @@ SELECT
     'insight_github' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,
     _airbyte_extracted_at,
-    patch_id
+    patch_id,
+    parseDateTimeBestEffortOrNull(committed_date) AS committer_date
 -- FINAL: the lookback window re-reads a commit under the same unique_key, and
 -- its membership flag can differ between the two rows. Without FINAL a
 -- full-refresh build inserts both into staging under one now64() _version, and

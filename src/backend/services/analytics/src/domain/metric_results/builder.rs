@@ -24,7 +24,16 @@ use super::view::Bucket;
 
 type DimensionKey = Vec<(String, String, Option<String>)>;
 type SeriesKey = (String, bool, DimensionKey);
-type PointsByBucket = HashMap<String, Option<f64>>;
+/// What one bucket holds: the metric's reading, and — for a ratio — the two
+/// sides it was taken from.
+#[derive(Debug, Clone, Copy, Default)]
+struct BucketReading {
+    value: Option<f64>,
+    numerator: Option<f64>,
+    denominator: Option<f64>,
+}
+
+type PointsByBucket = HashMap<String, BucketReading>;
 
 struct SeriesData {
     points: PointsByBucket,
@@ -115,7 +124,14 @@ pub fn build_timeseries_view(
         if row.is_total != 0 {
             data.total = row.value;
         } else {
-            data.points.insert(row.bucket_start, row.value);
+            data.points.insert(
+                row.bucket_start,
+                BucketReading {
+                    value: row.value,
+                    numerator: row.numerator,
+                    denominator: row.denominator,
+                },
+            );
         }
     }
 
@@ -124,9 +140,14 @@ pub fn build_timeseries_view(
         .map(|((entity_id, _, dims), data)| {
             let points = buckets
                 .iter()
-                .map(|bucket| TimeseriesPointDto {
-                    bucket_start: bucket.clone(),
-                    value: data.points.get(bucket).copied().flatten(),
+                .map(|bucket| {
+                    let reading = data.points.get(bucket).copied().unwrap_or_default();
+                    TimeseriesPointDto {
+                        bucket_start: bucket.clone(),
+                        value: reading.value,
+                        numerator: reading.numerator,
+                        denominator: reading.denominator,
+                    }
                 })
                 .collect();
             TimeseriesDto {
@@ -942,6 +963,8 @@ mod tests {
             entity_id: "00000000-0000-0000-0000-00000000000a".to_owned(),
             bucket_start: "2026-01-02".to_owned(),
             value: Some(3.0),
+            numerator: None,
+            denominator: None,
             is_total: 0,
             rank: None,
             remainder: 0,
@@ -999,6 +1022,8 @@ mod tests {
             entity_id: "00000000-0000-0000-0000-00000000000a".to_owned(),
             bucket_start: "2026-01-01".to_owned(),
             value: Some(2.0),
+            numerator: None,
+            denominator: None,
             is_total: 0,
             rank: None,
             remainder: 0,
@@ -1033,6 +1058,8 @@ mod tests {
                 entity_id: "00000000-0000-0000-0000-00000000000a".to_owned(),
                 bucket_start: "2026-01-01".to_owned(),
                 value: Some(2.0),
+                numerator: None,
+                denominator: None,
                 is_total: 0,
                 rank: Some(1),
                 remainder: 0,
@@ -1043,6 +1070,8 @@ mod tests {
                 entity_id: "00000000-0000-0000-0000-00000000000a".to_owned(),
                 bucket_start: String::new(),
                 value: Some(3.0),
+                numerator: None,
+                denominator: None,
                 is_total: 1,
                 rank: Some(1),
                 remainder: 0,
@@ -1053,6 +1082,8 @@ mod tests {
                 entity_id: "00000000-0000-0000-0000-00000000000a".to_owned(),
                 bucket_start: "2026-01-01".to_owned(),
                 value: Some(4.0),
+                numerator: None,
+                denominator: None,
                 is_total: 0,
                 rank: None,
                 remainder: 1,
@@ -1063,6 +1094,8 @@ mod tests {
                 entity_id: "00000000-0000-0000-0000-00000000000a".to_owned(),
                 bucket_start: String::new(),
                 value: Some(5.0),
+                numerator: None,
+                denominator: None,
                 is_total: 1,
                 rank: None,
                 remainder: 1,
@@ -1126,6 +1159,8 @@ mod tests {
             entity_id: "00000000-0000-0000-0000-00000000000a".to_owned(),
             bucket_start: "2026-01-01".to_owned(),
             value: Some(2.0),
+            numerator: None,
+            denominator: None,
             is_total: 0,
             rank: None,
             remainder: 0,

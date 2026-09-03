@@ -1,7 +1,4 @@
-import type {
-  MetricEvidenceColumn,
-  MetricEvidenceRow,
-} from "@/api/metric-drilldown-client";
+import type { MetricEvidenceRow } from "@/api/metric-drilldown-client";
 import type { NormalizedMetricResult } from "@/lib/metrics/collection";
 
 /**
@@ -48,53 +45,6 @@ export interface DayReading {
 
 function num(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-/**
- * One reading per day, oldest first.
- *
- * The wire splits a day across rows whenever the metric carries a dimension,
- * and returns the dimension itself only when it was asked for — so rows read
- * as duplicates unless they are added up. Summing here is what makes a day a
- * day, whatever split produced it.
- *
- * A ratio is summed on each side and divided once, never averaged across
- * days: the mean of daily shares weights a day with one meeting the same as a
- * day with eight.
- */
-export function dailyReadings(
-  rows: MetricEvidenceRow[],
-  columns: MetricEvidenceColumn[]
-): DayReading[] {
-  const hasRatio = columns.some((c) => c.key === "numerator");
-  const byDate = new Map<string, DayReading>();
-  for (const row of rows) {
-    const date = row.values.date;
-    if (typeof date !== "string") continue;
-    const day = byDate.get(date) ?? {
-      date,
-      value: 0,
-      numerator: hasRatio ? 0 : null,
-      denominator: hasRatio ? 0 : null,
-    };
-    day.value += num(row.values.value) ?? 0;
-    if (hasRatio) {
-      day.numerator = (day.numerator ?? 0) + (num(row.values.numerator) ?? 0);
-      day.denominator =
-        (day.denominator ?? 0) + (num(row.values.denominator) ?? 0);
-    }
-    byDate.set(date, day);
-  }
-  const days = [...byDate.values()].sort((a, b) =>
-    a.date.localeCompare(b.date)
-  );
-  // A ratio's daily value is its own two sides, not whatever the wire put in
-  // `value` — which for a share of the day is a rounded percentage.
-  return days.map((day) =>
-    day.denominator != null && day.denominator > 0
-      ? { ...day, value: (day.numerator ?? 0) / day.denominator }
-      : day
-  );
 }
 
 export interface ActivityEvent {

@@ -34,8 +34,8 @@ bronze:
     - {$ref: templates/gitlab_git.yaml#/templates/commit, unique_key: "gl-c:commit-m", id: gl-commit-m, author_name: Erin Epsilon, author_email: erin@example.com, committer_name: Erin Epsilon, committer_email: erin@example.com, parent_count: 2, stats_additions: 500, stats_deletions: 500, stats_total: 1000}
     # The same content on two commits. Without object ids the rows cannot be
     # folded, so each commit keeps its own 8.
-    - {$ref: templates/gitlab_git.yaml#/templates/commit, unique_key: "gl-c:commit-c1", id: gl-commit-c1, committed_date: "2026-10-01T10:00:00Z", author_name: Erin Epsilon, author_email: erin@example.com, committer_name: Erin Epsilon, committer_email: erin@example.com, stats_additions: 7, stats_deletions: 1, stats_total: 8}
-    - {$ref: templates/gitlab_git.yaml#/templates/commit, unique_key: "gl-c:commit-c2", id: gl-commit-c2, committed_date: "2026-10-01T11:00:00Z", author_name: Erin Epsilon, author_email: erin@example.com, committer_name: Erin Epsilon, committer_email: erin@example.com, stats_additions: 7, stats_deletions: 1, stats_total: 8}
+    - {$ref: templates/gitlab_git.yaml#/templates/commit, unique_key: "gl-c:commit-c1", id: gl-commit-c1, authored_date: "2026-10-01T10:00:00Z", committed_date: "2026-10-01T10:00:00Z", author_name: Erin Epsilon, author_email: erin@example.com, committer_name: Erin Epsilon, committer_email: erin@example.com, stats_additions: 7, stats_deletions: 1, stats_total: 8}
+    - {$ref: templates/gitlab_git.yaml#/templates/commit, unique_key: "gl-c:commit-c2", id: gl-commit-c2, authored_date: "2026-10-01T11:00:00Z", committed_date: "2026-10-01T11:00:00Z", author_name: Erin Epsilon, author_email: erin@example.com, committer_name: Erin Epsilon, committer_email: erin@example.com, stats_additions: 7, stats_deletions: 1, stats_total: 8}
 
   bronze_gitlab.commit_file_changes:
     - {$ref: templates/gitlab_git.yaml#/templates/file_change, unique_key: "gl-fc:commit-a:a.py", commit_sha: gl-commit-a, new_path: src/a.py, lines_added: 10, lines_removed: 2}

@@ -23,6 +23,10 @@ SELECT
     author_name,
     message,
     date AS observed_at,
+    -- INVARIANT: kept beside observed_at, not instead of it. A rebase copy and
+    -- its original share an author date, so a reader ranking carriers of the
+    -- same work has nothing to compare until this column. #3153
+    committer_date,
     lower(trimBoth(author_email)) AS entity_id,
     toDate(date) AS metric_date,
     lines_added,

@@ -66,7 +66,11 @@ classified AS (
         commits.tenant_id AS tenant_id,
         commits.data_source AS data_source,
         commits.source_id AS source_id,
-        toDate(commits.date) AS commit_date,
+        -- INVARIANT: the COMMITTER date, unlike the metrics. This panel asks
+        -- how completely collection is keeping up, and its window is real
+        -- time — an old repository imported yesterday carries old author
+        -- dates (#3153) and would report as having no recent commits at all.
+        toDate(coalesce(commits.committer_date, commits.date)) AS commit_date,
         multiIf(
             coalesce(commits.lines_added, 0) > 0 OR coalesce(commits.lines_removed, 0) > 0,
             'requires',
