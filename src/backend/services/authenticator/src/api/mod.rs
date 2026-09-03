@@ -62,7 +62,7 @@ pub fn register_routes(
 
 /// Declare every operation through the toolkit's `OperationBuilder` so each
 /// lands in the generated OpenAPI (the machine-checkable subrequest contract),
-/// grouped by surface. All step-04 endpoints are `.public()` — the credential
+/// grouped by surface. All step-04 endpoints are `.anonymous().exposed()` — the credential
 /// is the session cookie, checked inside the handler.
 fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
     let router = register_auth_routes(router, openapi);
@@ -79,7 +79,8 @@ fn register_auth_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router
         .operation_id("authenticator.login")
         .summary("Start the OIDC code+PKCE login flow (the request Host selects the issuer)")
         .tag("auth")
-        .public()
+        .anonymous()
+        .exposed()
         .no_content_response(StatusCode::FOUND, "Redirect to the IdP authorize endpoint")
         .error_403(openapi)
         .handler(handlers::login)
@@ -89,7 +90,8 @@ fn register_auth_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router
         .operation_id("authenticator.callback")
         .summary("Complete login: exchange the code and set the session cookie")
         .tag("auth")
-        .public()
+        .anonymous()
+        .exposed()
         .no_content_response(
             StatusCode::FOUND,
             "Redirect to the SPA: with the session cookie set on success, or \
@@ -104,7 +106,8 @@ fn register_auth_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router
         .operation_id("authenticator.csrf")
         .summary("Issue the CSRF token bound to the current session")
         .tag("auth")
-        .public()
+        .anonymous()
+        .exposed()
         .text_response(StatusCode::OK, "CSRF token", "application/json")
         .error_401(openapi)
         .handler(handlers::csrf)
@@ -114,7 +117,8 @@ fn register_auth_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router
         .operation_id("authenticator.me")
         .summary("Current session summary for the SPA")
         .tag("auth")
-        .public()
+        .anonymous()
+        .exposed()
         .text_response(StatusCode::OK, "Session summary", "application/json")
         .error_401(openapi)
         .handler(handlers::me)
@@ -124,7 +128,8 @@ fn register_auth_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router
         .operation_id("authenticator.refresh")
         .summary("Rotate the session cookie and extend the session (grace-tolerant)")
         .tag("auth")
-        .public()
+        .anonymous()
+        .exposed()
         .text_response(
             StatusCode::OK,
             "{expires_at, refresh_at} + re-issued cookie",
@@ -138,7 +143,8 @@ fn register_auth_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router
         .operation_id("authenticator.back_channel_logout")
         .summary("Receive IdP back-channel logout tokens (OIDC BCL 1.0)")
         .tag("auth")
-        .public()
+        .anonymous()
+        .exposed()
         .no_content_response(StatusCode::OK, "Logout processed (or idempotent replay)")
         .error_400(openapi)
         .handler(handlers::back_channel_logout)
@@ -148,7 +154,8 @@ fn register_auth_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router
         .operation_id("authenticator.logout")
         .summary("Revoke the session, clear the cookie, return the RP-logout URL")
         .tag("auth")
-        .public()
+        .anonymous()
+        .exposed()
         .text_response(StatusCode::OK, "RP-logout URL", "application/json")
         .handler(handlers::logout)
         .register(router, openapi)
@@ -163,7 +170,8 @@ fn register_session_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Rou
         .operation_id("authenticator.sessions.list")
         .summary("List the current user's active sessions")
         .tag("auth")
-        .public()
+        .anonymous()
+        .exposed()
         .text_response(StatusCode::OK, "Active sessions", "application/json")
         .error_401(openapi)
         .handler(handlers::sessions_list)
@@ -173,7 +181,8 @@ fn register_session_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Rou
         .operation_id("authenticator.sessions.revoke")
         .summary("Revoke one of the current user's sessions")
         .tag("auth")
-        .public()
+        .anonymous()
+        .exposed()
         .text_response(StatusCode::OK, "Revocation result", "application/json")
         .error_401(openapi)
         .error_404(openapi)
@@ -184,7 +193,8 @@ fn register_session_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Rou
         .operation_id("authenticator.sessions.revoke_all")
         .summary("Revoke all sessions of the current user (log out everywhere)")
         .tag("auth")
-        .public()
+        .anonymous()
+        .exposed()
         .text_response(StatusCode::OK, "Revocation result", "application/json")
         .error_401(openapi)
         .handler(handlers::sessions_revoke_all)
@@ -215,7 +225,8 @@ fn register_internal_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Ro
         .operation_id("authenticator.authz")
         .summary("Exchange the session cookie for the linked gateway JWT")
         .tag("internal")
-        .public()
+        .anonymous()
+        .exposed()
         .no_content_response(StatusCode::OK, "JWT attached via X-Gateway-Jwt")
         .error_401(openapi)
         .handler(handlers::authz)
@@ -230,7 +241,8 @@ fn register_well_known_routes(router: Router, openapi: &dyn OpenApiRegistry) -> 
         .operation_id("authenticator.openid_configuration")
         .summary("OIDC discovery document (issuer + jwks_uri) for downstream verifiers")
         .tag("internal")
-        .public()
+        .anonymous()
+        .exposed()
         .text_response(
             StatusCode::OK,
             "OIDC discovery document",
@@ -243,7 +255,8 @@ fn register_well_known_routes(router: Router, openapi: &dyn OpenApiRegistry) -> 
         .operation_id("authenticator.jwks")
         .summary("Public JWKS for gateway-JWT verification")
         .tag("internal")
-        .public()
+        .anonymous()
+        .exposed()
         .text_response(StatusCode::OK, "JWKS document", "application/json")
         .handler(handlers::jwks)
         .register(router, openapi)

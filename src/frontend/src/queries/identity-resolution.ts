@@ -172,6 +172,15 @@ export type AccountListIntent = "browse" | "match";
 export const MIN_SEARCH_CHARS = 2;
 
 /**
+ * The ceiling both identity search surfaces are checked against server-side —
+ * `listing::MAX_QUERY_CHARS` on `/v1/persons` and `/v1/visible-persons`, and
+ * the same value on `/v1/resolution/accounts`. Declared here so a field can
+ * stop at the limit rather than let the operator type past it and receive a
+ * refusal they cannot read as "too long".
+ */
+export const MAX_SEARCH_CHARS = 200;
+
+/**
  * How long a field waits before it searches. Past the gap between two
  * keystrokes of ordinary typing (150-300 ms), so a typed word costs one search
  * of the journal rather than one per letter.

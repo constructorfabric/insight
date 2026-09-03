@@ -21,20 +21,7 @@
 -- and visible to the token's scopes; where it is absent, resolution leans on
 -- the id binding and display_name.
 --
--- No deactivation condition applies, and none can be expressed here: the
--- macro's DELETE branch selects `FROM history WHERE <condition>`, so it fires
--- only on a CHANGE. A member removed from the org produces no change at all —
--- they stop appearing in the roster, their last bronze row survives under
--- ReplacingMergeTree, and the snapshot therefore emits nothing to match on.
--- Detecting removal needs a roster diff across syncs, which is a new model
--- rather than a predicate. The condition below is intentionally unsatisfiable
--- so the branch stays wired for whatever supplies that signal.
---
--- Consequence until then: a departed member keeps an active GitHub binding.
--- Revocation belongs at the IdP, which is the only control that takes effect
--- when it happens rather than at the next sync — a daily batch cannot be an
--- access-revocation mechanism at any fidelity. Do not treat this connector as
--- one.
+-- INVARIANT: This model emits observed membership only; absence reconciliation belongs to snapshot processing.
 
 {{ identity_inputs_from_history(
     fields_history_ref=ref('github_directory__org_members_fields_history'),
@@ -44,5 +31,6 @@
         {'field': 'login', 'value_type': 'username',     'value_field_name': 'bronze_github_directory.org_members.login'},
         {'field': 'name',  'value_type': 'display_name', 'value_field_name': 'bronze_github_directory.org_members.name'},
     ],
-    deactivation_condition="field_name = 'login' AND new_value = ''"
+    roster_membership={'kind': 'implicit_active'},
+    person_profile_fields=['email', 'username', 'display_name']
 ) }}

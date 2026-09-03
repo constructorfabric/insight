@@ -192,6 +192,7 @@
             "$ref": "#/components/schemas/AccountRef"
           },
           "comment": {
+            "maxLength": 500,
             "type": "string"
           }
         },
@@ -369,6 +370,7 @@
             "type": "array"
           },
           "comment": {
+            "maxLength": 500,
             "type": "string"
           }
         },
@@ -617,6 +619,7 @@
       "MergeRequest": {
         "properties": {
           "comment": {
+            "maxLength": 500,
             "type": "string"
           },
           "source_person_id": {
@@ -633,6 +636,86 @@
         "required": [
           "source_person_id",
           "target_person_id"
+        ],
+        "type": "object"
+      },
+      "PeopleListItemResponse": {
+        "properties": {
+          "attributes": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "display_name": {
+            "description": "Source-provided display name, or the available source-provided name\nparts joined together.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "first_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "manager_person_id": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "person_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "person_id",
+          "attributes"
+        ],
+        "type": "object"
+      },
+      "PeopleListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PeopleListItemResponse"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
         ],
         "type": "object"
       },
@@ -1787,6 +1870,137 @@
         "summary": "The caller's identity and active roles"
       }
     },
+    "/v1/people": {
+      "get": {
+        "operationId": "identity_resolution.people.list",
+        "parameters": [
+          {
+            "description": "`caller` (default) returns people visible to the caller; `tenant` returns the entire tenant roster and requires admin",
+            "in": "query",
+            "name": "visibility",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Search display name, first name, last name, username, or email; every whitespace-separated term must match",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Cap on returned people (1..=500, default 50)",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Opaque `next_cursor` from the previous page; valid only for the same caller, visibility, and query",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PeopleListResponse"
+                }
+              }
+            },
+            "description": "One page of current roster people"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List current roster people"
+      }
+    },
     "/v1/person-roles": {
       "get": {
         "operationId": "identity_resolution.person_roles.list",
@@ -2896,7 +3110,7 @@
         "operationId": "identity_resolution.resolution.search_accounts",
         "parameters": [
           {
-            "description": "Needle matched against every value the account's row shows, case-insensitively: a substring of the current address, handle, id or observed name (whole, or composed from parts). The source is the exception — it matches a whole `_`/`-` separated segment from its start, so `github` and `entra` list those connectors' accounts while `hub` lists none. Absent or blank lists every open account.",
+            "description": "Needle matched against every value the account's row shows, case-insensitively: a substring of the current address, handle, id or observed name (whole, or composed from parts). The source is the exception — it matches a whole `_`/`-` separated segment from its start, so `github` and `entra` list those connectors' accounts while `hub` lists none. At most 200 characters. Absent or blank lists every open account.",
             "in": "query",
             "name": "q",
             "required": false,
@@ -4811,5 +5025,6 @@
         "summary": "Filter person ids to the ones the caller may see"
       }
     }
-  }
+  },
+  "x-toolkit-spec-scope": "minimum-conformance"
 }

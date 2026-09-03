@@ -405,7 +405,7 @@ Then open `https://<HOST>` — the host from Step 1 — and confirm the login re
 
 ## Step 6 — Configure connectors (optional)
 
-Configure connectors after the app is up. Each of the 25 connectors is a single Kubernetes Secret; the `insight-reconcile-loop` CronWorkflow discovers it and provisions the Airbyte source automatically, so there is nothing else to run.
+Configure connectors after the app is up. Each connector is a single Kubernetes Secret; the `insight-reconcile-loop` CronWorkflow discovers it and provisions the Airbyte source automatically, so there is nothing else to run.
 
 See [deploy/CONNECTORS.md](./CONNECTORS.md) for the connector list and a copy-paste Secret for each.
 

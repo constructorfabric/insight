@@ -104,6 +104,25 @@ def test_route_host_defaults_empty_so_creates_fail_closed() -> None:
     assert _gear_config(_docs())["route_host"] == ""
 
 
+def test_the_registry_token_rides_a_secret_env_and_never_the_configmap() -> None:
+    docs = _docs("--set", "experiments.registryTokenSecret=registry-read")
+
+    config = _gear_config(docs)
+    assert config["registry_url"] == "https://ghcr.io"
+    assert "registry_token" not in config
+
+    container = _kind(docs, "Deployment")[0]["spec"]["template"]["spec"]["containers"][0]
+    (env,) = container["env"]
+    assert env["name"] == "APP__gears__previews__config__registry_token"
+    assert env["valueFrom"]["secretKeyRef"] == {"name": "registry-read", "key": "token"}
+
+
+def test_without_a_registry_secret_no_env_is_rendered() -> None:
+    container = _kind(_docs(), "Deployment")[0]["spec"]["template"]["spec"]["containers"][0]
+
+    assert "env" not in container
+
+
 def test_experiment_knobs_reach_the_gear_config() -> None:
     config = _gear_config(
         _docs(

@@ -69,5 +69,8 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           image-names: ${{ env.SERVICE_IMAGES }} ${{ env.CONNECTOR_IMAGES }}
           image-tags: "*.${{ steps.suffix.outputs.safe }}"
+          # SAFETY: with `both`, a concurrent publication's per-arch digests
+          # (untagged until their manifest list lands) get deleted (#3020).
+          tag-selection: tagged
           cut-off: 0s
           dry-run: false

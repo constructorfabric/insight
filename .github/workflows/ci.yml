@@ -150,12 +150,12 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - name: Install PyYAML
-        run: python3 -m pip install --quiet pyyaml
+      - name: Install PyYAML and pytest
+        run: python3 -m pip install --quiet pyyaml pytest
       - name: Connector wiring invariants
         run: python3 scripts/ci/connector_wiring.py
       - name: Reconcile renderer contract
-        run: python3 -m unittest discover -s src/ingestion/reconcile-connectors/tests -p 'test_*.py'
+        run: python3 -m pytest src/ingestion/reconcile-connectors/tests -q
 
   # One unified job per Rust crate: fmt + clippy (when entry.lint) and coverage
   # (when entry.cover). Replaces the old standalone workspace rust-lint — fmt and

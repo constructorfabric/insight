@@ -65,24 +65,16 @@ export function DashboardScreen({ personId }: DashboardScreenProps) {
   // exist for the drilldown. Fetch the light projection here so a card paints
   // as fast as a KPI tile, and let the open drilldown fetch the full
   // collection lazily below.
+  // The comparison window rides inside the same request. Attention reports a
+  // standing that is ALSO a change, so without it the block would go silent
+  // here — which reads as "nothing to see" rather than "not compared" (#2651).
   const groupData = useMetricCollectionSet(
     GROUPS.map((def) => ({
       key: def.id,
       collection: projectViews(def.collection, ["period", "peer"]),
     })),
     entity,
-    dateRange
-  );
-
-  // The same collections over the previous period. Attention reports a
-  // standing that is ALSO a change, so without this the block would go silent
-  // here — which reads as "nothing to see" rather than "not compared".
-  const previousGroupData = useMetricCollectionSet(
-    GROUPS.map((def) => ({
-      key: def.id,
-      collection: projectViews(def.collection, ["period"]),
-    })),
-    entity,
+    dateRange,
     previousPeriodRange(dateRange, period)
   );
 
@@ -121,9 +113,7 @@ export function DashboardScreen({ personId }: DashboardScreenProps) {
   // paint before it could say anything — and an empty attention block reads as
   // "nothing to see" rather than "not compared yet".
   const isLoading =
-    kpiData.isPending ||
-    collectionSetPending(groupData) ||
-    collectionSetPending(previousGroupData);
+    kpiData.isPending || collectionSetPending(groupData);
   // Identity failing is not a metric failure: with no person there is no name,
   // no reports, and the metrics below are unauthorized anyway. A 404 means the
   // id is gone or outside the viewer's visible set — say so, rather than paint
@@ -146,7 +136,7 @@ export function DashboardScreen({ personId }: DashboardScreenProps) {
       metricAttentionItems(
         def,
         groupData.get(def.id)?.byKey ?? new Map(),
-        previousGroupData.get(def.id)?.byKey ?? null,
+        groupData.get(def.id)?.previousByKey ?? null,
         entityId,
         headlineKeys
       )
@@ -221,7 +211,7 @@ export function DashboardScreen({ personId }: DashboardScreenProps) {
             {/* A failed comparison is an error, not silence: without it the
                 block cannot judge a change, and rendering nothing claims the
                 person has nothing worth looking at. */}
-            {[...previousGroupData.values()].some((r) => r.isError) ? (
+            {[...groupData.values()].some((r) => r.isError) ? (
               <section className="flex flex-col gap-3">
                 <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
                   Needs attention
@@ -230,7 +220,7 @@ export function DashboardScreen({ personId }: DashboardScreenProps) {
                   variant="card"
                   state="error"
                   onRetry={() =>
-                    previousGroupData.forEach((r) => {
+                    groupData.forEach((r) => {
                       if (r.isError) r.refetch();
                     })
                   }

@@ -45,6 +45,10 @@ experiments:
   defaultTtlDays: 7
   maxTtlDays: 30
   sweepIntervalSecs: 300
+  # Tag listing for GET /v1/images; empty URL disables it. The Secret (key
+  # `token`) is needed only for a private repository.
+  registryUrl: https://ghcr.io
+  registryTokenSecret: ""
 
 # The shared Gateway an experiment's HTTPRoute attaches to. The Gateway's
 # `allowedRoutes` namespace selector must admit `experiments.namespace`

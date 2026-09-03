@@ -64,8 +64,12 @@ impl toolkit::api::api_dto::ResponseApiDto for ExperimentResponse {}
 
 /// List wrapper for `GET /v1/experiments`.
 #[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct ExperimentListResponse {
     pub experiments: Vec<ExperimentResponse>,
+    /// Experiments counting against the cap; expired ones do not.
+    pub live_count: usize,
+    pub cap: usize,
 }
 impl toolkit::api::api_dto::ResponseApiDto for ExperimentListResponse {}
 
@@ -107,7 +111,11 @@ pub async fn list_experiments(
         .collect();
     experiments.sort_by(|a, b| a.name.cmp(&b.name));
 
-    Ok(Json(ExperimentListResponse { experiments }))
+    Ok(Json(ExperimentListResponse {
+        experiments,
+        live_count: objects::live_experiment_count(&deployments, now),
+        cap: state.config.max_experiments,
+    }))
 }
 
 /// `POST /v1/experiments` — create the Deployment/Service/HTTPRoute trio.
@@ -235,7 +243,7 @@ pub async fn delete_experiment(
 }
 
 /// Require an identified caller (gateway-JWT subject); 401 otherwise.
-fn require_caller(ctx: &SecurityContext) -> Result<Uuid, CanonicalError> {
+pub(crate) fn require_caller(ctx: &SecurityContext) -> Result<Uuid, CanonicalError> {
     let caller = ctx.subject_id();
     if caller.is_nil() {
         return Err(CanonicalError::unauthenticated()

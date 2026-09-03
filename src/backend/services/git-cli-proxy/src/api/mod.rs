@@ -65,13 +65,16 @@ pub fn register_routes(
 }
 
 /// Every wait a handler can make is individually bounded (git budgets, the
-/// inline preparation wait, the read-lock wait), but a hold that is never
-/// released — a leaked guard, a wedged permit holder — turns the NEXT
+/// in-connection preparation wait, the read-lock wait), but a hold that is
+/// never released — a leaked guard, a wedged permit holder — turns the NEXT
 /// request's wait into forever: the connector has no client timeout, so one
 /// such request froze a multi-day sync invisibly. This ceiling converts that
 /// class into a bounded, retryable answer. It must stay above every legal
-/// inline duration; the longest is a page-serve blob prefetch (10 minutes).
-const HANDLER_BUDGET: Duration = Duration::from_mins(15);
+/// inline duration; the longest is [`crate::engine::store::PREPARATION_WAIT`].
+const HANDLER_BUDGET: Duration = Duration::from_hours(1);
+
+// INVARIANT: the typed Busy answer must fire before the blanket 503 cutoff.
+const _: () = assert!(HANDLER_BUDGET.as_secs() > crate::engine::store::PREPARATION_WAIT.as_secs());
 
 /// Answer 503 when a handler outlives [`HANDLER_BUDGET`].
 ///

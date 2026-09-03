@@ -16,6 +16,7 @@ use toolkit::{Gear, GearCtx, RestApiCapability};
 use crate::api::AppState;
 use crate::config::GearConfig;
 use crate::infra::cluster::Cluster;
+use crate::infra::registry::Registry;
 
 /// Previews gear. Capability: `rest` (HTTP surface). Config key is the gear
 /// name `previews`; env overrides are `APP__gears__previews__config__*`.
@@ -42,8 +43,18 @@ impl Gear for PreviewsGear {
             config.sweep_interval_secs,
         ));
 
+        let registry = if config.registry_url.is_empty() {
+            None
+        } else {
+            Some(Registry::connect(
+                &config.registry_url,
+                &config.registry_token,
+            )?)
+        };
+
         let state = AppState {
             cluster,
+            registry,
             config,
             create_gate: tokio::sync::Mutex::new(()),
         };

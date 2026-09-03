@@ -29,12 +29,13 @@ deploy/gitops/
 ├── secrets-store.yaml.template  # template for the sample secret store; copy to secrets-store.yaml and fill in
 ├── bootstrap/
 │   ├── argo-rbac.yaml.template  # supplemental Argo RBAC; rendered + applied by Makefile
-│   └── local/                   # per-cluster L0 prereqs (one dir per env)
-│       ├── envoy-gateway-values.yaml
-│       ├── gateway.yaml         # shared GatewayClass + Gateway (applied at bootstrap)
-│       ├── cert-manager-values.yaml
-│       ├── sealed-secrets-values.yaml
-│       └── selfsigned-issuer.yaml
+│   ├── local/                   # per-cluster L0 prereqs (one dir per env)
+│   │   ├── envoy-gateway-values.yaml
+│   │   ├── gateway.yaml         # shared GatewayClass + Gateway (applied at bootstrap)
+│   │   ├── cert-manager-values.yaml
+│   │   ├── sealed-secrets-values.yaml
+│   │   └── selfsigned-issuer.yaml
+│   └── functional-ci/           # L0 prereqs for the ephemeral k3d smoke env
 ├── system/                      # L2 base values, one dir per service
 │   ├── README.md                # services table + secret layout
 │   ├── mariadb/                 # values.yaml + SECRETS.md
@@ -43,20 +44,29 @@ deploy/gitops/
 │   ├── redpanda/                # values.yaml
 │   ├── redpanda-console/        # values.yaml
 │   ├── airbyte/                 # values.yaml
-│   └── argo-workflows/          # values.yaml
+│   ├── argo-workflows/          # values.yaml
+│   └── victoriametrics/ loki/ tempo/ alloy/ alloy-metrics/
+│       kube-state-metrics/ grafana/   # observability stack values
 ├── environments/
-│   └── local/                   # sandbox env (also the starter template for new envs)
-│       ├── inventory.yaml.template  # what this cluster has (drives bootstrap / system / seal / deploy)
-│       ├── values.yaml.template     # umbrella overlay (L3) — wizard cp's to values.yaml on first `make deploy ENV=local`
-│       └── sealed-secrets/
-│           ├── insight-infra/*.yaml.template  # L2 sealed-secret shape (one folder per Kubernetes namespace)
-│           └── insight/*.yaml.template        # L3 sealed-secret shape
+│   ├── local/                   # sandbox env (also the starter template for new envs)
+│   │   ├── inventory.yaml.template  # what this cluster has (drives bootstrap / system / seal / deploy)
+│   │   ├── values.yaml.template     # umbrella overlay (L3) — wizard cp's to values.yaml on first `make deploy ENV=local`
+│   │   ├── keycloak/realms/         # broker realm content (keycloak-config-cli YAML)
+│   │   └── sealed-secrets/
+│   │       ├── insight-infra/*.yaml.template  # L2 sealed-secret shape (one folder per Kubernetes namespace)
+│   │       └── insight/*.yaml.template        # L3 sealed-secret shape
+│   ├── functional-ci/           # committed env for the k3d deployment smoke (functional-k3s.yml)
+│   └── test-stand/              # the published CI-deployed stand — see its README.md and INFRA.md
 └── scripts/
     ├── doctor.sh                # invoked by `make doctor`
     ├── render-diff.sh           # invoked by `make diff`
+    ├── render-system-values.sh  # substitutes ${NS_*} into L2 values before helm sees them
     ├── secret-fetch.sh          # password-manager stub for `make seal-secret`
-    ├── compose-app-secrets.sh   # derives insight-{analytics,identity-resolution}-config from insight-db-creds
-    └── airbyte-setup.sh         # post-install Airbyte setup-wizard automation
+    ├── compose-app-secrets.sh   # derives the app *-config Secrets from insight-db-creds
+    ├── airbyte-setup.sh         # post-install Airbyte setup-wizard automation
+    ├── provision-ci-deployer.sh # namespace-scoped ServiceAccount for the test-stand CI deploy
+    ├── recreate-test-stand.sh   # tear down + rebuild the test stand
+    └── push-deploy-log.sh       # ships the deploy log into in-cluster Loki
 ```
 
 The wizard at `../compose/insight-init.sh` is shared with the
@@ -226,10 +236,10 @@ make system     ENV=<new>
 make deploy     ENV=<new>           # protected envs need CONFIRM=yes-deploy-<new>
 ```
 
-The `local` env disables OIDC for sandbox convenience. For production
-or staging envs, set `apiGateway.authDisabled: false`, configure an
-OIDC IdP (Okta, Entra, Auth0, Keycloak, …), and seal a corresponding
-`insight-oidc` Secret — see
+Every env runs a real OIDC login — the chart has no auth-off toggle,
+and `local` wires the in-stack Keycloak subchart as its issuer. For
+production or staging envs, configure an OIDC IdP (Okta, Entra, Auth0,
+Keycloak, …) and seal a corresponding `insight-oidc` Secret — see
 [`environments/local/sealed-secrets/insight/insight-oidc-sealedsecret.yaml.template`](environments/local/sealed-secrets/insight/insight-oidc-sealedsecret.yaml.template)
 for the seven required keys.
 
@@ -338,10 +348,16 @@ real `*.yaml` siblings beside them, safe to commit.
 3. `make deploy` pulls the chart at the pinned semver and runs
    `helm upgrade --install --atomic`.
 
-### Automating the `.insight-version` bump (optional)
+### Automating the `.insight-version` bump
 
-This sample does NOT ship CI for auto-bumping `.insight-version` —
-it's CI-vendor-specific. The pattern is:
+In this repo the bump is automated: the `publish-chart` job in
+`.github/workflows/build-images.yml` writes the newly published semver
+into `deploy/gitops/.insight-version` and commits it at the end of each
+publish. (Consequence: a checkout of the SHA that triggered the publish
+still holds the PREVIOUS release in that file — resolve "latest" from
+the OCI registry, not from the file, when reacting to a publish event.)
+
+A standalone deployment repo has to wire its own bump; the pattern is:
 
 1. List semver tags at the chart registry on a cron schedule (e.g.
    hourly):

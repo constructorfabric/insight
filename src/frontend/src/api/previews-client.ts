@@ -25,6 +25,15 @@ export interface Experiment {
 
 export interface ExperimentListResponse {
   experiments: Experiment[];
+  /** Experiments counting against the cap; expired ones do not. */
+  liveCount: number;
+  cap: number;
+}
+
+export interface ImageListResponse {
+  /** False when tag listing is disabled server-side; `tags` is empty. */
+  configured: boolean;
+  tags: string[];
 }
 
 export interface CreateExperimentRequest {
@@ -32,6 +41,8 @@ export interface CreateExperimentRequest {
   name: string;
   /** FE image tag — the server validates (`preview-…` or a CI build tag). */
   tag: string;
+  /** Days until expiry; server default when omitted. */
+  ttlDays?: number;
 }
 
 export class PreviewsApiError extends Error {
@@ -51,8 +62,8 @@ async function failure(res: Response): Promise<PreviewsApiError> {
   return new PreviewsApiError(res.status, body);
 }
 
-/** Every live experiment; authenticated-only. */
-export async function listExperiments(): Promise<Experiment[]> {
+/** Every live experiment plus the count/cap; authenticated-only. */
+export async function listExperiments(): Promise<ExperimentListResponse> {
   const res = await fetchWithAuth(`${BASE}/experiments`);
   if (!res.ok) throw await failure(res);
   let listed: ExperimentListResponse;
@@ -64,12 +75,28 @@ export async function listExperiments(): Promise<Experiment[]> {
   if (!Array.isArray(listed.experiments)) {
     throw new PreviewsApiError(res.status, { error: "malformed_experiments" });
   }
-  return listed.experiments;
+  return listed;
+}
+
+/** The registry's `preview-…` tags; authenticated-only. */
+export async function listImages(): Promise<ImageListResponse> {
+  const res = await fetchWithAuth(`${BASE}/images`);
+  if (!res.ok) throw await failure(res);
+  let listed: ImageListResponse;
+  try {
+    listed = (await res.json()) as ImageListResponse;
+  } catch {
+    throw new PreviewsApiError(res.status, { error: "invalid_json" });
+  }
+  if (!Array.isArray(listed.tags)) {
+    throw new PreviewsApiError(res.status, { error: "malformed_tags" });
+  }
+  return listed;
 }
 
 /** Create an experiment (name + tag). Requires previews-admin or admin. */
 export async function createExperiment(
-  req: CreateExperimentRequest,
+  req: CreateExperimentRequest
 ): Promise<Experiment> {
   const res = await fetchWithAuth(`${BASE}/experiments`, {
     method: "POST",
@@ -88,7 +115,7 @@ export async function createExperiment(
 export async function deleteExperiment(name: string): Promise<void> {
   const res = await fetchWithAuth(
     `${BASE}/experiments/${encodeURIComponent(name)}`,
-    { method: "DELETE" },
+    { method: "DELETE" }
   );
   if (!res.ok) throw await failure(res);
 }

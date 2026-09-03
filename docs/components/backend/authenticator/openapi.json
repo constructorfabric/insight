@@ -70,7 +70,8 @@
         "summary": "Public JWKS for gateway-JWT verification",
         "tags": [
           "internal"
-        ]
+        ],
+        "x-toolkit-visibility": "exposed"
       }
     },
     "/.well-known/openid-configuration": {
@@ -91,7 +92,8 @@
         "summary": "OIDC discovery document (issuer + jwks_uri) for downstream verifiers",
         "tags": [
           "internal"
-        ]
+        ],
+        "x-toolkit-visibility": "exposed"
       }
     },
     "/auth/admin/users/{person_id}/sessions": {
@@ -151,7 +153,8 @@
         "summary": "Complete login: exchange the code and set the session cookie",
         "tags": [
           "auth"
-        ]
+        ],
+        "x-toolkit-visibility": "exposed"
       }
     },
     "/auth/csrf": {
@@ -182,7 +185,8 @@
         "summary": "Issue the CSRF token bound to the current session",
         "tags": [
           "auth"
-        ]
+        ],
+        "x-toolkit-visibility": "exposed"
       }
     },
     "/auth/login": {
@@ -206,7 +210,8 @@
         "summary": "Start the OIDC code+PKCE login flow (the request Host selects the issuer)",
         "tags": [
           "auth"
-        ]
+        ],
+        "x-toolkit-visibility": "exposed"
       }
     },
     "/auth/logout": {
@@ -227,7 +232,8 @@
         "summary": "Revoke the session, clear the cookie, return the RP-logout URL",
         "tags": [
           "auth"
-        ]
+        ],
+        "x-toolkit-visibility": "exposed"
       }
     },
     "/auth/me": {
@@ -258,7 +264,8 @@
         "summary": "Current session summary for the SPA",
         "tags": [
           "auth"
-        ]
+        ],
+        "x-toolkit-visibility": "exposed"
       }
     },
     "/auth/oidc/back-channel-logout": {
@@ -282,7 +289,8 @@
         "summary": "Receive IdP back-channel logout tokens (OIDC BCL 1.0)",
         "tags": [
           "auth"
-        ]
+        ],
+        "x-toolkit-visibility": "exposed"
       }
     },
     "/auth/refresh": {
@@ -313,7 +321,8 @@
         "summary": "Rotate the session cookie and extend the session (grace-tolerant)",
         "tags": [
           "auth"
-        ]
+        ],
+        "x-toolkit-visibility": "exposed"
       }
     },
     "/auth/sessions": {
@@ -344,7 +353,8 @@
         "summary": "Revoke all sessions of the current user (log out everywhere)",
         "tags": [
           "auth"
-        ]
+        ],
+        "x-toolkit-visibility": "exposed"
       },
       "get": {
         "operationId": "authenticator.sessions.list",
@@ -373,7 +383,8 @@
         "summary": "List the current user's active sessions",
         "tags": [
           "auth"
-        ]
+        ],
+        "x-toolkit-visibility": "exposed"
       }
     },
     "/auth/sessions/{session_id}": {
@@ -414,7 +425,8 @@
         "summary": "Revoke one of the current user's sessions",
         "tags": [
           "auth"
-        ]
+        ],
+        "x-toolkit-visibility": "exposed"
       }
     },
     "/internal/authz": {
@@ -438,8 +450,10 @@
         "summary": "Exchange the session cookie for the linked gateway JWT",
         "tags": [
           "internal"
-        ]
+        ],
+        "x-toolkit-visibility": "exposed"
       }
     }
-  }
+  },
+  "x-toolkit-spec-scope": "minimum-conformance"
 }

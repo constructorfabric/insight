@@ -19,9 +19,10 @@ use sea_orm::{
 };
 use uuid::Uuid;
 
+use crate::domain::people::PersonChange;
 use crate::domain::seed::{KnownBinding, SeedObservationRow, SourceAccountKey, normalize_email};
 use crate::domain::seed_service::{ApplyCounts, SeedStore};
-use crate::infra::db::resolution_repo;
+use crate::infra::db::{people_repo, resolution_repo};
 use crate::infra::metrics::{self, DbQuery};
 
 /// MariaDB-backed [`SeedStore`] — wraps a connection so the persons-seed service
@@ -64,9 +65,19 @@ impl SeedStore for MariaDbSeedStore<'_> {
         tenant_id: Uuid,
         author_person_id: Uuid,
         rows: &[SeedObservationRow],
+        people: &[PersonChange],
+        retained_people: Option<&std::collections::HashSet<Uuid>>,
     ) -> anyhow::Result<ApplyCounts> {
         let started = std::time::Instant::now();
-        let result = apply(self.db, tenant_id, author_person_id, rows).await;
+        let result = apply(
+            self.db,
+            tenant_id,
+            author_person_id,
+            rows,
+            people,
+            retained_people,
+        )
+        .await;
         metrics::record_db_query(DbQuery::Apply, started.elapsed());
         result
     }
@@ -497,6 +508,8 @@ pub async fn apply(
     tenant_id: Uuid,
     author_person_id: Uuid,
     rows: &[SeedObservationRow],
+    people: &[PersonChange],
+    retained_people: Option<&std::collections::HashSet<Uuid>>,
 ) -> anyhow::Result<ApplyCounts> {
     // Idempotent insert — uq_person_observation dedups a re-emitted identical
     // observation; INSERT IGNORE swallows the duplicate-key error. Batched
@@ -541,11 +554,15 @@ pub async fn apply(
     }
     tracing::info!(inserted, "persons-seed apply: observations inserted");
 
+    let people_counts = people_repo::reconcile(&txn, tenant_id, people, retained_people).await?;
     let org_chart_rows_rebuilt = rebuild_org_chart(&txn, tenant_id, author_person_id).await?;
 
     txn.commit().await?;
     Ok(ApplyCounts {
         observations_inserted: inserted,
         org_chart_rows_rebuilt,
+        people_opened: people_counts.opened,
+        people_closed: people_counts.closed,
+        people_unchanged: people_counts.unchanged,
     })
 }

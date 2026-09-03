@@ -42,6 +42,7 @@ vi.mock("@/hooks/use-debounced-value", () => ({
 }));
 
 import { SCROLL_ENDS_AFTER_ROWS } from "@/components/widgets/scroll-to-ends";
+import { MAX_SEARCH_CHARS } from "@/queries/identity-resolution";
 import { scrollEndIntoView } from "@/test/intersection-observer";
 
 import { PersonPicker } from "./person-picker";
@@ -99,6 +100,18 @@ describe("PersonPicker", () => {
   // One letter names most of the roster: the answer is no use and the service
   // pays a pass over the journal for it. Going silent instead would read as a
   // broken field, so the picker says what it is waiting for.
+  // `/v1/persons` refuses a needle past 200 characters, the same ceiling the
+  // account search carries. The field stops there rather than letting a paste
+  // become a refusal the reader cannot interpret.
+  it("stops at the length the service accepts", () => {
+    render(<PersonPicker onPick={vi.fn()} />);
+
+    expect(screen.getByRole("searchbox")).toHaveAttribute(
+      "maxlength",
+      String(MAX_SEARCH_CHARS),
+    );
+  });
+
   it("asks for a second character instead of searching on one", async () => {
     list.state.data = { pages: [page([BOB])] };
     render(<PersonPicker onPick={vi.fn()} />);

@@ -1,7 +1,9 @@
 name: bamboohr
 type: cdk
-version: "1.4.0"
-schedule: 0 4 * * *
+# The major bump full-refreshes the new roster and profile claims before the
+# persons seed projects them.
+version: "2.2.0"
+schedule: 0 * * * *
 dbt_select: tag:bamboohr+
 workflow: sync
 # CI build metadata + runtime image ref (ADR-0016). bump-descriptors keeps
@@ -12,7 +14,7 @@ images:
     name: source-bamboohr-insight
     dockerfile: ./Dockerfile
     context: .
-    image: "ghcr.io/constructorfabric/source-bamboohr-insight:2026.08.19.14.27-6346c92"
+    image: "ghcr.io/constructorfabric/source-bamboohr-insight:2026.09.02.09.09-00d2c69"
 connection:
   namespace: bronze_bamboohr
 secret:

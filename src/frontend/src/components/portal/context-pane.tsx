@@ -20,7 +20,10 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { visibleGroups } from "@/lib/insight/groups";
-import { usePersonSectionStandings } from "@/lib/portal/use-person-sections";
+import {
+  usePersonSectionStandings,
+  useSelectedPersonSection,
+} from "@/lib/portal/use-person-sections";
 import { STATUS_BG_CLASS } from "@/lib/status";
 import {
   lensRoadmap,
@@ -619,8 +622,7 @@ function PersonSectionsNav() {
   const standingById = new Map(standings.map((st) => [st.id as string, st]));
   const showPlanned = usePortalShowPlanned();
   const groups = visibleGroups(showPlanned);
-  const groupIds = groups.map((g) => g.id) as string[];
-  const glance = active == null || !groupIds.includes(active);
+  const glance = useSelectedPersonSection() == null;
   return (
     <SidebarGroup>
       <SidebarGroupLabel>Sections</SidebarGroupLabel>

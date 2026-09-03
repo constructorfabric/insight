@@ -161,6 +161,23 @@ def _run_connector_dbt_path(
     tracked_models.run(["identity_inputs"], worker_ctx=worker_ctx)
 
 
+def _person_id_by_email(identity_svc, email: str) -> str | None:
+    """The person an address names, the second way in.
+
+    Used to say WHICH person a member id must resolve to: the id and the
+    roster address are two independent handles on one member, so agreeing on
+    a person is a claim `is not None` cannot make.
+    """
+    with identity_svc.client(
+        sub=str(seed.SEED_ADMIN), tenant=str(seed.SEED_TENANT), sub_type="service", roles="service"
+    ) as svc:
+        r = svc.get("/internal/persons/by-email-override", params={"email": email})
+    if r.status_code == 404:
+        return None
+    assert r.status_code == 200, f"status={r.status_code} body={r.text}"
+    return r.json()["insight_source_id"]
+
+
 def _resolve_by_external_id(identity_svc, external_id: str) -> str | None:
     """Resolve exactly as the authenticator's login-bootstrap does."""
     with identity_svc.client(
@@ -236,10 +253,68 @@ def test_github_member_id_resolves_a_person_through_the_real_connector_pipeline(
     res = identity_svc.run_seed_cli(tenant=str(seed.SEED_TENANT), force=True)
     assert res.returncode == 0, f"rc={res.returncode}\n{res.stdout}\n{res.stderr}"
 
-    assert _resolve_by_external_id(identity_svc, str(member_id)) is not None, (
+    resolved = _resolve_by_external_id(identity_svc, str(member_id))
+    assert resolved is not None, (
         "persons carries no row the login-bootstrap lookup can find for "
         f"(source_type=github, external_id={member_id})"
     )
+
+    # WHICH person, not merely some person. The member id and the roster
+    # address are two independent handles on the same member, so a sign-in
+    # landing on a real-but-wrong person — the failure this criterion exists
+    # to rule out — satisfies `is not None` and fails this.
+    by_address = _person_id_by_email(identity_svc, f"pipeline.dev.{run_tag}@e2e.test")
+    assert by_address is not None, "the roster address names no person"
+    assert resolved == by_address, (
+        f"the member id resolves to {resolved}, the roster address to {by_address} — "
+        "a sign-in through this connector lands on someone other than the member"
+    )
+
+
+def test_github_directory_emits_roster_profile_claims(
+    ch_seeder: CHSeeder,
+    dbt_runner: DbtRunner,
+    tracked_models: TrackedModels,
+    worker_ctx: WorkerContext,
+    compose_stack: SessionConfig,
+) -> None:
+    run_tag = uuid.uuid4().hex[:10]
+    member_id = _run_specific_member_id(run_tag)
+    login = f"profile-dev-{run_tag}"
+    email = f"profile.dev.{run_tag}@e2e.test"
+    display_name = "Profile Dev"
+
+    _run_connector_dbt_path(
+        ch_seeder,
+        dbt_runner,
+        tracked_models,
+        worker_ctx,
+        {
+            "bronze_github_directory.org_members": [
+                _org_member(
+                    run_tag=run_tag,
+                    login=login,
+                    member_id=member_id,
+                    email=email,
+                    display_name=display_name,
+                )
+            ]
+        },
+    )
+
+    rows = clickhouse.query(
+        compose_stack,
+        "SELECT value_type, value FROM identity.identity_inputs"
+        f" WHERE insight_source_type = 'github' AND source_account_id = '{member_id}'"
+        "   AND value_type IN ('person_email', 'person_username', 'person_display_name')"
+        "   AND operation_type = 'UPSERT' ORDER BY value_type",
+    )
+
+    assert rows == [
+        ["person_display_name", display_name],
+        ["person_email", email],
+        ["person_username", login],
+    ]
 
 
 def test_the_binding_is_the_member_id_never_the_login(

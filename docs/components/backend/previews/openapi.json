@@ -31,15 +31,26 @@
       "ExperimentListResponse": {
         "description": "List wrapper for `GET /v1/experiments`.",
         "properties": {
+          "cap": {
+            "minimum": 0,
+            "type": "integer"
+          },
           "experiments": {
             "items": {
               "$ref": "#/components/schemas/ExperimentResponse"
             },
             "type": "array"
+          },
+          "liveCount": {
+            "description": "Experiments counting against the cap; expired ones do not.",
+            "minimum": 0,
+            "type": "integer"
           }
         },
         "required": [
-          "experiments"
+          "experiments",
+          "liveCount",
+          "cap"
         ],
         "type": "object"
       },
@@ -94,6 +105,27 @@
           "expired"
         ],
         "type": "string"
+      },
+      "ImageListResponse": {
+        "description": "Body of `GET /v1/images`.",
+        "properties": {
+          "configured": {
+            "description": "False when tag listing is disabled server-side; `tags` is then empty.",
+            "type": "boolean"
+          },
+          "tags": {
+            "description": "The repository's `preview-…` tags, deduped and sorted.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "configured",
+          "tags"
+        ],
+        "type": "object"
       },
       "Problem": {
         "description": "RFC 9457 problem+json. `context` varies by error category.",
@@ -437,6 +469,100 @@
         ],
         "summary": "Delete a preview experiment; requires the previews-admin or admin role"
       }
+    },
+    "/v1/images": {
+      "get": {
+        "operationId": "previews.images.list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageListResponse"
+                }
+              }
+            },
+            "description": "The preview- tags of the FE image repository; configured=false when tag listing is disabled"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List the preview- image tags available in the registry"
+      }
     }
-  }
+  },
+  "x-toolkit-spec-scope": "minimum-conformance"
 }

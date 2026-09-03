@@ -53,7 +53,10 @@ import { SidebarProvider } from "@/components/ui/sidebar";
 // The sections nav asks where the person stands so it can mark each section;
 // the standings come from the section screens' own queries, which this test
 // has no reason to run.
-vi.mock("@/lib/portal/use-person-sections", () => ({
+// `useSelectedPersonSection` is left real: it reads the router mock above, and
+// it is what decides whether "At a glance" or a section row is the active one.
+vi.mock("@/lib/portal/use-person-sections", async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
   usePersonSectionStandings: () => mocks.standings,
 }));
 

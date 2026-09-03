@@ -13,6 +13,9 @@ use url::Url;
 
 use crate::schema::{ResolvedRoute, RouteConfig};
 
+// INVARIANT: the gateway chart's exporter scrape URI must match this address.
+const STUB_STATUS_LISTEN: &str = "127.0.0.1:8090";
+
 /// Deployment settings that are not part of the route table itself (upstream
 /// authorities, timeouts, trusted proxies). The CLI fills them from env at
 /// container startup; defaults are the in-cluster values.
@@ -207,6 +210,8 @@ pub fn emit(config: &RouteConfig, settings: &Settings) -> anyhow::Result<String>
         &upstreams,
     )?;
 
+    emit_stub_status(&mut c)?;
+
     writeln!(c, "}}")?;
 
     Ok(c)
@@ -365,6 +370,22 @@ fn emit_server(
 
     writeln!(c, "    }}")?;
 
+    Ok(())
+}
+
+/// SAFETY: a dedicated loopback listener — a main-port allow/deny check could
+/// be spoofed, since `remote_addr` there is rewritten from X-Forwarded-For.
+fn emit_stub_status(c: &mut String) -> anyhow::Result<()> {
+    c.push('\n');
+    c.push_str("    # --- nginx counters for the metrics exporter sidecar: loopback-only ---\n");
+    writeln!(c, "    server {{")?;
+    writeln!(c, "        listen {STUB_STATUS_LISTEN};")?;
+    c.push('\n');
+    c.push_str("        location = /stub_status {\n");
+    c.push_str("            access_log off;\n");
+    c.push_str("            stub_status;\n");
+    c.push_str("        }\n");
+    writeln!(c, "    }}")?;
     Ok(())
 }
 

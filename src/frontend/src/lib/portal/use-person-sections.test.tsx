@@ -19,6 +19,15 @@ const mocks = vi.hoisted(() => ({
   byKey: new Map<string, unknown>(),
   isPending: false,
   cohort: [] as string[],
+  /** The open section, or null on "At a glance". */
+  item: null as string | null,
+  // Every `useMetricCollectionSet` call, so a test can assert WHICH windows
+  // were asked for — the mock answers the same set whatever the arguments.
+  setCalls: [] as Array<{
+    entity: { type: string; ids?: string[] };
+    range: { from: string; to: string };
+    compareTo?: { from: string; to: string };
+  }>,
 }));
 
 vi.mock("@/queries/metric-definitions", () => ({
@@ -27,9 +36,18 @@ vi.mock("@/queries/metric-definitions", () => ({
     isPending: mocks.definitionsPending,
   }),
 }));
+vi.mock("@/lib/portal/portal-nav", () => ({
+  usePortalItem: () => mocks.item,
+}));
 vi.mock("@/queries/metric-results", () => ({
-  useMetricCollectionSet: () =>
-    new Map(
+  useMetricCollectionSet: (
+    _collections: unknown,
+    entity: { type: string; ids?: string[] },
+    range: { from: string; to: string },
+    compareTo?: { from: string; to: string }
+  ) => {
+    mocks.setCalls.push({ entity, range, compareTo });
+    return new Map(
       [
         "task_delivery",
         "git_output",
@@ -47,7 +65,8 @@ vi.mock("@/queries/metric-results", () => ({
           refetch: vi.fn(),
         },
       ])
-    ),
+    );
+  },
 }));
 vi.mock("@/lib/portal/use-person-cohort", () => ({
   usePersonCohort: () => mocks.cohort,
@@ -59,7 +78,10 @@ vi.mock("@/hooks/use-portal-period", () => ({
   }),
 }));
 
-import { usePersonSectionStandings } from "./use-person-sections";
+import {
+  usePersonSectionCollection,
+  usePersonSectionStandings,
+} from "./use-person-sections";
 
 const ME = "019e27bc-dec0-7626-81a9-c5524662a6a9";
 
@@ -106,6 +128,50 @@ beforeEach(() => {
   mocks.byKey = new Map();
   mocks.isPending = false;
   mocks.cohort = [];
+  mocks.item = null;
+  mocks.setCalls.length = 0;
+});
+
+describe("usePersonSectionCollection", () => {
+  /** The person's own set; the cohort's rides the same hook with other ids. */
+  const personCalls = () =>
+    mocks.setCalls.filter((c) => c.entity.ids?.[0] === ME);
+
+  it("asks for the comparison window on the overview", () => {
+    renderHook(() => usePersonSectionCollection(ME));
+    // "At a glance" is the only surface reading `previousByKey` — the
+    // attention block needs a standing that is also a change.
+    expect(personCalls()[0]!.compareTo).toEqual({
+      from: "2026-06-01",
+      to: "2026-06-30",
+    });
+  });
+
+  it("drops it once a section is open", () => {
+    mocks.item = "git_output";
+    renderHook(() => usePersonSectionCollection(ME));
+    // Only the nav mark is left reading this set, and it ranks the current
+    // window alone. Asking for a second window would buy backend work for a
+    // number nothing on screen reads.
+    expect(personCalls()[0]!.compareTo).toBeUndefined();
+    expect(personCalls()[0]!.range).toEqual({
+      from: "2026-07-01",
+      to: "2026-07-31",
+    });
+  });
+
+  it("keeps one signature per window scope across its consumers", () => {
+    // The overview and the nav mark both call it. Identical arguments are what
+    // make that one query key and one round trip (#2651), so the signature —
+    // not the call count — is the thing under test.
+    renderHook(() => {
+      usePersonSectionCollection(ME);
+      usePersonSectionStandings(ME);
+    });
+    const signatures = new Set(personCalls().map((c) => JSON.stringify(c)));
+    expect(personCalls().length).toBeGreaterThan(1);
+    expect(signatures.size).toBe(1);
+  });
 });
 
 describe("usePersonSectionStandings", () => {

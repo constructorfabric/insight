@@ -105,7 +105,7 @@ cd src/ingestion/tests/e2e
 
 ## 6. E2E
 
-- Real ingestion (Airbyte → Argo/Kestra → bronze → API), the umbrella-chart deployment, and UI flows (Playwright,
+- Real ingestion (Airbyte → Argo Workflows → bronze → API), the umbrella-chart deployment, and UI flows (Playwright,
   role + accessible-name locators — no accessibility or contrast checking).
 - The **deployment smoke** (chart installs + rollout) runs post-merge on `main`. Full ingestion + UI run in
   **Test**; a **shallow acceptance validation** runs in **Beta**.

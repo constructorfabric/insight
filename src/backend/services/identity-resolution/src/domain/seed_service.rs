@@ -9,10 +9,13 @@ use async_trait::async_trait;
 use serde::Serialize;
 use uuid::Uuid;
 
+use super::people::{self, PersonChange};
+use super::resolution::EXCLUDED_PERSON;
 use super::roster::RosterSource;
 use super::seed::{
-    IdentityInputRow, KnownBinding, ResolveOutcome, SeedObservationRow, SeedProfile,
-    SourceAccountKey, assignments_to_rows, build_profiles, group_by_email, resolve_assignments,
+    IdentityInputRow, KnownBinding, PersonAssignment, ResolveOutcome, SeedObservationRow,
+    SeedProfile, SourceAccountKey, assignments_to_rows, build_profiles, group_by_email,
+    resolve_assignments,
 };
 
 /// Streams the raw `identity_inputs` observations for a tenant, delivered
@@ -42,6 +45,8 @@ pub trait SeedStore {
         tenant_id: Uuid,
         author_person_id: Uuid,
         rows: &[SeedObservationRow],
+        people: &[PersonChange],
+        retained_people: Option<&HashSet<Uuid>>,
     ) -> anyhow::Result<ApplyCounts>;
 }
 
@@ -51,6 +56,9 @@ pub trait SeedStore {
 pub struct ApplyCounts {
     pub observations_inserted: u64,
     pub org_chart_rows_rebuilt: u64,
+    pub people_opened: u64,
+    pub people_closed: u64,
+    pub people_unchanged: u64,
 }
 
 /// Outcome of one persons-seed run (feeds the operation status).
@@ -60,6 +68,9 @@ pub struct ApplyCounts {
 // merge) — additive keys are ignored by conformant consumers.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct SeedSummary {
+    pub people_opened: u64,
+    pub people_closed: u64,
+    pub people_unchanged: u64,
     pub accounts_read: usize,
     #[serde(rename = "accounts_reused_known")]
     pub reused_known: usize,
@@ -134,12 +145,20 @@ where
 
     // 3. Materialize the resolved observations and apply them.
     let observation_rows = assignments_to_rows(&outcome.assignments, author_person_id, &known);
+    let people_changes = people::changes(&outcome.assignments, roster);
+    let retained_people = retained_roster_people(&known, &outcome.assignments, roster);
     tracing::info!(
         observation_rows = observation_rows.len(),
         "persons-seed: applying"
     );
     let counts = store
-        .apply(tenant_id, author_person_id, &observation_rows)
+        .apply(
+            tenant_id,
+            author_person_id,
+            &observation_rows,
+            &people_changes,
+            retained_people.as_ref(),
+        )
         .await?;
     tracing::info!(
         observations_inserted = counts.observations_inserted,
@@ -148,6 +167,9 @@ where
     );
 
     Ok(SeedSummary {
+        people_opened: counts.people_opened,
+        people_closed: counts.people_closed,
+        people_unchanged: counts.people_unchanged,
         accounts_read,
         reused_known: outcome.reused_known,
         linked_by_email: outcome.linked_by_email,
@@ -163,6 +185,40 @@ where
         skipped_excluded: outcome.skipped_excluded,
         minted_from_roster: outcome.minted_from_roster,
     })
+}
+
+fn retained_roster_people(
+    known: &HashMap<SourceAccountKey, KnownBinding>,
+    assignments: &[PersonAssignment],
+    roster: Option<&RosterSource>,
+) -> Option<HashSet<Uuid>> {
+    let roster = roster?;
+    let mut holders = known
+        .iter()
+        .filter(|(account, binding)| {
+            roster.speaks_for(&account.source_type) && binding.person_id != EXCLUDED_PERSON
+        })
+        .map(|(account, binding)| (account.clone(), binding.person_id))
+        .collect::<HashMap<_, _>>();
+
+    for assignment in assignments {
+        for profile in &assignment.profiles {
+            if !roster.speaks_for(&profile.account.source_type) {
+                continue;
+            }
+            match profile.roster_membership {
+                Some(membership) if membership.active => {
+                    holders.insert(profile.account.clone(), assignment.person_id);
+                }
+                Some(_) => {
+                    holders.remove(&profile.account);
+                }
+                None => {}
+            }
+        }
+    }
+
+    Some(holders.into_values().collect())
 }
 
 /// A configured roster that matched nothing is indistinguishable from one that
@@ -243,11 +299,22 @@ mod tests {
             _tenant: Uuid,
             _author: Uuid,
             rows: &[SeedObservationRow],
+            people: &[PersonChange],
+            _retained_people: Option<&HashSet<Uuid>>,
         ) -> anyhow::Result<ApplyCounts> {
             // Net-inserted (no dedup in the fake); org_chart rebuild is DB-only.
             Ok(ApplyCounts {
                 observations_inserted: rows.len() as u64,
                 org_chart_rows_rebuilt: 0,
+                people_opened: people
+                    .iter()
+                    .filter(|change| matches!(change, PersonChange::Upsert(_)))
+                    .count() as u64,
+                people_closed: people
+                    .iter()
+                    .filter(|change| matches!(change, PersonChange::Close { .. }))
+                    .count() as u64,
+                people_unchanged: 0,
             })
         }
     }
@@ -360,7 +427,10 @@ mod tests {
         // one, dropping the argument here leaves the feature dead and the suite
         // green.
         let at: DateTime = "2026-01-01T00:00:00".parse()?;
-        let rows = vec![input("bamboohr", "e-1", "id", "e-1", at)];
+        let rows = vec![
+            input("bamboohr", "e-1", "id", "e-1", at),
+            input("bamboohr", "e-1", "roster_membership", "active", at),
+        ];
         let store = FakeStore {
             known: HashMap::new(),
             emails: HashMap::new(),
@@ -411,5 +481,70 @@ mod tests {
         assert_eq!(summary.skipped_no_email, 1);
         assert_eq!(summary.observations_inserted, 0, "nothing to write");
         Ok(())
+    }
+
+    #[test]
+    fn resolved_roster_binding_replaces_the_previous_holder() -> anyhow::Result<()> {
+        let at: DateTime = "2026-01-01T00:00:00".parse()?;
+        let account = SourceAccountKey {
+            source_type: "bamboohr".to_owned(),
+            source_id: Uuid::from_u128(1),
+            account_id: "e-1".to_owned(),
+        };
+        let known = HashMap::from([(
+            account,
+            KnownBinding {
+                person_id: Uuid::from_u128(1),
+                author_person_id: Uuid::nil(),
+                provenance: crate::domain::provenance::Provenance::Resolved,
+            },
+        )]);
+        let assignments = vec![crate::domain::seed::PersonAssignment {
+            person_id: Uuid::from_u128(2),
+            kind: crate::domain::seed::AssignmentKind::ReusedKnown,
+            profiles: build_profiles(vec![
+                input("bamboohr", "e-1", "id", "e-1", at),
+                input("bamboohr", "e-1", "roster_membership", "active", at),
+            ]),
+        }];
+        let Some(roster) = RosterSource::parse("bamboohr") else {
+            panic!("bamboohr is a roster source");
+        };
+
+        assert_eq!(
+            retained_roster_people(&known, &assignments, Some(&roster)),
+            Some(HashSet::from([Uuid::from_u128(2)]))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn an_unobserved_roster_binding_is_retained_conservatively() {
+        let account = SourceAccountKey {
+            source_type: "bamboohr".to_owned(),
+            source_id: Uuid::from_u128(1),
+            account_id: "e-1".to_owned(),
+        };
+        let known = HashMap::from([(
+            account,
+            KnownBinding {
+                person_id: Uuid::from_u128(1),
+                author_person_id: Uuid::nil(),
+                provenance: crate::domain::provenance::Provenance::Resolved,
+            },
+        )]);
+        let Some(roster) = RosterSource::parse("bamboohr") else {
+            panic!("bamboohr is a roster source");
+        };
+
+        assert_eq!(
+            retained_roster_people(&known, &[], Some(&roster)),
+            Some(HashSet::from([Uuid::from_u128(1)]))
+        );
+    }
+
+    #[test]
+    fn no_configured_roster_disables_binding_based_closure() {
+        assert_eq!(retained_roster_people(&HashMap::new(), &[], None), None);
     }
 }

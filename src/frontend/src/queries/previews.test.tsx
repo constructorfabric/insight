@@ -20,10 +20,12 @@ import {
   useCreateExperiment,
   useDeleteExperiment,
   useExperiments,
+  useImages,
   usePreviewsGate,
 } from "./previews";
 
 const listExperiments = vi.mocked(previewsClient.listExperiments);
+const listImages = vi.mocked(previewsClient.listImages);
 const createExperiment = vi.mocked(previewsClient.createExperiment);
 const deleteExperiment = vi.mocked(previewsClient.deleteExperiment);
 
@@ -101,13 +103,14 @@ describe("usePreviewsGate", () => {
 });
 
 describe("useExperiments", () => {
-  it("serves the listing", async () => {
-    listExperiments.mockResolvedValueOnce([EXPERIMENT]);
+  it("serves the listing with its count and cap", async () => {
+    const listed = { experiments: [EXPERIMENT], liveCount: 1, cap: 10 };
+    listExperiments.mockResolvedValueOnce(listed);
 
     const { result } = renderHook(() => useExperiments(), harness());
 
     await waitFor(() => expect(result.current.isPending).toBe(false));
-    expect(result.current.data).toEqual([EXPERIMENT]);
+    expect(result.current.data).toEqual(listed);
   });
 
   it("never asks without a session", async () => {
@@ -120,9 +123,43 @@ describe("useExperiments", () => {
   });
 });
 
+describe("useImages", () => {
+  it("serves the registry tags", async () => {
+    const listed = { configured: true, tags: ["preview-my-branch"] };
+    listImages.mockResolvedValueOnce(listed);
+
+    const { result } = renderHook(() => useImages(), harness());
+
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+    expect(result.current.data).toEqual(listed);
+  });
+
+  it("surfaces a listing failure without retrying — the form falls back", async () => {
+    listImages.mockRejectedValueOnce(new Error("Previews API 503"));
+
+    const { result } = renderHook(() => useImages(), harness());
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(listImages).toHaveBeenCalledTimes(1);
+  });
+
+  it("never asks without a session", async () => {
+    auth.session = null;
+
+    renderHook(() => useImages(), harness());
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(listImages).not.toHaveBeenCalled();
+  });
+});
+
 describe("mutations", () => {
   it("create invalidates the listing so the console reconciles", async () => {
-    listExperiments.mockResolvedValue([EXPERIMENT]);
+    listExperiments.mockResolvedValue({
+      experiments: [EXPERIMENT],
+      liveCount: 1,
+      cap: 10,
+    });
     createExperiment.mockResolvedValueOnce(EXPERIMENT);
     const h = harness();
     const invalidate = vi.spyOn(h.queryClient, "invalidateQueries");

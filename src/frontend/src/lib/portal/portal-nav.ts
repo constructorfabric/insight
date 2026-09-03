@@ -2,7 +2,7 @@ import { useRouterState } from "@tanstack/react-router";
 import { useMemo } from "react";
 
 import { normalizePersonId } from "@/lib/metrics/entity";
-import type { OrgScope } from "@/lib/portal/portal-store";
+import { type OrgScope, usePortalShowPlanned } from "@/lib/portal/portal-store";
 import { recordUsageEvent, scopeLabel } from "@/telemetry";
 import { usePortalSearch, useSetPortalSearch } from "@/lib/portal/portal-search";
 
@@ -52,9 +52,10 @@ export function usePortalLens(): string {
   return usePortalSearch().lens ?? "";
 }
 
-/** The active slice attribute, or "" when the roster is one undivided cohort. */
+/** The active slice attribute, or "" while no cohort is in effect. */
 export function usePortalSlice(): string {
-  return usePortalSearch().slice ?? "";
+  const slice = usePortalSearch().slice ?? "";
+  return usePortalShowPlanned() ? slice : "";
 }
 
 /** The org scope the URL names: a root person id (absent = the viewer) + direct-only. */

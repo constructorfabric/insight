@@ -18,8 +18,10 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use super::AppState;
+use super::canonical_json::CanonicalJson;
 use super::error::CorrectionError;
 use super::gate::require_admin;
+use super::listing;
 use crate::domain::person_card::{self, PersonCard};
 use crate::domain::resolution::{self, EXCLUDED_PERSON, Target, Verb};
 use crate::domain::review_queue::{self, EvidenceAccount, ItemKind, Review};
@@ -39,6 +41,11 @@ const MAX_ACCOUNT_OPERATIONS: u64 = 50;
 /// How many accounts one bulk call may carry — a prepared matching table is
 /// pasted by a human, not streamed.
 pub(super) const MAX_BULK_ITEMS: usize = 1_000;
+
+/// The ceiling `reason` carries on the grant routes, applied to the other
+/// free-text field an operator writes. Not a column limit: `request_json` is
+/// JSON, and the journal takes whatever it is given.
+const MAX_COMMENT_LEN: usize = 500;
 
 /// A source-native account, as named by the caller.
 ///
@@ -79,6 +86,7 @@ pub struct BindRequest {
     /// One or more bindings; a prepared matching table is submitted as one call.
     pub bindings: Vec<BindItem>,
     #[serde(default)]
+    #[schema(max_length = 500)]
     pub comment: String,
 }
 impl toolkit::api::api_dto::RequestApiDto for BindRequest {}
@@ -90,6 +98,7 @@ pub struct MergeRequest {
     /// The surviving person, named explicitly by the operator.
     pub target_person_id: Uuid,
     #[serde(default)]
+    #[schema(max_length = 500)]
     pub comment: String,
 }
 impl toolkit::api::api_dto::RequestApiDto for MergeRequest {}
@@ -98,6 +107,7 @@ impl toolkit::api::api_dto::RequestApiDto for MergeRequest {}
 pub struct AccountRequest {
     pub account: AccountRef,
     #[serde(default)]
+    #[schema(max_length = 500)]
     pub comment: String,
 }
 impl toolkit::api::api_dto::RequestApiDto for AccountRequest {}
@@ -135,11 +145,12 @@ impl toolkit::api::api_dto::ResponseApiDto for CorrectionResponse {}
 pub async fn bind(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
-    Json(req): Json<BindRequest>,
+    CanonicalJson(req): CanonicalJson<BindRequest>,
 ) -> Result<impl IntoResponse, CanonicalError> {
     let operator = require_admin(&state.db, &ctx).await?;
     let tenant = ctx.subject_tenant_id();
 
+    reject_long_comment(&req.comment)?;
     reject_empty(req.bindings.is_empty(), "bindings")?;
     reject_oversized(req.bindings.len())?;
 
@@ -190,11 +201,12 @@ pub async fn bind(
 pub async fn merge(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
-    Json(req): Json<MergeRequest>,
+    CanonicalJson(req): CanonicalJson<MergeRequest>,
 ) -> Result<impl IntoResponse, CanonicalError> {
     let operator = require_admin(&state.db, &ctx).await?;
     let tenant = ctx.subject_tenant_id();
 
+    reject_long_comment(&req.comment)?;
     if req.source_person_id == req.target_person_id {
         return Err(invalid(
             "target_person_id",
@@ -238,11 +250,12 @@ pub async fn merge(
 pub async fn detach(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
-    Json(req): Json<AccountRequest>,
+    CanonicalJson(req): CanonicalJson<AccountRequest>,
 ) -> Result<impl IntoResponse, CanonicalError> {
     let operator = require_admin(&state.db, &ctx).await?;
     let tenant = ctx.subject_tenant_id();
 
+    reject_long_comment(&req.comment)?;
     let account = SourceAccountKey::from(&req.account);
     require_known_account(&state, tenant, &account).await?;
 
@@ -280,11 +293,12 @@ pub async fn detach(
 pub async fn exclude(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
-    Json(req): Json<AccountRequest>,
+    CanonicalJson(req): CanonicalJson<AccountRequest>,
 ) -> Result<impl IntoResponse, CanonicalError> {
     let operator = require_admin(&state.db, &ctx).await?;
     let tenant = ctx.subject_tenant_id();
 
+    reject_long_comment(&req.comment)?;
     let account = SourceAccountKey::from(&req.account);
     require_known_account(&state, tenant, &account).await?;
 
@@ -622,6 +636,31 @@ fn reject_excluded_person(person_id: Uuid, field: &str) -> Result<(), CanonicalE
         return Err(invalid(
             field,
             "the reserved excluded person cannot take part in a correction; use the exclude verb",
+        ));
+    }
+    Ok(())
+}
+
+/// The needle is bound in length only, not in term count: unlike the person
+/// listings this one never splits `q`, so there is no fan-out to cap.
+fn reject_long_query(needle: &str) -> Result<(), CanonicalError> {
+    if needle.chars().count() > listing::MAX_QUERY_CHARS {
+        return Err(invalid(
+            "q",
+            &format!(
+                "at most {} characters are accepted",
+                listing::MAX_QUERY_CHARS
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn reject_long_comment(comment: &str) -> Result<(), CanonicalError> {
+    if comment.chars().count() > MAX_COMMENT_LEN {
+        return Err(invalid(
+            "comment",
+            &format!("at most {MAX_COMMENT_LEN} characters are accepted"),
         ));
     }
     Ok(())
@@ -988,6 +1027,7 @@ pub async fn search_accounts(
     let tenant = ctx.subject_tenant_id();
 
     let needle = params.q.unwrap_or_default().trim().to_owned();
+    reject_long_query(&needle)?;
     let limit = super::listing::clamp_limit(
         params.limit,
         DEFAULT_ACCOUNT_SEARCH_LIMIT,

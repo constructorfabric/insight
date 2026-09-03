@@ -553,7 +553,7 @@ pub(crate) fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) ->
             status: StatusCode::OK.as_u16(),
             content_type: "text/csv",
             description: "Complete metric report export".to_owned(),
-            schema_name: None,
+            schema: None,
         })
         .error_400(openapi)
         .error_401(openapi)
@@ -693,7 +693,7 @@ pub(crate) fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) ->
             status: StatusCode::OK.as_u16(),
             content_type: "text/csv",
             description: "Complete metric evidence export".to_owned(),
-            schema_name: None,
+            schema: None,
         })
         .standard_errors(openapi)
         .handler(metric_drilldown::export_metric_drilldown)

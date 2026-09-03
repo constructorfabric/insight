@@ -9,6 +9,7 @@ mod handlers;
 mod http_live_tests;
 mod listing;
 pub mod me;
+pub mod people;
 pub mod person_roles;
 pub mod persons;
 pub mod resolution;
@@ -175,6 +176,41 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .handler(me::get_me)
         .register(router, openapi);
 
+    let router = OperationBuilder::get("/v1/people")
+        .operation_id("identity_resolution.people.list")
+        .summary("List current roster people")
+        .authenticated()
+        .query_param(
+            "visibility",
+            false,
+            "`caller` (default) returns people visible to the caller; `tenant` returns the entire tenant roster and requires admin",
+        )
+        .query_param(
+            "q",
+            false,
+            "Search display name, first name, last name, username, or email; every whitespace-separated term must match",
+        )
+        .query_param_typed(
+            "limit",
+            false,
+            "Cap on returned people (1..=500, default 50)",
+            "integer",
+        )
+        .query_param(
+            "cursor",
+            false,
+            "Opaque `next_cursor` from the previous page; valid only for the same caller, visibility, and query",
+        )
+        .no_license_required()
+        .json_response_with_schema::<people::PeopleListResponse>(
+            openapi,
+            StatusCode::OK,
+            "One page of current roster people",
+        )
+        .standard_errors(openapi)
+        .handler(people::list_people)
+        .register(router, openapi);
+
     let router = OperationBuilder::get("/v1/persons")
         .operation_id("identity_resolution.persons.search")
         .summary("List the tenant's persons, narrowed by search terms (admin)")
@@ -313,7 +349,8 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
              or observed name (whole, or composed from parts). The source is the \
              exception — it matches a whole `_`/`-` separated segment from its \
              start, so `github` and `entra` list those connectors' accounts \
-             while `hub` lists none. Absent or blank lists every open account.",
+             while `hub` lists none. At most 200 characters. Absent or blank \
+             lists every open account.",
             "string",
         )
         .query_param_typed(
@@ -705,6 +742,10 @@ mod openapi_tests {
     fn the_document_builds_without_state_or_backends() -> anyhow::Result<()> {
         let document = openapi_document()?;
 
+        assert!(
+            document.paths.paths.contains_key("/v1/people"),
+            "the additive people listing must be described"
+        );
         assert!(
             document.paths.paths.contains_key("/v1/resolution/bind"),
             "the correction surface must be described: {:?}",

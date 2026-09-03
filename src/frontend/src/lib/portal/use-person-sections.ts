@@ -14,9 +14,14 @@ import { derivePeerStanding } from "@/lib/metrics/peer-standing";
 import { usePersonCohort } from "@/lib/portal/use-person-cohort";
 import type { Status } from "@/lib/status";
 import { usePortalPeriod } from "@/hooks/use-portal-period";
+import { usePortalItem } from "@/lib/portal/portal-nav";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
+import { previousPeriodRange } from "@/api/period-to-date-range";
 import { useMetricDefinitionsResponse } from "@/queries/metric-definitions";
-import { useMetricCollectionSet } from "@/queries/metric-results";
+import {
+  useMetricCollectionSet,
+  type MetricCollectionResult,
+} from "@/queries/metric-results";
 
 export interface SectionStanding {
   id: GroupId;
@@ -46,6 +51,87 @@ export interface SectionStanding {
 const CLOSED_ENTITY = { type: "person" as const, ids: [] as string[] };
 
 /**
+ * The section the person zone has open, or null on "At a glance".
+ *
+ * INVARIANT: every surface branching on this reads it here. The collection
+ * below carries a comparison window only on the overview, so a screen deciding
+ * the same thing its own way would either ask for a window nothing reads or
+ * disagree about the key and split the request in two.
+ */
+export function useSelectedPersonSection(): GroupId | null {
+  const item = usePortalItem();
+  const showPlanned = usePortalShowPlanned();
+
+  return visibleGroups(showPlanned).some((def) => def.id === item)
+    ? (item as GroupId)
+    : null;
+}
+
+/**
+ * The section collection every person surface reads — the nav mark, the
+ * overview and the attention block alike.
+ *
+ * INVARIANT: this is the only place the set is requested. The surfaces share
+ * one query key, so they cost one round trip between them; a second call site
+ * differing in any argument — a narrower group list, a missing comparison
+ * window — mints a second key and a second request per section (#2651).
+ *
+ * The comparison window rides inside the request rather than as its own
+ * shifted-period call: the `period` view answers over both windows in one pass.
+ * Only the overview reads it, through the attention block. With a section open
+ * the nav mark is the lone consumer and ranks the current window alone, so the
+ * window is scoped here rather than by a caller — a caller deciding it would be
+ * the divergence above.
+ */
+export function usePersonSectionCollection(
+  personId: string
+): Map<string, MetricCollectionResult> {
+  const { period, dateRange } = usePortalPeriod();
+  const entityId = normalizePersonId(personId);
+  const showPlanned = usePortalShowPlanned();
+  const selectedSection = useSelectedPersonSection();
+
+  return useMetricCollectionSet(
+    visibleGroups(showPlanned).map((def) => ({
+      key: def.id,
+      collection: projectViews(def.collection, ["period", "peer"]),
+    })),
+    { type: "person" as const, ids: [entityId] },
+    dateRange,
+    selectedSection == null ? previousPeriodRange(dateRange, period) : undefined
+  );
+}
+
+/**
+ * The cohort readings a section's peer stats are rebased on once a slice is
+ * picked — an empty collection otherwise, so nothing goes out.
+ *
+ * INVARIANT: as with `usePersonSectionCollection`, this is the only place the
+ * cohort set is requested; a call site narrowing the group list mints its own
+ * key and its own request per section.
+ */
+export function usePersonSectionCohort(
+  personId: string
+): Map<string, MetricCollectionResult> {
+  const { dateRange } = usePortalPeriod();
+  const cohortIds = usePersonCohort(normalizePersonId(personId));
+  const showPlanned = usePortalShowPlanned();
+
+  return useMetricCollectionSet(
+    cohortIds.length
+      ? visibleGroups(showPlanned).map((def) => ({
+          key: def.id,
+          collection: projectViews(def.collection, ["period"]),
+        }))
+      : [],
+    cohortIds.length
+      ? { type: "person" as const, ids: cohortIds }
+      : CLOSED_ENTITY,
+    dateRange
+  );
+}
+
+/**
  * Where a person stands in each section, for the nav.
  *
  * The person page is an OVERVIEW and every section has its own screen, so the
@@ -54,24 +140,16 @@ const CLOSED_ENTITY = { type: "person" as const, ids: [] as string[] };
  * different question and duplicated the list of sections that was already on
  * screen to their left.
  *
- * The queries here are the same ones the section screens run, so react-query
- * serves them from cache: the mark costs no extra request.
+ * The reading comes from `usePersonSectionCollection`, the same query the
+ * section screens run, so react-query serves it from cache: the mark costs no
+ * extra request.
  */
 export function usePersonSectionStandings(personId: string): SectionStanding[] {
-  const { dateRange } = usePortalPeriod();
   const entityId = normalizePersonId(personId);
-  const entity = { type: "person" as const, ids: [entityId] };
   const showPlanned = usePortalShowPlanned();
   const groups = visibleGroups(showPlanned);
 
-  const groupData = useMetricCollectionSet(
-    groups.map((def) => ({
-      key: def.id,
-      collection: projectViews(def.collection, ["period", "peer"]),
-    })),
-    entity,
-    dateRange,
-  );
+  const groupData = usePersonSectionCollection(personId);
 
   // Same query key as the availability gate, so this rides its cache.
   const definitions = useMetricDefinitionsResponse();
@@ -79,16 +157,7 @@ export function usePersonSectionStandings(personId: string): SectionStanding[] {
   // The same cohort the screens compare against, so the nav mark and the
   // section it points at cannot disagree.
   const cohortIds = usePersonCohort(entityId);
-  const cohortGroup = useMetricCollectionSet(
-    cohortIds.length
-      ? groups.map((def) => ({
-          key: def.id,
-          collection: projectViews(def.collection, ["period"]),
-        }))
-      : [],
-    cohortIds.length ? { type: "person" as const, ids: cohortIds } : CLOSED_ENTITY,
-    dateRange,
-  );
+  const cohortGroup = usePersonSectionCohort(personId);
 
   const reachable = reachableMetricKeys(definitions.data?.metrics ?? []);
 

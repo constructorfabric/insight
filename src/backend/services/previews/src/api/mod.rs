@@ -3,6 +3,7 @@
 pub(crate) mod canonical_json;
 pub mod error;
 pub mod experiments;
+pub mod images;
 
 use std::sync::Arc;
 
@@ -13,12 +14,15 @@ use toolkit::api::{OpenApiInfo, OpenApiRegistry, OpenApiRegistryImpl, OperationB
 
 use crate::config::GearConfig;
 use crate::infra::cluster::Cluster;
+use crate::infra::registry::Registry;
 
 /// Shared application state, injected into handlers via `Extension` (as one
 /// `Arc`, never cloned per request).
 pub struct AppState {
     /// Kubernetes access, scoped to the one configured namespace.
     pub cluster: Cluster,
+    /// `None` when tag listing is disabled (empty registry URL).
+    pub registry: Option<Registry>,
     pub config: GearConfig,
     /// Serializes create admission (count-then-create); see the INVARIANT at
     /// its lock site.
@@ -89,6 +93,21 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .handler(experiments::list_experiments)
         .register(router, openapi);
 
+    let router = OperationBuilder::get("/v1/images")
+        .operation_id("previews.images.list")
+        .summary("List the preview- image tags available in the registry")
+        .authenticated()
+        .no_license_required()
+        .json_response_with_schema::<images::ImageListResponse>(
+            openapi,
+            StatusCode::OK,
+            "The preview- tags of the FE image repository; configured=false \
+             when tag listing is disabled",
+        )
+        .standard_errors(openapi)
+        .handler(images::list_images)
+        .register(router, openapi);
+
     let router = OperationBuilder::post("/v1/experiments")
         .operation_id("previews.experiments.create")
         .summary(
@@ -127,7 +146,7 @@ mod openapi_tests {
     fn the_document_builds_without_state_or_a_cluster() -> anyhow::Result<()> {
         let document = openapi_document()?;
 
-        for path in ["/v1/experiments", "/v1/experiments/{name}"] {
+        for path in ["/v1/experiments", "/v1/experiments/{name}", "/v1/images"] {
             assert!(
                 document.paths.paths.contains_key(path),
                 "missing {path}: {:?}",

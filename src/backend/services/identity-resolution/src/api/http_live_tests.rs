@@ -12,6 +12,7 @@
 //! covered by the plugin's own tests plus the compose e2e. Each test mints its
 //! own tenant, so the suite is parallel-safe.
 
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use axum::Router;
@@ -29,7 +30,9 @@ use toolkit_security::SecurityContext;
 use super::AppState;
 use crate::config::{GearConfig, VisibilityPolicy};
 use crate::domain::resolution::EXCLUDED_PERSON;
-use crate::infra::db::test_fixture::{FIXTURE_REASON, Fixture, SOURCE_TYPE, fixture_or_skip};
+use crate::infra::db::test_fixture::{
+    FIXTURE_REASON, Fixture, ProjectedPerson, SOURCE_TYPE, fixture_or_skip,
+};
 use crate::infra::db::{ops_repo, person_roles_repo, resolution_repo, roles_repo, visibility_repo};
 
 type TestResult = anyhow::Result<()>;
@@ -664,6 +667,264 @@ fn found_ids(payload: &Value) -> anyhow::Result<Vec<String>> {
         .iter()
         .filter_map(|i| i["person_id"].as_str().map(str::to_owned))
         .collect())
+}
+
+#[tokio::test]
+async fn people_lists_only_current_roster_people_visible_to_the_caller() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = f.person("people-caller@http-live.test").await?;
+    let marker = format!("find-{}", Uuid::now_v7().simple());
+    let report = f.person("people-report@http-live.test").await?;
+    f.project_person(
+        report,
+        Some("canonical@http-live.test"),
+        Some("canonical-handle"),
+        Some(&format!("Canonical {marker}")),
+        Some("Canonical"),
+        Some("Person"),
+    )
+    .await?;
+    let profile_name = format!("Canonical {marker}");
+    let profile_attributes = BTreeMap::from([("department".to_owned(), "Engineering".to_owned())]);
+    f.project_person_with_attributes(
+        report,
+        ProjectedPerson {
+            email: Some("canonical@http-live.test"),
+            username: Some("canonical-handle"),
+            display_name: Some(&profile_name),
+            first_name: Some("Canonical"),
+            last_name: Some("Person"),
+            attributes: &profile_attributes,
+        },
+    )
+    .await?;
+    f.reports_to(report, caller).await?;
+    let identity_only = f
+        .identity_only_person(&format!("observed-{marker}@http-live.test"))
+        .await?;
+    let unrelated = f
+        .person(&format!("unrelated-{marker}@http-live.test"))
+        .await?;
+
+    let (status, body) = get(app(&f, caller), &format!("/v1/people?q={marker}")).await?;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(found_ids(&body)?, vec![report.to_string()]);
+    let item = &body["items"][0];
+    assert_eq!(item["display_name"], format!("Canonical {marker}"));
+    assert_eq!(item["first_name"], "Canonical");
+    assert_eq!(item["last_name"], "Person");
+    assert_eq!(item["username"], "canonical-handle");
+    assert_eq!(item["email"], "canonical@http-live.test");
+    assert_eq!(item["attributes"]["department"], "Engineering");
+    assert_eq!(item["manager_person_id"], caller.to_string());
+    for legacy_field in ["provisional", "job_title", "status"] {
+        assert!(
+            item.get(legacy_field).is_none(),
+            "unexpected {legacy_field}: {item}"
+        );
+    }
+    assert!(
+        !found_ids(&body)?.contains(&identity_only.to_string()),
+        "identity evidence without a people projection is not roster membership"
+    );
+    assert!(
+        !found_ids(&body)?.contains(&unrelated.to_string()),
+        "caller visibility excludes unrelated roster people"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn people_preserve_source_names_and_only_synthesize_a_missing_display_name() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = f.person("people-names-caller@http-live.test").await?;
+    let marker = format!("find-{}", Uuid::now_v7().simple());
+    let explicit = f
+        .person(&format!("people-names-explicit-{marker}@http-live.test"))
+        .await?;
+    let parts = f
+        .person(&format!("people-names-parts-{marker}@http-live.test"))
+        .await?;
+    let single = f
+        .person(&format!("people-names-single-{marker}@http-live.test"))
+        .await?;
+    let explicit_display = format!("Source Display {marker}");
+    let parts_last = format!("Parts {marker}");
+    let single_first = format!("Mononym {marker}");
+    f.project_person(
+        explicit,
+        None,
+        None,
+        Some(&explicit_display),
+        Some("Separate"),
+        Some("Parts"),
+    )
+    .await?;
+    f.project_person(
+        parts,
+        None,
+        None,
+        None,
+        Some("Available"),
+        Some(&parts_last),
+    )
+    .await?;
+    f.project_person(single, None, None, None, Some(&single_first), None)
+        .await?;
+
+    let (status, body) = get(flat_app(&f, caller), &format!("/v1/people?q={marker}")).await?;
+
+    assert_eq!(status, StatusCode::OK);
+    let items = body["items"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("no `items` array in {body}"))?;
+    let by_id = items
+        .iter()
+        .filter_map(|item| {
+            item["person_id"]
+                .as_str()
+                .map(|person_id| (person_id, item))
+        })
+        .collect::<HashMap<_, _>>();
+    let explicit_id = explicit.to_string();
+    let parts_id = parts.to_string();
+    let single_id = single.to_string();
+    assert_eq!(
+        by_id[explicit_id.as_str()]["display_name"],
+        explicit_display
+    );
+    assert_eq!(by_id[explicit_id.as_str()]["first_name"], "Separate");
+    assert_eq!(by_id[explicit_id.as_str()]["last_name"], "Parts");
+    assert_eq!(
+        by_id[parts_id.as_str()]["display_name"],
+        format!("Available {parts_last}")
+    );
+    assert_eq!(by_id[parts_id.as_str()]["first_name"], "Available");
+    assert_eq!(by_id[parts_id.as_str()]["last_name"], parts_last);
+    assert_eq!(by_id[single_id.as_str()]["display_name"], single_first);
+    assert_eq!(by_id[single_id.as_str()]["first_name"], single_first);
+    assert!(by_id[single_id.as_str()]["last_name"].is_null());
+    Ok(())
+}
+
+#[tokio::test]
+async fn people_org_chart_visibility_does_not_widen_without_an_edge() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let marker = format!("find-{}", Uuid::now_v7().simple());
+    let caller = f.person(&format!("caller-{marker}@http-live.test")).await?;
+    let other = f.person(&format!("other-{marker}@http-live.test")).await?;
+    let uri = format!("/v1/people?q={marker}");
+
+    let (status, body) = get(app(&f, caller), &uri).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(found_ids(&body)?, vec![caller.to_string()]);
+
+    let (status, body) = get(flat_app(&f, caller), &uri).await?;
+    assert_eq!(status, StatusCode::OK);
+    let mut ids = found_ids(&body)?;
+    ids.sort();
+    let mut expected = vec![caller.to_string(), other.to_string()];
+    expected.sort();
+    assert_eq!(ids, expected);
+    Ok(())
+}
+
+#[tokio::test]
+async fn people_hide_a_manager_outside_the_callers_visible_set() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = f.person("manager-hidden-caller@http-live.test").await?;
+    let marker = format!("find-{}", Uuid::now_v7().simple());
+    let report = f
+        .person(&format!("manager-hidden-report-{marker}@http-live.test"))
+        .await?;
+    let manager = f
+        .person(&format!("manager-hidden-manager-{marker}@http-live.test"))
+        .await?;
+    f.reports_to(report, manager).await?;
+    f.grant(caller, Some(report)).await?;
+
+    let (status, body) = get(app(&f, caller), &format!("/v1/people?q={marker}")).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(found_ids(&body)?, vec![report.to_string()]);
+    assert!(body["items"][0]["manager_person_id"].is_null());
+    Ok(())
+}
+
+#[tokio::test]
+async fn tenant_people_visibility_requires_admin_and_lists_the_tenant_roster() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = f.person("people-plain@http-live.test").await?;
+    let marker = Uuid::now_v7().simple().to_string();
+    let unrelated = f.person(&format!("tenant-{marker}@http-live.test")).await?;
+    let uri = format!("/v1/people?visibility=tenant&q=tenant-{marker}");
+
+    let (status, _) = get(app(&f, caller), &uri).await?;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    grant_admin(&f, caller).await?;
+    let (status, body) = get(app(&f, caller), &uri).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(found_ids(&body)?, vec![unrelated.to_string()]);
+
+    let (status, _) = get(app(&f, caller), "/v1/people?visibility=all").await?;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    Ok(())
+}
+
+#[tokio::test]
+async fn people_cursor_resumes_only_the_listing_that_issued_it() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = f.person("people-page-caller@http-live.test").await?;
+    let marker = format!("find-{}", Uuid::now_v7().simple());
+    for index in 0..2 {
+        let person = f
+            .person(&format!("people-page-{marker}-{index}@http-live.test"))
+            .await?;
+        f.project_person(
+            person,
+            None,
+            None,
+            Some(&format!("People Page {marker} {index}")),
+            None,
+            None,
+        )
+        .await?;
+    }
+
+    let uri = format!("/v1/people?q={marker}&limit=1");
+    let (status, first) = get(flat_app(&f, caller), &uri).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(found_ids(&first)?.len(), 1);
+    let cursor = first["next_cursor"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("expected next cursor: {first}"))?;
+
+    let (status, second) = get(flat_app(&f, caller), &format!("{uri}&cursor={cursor}")).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(found_ids(&second)?.len(), 1);
+    assert_ne!(found_ids(&first)?, found_ids(&second)?);
+
+    grant_admin(&f, caller).await?;
+    let (status, _) = get(
+        flat_app(&f, caller),
+        &format!("/v1/people?visibility=tenant&q={marker}&limit=1&cursor={cursor}"),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    Ok(())
 }
 
 async fn admin_operator(f: &Fixture) -> anyhow::Result<Uuid> {
@@ -2092,5 +2353,145 @@ async fn every_operator_route_refuses_a_caller_the_gateway_did_not_name() -> Tes
             "{method} {uri} answered a caller with no identity"
         );
     }
+    Ok(())
+}
+
+/// The four correction verbs, each with a body its extractor accepts — so a
+/// case below varies ONE thing and the refusal is about that thing.
+fn correction_verbs(f: &Fixture, person: Uuid) -> Vec<(&'static str, Value)> {
+    let account = json!({"account": account_ref(f, "acct-extractor")});
+    vec![
+        (
+            "/v1/resolution/bind",
+            bind_body(f, "acct-extractor", person),
+        ),
+        (
+            "/v1/resolution/merge",
+            json!({
+                "source_person_id": person.to_string(),
+                "target_person_id": Uuid::now_v7().to_string(),
+            }),
+        ),
+        ("/v1/resolution/detach", account.clone()),
+        ("/v1/resolution/exclude", account),
+    ]
+}
+
+#[tokio::test]
+async fn a_correction_body_that_will_not_parse_is_refused_in_the_canonical_shape() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = operator(&f).await?;
+    let person = f.person("extractor@http-live.test").await?;
+    f.bound_at("acct-extractor", person, FIXTURE_REASON, 60)
+        .await?;
+
+    for (uri, _) in correction_verbs(&f, person) {
+        let req = Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header("content-type", "application/json")
+            .body(Body::from("{not json"))?;
+        let resp = app(&f, caller).oneshot(req).await?;
+        let status = resp.status();
+        let content_type = resp
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_owned();
+        let bytes = to_bytes(resp.into_body(), usize::MAX).await?;
+        let body: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}: {body}");
+        assert!(
+            content_type.starts_with("application/problem+json"),
+            "{uri} answered {content_type} — the console reads the problem \
+             document to say what went wrong, and gets nothing from a plain \
+             extractor rejection"
+        );
+        assert_eq!(
+            body["context"]["field_violations"][0]["field"], "body",
+            "{uri}: {body}"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_correction_without_a_json_content_type_is_refused_on_the_media_type() -> TestResult {
+    // Held before the extractor swap too — axum's own `Json` refuses on the
+    // media type as well. Kept as the guard that the swap did not trade the
+    // 415 away for a parse attempt, not as a rule this change introduced.
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = operator(&f).await?;
+    let person = f.person("media-type@http-live.test").await?;
+    f.bound_at("acct-extractor", person, FIXTURE_REASON, 60)
+        .await?;
+
+    for (uri, body) in correction_verbs(&f, person) {
+        let req = Request::builder()
+            .method("POST")
+            .uri(uri)
+            .body(Body::from(body.to_string()))?;
+        let resp = app(&f, caller).oneshot(req).await?;
+
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "{uri} parsed a body that declared no media type"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_comment_past_the_cap_is_refused_before_the_correction_applies() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = operator(&f).await?;
+    let person = f.person("comment-cap@http-live.test").await?;
+    f.bound_at("acct-extractor", person, FIXTURE_REASON, 60)
+        .await?;
+
+    let oversize = "c".repeat(501);
+    for (uri, mut body) in correction_verbs(&f, person) {
+        body["comment"] = Value::String(oversize.clone());
+        let (status, answer) = post(app(&f, caller), uri, &body).await?;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}: {answer}");
+        assert_eq!(
+            answer["context"]["field_violations"][0]["field"], "comment",
+            "{uri}: {answer}"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_account_search_needle_past_the_cap_is_refused() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = operator(&f).await?;
+
+    // `/v1/persons` and `/v1/visible-persons` both bound their needle at 200
+    // characters; this listing handed the raw one to the evidence reader.
+    let needle = "n".repeat(201);
+    let (status, body) = get(
+        app(&f, caller),
+        &format!("/v1/resolution/accounts?q={needle}"),
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(
+        body["context"]["field_violations"][0]["field"], "q",
+        "{body}"
+    );
     Ok(())
 }

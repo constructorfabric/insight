@@ -122,3 +122,7 @@ gears:
       default_ttl_days: 7
       max_ttl_days: 30
       sweep_interval_secs: 300
+      # Tag listing (GET /v1/images); empty disables it. A private repository
+      # additionally needs APP__gears__previews__config__registry_token.
+      registry_url: "https://ghcr.io"
+      registry_token: ""

@@ -30,6 +30,7 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import {
   belowPersonFloor,
   listsAnyone,
+  MAX_SEARCH_CHARS,
   MIN_SEARCH_CHARS,
   SEARCH_DEBOUNCE_MS,
   usePersonList,
@@ -127,6 +128,7 @@ export function PersonPicker({
           className="ps-8"
           placeholder={t("identities.picker.placeholder")}
           aria-label={t("identities.picker.placeholder")}
+          maxLength={MAX_SEARCH_CHARS}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />

@@ -26,6 +26,7 @@ import {
   useCreateExperiment,
   useDeleteExperiment,
   useExperiments,
+  useImages,
   usePreviewsGate,
 } from "@/queries/previews";
 
@@ -51,8 +52,8 @@ export function PreviewsBody() {
         <div className="rounded-lg border p-6 text-center">
           <p className="text-sm font-semibold">Previews are not available</p>
           <p className="mt-2 text-sm text-muted-foreground">
-            Managing preview experiments needs the previews-admin or admin
-            role, on a stand with experiments enabled.
+            Managing preview experiments needs the previews-admin or admin role,
+            on a stand with experiments enabled.
           </p>
         </div>
       </div>
@@ -66,8 +67,8 @@ export function PreviewsBody() {
             Preview experiments
           </h2>
           <p className="text-sm text-muted-foreground">
-            Each experiment serves one frontend build under /exp/&lt;name&gt;
-            on the preview host, against this stand&apos;s data.
+            Each experiment serves one frontend build under /exp/&lt;name&gt; on
+            the preview host, against this stand&apos;s data.
           </p>
         </section>
         <CreateExperimentForm />
@@ -90,19 +91,32 @@ function errorMessage(error: unknown): string {
 function CreateExperimentForm() {
   const [name, setName] = useState("");
   const [tag, setTag] = useState("");
+  const [ttlDays, setTtlDays] = useState("");
   const create = useCreateExperiment();
+  const images = useImages();
+  // Free text stays available either way; the registry only adds suggestions.
+  const suggestedTags =
+    images.data?.configured && images.data.tags.length > 0
+      ? images.data.tags
+      : null;
 
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
     if (!name.trim() || !tag.trim() || create.isPending) return;
+    const ttl = Number.parseInt(ttlDays, 10);
     create.mutate(
-      { name: name.trim(), tag: tag.trim() },
+      {
+        name: name.trim(),
+        tag: tag.trim(),
+        ...(Number.isFinite(ttl) && ttl > 0 ? { ttlDays: ttl } : {}),
+      },
       {
         onSuccess: () => {
           setName("");
           setTag("");
+          setTtlDays("");
         },
-      },
+      }
     );
   };
 
@@ -112,7 +126,7 @@ function CreateExperimentForm() {
       className="flex flex-col gap-3 rounded-lg border bg-card p-4"
       aria-label="Create a preview experiment"
     >
-      <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+      <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto_auto] sm:items-end">
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="previews-name">Name</Label>
           <Input
@@ -131,6 +145,27 @@ function CreateExperimentForm() {
             onChange={(event) => setTag(event.target.value)}
             placeholder="preview-my-branch"
             autoComplete="off"
+            list={suggestedTags ? "previews-tag-options" : undefined}
+          />
+          {suggestedTags ? (
+            <datalist id="previews-tag-options">
+              {suggestedTags.map((option) => (
+                <option key={option} value={option} />
+              ))}
+            </datalist>
+          ) : null}
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="previews-ttl">TTL days</Label>
+          <Input
+            id="previews-ttl"
+            type="number"
+            min={1}
+            className="w-24"
+            value={ttlDays}
+            onChange={(event) => setTtlDays(event.target.value)}
+            placeholder="default"
+            autoComplete="off"
           />
         </div>
         <Button
@@ -142,8 +177,12 @@ function CreateExperimentForm() {
         </Button>
       </div>
       <p className="text-xs text-muted-foreground">
-        The server validates both: the name is a DNS label (at most 55
-        characters), the tag a preview- or CI build tag.
+        The server validates everything: the name is a DNS label (at most 55
+        characters), the tag a preview- or CI build tag, the TTL within the
+        server&apos;s maximum.
+        {suggestedTags
+          ? " The tag field suggests the registry's preview- tags."
+          : null}
       </p>
       {create.isError ? (
         <Alert variant="destructive">
@@ -184,77 +223,90 @@ function ExperimentList() {
       </Alert>
     );
   }
-  if (experiments.data.length === 0) {
+  const { experiments: rows, liveCount, cap } = experiments.data;
+  const countLine = (
+    <p className="text-sm text-muted-foreground">
+      {liveCount} of {cap} experiments
+    </p>
+  );
+
+  if (rows.length === 0) {
     return (
-      <p className="rounded-lg border p-6 text-center text-sm text-muted-foreground">
-        No experiments are running.
-      </p>
+      <div className="flex flex-col gap-2">
+        {countLine}
+        <p className="rounded-lg border p-6 text-center text-sm text-muted-foreground">
+          No experiments are running.
+        </p>
+      </div>
     );
   }
 
   return (
-    <div className="overflow-x-auto rounded-lg border">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Name</TableHead>
-            <TableHead>Tag</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead>Expires</TableHead>
-            <TableHead className="text-right">Actions</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {experiments.data.map((experiment) => (
-            <TableRow key={experiment.name}>
-              <TableCell className="font-mono text-xs">
-                {experiment.name}
-              </TableCell>
-              <TableCell className="font-mono text-xs">
-                {experiment.tag}
-              </TableCell>
-              <TableCell className="text-muted-foreground">
-                {experiment.status}
-              </TableCell>
-              <TableCell className="text-muted-foreground">
-                {experiment.expiresAt
-                  ? new Date(experiment.expiresAt).toLocaleString()
-                  : "—"}
-              </TableCell>
-              <TableCell className="text-right">
-                <div className="flex justify-end gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    render={
-                      // Cross-origin (the preview host), so a plain anchor.
-                      <a
-                        href={experiment.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        aria-label={`Open experiment ${experiment.name}`}
-                      />
-                    }
-                  >
-                    <ExternalLink />
-                    Open
-                  </Button>
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    onClick={() => {
-                      remove.reset();
-                      setDeleting(experiment);
-                    }}
-                  >
-                    Delete
-                  </Button>
-                </div>
-              </TableCell>
+    <div className="flex flex-col gap-2">
+      {countLine}
+      <div className="overflow-x-auto rounded-lg border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Name</TableHead>
+              <TableHead>Tag</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Expires</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
             </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+          </TableHeader>
+          <TableBody>
+            {rows.map((experiment) => (
+              <TableRow key={experiment.name}>
+                <TableCell className="font-mono text-xs">
+                  {experiment.name}
+                </TableCell>
+                <TableCell className="font-mono text-xs">
+                  {experiment.tag}
+                </TableCell>
+                <TableCell className="text-muted-foreground">
+                  {experiment.status}
+                </TableCell>
+                <TableCell className="text-muted-foreground">
+                  {experiment.expiresAt
+                    ? new Date(experiment.expiresAt).toLocaleString()
+                    : "—"}
+                </TableCell>
+                <TableCell className="text-right">
+                  <div className="flex justify-end gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      render={
+                        // Cross-origin (the preview host), so a plain anchor.
+                        <a
+                          href={experiment.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          aria-label={`Open experiment ${experiment.name}`}
+                        />
+                      }
+                    >
+                      <ExternalLink />
+                      Open
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => {
+                        remove.reset();
+                        setDeleting(experiment);
+                      }}
+                    >
+                      Delete
+                    </Button>
+                  </div>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
       <ConfirmDialog
         open={deleting != null}
         onOpenChange={(open) => {

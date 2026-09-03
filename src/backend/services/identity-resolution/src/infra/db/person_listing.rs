@@ -64,6 +64,8 @@ use uuid::Uuid;
 use crate::config::VisibilityPolicy;
 use crate::domain::resolution::EXCLUDED_PERSON;
 
+use super::visible_set_sql::CURRENT_VISIBLE_SET_CTE;
+
 /// How much of the label the order key carries.
 ///
 /// INVARIANT: must keep the key under `max_sort_length` (1024 bytes by default,
@@ -153,42 +155,6 @@ pub struct VisibleTo<'a> {
     pub org_source_type: &'a str,
     pub policy: VisibilityPolicy,
 }
-
-/// INVARIANT: the same union `subchart_repo` evaluates. A second rule here
-/// would let a listing show a person the batch filter refuses to confirm.
-const VISIBLE_SET_CTE: &str = r"
-        visible_set (person_id) AS (
-            SELECT ?
-            UNION
-            SELECT viewed_person_id
-            FROM visibility
-            WHERE insight_tenant_id = ?
-              AND viewer_person_id  = ?
-              AND viewed_person_id  IS NOT NULL
-              AND valid_from <= UTC_TIMESTAMP(6)
-              AND (valid_to IS NULL OR valid_to > UTC_TIMESTAMP(6))
-            UNION
-            SELECT DISTINCT person_id
-            FROM persons
-            WHERE insight_tenant_id = ?
-              AND (? OR EXISTS (
-                  SELECT 1 FROM visibility
-                  WHERE insight_tenant_id = ?
-                    AND viewer_person_id  = ?
-                    AND viewed_person_id  IS NULL
-                    AND valid_from <= UTC_TIMESTAMP(6)
-                    AND (valid_to IS NULL OR valid_to > UTC_TIMESTAMP(6))
-              ))
-            UNION
-            SELECT oc.child_person_id
-            FROM visible_set vs
-            JOIN org_chart oc
-              ON  oc.parent_person_id    = vs.person_id
-              AND oc.insight_tenant_id   = ?
-              AND oc.insight_source_type = ?
-              AND oc.valid_from <= UTC_TIMESTAMP(6)
-              AND (oc.valid_to IS NULL OR oc.valid_to > UTC_TIMESTAMP(6))
-        )";
 
 /// One listed person and the position that orders them.
 #[derive(Debug, Clone)]
@@ -459,7 +425,7 @@ fn visible_scope(visible_to: Option<VisibleTo<'_>>, tenant_id: Uuid) -> VisibleS
 
     VisibleScopeSql {
         recursive: "RECURSIVE ",
-        cte: format!(",\n{VISIBLE_SET_CTE}"),
+        cte: format!(",\n{CURRENT_VISIBLE_SET_CTE}"),
         filter: " AND EXISTS (SELECT 1 FROM visible_set vs WHERE vs.person_id = p.person_id)",
         values: vec![
             viewer(),

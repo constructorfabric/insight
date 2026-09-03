@@ -31,7 +31,18 @@ import uuid
 from collections.abc import Sequence
 from typing import Final
 
-from insight_stand import ANALYTICS_PREFIX, ApiClient, analytics_path, identity_path
+from insight_stand import (
+    ANALYTICS_PREFIX,
+    RUN_TAG,
+    SCRATCH_PREFIX,
+    SCRATCH_SOURCE_ID,
+    SCRATCH_SOURCE_TYPE,
+    ApiClient,
+    analytics_path,
+    identity_path,
+    issued_names,
+    scratch_name,
+)
 
 from .schemas import CustomMetric, ListResponse, SavedQuery
 
@@ -41,27 +52,10 @@ from .schemas import CustomMetric, ListResponse, SavedQuery
 #: would couple the sweep to every schema change that does not concern it.
 _Named = ListResponse[dict[str, object]]
 
-#: Marks every row this suite creates, so a leak is identifiable on sight.
-#: INVARIANT: must match insight_seed.config.STAND_SCRATCH_PREFIX — the seed
-#: preflight uses it to recognise this suite's leftover journal rows.
-SCRATCH_PREFIX: Final[str] = "stand-scratch"
-
-#: The connector instance every correction this suite writes is filed under — the
-#: other half of what makes an undeletable journal row recognisable (rule 5).
-#: Fixed, not random: a stable pair keeps those rows attributable to this suite.
-#: INVARIANT: must match insight_seed.config.STAND_SCRATCH_SOURCE_TYPE, and the
-#: literal `github` segment in `operations.py`'s account-read template — the
-#: coverage gate folds a recorded path onto a template by exact segment equality,
-#: so a divergence here makes that operation read as never exercised.
-SCRATCH_SOURCE_TYPE: Final[str] = "github"
-
-#: INVARIANT: must match insight_seed.config.STAND_SCRATCH_SOURCE_ID. Unlike the
-#: type, this segment is a `{source_id}` in the coverage template, so it folds
-#: whatever its value.
-SCRATCH_SOURCE_ID: Final[str] = "01900000-0000-7000-8000-00000000feed"
-
-#: One token per session: a leak becomes attributable to the run that made it.
-RUN_TAG: Final[str] = uuid.uuid4().hex[:8]
+# The naming and the connector instance now live in `insight_stand`, so the UI
+# journeys can file a correction under the same pair without importing across
+# suites. Re-exported here because every existing caller reads them from this
+# module, and because the issued-name registry must stay single.
 
 #: SQL the query gate accepts (a single `SELECT … FROM db.table`) that executes
 #: deterministically on ANY ClickHouse — `system.one` has exactly one row — so
@@ -105,24 +99,10 @@ SCRATCH_OBSERVATION_SQL: Final[str] = (
     "FROM system.one"
 )
 
-#: Names handed out this session, checked for survivors at the end.
-_ISSUED: set[str] = set()
-
 #: Rows this session created that have NO name to namespace — a person-role
 #: assignment and a visibility grant are identified only by their id. Tracked as
 #: (listing path, id field, id) so the sweep can look for them the same way.
 _CREATED_IDS: list[tuple[str, str, str]] = []
-
-
-def scratch_name(tag: str) -> str:
-    """A unique, greppable, attributable name — and register it for the sweep."""
-    name = f"{SCRATCH_PREFIX}-{RUN_TAG}-{tag}-{uuid.uuid4().hex[:8]}"
-    _ISSUED.add(name)
-    return name
-
-
-def issued_names() -> frozenset[str]:
-    return frozenset(_ISSUED)
 
 
 def tracked_ids() -> tuple[str, ...]:
@@ -276,7 +256,8 @@ def surviving_scratch_rows(*, analytics: ApiClient, identity: ApiClient) -> list
     So a tracked row is judged by `valid_to` when the listing reports one, and
     by mere presence when it does not.
     """
-    if not _ISSUED and not _CREATED_IDS:
+    issued = issued_names()
+    if not issued and not _CREATED_IDS:
         return []
 
     def client_for(path: str) -> ApiClient:
@@ -287,7 +268,7 @@ def surviving_scratch_rows(*, analytics: ApiClient, identity: ApiClient) -> list
     for listing in _NAMED_LISTINGS:
         for item in _listing_items(client_for(listing), listing):
             name = item.get("name")
-            if isinstance(name, str) and name in _ISSUED:
+            if isinstance(name, str) and name in issued:
                 leaked.append(f"{listing} -> {name}")
 
     for listing, id_field, value in _CREATED_IDS:

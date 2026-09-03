@@ -15,10 +15,11 @@ vi.mock("@tanstack/react-router", async () => {
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SidebarProvider } from "@/components/ui/sidebar";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { MetricDefinitionListResponse } from "@/api/metric-definitions-client";
+import { setPortalShowPlanned } from "@/lib/portal/portal-store";
 import { identityPerson, pid } from "@/test/identity";
 
 const mocks = vi.hoisted(() => ({
@@ -114,6 +115,8 @@ beforeEach(() => {
     dispatchEvent: () => false,
   })) as unknown as typeof window.matchMedia;
   mocks.definitions = { metrics: [] };
+  mocks.isFlat = false;
+  act(() => setPortalShowPlanned(true));
   portalRouter.reset();
 });
 
@@ -178,5 +181,19 @@ describe("PortalTopBar · zones that filter nothing", () => {
     bar();
 
     expect(screen.queryByText("Cohort")).toBeNull();
+  });
+});
+
+describe("PortalTopBar · planned sections", () => {
+  it("keeps the cohort control off the bar until the reader turns planned sections on", async () => {
+    act(() => setPortalShowPlanned(false));
+    bar();
+
+    await waitFor(() => expect(filters()).toBeInTheDocument());
+    expect(screen.queryByText("Cohort")).toBeNull();
+    expect(screen.queryByTestId("dims")).toBeNull();
+
+    act(() => setPortalShowPlanned(true));
+    expect(screen.getByText("Cohort")).toBeInTheDocument();
   });
 });

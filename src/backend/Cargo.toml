@@ -74,7 +74,7 @@ aes-gcm = "0.11"
 zeroize = "1.8"
 hex = "0.4"
 csv = "1.3"
-rust_xlsxwriter = { version = "0.98", features = ["constant_memory"] }
+rust_xlsxwriter = { version = "0.99", features = ["constant_memory"] }
 time = { version = "0.3", features = ["serde", "formatting", "parsing"] }
 
 # Logging
@@ -102,31 +102,30 @@ serde_yaml = "0.9"
 clap = { version = "4.5", features = ["derive"] }
 
 # gears-rust toolkit (crates.io, `cf-gears-toolkit-*` family)
-# Versions tracked to gears-rust HEAD (the authoritative source); bumped for
-# the authenticator gear (nginx+auth step 04).
-toolkit = { package = "cf-gears-toolkit", version = "=0.6.13" }
-toolkit-auth = { package = "cf-gears-toolkit-auth", version = "=0.7.2" }
-toolkit-security = { package = "cf-gears-toolkit-security", version = "=0.7.2" }
-toolkit-canonical-errors = { package = "cf-gears-toolkit-canonical-errors", version = "=0.7.4", features = ["axum", "sea-orm"] }
-toolkit-odata = { package = "cf-gears-toolkit-odata", version = "=0.8.2" }
+# Versions tracked to gears-rust HEAD (the authoritative source); the whole
+# family moves together with the opentelemetry major (see INVARIANT below).
+toolkit = { package = "cf-gears-toolkit", version = "=0.7.2" }
+toolkit-auth = { package = "cf-gears-toolkit-auth", version = "=0.7.6" }
+toolkit-security = { package = "cf-gears-toolkit-security", version = "=0.8.1" }
+toolkit-canonical-errors = { package = "cf-gears-toolkit-canonical-errors", version = "=0.9.2", features = ["axum", "sea-orm"] }
 
 # gears-rust SDKs (crates.io)
-authn-resolver-sdk = { package = "cf-gears-authn-resolver-sdk", version = "0.3.18" }
-types-registry-sdk = { package = "cf-gears-types-registry-sdk", version = "0.3.0" }
+authn-resolver-sdk = { package = "cf-gears-authn-resolver-sdk", version = "0.3.29" }
+types-registry-sdk = { package = "cf-gears-types-registry-sdk", version = "0.3.6" }
 
 # gears-rust system gears (crates.io)
-api_gateway = { package = "cf-gears-api-gateway", version = "0.2.9" }
-authn-resolver = { package = "cf-gears-authn-resolver", version = "0.2.18" }
-authz-resolver = { package = "cf-gears-authz-resolver", version = "0.1.25" }
+api_gateway = { package = "cf-gears-api-gateway", version = "0.4.9" }
+authn-resolver = { package = "cf-gears-authn-resolver", version = "0.2.29" }
+authz-resolver = { package = "cf-gears-authz-resolver", version = "0.1.37" }
 # Downstream gateway-JWT verification (JWKS + configurable claim mapping). Was a
 # local fork under plugins/; now the upstream published crate.
-oidc-authn-plugin = { package = "cf-gears-oidc-authn-plugin", version = "0.1.1" }
-tenant-resolver = { package = "cf-gears-tenant-resolver", version = "0.1.22" }
-static-authz-plugin = { package = "cf-gears-static-authz-plugin", version = "0.1.21" }
-single-tenant-tr-plugin = { package = "cf-gears-single-tenant-tr-plugin", version = "0.1.23" }
-grpc_hub = { package = "cf-gears-grpc-hub", version = "0.2.8" }
-gear_orchestrator = { package = "cf-gears-gear-orchestrator", version = "0.1.27" }
-types_registry = { package = "cf-gears-types-registry", version = "0.1.23" }
+oidc-authn-plugin = { package = "cf-gears-oidc-authn-plugin", version = "0.2.7" }
+tenant-resolver = { package = "cf-gears-tenant-resolver", version = "0.1.33" }
+static-authz-plugin = { package = "cf-gears-static-authz-plugin", version = "0.1.32" }
+single-tenant-tr-plugin = { package = "cf-gears-single-tenant-tr-plugin", version = "0.1.34" }
+grpc_hub = { package = "cf-gears-grpc-hub", version = "0.2.19" }
+gear_orchestrator = { package = "cf-gears-gear-orchestrator", version = "0.1.38" }
+types_registry = { package = "cf-gears-types-registry", version = "0.1.35" }
 
 # Anchored validation patterns (previews image-tag shapes). The lite build:
 # no Unicode tables, ASCII-only patterns here.
@@ -141,11 +140,11 @@ figment = { version = "0.10", features = ["yaml", "env"] }
 
 # INVARIANT: must match the toolkit's opentelemetry major — a different major
 # is a different global meter provider and instruments silently no-op.
-opentelemetry = "0.31"
+opentelemetry = "0.32"
 # Local meter provider for the CLI job paths (seed/sync), which run outside the
 # toolkit server bootstrap and must build + flush their own provider.
-opentelemetry_sdk = { version = "0.31", features = ["metrics", "rt-tokio"] }
-opentelemetry-otlp = { version = "0.31", features = ["grpc-tonic", "http-proto", "metrics"] }
+opentelemetry_sdk = { version = "0.32", features = ["metrics", "rt-tokio"] }
+opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic", "http-proto", "metrics"] }
 
 # Internal crates
 insight-clickhouse = { path = "libs/insight-clickhouse" }

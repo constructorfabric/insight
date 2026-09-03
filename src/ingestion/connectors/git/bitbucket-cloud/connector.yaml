@@ -95,6 +95,12 @@ definitions:
       - type: WaitTimeFromHeader
         header: Retry-After
         max_waiting_time_in_seconds: 600
+      # Fallback for failures that carry no response and so no header — a
+      # connection refused or reset while the proxy restarts during a deploy.
+      # Without it the request dies after two immediate tries; the ladder
+      # rides out any restart shorter than the CDK's overall retry ceiling.
+      - type: ExponentialBackoffStrategy
+        factor: 5
     response_filters:
       # The repository is being cloned in the background: the proxy is
       # working, the caller waits.

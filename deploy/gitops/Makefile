@@ -104,10 +104,10 @@ HELM_ATOMIC_FLAG := $(if $(filter false,$(ATOMIC)),,--atomic)
 #                         helm to print every kubectl API call it makes
 #                         (verbose; great for diagnosing a stuck install).
 #                     Example: HELM_EXTRA_FLAGS=--debug make deploy ENV=local
-# HELM_UPGRADE_FLAGS: passed ONLY to the umbrella `helm upgrade --install`.
-#                     Use for apply-time flags like `--force-conflicts`
-#                     (SSA ownership override) that error out on
-#                     read-only `helm show` / `helm template`.
+# HELM_UPGRADE_FLAGS: passed to every `helm upgrade --install` (umbrella,
+#                     system-*, bootstrap-*). Use for apply-time flags like
+#                     `--force-conflicts` (SSA ownership override) that
+#                     error out on read-only `helm show` / `helm template`.
 HELM_EXTRA_FLAGS   ?=
 HELM_UPGRADE_FLAGS ?=
 
@@ -678,7 +678,7 @@ endef
 # any other `$` syntax pass through untouched) into
 # $(RENDER_DIR)/system-values/ and helm reads the rendered copies.
 # Usage: $(call _system_values_args,<svc>)
-_system_ns_env = NS_INFRA=$(NS_INFRA) NS_MONITORING=$(NS_MONITORING)
+_system_ns_env = NS_INFRA=$(NS_INFRA) NS_MONITORING=$(NS_MONITORING) NS_APP=$(NS_APP)
 _system_values_args = $(or $(shell $(_system_ns_env) bash scripts/render-system-values.sh $(1) $(ENV) $(RENDER_DIR)/system-values),$(error render-system-values.sh failed for '$(1)' — see the message above))
 
 # Helper: require a sealed-secret named `<svc>-creds` to be present in
@@ -729,7 +729,7 @@ system-mariadb: vpn-up kube-ctx
 		--namespace $(NS_INFRA) --create-namespace \
 		--version $(MARIADB_VERSION) $(HELM_EXTRA_FLAGS) \
 		$(call _system_values_args,mariadb) \
-		--wait --timeout 10m
+		--wait --timeout 10m $(HELM_UPGRADE_FLAGS)
 
 .PHONY: system-clickhouse
 system-clickhouse: vpn-up kube-ctx
@@ -738,7 +738,7 @@ system-clickhouse: vpn-up kube-ctx
 		--namespace $(NS_INFRA) --create-namespace \
 		--version $(CLICKHOUSE_VERSION) $(HELM_EXTRA_FLAGS) \
 		$(call _system_values_args,clickhouse) \
-		--wait --timeout 10m
+		--wait --timeout 10m $(HELM_UPGRADE_FLAGS)
 
 .PHONY: system-redis
 system-redis: vpn-up kube-ctx
@@ -747,7 +747,7 @@ system-redis: vpn-up kube-ctx
 		--namespace $(NS_INFRA) --create-namespace \
 		--version $(REDIS_VERSION) $(HELM_EXTRA_FLAGS) \
 		$(call _system_values_args,redis) \
-		--wait --timeout 5m
+		--wait --timeout 5m $(HELM_UPGRADE_FLAGS)
 
 .PHONY: system-redpanda
 system-redpanda: vpn-up kube-ctx
@@ -757,7 +757,7 @@ system-redpanda: vpn-up kube-ctx
 		--namespace $(NS_INFRA) --create-namespace \
 		--version $(REDPANDA_VERSION) $(HELM_EXTRA_FLAGS) \
 		$(call _system_values_args,redpanda) \
-		--wait --timeout 10m
+		--wait --timeout 10m $(HELM_UPGRADE_FLAGS)
 
 .PHONY: system-redpanda-console
 system-redpanda-console: vpn-up kube-ctx
@@ -767,7 +767,7 @@ system-redpanda-console: vpn-up kube-ctx
 		--namespace $(NS_INFRA) --create-namespace \
 		--version $(REDPANDA_CONSOLE_VERSION) $(HELM_EXTRA_FLAGS) \
 		$(call _system_values_args,redpanda-console) \
-		--wait --timeout 5m
+		--wait --timeout 5m $(HELM_UPGRADE_FLAGS)
 
 # ── Observability (LGTM) ────────────────────────────────────────────────
 # VictoriaMetrics (metrics store) + Loki (log store) + Tempo (trace store)
@@ -784,7 +784,7 @@ system-victoriametrics: vpn-up kube-ctx
 		--namespace $(NS_INFRA) --create-namespace \
 		--version $(VICTORIAMETRICS_VERSION) $(HELM_EXTRA_FLAGS) \
 		$(call _system_values_args,victoriametrics) \
-		--wait --timeout 10m
+		--wait --timeout 10m $(HELM_UPGRADE_FLAGS)
 
 .PHONY: system-loki
 system-loki: vpn-up kube-ctx
@@ -794,7 +794,7 @@ system-loki: vpn-up kube-ctx
 		--namespace $(NS_INFRA) --create-namespace \
 		--version $(LOKI_VERSION) $(HELM_EXTRA_FLAGS) \
 		$(call _system_values_args,loki) \
-		--wait --timeout 10m
+		--wait --timeout 10m $(HELM_UPGRADE_FLAGS)
 
 .PHONY: system-tempo
 system-tempo: vpn-up kube-ctx
@@ -804,7 +804,7 @@ system-tempo: vpn-up kube-ctx
 		--namespace $(NS_INFRA) --create-namespace \
 		--version $(TEMPO_VERSION) $(HELM_EXTRA_FLAGS) \
 		$(call _system_values_args,tempo) \
-		--wait --timeout 10m
+		--wait --timeout 10m $(HELM_UPGRADE_FLAGS)
 
 .PHONY: system-alloy
 system-alloy: vpn-up kube-ctx
@@ -814,7 +814,7 @@ system-alloy: vpn-up kube-ctx
 		--namespace $(NS_INFRA) --create-namespace \
 		--version $(ALLOY_VERSION) $(HELM_EXTRA_FLAGS) \
 		$(call _system_values_args,alloy) \
-		--wait --timeout 5m
+		--wait --timeout 5m $(HELM_UPGRADE_FLAGS)
 
 # Infra metrics: kube-state-metrics first (alloy-metrics scrapes it),
 # then the alloy-metrics scraper. Both remote-write into VictoriaMetrics.
@@ -826,7 +826,7 @@ system-kube-state-metrics: vpn-up kube-ctx
 		--namespace $(NS_INFRA) --create-namespace \
 		--version $(KUBE_STATE_METRICS_VERSION) $(HELM_EXTRA_FLAGS) \
 		$(call _system_values_args,kube-state-metrics) \
-		--wait --timeout 5m
+		--wait --timeout 5m $(HELM_UPGRADE_FLAGS)
 
 .PHONY: system-alloy-metrics
 system-alloy-metrics: vpn-up kube-ctx
@@ -836,7 +836,7 @@ system-alloy-metrics: vpn-up kube-ctx
 		--namespace $(NS_INFRA) --create-namespace \
 		--version $(ALLOY_VERSION) $(HELM_EXTRA_FLAGS) \
 		$(call _system_values_args,alloy-metrics) \
-		--wait --timeout 5m
+		--wait --timeout 5m $(HELM_UPGRADE_FLAGS)
 
 .PHONY: system-grafana
 system-grafana: vpn-up kube-ctx
@@ -845,7 +845,7 @@ system-grafana: vpn-up kube-ctx
 	helm upgrade --install $(GRAFANA_RELEASE) $(GRAFANA_CHART) \
 		--namespace $(NS_INFRA) --create-namespace \
 		--version $(GRAFANA_VERSION) $(HELM_EXTRA_FLAGS) \
-		$(call _system_values_args,grafana) \
+		$(call _system_values_args,grafana) $(HELM_UPGRADE_FLAGS) \
 		--wait --timeout 5m
 
 # Airbyte: helm-install the upstream chart, then run the post-install
@@ -873,7 +873,7 @@ system-airbyte: vpn-up kube-ctx
 		--namespace $(NS_INFRA) --create-namespace \
 		--version $(AIRBYTE_VERSION) $(HELM_EXTRA_FLAGS) \
 		$(call _system_values_args,airbyte) \
-		--wait --timeout 15m
+		--wait --timeout 15m $(HELM_UPGRADE_FLAGS)
 	@NAMESPACE=$(NS_INFRA) AIRBYTE_RELEASE=$(AIRBYTE_RELEASE) \
 		AIRBYTE_SETUP_EMAIL="$$AIRBYTE_SETUP_EMAIL" \
 		AIRBYTE_SETUP_ORG="$$AIRBYTE_SETUP_ORG" \
@@ -901,7 +901,7 @@ system-argo: vpn-up kube-ctx
 		--set controller.workflowNamespaces[1]=$(NS_APP) \
 		--set controller.instanceID.enabled=true \
 		--set controller.instanceID.explicitID=$(ARGO_RELEASE)-$(NS_INFRA) \
-		--wait --timeout 5m
+		--wait --timeout 5m $(HELM_UPGRADE_FLAGS)
 	@command -v envsubst >/dev/null \
 		|| { echo "$(C_RED)ERROR$(C_RST): envsubst not found (install gettext)"; exit 1; }
 	@NAMESPACE=$(NS_INFRA) SA_NAMESPACE=$(NS_INFRA) WORKFLOW_SA=$(ARGO_WORKFLOW_SA) \
@@ -1216,7 +1216,7 @@ bootstrap-envoy-gateway: vpn-up kube-ctx
 		--namespace $(ENVOY_GATEWAY_NAMESPACE) --create-namespace \
 		--version $(ENVOY_GATEWAY_VERSION) $(HELM_EXTRA_FLAGS) \
 		$$VALUES_ARGS \
-		--wait --timeout 5m
+		--wait --timeout 5m $(HELM_UPGRADE_FLAGS)
 	@# Namespaces come from inventory.yaml (namespaces.*), never hardcoded:
 	@# ${NS_APP} / ${NS_INFRA} / ${NS_PREVIEWS} placeholders in gateway.yaml
 	@# are substituted here. A manifest without placeholders applies as-is.
@@ -1243,7 +1243,7 @@ bootstrap-cert-manager: vpn-up kube-ctx
 		--set crds.enabled=true \
 		--set config.enableGatewayAPI=$(CERT_MANAGER_GATEWAY_SHIM) \
 		$$VALUES_ARGS \
-		--wait --timeout 5m
+		--wait --timeout 5m $(HELM_UPGRADE_FLAGS)
 	@kubectl --context $(KUBE_CTX) -n $(CERT_MANAGER_NAMESPACE) \
 		rollout status deploy/$(CERT_MANAGER_RELEASE)-webhook --timeout=60s
 	@# INVARIANT: bootstrap returns only once every issuer this file defines is
@@ -1280,7 +1280,7 @@ bootstrap-sealed-secrets: vpn-up kube-ctx
 		--namespace $(SEALED_SECRETS_NAMESPACE) \
 		--version $(SEALED_SECRETS_VERSION) $(HELM_EXTRA_FLAGS) \
 		$$VALUES_ARGS \
-		--wait --timeout 3m
+		--wait --timeout 3m $(HELM_UPGRADE_FLAGS)
 
 .PHONY: bootstrap-status
 bootstrap-status: vpn-up kube-ctx

@@ -14,6 +14,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { MetricResult } from "@/api/metric-results-client";
+import { previousPeriodRange } from "@/api/period-to-date-range";
 import type { GroupId } from "@/lib/insight/groups";
 import { normalizeMetricResults } from "@/lib/metrics/collection";
 
@@ -28,6 +29,16 @@ const mocks = vi.hoisted(() => ({
   },
   set: new Map<string, { byKey: Map<string, never>; isPending: boolean; isError: boolean; refetch: () => void }>(),
   cohort: [] as string[],
+  period: "week" as const,
+  range: { from: "2026-07-20", to: "2026-07-26" },
+  // Every `useMetricCollectionSet` call, so a test can assert WHICH windows the
+  // view asked for — the mock returns one result set regardless of arguments.
+  setCalls: [] as Array<{
+    collections: unknown;
+    entity: { type: string; ids?: string[] };
+    range: { from: string; to: string };
+    compareTo?: { from: string; to: string };
+  }>,
 }));
 
 // usePersonSectionStandings now reads source availability from the tenant's
@@ -42,15 +53,28 @@ vi.mock("@/queries/metric-definitions", async (orig) => ({
 }));
 vi.mock("@/queries/metric-results", () => ({
   useMetricCollection: () => mocks.collection,
-  useMetricCollectionSet: () => mocks.set,
+  useMetricCollectionSet: (
+    collections: unknown,
+    entity: { type: string; ids?: string[] },
+    range: { from: string; to: string },
+    compareTo?: { from: string; to: string }
+  ) => {
+    mocks.setCalls.push({ collections, entity, range, compareTo });
+    return mocks.set;
+  },
   collectionSetPending: (set: Map<string, { isPending: boolean }>) =>
     [...set.values()].some((r) => r.isPending),
 }));
 vi.mock("@/lib/portal/use-person-cohort", () => ({
   usePersonCohort: () => mocks.cohort,
 }));
+// This view only mounts on "At a glance", so no section is ever open under it;
+// `use-person-sections.test.tsx` covers the window scope on both routes.
+vi.mock("@/lib/portal/portal-nav", () => ({
+  usePortalItem: () => null,
+}));
 vi.mock("@/hooks/use-portal-period", () => ({
-  usePortalPeriod: () => ({ period: "week", dateRange: { from: "2026-07-20", to: "2026-07-26" } }),
+  usePortalPeriod: () => ({ period: mocks.period, dateRange: mocks.range }),
 }));
 vi.mock("@/hooks/use-settings", () => ({ useSettings: () => ({ focusMode: false }) }));
 vi.mock("@/components/widgets/dashboard/kpi-tile", () => ({
@@ -132,6 +156,7 @@ beforeEach(() => {
   mocks.collection.isPending = false;
   mocks.collection.isError = false;
   mocks.cohort = [];
+  mocks.setCalls.length = 0;
   seedSet();
 });
 
@@ -171,6 +196,41 @@ describe("MetricGroupsView", () => {
     render(<MetricGroupsView personId="p@x" groupIds={GROUPS} showKpis />);
     expect(screen.getByText("At a glance")).toBeInTheDocument();
     expect(screen.getByTestId("needs-attention")).toBeInTheDocument();
+  });
+
+  it("asks for the sections over one window pair, not a shifted second request", () => {
+    render(<MetricGroupsView personId="p@x" groupIds={GROUPS} showKpis />);
+    // Attention compares against the previous period. Asking for it over a
+    // SHIFTED range is the duplicate round trip this view stopped making
+    // (#2651), so every request runs over the period on screen.
+    for (const call of mocks.setCalls) {
+      expect(call.range, `range for ${JSON.stringify(call.entity)}`).toEqual(
+        mocks.range,
+      );
+    }
+    // The page and the nav mark both ask; identical arguments is what makes
+    // that one query key and one round trip, so the distinct signature — not
+    // the call count — is the thing under test.
+    const sections = mocks.setCalls.filter((c) => (c.entity.ids?.length ?? 0) > 0);
+    const signatures = new Set(sections.map((c) => JSON.stringify(c)));
+    expect(sections.length).toBeGreaterThan(1);
+    expect(signatures.size).toBe(1);
+    expect(sections[0]!.compareTo).toEqual(
+      previousPeriodRange(mocks.range, mocks.period),
+    );
+  });
+
+  it("asks for the slice cohort under one signature too", () => {
+    mocks.cohort = ["a@x", "b@x"];
+    render(<MetricGroupsView personId="p@x" groupIds={GROUPS} showKpis />);
+    // The same trap one hook over: the page and the nav mark each named their
+    // own group list for the cohort, so a narrower one would split it into a
+    // second key and a second request per section.
+    const cohort = mocks.setCalls.filter(
+      (c) => c.entity.ids?.join() === mocks.cohort.join(),
+    );
+    expect(cohort.length).toBeGreaterThan(1);
+    expect(new Set(cohort.map((c) => JSON.stringify(c))).size).toBe(1);
   });
 
   it("routes a KPI tile through onSelectGroup instead of the modal when provided", async () => {

@@ -40,6 +40,17 @@ class ExperimentStatus(StrEnum):
     expired = 'expired'
 
 
+class ImageListResponse(BaseModel):
+    """
+    Body of `GET /v1/images`.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    configured: bool = Field(..., description='False when tag listing is disabled server-side; `tags` is then empty.')
+    tags: list[str] = Field(..., description="The repository's `preview-…` tags, deduped and sorted.")
+
+
 class Problem(BaseModel):
     """
     RFC 9457 problem+json. `context` varies by error category.
@@ -79,4 +90,6 @@ class ExperimentListResponse(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
+    cap: int = Field(..., ge=0)
     experiments: list[ExperimentResponse]
+    liveCount: int = Field(..., description='Experiments counting against the cap; expired ones do not.', ge=0)

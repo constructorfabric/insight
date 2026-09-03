@@ -13,8 +13,19 @@ use super::meta::{RepoMeta, now_epoch_s};
 use super::metrics::{self, DiskGauges, EvictionTier, FetchResult};
 use super::runner::{GitCredentials, GitError, GitRunner};
 
-const INLINE_WAIT: Duration = Duration::from_secs(15);
+/// How long a request waits in-connection for the entry to become readable —
+/// through a fetch queue, a cold clone, or a purge holding the write side.
+///
+/// The connectors set no client timeout and their retry ceiling (600 s of
+/// wall clock once the first failure lands) cannot be raised, so a held
+/// connection is the only side that can absorb a long preparation: waiting
+/// burns none of the caller's retry budget, a 429 answer starts the clock.
+/// INVARIANT: must stay under `api::HANDLER_BUDGET`, or the typed `Busy`
+/// answer below loses to the blanket 503.
+pub(crate) const PREPARATION_WAIT: Duration = Duration::from_mins(55);
 const COLD_RETRY_AFTER: Duration = Duration::from_secs(30);
+/// Probe wait for opportunistic work that a concurrent writer makes moot.
+const MEASURE_WAIT: Duration = Duration::from_secs(15);
 const REPROOF_ATTEMPTS: usize = 2;
 const BARE_REFSPEC: &str = "+refs/heads/*:refs/heads/*";
 /// How often one entry's on-disk size is re-measured after being served.
@@ -387,7 +398,7 @@ impl RepoStore {
                 generation,
                 incarnation,
             } => {
-                let read = read_within(&lock, INLINE_WAIT).await?;
+                let read = read_within(&lock, PREPARATION_WAIT).await?;
                 let meta = usable_meta(&entry_dir, &fingerprint)
                     .ok_or(StoreError::SnapshotChanged { current: 0 })?;
                 // INVARIANT: both must match. An entry evicted and re-cloned
@@ -409,7 +420,7 @@ impl RepoStore {
             }
             Freshness::Refresh { max_staleness } => {
                 {
-                    let read = read_within(&lock, INLINE_WAIT).await?;
+                    let read = read_within(&lock, PREPARATION_WAIT).await?;
                     if let Some(meta) = fresh_meta(&entry_dir, &fingerprint, max_staleness) {
                         let generation = meta.generation;
                         let incarnation = meta.incarnation.clone();
@@ -432,7 +443,7 @@ impl RepoStore {
                     self.await_refresh(key, creds, max_staleness, RefreshKind::Sync)
                         .await?;
 
-                    let read = read_within(&lock, INLINE_WAIT).await?;
+                    let read = read_within(&lock, PREPARATION_WAIT).await?;
                     if let Some(meta) = usable_meta(&entry_dir, &fingerprint) {
                         return Ok(RepoGuard {
                             git_dir,
@@ -453,11 +464,12 @@ impl RepoStore {
         }
     }
 
-    /// Join (or start) the background refresh for `key` and wait a bounded
-    /// slice of time for it. A cold clone outlives the request: the caller
-    /// gets `Busy` and the task keeps running, so no HTTP request ever hangs
-    /// for the length of a clone and no clone is cancelled by a client giving
-    /// up.
+    /// Join (or start) the background refresh for `key` and wait
+    /// [`PREPARATION_WAIT`] for it — long enough to ride out a cold clone
+    /// in-connection, because the callers' retry budget cannot absorb one
+    /// (see the constant). The task owns the work either way: a caller
+    /// giving up cancels nothing, and `Busy` past the ceiling is the
+    /// backstop for a preparation that outlives even this wait.
     async fn await_refresh(
         self: &Arc<Self>,
         key: &CacheKey,
@@ -467,7 +479,8 @@ impl RepoStore {
     ) -> Result<u64, StoreError> {
         let mut receiver = self.refresh_task(key, creds, max_staleness, kind).await;
 
-        let waited = tokio::time::timeout(INLINE_WAIT, receiver.wait_for(Option::is_some)).await;
+        let waited =
+            tokio::time::timeout(PREPARATION_WAIT, receiver.wait_for(Option::is_some)).await;
         match waited {
             Ok(Ok(seen)) => match seen.clone() {
                 Some(Ok(generation)) => Ok(generation),
@@ -1032,8 +1045,9 @@ impl RepoStore {
         // validated. A concurrent `touch_access` can still lose one LRU bump
         // to this write; that is the documented best-effort trade.
         let (measured, meta) = {
-            let Ok(_read) = read_within(&lock, INLINE_WAIT).await else {
-                // A writer holds the entry; it publishes fresh sizes itself.
+            // Opportunistic: a writer publishes fresh sizes itself, so give
+            // up quickly rather than queueing a measurement behind it.
+            let Ok(_read) = read_within(&lock, MEASURE_WAIT).await else {
                 return;
             };
             let Some(mut meta) = RepoMeta::load(&entry_dir) else {
@@ -1666,12 +1680,10 @@ async fn remove_tree_off_reactor(path: PathBuf) -> std::io::Result<()> {
 
 /// Take the entry's read side, or give up and ask the caller back.
 ///
-/// A clone or fetch holds the WRITE side for its whole heavy budget — up to
-/// half an hour. Waiting on that unbounded turns the documented `429` +
-/// `Retry-After` into an HTTP request that hangs until the connector's own
-/// socket timeout fires, which is the failure mode the bounded wait exists to
-/// avoid (§3.2). The first caller already gets its `429` from `INLINE_WAIT`;
-/// this is what gives every later one the same answer.
+/// The budget is generous by design — readers ride out a clone or fetch
+/// in-connection (see [`PREPARATION_WAIT`]) — but never infinite: a hold
+/// that outlives it is a leaked guard or a wedged permit holder, and the
+/// documented `429` + `Retry-After` is the bounded answer for that.
 async fn read_within(
     lock: &Arc<RwLock<()>>,
     budget: Duration,
@@ -2233,12 +2245,34 @@ pub(crate) mod tests {
         );
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn a_reader_outwaits_a_long_preparation_instead_of_being_bounced() {
+        // The callers' retry budget cannot absorb a cold clone, so the reader
+        // must ride out a preparation far longer than any polite inline wait
+        // and be served the moment the writer finishes.
+        let lock: Arc<RwLock<()>> = Arc::new(RwLock::new(()));
+        let writer = lock.clone().write_owned().await;
+
+        let handle = tokio::spawn({
+            let lock = lock.clone();
+            async move { read_within(&lock, PREPARATION_WAIT).await }
+        });
+        tokio::time::sleep(Duration::from_mins(20)).await;
+        drop(writer);
+
+        match handle.await {
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => panic!("a reader must outlast a 20-minute preparation: {e}"),
+            Err(e) => panic!("reader task died: {e}"),
+        }
+    }
+
     #[tokio::test]
     async fn a_reader_behind_a_writer_is_asked_back_rather_than_left_hanging() {
-        // A clone or fetch holds the write side for its whole heavy budget —
-        // up to half an hour. Waiting on that unbounded turns the documented
-        // 429 into a request that hangs until the connector's socket timeout
-        // fires. Every read path in `open` goes through this one function.
+        // Past the preparation wait the reader is answered 429 rather than
+        // left on a hold that will never end — the backstop for a leaked
+        // guard or a wedged permit holder. Every read path in `open` goes
+        // through this one function.
         let lock: Arc<RwLock<()>> = Arc::new(RwLock::new(()));
         let writer = lock.clone().write_owned().await;
 
