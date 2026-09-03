@@ -209,6 +209,18 @@ class MetricResponse:
         """The histogram entries of `key`, counted as an assertion over their bins."""
         return self._whole_view(key, "histogram")
 
+    def rows(self, key: str, kind: str) -> list[Row]:
+        """Every row of `key`'s `kind` view, counted as an assertion over the view.
+
+        For a rule over the whole list of a period, peer or rollup view; unlike `row`,
+        these rows are not held to the completeness check.
+        """
+        items = self._whole_view(key, kind)
+        return [
+            Row(fields=item, where=f"{self._test_name}: {key}/{kind} [{index}]", asserted=set())
+            for index, item in enumerate(items)
+        ]
+
     def _whole_view(self, key: str, kind: str) -> list[dict[str, Any]]:
         self._ledger.record_assertion(key, kind, self._test_name)
         return self.items(key, kind)
