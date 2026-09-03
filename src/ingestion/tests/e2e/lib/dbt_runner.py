@@ -65,6 +65,41 @@ class DbtRunner:
         self._runner = dbtRunner()
         self._parse()
 
+    def _worker_var(self, worker_ctx: WorkerContext) -> str:
+        return worker_ctx.worker_id.removeprefix("gw") if worker_ctx.worker_id != "master" else "0"
+
+    def build_closure(self, *, worker_ctx: WorkerContext) -> None:
+        """Materialize every non-gold model once, over empty bronze.
+
+        Relation existence becomes a session constant, so `union_by_tag`'s
+        compile-time `adapter.get_relation` probe answers the same whatever ran
+        before it. Without this a spec builds only its own slice, and a data test
+        pulled in by indirect selection can reference an ephemeral model reading
+        staging relations no spec ever created — which is a hard error, not a
+        skip.
+
+        `run`, not `build`: over empty bronze a uniqueness or completeness test
+        has nothing to assert and several fail outright. Per-spec builds still
+        use `build` on their own selection, so no model loses test coverage; it
+        simply is not tested twice, once meaninglessly.
+        """
+        if self._runner is None:
+            raise DbtError("dbt_runner.setup() must be called before build_closure()")
+        LOG.info("dbt run --exclude tag:gold (closure build, worker=%s)", worker_ctx.worker_id)
+        res = self._runner.invoke(
+            [
+                "run",
+                "--exclude",
+                "tag:gold",
+                *self._base_flags(),
+                "--vars",
+                json.dumps({"worker_id": self._worker_var(worker_ctx)}),
+            ]
+        )
+        if not res.success:
+            failed = self._extract_failed_model_summary()
+            raise DbtError(f"closure build failed\nfailed models: {failed}\nexception: {res.exception!r}")
+
     def build(self, selector: str, *, worker_ctx: WorkerContext) -> None:
         """Build the selected models via the in-process runner.
 
@@ -76,7 +111,6 @@ class DbtRunner:
         """
         if self._runner is None:
             raise DbtError("dbt_runner.setup() must be called before build()")
-        worker_n = worker_ctx.worker_id.removeprefix("gw") if worker_ctx.worker_id != "master" else "0"
         LOG.info("dbt build --select %s (worker=%s)", selector, worker_ctx.worker_id)
         res = self._runner.invoke(
             [
@@ -88,7 +122,7 @@ class DbtRunner:
                 "--state",
                 str(self.target_dir),
                 "--vars",
-                json.dumps({"worker_id": worker_n}),
+                json.dumps({"worker_id": self._worker_var(worker_ctx)}),
             ]
         )
         if not res.success:
@@ -100,7 +134,6 @@ class DbtRunner:
     def run(self, selector: str, *, worker_ctx: WorkerContext, full_refresh: bool = False) -> None:
         if self._runner is None:
             raise DbtError("dbt_runner.setup() must be called before run()")
-        worker_n = worker_ctx.worker_id.removeprefix("gw") if worker_ctx.worker_id != "master" else "0"
         LOG.info(
             "dbt run --select %s%s (worker=%s)",
             selector,
@@ -118,7 +151,7 @@ class DbtRunner:
                 "--state",
                 str(self.target_dir),
                 "--vars",
-                json.dumps({"worker_id": worker_n}),
+                json.dumps({"worker_id": self._worker_var(worker_ctx)}),
             ]
         )
         if not res.success:

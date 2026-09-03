@@ -115,11 +115,19 @@ def ch_migrations_applied(compose_stack: SessionConfig) -> SessionConfig:
 
 
 @pytest.fixture(scope="session")
-def dbt_runner(ch_migrations_applied: SessionConfig):
-    """Parse dbt manifest once per session; expose a runner for per-test builds."""
+def dbt_runner(ch_migrations_applied: SessionConfig, worker_ctx: WorkerContext):
+    """Parse dbt manifest once per session; expose a runner for per-test builds.
+
+    The closure build that follows makes relation existence uniform for the whole
+    session — see `DbtRunner.build_closure`. It runs on the primary worker only:
+    the relations it creates are shared, and a second worker creating them again
+    would race the first.
+    """
     cfg = ch_migrations_applied
     runner = DbtRunner(cfg)
     runner.setup()
+    if _IS_PRIMARY:
+        runner.build_closure(worker_ctx=worker_ctx)
     yield runner
     runner.cleanup()
 
