@@ -120,10 +120,47 @@ alloy:
           endpoint = "0.0.0.0:4318"
         }
         output {
-          metrics = [otelcol.processor.filter.drop_probe_routes.input]
+          metrics = [otelcol.processor.k8sattributes.pods.input]
+          traces  = [otelcol.processor.k8sattributes.pods.input]
+        }
+      }
+
+      // Two replicas of one service export identical resource identities, so
+      // their cumulative counters collide into one stored series and every
+      // scrape reads as a counter reset. Stamp each stream with its pod.
+      otelcol.processor.k8sattributes "pods" {
+        // Refuse readiness until the pod cache syncs — telemetry accepted
+        // before it would miss k8s.pod.name and collide again.
+        wait_for_metadata = true
+        extract {
+          metadata = ["k8s.pod.name"]
+        }
+        pod_association {
+          source {
+            from = "connection"
+          }
+        }
+        output {
+          metrics = [otelcol.processor.transform.instance_from_pod.input]
           traces  = [otelcol.exporter.otlp.to_tempo.input]
         }
       }
+
+      // service.instance.id is what otelcol.exporter.prometheus turns into
+      // the `instance` label.
+      otelcol.processor.transform "instance_from_pod" {
+        error_mode = "ignore"
+        metric_statements {
+          context = "resource"
+          statements = [
+            "set(attributes[\"service.instance.id\"], attributes[\"k8s.pod.name\"]) where attributes[\"service.instance.id\"] == nil",
+          ]
+        }
+        output {
+          metrics = [otelcol.processor.filter.drop_probe_routes.input]
+        }
+      }
+
 
       // Liveness/readiness probes out of the RED metrics: they are traffic
       // nobody sent, and the toolkit records them with a coarser bucket set
