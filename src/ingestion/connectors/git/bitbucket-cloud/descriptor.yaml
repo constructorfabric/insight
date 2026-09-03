@@ -12,7 +12,18 @@ name: bitbucket-cloud
 #   same reason as github 6.0.0 — the patch id has been in Bronze all along,
 #   but staging never re-reads Bronze, so the column heals to NULL on existing
 #   rows and a NULL identity never folds.
-version: "5.0.1"
+# 6.0.0: the class-contract column `date` now carries the AUTHOR date rather
+#   than the committer date, and `committer_date` joins it as its own column.
+#   A rebase, an amend and a cherry-pick rewrite the committer date and keep
+#   the author date, so a branch rebased before merging used to collapse every
+#   day of work on it onto the day of the last rewrite. MAJOR for the same
+#   reason as the patch id: staging is incremental on _airbyte_extracted_at and
+#   never re-reads Bronze, so already-materialized commits keep the committer
+#   date forever and the install would run in two regimes. Only the one-shot
+#   scoped `dbt --full-refresh` a major bump dispatches re-materializes them.
+#   Safe: both dates have been in Bronze all along, and the author date falls
+#   back to the committer date where a source left it empty. #3153
+version: "6.0.0"
 # A slot of its own: replication pods sharing a slot with other connector
 # syncs can be starved of workers, which surfaces as startup and activity
 # timeouts rather than as a connector error.

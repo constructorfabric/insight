@@ -84,7 +84,12 @@ deduplicated_file_changes AS (
         lines_added,
         lines_removed
     FROM {{ ref('git_commit_file_changes') }}
-    ORDER BY observed_at, commit_hash
+    -- INVARIANT: committer_date breaks the tie, and must stay ahead of the
+    -- hash. observed_at is the AUTHOR date, which a rebase preserves — so the
+    -- copy and its original tie there, and without this the survivor (and with
+    -- it the repository and branch scope the lines are filed under) would be
+    -- decided by comparing hashes. #3153
+    ORDER BY observed_at, committer_date, commit_hash
     LIMIT 1 BY
         tenant_id,
         data_source,

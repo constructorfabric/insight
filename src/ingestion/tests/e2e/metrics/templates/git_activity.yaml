@@ -18,6 +18,9 @@ templates:
     committer_name: null
     committer_email: null
     message: change
+    # The metric day comes from the AUTHOR date; the committer date is carried
+    # so a case can set them apart (#3153).
+    authored_date: "2026-10-01T09:00:00Z"
     committed_date: "2026-10-01T09:00:00Z"
     changed_files: 1
     additions: 0

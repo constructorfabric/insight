@@ -33,6 +33,24 @@ vi.mock("@/queries/metric-detail", () => ({
   },
 }));
 
+// The strip reads the metric's own daily series, not evidence rows: evidence is
+// paged, and a page covers the days it reaches rather than the period.
+const series = vi.hoisted(() => ({
+  state: {
+    isPending: false,
+    isError: false,
+    data: undefined as unknown,
+    refetch: () => {},
+  },
+  calls: [] as unknown[],
+}));
+vi.mock("@/queries/metric-day-series", () => ({
+  useMetricDaySeries: (selection: unknown, enabled?: boolean) => {
+    series.calls.push({ selection, enabled });
+    return series.state;
+  },
+}));
+
 // The catalogue decides whether `source` may be asked for alongside a git
 // metric's evidence; these tests are about what the grains RENDER, so it
 // answers with a declaration and no request of its own.
@@ -56,6 +74,10 @@ vi.mock("@/queries/metric-definitions", () => ({
 import { MetricActivity } from "./metric-activity";
 
 const ME = "019e27bc-dec0-7626-81a9-c5524662a6a9";
+
+function reading(date: string, value: number) {
+  return { date, value, numerator: null, denominator: null };
+}
 
 function metric(
   key: string,
@@ -101,6 +123,13 @@ beforeEach(() => {
   detail.collectedThrough = null;
   detail.revisionWindowDays = null;
   detail.state = {
+    isPending: false,
+    isError: false,
+    data: undefined,
+    refetch: () => {},
+  };
+  series.calls = [];
+  series.state = {
     isPending: false,
     isError: false,
     data: undefined,
@@ -208,18 +237,12 @@ describe("MetricActivity", () => {
   });
 
   it("draws days at counter grain, and names the days with no reading", () => {
-    detail.state.data = {
-      columns: [
-        { key: "date", label: "Date", type: "date" },
-        { key: "value", label: "Value", type: "number" },
-      ],
-      // Two of the five days in the period are missing entirely.
-      rows: [
-        { values: { date: "2026-03-01", value: 4 } },
-        { values: { date: "2026-03-03", value: 2 } },
-        { values: { date: "2026-03-05", value: 0 } },
-      ],
-    };
+    // Two of the five days in the period are missing entirely.
+    series.state.data = [
+      reading("2026-03-01", 4),
+      reading("2026-03-03", 2),
+      reading("2026-03-05", 0),
+    ];
     const { container } = draw(
       metric("collab.messages_sent", ["source_summary"], 6)
     );
@@ -233,16 +256,7 @@ describe("MetricActivity", () => {
     // as silence they would say this person did none of it, which is the one
     // thing the data cannot support.
     detail.collectedThrough = "2026-03-03";
-    detail.state.data = {
-      columns: [
-        { key: "date", label: "Date", type: "date" },
-        { key: "value", label: "Value", type: "number" },
-      ],
-      rows: [
-        { values: { date: "2026-03-01", value: 4 } },
-        { values: { date: "2026-03-03", value: 2 } },
-      ],
-    };
+    series.state.data = [reading("2026-03-01", 4), reading("2026-03-03", 2)];
     draw(metric("collab.messages_sent", ["source_summary"], 6));
     // The 2nd is the only quiet day; the tail is uncollected, not quiet.
     expect(screen.getByText(/2 days not collected yet/)).toBeInTheDocument();
@@ -258,17 +272,11 @@ describe("MetricActivity", () => {
     // measurement; drawing them as settled would overstate it.
     detail.collectedThrough = "2026-03-03";
     detail.revisionWindowDays = 2;
-    detail.state.data = {
-      columns: [
-        { key: "date", label: "Date", type: "date" },
-        { key: "value", label: "Value", type: "number" },
-      ],
-      rows: [
-        { values: { date: "2026-03-01", value: 4 } },
-        { values: { date: "2026-03-02", value: 3 } },
-        { values: { date: "2026-03-03", value: 2 } },
-      ],
-    };
+    series.state.data = [
+      reading("2026-03-01", 4),
+      reading("2026-03-02", 3),
+      reading("2026-03-03", 2),
+    ];
     draw(metric("collab.messages_sent", ["source_summary"], 6));
     const label = screen.getByRole("img").getAttribute("aria-label") ?? "";
     expect(label).toMatch(/2 days may still change/);
@@ -277,23 +285,53 @@ describe("MetricActivity", () => {
   });
 
   it("names a constant denominator, because that is what a share is argued with", () => {
-    detail.state.data = {
-      columns: [
-        { key: "date", label: "Date", type: "date" },
-        { key: "numerator", label: "Numerator", type: "number" },
-        { key: "denominator", label: "Denominator", type: "number" },
-      ],
-      rows: [
-        { values: { date: "2026-03-01", numerator: 6, denominator: 8 } },
-        { values: { date: "2026-03-02", numerator: 7, denominator: 8 } },
-      ],
-    };
-    draw(metric("collab.focus_time_pct", ["derived_population"], 81));
+    series.state.data = [
+      { date: "2026-03-01", value: 0.75, numerator: 6, denominator: 8 },
+      { date: "2026-03-02", value: 0.875, numerator: 7, denominator: 8 },
+    ];
+    // A real ratio, because the readout is scaled on the way out: a metric
+    // left as a sum would render the same string whether the day value was a
+    // share or a percentage already multiplied by 100.
+    draw(
+      metric("collab.focus_time_pct", ["derived_population"], 81, {
+        computation: "ratio",
+        format: "percent",
+        scale: 100,
+        unit: null,
+      })
+    );
     expect(screen.getByText(/measured against 8 per day/)).toBeInTheDocument();
+    const label = screen.getByRole("img").getAttribute("aria-label") ?? "";
+    // 0.875 scaled once is 88%. Scaled twice it reads 8,750%.
+    expect(label).toMatch(/busiest 2 Mar — 88% of 8/);
+  });
+
+  it("offers a retry when the list of things could not be loaded", () => {
+    // The other error case covers the day strip; an event-grain section reads
+    // a different query, and its failure has its own path to the same button.
+    detail.state.isError = true;
+    draw(metric("git.commits", ["event"], 3));
+    expect(
+      screen.getByRole("button", { name: /try again/i })
+    ).toBeInTheDocument();
+  });
+
+  it("reads one source per grain and never both", () => {
+    // Two queries hang off this component and only the one the grain renders
+    // may fire; the other would be a round trip for rows nothing draws.
+    draw(metric("collab.messages_sent", ["source_summary"], 6));
+    expect((detail.calls.at(-1) as { enabled: boolean }).enabled).toBe(false);
+    expect((series.calls.at(-1) as { enabled: boolean }).enabled).toBe(true);
+
+    detail.calls = [];
+    series.calls = [];
+    draw(metric("git.commits", ["event"], 3));
+    expect((detail.calls.at(-1) as { enabled: boolean }).enabled).toBe(true);
+    expect((series.calls.at(-1) as { enabled: boolean }).enabled).toBe(false);
   });
 
   it("offers a retry when the detail could not be loaded", () => {
-    detail.state.isError = true;
+    series.state.isError = true;
     draw(metric("collab.messages_sent", ["source_summary"], 6));
     expect(
       screen.getByRole("button", { name: /try again/i })
@@ -303,16 +341,7 @@ describe("MetricActivity", () => {
   it("describes the strip for anyone not reading it with their eyes", () => {
     // Thirty-one focusable days per strip is a worse answer for a keyboard
     // reader than one sentence saying what the shape is.
-    detail.state.data = {
-      columns: [
-        { key: "date", label: "Date", type: "date" },
-        { key: "value", label: "Value", type: "number" },
-      ],
-      rows: [
-        { values: { date: "2026-03-01", value: 4 } },
-        { values: { date: "2026-03-03", value: 9 } },
-      ],
-    };
+    series.state.data = [reading("2026-03-01", 4), reading("2026-03-03", 9)];
     draw(metric("collab.messages_sent", ["source_summary"], 13));
     const label = screen.getByRole("img").getAttribute("aria-label") ?? "";
     expect(label).toMatch(/Messages Sent by day/);
@@ -326,16 +355,7 @@ describe("MetricActivity", () => {
     // ENDS at its day's right boundary. Anchoring both directions to the left
     // boundary put every readout in the second half a full day to the left of
     // the day under the pointer.
-    detail.state.data = {
-      columns: [
-        { key: "date", label: "Date", type: "date" },
-        { key: "value", label: "Value", type: "number" },
-      ],
-      rows: [
-        { values: { date: "2026-03-01", value: 4 } },
-        { values: { date: "2026-03-05", value: 9 } },
-      ],
-    };
+    series.state.data = [reading("2026-03-01", 4), reading("2026-03-05", 9)];
     const { container } = draw(
       metric("collab.messages_sent", ["source_summary"], 13)
     );
@@ -355,7 +375,7 @@ describe("MetricActivity", () => {
   });
 
   it("says nothing was recorded rather than drawing an empty chart", () => {
-    detail.state.data = { columns: [], rows: [] };
+    series.state.data = [];
     draw(metric("collab.messages_sent", ["source_summary"], 0));
     expect(
       screen.getByText(/Nothing recorded in this period/)

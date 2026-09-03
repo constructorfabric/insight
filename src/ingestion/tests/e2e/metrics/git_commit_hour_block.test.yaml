@@ -24,13 +24,13 @@ bronze:
   bronze_github.branches:
     - {$ref: templates/git_activity.yaml#/templates/base, unique_key: br-main, repository: "https://github.com/constructor/insight.git", name: main, head_sha: head-main, is_default: true}
   bronze_github.commits:
-    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: c-1, sha: sha-1, author_name: alice, author_email: alice@example.com, committer_name: alice, committer_email: alice@example.com, committed_date: "2026-10-01T09:14:00Z", additions: 5, is_in_default_branch: true}
-    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: c-2, sha: sha-2, author_name: alice, author_email: alice@example.com, committer_name: alice, committer_email: alice@example.com, committed_date: "2026-10-01T09:52:00Z", additions: 5, is_in_default_branch: true}
-    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: c-3, sha: sha-3, author_name: alice, author_email: alice@example.com, committer_name: alice, committer_email: alice@example.com, committed_date: "2026-10-01T15:03:00Z", additions: 5, is_in_default_branch: true}
-    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: c-4, sha: sha-4, author_name: alice, author_email: alice@example.com, committer_name: alice, committer_email: alice@example.com, committed_date: "2026-10-02T09:30:00Z", additions: 5, is_in_default_branch: true}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: c-1, sha: sha-1, author_name: alice, author_email: alice@example.com, committer_name: alice, committer_email: alice@example.com, authored_date: "2026-10-01T09:14:00Z", committed_date: "2026-10-01T09:14:00Z", additions: 5, is_in_default_branch: true}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: c-2, sha: sha-2, author_name: alice, author_email: alice@example.com, committer_name: alice, committer_email: alice@example.com, authored_date: "2026-10-01T09:52:00Z", committed_date: "2026-10-01T09:52:00Z", additions: 5, is_in_default_branch: true}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: c-3, sha: sha-3, author_name: alice, author_email: alice@example.com, committer_name: alice, committer_email: alice@example.com, authored_date: "2026-10-01T15:03:00Z", committed_date: "2026-10-01T15:03:00Z", additions: 5, is_in_default_branch: true}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: c-4, sha: sha-4, author_name: alice, author_email: alice@example.com, committer_name: alice, committer_email: alice@example.com, authored_date: "2026-10-02T09:30:00Z", committed_date: "2026-10-02T09:30:00Z", additions: 5, is_in_default_branch: true}
     # Still in flight, and late in the day: the non-default scope declares the
     # same dimension, so a breakdown over it must answer too.
-    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: c-5, sha: sha-5, author_name: alice, author_email: alice@example.com, committer_name: alice, committer_email: alice@example.com, committed_date: "2026-10-02T21:05:00Z", additions: 5, is_in_default_branch: false}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: c-5, sha: sha-5, author_name: alice, author_email: alice@example.com, committer_name: alice, committer_email: alice@example.com, authored_date: "2026-10-02T21:05:00Z", committed_date: "2026-10-02T21:05:00Z", additions: 5, is_in_default_branch: false}
   bronze_github.file_changes:
     - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: f-1, sha: sha-1, filename: src/one.rs, additions: 5}
     - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: f-2, sha: sha-2, filename: src/two.rs, additions: 5}

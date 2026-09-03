@@ -52,7 +52,15 @@ SELECT
     COALESCE(c.committer_name, '') AS committer_name,
     COALESCE(c.committer_email, '') AS committer_email,
     COALESCE(c.message, '') AS message,
-    parseDateTimeBestEffortOrNull(c.committed_date) AS date,
+    -- INVARIANT: the AUTHOR date, with the committer date as a fallback, and
+    -- the two PARSES coalesced rather than the two strings — an unparseable
+    -- author date must fall through, not win and yield NULL. The fallback is
+    -- load-bearing: committed_date is the stream's cursor and always present,
+    -- so without it a bad author date drops the commit from every metric. #3153
+    coalesce(
+        parseDateTimeBestEffortOrNull(c.authored_date),
+        parseDateTimeBestEffortOrNull(c.committed_date)
+    ) AS date,
     toNullable(toInt64(COALESCE(f.files_changed, 0))) AS files_changed,
     toNullable(COALESCE(c.stats_additions, 0)) AS lines_added,
     toNullable(COALESCE(c.stats_deletions, 0)) AS lines_removed,
@@ -60,7 +68,8 @@ SELECT
     'insight_gitlab' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,
     c._airbyte_extracted_at,
-    CAST(NULL AS Nullable(String)) AS patch_id
+    CAST(NULL AS Nullable(String)) AS patch_id,
+    parseDateTimeBestEffortOrNull(c.committed_date) AS committer_date
 -- FINAL: a re-walk re-emits a commit under the same unique_key with the
 -- membership flag set, so Bronze holds the old row and the new one. Without
 -- FINAL a full-refresh build inserts both into staging under one now64()

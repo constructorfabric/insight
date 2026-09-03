@@ -2974,6 +2974,21 @@
           "bucket_start": {
             "type": "string"
           },
+          "denominator": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "numerator": {
+            "description": "The two sides a ratio was taken from, for the bucket. Present only for\nratio metrics: a share is argued with its denominator, and a reader who\ncan see \"6 of 8\" can tell a quiet day from a bad one. Every other\ncomputation leaves them out rather than sending nulls.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
           "value": {
             "format": "double",
             "type": [

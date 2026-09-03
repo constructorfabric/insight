@@ -18,6 +18,7 @@ schemas:
       committer_name: {type: string}
       committer_email: {type: string}
       message: {type: string}
+      authored_date: {type: [string, "null"]}
       committed_date: {type: string}
       changed_files: {type: [integer, "null"]}
       additions: {type: [integer, "null"]}

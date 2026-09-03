@@ -352,6 +352,28 @@ for _git_source in github gitlab bitbucket_cloud; do
   heal_git_commit_patch_id "${_git_source}__commits"
 done
 
+echo "=== Healing git commit committer date column ==="
+# Same positional invariant: every projection feeding class_git_commits gained
+# committer_date at the tail. `date` now carries the AUTHOR date (#3153), which
+# a rebase preserves — so the committer date is the only field left that tells
+# a rebase copy from its original, and two readers rank on it. The silver side
+# heals in migrations/*.sql; staging heals here because these tables exist only
+# after a connector has run. Existing rows heal to NULL and carry a committer
+# date from the first sync that re-collects them. Idempotent.
+heal_git_commit_committer_date() {
+  local table="$1"
+  ch_table_is_real staging "${table}" || return 0
+  echo "  staging.${table}"
+  run_ch <<SQL
+ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS committer_date Nullable(DateTime) AFTER patch_id;
+ALTER TABLE staging.${table} MODIFY COLUMN committer_date Nullable(DateTime) AFTER patch_id;
+SQL
+}
+
+for _git_source in github gitlab bitbucket_cloud; do
+  heal_git_commit_committer_date "${_git_source}__commits"
+done
+
 echo "=== Healing git pull-request author account column ==="
 # Same positional invariant: every projection feeding class_git_pull_requests
 # gained author_account_id after author_email (account-first person

@@ -23,8 +23,8 @@ import { metricComparisons } from "@/lib/insight/metric-comparison";
 import { metricHelp } from "@/lib/insight/metric-help";
 import {
   activityEvents,
-  dailyReadings,
   finestGrain,
+  type DayReading,
 } from "@/lib/insight/metric-grain";
 import { formatDate, formatMetricValue } from "@/lib/format";
 import {
@@ -37,6 +37,7 @@ import {
   withTypeDimension,
 } from "@/lib/metrics/provider-links";
 import { RecordLink } from "@/components/record-link";
+import { useMetricDaySeries } from "@/queries/metric-day-series";
 import { useMetricDetail } from "@/queries/metric-detail";
 import {
   useCollectedThrough,
@@ -80,10 +81,12 @@ export function MetricActivity({
     ? declared.byMetricKey?.get(base.metric_key)
     : null;
   const selection = base ? withTypeDimension(base, declaredForMetric) : null;
-  const detail = useMetricDetail(
-    selection,
-    grain != null && !declared.isPending
-  );
+  // Two shapes of detail, and only the one this grain renders is fetched: a
+  // list of things reads evidence rows, a strip of days reads the metric's own
+  // daily series.
+  const ready = grain != null && !declared.isPending;
+  const detail = useMetricDetail(selection, ready && grain === "event");
+  const series = useMetricDaySeries(selection, ready && grain !== "event");
   const help = metricHelp(metric);
   const data = forEntity(metric, entityId);
   const total = formatMetricValue(data.value, metric.format, metric.unit);
@@ -132,6 +135,7 @@ export function MetricActivity({
         metric={metric}
         selection={selection}
         detail={detail}
+        series={series}
       />
     </section>
   );
@@ -142,13 +146,16 @@ function Body({
   metric,
   selection,
   detail,
+  series,
 }: {
   grain: ReturnType<typeof finestGrain>;
   metric: NormalizedMetricResult;
   /** The read's own selection — the dialog opens on exactly what was listed. */
   selection: MetricEvidenceSelection | null;
   detail: ReturnType<typeof useMetricDetail>;
+  series: ReturnType<typeof useMetricDaySeries>;
 }) {
+  const source = grain === "event" ? detail : series;
   if (grain == null) {
     // Said plainly rather than left blank: a reader who can open the day of
     // every other metric on the page will otherwise read the silence here as
@@ -160,40 +167,43 @@ function Body({
       </p>
     );
   }
-  if (detail.isPending) {
+  if (source.isPending) {
     return (
       <div className="flex h-12 items-center">
         <Spinner className="size-4 text-muted-foreground" />
       </div>
     );
   }
-  if (detail.isError) {
+  if (source.isError) {
     return (
       <p className="text-xs text-muted-foreground">
         The detail behind this number could not be loaded.{" "}
         <button
           type="button"
           className="underline underline-offset-2"
-          onClick={() => void detail.refetch()}
+          onClick={() => void source.refetch()}
         >
           Try again
         </button>
       </p>
     );
   }
-  const rows = detail.data?.rows ?? [];
-  const columns = detail.data?.columns ?? [];
-  if (rows.length === 0) {
-    return (
-      <p className="text-xs text-muted-foreground">
-        Nothing recorded in this period.
-      </p>
-    );
-  }
   if (grain === "event") {
+    const rows = detail.data?.rows ?? [];
+    if (rows.length === 0) return <NothingRecorded />;
     return <EventList metric={metric} selection={selection} rows={rows} />;
   }
-  return <DayStrip metric={metric} rows={rows} columns={columns} />;
+  const readings = series.data ?? [];
+  if (readings.length === 0) return <NothingRecorded />;
+  return <DayStrip metric={metric} readings={readings} />;
+}
+
+function NothingRecorded() {
+  return (
+    <p className="text-xs text-muted-foreground">
+      Nothing recorded in this period.
+    </p>
+  );
 }
 
 function EventList({
@@ -358,12 +368,10 @@ function stripSummary(
 
 function DayStrip({
   metric,
-  rows,
-  columns,
+  readings,
 }: {
   metric: NormalizedMetricResult;
-  rows: NonNullable<ReturnType<typeof useMetricDetail>["data"]>["rows"];
-  columns: NonNullable<ReturnType<typeof useMetricDetail>["data"]>["columns"];
+  readings: DayReading[];
 }) {
   const [hovered, setHovered] = useState<number | null>(null);
   const period = metric.selection?.period;
@@ -374,14 +382,14 @@ function DayStrip({
     () =>
       period
         ? stripDays(
-            dailyReadings(rows, columns),
+            readings,
             period.from,
             period.to,
             collectedThrough,
             revisionWindowDays
           )
         : [],
-    [rows, columns, period, collectedThrough, revisionWindowDays]
+    [readings, period, collectedThrough, revisionWindowDays]
   );
   if (days.length === 0) return null;
 
