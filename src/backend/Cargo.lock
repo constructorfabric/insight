@@ -139,6 +139,7 @@ dependencies = [
  "insight-migration",
  "jsonwebtoken",
  "opentelemetry",
+ "p256 0.14.0",
  "redis",
  "reqwest 0.12.28",
  "rmcp",
