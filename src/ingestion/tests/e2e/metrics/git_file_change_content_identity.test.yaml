@@ -66,6 +66,9 @@ cases:
           - metric_key: git.commits
             views:
               - {view: breakdown, dimensions: [repository]}
+          - metric_key: git.code_lines
+            views:
+              - {view: breakdown, dimensions: [repository]}
     expect:
       - assert: "status == 200"
       # 100 (the October add, which is the earliest) + 7 + 8 (one
@@ -85,6 +88,13 @@ cases:
         view: breakdown
         find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:constructor/content-identity"}}
         equal: {value: 6}
+      # Every path here is code, so the dedup has to reach the code measure
+      # too: 125, not the 133 the rows sum to before the repeat of one
+      # modification is folded away.
+      - metric: git.code_lines
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:constructor/content-identity"}}
+        equal: {value: 125}
 
   - name: The repeat of an earlier content reports no lines of its own
     request:

@@ -1,0 +1,226 @@
+spec_version: 1
+description: >
+  Metric: git.code_lines — lines added to files the classifier calls CODE,
+  #3043. Tests, configuration, documentation and vendored content are all
+  excluded, so what this metric measures is decided entirely by where the
+  classifier draws its lines.
+
+  How it's computed (bronze → silver → gold):
+    • bronze: one row per file a commit touched, with its path and its added
+      and removed line counts
+    • silver: one class row per file change
+    • gold:   one row per content per path, and each surviving row is
+      classified from its PATH alone — only the `code` rows contribute
+      `code_lines_added`
+
+  Precedence is vendored → test → docs → config → code, so a path that could
+  answer to two rules answers to the earlier one. `git_line_counts.test.yaml`
+  pins the vendored end of that chain and the `tests/` folder; the edges it
+  leaves open are `.spec.`, the optional `s` in `tests?`, the patterns'
+  case-insensitivity, and docs ahead of config. This fixture pins those and
+  then breaks the metric down by branch scope, change type and extension —
+  none of which was asserted for this metric anywhere.
+
+  Because the metric is binary, code against everything else, it cannot by
+  itself tell docs from config: swapping those two rules moves no value it
+  reports. So the category split of the unclassified total carries that one
+  claim, and it is asserted on `git.lines_added` in the same request.
+
+  The rig resolves `view: breakdown` to exactly one view per metric, so each
+  split needs its own case.
+
+  Cases: what the classifier admits and what it keeps out, with the category
+  split that separates docs from config; the branch-scope, change-type and
+  extension splits; and an empty window.
+
+  Fixture — erin only. A landed commit carries eight files:
+    * src/app.rs         +11 −2  code, the control
+    * src/util.go        +6      code, a second extension
+    * src/moved.rs       +4 −1   code, renamed rather than modified
+    * docs/settings.yaml +40     DOCS, not config: `.yaml` answers to the
+                                 config rule too, and docs comes first. Only
+                                 the category split below can see this
+    * TESTS/App.kt       +30     TEST from an upper-case folder — the
+                                 classifier is case-insensitive
+    * test/single.rs     +20     TEST from the singular folder name, which
+                                 `tests?` admits
+    * README.MD          +7      DOCS from an upper-case extension
+    * src/app.spec.ts    +9      TEST, although `.ts` under src/ is otherwise
+                                 code
+  and an in-flight commit on another branch carries one more code file:
+    * src/wip.rs         +3      code, modified
+
+  So git.code_lines reads 11 + 6 + 4 + 3 = 24 while git.lines_added reads
+  every line, 130. Any rule that stopped firing raises the first number toward
+  the second, so the 24 is a known fraction of a known total rather than an
+  isolated constant — and the category split names where the other 106 went:
+  test 59, docs 47, config and vendored nothing at all.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/erin
+
+  bronze_github.commits:
+    # Commit-level stats reach no metric asserted here: the fallback that
+    # reads them fires only for a commit with NO collected file rows, which
+    # git_uncollected_file_changes.test.yaml covers.
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: cl-landed, repository: "https://github.com/acme/codelines.git", sha: cl-landed, authored_date: "2026-10-01T09:00:00Z", committed_date: "2026-10-01T09:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 127, deletions: 3, changed_files: 8, is_in_default_branch: true}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: cl-wip, repository: "https://github.com/acme/codelines.git", sha: cl-wip, authored_date: "2026-10-01T10:00:00Z", committed_date: "2026-10-01T10:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 3, deletions: 0, changed_files: 1, is_in_default_branch: false}
+
+  bronze_github.file_changes:
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: cl-f-app, repository: "https://github.com/acme/codelines.git", sha: cl-landed, filename: src/app.rs, status: modified, additions: 11, deletions: 2, pre_image_oid: c0de0000000000000000000000000000000000a1, post_image_oid: c0de0000000000000000000000000000000000a2}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: cl-f-util, repository: "https://github.com/acme/codelines.git", sha: cl-landed, filename: src/util.go, status: added, additions: 6, deletions: 0, post_image_oid: c0de0000000000000000000000000000000000b1}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: cl-f-moved, repository: "https://github.com/acme/codelines.git", sha: cl-landed, filename: src/moved.rs, status: renamed, additions: 4, deletions: 1, pre_image_oid: c0de0000000000000000000000000000000000c1, post_image_oid: c0de0000000000000000000000000000000000c2}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: cl-f-docsyaml, repository: "https://github.com/acme/codelines.git", sha: cl-landed, filename: docs/settings.yaml, status: added, additions: 40, deletions: 0, post_image_oid: c0de0000000000000000000000000000000000d1}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: cl-f-uptests, repository: "https://github.com/acme/codelines.git", sha: cl-landed, filename: TESTS/App.kt, status: added, additions: 30, deletions: 0, post_image_oid: c0de0000000000000000000000000000000000e1}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: cl-f-single, repository: "https://github.com/acme/codelines.git", sha: cl-landed, filename: test/single.rs, status: added, additions: 20, deletions: 0, post_image_oid: c0de0000000000000000000000000000000000f1}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: cl-f-readme, repository: "https://github.com/acme/codelines.git", sha: cl-landed, filename: README.MD, status: added, additions: 7, deletions: 0, post_image_oid: c0de00000000000000000000000000000000000f}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: cl-f-spec, repository: "https://github.com/acme/codelines.git", sha: cl-landed, filename: src/app.spec.ts, status: added, additions: 9, deletions: 0, post_image_oid: c0de000000000000000000000000000000000101}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: cl-f-wip, repository: "https://github.com/acme/codelines.git", sha: cl-wip, filename: src/wip.rs, status: modified, additions: 3, deletions: 0, pre_image_oid: c0de000000000000000000000000000000000201, post_image_oid: c0de000000000000000000000000000000000202}
+
+cases:
+  - name: Only code paths reach the metric, and docs outranks config on the way out
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [erin@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.code_lines
+            views:
+              - {view: breakdown, dimensions: [repository]}
+          - metric_key: git.lines_added
+            views:
+              - {view: period}
+              - {view: breakdown, dimensions: [category]}
+    expect:
+      - assert: "status == 200"
+      # 11 + 6 + 4 + 3, a known fraction of the 130 below.
+      - metric: git.code_lines
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:acme/codelines"}}
+        equal: {value: 24}
+      - metric: git.lines_added
+        view: period
+        find: {entity_id: erin@example.com}
+        equal: {value: 130}
+      # Where the other 106 went. `docs/settings.yaml` is the load-bearing row:
+      # `.yaml` answers to the config rule as well, so 47 here and no config
+      # row at all is the only place the docs-before-config order is visible.
+      - metric: git.lines_added
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: category, value: code}}
+        equal: {value: 24}
+      - metric: git.lines_added
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: category, value: test}}
+        equal: {value: 59}
+      - metric: git.lines_added
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: category, value: docs}}
+        equal: {value: 47}
+      - metric: git.lines_added
+        view: breakdown
+        assert: "!items.exists(v, v.dimensions.exists(d, d.key == 'category' && (d.value == 'config' || d.value == 'vendored')))"
+
+  - name: Lines follow their commit's branch scope, and the two scopes partition the total
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [erin@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.code_lines
+            views:
+              - {view: breakdown, dimensions: [branch_scope]}
+    expect:
+      - assert: "status == 200"
+      # The landed commit's three code files against the in-flight one's.
+      - metric: git.code_lines
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: branch_scope, value: default}}
+        equal: {value: 21}
+      - metric: git.code_lines
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: branch_scope, value: non_default}}
+        equal: {value: 3}
+
+  - name: A rename is its own change type and carries only its edited lines
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [erin@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.code_lines
+            views:
+              - {view: breakdown, dimensions: [change_type]}
+    expect:
+      - assert: "status == 200"
+      - metric: git.code_lines
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: change_type, value: modified}}
+        equal: {value: 14}
+      - metric: git.code_lines
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: change_type, value: added}}
+        equal: {value: 6}
+      - metric: git.code_lines
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: change_type, value: renamed}}
+        equal: {value: 4}
+
+  - name: An extension gathers every code file sharing it, and an excluded file's never appears
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [erin@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.code_lines
+            views:
+              - {view: breakdown, dimensions: [file_extension]}
+    expect:
+      - assert: "status == 200"
+      # rs spans app, moved and wip; go is util's alone.
+      - metric: git.code_lines
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: file_extension, value: rs}}
+        equal: {value: 18}
+      - metric: git.code_lines
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: file_extension, value: go}}
+        equal: {value: 6}
+      # `test/single.rs` is an rs file the classifier calls test: were that
+      # rule to stop firing, rs would read 38 rather than 18. yaml, kt, md and
+      # ts appear at all only for the same kind of reason.
+      #
+      # Compared lower-case because gold lower-cases the extension. The rig's
+      # CEL has no case-folding function, so a regression that lost BOTH the
+      # classifier's case-insensitivity and that lower-casing would slip past
+      # this guard — the `24` in the first case is what catches it.
+      - metric: git.code_lines
+        view: breakdown
+        assert: "!items.exists(v, v.dimensions.exists(d, d.key == 'file_extension' && (d.value == 'yaml' || d.value == 'kt' || d.value == 'md' || d.value == 'ts')))"
+
+  - name: An empty window is null, not zero
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [erin@example.com]}
+        period: {from: "2026-12-01", to: "2026-12-31"}
+        metrics:
+          - metric_key: git.code_lines
+            views:
+              - {view: period}
+    expect:
+      - assert: "status == 200"
+      - metric: git.code_lines
+        view: period
+        find: {entity_id: erin@example.com}
+        equal: {value: null}
