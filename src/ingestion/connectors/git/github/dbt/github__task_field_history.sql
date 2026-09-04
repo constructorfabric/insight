@@ -201,7 +201,13 @@ snapshot_values AS (
         i.author_login, i.author_id,
         'title'                                                 AS field_id,
         i.title                                                 AS value_id,
-        i.title                                                 AS value_display,
+        -- No display of its own: the title IS its value, and `initial_values`
+        -- rewinds the value to the first rename's previous title. A display
+        -- carried separately would stay at the CURRENT title and disagree with
+        -- it — and gold reads the display, so a renamed issue would report
+        -- today's name as the one it was opened with. The final projection
+        -- falls back to the value.
+        ''                                                      AS value_display,
         i._airbyte_extracted_at
     FROM issues AS i
     WHERE i.title != ''
