@@ -87,6 +87,7 @@ events AS (
         toString(e.actor_id)                                    AS actor_id,
         multiIf(
             e.event_type IN ('ClosedEvent', 'ReopenedEvent'),          'state',
+            e.event_type = 'RenamedTitleEvent',                        'title',
             e.event_type IN ('AssignedEvent', 'UnassignedEvent'),      'assignees',
             e.event_type = 'IssueTypeChangedEvent',                    'type',
             e.event_type = 'IssueFieldChangedEvent',                   COALESCE(e.field_id, ''),
@@ -102,6 +103,7 @@ events AS (
         multiIf(
             e.event_type = 'ClosedEvent',   concat('closed:', lower(COALESCE(e.state_reason, ''))),
             e.event_type = 'ReopenedEvent', 'open',
+            e.event_type = 'RenamedTitleEvent', COALESCE(e.new_value, ''),
             e.event_type = 'AssignedEvent', toString(e.target_id),
             -- Removing an assignee states no remaining owner. An empty value
             -- reaches gold as an unresolvable account and correctly leaves the
@@ -140,7 +142,7 @@ events AS (
         e._airbyte_extracted_at                                 AS _airbyte_extracted_at
     FROM {{ source('bronze_github', 'issue_timeline_events') }} AS e FINAL
     WHERE e.event_type IN (
-        'ClosedEvent', 'ReopenedEvent', 'AssignedEvent', 'UnassignedEvent',
+        'ClosedEvent', 'ReopenedEvent', 'RenamedTitleEvent', 'AssignedEvent', 'UnassignedEvent',
         'IssueTypeChangedEvent', 'IssueFieldChangedEvent',
         'ProjectV2ItemStatusChangedEvent'
     )

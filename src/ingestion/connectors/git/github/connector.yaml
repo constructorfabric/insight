@@ -4033,7 +4033,7 @@ streams:
             query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
               repository(owner: $owner, name: $name) {
                 issue(number: $number) {
-                  timelineItems(first: 100, after: $cursor, itemTypes: [ASSIGNED_EVENT, UNASSIGNED_EVENT, LABELED_EVENT, UNLABELED_EVENT, CLOSED_EVENT, REOPENED_EVENT, ISSUE_TYPE_CHANGED_EVENT, ISSUE_FIELD_CHANGED_EVENT, PROJECT_V2_ITEM_STATUS_CHANGED_EVENT, ADDED_TO_PROJECT_V2_EVENT, REMOVED_FROM_PROJECT_V2_EVENT, SUB_ISSUE_ADDED_EVENT, SUB_ISSUE_REMOVED_EVENT, PARENT_ISSUE_ADDED_EVENT, PARENT_ISSUE_REMOVED_EVENT, BLOCKED_BY_ADDED_EVENT, BLOCKED_BY_REMOVED_EVENT, BLOCKING_ADDED_EVENT, BLOCKING_REMOVED_EVENT, CONNECTED_EVENT, DISCONNECTED_EVENT, MARKED_AS_DUPLICATE_EVENT, UNMARKED_AS_DUPLICATE_EVENT]) {
+                  timelineItems(first: 100, after: $cursor, itemTypes: [ASSIGNED_EVENT, UNASSIGNED_EVENT, LABELED_EVENT, UNLABELED_EVENT, CLOSED_EVENT, REOPENED_EVENT, RENAMED_TITLE_EVENT, ISSUE_TYPE_CHANGED_EVENT, ISSUE_FIELD_CHANGED_EVENT, PROJECT_V2_ITEM_STATUS_CHANGED_EVENT, ADDED_TO_PROJECT_V2_EVENT, REMOVED_FROM_PROJECT_V2_EVENT, SUB_ISSUE_ADDED_EVENT, SUB_ISSUE_REMOVED_EVENT, PARENT_ISSUE_ADDED_EVENT, PARENT_ISSUE_REMOVED_EVENT, BLOCKED_BY_ADDED_EVENT, BLOCKED_BY_REMOVED_EVENT, BLOCKING_ADDED_EVENT, BLOCKING_REMOVED_EVENT, CONNECTED_EVENT, DISCONNECTED_EVENT, MARKED_AS_DUPLICATE_EVENT, UNMARKED_AS_DUPLICATE_EVENT]) {
                     pageInfo { hasNextPage endCursor }
                     nodes {
                       __typename
@@ -4043,6 +4043,9 @@ streams:
                       ... on UnlabeledEvent { id createdAt actor { login ... on User { databaseId } } label { name } }
                       ... on ClosedEvent { id createdAt actor { login ... on User { databaseId } } stateReason }
                       ... on ReopenedEvent { id createdAt actor { login ... on User { databaseId } } }
+                      # A rename is the only history the title has; the issue
+                      # snapshot holds the current one alone.
+                      ... on RenamedTitleEvent { id createdAt actor { login ... on User { databaseId } } previousTitle currentTitle }
                       ... on IssueTypeChangedEvent { id createdAt actor { login ... on User { databaseId } } issueType { id name } prevIssueType { id name } }
                       ... on IssueFieldChangedEvent {
                         id createdAt actor { login ... on User { databaseId } } previousValue newValue
@@ -4256,12 +4259,12 @@ streams:
           - type: AddedFieldDefinition
             path: [prev_value]
             value: >-
-              {{ record.get('previousValue') or record.get('previousStatus') or (record.get('prevIssueType') or {}).get('name') or '' }}
+              {{ record.get('previousValue') or record.get('previousStatus') or record.get('previousTitle') or (record.get('prevIssueType') or {}).get('name') or '' }}
             value_type: string
           - type: AddedFieldDefinition
             path: [new_value]
             value: >-
-              {{ record.get('newValue') or record.get('status') or (record.get('issueType') or {}).get('name') or '' }}
+              {{ record.get('newValue') or record.get('status') or record.get('currentTitle') or (record.get('issueType') or {}).get('name') or '' }}
             value_type: string
           # Identifier counterparts, where the vendor has one. Only the issue
           # type carries an id on both sides today; board status is free text
@@ -4347,6 +4350,8 @@ streams:
           - [newOptions]
           - [previousStatus]
           - [status]
+          - [previousTitle]
+          - [currentTitle]
           - [project]
           - [wasAutomated]
           - [subIssue]
