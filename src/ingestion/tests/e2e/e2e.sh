@@ -100,15 +100,10 @@ case "$cmd" in
                 exit 2
                 ;;
         esac
-        if [ ! -f .artifacts/metric_definitions.json ]; then
-            echo "no .artifacts/metric_definitions.json — run './e2e.sh test metrics/' first" >&2
-            exit 2
-        fi
-        run=(docker compose "${COMPOSE_FILES[@]}" -f compose/docker-compose.norebuild.yml run --rm --no-deps -T runner)
-        rc=0
-        echo "── metric coverage (gate) ──"
-        "${run[@]}" python3 lib/metric_coverage.py --universe-file .artifacts/metric_definitions.json || rc=1
-        exit "$rc"
+        echo "the metric specs and their coverage gate moved to tests/datapath; run" >&2
+        echo "  ./dev-compose.sh test-stand test --tree=tests/datapath/metrics" >&2
+        echo "then python3 tests/lib/insight_datapath/metric_coverage.py over the .artifacts/ it writes" >&2
+        exit 2
         ;;
     *)
         echo "usage: $0 {build|test|run|shell|up|down|logs|gates [metrics]} [args...]" >&2

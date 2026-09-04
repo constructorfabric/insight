@@ -24,7 +24,9 @@ from lib.worker import WorkerContext
 
 pytestmark = [pytest.mark.identity, pytest.mark.mutating]
 
-_SCHEMAS_PATH = Path(__file__).parents[1] / "metrics" / "schemas" / "bronze_bamboohr.employees.yaml"
+_SCHEMAS_PATH = (
+    Path(__file__).parents[5] / "tests" / "datapath" / "metrics" / "schemas" / "bronze_bamboohr.employees.yaml"
+)
 _BAMBOOHR_SCHEMAS = yaml.safe_load(_SCHEMAS_PATH.read_text(encoding="utf-8"))["schemas"]
 
 # No `schemas/bronze_ms_entra.users.yaml` fixture exists yet (the metrics rig
@@ -124,9 +126,7 @@ def _bamboohr_employee(
         "source_id": f"pipeline-source-{run_tag}",
         # Same shape the fixture-loader derives for YAML fixtures: keys sorted,
         # values the source did not state left out.
-        "raw_data": json.dumps(
-            {k: v for k, v in sorted(fields.items()) if v is not None}, separators=(",", ":")
-        ),
+        "raw_data": json.dumps({k: v for k, v in sorted(fields.items()) if v is not None}, separators=(",", ":")),
         **fields,
     }
 
@@ -218,8 +218,7 @@ def _insert_raw_inputs(
         cfg,
         "INSERT INTO identity.identity_inputs "
         "(unique_key, insight_tenant_id, insight_source_type, insight_source_id,"
-        " source_account_id, value_type, value, operation_type, _synced_at, _version) VALUES "
-        + ", ".join(values),
+        " source_account_id, value_type, value, operation_type, _synced_at, _version) VALUES " + ", ".join(values),
     )
 
 
@@ -340,7 +339,9 @@ def test_seed_and_subchart_survive_a_circular_manager_chain(identity_svc, compos
     )
 
     res = identity_svc.run_seed_cli(tenant=str(seed.SEED_TENANT), force=True)
-    assert res.returncode == 0, f"the seed must terminate on cyclic input, not hang or crash\nrc={res.returncode}\n{res.stdout}\n{res.stderr}"
+    assert res.returncode == 0, (
+        f"the seed must terminate on cyclic input, not hang or crash\nrc={res.returncode}\n{res.stdout}\n{res.stderr}"
+    )
 
     person_a = _person_id_by_email(identity_svc, a_email)
     person_b = _person_id_by_email(identity_svc, b_email)
@@ -352,7 +353,9 @@ def test_seed_and_subchart_survive_a_circular_manager_chain(identity_svc, compos
 
     with identity_svc.client(sub=person_a, tenant=str(seed.SEED_TENANT)) as api:
         r = api.get(f"/v1/subchart/{person_a}")
-    assert r.status_code == 200, f"cyclic org_chart must not 500/hang the subchart read: status={r.status_code} body={r.text}"
+    assert r.status_code == 200, (
+        f"cyclic org_chart must not 500/hang the subchart read: status={r.status_code} body={r.text}"
+    )
 
     depths: list[int] = []
 
@@ -403,7 +406,9 @@ def test_ms_entra_connector_emits_no_org_chart_signal_yet(
 
     staging, silver = dbt_runner.derive_selectors({("bronze_ms_entra", "users")})
     tracked_models.build(staging, worker_ctx=worker_ctx, with_ancestors=True)
-    assert "identity_inputs" in silver, f"ms_entra__identity_inputs no longer tags silver:identity_inputs (silver={silver})"
+    assert "identity_inputs" in silver, (
+        f"ms_entra__identity_inputs no longer tags silver:identity_inputs (silver={silver})"
+    )
     tracked_models.run(["identity_inputs"], worker_ctx=worker_ctx)
 
     emitted = clickhouse.query(
@@ -461,7 +466,9 @@ def test_seed_and_subchart_project_arbitrary_depth_from_a_synced_chain(
 
     staging, silver = dbt_runner.derive_selectors({("bronze_bamboohr", "employees")})
     tracked_models.build(staging, worker_ctx=worker_ctx, with_ancestors=True)
-    assert "identity_inputs" in silver, f"bamboohr__identity_inputs did not surface a silver:identity_inputs tag (silver={silver})"
+    assert "identity_inputs" in silver, (
+        f"bamboohr__identity_inputs did not surface a silver:identity_inputs tag (silver={silver})"
+    )
     tracked_models.run(["identity_inputs"], worker_ctx=worker_ctx)
 
     res = identity_svc.run_seed_cli(tenant=str(seed.SEED_TENANT), force=True)

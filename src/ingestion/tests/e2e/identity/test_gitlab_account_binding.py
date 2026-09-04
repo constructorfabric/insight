@@ -52,7 +52,7 @@ type TableSchemas = dict[str, dict[str, object]]
 type BronzeTables = dict[str, list[BronzeRow]]
 
 # The metrics rig already declares every column of these three tables.
-_SCHEMA_DIR = Path(__file__).resolve().parents[1] / "metrics" / "schemas"
+_SCHEMA_DIR = Path(__file__).resolve().parents[5] / "tests" / "datapath" / "metrics" / "schemas"
 
 READ_AT = "2026-10-02T00:00:00Z"
 

@@ -83,7 +83,7 @@ e2e/
 │   ├── tracked_models.py       # dbt builds, with their relations registered for truncation
 │   ├── analytics.py        # builds + spawns the analytics binary
 │   ├── worker.py               # WorkerContext (resolves pytest-xdist worker id)
-│   ├── metric_coverage.py      # builtin metric coverage gate
+│   ├── (metric_coverage.py moved to tests/lib/insight_datapath/ with the metric specs)
 │   ├── api_coverage.py         # shim: loads scripts/ci/api_coverage.py for the identity lane
 │   ├── collect_metric_definitions.py # snapshot enabled builtin definitions
 │   └── config.py               # session config (ports, random creds)
