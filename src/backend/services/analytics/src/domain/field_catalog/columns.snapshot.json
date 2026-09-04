@@ -66,7 +66,15 @@
         "type": "String"
       },
       {
-        "name": "source_entity_id",
+        "name": "account_source_type",
+        "type": "String"
+      },
+      {
+        "name": "account_source_id",
+        "type": "String"
+      },
+      {
+        "name": "account_id",
         "type": "String"
       },
       {
@@ -138,6 +146,18 @@
         "type": "String"
       },
       {
+        "name": "account_source_type",
+        "type": "String"
+      },
+      {
+        "name": "account_source_id",
+        "type": "String"
+      },
+      {
+        "name": "account_id",
+        "type": "String"
+      },
+      {
         "name": "metric_date",
         "type": "Date"
       },
@@ -186,7 +206,15 @@
         "type": "String"
       },
       {
-        "name": "source_entity_id",
+        "name": "account_source_type",
+        "type": "String"
+      },
+      {
+        "name": "account_source_id",
+        "type": "String"
+      },
+      {
+        "name": "account_id",
         "type": "String"
       },
       {
@@ -258,6 +286,18 @@
         "type": "String"
       },
       {
+        "name": "account_source_type",
+        "type": "String"
+      },
+      {
+        "name": "account_source_id",
+        "type": "String"
+      },
+      {
+        "name": "account_id",
+        "type": "String"
+      },
+      {
         "name": "metric_date",
         "type": "Date"
       },
@@ -290,6 +330,30 @@
   {
     "columns": [
       {
+        "name": "source_database",
+        "type": "LowCardinality(String)"
+      },
+      {
+        "name": "connector",
+        "type": "LowCardinality(String)"
+      },
+      {
+        "name": "stream",
+        "type": "LowCardinality(String)"
+      },
+      {
+        "name": "extracted_at",
+        "type": "DateTime64(3)"
+      }
+    ],
+    "database": "insight",
+    "engine": "View",
+    "relation": "bronze_insert_events",
+    "sorting_key": ""
+  },
+  {
+    "columns": [
+      {
         "name": "tenant_id",
         "type": "String"
       },
@@ -307,6 +371,158 @@
       },
       {
         "name": "source_entity_id",
+        "type": "String"
+      },
+      {
+        "name": "account_source_type",
+        "type": "String"
+      },
+      {
+        "name": "account_source_id",
+        "type": "String"
+      },
+      {
+        "name": "account_id",
+        "type": "String"
+      },
+      {
+        "name": "metric_date",
+        "type": "Date"
+      },
+      {
+        "name": "observed_at",
+        "type": "Nullable(DateTime64(3))"
+      },
+      {
+        "name": "measure_key",
+        "type": "String"
+      },
+      {
+        "name": "record_id",
+        "type": "String"
+      },
+      {
+        "name": "record_kind",
+        "type": "String"
+      },
+      {
+        "name": "granularity",
+        "type": "String"
+      },
+      {
+        "name": "record_label",
+        "type": "String"
+      },
+      {
+        "name": "contribution",
+        "type": "Nullable(Float64)"
+      },
+      {
+        "name": "subject_key",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "dimensions",
+        "type": "Array(Tuple(key String, value String, label Nullable(String)))"
+      },
+      {
+        "name": "details",
+        "type": "Map(String, Nullable(String))"
+      }
+    ],
+    "database": "insight",
+    "engine": "MergeTree",
+    "relation": "ci_metric_evidence",
+    "sorting_key": "tenant_id, source_key, entity_type, entity_id, measure_key, metric_date, record_id"
+  },
+  {
+    "columns": [
+      {
+        "name": "tenant_id",
+        "type": "String"
+      },
+      {
+        "name": "source_key",
+        "type": "String"
+      },
+      {
+        "name": "entity_type",
+        "type": "String"
+      },
+      {
+        "name": "entity_id",
+        "type": "String"
+      },
+      {
+        "name": "account_source_type",
+        "type": "String"
+      },
+      {
+        "name": "account_source_id",
+        "type": "String"
+      },
+      {
+        "name": "account_id",
+        "type": "String"
+      },
+      {
+        "name": "metric_date",
+        "type": "Date"
+      },
+      {
+        "name": "observed_at",
+        "type": "Nullable(DateTime64(3))"
+      },
+      {
+        "name": "measure_key",
+        "type": "String"
+      },
+      {
+        "name": "value",
+        "type": "Nullable(Float64)"
+      },
+      {
+        "name": "subject_key",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "dimensions",
+        "type": "Array(Tuple(key String, value String, label Nullable(String)))"
+      }
+    ],
+    "database": "insight",
+    "engine": "MergeTree",
+    "relation": "ci_metric_observations",
+    "sorting_key": "tenant_id, source_key, entity_type, entity_id, measure_key, metric_date"
+  },
+  {
+    "columns": [
+      {
+        "name": "tenant_id",
+        "type": "String"
+      },
+      {
+        "name": "source_key",
+        "type": "String"
+      },
+      {
+        "name": "entity_type",
+        "type": "String"
+      },
+      {
+        "name": "entity_id",
+        "type": "String"
+      },
+      {
+        "name": "account_source_type",
+        "type": "String"
+      },
+      {
+        "name": "account_source_id",
+        "type": "String"
+      },
+      {
+        "name": "account_id",
         "type": "String"
       },
       {
@@ -378,6 +594,18 @@
         "type": "String"
       },
       {
+        "name": "account_source_type",
+        "type": "String"
+      },
+      {
+        "name": "account_source_id",
+        "type": "String"
+      },
+      {
+        "name": "account_id",
+        "type": "String"
+      },
+      {
         "name": "metric_date",
         "type": "Date"
       },
@@ -406,6 +634,198 @@
     "engine": "MergeTree",
     "relation": "collab_metric_observations",
     "sorting_key": "tenant_id, source_key, entity_type, entity_id, measure_key, metric_date"
+  },
+  {
+    "columns": [
+      {
+        "name": "tenant_id",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "source_id",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "project_key",
+        "type": "String"
+      },
+      {
+        "name": "repo_slug",
+        "type": "String"
+      },
+      {
+        "name": "commit_hash",
+        "type": "String"
+      },
+      {
+        "name": "data_source",
+        "type": "String"
+      },
+      {
+        "name": "author_name",
+        "type": "String"
+      },
+      {
+        "name": "message",
+        "type": "String"
+      },
+      {
+        "name": "observed_at",
+        "type": "Nullable(DateTime)"
+      },
+      {
+        "name": "entity_id",
+        "type": "String"
+      },
+      {
+        "name": "metric_date",
+        "type": "Nullable(Date)"
+      },
+      {
+        "name": "lines_added",
+        "type": "Nullable(Int64)"
+      },
+      {
+        "name": "lines_removed",
+        "type": "Nullable(Int64)"
+      },
+      {
+        "name": "branch_scope_value",
+        "type": "String"
+      },
+      {
+        "name": "branch_scope_label",
+        "type": "String"
+      },
+      {
+        "name": "project_value",
+        "type": "String"
+      },
+      {
+        "name": "project_label",
+        "type": "String"
+      },
+      {
+        "name": "repository_value",
+        "type": "String"
+      },
+      {
+        "name": "repository_label",
+        "type": "String"
+      },
+      {
+        "name": "source_value",
+        "type": "String"
+      },
+      {
+        "name": "source_label",
+        "type": "String"
+      },
+      {
+        "name": "source_dimensions",
+        "type": "Array(Tuple(key String, value String, label Nullable(String)))"
+      }
+    ],
+    "database": "insight",
+    "engine": "MergeTree",
+    "relation": "git_authored_commits",
+    "sorting_key": "tenant_id, data_source, commit_hash"
+  },
+  {
+    "columns": [
+      {
+        "name": "tenant_id",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "source_id",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "project_key",
+        "type": "String"
+      },
+      {
+        "name": "repo_slug",
+        "type": "String"
+      },
+      {
+        "name": "commit_hash",
+        "type": "String"
+      },
+      {
+        "name": "observed_at",
+        "type": "Nullable(DateTime)"
+      },
+      {
+        "name": "data_source",
+        "type": "String"
+      },
+      {
+        "name": "file_path",
+        "type": "String"
+      },
+      {
+        "name": "file_extension",
+        "type": "String"
+      },
+      {
+        "name": "change_type",
+        "type": "String"
+      },
+      {
+        "name": "lines_added",
+        "type": "Nullable(Int64)"
+      },
+      {
+        "name": "lines_removed",
+        "type": "Nullable(Int64)"
+      },
+      {
+        "name": "pre_image_oid",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "post_image_oid",
+        "type": "Nullable(String)"
+      }
+    ],
+    "database": "insight",
+    "engine": "MergeTree",
+    "relation": "git_commit_file_changes",
+    "sorting_key": "tenant_id, data_source, commit_hash"
+  },
+  {
+    "columns": [
+      {
+        "name": "tenant_id",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "data_source",
+        "type": "String"
+      },
+      {
+        "name": "commit_hash",
+        "type": "String"
+      },
+      {
+        "name": "file_change_rows",
+        "type": "UInt64"
+      },
+      {
+        "name": "lines_added",
+        "type": "Nullable(Int64)"
+      },
+      {
+        "name": "lines_removed",
+        "type": "Nullable(Int64)"
+      }
+    ],
+    "database": "insight",
+    "engine": "MergeTree",
+    "relation": "git_commit_file_line_totals",
+    "sorting_key": "tenant_id, data_source, commit_hash"
   },
   {
     "columns": [
@@ -522,6 +942,86 @@
     "engine": "MergeTree",
     "relation": "git_default_branch_commits",
     "sorting_key": "tenant_id, source_id, project_key, repo_slug, commit_hash"
+  },
+  {
+    "columns": [
+      {
+        "name": "tenant_id",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "data_source",
+        "type": "String"
+      },
+      {
+        "name": "commit_hash",
+        "type": "String"
+      },
+      {
+        "name": "reason",
+        "type": "String"
+      }
+    ],
+    "database": "insight",
+    "engine": "MergeTree",
+    "relation": "git_derived_commits",
+    "sorting_key": "tenant_id, data_source, commit_hash"
+  },
+  {
+    "columns": [
+      {
+        "name": "tenant_id",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "data_source",
+        "type": "String"
+      },
+      {
+        "name": "source_id",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "commits",
+        "type": "UInt64"
+      },
+      {
+        "name": "commits_requiring_file_changes",
+        "type": "UInt64"
+      },
+      {
+        "name": "known_zero_size_commits",
+        "type": "UInt64"
+      },
+      {
+        "name": "unknown_size_commits",
+        "type": "UInt64"
+      },
+      {
+        "name": "commits_with_file_changes",
+        "type": "UInt64"
+      },
+      {
+        "name": "collected_pct",
+        "type": "Nullable(Float64)"
+      },
+      {
+        "name": "recent_commits_requiring_file_changes",
+        "type": "UInt64"
+      },
+      {
+        "name": "recent_collected_pct",
+        "type": "Nullable(Float64)"
+      },
+      {
+        "name": "uncollected_lines",
+        "type": "Int64"
+      }
+    ],
+    "database": "insight",
+    "engine": "MergeTree",
+    "relation": "git_file_change_coverage",
+    "sorting_key": "tenant_id, data_source, source_id"
   },
   {
     "columns": [
@@ -654,7 +1154,15 @@
         "type": "String"
       },
       {
-        "name": "source_entity_id",
+        "name": "account_source_type",
+        "type": "String"
+      },
+      {
+        "name": "account_source_id",
+        "type": "String"
+      },
+      {
+        "name": "account_id",
         "type": "String"
       },
       {
@@ -726,6 +1234,18 @@
         "type": "String"
       },
       {
+        "name": "account_source_type",
+        "type": "String"
+      },
+      {
+        "name": "account_source_id",
+        "type": "String"
+      },
+      {
+        "name": "account_id",
+        "type": "String"
+      },
+      {
         "name": "metric_date",
         "type": "Date"
       },
@@ -766,12 +1286,12 @@
         "type": "Nullable(String)"
       },
       {
-        "name": "project_key",
+        "name": "event_kind",
         "type": "String"
       },
       {
-        "name": "repo_slug",
-        "type": "String"
+        "name": "event_key",
+        "type": "Nullable(String)"
       },
       {
         "name": "pr_id",
@@ -782,15 +1302,19 @@
         "type": "Int64"
       },
       {
+        "name": "entity_id",
+        "type": "String"
+      },
+      {
+        "name": "metric_date",
+        "type": "Nullable(Date)"
+      },
+      {
+        "name": "observed_at",
+        "type": "Nullable(DateTime)"
+      },
+      {
         "name": "title",
-        "type": "String"
-      },
-      {
-        "name": "author_email",
-        "type": "String"
-      },
-      {
-        "name": "author_account_id",
         "type": "String"
       },
       {
@@ -798,67 +1322,27 @@
         "type": "String"
       },
       {
-        "name": "created_at",
-        "type": "DateTime"
-      },
-      {
-        "name": "created_date",
-        "type": "Date"
-      },
-      {
-        "name": "closed_at",
-        "type": "Nullable(DateTime)"
-      },
-      {
-        "name": "merged",
-        "type": "UInt8"
-      },
-      {
-        "name": "abandoned",
-        "type": "UInt8"
-      },
-      {
-        "name": "merged_without_approval",
-        "type": "UInt8"
-      },
-      {
-        "name": "reviewer_count",
-        "type": "UInt64"
-      },
-      {
-        "name": "first_reviewed_at",
-        "type": "Nullable(DateTime)"
-      },
-      {
-        "name": "approved_at",
-        "type": "Nullable(DateTime)"
-      },
-      {
-        "name": "branch_scope",
+        "name": "author_email",
         "type": "String"
       },
       {
-        "name": "branch_scope_label",
+        "name": "actor_person_id",
         "type": "String"
       },
       {
-        "name": "destination_branch",
+        "name": "author_person_id",
         "type": "String"
       },
       {
-        "name": "destination_branch_label",
+        "name": "comment_target_value",
         "type": "String"
       },
       {
-        "name": "repository",
+        "name": "comment_target_label",
         "type": "String"
       },
       {
-        "name": "repository_label",
-        "type": "String"
-      },
-      {
-        "name": "project",
+        "name": "project_value",
         "type": "String"
       },
       {
@@ -866,7 +1350,23 @@
         "type": "String"
       },
       {
-        "name": "source",
+        "name": "repository_value",
+        "type": "String"
+      },
+      {
+        "name": "repository_label",
+        "type": "String"
+      },
+      {
+        "name": "destination_branch_value",
+        "type": "String"
+      },
+      {
+        "name": "destination_branch_label",
+        "type": "String"
+      },
+      {
+        "name": "source_value",
         "type": "String"
       },
       {
@@ -874,42 +1374,14 @@
         "type": "String"
       },
       {
-        "name": "lines_added",
-        "type": "Nullable(Int64)"
-      },
-      {
-        "name": "lines_removed",
-        "type": "Nullable(Int64)"
-      },
-      {
-        "name": "files_changed",
-        "type": "Nullable(Int64)"
-      },
-      {
-        "name": "cycle_hours",
-        "type": "Nullable(Float64)"
-      },
-      {
-        "name": "first_review_hours",
-        "type": "Nullable(Float64)"
-      },
-      {
-        "name": "review_to_merge_hours",
-        "type": "Nullable(Float64)"
-      },
-      {
-        "name": "approval_to_merge_hours",
-        "type": "Nullable(Float64)"
-      },
-      {
-        "name": "review_wait_share",
-        "type": "Nullable(Float64)"
+        "name": "source_dimensions",
+        "type": "Array(Tuple(key String, value String, label Nullable(String)))"
       }
     ],
     "database": "insight",
     "engine": "MergeTree",
-    "relation": "git_pull_requests",
-    "sorting_key": "tenant_id, author_email, created_at"
+    "relation": "git_review_events",
+    "sorting_key": "tenant_id, entity_id, metric_date"
   },
   {
     "columns": [
@@ -935,9 +1407,9 @@
       }
     ],
     "database": "insight",
-    "engine": "MergeTree",
+    "engine": "View",
     "relation": "identity_resolution_coverage",
-    "sorting_key": "source_key"
+    "sorting_key": ""
   },
   {
     "columns": [
@@ -963,9 +1435,9 @@
       }
     ],
     "database": "insight",
-    "engine": "MergeTree",
+    "engine": "View",
     "relation": "metric_entity_cohorts_current",
-    "sorting_key": "tenant_id, entity_type, cohort_key, entity_id"
+    "sorting_key": ""
   },
   {
     "columns": [
@@ -1066,7 +1538,15 @@
         "type": "String"
       },
       {
-        "name": "source_entity_id",
+        "name": "account_source_type",
+        "type": "String"
+      },
+      {
+        "name": "account_source_id",
+        "type": "String"
+      },
+      {
+        "name": "account_id",
         "type": "String"
       },
       {
@@ -1135,6 +1615,18 @@
       },
       {
         "name": "entity_id",
+        "type": "String"
+      },
+      {
+        "name": "account_source_type",
+        "type": "String"
+      },
+      {
+        "name": "account_source_id",
+        "type": "String"
+      },
+      {
+        "name": "account_id",
         "type": "String"
       },
       {
@@ -1246,7 +1738,15 @@
         "type": "String"
       },
       {
-        "name": "source_entity_id",
+        "name": "account_source_type",
+        "type": "String"
+      },
+      {
+        "name": "account_source_id",
+        "type": "String"
+      },
+      {
+        "name": "account_id",
         "type": "String"
       },
       {
@@ -1315,6 +1815,18 @@
       },
       {
         "name": "entity_id",
+        "type": "String"
+      },
+      {
+        "name": "account_source_type",
+        "type": "String"
+      },
+      {
+        "name": "account_source_id",
+        "type": "String"
+      },
+      {
+        "name": "account_id",
         "type": "String"
       },
       {
@@ -1619,6 +2131,10 @@
       },
       {
         "name": "tier_label",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "tier_ref",
         "type": "Nullable(String)"
       },
       {
@@ -2626,6 +3142,110 @@
         "type": "Nullable(String)"
       },
       {
+        "name": "repo_full_name",
+        "type": "String"
+      },
+      {
+        "name": "pipeline_key",
+        "type": "String"
+      },
+      {
+        "name": "pipeline_name",
+        "type": "String"
+      },
+      {
+        "name": "run_id",
+        "type": "Int64"
+      },
+      {
+        "name": "run_number",
+        "type": "Int64"
+      },
+      {
+        "name": "attempt",
+        "type": "Int64"
+      },
+      {
+        "name": "is_retry",
+        "type": "UInt8"
+      },
+      {
+        "name": "trigger_category",
+        "type": "String"
+      },
+      {
+        "name": "trigger_raw",
+        "type": "String"
+      },
+      {
+        "name": "outcome",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "is_gate",
+        "type": "UInt8"
+      },
+      {
+        "name": "branch",
+        "type": "String"
+      },
+      {
+        "name": "commit_sha",
+        "type": "String"
+      },
+      {
+        "name": "actor_login",
+        "type": "String"
+      },
+      {
+        "name": "created_at",
+        "type": "Nullable(DateTime)"
+      },
+      {
+        "name": "started_at",
+        "type": "Nullable(DateTime)"
+      },
+      {
+        "name": "finished_at",
+        "type": "Nullable(DateTime)"
+      },
+      {
+        "name": "duration_s",
+        "type": "Nullable(Int64)"
+      },
+      {
+        "name": "data_source",
+        "type": "String"
+      },
+      {
+        "name": "_version",
+        "type": "Int64"
+      },
+      {
+        "name": "_airbyte_extracted_at",
+        "type": "DateTime64(3)"
+      }
+    ],
+    "database": "silver",
+    "engine": "ReplacingMergeTree",
+    "relation": "class_git_ci_runs",
+    "sorting_key": "unique_key"
+  },
+  {
+    "columns": [
+      {
+        "name": "tenant_id",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "source_id",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "unique_key",
+        "type": "Nullable(String)"
+      },
+      {
         "name": "project_key",
         "type": "String"
       },
@@ -2696,11 +3316,147 @@
       {
         "name": "_airbyte_extracted_at",
         "type": "DateTime64(3)"
+      },
+      {
+        "name": "patch_id",
+        "type": "Nullable(String)"
       }
     ],
     "database": "silver",
     "engine": "ReplacingMergeTree",
     "relation": "class_git_commits",
+    "sorting_key": "unique_key"
+  },
+  {
+    "columns": [
+      {
+        "name": "tenant_id",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "source_id",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "unique_key",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "repo_full_name",
+        "type": "String"
+      },
+      {
+        "name": "deployment_id",
+        "type": "String"
+      },
+      {
+        "name": "event_id",
+        "type": "Int64"
+      },
+      {
+        "name": "state",
+        "type": "String"
+      },
+      {
+        "name": "environment",
+        "type": "String"
+      },
+      {
+        "name": "creator_login",
+        "type": "String"
+      },
+      {
+        "name": "created_at",
+        "type": "Nullable(DateTime)"
+      },
+      {
+        "name": "data_source",
+        "type": "String"
+      },
+      {
+        "name": "_version",
+        "type": "Int64"
+      },
+      {
+        "name": "_airbyte_extracted_at",
+        "type": "DateTime64(3)"
+      }
+    ],
+    "database": "silver",
+    "engine": "ReplacingMergeTree",
+    "relation": "class_git_deployment_events",
+    "sorting_key": "unique_key"
+  },
+  {
+    "columns": [
+      {
+        "name": "tenant_id",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "source_id",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "unique_key",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "repo_full_name",
+        "type": "String"
+      },
+      {
+        "name": "deployment_id",
+        "type": "String"
+      },
+      {
+        "name": "environment",
+        "type": "String"
+      },
+      {
+        "name": "is_production",
+        "type": "UInt8"
+      },
+      {
+        "name": "is_transient",
+        "type": "UInt8"
+      },
+      {
+        "name": "ref",
+        "type": "String"
+      },
+      {
+        "name": "commit_sha",
+        "type": "String"
+      },
+      {
+        "name": "task",
+        "type": "String"
+      },
+      {
+        "name": "creator_login",
+        "type": "String"
+      },
+      {
+        "name": "created_at",
+        "type": "Nullable(DateTime)"
+      },
+      {
+        "name": "data_source",
+        "type": "String"
+      },
+      {
+        "name": "_version",
+        "type": "Int64"
+      },
+      {
+        "name": "_airbyte_extracted_at",
+        "type": "DateTime64(3)"
+      }
+    ],
+    "database": "silver",
+    "engine": "ReplacingMergeTree",
+    "relation": "class_git_deployments",
     "sorting_key": "unique_key"
   },
   {
@@ -2861,6 +3617,82 @@
     "database": "silver",
     "engine": "ReplacingMergeTree",
     "relation": "class_git_item_events",
+    "sorting_key": "unique_key"
+  },
+  {
+    "columns": [
+      {
+        "name": "tenant_id",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "source_id",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "unique_key",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "project_key",
+        "type": "String"
+      },
+      {
+        "name": "repo_slug",
+        "type": "String"
+      },
+      {
+        "name": "pr_id",
+        "type": "Int64"
+      },
+      {
+        "name": "pr_number",
+        "type": "Int64"
+      },
+      {
+        "name": "event_kind",
+        "type": "String"
+      },
+      {
+        "name": "review_state",
+        "type": "String"
+      },
+      {
+        "name": "actor_login",
+        "type": "String"
+      },
+      {
+        "name": "actor_name",
+        "type": "String"
+      },
+      {
+        "name": "actor_account_id",
+        "type": "String"
+      },
+      {
+        "name": "actor_email",
+        "type": "String"
+      },
+      {
+        "name": "created_at",
+        "type": "Nullable(DateTime)"
+      },
+      {
+        "name": "data_source",
+        "type": "String"
+      },
+      {
+        "name": "_version",
+        "type": "Int64"
+      },
+      {
+        "name": "_airbyte_extracted_at",
+        "type": "DateTime64(3)"
+      }
+    ],
+    "database": "silver",
+    "engine": "ReplacingMergeTree",
+    "relation": "class_git_pr_review_events",
     "sorting_key": "unique_key"
   },
   {
@@ -3248,6 +4080,10 @@
       {
         "name": "_airbyte_extracted_at",
         "type": "DateTime64(3)"
+      },
+      {
+        "name": "default_branch",
+        "type": "Nullable(String)"
       }
     ],
     "database": "silver",
@@ -3927,6 +4763,82 @@
     "columns": [
       {
         "name": "unique_key",
+        "type": "String"
+      },
+      {
+        "name": "insight_source_id",
+        "type": "String"
+      },
+      {
+        "name": "data_source",
+        "type": "String"
+      },
+      {
+        "name": "id_readable",
+        "type": "String"
+      },
+      {
+        "name": "link_type",
+        "type": "String"
+      },
+      {
+        "name": "target_type",
+        "type": "Enum8('issue' = 1, 'pull_request' = 2)"
+      },
+      {
+        "name": "target_readable",
+        "type": "String"
+      },
+      {
+        "name": "is_cross_repository",
+        "type": "Bool"
+      },
+      {
+        "name": "valid_from",
+        "type": "DateTime64(3)"
+      },
+      {
+        "name": "valid_from_known",
+        "type": "UInt8"
+      },
+      {
+        "name": "valid_to",
+        "type": "Nullable(DateTime64(3))"
+      },
+      {
+        "name": "added_by",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "removed_by",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "evidence",
+        "type": "Enum8('event' = 1, 'observation' = 2)"
+      },
+      {
+        "name": "origin_event_id",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "collected_at",
+        "type": "DateTime64(3)"
+      },
+      {
+        "name": "_version",
+        "type": "UInt64"
+      }
+    ],
+    "database": "silver",
+    "engine": "ReplacingMergeTree",
+    "relation": "class_task_links",
+    "sorting_key": "unique_key"
+  },
+  {
+    "columns": [
+      {
+        "name": "unique_key",
         "type": "Nullable(String)"
       },
       {
@@ -4422,6 +5334,18 @@
     "engine": "ReplacingMergeTree",
     "relation": "class_wiki_pages",
     "sorting_key": "unique_key"
+  },
+  {
+    "columns": [
+      {
+        "name": "version",
+        "type": "UInt32"
+      }
+    ],
+    "database": "silver",
+    "engine": "View",
+    "relation": "contract_version",
+    "sorting_key": ""
   },
   {
     "columns": [
