@@ -1,4 +1,4 @@
-import { Bug, Settings2, type LucideIcon } from "lucide-react";
+import { Bug, Settings, type LucideIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -273,7 +273,7 @@ export function LensRail() {
           <Popover open={settingsOpen} onOpenChange={setSettingsOpen}>
             <PopoverTrigger
               render={
-                <RailButton icon={Settings2} label="Settings" />
+                <RailButton icon={Settings} label="Settings" />
               }
             />
             <PopoverContent
