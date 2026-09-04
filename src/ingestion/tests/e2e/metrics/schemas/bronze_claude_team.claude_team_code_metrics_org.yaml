@@ -1,0 +1,27 @@
+# JSON schema for bronze_claude_team.claude_team_code_metrics_org (all real columns).
+# Mirrors the connector InlineSchemaLoader (connectors/ai/claude-team/connector.yaml
+# — stream claude_team_code_metrics_org, the org-level half of the same
+# GET /api/claude_code/metrics_aggs/users response) plus the 4 _airbyte_* CDK
+# columns. total_users is the day's headcount AS OF THE READ that returned it,
+# which is what the completeness gate in claude_team__ai_dev_usage compares
+# against; the read is in unique_key so one read never overwrites another's.
+schemas:
+  bronze_claude_team.claude_team_code_metrics_org:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      _airbyte_raw_id: { type: string }
+      _airbyte_extracted_at: { type: string, format: date-time }
+      _airbyte_meta: { type: string }
+      _airbyte_generation_id: { type: integer }
+      tenant_id: { type: [string, "null"] }
+      source_id: { type: [string, "null"] }
+      unique_key: { type: string }
+      collected_at: { type: [string, "null"] }
+      data_source: { type: [string, "null"] }
+      metric_date: { type: [string, "null"] }
+      pr_attribution: { type: [string, "null"] }
+      top_users_by_prs: { type: [string, "null"] }
+      top_users_by_lines_of_code: { type: [string, "null"] }
+      total_users: { type: [number, "null"] }

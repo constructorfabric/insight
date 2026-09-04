@@ -1,0 +1,15 @@
+{
+  "email": "person@example.com",
+  "api_key_name": null,
+  "account_uuid": null,
+  "status": "active",
+  "avg_cost_per_day": "0.0",
+  "avg_lines_accepted_per_day": 0,
+  "total_cost": "0.0",
+  "total_lines_accepted": 0,
+  "total_sessions": 1,
+  "last_active": "2026-08-19T00:00:00",
+  "prs_with_cc": 0,
+  "total_prs": 0,
+  "prs_with_cc_percentage": 0.0
+}
