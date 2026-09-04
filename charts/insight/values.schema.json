@@ -88,6 +88,12 @@
         "imagePullSecrets": { "type": "array", "items": { "type": "object" } },
         "storageClass":     { "type": "string" },
         "observability":    { "$ref": "#/definitions/observability" },
+        "sqlApi": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" }
+          }
+        },
         "mcp": {
           "type": "object",
           "properties": {

@@ -11,7 +11,7 @@ spec:
       targetPort: http
       protocol: TCP
       name: http
-    {{- if .Values.global.mcp.enabled }}
+    {{- if or .Values.global.mcp.enabled .Values.global.sqlApi.enabled }}
     - port: {{ .Values.mcp.port }}
       targetPort: mcp
       protocol: TCP

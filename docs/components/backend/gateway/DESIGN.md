@@ -203,7 +203,7 @@ Runs once at startup, not as a runtime watcher. Does not decide routing policy -
 The commodity edge: routing, proxying, streaming, WebSocket upgrades, timeouts, rate limiting -- the code nobody should hand-write in Rust.
 
 ##### Responsibility scope
-Longest-prefix `location` matching; an access-phase Lua exchange on every `/api/` location; plain proxy for `/auth/` (with a coarse per-IP `limit_req` flood guard); SPA at `/`; `proxy_buffering off` where streaming matters; WebSocket upgrade pass-through (auth runs once at upgrade, JWT frozen for the socket's life); `/internal/` returns 404; HSTS on every response.
+Longest-prefix `location` matching for session-authenticated routes, with an access-phase Lua exchange; exact matching for explicitly configured bearer and instance-token routes (see 3.8); plain proxy for `/auth/` (with a coarse per-IP `limit_req` flood guard); SPA at `/`; `proxy_buffering off` where streaming matters; WebSocket upgrade pass-through (auth runs once at upgrade, JWT frozen for the socket's life); `/internal/` returns 404; HSTS on every response.
 
 Access-phase Lua exchange semantics the design hangs on: authenticator `200` = allow (JWT read from the `X-Gateway-Jwt` response header); `401` = deny with that status (never cached); anything else (authenticator unreachable / timeout / 5xx) = fail closed, shaped to a `503`. The Lua cosocket calls the authenticator without the request body, so uploads are not buffered twice; the response body and any `Set-Cookie` are discarded -- fine, the design never sets cookies on `/api/*`.
 
@@ -331,8 +331,8 @@ defaults:
   strip_prefix: false
   websocket: false
   # Operator-extensible deny-list of request headers. The hardcoded
-  # gateway-reserved set (Authorization, X-Correlation-Id,
-  # X-Forwarded-*, gateway cookies) is always stripped in addition.
+  # Auth mode owns Authorization/cookies; correlation and forwarding
+  # headers are always replaced by gateway-authored values.
   strip_request_headers:
     - X-Real-IP
     - Forwarded
@@ -355,16 +355,16 @@ Validation rules (enforced by the configurator in CI, before nginx ever sees the
 
 - `version` must be a known schema version.
 - `prefix` unique across the table; no two routes share an exact prefix.
-- `prefix` must start with `/api/`.
+- `auth` defaults to `session`, whose `prefix` must start with `/api/`. `bearer` is restricted to exact `/mcp`; `instance_token` is restricted to exact `/api/sql/query`.
 - `upstream` must be a valid URL with hostname and port.
 - `timeout_ms >= 0`; `0` only allowed when `websocket: true`.
-- `strip_request_headers` entries must be valid HTTP header names; reserved gateway headers (`Authorization`, `X-Correlation-Id`, `X-Forwarded-*`, gateway cookies) **MUST NOT** appear in this list -- they are stripped unconditionally. There is no tenant selector anymore: the JWT carries a single signed `tenant_id`, so an inbound `X-Tenant-ID`/`X-Insight-Tenant-Id` is not authority and downstream ignores it (deployments may strip it for hygiene).
+- `strip_request_headers` entries must be valid HTTP header names; reserved gateway headers (`Authorization`, `X-Correlation-Id`, `X-Forwarded-*`, gateway cookies) **MUST NOT** appear in this list -- their treatment is owned by the selected auth mode and the common hygiene block. There is no tenant selector: session JWTs carry a single signed `tenant_id`, while the instance-token SQL API has instance-wide scope. An inbound `X-Tenant-ID`/`X-Insight-Tenant-Id` is not authority (deployments may strip it for hygiene).
 
 **Why the defaults strip `X-Real-IP` and `Forwarded` -- and how backends still get the client IP.** Those two are *inbound, client-writable* identity headers: the gateway never sets them, so any value arriving upstream could only have come from the browser -- an attacker sending `Forwarded: for=1.2.3.4` would spoof IP-based audit trails, rate-limit keys, or geo logic in any backend that reads them. Stripping them leaves exactly **one source of client-IP truth**: the `X-Forwarded-For` chain, which the gateway strips from the client unconditionally (reserved set) and re-writes itself (hygiene block item 5), resolving the true peer address via `set_real_ip_from` trust of the ingress hops. Backends read client IP from that header and nothing else; the authenticator's session records (`ip` captured at login) rely on the same chain. Same trust model as the tenant claim: an unsigned inbound header is never authority — only the signed gateway JWT is. If an upstream ever genuinely needs `X-Real-IP`, the configurator emits it gateway-written (`$remote_addr` after real-ip resolution) as a hygiene-block addition -- do not remove it from the strip list, which would reintroduce the client-writable variant.
 
 ### 3.9 Generated Location Hygiene Block
 
-Every generated `/api/` location gets, without exception (this is what closes the deleted spec's header-hygiene and auth-bypass risks by construction):
+Every generated `auth: session` location gets the following block. Explicit non-session modes preserve the common header hygiene but use their own downstream authentication boundary, as described below.
 
 1. `auth_request` to the internal exchange location, with `auth_request_set` capturing `X-Gateway-Jwt`.
 2. `Authorization` set to the captured JWT -- replacing anything the browser sent.
@@ -375,7 +375,11 @@ Every generated `/api/` location gets, without exception (this is what closes th
 7. Per-route `proxy_read_timeout` from `timeout_ms`; WebSocket upgrade boilerplate when `websocket: true`; `proxy_buffering off`.
 8. `error_page` wiring for the fail-closed exits (3.12).
 
-CI proof: a poisoned-request snapshot test per generated route (forged `Authorization`, junk cookies, junk correlation id sent in; assert what the upstream stub receives), and a no-cookie-means-401 assertion on every `/api/` route.
+`auth: instance_token` forwards `Authorization` unchanged to analytics, where the SQL API validates the configured instance token on every request. It does not invoke the session exchange or advertise MCP OAuth. Its Lua handler strips all cookies and replaces the correlation and forwarding context; operator header stripping, proxy timeouts, and response handling still apply. This mode grants instance-wide SQL explorer access, not a user or tenant identity. Helm renders the route only when `global.sqlApi.enabled` is true.
+
+`auth: bearer` similarly forwards bearer credentials for `/mcp`, where analytics verifies the MCP OAuth token. This is separate from instance-token authentication.
+
+CI proof: poisoned-request and no-cookie-means-401 assertions cover session routes. Route-generator tests separately assert exact matching, the instance-token handler, common proxy hygiene, and absence of session exchange/MCP OAuth on the SQL API route. Analytics tests cover missing, malformed, and valid instance tokens.
 
 ### 3.10 Subrequest Contract
 
@@ -520,7 +524,7 @@ One OpenResty Deployment behind the single ingress backend, per the edge chain f
 
 **Why**: In the deleted Rust Router, auth was structural (every request passed the middleware chain by construction); in nginx it is per-location config. The containment is this rule: a route missing auth means a JWT-less request downstream and a 401 -- an availability bug caught by the first smoke test, never a breach. This is what zero trust means here: no service trusts network position, headers, or another service's word; only the signature.
 
-**Consequences**: CI asserts every `/api/` route returns 401 without a cookie; downstream verification ships as one shared middleware so a new service gets the boundary by adding a dependency.
+**Consequences**: CI asserts every session-authenticated `/api/` route returns 401 without a cookie; downstream verification ships as one shared middleware so a new service gets the boundary by adding a dependency. Explicit bearer and instance-token routes use the separate boundaries in 3.9.
 
 **Realized (step 07)**: The algorithm is **ES256** (§9.6, ECDSA P-256) — smaller signatures (~64 B vs RSA's ~256 B) and faster verify, both paid on every downstream request. Downstream verification is entirely **plugin-native**: Rust services enable host auth via the **upstream `cf-gears-oidc-authn-plugin`** (the insight-local fork and the bespoke `authverify` crate are both **deleted**), which verifies signature / `iss` / `aud` / `exp` / the required `tenant_id` and maps the signed claims straight to a `SecurityContext` via configured `claim_mapping` (`sub`→`subject_id`, `tenant_id`→`subject_tenant_id`, `sub_type`→`subject_type`, `roles`→`token_scopes`). There is **no tenant selector**: the JWT carries a single signed `tenant_id`, so the `X-Tenant-ID`/`X-Insight-Tenant-Id` header trust paths are gone (a tenant from the outside world never passes). analytics adopts the plugin (its `auth_disabled` trust path deleted). identity-resolution verifies JWTs the same way via the upstream `cf-gears-oidc-authn-plugin` (pinned to ES256) against the authenticator's JWKS, reading the caller from `sub` and the tenant from the single `tenant_id` claim, and fails closed when the token is absent or invalid. The plugin resolves the JWKS via OIDC **discovery** (`{issuer}/.well-known/openid-configuration` → `jwks_uri`) over **https only**; in production the issuer is a real https origin, and in dev/e2e a self-signed TLS front serves the authenticator's well-known endpoints (trusted via `http_client.custom_ca_certificate_paths`). Proven end-to-end by `services/gateway/tests/step07/` (the §D scenarios).
 

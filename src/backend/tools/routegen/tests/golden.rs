@@ -46,11 +46,71 @@ fn golden_strip_prefix() {
     assert_golden("stripprefix.routes.yaml", "stripprefix.nginx.conf");
 }
 
+#[test]
+fn instance_token_routes_reject_effective_prefix_stripping() {
+    for (defaults, route, accepted) in [
+        ("", "", true),
+        ("", "    strip_prefix: true\n", false),
+        ("defaults:\n  strip_prefix: true\n", "", false),
+        (
+            "defaults:\n  strip_prefix: true\n",
+            "    strip_prefix: false\n",
+            true,
+        ),
+    ] {
+        let routes = format!(
+            "version: 1\n{defaults}routes:\n  - prefix: /api/sql/query\n    upstream: http://analytics:8086\n    auth: instance_token\n{route}"
+        );
+        let result = generate(&routes, &Settings::default());
+        assert_eq!(result.is_ok(), accepted, "route configuration: {routes}");
+        if let Err(error) = result {
+            assert!(error.to_string().contains("must not enable strip_prefix"));
+        }
+    }
+}
+
+#[test]
+fn instance_token_route_bypasses_session_and_mcp_oauth() {
+    let routes = "version: 1\nroutes:\n  - prefix: /api/sql/query\n    upstream: http://analytics:8086\n    auth: instance_token\n";
+    let conf = generate(routes, &Settings::default()).unwrap();
+    assert!(conf.contains("location = /api/sql/query {"));
+    assert!(conf.contains("require(\"gateway\").pass_instance_token()"));
+    assert!(!conf.contains("require(\"gateway\").pass_bearer()"));
+    assert!(!conf.contains("require(\"gateway\").exchange()"));
+    let sql_location = conf
+        .split("location = /api/sql/query {")
+        .nth(1)
+        .unwrap()
+        .split("        }\n")
+        .next()
+        .unwrap();
+    for directive in [
+        "proxy_set_header Host $host;",
+        "proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+        "proxy_set_header X-Forwarded-Proto $scheme;",
+        "proxy_connect_timeout 5s;",
+        "proxy_read_timeout 30s;",
+        "proxy_buffering off;",
+    ] {
+        assert!(sql_location.contains(directive), "missing: {directive}");
+    }
+    for path in ["/mcp", "/api/analytics", "/api/sql/query/extra"] {
+        assert!(
+            generate(
+                &routes.replace("/api/sql/query", path),
+                &Settings::default()
+            )
+            .is_err(),
+            "path: {path}"
+        );
+    }
+}
+
 /// Every generated `/api/` location must carry the full hygiene block (DESIGN
 /// 3.9): the Lua exchange, no browser Authorization survives, the session cookie
 /// is stripped in Lua, a fresh correlation id, and gateway-authored forwarding.
 #[test]
-fn every_api_location_has_the_hygiene_block() {
+fn every_session_location_has_the_hygiene_block() {
     let conf = generate(&fixture("full.routes.yaml"), &Settings::default()).unwrap();
     // One access_by_lua per /api route (3 routes in the fixture).
     assert_eq!(

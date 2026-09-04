@@ -467,7 +467,9 @@ fn emit_api_location(
     writeln!(c, "        # route: {} -> {}", route.prefix, route.upstream)?;
     match route.auth {
         Authentication::Session => writeln!(c, "        location {} {{", route.prefix)?,
-        Authentication::Bearer => writeln!(c, "        location = {} {{", route.prefix)?,
+        Authentication::Bearer | Authentication::InstanceToken => {
+            writeln!(c, "        location = {} {{", route.prefix)?;
+        }
     }
     match route.auth {
         Authentication::Session => {
@@ -475,6 +477,11 @@ fn emit_api_location(
         }
         Authentication::Bearer => {
             c.push_str("            access_by_lua_block { require(\"gateway\").pass_bearer() }\n");
+        }
+        Authentication::InstanceToken => {
+            c.push_str(
+                "            access_by_lua_block { require(\"gateway\").pass_instance_token() }\n",
+            );
         }
     }
     if route.strip_prefix {
@@ -486,7 +493,9 @@ fn emit_api_location(
     }
     writeln!(c, "            proxy_pass {scheme}://{ident};")?;
     match route.auth {
-        Authentication::Session => c.push_str("            proxy_set_header Host $host;\n"),
+        Authentication::Session | Authentication::InstanceToken => {
+            c.push_str("            proxy_set_header Host $host;\n");
+        }
         Authentication::Bearer => c.push_str("            proxy_set_header Host localhost;\n"),
     }
     // 5. gateway-authored forwarding headers (client-supplied are cleared in Lua)

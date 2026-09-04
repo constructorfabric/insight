@@ -35,6 +35,7 @@ mod gear;
 mod infra;
 mod mcp;
 mod migration;
+mod sql_explorer;
 
 // System gears — linked via inventory for the REST host + auth pipeline.
 // `oidc-authn-plugin` verifies the ES256 gateway JWT against the authenticator's

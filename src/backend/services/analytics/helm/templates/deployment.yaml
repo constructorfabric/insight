@@ -69,18 +69,25 @@ spec:
             - name: http
               containerPort: {{ .Values.service.port }}
               protocol: TCP
-            {{- if .Values.global.mcp.enabled }}
+            {{- if or .Values.global.mcp.enabled .Values.global.sqlApi.enabled }}
             - name: mcp
               containerPort: {{ .Values.mcp.port }}
               protocol: TCP
             {{- end }}
-          {{- if .Values.global.mcp.enabled }}
+          {{- if or .Values.global.mcp.enabled .Values.global.sqlApi.enabled }}
           env:
             - name: APP__gears__analytics__config__mcp__clickhouse_password
               valueFrom:
                 secretKeyRef:
-                  name: {{ required "mcp.credentialsSecret is required when MCP is enabled" .Values.mcp.credentialsSecret | quote }}
-                  key: {{ required "mcp.clickhousePasswordKey is required when MCP is enabled" .Values.mcp.clickhousePasswordKey | quote }}
+                  name: {{ required "mcp.credentialsSecret is required when a SQL explorer is enabled" .Values.mcp.credentialsSecret | quote }}
+                  key: {{ required "mcp.clickhousePasswordKey is required when a SQL explorer is enabled" .Values.mcp.clickhousePasswordKey | quote }}
+            {{- if .Values.global.sqlApi.enabled }}
+            - name: APP__gears__analytics__config__sql_api__token
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "sqlApi.tokenSecret is required when SQL API is enabled" .Values.sqlApi.tokenSecret | quote }}
+                  key: {{ required "sqlApi.tokenKey is required when SQL API is enabled" .Values.sqlApi.tokenKey | quote }}
+            {{- end }}
           {{- end }}
           # Gateway-JWT verification (NGINX_BFF R1): the plugin's verification
           # config is nested/list-shaped and rendered into the ConfigMap from
