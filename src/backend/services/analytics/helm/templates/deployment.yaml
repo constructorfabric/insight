@@ -74,14 +74,16 @@ spec:
               containerPort: {{ .Values.mcp.port }}
               protocol: TCP
             {{- end }}
-          {{- if .Values.global.mcp.enabled }}
           env:
+            - name: INSIGHT_SERVICE_VERSION
+              value: {{ .Values.image.tag | default .Chart.AppVersion | quote }}
+            {{- if .Values.global.mcp.enabled }}
             - name: APP__gears__analytics__config__mcp__clickhouse_password
               valueFrom:
                 secretKeyRef:
                   name: {{ required "mcp.credentialsSecret is required when MCP is enabled" .Values.mcp.credentialsSecret | quote }}
                   key: {{ required "mcp.clickhousePasswordKey is required when MCP is enabled" .Values.mcp.clickhousePasswordKey | quote }}
-          {{- end }}
+            {{- end }}
           # Gateway-JWT verification (NGINX_BFF R1): the plugin's verification
           # config is nested/list-shaped and rendered into the ConfigMap from
           # `.Values.gateway.*` (issuer / discoveryUrl / audience / caCertPaths),

@@ -57,10 +57,18 @@ pub fn register_routes(
         .layer(Extension(state))
         .layer(insight_http_metrics::ServerMetricsLayer::new(
             "identity-resolution",
-        ));
+        ))
+        .layer(log_context_layer());
 
     host_router.merge(api)
 }
+
+pub(crate) fn log_context_layer() -> insight_log_context::LogContextLayer {
+    insight_log_context::LogContextLayer::new(insight_log_context::service_identity!())
+}
+
+#[cfg(test)]
+mod log_context_tests;
 
 /// Title/version/description of the emitted document. Kept in step with the
 /// `openapi` block of `config/insight.yaml`, which the live gear reads: the two

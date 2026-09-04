@@ -79,6 +79,9 @@ spec:
             - name: http
               containerPort: {{ .Values.service.port }}
               protocol: TCP
+          env:
+            - name: INSIGHT_SERVICE_VERSION
+              value: {{ .Values.image.tag | default .Chart.AppVersion | quote }}
           envFrom:
             # The umbrella publishes INSIGHT_LOG_LEVEL and, when an OTLP
             # endpoint is configured, the OTEL_* emission contract here.

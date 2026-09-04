@@ -14,6 +14,7 @@ workspace = true
 [dependencies]
 authenticator-sdk = { workspace = true }
 insight-http-metrics = { workspace = true }
+insight-log-context = { workspace = true }
 
 # ToolKit host runtime. The authenticator runs as a gears-rust host: routes are
 # declared via `OperationBuilder` and served by the `api-gateway` system gear
@@ -80,6 +81,7 @@ base64 = "0.23"
 rand = "0.10"
 
 [dev-dependencies]
+insight-log-context = { workspace = true, features = ["test-support"] }
 tower = { version = "0.5", features = ["util"] }
 # Parse the dev config in a test so a YAML mistake in the service-token registry
 # fails fast, not only at container boot.

@@ -37,10 +37,19 @@ pub fn register_routes(
     openapi: &dyn OpenApiRegistry,
     state: Arc<AppState>,
 ) -> Router {
-    let api = build_operations(Router::new(), openapi).layer(Extension(state));
+    let api = build_operations(Router::new(), openapi)
+        .layer(Extension(state))
+        .layer(log_context_layer());
 
     host_router.merge(api)
 }
+
+pub(crate) fn log_context_layer() -> insight_log_context::LogContextLayer {
+    insight_log_context::LogContextLayer::new(insight_log_context::service_identity!())
+}
+
+#[cfg(test)]
+mod log_context_tests;
 
 /// Title/version/description of the emitted document. Kept in step with the
 /// `openapi` block of `config/insight.yaml`.
