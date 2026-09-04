@@ -17,6 +17,8 @@ from insight_datapath.ch_seeder import CHSeeder
 from insight_datapath.dbt_runner import DbtRunner
 from insight_datapath.enrich import EnrichRunner
 from insight_datapath.fixture_loader import load
+from insight_datapath.instance import InstanceConfig
+from insight_datapath.metric_definitions import collect
 from insight_datapath.metric_expect import Ledger
 from insight_datapath.spec_runner import SpecRun, run_spec
 from insight_datapath.subjects import Subjects
@@ -31,10 +33,12 @@ LEDGER = Ledger()
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _write_ledger() -> Iterator[None]:
-    """The coverage gate reads what this run asserted from here."""
+def _write_coverage_inputs(instance_cfg: InstanceConfig) -> Iterator[None]:
+    """The coverage gate reads what this run asserted, and what it was owed, from here."""
     yield
-    LEDGER.write(artifact_dir(REPO_ROOT / ".artifacts") / "metric_assertions.json")
+    out = artifact_dir(REPO_ROOT / ".artifacts")
+    LEDGER.write(out / "metric_assertions.json")
+    collect(instance_cfg, out)
 
 
 @pytest.fixture(scope="module")

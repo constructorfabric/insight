@@ -1,47 +1,39 @@
 name: E2E — Bronze to API
 
-# End-to-end transformation tests covering bronze → dbt → ClickHouse
-# migration views → analytics HTTP response → expect rules.
+# End-to-end data-path tests: a spec seeds bronze, dbt builds staging, silver
+# and gold on a ClickHouse the stand raised, identity mints the spec's people
+# through the product, and the metric is read back over HTTP as a seeded
+# persona. The assertions are pytest; the specs are tests/datapath/metrics.
 #
-# Everything (Python, Rust, dbt, pytest) runs inside the runner image
-# defined at src/ingestion/tests/e2e/compose/Dockerfile.runner. The same
-# image is used for local development via src/ingestion/tests/e2e/e2e.sh.
-#
-# This is now the DATA-PATH rig, and only that. The HTTP CONTRACT suites the
-# `api` and `identity` lanes ran retired: those contracts are asserted against a
+# This is the DATA-PATH rig, and only that. The HTTP CONTRACT suites the `api`
+# and `identity` lanes once ran retired: those contracts are asserted against a
 # deployed stand in `e2e-stand.yml` (tests/stand), which crosses a real gateway
 # with a real Keycloak session and can therefore prove the 401/403 behaviour an
-# in-process rig structurally cannot. What is left here is what only this rig
-# can do — bronze → dbt → ClickHouse → analytics response, over fixtures it
-# seeds itself — in two lanes: the metric fixtures, and identity's own data
-# path (a connector's output reaching the seed, and a correction surviving the
-# seed run after it).
+# in-process rig structurally cannot. What is left here is what only a rig that
+# seeds its own bronze can do — bronze → dbt → ClickHouse → analytics response
+# — in two lanes: the metric specs, and identity's own data path (a connector's
+# output reaching the seed, and a correction surviving the seed run after it).
 #
 # Topology: a cheap `changes` job decides whether the diff can reach the data
-# path at all and everything expensive hangs off it; a shared upstream `build`
-# job assembles the runner image ONCE —
-# on PRs from the component images build-images.yml already built (or the
-# published :latest for path-skipped components), elsewhere by compiling
-# analytics + each connector's enrich binary via build-only services — and
-# hands it to `e2e-metrics` as a saved image
-# artifact, which also makes `build` the SOLE writer of the GHA BuildKit
-# cache scopes wired in compose/docker-compose.cache.yml (two concurrent
-# writers to the same scope key just thrash each other's cache). The lane is
-# a shard matrix: each leg loads the pre-built image, boots its own isolated
-# stack, runs its slice of the suite, and snapshots that session's
-# `.artifacts/` for `metric-coverage-gate`, which analyses it
-# as a pure-Python check (no Docker, no app boot). See
-# src/ingestion/tests/e2e/lib/{metric_coverage,collect_metric_definitions}.py.
+# path at all and everything expensive hangs off it. The metrics lane is a
+# shard matrix, one leg per metric class: each leg raises a MINIMAL compose
+# stand of its own (`dev-compose.sh test-stand minimal` — identity and the
+# realm seeded, the warehouse empty), pulls the chart-pinned backend images or
+# compiles the backend when the diff touched it, runs its class directories of
+# the suite host-side with uv, and uploads that session's `.artifacts/` for
+# `metric-coverage-gate`, a pure-Python check over two JSON files: the builtin
+# metric catalogue the run read from analytics, and the ledger of what it
+# asserted. The identity lane still runs on the retired self-contained runner
+# image, built once by `build`, until it is migrated in turn.
 #
-# Code:  src/ingestion/tests/e2e/
+# Code:  tests/datapath/ and tests/lib/insight_datapath/ (metrics);
+#        src/ingestion/tests/e2e/ (identity, retiring)
 
 on:
-  # Pull requests call this from e2e-stand.yml after the shared image build.
-  # Merge-queue and manual runs retain their source-build path.
-  workflow_call:
   # Merge-queue builds: the queue's gh-readonly-queue/* branches emit merge_group,
   # and the required "Run E2E suite" check must report there or every queued PR
-  # times out and is evicted.
+  # times out and is evicted. On a pull request the same check name is emitted
+  # by e2e-stand.yml as a deferral to the queue.
   merge_group:
   workflow_dispatch:
 
@@ -52,13 +44,11 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # NB: forbids developers from running `pytest --update-snapshots` in CI.
-  # The guard lives in src/ingestion/tests/e2e/metrics/test_fixtures.py.
   CI: "true"
 
 permissions:
   contents: read
-  # PR runs download component images produced earlier in the caller run.
+  # The identity lane's `build` job downloads component images from this run.
   actions: read
 
 jobs:
@@ -76,28 +66,30 @@ jobs:
   # workflow ALWAYS runs and the umbrella below can always report.
   #
   # The list is deliberately over-inclusive: a false positive costs one
-  # unnecessary suite run — today's behaviour for every PR — while a false
-  # negative greens a required check over untested data-path changes. It covers
-  # everything the runner image bakes in or the suite reads at run time:
+  # unnecessary suite run, while a false negative greens a required check over
+  # untested data-path changes. It covers everything a stand raises or the
+  # suite reads at run time:
   #
-  #   src/ingestion/  the rig itself (tests/e2e), dbt models, the migration and
-  #                   connectors-ddl scripts, and every connector's enrich
-  #                   source (jira-enrich is baked into the runner image)
-  #   src/backend/    analytics and identity-resolution — compiled from their
-  #                   own Dockerfiles into the runner image, and the analytics
-  #                   HTTP response is the last hop every metric fixture
-  #                   asserts on
-  #   build-images.yml  the PR path consumes its e2e-prebuilt-* artifacts by
-  #                   name, so a change there can break this workflow's build
+  #   src/ingestion/    dbt models, the migration and connectors-ddl scripts,
+  #                     every connector's enrich source, and the identity rig
+  #   src/backend/      analytics, identity-resolution, the gateway and the
+  #                     authenticator — the stand runs them, and the analytics
+  #                     HTTP response is the last hop every spec asserts on
+  #   tests/datapath/   the specs and their modules
+  #   tests/lib/        the suite's own machinery and the stand client it
+  #                     authenticates through
+  #   tests/pyproject.toml, tests/uv.lock   the suite's dependency set
+  #   dev-compose.sh, docker-compose.yml, deploy/compose/   what raises a stand
+  #   build-images.yml  the identity lane's build consumes its artifacts
   #
-  # src/frontend/, deploy/, tests/ (the deployed-stand suite) and docs/ are
-  # absent on purpose: nothing in this rig loads them.
+  # src/frontend/ and docs/ are absent on purpose: nothing here loads them.
   changes:
     name: changes
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       relevant: ${{ steps.filter.outputs.relevant }}
+      backend: ${{ steps.filter.outputs.backend }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -133,11 +125,18 @@ jobs:
           fi
           changed="$(git diff --name-only "$base_point" "$HEAD")"
           echo "$changed" | sed 's/^/  /'
-          if echo "$changed" | grep -qE '^(src/ingestion/|src/backend/|\.github/workflows/e2e-bronze-to-api\.yml|\.github/workflows/build-images\.yml)'; then
+          if echo "$changed" | grep -qE '^(src/ingestion/|src/backend/|tests/datapath/|tests/lib/|tests/pyproject\.toml|tests/uv\.lock|dev-compose\.sh|docker-compose\.yml|deploy/compose/|\.github/workflows/e2e-bronze-to-api\.yml|\.github/workflows/build-images\.yml)'; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
           else
             echo "relevant=false" >> "$GITHUB_OUTPUT"
             echo "nothing on the bronze → dbt → ClickHouse → analytics path changed"
+          fi
+          # A backend change means the pinned images no longer describe this
+          # tree, so the stand compiles the backend instead of pulling it.
+          if echo "$changed" | grep -qE '^src/backend/'; then
+            echo "backend=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "backend=false" >> "$GITHUB_OUTPUT"
           fi
 
   # ─── Build the runner image once, shared by both lanes ────────────────────
@@ -262,128 +261,91 @@ jobs:
 
   e2e-metrics:
     name: metrics (shard ${{ matrix.shard }})
-    needs: build
+    needs: changes
+    if: ${{ needs.changes.outputs.relevant == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Compiling the backend from this tree is the slow path; pulling the
+    # pinned images is not. Same split e2e-stand.yml makes.
+    timeout-minutes: ${{ needs.changes.outputs.backend == 'true' && 75 || 45 }}
+    permissions:
+      contents: read
+      packages: read
     strategy:
       # Every leg reports: a red shard must not cancel its siblings, or their
-      # failures (and coverage artifacts) vanish with it.
+      # failures (and coverage ledgers) vanish with it.
       fail-fast: false
       matrix:
-        # Shards of the metrics suite, one isolated stack per leg, sliced BY
-        # FIXTURE FAMILY (filename prefix), not round-robin. Families must not
-        # split across shards: fixtures leak state to LATER tests in the same
-        # session through table existence — e.g. every ai_* silver build
-        # eagerly selects assert_cursor_event_cost_attributed (dbt's default
-        # indirect selection), whose ephemeral ref compiles to a read of the
-        # cursor staging tables, and those only exist once a cursor-seeding
-        # fixture (ai_active_days, alphabetically first) has run in the same
-        # session. Grouping a family keeps its alphabetical order — exactly
-        # the serial lane's semantics. (Round-robin sharding was tried and
-        # tripped precisely this: dbt indirect-selection modes don't help —
-        # `cautious`/`buildable` would silently deselect that test everywhere
-        # because its ephemeral parent is never in any build's selection.)
+        # One leg per metric class directory under tests/datapath/metrics. The
+        # suite builds every non-gold model once per session and clears the
+        # warehouse between specs, so a leg is any set of specs; classes are
+        # the natural split because a reader can find a shard by name.
         #
-        # `rest` is the complement of the named prefixes (see the run step),
-        # so every yaml lands in EXACTLY one shard by construction and a new
-        # test — even with a brand-new prefix — can never silently fall out
-        # of CI. Rebalancing = promoting a prefix out of `rest` into its own
-        # leg here AND excluding it in the run step's `rest` branch.
-        shard: [ai, collab, tasks, rest]
-
-    defaults:
-      run:
-        working-directory: src/ingestion/tests/e2e
+        # `rest` is every class directory not named here, computed at run
+        # time from the tree, so a new class can never silently fall out of
+        # CI. Rebalancing = naming a class here AND excluding it in the run
+        # step's `rest` branch.
+        shard: [ai, git, tasks, rest]
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      # ─── Load the shared runner image ───────────────────────────────────
-      # Built once by the `build` job above; loading tags it back as
-      # insight-e2e-runner:latest, exactly what compose expects, so the
-      # `./e2e.sh test` below never re-triggers a build.
-      - name: Download runner image
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          name: e2e-runner-image
-          path: src/ingestion/tests/e2e
+          python-version: "3.12"
 
-      # zstd ships in the ubuntu-latest runner image today; the guard keeps a
-      # future image revision from failing the required check with a bare
-      # command-not-found.
-      - name: Ensure zstd is available
-        run: command -v zstd >/dev/null || (sudo apt-get update && sudo apt-get install -y zstd)
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          cache-suffix: datapath
 
-      - name: Load runner image
-        run: zstd -d < runner-image.tar.zst | docker load
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      # This job runs a single suite session, so there's no cross-session
-      # ledger merge to worry about — but a reused workspace (self-hosted
-      # runner) could still leave a stale .artifacts/ behind from a previous
-      # run; start from a clean slate so dead coverage can't survive.
-      - name: Reset coverage artifacts
+      # `minimal` seeds identity and the realm and leaves the warehouse empty:
+      # the suite writes its own bronze and clears it between specs, and the
+      # guard at its door refuses an instance whose seed shares those tables.
+      - name: Bring a minimal stand up
+        id: stand-up
+        env:
+          BUILD_BACKEND: ${{ needs.changes.outputs.backend }}
+        run: |
+          set -euo pipefail
+          flags=()
+          if [ "$BUILD_BACKEND" = "true" ]; then flags+=(--build-backend); fi
+          ./dev-compose.sh test-stand minimal "${flags[@]}"
+
+      # A reused workspace could carry a previous run's ledger; the gate must
+      # see only what this run asserted.
+      - name: Reset coverage inputs
         run: rm -rf .artifacts
 
-      # ─── Run this shard's slice inside the runner ───────────────────────
-      # `./e2e.sh test <node-ids>` (docker compose run runner) starts the
-      # clickhouse + mariadb `depends_on` services — compose pulls their images
-      # on demand and waits for `service_healthy` — so no explicit image
-      # pre-pull is needed.
-      #
-      # This lane runs only the metrics/ suite — the bronze→dbt→gold→API metric
-      # fixtures — split across the shard matrix: each leg gets
-      # its own runner VM, hence its own ClickHouse/MariaDB/dbt target/analytics
-      # — full isolation with zero changes to the session rig. The slice is
-      # this shard's fixture family (see the matrix comment for why families
-      # must stay whole), expanded into explicit module paths: exhaustive by
-      # construction (no `-k` substring traps — a path that is a prefix of
-      # another cannot leak across shards, and a new spec can never silently
-      # fall out of CI thanks to the complement `rest` shard).
-      #
-      # WITHIN a shard the tests still run serially: the session rig is not
-      # xdist-safe (see conftest.py — per-worker analytics spawns race SeaORM
-      # migrations in the shared MariaDB, non-primary workers don't wait for
-      # ClickHouse migrations, and the shared dbt target/ dir is deleted by
-      # whichever worker finishes first). The expensive analytics+enrich
-      # compile happens once, upstream, in the `build` job.
-      #
-      # meta/ (the rig's own framework smoke tests) is deliberately NOT run in
-      # CI — it tests the harness, not the product; run it locally via
-      # `./e2e.sh test meta/`.
-      #
-      # Each shard's session ALSO emits BOTH .artifacts/ files while analytics
-      # is up:
-      #   • metric_definitions.json  (lib/collect_metric_definitions.py)
-      #   • observed_endpoints.json  (conftest.pytest_sessionfinish — httpx hook
-      #     ledger)
-      # but only the lane-relevant one is consumed downstream: this metrics
-      # lane feeds metric-coverage-gate. metric_definitions.json is the FULL
-      # builtin registry queried from MariaDB — independent of which tests the
-      # shard ran, so every shard's copy is identical and the gate can use any
-      # one of them.
-      - name: E2E suite — metrics shard
+      # `test-stand test` picks the suite's own dependency group for a tree
+      # under tests/datapath and aims it at the stand it just raised.
+      - name: Data-path suite — metrics shard
+        id: suite
         env:
           SHARD: ${{ matrix.shard }}
         run: |
           set -euo pipefail
-          # `rest` must exclude exactly the prefixes that have their own matrix
-          # leg — keep this list in lockstep with `matrix.shard` above.
+          trees=()
           case "$SHARD" in
-            rest) filter=(grep -v -e '^metrics/test_ai_' -e '^metrics/test_collab_' -e '^metrics/test_tasks_') ;;
-            *)    filter=(grep -e "^metrics/test_${SHARD}_") ;;
+            rest)
+              for dir in tests/datapath/metrics/*/; do
+                name="$(basename "$dir")"
+                case "$name" in ai|git|tasks|schemas|templates|__pycache__) continue ;; esac
+                trees+=("--tree=${dir%/}")
+              done
+              trees+=(--tree=tests/datapath/meta)
+              ;;
+            *) trees+=("--tree=tests/datapath/metrics/${SHARD}") ;;
           esac
-          nodes=()
-          while IFS= read -r module; do
-            nodes+=("$module")
-          done < <(printf '%s\n' metrics/test_*.py | "${filter[@]}" | sort)
-          # Fail loudly on an empty slice — pytest exits 4 on unknown node ids
-          # but an empty arg list would silently run the FULL suite instead.
-          [ "${#nodes[@]}" -gt 0 ] || { echo "::error::shard ${SHARD} selected no tests"; exit 1; }
-          printf 'shard %s → %s tests\n' "$SHARD" "${#nodes[@]}"
-          printf '  %s\n' "${nodes[@]}"
-          ./e2e.sh test "${nodes[@]}" --tb=short -q
+          [ "${#trees[@]}" -gt 0 ] || { echo "::error::shard ${SHARD} selected no trees"; exit 1; }
+          printf 'shard %s → %s\n' "$SHARD" "${trees[*]}"
+          ./dev-compose.sh test-stand test "${trees[@]}" --tb=short -q
 
       # The shards' ledgers merge into one directory, which keeps one file per
       # name — so each carries its own or the gate sees a quarter of the coverage.
@@ -396,48 +358,43 @@ jobs:
           ledger=.artifacts/metric_assertions.json
           [ -f "$ledger" ] && mv "$ledger" ".artifacts/metric_assertions-${SHARD}.json"
 
-      # ─── Hand the collected catalog to the gate job ─────────────────────
-      # Uploaded even if the suite failed (the collection script still runs), so the
-      # gate reports alongside a red suite. `path` is workspace-relative (actions
-      # ignore defaults.run.working-directory).
+      # Uploaded even when the suite failed, so the gate reports beside a red
+      # run. metric_definitions.json is the full builtin catalogue, identical
+      # in every shard; the ledgers are per shard and the gate unions them.
       - name: Upload coverage inputs
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          # Per-shard name — matrix legs may not share one artifact. The gate
-          # downloads the whole coverage-inputs-metrics-* family and merges
-          # last-write-wins; safe because the only file it reads —
-          # metric_definitions.json — is a full-registry snapshot, identical
-          # in every shard. (observed_endpoints.json does differ per shard,
-          # but nothing downstream consumes it in this lane.)
           name: coverage-inputs-metrics-${{ matrix.shard }}
-          path: src/ingestion/tests/e2e/.artifacts/
-          # Single-writer per-run artifact; lets "Re-run failed jobs" replace a
-          # prior partial upload instead of erroring "artifact already exists".
+          path: .artifacts/
           overwrite: true
-          # `.artifacts/` is a dotdir; upload-artifact@v4 skips hidden paths by
-          # default (include-hidden-files: false) — without this it uploads
-          # nothing and the gate job fails with "artifact not found".
+          # `.artifacts/` is a dotdir; without this the action uploads nothing
+          # and the gate fails on a missing artifact.
           include-hidden-files: true
-          # The gate is useless without the catalog; fail loudly here rather than
-          # as a confusing downstream "artifact not found".
           if-no-files-found: error
           retention-days: 7
 
-      # ─── Diagnostics on failure ─────────────────────────────────────────
-      - name: Dump compose logs on failure
+      - name: Dump diagnostics on failure
         if: failure()
         run: |
-          echo "::group::clickhouse logs"
-          ./e2e.sh logs clickhouse || true
+          set -uo pipefail
+          echo "::group::containers"
+          docker ps -a || true
           echo "::endgroup::"
-          echo "::group::mariadb logs"
-          ./e2e.sh logs mariadb || true
-          echo "::endgroup::"
+          for name in $(docker ps -a --filter "name=insight-" --format '{{.Names}}' || true); do
+            echo "::group::${name}"
+            docker logs --tail=200 "$name" 2>&1 || true
+            echo "::endgroup::"
+          done
 
-      - name: Tear down
+      # always(), not failure(): a cancelled run must still tear its stack
+      # down, and `down` passes --volumes so the next run starts from empty
+      # databases rather than inheriting this one's rows.
+      - name: Tear the stand down
         if: always()
-        run: ./e2e.sh down || true
+        run: |
+          [ -f .env.compose.test-stand ] || { echo "no stand env file — nothing to tear down"; exit 0; }
+          ./dev-compose.sh test-stand down
 
   # ─── identity data path ───────────────────────────────────────────────────
   # The half of identity this rig can state and the deployed stand cannot: a
@@ -533,7 +490,7 @@ jobs:
           path: coverage-inputs
       - name: Analyse metric coverage
         run: |
-          python3 src/ingestion/tests/e2e/lib/metric_coverage.py \
+          python3 tests/lib/insight_datapath/metric_coverage.py \
             --universe-file coverage-inputs/metric_definitions.json \
             --ledger coverage-inputs/metric_assertions-*.json | tee metric_coverage.md
           rc=${PIPESTATUS[0]}

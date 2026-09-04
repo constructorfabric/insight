@@ -1,11 +1,13 @@
 from pathlib import Path
 
 import pytest
-from lib.metric_coverage import MetricDefinition, build_report, main
-from lib.metric_expect import Ledger
+from insight_datapath.metric_coverage import MetricDefinition, build_report, main
+from insight_datapath.metric_expect import Ledger
 
 
-def _definition(metric_key: str, computation: str = "sum", dimensions: tuple[str, ...] = ()) -> MetricDefinition:
+def _definition(
+    metric_key: str, computation: str = "sum", dimensions: tuple[str, ...] = ()
+) -> MetricDefinition:
     return MetricDefinition(
         metric_key=metric_key,
         label=metric_key,
@@ -39,7 +41,9 @@ def test_dimensions_and_a_median_add_breakdown_and_histogram(tmp_path: Path) -> 
     ledger = _ledger(tmp_path / "ledger.json", key, "period", "peer", "timeseries")
     assert build_report({key: definition}, [ledger]).missing == {key: {"breakdown", "histogram"}}
 
-    ledger = _ledger(tmp_path / "ledger.json", key, "period", "peer", "timeseries", "breakdown", "histogram")
+    ledger = _ledger(
+        tmp_path / "ledger.json", key, "period", "peer", "timeseries", "breakdown", "histogram"
+    )
     assert build_report({key: definition}, [ledger]).passed
 
 

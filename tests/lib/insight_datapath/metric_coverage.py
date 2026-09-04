@@ -134,7 +134,9 @@ def render_markdown(report: CoverageReport) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--universe-file", required=True)
-    parser.add_argument("--ledger", type=Path, nargs="+", default=[LEDGER_FILE], help="one per suite run")
+    parser.add_argument(
+        "--ledger", type=Path, nargs="+", default=[LEDGER_FILE], help="one per suite run"
+    )
     parser.add_argument("--md", action="store_true")
     args = parser.parse_args(argv)
     missing = [path for path in args.ledger if not path.is_file()]
