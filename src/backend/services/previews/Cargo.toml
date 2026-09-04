@@ -57,6 +57,10 @@ k8s-openapi = { workspace = true, features = ["latest"] }
 
 # HTTP surface: SecurityContext, RFC-9457 canonical errors, OpenAPI schemas.
 toolkit-security = { workspace = true }
+insight-log-context = { workspace = true }
 toolkit-canonical-errors = { workspace = true }
 # utoipa pinned to match the `ToSchema` the toolkit OperationBuilder compiles against.
 utoipa = { version = "5.5", features = ["chrono", "uuid"] }
+
+[dev-dependencies]
+insight-log-context = { workspace = true, features = ["test-support"] }

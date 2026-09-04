@@ -61,6 +61,7 @@ base64 = { workspace = true }
 # `Row` derive on the query row struct.
 insight-clickhouse = { workspace = true }
 insight-http-metrics = { workspace = true }
+insight-log-context = { workspace = true }
 insight-migration = { workspace = true }
 clickhouse = { workspace = true }
 
@@ -78,6 +79,7 @@ toolkit-canonical-errors = { workspace = true }
 utoipa = { version = "5.5", features = ["chrono", "uuid"] }
 
 [dev-dependencies]
+insight-log-context = { workspace = true, features = ["test-support"] }
 # `tower::ServiceExt::oneshot` for driving the Axum router in the HTTP
 # integration tests. Same dev-dep pattern as the analytics service.
 tower = { version = "0.5", features = ["util"] }

@@ -408,6 +408,14 @@ Then open `https://<HOST>` — the host from Step 1 — and confirm the login re
 
 On a default install no log collector is configured (`global.observability.otlp.endpoint` is empty), and the umbrella never installs one. Every pod then writes its log lines to its own standard output/error and nowhere else; read them with `kubectl -n insight logs deploy/<service>`. The five gears services emit JSON (one object per line), governed by two install-wide knobs: `global.observability.logs.level` (`info` by default) and `global.observability.logs.format` (`json` by default; set `text` for human-readable lines, at the cost of any collector's level parsing). The gateway, frontend and ingestion workflow pods keep formats of their own for now (constructorfabric/insight#2488 tracks converging them).
 
+A line a gears service writes while handling a request carries, in its `spans` chain under the `log_ctx` entry:
+
+- `correlation_id` — echoed from the `X-Correlation-Id` the gateway minted for the request (the gateway's own access log carries the same value as `correlation_id`, so one id joins the edge and every service); a request arriving without one falls back to its `x-request-id`;
+- `tenant_id` — the authenticated tenant, present only on authenticated requests;
+- `service` and `version` — the emitting service and the image tag it runs, from the `INSIGHT_SERVICE_VERSION` env var each deployment sets.
+
+Startup and background lines carry none of these yet — extending the identity fields to every line requires a toolkit change and is tracked in constructorfabric/insight#2488.
+
 ## Step 6 — Configure connectors (optional)
 
 Configure connectors after the app is up. Each connector is a single Kubernetes Secret; the `insight-reconcile-loop` CronWorkflow discovers it and provisions the Airbyte source automatically, so there is nothing else to run.

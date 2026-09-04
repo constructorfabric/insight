@@ -50,14 +50,16 @@ spec:
           # registry token is the one Secret-backed env override.
           command: ["/app/previews"]
           args: ["-c", "/app/config/insight.yaml"]
-          {{- if .Values.experiments.registryTokenSecret }}
           env:
+            - name: INSIGHT_SERVICE_VERSION
+              value: {{ .Values.image.tag | default .Chart.AppVersion | quote }}
+            {{- if .Values.experiments.registryTokenSecret }}
             - name: APP__gears__previews__config__registry_token
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.experiments.registryTokenSecret | quote }}
                   key: token
-          {{- end }}
+            {{- end }}
           volumeMounts:
             - name: previews-config
               mountPath: /app/config/insight.yaml

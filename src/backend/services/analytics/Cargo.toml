@@ -14,6 +14,7 @@ workspace = true
 [dependencies]
 insight-clickhouse = { workspace = true }
 insight-http-metrics = { workspace = true }
+insight-log-context = { workspace = true }
 insight-migration = { workspace = true }
 # Direct `clickhouse` dep is for the `Row` derive on `system.columns` probe
 # rows (Refs #521 schema-validator). `insight-clickhouse` wraps the client
@@ -87,6 +88,7 @@ opentelemetry = { workspace = true }
 clap = { workspace = true }
 
 [dev-dependencies]
+insight-log-context = { workspace = true, features = ["test-support"] }
 # `tower::ServiceExt::oneshot` for driving the Axum router in the HTTP
 # integration tests. Same dev-dep pattern as api-gateway's proxy tests.
 tower = { version = "0.5", features = ["util"] }

@@ -59,10 +59,18 @@ pub fn register_routes(
         .layer(axum::middleware::from_fn(observe))
         .layer(insight_http_metrics::ServerMetricsLayer::new(
             "git-cli-proxy",
-        ));
+        ))
+        .layer(log_context_layer());
 
     host_router.merge(v1)
 }
+
+pub(crate) fn log_context_layer() -> insight_log_context::LogContextLayer {
+    insight_log_context::LogContextLayer::new(insight_log_context::service_identity!())
+}
+
+#[cfg(test)]
+mod log_context_tests;
 
 /// Every wait a handler can make is individually bounded (git budgets, the
 /// in-connection preparation wait, the read-lock wait), but a hold that is
