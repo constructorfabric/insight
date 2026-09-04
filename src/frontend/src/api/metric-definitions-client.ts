@@ -47,12 +47,25 @@ export interface MetricDefinition {
   schema_status: MetricDefinitionSchemaStatus;
   /** Why schema_status is "error"; null otherwise. */
   schema_error_code: MetricSchemaErrorCode | null;
+  /**
+   * ISO date of the oldest observation the metric currently holds; null = no
+   * data yet. With `last_observed_date` it bounds what can be read, so a day
+   * outside the pair is one no reading exists for. It moves forward when
+   * retention drops old rows, so it is not the date collection began.
+   */
+  first_observed_date: string | null;
   /** ISO date of the newest observation ever seen; null = no data yet. */
   last_observed_date: string | null;
   /**
-   * How many days back from `last_observed_date` the suppliers may still
-   * revise. Absent where nothing revises — never read absence as "revised
-   * forever".
+   * ISO date of the newest delivered day that can no longer change. Absent
+   * where nothing revises — never read absence as "revised forever".
+   */
+  settled_through?: string | null;
+  /**
+   * Legacy: a conservative day count standing in for `settled_through`, kept
+   * for consumers written before it existed. It cannot express a boundary that
+   * moves with the billing month, so it over-states there. New code reads
+   * `settled_through`.
    */
   revision_window_days?: number | null;
   drilldown?: MetricDrilldownCapability;

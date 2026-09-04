@@ -22,8 +22,9 @@ const detail = vi.hoisted(() => ({
     refetch: () => {},
   },
   calls: [] as unknown[],
+  collectedFrom: null as string | null,
   collectedThrough: null as string | null,
-  revisionWindowDays: null as number | null,
+  settledThrough: null as string | null,
 }));
 vi.mock("@/queries/metric-detail", () => ({
   DETAIL_LIMIT: 200,
@@ -59,11 +60,12 @@ const declared = vi.hoisted(() => ({
 }));
 // One mock for the whole catalogue module: a second `vi.mock` of the same
 // specifier replaces the first, so both hooks are served from here. The
-// collection boundary is set per test through `detail.collectedThrough`.
+// collection boundary is set per test through `detail.collected*`.
 vi.mock("@/queries/metric-definitions", () => ({
-  useCollectedThrough: () => ({
+  useCollectionBoundary: () => ({
+    collectedFrom: detail.collectedFrom,
     collectedThrough: detail.collectedThrough,
-    revisionWindowDays: detail.revisionWindowDays,
+    settledThrough: detail.settledThrough,
   }),
   useDeclaredMetricDimensions: () => ({
     byMetricKey: declared.byMetricKey,
@@ -120,8 +122,9 @@ function draw(m: ReturnType<typeof metric>) {
 beforeEach(() => {
   declared.byMetricKey = new Map();
   detail.calls = [];
+  detail.collectedFrom = null;
   detail.collectedThrough = null;
-  detail.revisionWindowDays = null;
+  detail.settledThrough = null;
   detail.state = {
     isPending: false,
     isError: false,
@@ -260,18 +263,35 @@ describe("MetricActivity", () => {
     draw(metric("collab.messages_sent", ["source_summary"], 6));
     // The 2nd is the only quiet day; the tail is uncollected, not quiet.
     expect(screen.getByText(/2 days not collected yet/)).toBeInTheDocument();
-    expect(screen.queryByText(/days with no reading/)).not.toBeInTheDocument();
+    expect(screen.getByText(/1 day with no reading/)).toBeInTheDocument();
     const label = screen.getByRole("img").getAttribute("aria-label") ?? "";
     expect(label).toMatch(/1 day has no reading/);
     expect(label).toMatch(/2 days are not collected yet/);
   });
 
+  it("says a day is older than the data rather than calling it empty", () => {
+    // The metric holds nothing before the 3rd. Drawn as silence, the two days
+    // before it would report that this person did none of it — a claim about
+    // them made out of a fact about what we can read.
+    detail.collectedFrom = "2026-03-03";
+    detail.collectedThrough = "2026-03-05";
+    series.state.data = [reading("2026-03-03", 4)];
+    draw(metric("collab.messages_sent", ["source_summary"], 4));
+    expect(
+      screen.getByText(/2 days before available data/)
+    ).toBeInTheDocument();
+    const label = screen.getByRole("img").getAttribute("aria-label") ?? "";
+    expect(label).toMatch(/2 days are before available data/);
+    // Only the 4th and 5th are days the metric covers and found empty.
+    expect(label).toMatch(/2 days have no reading/);
+  });
+
   it("marks the days the supplier may still revise without hiding their figures", () => {
-    // Delivered through the 3rd, revised for 2 days: the 2nd and 3rd carry real
-    // readings that are not final. Drawing them as absent would throw away a
-    // measurement; drawing them as settled would overstate it.
+    // Delivered through the 3rd, settled through the 1st: the 2nd and 3rd carry
+    // real readings that are not final. Drawing them as absent would throw away
+    // a measurement; drawing them as settled would overstate it.
     detail.collectedThrough = "2026-03-03";
-    detail.revisionWindowDays = 2;
+    detail.settledThrough = "2026-03-01";
     series.state.data = [
       reading("2026-03-01", 4),
       reading("2026-03-02", 3),
@@ -280,8 +300,63 @@ describe("MetricActivity", () => {
     draw(metric("collab.messages_sent", ["source_summary"], 6));
     const label = screen.getByRole("img").getAttribute("aria-label") ?? "";
     expect(label).toMatch(/2 days may still change/);
-    // The uncollected tail still outranks it in the one-line caption.
+    // Both reach the caption: the tail nobody delivered, and the days that are
+    // not final. One slot let the first hide the second.
     expect(screen.getByText(/2 days not collected yet/)).toBeInTheDocument();
+    expect(screen.getByText(/2 days may still change/)).toBeInTheDocument();
+  });
+
+  it("states coverage and settlement together rather than choosing between them", () => {
+    // before + silent + open at once. Picking two facts off a priority list
+    // dropped whichever came last, and which one that was depended on the
+    // order of the list rather than on what the reader needed.
+    detail.collectedFrom = "2026-03-02";
+    detail.collectedThrough = "2026-03-05";
+    detail.settledThrough = "2026-03-03";
+    // The 3rd is quiet; the 4th and 5th carry readings that are not final.
+    series.state.data = [
+      reading("2026-03-02", 4),
+      reading("2026-03-04", 3),
+      reading("2026-03-05", 2),
+    ];
+    draw(metric("collab.messages_sent", ["source_summary"], 9));
+    const caption = screen.getByText(/before available data/).textContent ?? "";
+    expect(caption).toMatch(/1 day before available data/);
+    expect(caption).toMatch(/1 day with no reading/);
+    expect(caption).toMatch(/2 may still change/);
+  });
+
+  it("keeps both ends of coverage when the period overruns the data on both sides", () => {
+    detail.collectedFrom = "2026-03-02";
+    detail.collectedThrough = "2026-03-04";
+    series.state.data = [reading("2026-03-02", 4)];
+    draw(metric("collab.messages_sent", ["source_summary"], 4));
+    const caption = screen.getByText(/before available data/).textContent ?? "";
+    expect(caption).toMatch(/1 day before available data/);
+    expect(caption).toMatch(/1 not collected yet/);
+  });
+
+  it("does not let the denominator displace a coverage or settlement fact", () => {
+    // The denominator is context for a share. It earns a slot only where one
+    // of the two facts above had nothing to say.
+    detail.collectedThrough = "2026-03-04";
+    detail.settledThrough = "2026-03-02";
+    series.state.data = [
+      { date: "2026-03-01", value: 75, numerator: 6, denominator: 8 },
+      { date: "2026-03-03", value: 87.5, numerator: 7, denominator: 8 },
+    ];
+    draw(
+      metric("collab.focus_time_pct", ["derived_population"], 81, {
+        computation: "ratio",
+        format: "percent",
+        scale: 100,
+        unit: null,
+      })
+    );
+    const caption = screen.getByText(/not collected yet/).textContent ?? "";
+    expect(caption).toMatch(/1 day not collected yet/);
+    expect(caption).toMatch(/may still change/);
+    expect(caption).not.toMatch(/measured against/);
   });
 
   it("names a constant denominator, because that is what a share is argued with", () => {
