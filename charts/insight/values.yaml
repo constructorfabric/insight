@@ -642,15 +642,17 @@ gitCliProxy:
     repository: ghcr.io/constructorfabric/insight-git-cli-proxy
     tag: ""
     pullPolicy: IfNotPresent
-  # The git subprocesses (clone, fetch, repack) run in this pod's cgroup and
-  # dominate its memory. The service caps git's own pack budgets so their
-  # peak cannot scale with the repository; this limit is the headroom above
-  # that ceiling rather than a figure derived from cache.maxRepoBytes. Lower
-  # cache.heavyOpsConcurrency before raising it — overlapping heavy
-  # operations are what push a correctly-capped pod over.
+  # The git subprocesses run in this pod's cgroup and dominate its memory,
+  # and page serves over blob-heavy windows legitimately run for minutes of
+  # CPU each — the CPU limit paces how long their buffers coexist, so it is
+  # sized to drain rather than to average load. Memory is the serve cap times
+  # the heaviest window plus headroom, and it must also fit the node's budget
+  # beside the warehouse and the platform pods — limits do not reserve, so a
+  # limit the node cannot honour under load takes the container runtime down
+  # with it. Lower cache.serveConcurrency before raising it.
   resources:
     requests: {cpu: 200m, memory: 1Gi}
-    limits: {cpu: "2", memory: 8Gi}
+    limits: {cpu: "4", memory: 8Gi}
   persistence:
     size: 50Gi
     storageClass: ""
@@ -659,8 +661,12 @@ gitCliProxy:
     # headroom absorbs transient packs and git temp files. Override with
     # diskBudgetBytes (must stay within 50-90% of the volume).
     maxRepoBytes: 10737418240
-    defaultMaxStalenessSeconds: 300
-    heavyOpsConcurrency: 4
+    # Under a daily sync cadence so every sync reads fresh refs, above any
+    # steady-state run length so no walk refetches mid-flight.
+    defaultMaxStalenessSeconds: 43200
+    # A fetch holds its entry's write lock while queued for a slot, so one
+    # slow clone must not convoy every other repository's refresh.
+    heavyOpsConcurrency: 2
     caCertPath: ""
   caCertSecret: ""
   # Bearer token the proxy requires on every /v1 request. Empty = generated on
