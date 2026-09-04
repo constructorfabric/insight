@@ -31,6 +31,10 @@ pub struct UsageError;
 #[resource_error("gts.cf.insight.analytics_api.connector_health.v1~")]
 pub struct ConnectorHealthError;
 
+/// Resource namespace for `/v1/gear-roadmap` (the board view of gear delivery).
+#[resource_error("gts.cf.insight.analytics_api.gear_roadmap.v1~")]
+pub struct GearRoadmapError;
+
 /// Resource namespace for `/v1/feedback*` (in-product feedback + the admin
 /// read model).
 #[resource_error("gts.cf.insight.analytics_api.feedback.v1~")]

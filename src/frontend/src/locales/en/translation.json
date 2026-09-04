@@ -603,5 +603,57 @@
     "send": "Send",
     "sent": "Thanks — your feedback was sent.",
     "failed": "Could not send your feedback. Try again."
+  },
+  "gear_roadmap": {
+    "capacity_note": "Capacity assumed: {{capacity}} man-day per person per day",
+    "load_failed": "The gear board could not be read.",
+    "committed": "committed",
+    "overview": {
+      "items": "Gears",
+      "done": "Done",
+      "done_share": "Done %",
+      "spec": "Spec",
+      "sdk": "SDK",
+      "impl": "Impl.",
+      "effort": "Estimate (m*d)",
+      "remaining": "Remaining (m*d)",
+      "unestimated": "Unestimated",
+      "total": "All subsystems",
+      "subsystem": "Subsystem",
+      "open_subsystem": "Open {{subsystem}} gears"
+    },
+    "items": {
+      "filter_placeholder": "Filter by gear, subsystem or assignee",
+      "gear": "Gear",
+      "subsystem": "Subsystem",
+      "spec": "Spec",
+      "sdk": "SDK",
+      "impl": "Impl.",
+      "effort": "Estimate (m*d)",
+      "remaining": "Remaining (m*d)",
+      "milestone": "Milestone",
+      "assignees": "Assignees",
+      "count": "{{count}} gears",
+      "all_subsystems": "All subsystems",
+      "forecast": "Forecast"
+    },
+    "grid": {
+      "overdue": "Overdue",
+      "later": "Later",
+      "committed_legend": "committed",
+      "planned_legend": "planned, not committed",
+      "delivered": "Delivered"
+    },
+    "gantt": {
+      "explainer": "Every person is assumed to deliver {{capacity}} man-day per calendar day. {{days}} days from {{start}}.",
+      "unassigned": "Unassigned",
+      "nothing_scheduled": "Nothing is left to schedule.",
+      "lane": "Assignee",
+      "window": "Scheduled",
+      "open_issue": "Open issue #{{number}}"
+    },
+    "board_label": "Board",
+    "board_option": "#{{number}} · {{cards}} cards",
+    "no_boards": "No delivery board has been synced yet."
   }
 }

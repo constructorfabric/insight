@@ -58,6 +58,29 @@ class AiSettingsResponse(BaseModel):
     system_prompt: str
 
 
+class AssigneeLink(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    login: str
+    url: str | None = None
+
+
+class BoardDto(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    cards: int = Field(..., ge=0)
+    number: int
+
+
+class BoardsResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    boards: list[BoardDto]
+
+
 class BreakdownWindowValueDto(BaseModel):
     """
     One group's reading over the comparison window.
@@ -698,6 +721,135 @@ class PeriodValueDto(BaseModel):
     value: float | None = None
 
 
+class Kind(StrEnum):
+    slot = 'slot'
+
+
+class Placement1(BaseModel):
+    """
+    Where a gear sits against the month window. Only `slot` carries an index
+    and only `overdue` a day count, so no other state can claim either.
+
+    A milestone names a month, not a day, so `days` counts from the day after
+    that month ended.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    kind: Kind
+    slot: int = Field(..., ge=0)
+
+
+class Kind1(StrEnum):
+    delivered = 'delivered'
+
+
+class Placement2(BaseModel):
+    """
+    Delivered: the work is done, so its milestone is history rather than a
+    deadline it missed.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    kind: Kind1
+
+
+class Kind2(StrEnum):
+    overdue = 'overdue'
+
+
+class Placement3(BaseModel):
+    """
+    Where a gear sits against the month window. Only `slot` carries an index
+    and only `overdue` a day count, so no other state can claim either.
+
+    A milestone names a month, not a day, so `days` counts from the day after
+    that month ended.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    days: int
+    kind: Kind2
+
+
+class Kind3(StrEnum):
+    future = 'future'
+
+
+class Placement4(BaseModel):
+    """
+    Where a gear sits against the month window. Only `slot` carries an index
+    and only `overdue` a day count, so no other state can claim either.
+
+    A milestone names a month, not a day, so `days` counts from the day after
+    that month ended.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    kind: Kind3
+
+
+class Kind4(StrEnum):
+    backlog = 'backlog'
+
+
+class Placement5(BaseModel):
+    """
+    Where a gear sits against the month window. Only `slot` carries an index
+    and only `overdue` a day count, so no other state can claim either.
+
+    A milestone names a month, not a day, so `days` counts from the day after
+    that month ended.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    kind: Kind4
+
+
+class Kind5(StrEnum):
+    unrecognized = 'unrecognized'
+
+
+class Placement6(BaseModel):
+    """
+    Where a gear sits against the month window. Only `slot` carries an index
+    and only `overdue` a day count, so no other state can claim either.
+
+    A milestone names a month, not a day, so `days` counts from the day after
+    that month ended.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    kind: Kind5
+
+
+class Kind6(StrEnum):
+    none = 'none'
+
+
+class Placement7(BaseModel):
+    """
+    Where a gear sits against the month window. Only `slot` carries an index
+    and only `overdue` a day count, so no other state can claim either.
+
+    A milestone names a month, not a day, so `days` counts from the day after
+    that month ended.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    kind: Kind6
+
+
+class Placement(RootModel[Placement1 | Placement2 | Placement3 | Placement4 | Placement5 | Placement6 | Placement7]):
+    root: Placement1 | Placement2 | Placement3 | Placement4 | Placement5 | Placement6 | Placement7 = Field(..., description='Where a gear sits against the month window. Only `slot` carries an index\nand only `overdue` a day count, so no other state can claim either.\n\nA milestone names a month, not a day, so `days` counts from the day after\nthat month ended.')
+
+
 class Problem(BaseModel):
     """
     RFC 9457 problem+json. `context` varies by error category.
@@ -799,6 +951,30 @@ class ReportSubject2(BaseModel):
 
 class ReportSubject(RootModel[ReportSubject1 | ReportSubject2]):
     root: ReportSubject1 | ReportSubject2
+
+
+class RoadmapGearDto(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    assignee_urls: list[AssigneeLink]
+    assignees: list[str]
+    closed: bool
+    commitment: str
+    design_percent: int | None = Field(None, ge=0)
+    effort_man_days: float | None = None
+    forecast: str | None = Field(None, description='The month the schedule lands the gear in, `YYYY-MM`. Absent for a gear\nwith nothing left to schedule.')
+    id: str = Field(..., description='`{repository}#{issue}` — the number alone repeats across repositories.')
+    issue_url: str | None = Field(None, description="Absent when no configured external source claims the gear's repository.")
+    milestone: str | None = None
+    number: int
+    placement: Placement
+    priority: str | None = None
+    remaining_man_days: float | None = None
+    sdk_percent: int | None = Field(None, ge=0)
+    status_percent: int | None = Field(None, ge=0)
+    subsystem: str | None = None
+    title: str
 
 
 class RollupValueDto(BaseModel):
@@ -912,6 +1088,15 @@ class SnapshotSeries(BaseModel):
     )
     label: str
     points: list[float | None] = Field(..., description='Readings per bucket, oldest first; a gap is null.')
+
+
+class SpanDto(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    end: str
+    gear_id: str
+    start: str
 
 
 class SyncFact(BaseModel):
@@ -1172,6 +1357,15 @@ class IngestionIntensityResponse(BaseModel):
     series: Series
     to: str
     truncated: bool = Field(..., description='The group cap clipped the tail: the window is too wide for this grain\nand series to plot honestly. Never silently true — the UI says so.')
+
+
+class LaneDto(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    assignee: str | None = None
+    assignee_url: str | None = Field(None, description='Absent for an unassigned lane, and where no configured source knows the\naccount.')
+    spans: list[SpanDto]
 
 
 class MetricDefinitionView(BaseModel):
@@ -1451,6 +1645,17 @@ class ExportCustomMetricsResponse(BaseModel):
         extra='forbid',
     )
     metrics: list[CustomMetric]
+
+
+class GearRoadmapResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    capacity_man_days_per_person: float
+    gears: list[RoadmapGearDto]
+    lanes: list[LaneDto]
+    window_months: int = Field(..., ge=0)
+    window_start: str
 
 
 class ImportCustomMetricsRequest(BaseModel):

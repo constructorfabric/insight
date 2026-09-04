@@ -119,6 +119,10 @@ export const DIRECTIONS: readonly Direction[] = [
       "Continuity",
       "Repositories",
       "Elements",
+      "Gear summary",
+      "Gear list",
+      "Gear roadmap",
+      "Gear schedule",
     ],
   },
   {

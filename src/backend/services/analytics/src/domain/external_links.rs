@@ -76,6 +76,26 @@ impl ExternalSourceRegistry {
         }
     }
 
+    /// Where an account's own page lives on a git host. Trackers have no such
+    /// page under a path this registry can derive, so they resolve to nothing
+    /// rather than to a guess.
+    pub fn account_href(&self, provider: &str, source_id: &str, account: &str) -> Option<String> {
+        let provider = parse_provider(provider)?;
+        let base = self.sources.get(&(provider, source_id.trim().to_owned()))?;
+        let account = account.trim();
+
+        if !valid_segment(account) {
+            return None;
+        }
+
+        match provider {
+            ExternalSourceProvider::Github
+            | ExternalSourceProvider::Gitlab
+            | ExternalSourceProvider::BitbucketCloud => append_segments(base, [account]),
+            ExternalSourceProvider::Jira | ExternalSourceProvider::Youtrack => None,
+        }
+    }
+
     pub fn repository_href(
         &self,
         provider: Option<&str>,
@@ -286,6 +306,30 @@ mod tests {
         assert_eq!(
             links.record.as_deref(),
             Some("https://github.example.test/group/repository/commit/a1b2c3")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn resolves_a_git_account_profile() -> anyhow::Result<()> {
+        let registry = ExternalSourceRegistry::new(&sources())?;
+
+        assert_eq!(
+            registry
+                .account_href("github", "github-source", "an-account")
+                .as_deref(),
+            Some("https://github.example.test/an-account")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn has_no_account_profile_for_a_tracker() -> anyhow::Result<()> {
+        let registry = ExternalSourceRegistry::new(&sources())?;
+
+        assert_eq!(
+            registry.account_href("jira", "jira-source", "an-account"),
+            None
         );
         Ok(())
     }

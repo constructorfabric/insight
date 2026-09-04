@@ -4,6 +4,7 @@ pub(crate) mod ai;
 mod connector_health;
 pub(crate) mod error;
 mod feedback;
+mod gear_roadmap;
 mod ingestion;
 mod metric_definitions;
 mod metric_drilldown;
@@ -41,6 +42,8 @@ use crate::config::GearConfig;
 use crate::domain::ai::dto as ai_dto;
 use crate::domain::connector_health as connector_health_domain;
 use crate::domain::external_links::ExternalSourceRegistry;
+use crate::domain::gear_roadmap::boards as gear_roadmap_boards;
+use crate::domain::gear_roadmap::response as gear_roadmap_response;
 use crate::domain::metric_crud;
 use crate::domain::metric_definitions::listing as metric_definitions_listing;
 use crate::domain::saved_query;
@@ -248,6 +251,47 @@ pub(crate) fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) ->
         )
         .standard_errors(openapi)
         .handler(connector_health::get_connector_syncs)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/v1/gear-roadmap")
+        .operation_id("analytics_api.gear_roadmap.board")
+        .summary("Gear delivery board with its assumed-capacity schedule")
+        .authenticated()
+        .no_license_required()
+        .query_param_typed(
+            "project",
+            true,
+            "GitHub project (v2) number of the board to read, from /v1/gear-roadmap/boards",
+            "integer",
+        )
+        .query_param_typed(
+            "sort",
+            false,
+            "Column to order by: gear, subsystem, spec, sdk, impl, effort, remaining, milestone, forecast or assignees",
+            "string",
+        )
+        .query_param_typed("direction", false, "Order direction: asc or desc", "string")
+        .json_response_with_schema::<gear_roadmap_response::GearRoadmapResponse>(
+            openapi,
+            StatusCode::OK,
+            "Every gear on the configured board, plus one lane per assignee",
+        )
+        .standard_errors(openapi)
+        .handler(gear_roadmap::get_gear_roadmap)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/v1/gear-roadmap/boards")
+        .operation_id("analytics_api.gear_roadmap.boards")
+        .summary("Delivery boards bronze holds, for the project parameter")
+        .authenticated()
+        .no_license_required()
+        .json_response_with_schema::<gear_roadmap_boards::BoardsResponse>(
+            openapi,
+            StatusCode::OK,
+            "Every synced board, with how many cards it carries",
+        )
+        .standard_errors(openapi)
+        .handler(gear_roadmap::get_gear_roadmap_boards)
         .register(router, openapi);
 
     // Ingestion intensity (ops). Admin-gated inside the handler, like the usage

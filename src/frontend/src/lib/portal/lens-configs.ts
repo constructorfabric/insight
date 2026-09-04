@@ -154,6 +154,17 @@ export interface LensRoadmap {
 }
 
 /**
+ * A lens whose content is a delivery board rather than metric sections. It
+ * reads the board itself, so it carries no measure keys to join into the
+ * direction's person grid.
+ */
+export interface BoardLensConfig {
+  title: string;
+  tagline?: string;
+  board: "gear-summary" | "gear-table" | "gear-roadmap" | "gear-schedule";
+}
+
+/**
  * A lens over ORG-grain (tenant-entity) metrics — CI is the first. Rendered by
  * TenantLensView: no roster, no peer view, no per-person anything; the entity
  * is the organization and every value is one number per period/bucket/row.
@@ -327,7 +338,22 @@ export function tenantSectionMetricKeys(config: TenantLensConfig): string[] {
 }
 
 /** Either a lens we render or one we only name — the pane treats the two differently. */
-export type LensEntry = LensConfig | LensRoadmap | TenantLensConfig;
+export type LensEntry =
+  | LensConfig
+  | LensRoadmap
+  | TenantLensConfig
+  | BoardLensConfig;
+
+/**
+ * True for every entry that carries no metric sections. The registry is
+ * discriminated by shape rather than by a tag, so the sites that walk it for
+ * measure keys ask here instead of each listing the shapes it knows.
+ */
+export function lensCarriesNoMetrics(
+  entry: LensEntry,
+): entry is LensRoadmap | TenantLensConfig | BoardLensConfig {
+  return "comingSoon" in entry || "entity" in entry || "board" in entry;
+}
 
 /** The registry entry for a direction's lens — a config, a roadmap note, or nothing. */
 export function lensEntry(dir: string, lens: string): LensEntry | undefined {
@@ -345,13 +371,24 @@ export function lensRoadmap(
   );
 }
 
+/**
+ * A board lens reads bronze, which the backend serves only to an admin. Listing
+ * one for anyone else offers a door that answers 403.
+ */
+function lensNeedsAdmin(dir: string, lens: string): boolean {
+  const entry = lensEntry(dir, lens);
+  return entry !== undefined && "board" in entry;
+}
+
 export function visibleLenses(
   direction: Direction,
   showPlanned: boolean,
-  policy: InstanceNavPolicy = navPolicy()
+  policy: InstanceNavPolicy = navPolicy(),
+  isAdmin = false
 ): string[] {
   return direction.lenses.filter((lens) => {
     if (lensHidden(direction.id, lensSlug(lens), policy)) return false;
+    if (!isAdmin && lensNeedsAdmin(direction.id, lens)) return false;
     return !lensRoadmap(direction, lens, policy) || showPlanned;
   });
 }
@@ -362,12 +399,13 @@ export function visibleLenses(
  */
 export function visibleDirections(
   showPlanned: boolean,
-  policy: InstanceNavPolicy = navPolicy()
+  policy: InstanceNavPolicy = navPolicy(),
+  isAdmin = false
 ): Direction[] {
   return DIRECTIONS.filter(
     (d) =>
       !directionHidden(d.id, policy) &&
-      visibleLenses(d, showPlanned, policy).length > 0
+      visibleLenses(d, showPlanned, policy, isAdmin).length > 0
   );
 }
 
@@ -410,7 +448,7 @@ export function sectionMetricKeys(config: LensConfig): string[] {
         // Cards derive from every configured direction Overview lens (design O4).
         for (const lenses of Object.values(DIRECTION_LENSES)) {
           const overview = lenses["Overview"];
-          if (!overview || "comingSoon" in overview) continue;
+          if (!overview || lensCarriesNoMetrics(overview)) continue;
           for (const sec of overview.sections) {
             if (sec.kind === "headline")
               for (const k of sec.metrics) keys.add(k);
@@ -1048,6 +1086,26 @@ const DEV: Record<string, LensEntry> = {
     },
   },
   Elements: SCREEN_GAP("Element-level (file/module) analytics"),
+  "Gear summary": {
+    title: "Gear summary",
+    tagline: "where every gear stands, by subsystem",
+    board: "gear-summary",
+  },
+  "Gear list": {
+    title: "Gear list",
+    tagline: "one row per gear on the board",
+    board: "gear-table",
+  },
+  "Gear roadmap": {
+    title: "Gear roadmap",
+    tagline: "committed and planned gears by month",
+    board: "gear-roadmap",
+  },
+  "Gear schedule": {
+    title: "Gear schedule",
+    tagline: "remaining effort at assumed capacity",
+    board: "gear-schedule",
+  },
 };
 
 /* ── Collaboration (ported unchanged from ModalityView configs) ──────── */
@@ -1323,7 +1381,7 @@ export function directionMetricKeys(dir: string): string[] {
   for (const entry of Object.values(DIRECTION_LENSES[dir] ?? {})) {
     // ComingSoon entries contribute nothing; tenant lenses fetch their own
     // tenant-entity collection and must stay out of the person grid.
-    if ("comingSoon" in entry || "entity" in entry) continue;
+    if (lensCarriesNoMetrics(entry)) continue;
     for (const k of sectionMetricKeys(entry)) keys.add(k);
   }
   // A figure whose records live under another metric needs that metric in the

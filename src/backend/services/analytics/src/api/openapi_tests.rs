@@ -36,6 +36,8 @@ fn openapi_document_covers_the_route_table() -> anyhow::Result<()> {
         "/v1/connector-health",
         "/v1/connector-health/{connector}/syncs",
         "/v1/feedback",
+        "/v1/gear-roadmap",
+        "/v1/gear-roadmap/boards",
         "/v1/ingestion/intensity",
         "/v1/metric-definitions",
         "/v1/metric-drilldown",
@@ -58,7 +60,7 @@ fn openapi_document_covers_the_route_table() -> anyhow::Result<()> {
     }
     assert_eq!(
         paths.len(),
-        26,
+        28,
         "the contract must carry exactly the surviving paths, got {:?}",
         paths.keys().collect::<Vec<_>>()
     );
@@ -104,5 +106,66 @@ fn report_export_request_is_strict_and_caps_metric_keys() -> anyhow::Result<()> 
         request["required"],
         serde_json::json!(["subject", "period", "granularity", "metric_keys", "format"])
     );
+    Ok(())
+}
+
+#[test]
+fn the_gear_roadmap_publishes_the_order_it_accepts() -> anyhow::Result<()> {
+    let json = serde_json::to_value(openapi_document()?)?;
+    let params = json["paths"]["/v1/gear-roadmap"]["get"]["parameters"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("gear-roadmap declares no query parameters"))?
+        .iter()
+        .map(|param| param["name"].as_str().unwrap_or_default().to_owned())
+        .collect::<Vec<_>>();
+
+    assert!(params.contains(&"sort".to_owned()), "got {params:?}");
+    assert!(params.contains(&"direction".to_owned()), "got {params:?}");
+    Ok(())
+}
+
+#[test]
+fn the_gear_roadmap_takes_the_board_from_the_caller() -> anyhow::Result<()> {
+    let json = serde_json::to_value(openapi_document()?)?;
+    let params = json["paths"]["/v1/gear-roadmap"]["get"]["parameters"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("gear-roadmap declares no query parameters"))?;
+
+    let project = params
+        .iter()
+        .find(|param| param["name"] == "project")
+        .ok_or_else(|| anyhow::anyhow!("gear-roadmap does not take a project"))?;
+
+    assert_eq!(project["required"], true, "the board is not optional");
+    Ok(())
+}
+
+#[test]
+fn the_boards_a_caller_may_name_are_published() -> anyhow::Result<()> {
+    let json = serde_json::to_value(openapi_document()?)?;
+
+    assert!(
+        json["paths"]["/v1/gear-roadmap/boards"]["get"].is_object(),
+        "no endpoint lists the boards the project parameter accepts"
+    );
+    Ok(())
+}
+
+/// `GearDto` is the gear-orchestrator's own schema name. Registering a second
+/// definition under it panics the host at boot — after every unit test and
+/// drift gate has passed, because neither boots the orchestrator.
+#[test]
+fn the_contract_claims_no_schema_name_the_host_gears_own() -> anyhow::Result<()> {
+    let json = serde_json::to_value(openapi_document()?)?;
+    let schemas = json["components"]["schemas"]
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("component schemas missing"))?;
+
+    for reserved in ["GearDto"] {
+        assert!(
+            !schemas.contains_key(reserved),
+            "{reserved} belongs to a host gear; give the analytics type its own name"
+        );
+    }
     Ok(())
 }

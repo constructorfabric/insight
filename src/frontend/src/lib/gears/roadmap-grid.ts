@@ -1,0 +1,52 @@
+import type { Gear } from "@/api/gear-roadmap-client";
+
+export const UNGROUPED = "Ungrouped";
+
+export interface RoadmapRow {
+  subsystem: string;
+  delivered: Gear[];
+  overdue: Gear[];
+  slots: Gear[][];
+  later: Gear[];
+}
+
+export function buildRoadmap(
+  gears: Gear[],
+  windowMonths: number,
+): RoadmapRow[] {
+  const rows = new Map<string, RoadmapRow>();
+
+  for (const gear of gears) {
+    const key = gear.subsystem ?? UNGROUPED;
+    const row = rows.get(key) ?? emptyRow(key, windowMonths);
+    rows.set(key, row);
+
+    if (gear.placement.kind === "delivered") {
+      row.delivered.push(gear);
+    } else if (gear.placement.kind === "overdue") {
+      row.overdue.push(gear);
+    } else if (gear.placement.kind === "slot") {
+      row.slots[gear.placement.slot]?.push(gear);
+    } else {
+      row.later.push(gear);
+    }
+  }
+
+  return [...rows.values()].sort(bySubsystem);
+}
+
+function emptyRow(subsystem: string, windowMonths: number): RoadmapRow {
+  return {
+    subsystem,
+    delivered: [],
+    overdue: [],
+    slots: Array.from({ length: windowMonths }, () => []),
+    later: [],
+  };
+}
+
+function bySubsystem(left: RoadmapRow, right: RoadmapRow): number {
+  if (left.subsystem === UNGROUPED) return 1;
+  if (right.subsystem === UNGROUPED) return -1;
+  return left.subsystem.localeCompare(right.subsystem);
+}

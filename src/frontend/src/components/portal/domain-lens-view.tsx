@@ -105,6 +105,7 @@ import {
   topDecile,
 } from "@/lib/portal/metric-stats";
 import {
+  lensCarriesNoMetrics,
   lensEntry,
   overviewCardDirections,
   sectionMetricKeys,
@@ -2704,7 +2705,7 @@ function DirectionCardsSection({
       const entry = lensEntry(d.id, "Overview");
       // Overview lenses are person-grain by construction; a tenant entry here
       // would have no roster to preview, so it contributes no card.
-      if (!entry || "comingSoon" in entry || "entity" in entry) return null;
+      if (!entry || lensCarriesNoMetrics(entry)) return null;
       const gated = visibleSections(entry, showPlanned);
       const headline = gated.sections.find(
         (s): s is Extract<SectionSpec, { kind: "headline" }> =>
