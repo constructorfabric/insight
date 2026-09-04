@@ -91,6 +91,21 @@ async fn stored_last_observed(
     row.try_get("", "last_observed_date")
 }
 
+async fn stored_first_observed(
+    db: &DatabaseConnection,
+    id: Uuid,
+) -> Result<Option<chrono::NaiveDate>, sea_orm::DbErr> {
+    let row = db
+        .query_one_raw(Statement::from_sql_and_values(
+            db.get_database_backend(),
+            "SELECT first_observed_date FROM metric_definitions WHERE id = ?",
+            [Value::Bytes(Some(id.as_bytes().to_vec()))],
+        ))
+        .await?
+        .ok_or_else(|| sea_orm::DbErr::Custom("definition disappeared".to_owned()))?;
+    row.try_get("", "first_observed_date")
+}
+
 #[tokio::test]
 #[ignore = "requires live MariaDB 11+; set INTEGRATION_TESTS_MARIADB_URL to enable"]
 async fn listing_resolves_tenant_override_over_product() -> anyhow::Result<()> {
@@ -139,20 +154,55 @@ async fn update_definition_status_advances_but_never_regresses_freshness() -> an
     let older = "2026-01-01".parse::<chrono::NaiveDate>()?;
     let newest = "2026-07-31".parse::<chrono::NaiveDate>()?;
 
-    update_definition_status(&db, id, SchemaStatus::Ok, None, Some(newer)).await?;
+    update_definition_status(&db, id, SchemaStatus::Ok, None, Some(older), Some(newer)).await?;
     assert_eq!(stored_last_observed(&db, id).await?, Some(newer));
 
     // Older sweep result must not regress the stored date.
-    update_definition_status(&db, id, SchemaStatus::Ok, None, Some(older)).await?;
+    update_definition_status(&db, id, SchemaStatus::Ok, None, Some(older), Some(older)).await?;
     assert_eq!(stored_last_observed(&db, id).await?, Some(newer));
 
     // A NULL (no observation this sweep) preserves the stored date.
-    update_definition_status(&db, id, SchemaStatus::Ok, None, None).await?;
+    update_definition_status(&db, id, SchemaStatus::Ok, None, None, None).await?;
     assert_eq!(stored_last_observed(&db, id).await?, Some(newer));
 
     // A strictly newer date advances it.
-    update_definition_status(&db, id, SchemaStatus::Ok, None, Some(newest)).await?;
+    update_definition_status(&db, id, SchemaStatus::Ok, None, Some(older), Some(newest)).await?;
     assert_eq!(stored_last_observed(&db, id).await?, Some(newest));
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires live MariaDB 11+; set INTEGRATION_TESTS_MARIADB_URL to enable"]
+async fn update_definition_status_tracks_the_oldest_date_still_held() -> anyhow::Result<()> {
+    let Some(db) = connect_or_skip().await else {
+        return Ok(());
+    };
+    let tenant = Uuid::now_v7();
+    let id = insert_definition(&db, tenant, "git.commits", "collection-start-probe").await?;
+
+    let start = "2026-01-01".parse::<chrono::NaiveDate>()?;
+    let later_start = "2026-03-01".parse::<chrono::NaiveDate>()?;
+    let last = "2026-07-31".parse::<chrono::NaiveDate>()?;
+
+    update_definition_status(&db, id, SchemaStatus::Ok, None, Some(start), Some(last)).await?;
+    assert_eq!(stored_first_observed(&db, id).await?, Some(start));
+
+    // Unlike the newest date, this one follows the relation forward: rows
+    // dropped by retention are days the strip can no longer show a reading for.
+    update_definition_status(
+        &db,
+        id,
+        SchemaStatus::Ok,
+        None,
+        Some(later_start),
+        Some(last),
+    )
+    .await?;
+    assert_eq!(stored_first_observed(&db, id).await?, Some(later_start));
+
+    // A sweep that observed nothing leaves the stored bound alone.
+    update_definition_status(&db, id, SchemaStatus::Ok, None, None, None).await?;
+    assert_eq!(stored_first_observed(&db, id).await?, Some(later_start));
     Ok(())
 }
 

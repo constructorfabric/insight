@@ -110,14 +110,30 @@ pub struct SourceSeed {
     /// `ObservationRelation::parse` (pinned by a registry test).
     pub source_ref: String,
     pub evidence_ref: String,
-    /// How many days a delivered day keeps changing before it settles, when the
-    /// suppliers revise one. Absent where nothing revises, or where nobody has
-    /// established it — a reader treats absence as "settles on arrival" rather
-    /// than as zero uncertainty. Where several suppliers feed one source the
-    /// longest window wins: calling a settled day provisional costs less than
-    /// the reverse.
+    /// When a delivered day stops changing, where the suppliers revise one.
+    /// Absent where nothing revises, or where nobody has established it — a
+    /// reader treats absence as "settles on arrival" rather than as zero
+    /// uncertainty. Where several suppliers feed one source the later boundary
+    /// wins: calling a settled day provisional costs less than the reverse.
     #[serde(default)]
-    pub revision_window_days: Option<u16>,
+    pub revision: Option<RevisionRule>,
+}
+
+/// What has to happen before a delivered day is final.
+///
+/// The distinction is the date the supplier's correction is scoped to. A
+/// supplier that re-reads a fixed tail revises a day for a fixed time after
+/// that day. A supplier reporting a month-to-date figure revises within the
+/// month it is reporting and nowhere else, so its days settle together when
+/// that month closes — a duration cannot express that boundary, because how
+/// long a day stays open depends on where in its month it falls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RevisionRule {
+    /// A delivered day keeps changing for this many days after itself.
+    RollingDays(u16),
+    /// A delivered day settles when the calendar month it falls in closes.
+    BillingMonth,
 }
 
 #[derive(Debug, Deserialize)]

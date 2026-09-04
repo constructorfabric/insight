@@ -6,7 +6,7 @@ sources:
       evidence_ref: ai_metric_evidence
       # Longest lookback_window among the connectors feeding this source:
       # claude-enterprise re-reads 3 days, claude-team and chatgpt-team 2.
-      revision_window_days: 3
+      revision: !rolling_days 3
     measures:
       - key: accepted_lines
         evidence_granularity: source_summary
@@ -323,9 +323,10 @@ sources:
       kind: managed_observation
       source_ref: ai_cost_metric_observations
       evidence_ref: ai_cost_metric_evidence
-      # The month in progress is revisable throughout, and 31 days is the
-      # longest such month.
-      revision_window_days: 31
+      # Every correction in ai_cost_metric_evidence is partitioned by
+      # period_month, so a reading can only rewrite days of the month it
+      # reports and the whole month settles when it closes.
+      revision: billing_month
     measures:
       - key: extra_usage_usd
         evidence_granularity: source_summary

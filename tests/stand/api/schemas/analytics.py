@@ -1187,15 +1187,17 @@ class MetricDefinitionView(BaseModel):
     drilldown: MetricDrilldownCapability | None = None
     entity_type: EntityType
     explanation: str | None = None
+    first_observed_date: date_aliased | None = Field(None, description="Oldest `metric_date` the definition's input measures currently hold;\nabsent when no observation has ever been seen. With `last_observed_date`\nit bounds what can be read, so a day outside the pair is one no reading\nexists for.\n\nThe oldest observation still available, NOT the date collection began:\nit moves forward when retention drops the oldest rows.")
     format: MetricFormat
     is_enabled: bool
     label: str
     last_observed_date: date_aliased | None = Field(None, description="Newest `metric_date` ever observed across the definition's input\nmeasures; absent when no observation has ever been seen. Freshness\nsignal, orthogonal to `schema_status`. Not maintained for `custom`\nmetrics (see `origin`).")
     metric_key: str
     origin: MetricOrigin = Field(..., description='`builtin` metrics read managed observation relations; `custom` metrics\nexecute inline SQL at query time. The validator stamps `schema_status`\nand `last_observed_date` from materialized relations only, so for\n`custom` those fields stay `unchecked` / absent regardless of data —\nreaders must not interpret them as "never measured" for custom metrics.')
-    revision_window_days: int | None = Field(None, description='How many days back from `last_observed_date` the suppliers may still\nrevise. Absent where the source declares none, and for `custom` metrics,\nwhich read no managed source — absence means "settles on arrival", not\n"revised forever". Registry knowledge, not tenant state, so it is read\nfrom the seed rather than stored per row.', ge=0)
+    revision_window_days: int | None = Field(None, description='Deprecated, kept for consumers written before `settled_through`: how many\ndays back from `last_observed_date` a reading may still be revised.\n\nA duration cannot express a boundary anchored to the billing month, so\nfor such a source this is the longest that boundary can ever be — an\nover-statement, never an under-statement. Absence still means "settles\non arrival", which is why a source with a rule always reports a number\nhere rather than omitting one it cannot state exactly. Read\n`settled_through` instead.', ge=0)
     schema_error_code: MetricSchemaErrorCode | None = None
     schema_status: SchemaStatus
+    settled_through: date_aliased | None = Field(None, description='Newest delivered date whose reading can no longer change. Absent where\nthe source declares no revision rule, and for `custom` metrics, which\nread no managed source — absence means "settles on arrival", not\n"revised forever".\n\nA date rather than the rule that produced it: how far back revision\nreaches depends on the rule\'s own anchor, and a consumer holding a day\ncount has to re-derive the anchor to use it.')
     short_label: str | None = Field(None, description='Compact label for dense surfaces; absent when the full label is\nalready compact enough.')
     subject: str | None = Field(None, description='The single topic this metric belongs to within its family, so a surface\nlisting a family can partition it into topics rather than only sorting\nby name. Exactly one per metric; absent only for metrics that declare\nnone.')
     tags: list[str] = Field(..., description='Cross-cutting labels a surface can filter or search by; many per metric,\nunlike the singular `subject`. Empty when the metric declares none.')

@@ -827,6 +827,7 @@ pub async fn update_definition_status(
     definition_id: Uuid,
     status: SchemaStatus,
     error_code: Option<MetricSchemaErrorCode>,
+    first_observed: Option<chrono::NaiveDate>,
     last_observed: Option<chrono::NaiveDate>,
 ) -> Result<(), sea_orm::DbErr> {
     // last_observed_date is monotonic knowledge, not per-sweep state: keep the
@@ -837,12 +838,20 @@ pub async fn update_definition_status(
         Some(date) => Value::from(date.to_string()),
         None => Value::String(None),
     };
+    // first_observed_date takes the sweep's answer instead, because it reports
+    // what the relation still holds: when retention drops the oldest rows, the
+    // day they covered stops being one we can show a reading for.
+    let first_val = match first_observed {
+        Some(date) => Value::from(date.to_string()),
+        None => Value::String(None),
+    };
     db.execute_raw(Statement::from_sql_and_values(
         db.get_database_backend(),
         "UPDATE metric_definitions \
          SET schema_status = ?, \
              schema_checked_at = CURRENT_TIMESTAMP(3), \
              schema_error_code = ?, \
+             first_observed_date = COALESCE(?, first_observed_date), \
              last_observed_date = CASE \
                  WHEN ? IS NULL THEN last_observed_date \
                  ELSE GREATEST(?, COALESCE(last_observed_date, ?)) \
@@ -855,6 +864,7 @@ pub async fn update_definition_status(
                 Some(code) => Value::from(code.as_db()),
                 None => Value::String(None),
             },
+            first_val,
             last_val.clone(),
             last_val.clone(),
             last_val,

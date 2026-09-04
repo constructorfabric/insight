@@ -11,12 +11,15 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+use chrono::{Datelike, Days, NaiveDate};
 use sea_orm::{DatabaseConnection, FromQueryResult, Statement, Value};
 use serde::Serialize;
 use toolkit_canonical_errors::CanonicalError;
 use uuid::Uuid;
 
-use crate::domain::metric_definitions::builtin::{EntityType, builtin_metrics, builtin_sources};
+use crate::domain::metric_definitions::builtin::{
+    EntityType, RevisionRule, builtin_metrics, builtin_sources,
+};
 use crate::domain::metric_definitions::definition::{MetricDirection, MetricFormat, MetricOrigin};
 use crate::domain::metric_definitions::error_code::{MetricSchemaErrorCode, SchemaStatus};
 use crate::domain::metric_definitions::repository::{fetch_dimensions, fetch_tags};
@@ -64,16 +67,38 @@ pub struct MetricDefinitionView {
     /// Why `schema_status` is `error`; absent otherwise (the DB enforces the
     /// biconditional).
     pub schema_error_code: Option<MetricSchemaErrorCode>,
+    /// Oldest `metric_date` the definition's input measures currently hold;
+    /// absent when no observation has ever been seen. With `last_observed_date`
+    /// it bounds what can be read, so a day outside the pair is one no reading
+    /// exists for.
+    ///
+    /// The oldest observation still available, NOT the date collection began:
+    /// it moves forward when retention drops the oldest rows.
+    pub first_observed_date: Option<chrono::NaiveDate>,
     /// Newest `metric_date` ever observed across the definition's input
     /// measures; absent when no observation has ever been seen. Freshness
     /// signal, orthogonal to `schema_status`. Not maintained for `custom`
     /// metrics (see `origin`).
     pub last_observed_date: Option<chrono::NaiveDate>,
-    /// How many days back from `last_observed_date` the suppliers may still
-    /// revise. Absent where the source declares none, and for `custom` metrics,
-    /// which read no managed source — absence means "settles on arrival", not
-    /// "revised forever". Registry knowledge, not tenant state, so it is read
-    /// from the seed rather than stored per row.
+    /// Newest delivered date whose reading can no longer change. Absent where
+    /// the source declares no revision rule, and for `custom` metrics, which
+    /// read no managed source — absence means "settles on arrival", not
+    /// "revised forever".
+    ///
+    /// A date rather than the rule that produced it: how far back revision
+    /// reaches depends on the rule's own anchor, and a consumer holding a day
+    /// count has to re-derive the anchor to use it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub settled_through: Option<chrono::NaiveDate>,
+    /// Deprecated, kept for consumers written before `settled_through`: how many
+    /// days back from `last_observed_date` a reading may still be revised.
+    ///
+    /// A duration cannot express a boundary anchored to the billing month, so
+    /// for such a source this is the longest that boundary can ever be — an
+    /// over-statement, never an under-statement. Absence still means "settles
+    /// on arrival", which is why a source with a rule always reports a number
+    /// here rather than omitting one it cannot state exactly. Read
+    /// `settled_through` instead.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub revision_window_days: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -100,6 +125,7 @@ struct ListingRow {
     origin: String,
     schema_status: String,
     schema_error_code: Option<String>,
+    first_observed_date: Option<chrono::NaiveDate>,
     last_observed_date: Option<chrono::NaiveDate>,
 }
 
@@ -171,7 +197,7 @@ fn build_views(
     mut tags: HashMap<Uuid, Vec<String>>,
 ) -> Result<Vec<MetricDefinitionView>, CanonicalError> {
     let mut metrics = Vec::with_capacity(selected.len());
-    let revision_windows = revision_window_by_metric();
+    let revision_rules = revision_rule_by_metric();
     for row in selected {
         let format = MetricFormat::from_db(&row.format)
             .ok_or_else(|| config_error(&row.metric_key, "format", &row.format))?;
@@ -191,7 +217,9 @@ fn build_views(
                     .ok_or_else(|| config_error(&row.metric_key, "schema_error_code", code))
             })
             .transpose()?;
-        let revision_window_days = revision_windows.get(row.metric_key.as_str()).copied();
+        let rule = revision_rules.get(row.metric_key.as_str()).copied();
+        let settled_through = rule.and_then(|rule| settled_through(rule, row.last_observed_date));
+        let revision_window_days = rule.map(legacy_revision_window_days);
         metrics.push(MetricDefinitionView {
             metric_key: row.metric_key,
             entity_type,
@@ -209,7 +237,9 @@ fn build_views(
             origin,
             schema_status,
             schema_error_code,
+            first_observed_date: row.first_observed_date,
             last_observed_date: row.last_observed_date,
+            settled_through,
             revision_window_days,
             drilldown: None,
         });
@@ -217,20 +247,20 @@ fn build_views(
     Ok(metrics)
 }
 
-/// Each builtin metric's revision window, taken from the source it reads.
+/// Each builtin metric's revision rule, taken from the source it reads.
 ///
-/// The window belongs to the supplier, not to the tenant, so it comes from the
+/// The rule belongs to the supplier, not to the tenant, so it comes from the
 /// seed rather than from `metric_definitions` — a stored copy would be a second
 /// truth to keep in step with the registry. A custom metric reads no managed
 /// source and so appears here for no key.
-fn revision_window_by_metric() -> HashMap<&'static str, u16> {
-    let by_source: HashMap<&str, u16> = builtin_sources()
+fn revision_rule_by_metric() -> HashMap<&'static str, RevisionRule> {
+    let by_source: HashMap<&str, RevisionRule> = builtin_sources()
         .iter()
         .filter_map(|source| {
             source
                 .source
-                .revision_window_days
-                .map(|days| (source.source.key.as_str(), days))
+                .revision
+                .map(|rule| (source.source.key.as_str(), rule))
         })
         .collect();
     builtin_metrics()
@@ -238,9 +268,44 @@ fn revision_window_by_metric() -> HashMap<&'static str, u16> {
         .filter_map(|metric| {
             by_source
                 .get(metric.source_key.as_str())
-                .map(|days| (metric.metric_key.as_str(), *days))
+                .map(|rule| (metric.metric_key.as_str(), *rule))
         })
         .collect()
+}
+
+/// The longest a month can be, and so the longest a billing-month boundary can
+/// hold a day open. What the `ai_cost` source declared before the rule existed.
+const LONGEST_MONTH_DAYS: u16 = 31;
+
+/// The rule as the pre-`settled_through` wire field could express it.
+///
+/// A billing-month boundary is not a duration, so it collapses to the widest
+/// one it can ever take. That over-states, which is the safe direction: a
+/// consumer that reads this draws a settled day as provisional, where omitting
+/// the field would have it draw an open month as final.
+fn legacy_revision_window_days(rule: RevisionRule) -> u16 {
+    match rule {
+        RevisionRule::RollingDays(days) => days,
+        RevisionRule::BillingMonth => LONGEST_MONTH_DAYS,
+    }
+}
+
+/// The newest date the rule declares final, given the newest date delivered.
+///
+/// Nothing is settled before anything has been delivered, so a metric with no
+/// observation gets no boundary rather than one in the distant past.
+fn settled_through(rule: RevisionRule, last_observed: Option<NaiveDate>) -> Option<NaiveDate> {
+    let last_observed = last_observed?;
+    match rule {
+        RevisionRule::RollingDays(days) => {
+            last_observed.checked_sub_days(Days::new(u64::from(days)))
+        }
+        // The day before the reported month began. A reading always belongs to
+        // the month it reports, so every earlier month has closed and no
+        // reading of the reported one is final yet — not even one already
+        // superseded, since a later reading can lower it again.
+        RevisionRule::BillingMonth => last_observed.with_day(1).and_then(|first| first.pred_opt()),
+    }
 }
 
 async fn fetch_listing_rows(
@@ -266,6 +331,7 @@ async fn fetch_listing_rows(
             d.origin AS origin, \
             d.schema_status AS schema_status, \
             d.schema_error_code AS schema_error_code, \
+            d.first_observed_date AS first_observed_date, \
             d.last_observed_date AS last_observed_date \
          FROM metric_definitions d \
          WHERE d.tenant_id IS NULL OR d.tenant_id = ? \
@@ -313,6 +379,7 @@ mod tests {
             origin: "builtin".to_owned(),
             schema_status: "unchecked".to_owned(),
             schema_error_code: None,
+            first_observed_date: None,
             last_observed_date: None,
         }
     }
@@ -349,6 +416,83 @@ mod tests {
 
         assert!(select_rows(vec![tenant_metric()], false).is_empty());
         assert_eq!(select_rows(vec![tenant_metric()], true).len(), 1);
+    }
+
+    fn date(iso: &str) -> NaiveDate {
+        let Ok(date) = iso.parse::<NaiveDate>() else {
+            panic!("test date must parse: {iso}");
+        };
+        date
+    }
+
+    #[test]
+    fn a_rolling_rule_settles_a_fixed_distance_behind_the_newest_delivered_day() {
+        assert_eq!(
+            settled_through(RevisionRule::RollingDays(3), Some(date("2026-03-10"))),
+            Some(date("2026-03-07"))
+        );
+        // Crossing a month boundary is arithmetic, not a special case.
+        assert_eq!(
+            settled_through(RevisionRule::RollingDays(3), Some(date("2026-03-02"))),
+            Some(date("2026-02-27"))
+        );
+    }
+
+    #[test]
+    fn a_billing_month_rule_settles_at_the_end_of_the_month_before_the_reported_one() {
+        // Mid-month: the whole reported month stays open, whatever the day.
+        assert_eq!(
+            settled_through(RevisionRule::BillingMonth, Some(date("2026-03-10"))),
+            Some(date("2026-02-28"))
+        );
+        // The last day of a month does not close it — a later reading inside
+        // the same month can still lower every day of it.
+        assert_eq!(
+            settled_through(RevisionRule::BillingMonth, Some(date("2026-03-31"))),
+            Some(date("2026-02-28"))
+        );
+        // The first day of a month settles every earlier month at once.
+        assert_eq!(
+            settled_through(RevisionRule::BillingMonth, Some(date("2026-01-01"))),
+            Some(date("2025-12-31"))
+        );
+    }
+
+    #[test]
+    fn the_legacy_window_over_states_a_billing_month_rather_than_going_absent() {
+        // Absence means "settles on arrival" to a consumer written before
+        // `settled_through`, so a month-anchored source must report a number it
+        // can never fall short of rather than report nothing.
+        assert_eq!(
+            legacy_revision_window_days(RevisionRule::BillingMonth),
+            LONGEST_MONTH_DAYS
+        );
+        assert_eq!(legacy_revision_window_days(RevisionRule::RollingDays(3)), 3);
+    }
+
+    #[test]
+    fn nothing_is_settled_before_anything_is_delivered() {
+        assert_eq!(settled_through(RevisionRule::RollingDays(3), None), None);
+        assert_eq!(settled_through(RevisionRule::BillingMonth, None), None);
+    }
+
+    #[test]
+    fn the_ai_cost_source_settles_by_billing_month_and_ai_usage_by_days() {
+        let rules = revision_rule_by_metric();
+        assert_eq!(
+            rules.get("ai.daily_approximate_extra_usage_cost"),
+            Some(&RevisionRule::BillingMonth)
+        );
+        assert_eq!(
+            rules.get("ai.extra_usage_cost"),
+            Some(&RevisionRule::BillingMonth)
+        );
+        assert_eq!(
+            rules.get("ai.accepted_lines"),
+            Some(&RevisionRule::RollingDays(3))
+        );
+        // A source that declares no rule leaves its metrics without one.
+        assert_eq!(rules.get("git.commits"), None);
     }
 
     #[test]

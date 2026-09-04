@@ -933,6 +933,14 @@
               "null"
             ]
           },
+          "first_observed_date": {
+            "description": "Oldest `metric_date` the definition's input measures currently hold;\nabsent when no observation has ever been seen. With `last_observed_date`\nit bounds what can be read, so a day outside the pair is one no reading\nexists for.\n\nThe oldest observation still available, NOT the date collection began:\nit moves forward when retention drops the oldest rows.",
+            "format": "date",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "format": {
             "$ref": "#/components/schemas/MetricFormat"
           },
@@ -958,7 +966,7 @@
             "description": "`builtin` metrics read managed observation relations; `custom` metrics\nexecute inline SQL at query time. The validator stamps `schema_status`\nand `last_observed_date` from materialized relations only, so for\n`custom` those fields stay `unchecked` / absent regardless of data —\nreaders must not interpret them as \"never measured\" for custom metrics."
           },
           "revision_window_days": {
-            "description": "How many days back from `last_observed_date` the suppliers may still\nrevise. Absent where the source declares none, and for `custom` metrics,\nwhich read no managed source — absence means \"settles on arrival\", not\n\"revised forever\". Registry knowledge, not tenant state, so it is read\nfrom the seed rather than stored per row.",
+            "description": "Deprecated, kept for consumers written before `settled_through`: how many\ndays back from `last_observed_date` a reading may still be revised.\n\nA duration cannot express a boundary anchored to the billing month, so\nfor such a source this is the longest that boundary can ever be — an\nover-statement, never an under-statement. Absence still means \"settles\non arrival\", which is why a source with a rule always reports a number\nhere rather than omitting one it cannot state exactly. Read\n`settled_through` instead.",
             "format": "int32",
             "minimum": 0,
             "type": [
@@ -979,6 +987,14 @@
           },
           "schema_status": {
             "$ref": "#/components/schemas/SchemaStatus"
+          },
+          "settled_through": {
+            "description": "Newest delivered date whose reading can no longer change. Absent where\nthe source declares no revision rule, and for `custom` metrics, which\nread no managed source — absence means \"settles on arrival\", not\n\"revised forever\".\n\nA date rather than the rule that produced it: how far back revision\nreaches depends on the rule's own anchor, and a consumer holding a day\ncount has to re-derive the anchor to use it.",
+            "format": "date",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "short_label": {
             "description": "Compact label for dense surfaces; absent when the full label is\nalready compact enough.",
