@@ -18,7 +18,8 @@ from insight_datapath.ch_seeder import CHSeeder
 from insight_datapath.dbt_runner import DbtRunner
 from insight_datapath.enrich import EnrichRunner
 from insight_datapath.instance import InstanceConfig, resolve_instance
-from insight_datapath.reset import session_floor
+from insight_datapath.reset import refuse_a_seeded_warehouse, session_floor
+from insight_datapath.schema import apply_all
 from insight_datapath.subjects import Subjects
 from insight_stand.manifest import Manifest, load_manifest
 from insight_stand.personas import PersonaSession, open_session
@@ -70,7 +71,23 @@ def ch_seeder(instance_cfg: InstanceConfig) -> CHSeeder:
 
 
 @pytest.fixture(scope="session")
-def warehouse_floor(instance_cfg: InstanceConfig) -> int:
+def warehouse_is_ours(stand_manifest: Manifest) -> None:
+    """Refuse an instance whose own seed shares the relations a spec builds."""
+    refuse_a_seeded_warehouse(stand_manifest.seeded)
+
+
+@pytest.fixture(scope="session")
+def warehouse_schema(instance_cfg: InstanceConfig, warehouse_is_ours: None) -> int:
+    """Give the instance the schema a connector's first sync would have left.
+
+    A stand raised with `test-stand minimal` carries identity and nothing else, so
+    the databases a spec seeds have to be created before anything can write them.
+    """
+    return apply_all(instance_cfg, repo_root=REPO_ROOT)
+
+
+@pytest.fixture(scope="session")
+def warehouse_floor(instance_cfg: InstanceConfig, warehouse_schema: int) -> int:
     """Empty every fixture-data relation before the first spec seeds."""
     return session_floor(instance_cfg)
 

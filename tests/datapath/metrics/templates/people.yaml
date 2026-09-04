@@ -20,7 +20,7 @@ templates:
     _airbyte_extracted_at: "2026-01-05T00:00:00"
     _airbyte_meta: "{}"
     _airbyte_generation_id: 0
-    tenant_id: "11111111-1111-1111-1111-111111111111"
+    tenant_id: "{{ tenant }}"
     source_id: "bamboohr-test"
     id: null
     unique_key: null
@@ -32,8 +32,8 @@ templates:
     jobTitle: null
     department: "Engineering"
     division: "Product"
-    supervisor: "Carol Gamma"
-    supervisorEmail: "carol@example.com"
+    supervisor: "{{ supervisor_name }}"
+    supervisorEmail: "{{ supervisor_email }}"
     supervisorEId: null
     employeeNumber: null
     city: null

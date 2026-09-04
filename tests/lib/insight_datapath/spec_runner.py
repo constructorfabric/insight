@@ -5,6 +5,11 @@ bronze, build the staging models that read it, run any enrich step between the t
 builds, build the silver classes above them, let the product mint the spec's people
 and publish them, then build gold and ask for the metric as a seeded persona.
 
+The identity inputs are rebuilt from scratch each time: the model admits only rows
+above the version it already holds, and a stand's own seed has raised that past
+anything a spec writes, so an incremental build would leave the previous spec's
+people in place and mint against those.
+
 A spec addresses people by email. The wire carries person ids, so requests translate
 on the way out and responses on the way back, and a test asserts in the spec's terms.
 """
@@ -35,11 +40,15 @@ _EMAIL_TOKEN = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 _RUN_WITHOUT_TESTS = frozenset({"class_hr_working_hours"})
 
 
-def all_persona_emails(bronze: dict[str, list[dict[str, Any]]]) -> list[str]:
-    """Every address the spec's bronze mentions.
+def all_persona_emails(
+    bronze: dict[str, list[dict[str, Any]]], *, excluding: str = ""
+) -> list[str]:
+    """Every address of the spec's own cast.
 
-    All of them are bound, not only the ones a test requests: a peer pool is built
-    from cohort members that are seeded as data and never asked for by name.
+    All of them, not only the ones a test requests: a peer pool is built from cohort
+    members that are seeded as data and never asked for by name. `excluding` drops
+    the caller, who appears in the spec's rows as the supervisor its people report to
+    but belongs to the instance rather than to the spec.
     """
     found: set[str] = set()
 
@@ -54,7 +63,7 @@ def all_persona_emails(bronze: dict[str, list[dict[str, Any]]]) -> list[str]:
                 walk(item)
 
     walk(bronze)
-    return sorted(found)
+    return sorted(found - {excluding.strip().lower()})
 
 
 def translate(value: Any, mapping: dict[str, str]) -> Any:
@@ -111,6 +120,7 @@ def run_spec(
     enrich_runner: EnrichRunner,
     subjects: Subjects,
     caller: StandCaller,
+    caller_email: str,
     ledger: Ledger,
 ) -> SpecRun:
     """Seed, build and publish one spec; returns the caller its tests read through."""
@@ -139,8 +149,9 @@ def run_spec(
     if "class_collab_meeting_activity" in silver_set:
         tracked.run(["class_focus_metrics"], full_refresh=True)
 
+    tracked.run(["identity_inputs"], full_refresh=True)
     subjects.publish()
-    emails = all_persona_emails(spec.bronze)
+    emails = all_persona_emails(spec.bronze, excluding=caller_email)
     person_ids = subjects.person_ids(emails)
     unresolved = sorted({email.strip().lower() for email in emails} - set(person_ids))
     if unresolved:

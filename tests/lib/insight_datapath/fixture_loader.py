@@ -18,6 +18,8 @@ What a fixture proves lives in the `test_<name>.py` module beside it; shared
 from __future__ import annotations
 
 import logging
+import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -89,8 +91,50 @@ def discover_tests(specs_root: Path) -> list[Path]:
     return sorted(specs_root.rglob("*.test.yaml"))
 
 
-def load(path: Path, *, schemas_dir: Path | None = None) -> TestYaml:
-    """Load and fully resolve one test file. Raises FixtureError on any problem."""
+PLACEHOLDER = re.compile(r"\{\{\s*(?P<name>[a-z_]+)\s*\}\}")
+
+
+def _substituted(value: Any, values: Mapping[str, str], path: Path) -> Any:
+    """Fill `{{ name }}` throughout a resolved record, refusing an unsupplied one.
+
+    Applied after `$ref` resolution so a placeholder works wherever a record puts
+    it, including in the shared templates the resolver reads on its own. A fixture
+    states the shape of the world it needs; which supervisor and which tenant that
+    is belongs to the instance. An unfilled placeholder would seed a row naming a
+    person the instance has never heard of, and surface much later as an empty
+    metric rather than as a bad fixture.
+    """
+
+    def fill(match: re.Match[str]) -> str:
+        name = match.group("name")
+        if name not in values:
+            raise FixtureError(
+                f"{path}: nothing supplies the placeholder {{{{ {name} }}}}; "
+                f"the run offers {', '.join(sorted(values)) or 'none'}"
+            )
+        return values[name]
+
+    if isinstance(value, str):
+        return PLACEHOLDER.sub(fill, value)
+    if isinstance(value, list):
+        return [_substituted(item, values, path) for item in value]
+    if isinstance(value, dict):
+        return {key: _substituted(item, values, path) for key, item in value.items()}
+    return value
+
+
+def load(
+    path: Path,
+    *,
+    schemas_dir: Path | None = None,
+    substitutions: Mapping[str, str] | None = None,
+) -> TestYaml:
+    """Load and fully resolve one test file. Raises FixtureError on any problem.
+
+    `substitutions` replaces the placeholders a fixture leaves for the instance to
+    fill — the supervisor its people report to, and the tenant they belong to. Both
+    are facts of the stand a spec runs against, not of the spec.
+    """
     if not path.is_file():
         raise FixtureError(f"test file not found: {path}")
     if schemas_dir is None:
@@ -160,7 +204,7 @@ def load(path: Path, *, schemas_dir: Path | None = None) -> TestYaml:
         resolved: list[dict[str, Any]] = []
         for idx, row in enumerate(rows):
             try:
-                merged = ref_resolver.resolve(row, path)
+                merged = _substituted(ref_resolver.resolve(row, path), substitutions or {}, path)
             except ref_resolver.RefError as e:
                 raise FixtureError(f"{path}: bronze.{table}[{idx}]: {e}") from e
             if not isinstance(merged, dict):

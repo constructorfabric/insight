@@ -6,11 +6,15 @@ emptied before the next one seeds. Two rules shape which relations those are.
 Only what a run actually wrote is cleared: the set comes from the ledger the seeder
 and the model builds fill in, not from a list maintained by hand beside them.
 
-And nothing the instance's own seed owns is ever cleared. A stand seeded with a roster
-holds its people in the same silver classes a spec builds, so a suite that truncated by
-layer would delete the roster the caller authenticates as. Those relations are named
-below; meeting one in a spec's ledger means the spec cannot run against this instance,
-which is a refusal rather than a silent overwrite.
+And the warehouse has to be this suite's to clear. A stand seeded with a roster holds
+its people in the same silver classes a spec builds, so clearing by layer would delete
+the roster the caller authenticates as. Which relations those are is named below, and
+whether any of them hold the stand's rows is a fact the instance reports: a run is
+refused at the door unless the instance seeded identity alone.
+
+Identity is never cleared whatever the instance. persons-sync swaps one of its
+relations wholesale and the other carries the roster's own observations — emptying it
+unresolves the persona the suite authenticates as.
 """
 
 from __future__ import annotations
@@ -78,9 +82,7 @@ SEED_OWNED: frozenset[Relation] = frozenset(
     }
 )
 
-#: Written by the product, not by any suite: persons-sync swaps `identity_persons`
-#: wholesale, and `identity_inputs` carries the roster's own observations — emptying
-#: it unresolves the persona the suite authenticates as.
+#: Written by the product, not by any suite.
 SERVICE_OWNED: frozenset[Relation] = frozenset(
     {
         ("identity", "identity_persons"),
@@ -88,14 +90,16 @@ SERVICE_OWNED: frozenset[Relation] = frozenset(
     }
 )
 
-PROTECTED: frozenset[Relation] = SEED_OWNED | SERVICE_OWNED
+#: The seed step that leaves the warehouse empty. Anything more and the stand's own
+#: rows share the relations a spec builds.
+WAREHOUSE_IS_OURS: frozenset[str] = frozenset({"identity"})
 
 #: Databases whose every relation holds fixture-derived rows.
 FIXTURE_DATABASES = "^(bronze_.*|staging|silver)$"
 
 
-class ProtectedRelationError(RuntimeError):
-    """A spec's build would write a relation the instance's own seed owns."""
+class SeededWarehouseError(RuntimeError):
+    """The instance holds rows this suite would clear but does not own."""
 
 
 def populated_relations(cfg: InstanceConfig) -> list[Relation]:
@@ -121,22 +125,25 @@ def populated_relations(cfg: InstanceConfig) -> list[Relation]:
     return [(str(database), str(table)) for database, table in rows]
 
 
-def refuse_protected(relations: Iterable[Relation]) -> None:
-    """Raise if a spec would write a relation the instance's seed owns."""
-    trespass = sorted(set(relations) & PROTECTED)
-    if trespass:
-        named = ", ".join(f"{database}.{table}" for database, table in trespass)
-        raise ProtectedRelationError(
-            f"this spec writes {named}, which the instance's own seed owns. "
-            "Run the data-path suite against an instance of its own, brought up with "
-            "`test-stand minimal`, which seeds no roster into the warehouse."
+def refuse_a_seeded_warehouse(seeded: Iterable[str]) -> None:
+    """Raise unless the instance's warehouse is this suite's to write.
+
+    The stand's seeder fills the same silver classes a spec builds, so a suite that
+    cleared them would delete the roster its own caller authenticates as.
+    """
+    extra = sorted(set(seeded) - WAREHOUSE_IS_OURS)
+    if extra:
+        raise SeededWarehouseError(
+            f"this instance was seeded with {', '.join(extra)}, which fills "
+            f"{len(SEED_OWNED)} of the relations a spec builds. Bring up an instance of "
+            "its own with `test-stand minimal`, which seeds identity and leaves the "
+            "warehouse empty."
         )
 
 
 def clear(cfg: InstanceConfig, relations: Iterable[Relation]) -> int:
-    """Empty each relation, returning how many were cleared."""
-    targets = sorted(set(relations))
-    refuse_protected(targets)
+    """Empty each relation this suite owns, returning how many were cleared."""
+    targets = sorted(set(relations) - SERVICE_OWNED)
     for database, table in targets:
         ch.execute(cfg, f"TRUNCATE TABLE IF EXISTS `{database}`.`{table}`")
     LOG.debug("reset: cleared %d relations", len(targets))

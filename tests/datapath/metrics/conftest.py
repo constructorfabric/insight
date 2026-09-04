@@ -19,6 +19,8 @@ from insight_datapath.fixture_loader import load
 from insight_datapath.metric_expect import Ledger
 from insight_datapath.spec_runner import SpecRun, run_spec
 from insight_datapath.subjects import Subjects
+from insight_stand.manifest import Manifest
+from insight_stand.personas import PersonaSession
 from insight_stand.stand import artifact_dir
 
 METRICS_ROOT = Path(__file__).parent
@@ -42,13 +44,22 @@ def spec(
     enrich_runner: EnrichRunner,
     subjects: Subjects,
     caller: StandCaller,
+    caller_session: PersonaSession,
+    stand_manifest: Manifest,
 ) -> SpecRun:
     name = getattr(request.module, "SPEC", None)
     if not name:
         raise pytest.UsageError(
             f"{request.module.__name__}: a spec module must set SPEC = '<fixture name>'"
         )
-    loaded = load(METRICS_ROOT / f"{name}.test.yaml")
+    loaded = load(
+        METRICS_ROOT / f"{name}.test.yaml",
+        substitutions={
+            "tenant": stand_manifest.tenant,
+            "supervisor_email": caller_session.email,
+            "supervisor_name": caller_session.person.display_name,
+        },
+    )
     if loaded.skip:
         pytest.skip(loaded.skip)
     return run_spec(
@@ -58,6 +69,7 @@ def spec(
         enrich_runner=enrich_runner,
         subjects=subjects,
         caller=caller,
+        caller_email=caller_session.email,
         ledger=LEDGER,
     )
 

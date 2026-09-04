@@ -1,4 +1,4 @@
-"""What a per-spec reset clears, and what it refuses to touch."""
+"""What a per-spec reset clears, and the instance it refuses to run against."""
 
 from __future__ import annotations
 
@@ -7,15 +7,19 @@ import re
 from pathlib import Path
 
 import pytest
-from insight_datapath.reset import PROTECTED, SEED_OWNED, ProtectedRelationError, refuse_protected
+from insight_datapath.reset import (
+    SEED_OWNED,
+    SERVICE_OWNED,
+    SeededWarehouseError,
+    refuse_a_seeded_warehouse,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SEEDER_INSERT = REPO_ROOT / "src/ingestion/tools/seed/insight_seed/generators/insert.py"
 
 
 def _seeder_reset_targets() -> set[tuple[str, str]]:
-    source = SEEDER_INSERT.read_text(encoding="utf-8")
-    tree = ast.parse(source)
+    tree = ast.parse(SEEDER_INSERT.read_text(encoding="utf-8"))
     for node in ast.walk(tree):
         if not isinstance(node, ast.AnnAssign) or getattr(node.target, "id", "") != "RESET_TARGETS":
             continue
@@ -33,25 +37,24 @@ def test_the_relations_the_stand_seed_owns_are_the_ones_it_declares() -> None:
     assert _seeder_reset_targets() == SEED_OWNED
 
 
-def test_a_spec_that_would_write_the_stand_s_own_rows_is_refused() -> None:
-    with pytest.raises(ProtectedRelationError, match=r"silver\.class_people"):
-        refuse_protected([("bronze_jira", "issues"), ("silver", "class_people")])
+def test_an_instance_seeded_with_a_roster_is_refused() -> None:
+    """Its people live in the same silver classes a spec builds."""
+    with pytest.raises(SeededWarehouseError, match="silver"):
+        refuse_a_seeded_warehouse(["identity", "silver"])
 
 
-def test_the_refusal_says_how_to_bring_up_an_instance_that_works() -> None:
-    with pytest.raises(ProtectedRelationError, match="test-stand minimal"):
-        refuse_protected([("silver", "class_people")])
+def test_the_refusal_names_the_bring_up_that_works() -> None:
+    with pytest.raises(SeededWarehouseError, match="test-stand minimal"):
+        refuse_a_seeded_warehouse(["identity", "all"])
 
 
-def test_relations_no_seed_owns_pass_the_check() -> None:
-    refuse_protected(
-        [("bronze_jira", "issues"), ("staging", "jira__issues"), ("silver", "class_tasks")]
-    )
+def test_an_instance_seeded_with_identity_alone_is_ours_to_write() -> None:
+    refuse_a_seeded_warehouse(["identity"])
 
 
-def test_identity_is_protected_because_the_caller_resolves_through_it() -> None:
-    assert ("identity", "identity_inputs") in PROTECTED
-    assert ("identity", "identity_persons") in PROTECTED
+def test_identity_is_never_cleared_because_the_caller_resolves_through_it() -> None:
+    assert ("identity", "identity_inputs") in SERVICE_OWNED
+    assert ("identity", "identity_persons") in SERVICE_OWNED
 
 
 def test_the_seeder_still_refuses_to_clear_a_relation_it_never_declared() -> None:
