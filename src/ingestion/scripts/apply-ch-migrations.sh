@@ -236,64 +236,13 @@ SQL
 
 heal_task_users_table silver class_task_users
 
-# Same positional invariant, one relation further along: class_task_field_history
-# gained `title` after `id_readable` (#2739) so evidence rows can name the work
-# item. The connectors-ddl snapshot only CREATEs IF NOT EXISTS, so a warm
-# installation keeps the old column list, and the gold build fails resolving
-# `fh.title`. Staging needs no heal — github's member is a table rebuilt every
-# run, and jira's is altered by the DDL macro that owns it.
-heal_task_field_history_table() {
-  local db="$1" table="$2"
-  ch_table_is_real "$db" "$table" || return 0
-  echo "  ${db}.${table}"
-  run_ch <<SQL
-ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS title Nullable(String) AFTER id_readable;
-ALTER TABLE ${db}.${table} MODIFY COLUMN title Nullable(String) AFTER id_readable;
-SQL
-}
-
-heal_task_field_history_table silver class_task_field_history
-
-# The column above only makes room for the summary; jira-enrich fills it. That
-# binary skips any issue that already has rows, so on a warm installation the
-# summary never reaches a Jira issue whose changelog has gone quiet — and a
-# closed issue, the kind task metrics count, never moves again. Emptying the
-# staging table makes the next enrich run bootstrap every issue from bronze,
-# which is the only channel that rewrites those rows.
-#
-# The window is invisible downstream: this hook builds tag:gold only, silver's
-# delete+insert removes just the unique_keys the incoming batch carries (an
-# empty Jira arm carries none), and the sync pipeline runs enrich before dbt.
-#
-# Self-limiting instead of ledger-backed, per this script's re-run contract:
-# rows but not one title means the table predates the enrich change, and the
-# bronze probe keeps an instance whose issues genuinely carry no summary from
-# truncating on every deploy.
-
-# SAFETY: callers use `ch_answer_is_yes ... || return 0`, which disables `set -e`
-# for the body — a probe failure (auth/transient, or a column the DDL macro has
-# not added yet, since it runs at dbt on-run-start below) reads as "no" and the
-# caller skips its heal rather than aborting the deploy.
-ch_answer_is_yes() {
-  local query="$1" answer
-  answer="$(printf '%s' "$query" | _ch_http_query | tr -d '[:space:]')"
-  [[ "$answer" == "1" ]]
-}
-
-heal_jira_task_history_titles() {
-  ch_table_is_real staging jira__task_field_history || return 0
-  ch_table_is_real bronze_jira jira_issue || return 0
-  ch_answer_is_yes "SELECT count() = 1 FROM system.columns WHERE database='staging' AND table='jira__task_field_history' AND name='title'" || return 0
-  ch_answer_is_yes "SELECT count() > 0 AND countIf(title IS NOT NULL) = 0 FROM staging.jira__task_field_history" || return 0
-  ch_answer_is_yes "SELECT count() > 0 FROM bronze_jira.jira_issue WHERE JSONExtractString(COALESCE(custom_fields_json, ''), 'summary') != ''" || return 0
-
-  echo "  staging.jira__task_field_history (emptied; next enrich run re-bootstraps it with summaries)"
-  run_ch <<SQL
-TRUNCATE TABLE staging.jira__task_field_history;
-SQL
-}
-
-heal_jira_task_history_titles
+# The `title` heal that used to live here is gone with the column. It added
+# `title` to class_task_field_history after `id_readable` (#2739) so evidence
+# rows could name the work item; the title is now an ordinary field in the
+# journal, bound to the `title` role, and the column is dropped by
+# migrations/20260903000000_task-field-history-drop-columns.sql. Leaving the
+# heal in place would ADD the column straight back after that migration ran —
+# heals run after the .sql files — and gold would still read it.
 
 echo "=== Healing git file-change object id columns ==="
 # The file-change object ids arrive at the tail of every projection that feeds

@@ -190,6 +190,22 @@ snapshot_values AS (
 
     UNION ALL
 
+    -- The title, as a FIELD rather than a column repeated on every event row.
+    -- Gold reads it through the `title` role like any other value; the
+    -- denormalized `title` column it replaces was an issue attribute copied
+    -- onto every row of that issue, and Jira never populated it at all.
+    SELECT
+        i.tenant_id, i.source_id, i.issue_id, i.id_readable, i.created_at,
+        i.author_login, i.author_id,
+        'title'                                                 AS field_id,
+        i.title                                                 AS value_id,
+        i.title                                                 AS value_display,
+        i._airbyte_extracted_at
+    FROM issues AS i
+    WHERE i.title != ''
+
+    UNION ALL
+
     SELECT
         i.tenant_id, i.source_id, i.issue_id, i.id_readable, i.created_at,
         i.author_login, i.author_id,
@@ -307,7 +323,6 @@ creation_marker AS (
         'synthetic_initial'                                     AS event_kind,
         toUInt32(0)                                             AS _seq,
         i.author_id                                             AS author_id,
-        i.author_login                                          AS author_display,
         'created'                                               AS field_id,
         ''                                                      AS value_id,
         ''                                                      AS value_display,
@@ -328,7 +343,6 @@ initial_rows AS (
             PARTITION BY v.tenant_id, v.source_id, v.issue_id ORDER BY v.field_id
         ))                                                      AS _seq,
         v.author_id,
-        v.author_login                                          AS author_display,
         v.field_id,
         v.value_id,
         v.value_display,
@@ -348,7 +362,6 @@ changelog_rows AS (
         'changelog'                                             AS event_kind,
         toUInt32(0)                                             AS _seq,
         actor_id                                                AS author_id,
-        actor_login                                             AS author_display,
         field_id,
         value_id,
         value_display,
@@ -370,9 +383,10 @@ SELECT
     CAST('github' AS String)                                    AS data_source,
     CAST(issue_id AS String)                                    AS issue_id,
     CAST(id_readable AS String)                                 AS id_readable,
-    -- One row per (issue x field x event) all share the issue's summary; it is
-    -- an issue attribute, not an event one, so it is joined in rather than
-    -- repeated by every branch of the union above.
+    -- The column stays while the class contract has it: gold falls back to it
+    -- for a source whose `title` role has no producer yet. This arm ALSO emits
+    -- the title as a field above, so GitHub is served by the role already; the
+    -- column and the fallback go together at the Jira cutover.
     CAST(nullIf(issue_title.title, '') AS Nullable(String))     AS title,
     CAST(event_id AS String)                                    AS event_id,
     -- The WHERE below already excludes the unparseable ones; the class declares
@@ -384,19 +398,18 @@ SELECT
     CAST(event_kind AS Enum8('changelog' = 1, 'synthetic_initial' = 2, 'availability' = 3, 'lifecycle' = 4)) AS event_kind,
     _seq                                                        AS _seq,
     CAST(nullIf(author_id, '0') AS Nullable(String))            AS author_id,
-    CAST(nullIf(author_display, '') AS Nullable(String))        AS author_display,
     CAST(field_id AS String)                                    AS field_id,
     CAST(field_id AS String)                                    AS field_name,
     CAST('single' AS Enum8('single' = 1, 'multi' = 2))          AS field_cardinality,
     CAST('set' AS Enum8('set' = 1, 'add' = 2, 'remove' = 3))    AS delta_action,
-    CAST(nullIf(value_id, '') AS Nullable(String))              AS delta_value_id,
-    CAST(nullIf(value_display, '') AS Nullable(String))         AS delta_value_display,
     CAST([value_id] AS Array(String))                           AS value_ids,
     CAST([if(value_display != '', value_display, value_id)] AS Array(String)) AS value_displays,
     CAST(
         multiIf(
             field_id = 'assignees', 'account_id',
             field_id = 'state', 'string_literal',
+            -- The title IS the value; there is no separate identifier for it.
+            field_id = 'title', 'string_literal',
             -- A board column is named, not identified: history states the
             -- display name and nothing else.
             startsWith(field_id, 'project_status:'), 'string_literal',
