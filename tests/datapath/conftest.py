@@ -27,9 +27,7 @@ from insight_stand.stand import resolve_endpoint
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-#: The persona every spec's people are grafted beneath, and who asks for their metrics.
-#: A lead sees their own subtree, so the visible set the gate computes is exactly the
-#: spec's cast — reach is a fact the product derived, not a grant the suite made.
+#: Every spec's people are grafted beneath this persona, who then asks for their metrics.
 CALLER_FIXTURE = "dev_lead"
 
 DEFAULT_TENANT = "00000000-df51-5b42-9538-d2b56b7ee953"

@@ -385,10 +385,8 @@ jobs:
           printf '  %s\n' "${nodes[@]}"
           ./e2e.sh test "${nodes[@]}" --tb=short -q
 
-      # Each shard asserts its own metrics, so the gate's input is the UNION of
-      # the shards' ledgers. They are downloaded into one directory with
-      # merge-multiple, which keeps one file per name — so each shard's ledger
-      # carries its own.
+      # The shards' ledgers merge into one directory, which keeps one file per
+      # name — so each carries its own or the gate sees a quarter of the coverage.
       - name: Name this shard's assertion ledger
         if: ${{ !cancelled() }}
         env:

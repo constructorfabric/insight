@@ -32,8 +32,7 @@ _CONNECTORS_GLOB = "src/ingestion/connectors/**/descriptor.yaml"
 
 _OVERLAY = "deploy/compose/docker-compose.enrich.yml"
 
-#: What the binary is given, matching the deployed job's arguments. The output
-#: database is fixed in the binary, so there is nothing to point elsewhere.
+#: The output database is fixed inside the binary and cannot be pointed elsewhere.
 _INTERNAL_CLICKHOUSE_HOST = "clickhouse"
 _INTERNAL_CLICKHOUSE_PORT = "8123"
 

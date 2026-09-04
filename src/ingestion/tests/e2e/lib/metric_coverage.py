@@ -10,9 +10,7 @@ from pathlib import Path
 _E2E_ROOT = Path(__file__).resolve().parents[1]
 LEDGER_FILE = _E2E_ROOT / ".artifacts" / "metric_assertions.json"
 
-# This module is the gate and runs as a bare `python3 <path>` on a machine with no
-# warehouse, no uv and no sibling packages on the path, so it reads the ledger's JSON
-# itself rather than importing `lib.metric_expect`, which writes it.
+# The gate runs as a bare `python3 <path>`, so this module may import no sibling.
 
 
 @dataclass(frozen=True)

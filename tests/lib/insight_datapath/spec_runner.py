@@ -35,8 +35,7 @@ LOG = logging.getLogger("datapath.spec")
 
 _EMAIL_TOKEN = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 
-#: Silver models whose own dbt tests assert a completeness a single spec's seed
-#: cannot satisfy, so they are materialized without running them.
+#: These models' own dbt tests assert a completeness one spec's seed cannot satisfy.
 _RUN_WITHOUT_TESTS = frozenset({"class_hr_working_hours"})
 
 

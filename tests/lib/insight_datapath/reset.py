@@ -29,10 +29,8 @@ LOG = logging.getLogger("datapath.reset")
 
 Relation = tuple[str, str]
 
-#: Relations the stand's seeder writes and truncates
-#: (`insight_seed.generators.insert.RESET_TARGETS`). Copied rather than imported: the
-#: seeder is not a dependency of this project, and a divergence is caught by
-#: `test_seed_owned_relations_match_the_seeder`.
+#: Mirrors `insight_seed.generators.insert.RESET_TARGETS`; a divergence fails
+#: `tests/datapath/meta/test_reset.py`.
 SEED_OWNED: frozenset[Relation] = frozenset(
     {
         ("bronze_bamboohr", "employees"),
@@ -82,7 +80,6 @@ SEED_OWNED: frozenset[Relation] = frozenset(
     }
 )
 
-#: Written by the product, not by any suite.
 SERVICE_OWNED: frozenset[Relation] = frozenset(
     {
         ("identity", "identity_persons"),
@@ -90,11 +87,9 @@ SERVICE_OWNED: frozenset[Relation] = frozenset(
     }
 )
 
-#: The seed step that leaves the warehouse empty. Anything more and the stand's own
-#: rows share the relations a spec builds.
+#: The seed step that leaves the warehouse empty.
 WAREHOUSE_IS_OURS: frozenset[str] = frozenset({"identity"})
 
-#: Databases whose every relation holds fixture-derived rows.
 FIXTURE_DATABASES = "^(bronze_.*|staging|silver)$"
 
 

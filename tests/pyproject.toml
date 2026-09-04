@@ -68,21 +68,10 @@ dependencies = [
 ]
 
 [dependency-groups]
-# The data-path lane transforms in process: it invokes dbt through `dbtRunner`
-# against the instance's ClickHouse. dbt-core is what caps this project's
-# interpreter at 3.13 (see `requires-python`), and the adapter floor is what
-# pins the pair — a newer dbt-core drops the adapter to its 1.9 line, and this
-# is the pairing the transformation path is exercised on.
-#
-# It is a group rather than a plain dependency because dbt-core 1.11 requires
-# `pathspec<0.13` and mypy requires `pathspec>=1.0`: one environment cannot hold
-# both, and neither pin is worth giving up. `[tool.uv] conflicts` makes that
-# explicit, so the lock carries a resolution for each:
+# dbt-core 1.11 requires `pathspec<0.13` and mypy requires `pathspec>=1.0`, so one
+# environment cannot hold both. Run this lane with:
 #
 #   uv run --project tests --group datapath --no-group dev pytest tests/datapath
-#
-# `--no-group dev` is required — dev is on by default and the two cannot share
-# an environment.
 datapath = [
     "dbt-core>=1.11,<1.12",
     "dbt-clickhouse>=1.10,<1.11",
