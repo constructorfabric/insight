@@ -121,6 +121,12 @@ pub struct PlannedOrder {
 /// The name the bucket column answers under, and an order term reaches it by.
 pub const BUCKET_COLUMN: &str = "time";
 
+// SAFETY: aliases are positional and engine-owned, so no caller-supplied string
+// reaches the SQL text, and no alias can shadow the column it reads.
+pub fn column_alias(index: usize) -> String {
+    format!("c{index}")
+}
+
 impl QueryPlan<'_> {
     pub fn buckets_by_time(&self) -> bool {
         self.group_by

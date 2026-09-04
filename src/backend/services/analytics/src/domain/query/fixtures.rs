@@ -47,6 +47,8 @@ time_fields:
   - field: authored_date
 dimensions:
   - field: author_email
+  - field: branch_scope
+    label_field: branch_scope_label
   - field: repository
     label_field: repository_label
   - field: source
