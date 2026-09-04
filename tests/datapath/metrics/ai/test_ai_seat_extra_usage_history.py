@@ -97,7 +97,7 @@ def test_a_month_survives_the_next_month_snapshot(
         f"""
         SELECT toString(period_month), used_amount_cents
         FROM silver.class_ai_overage FINAL
-        WHERE email = '{SEAT_EMAIL}='
+        WHERE email = '{SEAT_EMAIL}'
         ORDER BY period_month
         """,
     )
