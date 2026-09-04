@@ -115,14 +115,31 @@ models:
 
   - name: git_default_branch_commits
     description: >
-      Commits that reached a repository's default branch through a merged pull
-      request: one row per tenant/source/project/repo/commit. Materialized so
-      the pull-request membership joins run once per build in their own query
-      budget; the git evidence build reads it as a semi-join set alongside the
-      sync-time is_default_branch flag.
+      Commits that reached a repository's default branch, either through a
+      merged pull request or by carrying content a default-branch commit also
+      carries at the same path: one row per tenant/source/project/repo/commit.
+      Materialized so the membership joins run once per build in their own
+      query budget; the git evidence build reads it as a semi-join set
+      alongside the sync-time is_default_branch flag.
     columns:
       - name: commit_hash
         description: "Commit identifier within the repository"
+        tests:
+          - not_null
+
+  - name: git_superseded_file_changes
+    description: >
+      Paths on a merge-result commit whose work a collected commit of the same
+      pull request already carries, for the partial-coverage case the content
+      dedup cannot reach: one row per tenant/source/commit/path. The git
+      evidence build subtracts it before deduplicating file changes.
+    columns:
+      - name: commit_hash
+        description: "The merge-result commit whose copy of the path is suppressed"
+        tests:
+          - not_null
+      - name: file_path
+        description: "Path a collected commit of the same request already carries"
         tests:
           - not_null
 

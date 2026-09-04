@@ -446,6 +446,18 @@ ORDER BY (tenant_id, entity_id, metric_date)
 SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
 ;
 
+CREATE TABLE IF NOT EXISTS insight.git_superseded_file_changes
+(
+    `tenant_id` Nullable(String),
+    `data_source` String,
+    `commit_hash` String,
+    `file_path` String
+)
+ENGINE = MergeTree
+ORDER BY (tenant_id, data_source, commit_hash)
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
 CREATE TABLE IF NOT EXISTS insight.task_issue_state
 (
     `tenant_id` Nullable(String),
