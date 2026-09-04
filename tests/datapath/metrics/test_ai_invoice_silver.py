@@ -292,11 +292,11 @@ def _read_class(cfg: InstanceConfig, source_id: str, order_by: str = "unique_key
 
 @pytest.fixture
 def invoice_silver(
-    ch_migrations_applied: InstanceConfig, ch_seeder: CHSeeder, dbt_runner: DbtRunner
+    instance_cfg: InstanceConfig, ch_seeder: CHSeeder, dbt_runner: DbtRunner
 ) -> list[dict]:
     """Seed bronze, build the connector's models, read the class back."""
     _seed_and_build(ch_seeder, dbt_runner, BRONZE_ROWS)
-    return _read_class(ch_migrations_applied, SOURCE)
+    return _read_class(instance_cfg, SOURCE)
 
 
 def _by_line(rows: list[dict], line_id: str) -> dict:
@@ -430,7 +430,7 @@ def _recovered_rows(source_id: str, read_at: str) -> list[dict]:
 
 @pytest.fixture
 def recovered_in_one_build(
-    ch_migrations_applied: InstanceConfig, ch_seeder: CHSeeder, dbt_runner: DbtRunner
+    instance_cfg: InstanceConfig, ch_seeder: CHSeeder, dbt_runner: DbtRunner
 ) -> list[dict]:
     """Both syncs' rows already in bronze when the model first runs."""
     rows = [
@@ -438,12 +438,12 @@ def recovered_in_one_build(
         *_recovered_rows(SOURCE_ONE_BUILD, ONE_BUILD_RECOVERED_AT),
     ]
     _seed_and_build(ch_seeder, dbt_runner, rows)
-    return _read_class(ch_migrations_applied, SOURCE_ONE_BUILD, order_by="line_id NULLS FIRST")
+    return _read_class(instance_cfg, SOURCE_ONE_BUILD, order_by="line_id NULLS FIRST")
 
 
 @pytest.fixture
 def recovered_across_two_builds(
-    ch_migrations_applied: InstanceConfig, ch_seeder: CHSeeder, dbt_runner: DbtRunner
+    instance_cfg: InstanceConfig, ch_seeder: CHSeeder, dbt_runner: DbtRunner
 ) -> list[dict]:
     """The gap built into the class first, the enrichment only on the next run.
 
@@ -455,7 +455,7 @@ def recovered_across_two_builds(
     _seed_and_build(
         ch_seeder, dbt_runner, _recovered_rows(SOURCE_TWO_BUILDS, TWO_BUILDS_RECOVERED_AT)
     )
-    return _read_class(ch_migrations_applied, SOURCE_TWO_BUILDS, order_by="line_id NULLS FIRST")
+    return _read_class(instance_cfg, SOURCE_TWO_BUILDS, order_by="line_id NULLS FIRST")
 
 
 def test_a_recovery_inside_one_build_leaves_no_gap_behind(
@@ -480,7 +480,7 @@ def test_a_recovery_across_two_builds_leaves_no_gap_behind(
 
 @pytest.fixture
 def second_instance_silver(
-    ch_migrations_applied: InstanceConfig, ch_seeder: CHSeeder, dbt_runner: DbtRunner
+    instance_cfg: InstanceConfig, ch_seeder: CHSeeder, dbt_runner: DbtRunner
 ) -> list[dict]:
     """A second source instance, read BEFORE everything the class already holds."""
     rows = [
@@ -497,7 +497,7 @@ def second_instance_silver(
         )
     ]
     _seed_and_build(ch_seeder, dbt_runner, rows)
-    return _read_class(ch_migrations_applied, SOURCE_SECOND_INSTANCE)
+    return _read_class(instance_cfg, SOURCE_SECOND_INSTANCE)
 
 
 def test_a_second_source_instance_is_not_shut_out_by_the_first(
