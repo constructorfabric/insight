@@ -67,7 +67,9 @@ WITH reference AS (
         -- Not aliased `total_users`: the alias shadows the source column and
         -- ClickHouse then resolves the outer reference to the aggregate itself.
         max(toInt64OrNull(toString(total_users)))       AS read_total_users
-    FROM {{ source('bronze_claude_team', 'claude_team_code_metrics_org') }}
+    -- FINAL: the envelope table is a ReplacingMergeTree, so an unmerged part
+    -- can still hold a superseded headcount for the same read.
+    FROM {{ source('bronze_claude_team', 'claude_team_code_metrics_org') }} FINAL
     WHERE metric_date IS NOT NULL
       AND total_users IS NOT NULL
     GROUP BY insight_tenant_id, source_id, day, read_id
@@ -103,7 +105,11 @@ read_state AS (
         coalesce(source_id, '')                         AS source_id,
         toDate(metric_date)                             AS day,
         JSONExtractInt(_airbyte_meta, 'sync_id')        AS read_id,
-        uniqExact(lower(trim(coalesce(email, ''))))     AS people
+        -- Counts only rows the serving layer can attribute, so a headcount
+        -- that includes someone arriving without an email fails the gate
+        -- closed instead of passing on a body count.
+        uniqExactIf(lower(trim(email)),
+                    email IS NOT NULL AND trim(email) != '') AS people
     FROM {{ source('bronze_claude_team', 'claude_team_code_metrics') }}
     WHERE metric_date IS NOT NULL
     GROUP BY insight_tenant_id, source_id, day, read_id

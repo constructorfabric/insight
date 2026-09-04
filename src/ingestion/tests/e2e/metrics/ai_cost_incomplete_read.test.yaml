@@ -47,6 +47,13 @@ description: >
                         but there is none for THIS day, and the row was extracted
                         a minute BEFORE that envelope. Rejected, not legacy: the
                         boundary is the read id, and 15 is not before 15.      16.00
+    Nov 20  empty       read 20's envelope counted 2 and stored no per-user row
+                        at all. The whole day is missing, not part of it, so the
+                        check has to reach it from the envelope — a candidate set
+                        built from stored rows alone has nothing to group here
+                        and would pass over it.                                  —
+    Nov 21  quiet       read 21's envelope counted 0 and stored no row. Nobody
+                        worked; nothing is missing and nothing is reported.      —
 
   alice's window therefore sums the two days admitted for her: 0.50 + 1.00 = 1.50.
   With the gate removed every day would count and the same request would answer
@@ -76,6 +83,14 @@ bronze:
     - { $ref: templates/claude_team_metrics_org.yaml#/templates/claude_team_metrics_org,
         metric_date: "2026-11-18", unique_key: org-20261118-r19, total_users: 2,
         _airbyte_extracted_at: "2026-11-18T23:50:00Z", _airbyte_meta: '{"sync_id":19,"changes":[]}' }
+    # Nov 20 counted 2 people and no per-user row for it was ever stored.
+    - { $ref: templates/claude_team_metrics_org.yaml#/templates/claude_team_metrics_org,
+        metric_date: "2026-11-20", unique_key: org-20261120-r20, total_users: 2,
+        _airbyte_extracted_at: "2026-11-20T23:50:00Z", _airbyte_meta: '{"sync_id":20,"changes":[]}' }
+    # Nov 21 counted nobody, and nobody arrived. Healthy.
+    - { $ref: templates/claude_team_metrics_org.yaml#/templates/claude_team_metrics_org,
+        metric_date: "2026-11-21", unique_key: org-20261121-r21, total_users: 0,
+        _airbyte_extracted_at: "2026-11-21T23:50:00Z", _airbyte_meta: '{"sync_id":21,"changes":[]}' }
 
   bronze_claude_team.claude_team_code_metrics:
     # ── Nov 10 · legacy: extracted before the first envelope above ────────────
@@ -165,6 +180,15 @@ cases:
       - metric: ai.cost
         view: timeseries
         assert: "items.exists(s, s.entity_id == 'alice@example.com' && !s.points.exists(p, p.bucket_start == '2026-11-19' && double(p.value) > 0.0))"
+      # Nov 20 and Nov 21 stored no per-user row, so neither reaches serving.
+      # The two are told apart by the data-quality check, not here: Nov 20's
+      # envelope counted people and Nov 21's counted none.
+      - metric: ai.cost
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'alice@example.com' && !s.points.exists(p, p.bucket_start == '2026-11-20' && double(p.value) > 0.0))"
+      - metric: ai.cost
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'alice@example.com' && !s.points.exists(p, p.bucket_start == '2026-11-21' && double(p.value) > 0.0))"
 
   - name: each read of a day is judged against its own headcount
     request:
