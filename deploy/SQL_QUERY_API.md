@@ -74,8 +74,11 @@ gold database, identity, and config. No new grants are introduced by this API.
 Only one SELECT/WITH statement is accepted. Multiple CTEs, subqueries, joins,
 and unions are allowed. Query SETTINGS/FORMAT and external table functions are
 rejected. SQL is capped at 64 KiB and the request body at 128 KiB. The shared
-executor caps ClickHouse response bytes at 5 MiB; database row, memory, scan,
-and execution-time limits remain in force. Exceeding a limit fails the query;
+executor caps ClickHouse response bytes at 5 MiB. Shared API and MCP database
+limits allow scanning 10 million rows / 1 GiB and returning 5,000 rows / 5 MiB,
+with 512 MiB query memory, two threads, and a 30-second execution timeout.
+The scan limits apply when database provisioning runs, including on upgrades.
+Exceeding a limit fails the query;
 results are not silently truncated.
 
 Responses use canonical problem JSON for errors: 400 for invalid requests/SQL,

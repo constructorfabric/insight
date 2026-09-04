@@ -33,8 +33,8 @@ CREATE USER IF NOT EXISTS insight_mcp IDENTIFIED BY '${CLICKHOUSE_MCP_PASSWORD}'
   max_result_rows = 5000,
   max_result_bytes = 5242880,
   result_overflow_mode = 'throw',
-  max_rows_to_read = 1000000,
-  max_bytes_to_read = 268435456;
+  max_rows_to_read = 10000000,
+  max_bytes_to_read = 1073741824;
 ALTER USER insight_mcp IDENTIFIED BY '${CLICKHOUSE_MCP_PASSWORD}' SETTINGS
   readonly = 1,
   max_execution_time = 30,
@@ -43,8 +43,8 @@ ALTER USER insight_mcp IDENTIFIED BY '${CLICKHOUSE_MCP_PASSWORD}' SETTINGS
   max_result_rows = 5000,
   max_result_bytes = 5242880,
   result_overflow_mode = 'throw',
-  max_rows_to_read = 1000000,
-  max_bytes_to_read = 268435456;
+  max_rows_to_read = 10000000,
+  max_bytes_to_read = 1073741824;
 GRANT insight_mcp_ro TO insight_mcp;
 ALTER USER insight_mcp DEFAULT ROLE insight_mcp_ro;
 SQL
