@@ -1,0 +1,261 @@
+"""Seed a spec's resolved records into the instance's bronze tables.
+
+Each `bronze.<db>.<table>` entry of a fixture is a list of records the loader has
+already `$ref`-resolved, padded to the table schema and validated. This module
+coerces each value to its ClickHouse column type, read from `system.columns`, and
+inserts it. Duplicate records are inserted physically, so a re-synced row is
+deduplicated by the layer under test rather than by the seed.
+
+Every `(schema, table)` written is recorded, and `reset` clears that set before the
+next spec seeds.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from collections.abc import Iterable
+from dataclasses import dataclass, field
+from datetime import datetime
+from decimal import Decimal, InvalidOperation
+from typing import Any
+
+from insight_datapath import clickhouse as ch
+from insight_datapath.instance import InstanceConfig
+
+LOG = logging.getLogger("datapath.seeder")
+
+
+class SeederError(RuntimeError):
+    pass
+
+
+@dataclass
+class TouchedLedger:
+    """The relations a spec wrote, for the next spec's reset."""
+
+    tables: set[tuple[str, str]] = field(default_factory=set)
+
+    def record(self, schema: str, table: str) -> None:
+        self.tables.add((schema, table))
+
+    def drain(self) -> Iterable[tuple[str, str]]:
+        out = list(self.tables)
+        self.tables.clear()
+        return out
+
+
+class CHSeeder:
+    """Per-session helper that loads resolved test records into bronze tables."""
+
+    def __init__(self, cfg: InstanceConfig) -> None:
+        self.cfg = cfg
+        self.ledger = TouchedLedger()
+
+    # ------------------------------------------------------------------
+    # Per-test API
+    # ------------------------------------------------------------------
+
+    def seed_bronze(self, bronze: dict[str, list[dict]], schemas: dict[str, dict]) -> None:
+        """Seed every `<db>.<table>: [records]` entry of a TestYaml."""
+        for table_fqn, rows in bronze.items():
+            schema, _, table = table_fqn.partition(".")
+            self._ensure_table(schema, table, schemas[table_fqn])
+            self.ledger.record(schema, table)
+            self.seed_records(schema, table, rows)
+
+    def seed_records(self, schema: str, table: str, rows: list[dict]) -> None:
+        """INSERT `rows` (field maps) into `<schema>.<table>`.
+
+        It does not clear the table first: on an instance some bronze relations
+        belong to the stand's own seed, and only `reset` knows which.
+        """
+        column_types = self._fetch_column_types(schema, table)
+        if not column_types:
+            raise SeederError(
+                f"table {schema}.{table} not found in system.columns "
+                f"(bronze: check the placeholder; silver: ensure migrations + dbt ran)"
+            )
+        if not rows:
+            return
+
+        cols = list(column_types)
+        ch_rows = []
+        for rec in rows:
+            unknown = [k for k in rec if k not in column_types]
+            if unknown:
+                raise SeederError(
+                    f"{schema}.{table}: record has columns not in the table: {unknown}"
+                )
+            ch_rows.append(tuple(self._coerce(rec.get(c), column_types[c], c) for c in cols))
+
+        LOG.info("seeding %s.%s: %d rows, %d columns", schema, table, len(ch_rows), len(cols))
+        with ch.client(self.cfg, database=schema) as c:
+            c.insert(table=table, data=ch_rows, column_names=cols)
+
+    # ------------------------------------------------------------------
+    # internals
+    # ------------------------------------------------------------------
+
+    def _fetch_engine(self, schema: str, table: str) -> str | None:
+        rows = ch.query(
+            self.cfg,
+            f"SELECT engine FROM system.tables WHERE database = '{schema}' AND name = '{table}'",
+        )
+        return rows[0][0] if rows else None
+
+    def _fetch_column_types(self, schema: str, table: str) -> dict[str, str]:
+        rows = ch.query(
+            self.cfg,
+            f"SELECT name, type FROM system.columns WHERE database = '{schema}' AND table = '{table}'",
+        )
+        return dict(rows)  # type: ignore[arg-type]
+
+    def _ensure_table(self, database: str, table: str, schema: dict[str, Any]) -> None:
+        expected = {
+            name: _clickhouse_type(definition)
+            for name, definition in schema.get("properties", {}).items()
+        }
+        existing = self._fetch_column_types(database, table)
+        if existing:
+            # The real table (connectors-ddl snapshot / dbt) may carry MORE
+            # columns than the fixture declares: connectors emit raw API columns
+            # the dbt models never read (e.g. jira_issue.self/expand/fields),
+            # and a fixture only describes the columns a test seeds. Require the
+            # fixture's columns to all exist with a compatible type — seed_records
+            # leaves the extra real columns at their ClickHouse defaults. A column
+            # the fixture needs but the real table lacks (missing), or a type that
+            # no longer matches (mismatched), is still a hard error: that is
+            # genuine drift the snapshot regeneration is meant to surface.
+            missing = sorted(expected.keys() - existing.keys())
+            mismatched = sorted(
+                name
+                for name in expected.keys() & existing.keys()
+                if not _types_compatible(expected[name], existing[name])
+            )
+            if missing or mismatched:
+                raise SeederError(
+                    f"table {database}.{table} does not match its fixture schema "
+                    f"(missing={missing}, type_mismatches="
+                    f"{[(name, expected[name], existing[name]) for name in mismatched]})"
+                )
+            return
+        columns = ", ".join(f"`{name}` {column_type}" for name, column_type in expected.items())
+        ch.execute(self.cfg, f"CREATE DATABASE IF NOT EXISTS `{database}`")
+        ch.execute(
+            self.cfg,
+            f"CREATE TABLE `{database}`.`{table}` ({columns}) ENGINE = MergeTree ORDER BY tuple()",
+        )
+
+    @staticmethod
+    def _coerce(value: Any, ch_type: str, col: str) -> Any:
+        """Coerce a YAML-parsed value to what clickhouse-connect expects for `ch_type`."""
+        if value is None:
+            return None
+        base = _strip_wrappers(ch_type)
+        if base.startswith("Date"):
+            if isinstance(value, (datetime,)):
+                return value
+            try:
+                return datetime.fromisoformat(str(value))
+            except ValueError as e:
+                raise SeederError(f"column {col!r} ({ch_type}): bad datetime {value!r}: {e}") from e
+        if base in ("Bool", "Boolean"):
+            if isinstance(value, bool):
+                return value
+            norm = str(value).strip().lower()
+            if norm in ("true", "1"):
+                return True
+            if norm in ("false", "0"):
+                return False
+            raise SeederError(
+                f"column {col!r} ({ch_type}): non-boolean value {value!r} (use true/false)"
+            )
+        # Decimal columns: the connector types loosely-typed JSON `number` ids
+        # (status_id, worklog_id, changelog_id, *_seconds) as Decimal(38,9).
+        # Fixtures express them as either strings ("10001") or ints (3), neither
+        # of which clickhouse-connect serializes into a Decimal column directly —
+        # normalize both through Decimal(str(...)).
+        if base.startswith("Decimal") and isinstance(value, (int, float)):
+            return Decimal(str(value))
+        # Numeric columns: connectors declare loosely-typed JSON `number`
+        # fields (ids, counts, *_seconds), which the ClickHouse destination
+        # maps to Decimal/Int/Float. YAML fixtures naturally express those as
+        # strings (e.g. "10001"), which clickhouse-connect cannot serialize
+        # into a numeric column — coerce here so the fixture exercises exactly
+        # the value the connector would have written.
+        if isinstance(value, str) and value != "":
+            if base.startswith("Decimal"):
+                try:
+                    return Decimal(value)
+                except InvalidOperation as e:
+                    raise SeederError(f"column {col!r} ({ch_type}): bad decimal {value!r}") from e
+            if base.startswith(("Int", "UInt")):
+                try:
+                    return int(value)
+                except ValueError as e:
+                    raise SeederError(f"column {col!r} ({ch_type}): bad integer {value!r}") from e
+            if base.startswith("Float"):
+                try:
+                    return float(value)
+                except ValueError as e:
+                    raise SeederError(f"column {col!r} ({ch_type}): bad float {value!r}") from e
+        # A record-valued field (a connector's `raw_data` payload) lands in a
+        # String column; clickhouse-connect will not serialize a mapping, so
+        # state it as the JSON the destination writes. Keys sorted, matching what
+        # the connector builds the payload from.
+        if isinstance(value, dict) and base == "String":
+            return json.dumps(value, sort_keys=True, separators=(",", ":"))
+        # String / Array / JSON: pass through. clickhouse-connect accepts
+        # str→JSON, list→Array, str→String as-is.
+        return value
+
+
+def _strip_wrappers(ch_type: str) -> str:
+    """Peel the wrappers that change storage, not meaning.
+
+    `LowCardinality` is a dictionary encoding and `Nullable` a presence flag;
+    a fixture declaring `string` for a `LowCardinality(String)` column is
+    describing the same values. They nest in either order.
+    """
+    changed = True
+    while changed:
+        changed = False
+        for wrapper in ("Nullable(", "LowCardinality("):
+            if ch_type.startswith(wrapper) and ch_type.endswith(")"):
+                ch_type = ch_type[len(wrapper) : -1]
+                changed = True
+    return ch_type
+
+
+def _types_compatible(expected: str, existing: str) -> bool:
+    expected_base = _strip_wrappers(expected)
+    existing_base = _strip_wrappers(existing)
+    if expected_base == existing_base:
+        return True
+    if {expected_base, existing_base} == {"Bool", "UInt8"}:
+        return True
+    integer_prefixes = ("Int", "UInt")
+    if expected_base.startswith(integer_prefixes) and existing_base.startswith(integer_prefixes):
+        return True
+    numeric_prefixes = ("Float", "Decimal")
+    return expected_base.startswith(numeric_prefixes) and existing_base.startswith(numeric_prefixes)
+
+
+def _clickhouse_type(definition: dict[str, Any]) -> str:
+    declared = definition.get("type", "string")
+    types = declared if isinstance(declared, list) else [declared]
+    base = next((item for item in types if item != "null"), "string")
+    if base == "array":
+        item_type = _strip_wrappers(_clickhouse_type(definition.get("items", {})))
+        return f"Array({item_type})"
+    mapped = {
+        "boolean": "Bool",
+        "integer": "Int64",
+        "number": "Float64",
+        "string": "String",
+        "object": "String",
+    }.get(base, "String")
+    if base == "string" and definition.get("format") == "date-time":
+        mapped = "DateTime64(3)"
+    return f"Nullable({mapped})"
