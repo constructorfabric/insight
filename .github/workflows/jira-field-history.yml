@@ -1,0 +1,151 @@
+# Jira field-history transformations: the models that turn the field catalogue,
+# the issue snapshot and the changelog into class_task_field_history.
+#
+# Its own lane rather than a job in e2e-bronze-to-api: that suite boots MariaDB,
+# an identity stub and the analytics binary to assert an HTTP response, none of
+# which says anything about these transformations, and it runs on every
+# `src/ingestion/**` change. This one needs a warehouse and dbt, and only when
+# these models, macros or tests move.
+#
+# Deliberately NOT a required check. A path-filtered required check never
+# reports on a PR outside its filter, so it hangs on "Expected" forever — the
+# same reason e2e-stand.yml and openapi-specs.yml avoid `paths:`. The broad
+# data-path gates stay required; this is the fast, specific one.
+name: Jira field history
+
+on:
+  pull_request:
+    branches: [main]
+    # Duplicated rather than anchored: GitHub Actions does not support
+    # YAML anchors, and no workflow in this repository uses them.
+    paths:
+      - src/ingestion/connectors/task-tracking/jira/dbt/**
+      - src/ingestion/dbt/macros/jira/**
+      - src/ingestion/dbt/tests/jira/**
+      - src/ingestion/dbt/dbt_project.yml
+      - src/ingestion/scripts/connectors-ddl/jira.sql
+      - src/ingestion/scripts/bootstrap-db/pins.env
+      - .github/workflows/jira-field-history.yml
+      - .github/workflows/scripts/start-clickhouse.sh
+  push:
+    branches: [main]
+    paths:
+      - src/ingestion/connectors/task-tracking/jira/dbt/**
+      - src/ingestion/dbt/macros/jira/**
+      - src/ingestion/dbt/tests/jira/**
+      - src/ingestion/dbt/dbt_project.yml
+      - src/ingestion/scripts/connectors-ddl/jira.sql
+      - src/ingestion/scripts/bootstrap-db/pins.env
+      - .github/workflows/jira-field-history.yml
+      - .github/workflows/scripts/start-clickhouse.sh
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  transformations:
+    name: transformations + dbt tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CLICKHOUSE_CONTAINER: jira-field-history-clickhouse
+      CLICKHOUSE_USER: insight
+      CLICKHOUSE_PASSWORD: insight
+      CLICKHOUSE_DATABASE: insight
+      CLICKHOUSE_HOST: 127.0.0.1
+      CLICKHOUSE_HTTP_PORT: "8123"
+      VENV: ${{ github.workspace }}/.jira-dbt-venv
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          # Same major as the toolbox image; dbt-core 1.10+ does not run on newer.
+          python-version: "3.12"
+
+      - name: Start ClickHouse on the pinned version
+        run: |
+          set -euo pipefail
+          # pins.env is plain KEY=VALUE, so it doubles as a $GITHUB_ENV fragment:
+          # the server image and both dbt versions stay pinned in one committed
+          # place, shared with bootstrap-db and connectors-ddl.
+          cat src/ingestion/scripts/bootstrap-db/pins.env >> "$GITHUB_ENV"
+          . src/ingestion/scripts/bootstrap-db/pins.env
+          export CLICKHOUSE_SERVER_IMAGE
+          .github/workflows/scripts/start-clickhouse.sh "${CLICKHOUSE_CONTAINER}"
+          # The dbt project's on-run-start hooks write into `staging`, so the
+          # databases have to exist before the first dbt invocation — including
+          # the unit-test step, which otherwise fails before reading a fixture.
+          # Bronze tables themselves are created by the suite, from the
+          # connectors-ddl snapshot.
+          for db in staging silver config insight; do
+            curl -sSf "http://${CLICKHOUSE_HOST}:${CLICKHOUSE_HTTP_PORT}/" \
+              -u "${CLICKHOUSE_USER}:${CLICKHOUSE_PASSWORD}" \
+              --data-binary "CREATE DATABASE IF NOT EXISTS ${db}"
+          done
+
+      - name: Install pinned dbt and the suite's deps
+        run: |
+          set -euo pipefail
+          python -m venv "${VENV}"
+          "${VENV}/bin/pip" install --quiet \
+            "dbt-core==${DBT_CORE_VERSION}" \
+            "dbt-clickhouse==${DBT_CLICKHOUSE_VERSION}" \
+            -r src/ingestion/dbt/tests/jira/transform/requirements.txt
+
+      - name: Macro unit tests
+        working-directory: src/ingestion/dbt
+        # The fixture tests touch no table, so they need no seeded warehouse and
+        # say precisely which macro branch broke. Running them first turns a
+        # classifier typo into a one-line failure instead of a scenario
+        # mismatch. `assert_jira_field_kind_is_id_independent` is deliberately
+        # NOT here: it re-classifies the real catalogue with the field ids
+        # masked, so it needs rows. The suite runs it with the other invariants.
+        run: |
+          set -euo pipefail
+          profiles="$(mktemp -d)"
+          cat > "${profiles}/profiles.yml" <<PROFILE
+          ingestion:
+            target: ci
+            outputs:
+              ci:
+                type: clickhouse
+                host: ${CLICKHOUSE_HOST}
+                port: ${CLICKHOUSE_HTTP_PORT}
+                user: ${CLICKHOUSE_USER}
+                password: "{{ env_var('CLICKHOUSE_PASSWORD') }}"
+                schema: silver
+                secure: false
+                query_limit: 0
+                connect_timeout: 30
+                send_receive_timeout: 600
+                settings:
+                  allow_experimental_correlated_subqueries: 1
+          PROFILE
+          "${VENV}/bin/dbt" test --profiles-dir "${profiles}" \
+            --select assert_jira_field_kind_fixtures \
+                     assert_jira_field_value_fixtures \
+                     assert_jira_field_delta_fixtures \
+                     assert_jira_field_delta_element_fixtures
+
+      - name: Transformation tests
+        working-directory: src/ingestion/dbt/tests/jira/transform
+        # Each scenario seeds bronze, builds the models and asserts the whole
+        # journal. The dbt singular tests — the round trip above all — are
+        # asserted per scenario from inside the suite, because one scenario
+        # deliberately makes the round trip fail and only the suite knows which.
+        run: |
+          set -euo pipefail
+          # The suite shells out to `dbt`, so it has to be the pinned one.
+          PATH="${VENV}/bin:${PATH}" "${VENV}/bin/pytest" -q --durations=10
+
+      - name: ClickHouse logs
+        if: failure()
+        run: docker logs --tail 200 "${CLICKHOUSE_CONTAINER}" || true

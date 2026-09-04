@@ -106,7 +106,24 @@ issue_pivot AS (
         -- so a renamed repository or an issue moved between projects leaves rows
         -- under BOTH keys and FINAL collapses neither. The latest event wins.
         argMax(id_readable, (event_at, _version))                            AS id_readable,
-        argMax(title, (event_at, _version))                                  AS title,
+        -- The role first, the denormalized column as the fallback.
+        --
+        -- The role is where the title belongs: an ordinary field, so a source
+        -- that renames an issue has rename history. GitHub is served by it
+        -- already. Jira is not yet — while the Rust binary writes the journal,
+        -- a `summary` row exists only for an issue whose summary actually
+        -- changed, because the snapshot model that binary reads does not list
+        -- `summary`. The binary does fill the COLUMN for every row, so the
+        -- fallback is what keeps a never-renamed Jira issue named.
+        --
+        -- Both the column and this fallback go with the binary. `nullIf` keeps
+        -- the result `Nullable(String)`: `argMaxIf` returns '' when nothing
+        -- matches, and this is a serving table whose type the backend reads.
+        coalesce(
+            nullIf(argMaxIf(value_displays[1], (event_at, _version),
+                            role = 'title'), ''),
+            argMax(title, (event_at, _version))
+        )                                                                    AS title,
         maxIf(event_at, role = 'status' AND delta_action = 'set')        AS last_status_event_at,
         -- Availability lives in the same history as every other field
         -- (synthetic 'availability' events; see the jira deletion spec).

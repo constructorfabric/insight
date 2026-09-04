@@ -87,13 +87,10 @@ SELECT
                                                                 AS event_kind,
     toUInt32(0)                                                 AS _seq,
     t.author_id                                                 AS author_id,
-    CAST(NULL AS Nullable(String))                              AS author_display,
     CAST('worklog' AS String)                                   AS field_id,
     CAST('Worklog' AS String)                                   AS field_name,
     CAST('single', 'Enum8(\'single\' = 1, \'multi\' = 2)')      AS field_cardinality,
     CAST(t.action, 'Enum8(\'set\' = 1, \'add\' = 2, \'remove\' = 3)') AS delta_action,
-    toNullable(t.worklog_id)                                    AS delta_value_id,
-    CAST(NULL AS Nullable(String))                              AS delta_value_display,
     CAST([COALESCE(t.worklog_id, '')] AS Array(String))         AS value_ids,
     CAST([COALESCE(t.worklog_id, '')] AS Array(String))         AS value_displays,
     CAST('opaque_id', 'Enum8(\'opaque_id\' = 1, \'account_id\' = 2, \'string_literal\' = 3, \'path\' = 4, \'none\' = 5)')

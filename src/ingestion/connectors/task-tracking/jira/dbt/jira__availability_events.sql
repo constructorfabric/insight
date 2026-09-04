@@ -37,13 +37,10 @@ SELECT
                                                                 AS event_kind,
     toUInt32(0)                                                 AS _seq,
     CAST(NULL AS Nullable(String))                              AS author_id,
-    CAST(NULL AS Nullable(String))                              AS author_display,
     CAST('availability' AS String)                              AS field_id,
     CAST('Availability' AS String)                              AS field_name,
     CAST('single', 'Enum8(\'single\' = 1, \'multi\' = 2)')      AS field_cardinality,
     CAST('set', 'Enum8(\'set\' = 1, \'add\' = 2, \'remove\' = 3)') AS delta_action,
-    CAST(NULL AS Nullable(String))                              AS delta_value_id,
-    toNullable(h.new_value)                                     AS delta_value_display,
     CAST([h.new_value] AS Array(String))                        AS value_ids,
     CAST([h.new_value] AS Array(String))                        AS value_displays,
     CAST('string_literal', 'Enum8(\'opaque_id\' = 1, \'account_id\' = 2, \'string_literal\' = 3, \'path\' = 4, \'none\' = 5)')
