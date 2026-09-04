@@ -62,9 +62,31 @@ dependencies = [
     # assertion would then depend on test code nobody reviews as carefully as
     # the product. Read-only here — the suite writes no spreadsheets.
     "openpyxl>=3.1",
+    "clickhouse-connect>=0.7",
+    # Identity state the data-path lane reads and resets lives in MariaDB.
+    "pymysql>=1.1",
 ]
 
 [dependency-groups]
+# The data-path lane transforms in process: it invokes dbt through `dbtRunner`
+# against the instance's ClickHouse. dbt-core is what caps this project's
+# interpreter at 3.13 (see `requires-python`), and the adapter floor is what
+# pins the pair — a newer dbt-core drops the adapter to its 1.9 line, and this
+# is the pairing the transformation path is exercised on.
+#
+# It is a group rather than a plain dependency because dbt-core 1.11 requires
+# `pathspec<0.13` and mypy requires `pathspec>=1.0`: one environment cannot hold
+# both, and neither pin is worth giving up. `[tool.uv] conflicts` makes that
+# explicit, so the lock carries a resolution for each:
+#
+#   uv run --project tests --group datapath --no-group dev pytest tests/datapath
+#
+# `--no-group dev` is required — dev is on by default and the two cannot share
+# an environment.
+datapath = [
+    "dbt-core>=1.11,<1.12",
+    "dbt-clickhouse>=1.10,<1.11",
+]
 dev = [
     "mypy==2.1.0",
     "types-PyYAML>=6.0",
@@ -75,6 +97,9 @@ dev = [
     # so a test run never needs the generator.
     "datamodel-code-generator>=0.26",
 ]
+
+[tool.uv]
+conflicts = [[{ group = "datapath" }, { group = "dev" }]]
 
 # The library lives under lib/; the suite under stand/ is collected by pytest
 # and is deliberately not packaged. `where` is the whole filter — lib/ holds the
