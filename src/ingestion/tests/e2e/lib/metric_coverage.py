@@ -3,11 +3,16 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
 _E2E_ROOT = Path(__file__).resolve().parents[1]
 LEDGER_FILE = _E2E_ROOT / ".artifacts" / "metric_assertions.json"
+
+# This module is the gate and runs as a bare `python3 <path>` on a machine with no
+# warehouse, no uv and no sibling packages on the path, so it reads the ledger's JSON
+# itself rather than importing `lib.metric_expect`, which writes it.
 
 
 @dataclass(frozen=True)
@@ -69,18 +74,25 @@ def universe_from_file(path: str | Path) -> dict[str, MetricDefinition]:
     }
 
 
-def coverage_from_ledger(path: Path = LEDGER_FILE) -> tuple[dict[str, dict[str, set[str]]], set[str]]:
-    """What the spec modules asserted, as `lib.metric_expect` recorded it at run time.
-    A run that wrote no ledger asserted nothing."""
-    if not path.is_file():
-        return {}, set()
-    from lib.metric_expect import Ledger
+def coverage_from_ledgers(paths: Sequence[Path]) -> tuple[dict[str, dict[str, set[str]]], set[str]]:
+    """What the spec modules asserted, merged across every ledger given.
 
-    return Ledger.read(path)
+    One ledger per suite run: a sharded lane produces several, each covering the
+    metrics its own shard requested, and coverage is their union.
+    """
+    asserted: dict[str, dict[str, set[str]]] = {}
+    requested: set[str] = set()
+    for path in paths:
+        document = json.loads(path.read_text(encoding="utf-8"))
+        for key, views in document.get("asserted", {}).items():
+            for view, names in views.items():
+                asserted.setdefault(key, {}).setdefault(view, set()).update(names)
+        requested.update(document.get("requested", []))
+    return asserted, requested
 
 
-def build_report(universe: dict[str, MetricDefinition], ledger: Path = LEDGER_FILE) -> CoverageReport:
-    asserted, requested = coverage_from_ledger(ledger)
+def build_report(universe: dict[str, MetricDefinition], ledgers: Sequence[Path]) -> CoverageReport:
+    asserted, requested = coverage_from_ledgers(ledgers)
     return CoverageReport(universe=universe, asserted=asserted, requested=requested)
 
 
@@ -124,9 +136,12 @@ def render_markdown(report: CoverageReport) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--universe-file", required=True)
-    parser.add_argument("--ledger", type=Path, default=LEDGER_FILE)
+    parser.add_argument("--ledger", type=Path, nargs="+", default=[LEDGER_FILE], help="one per suite run")
     parser.add_argument("--md", action="store_true")
     args = parser.parse_args(argv)
+    missing = [path for path in args.ledger if not path.is_file()]
+    if missing:
+        parser.error(f"no assertion ledger at {', '.join(str(path) for path in missing)}")
     report = build_report(universe_from_file(args.universe_file), args.ledger)
     output = render_markdown(report)
     sys.stdout.write(output)
