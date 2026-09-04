@@ -6,16 +6,13 @@ A test file (discovered by the `*.test.yaml` suffix) has:
       <db>.<table>:
         - $ref: templates/<g>.yaml#/templates/<rec>   # inherit a record
           <field>: <override>                          # + fields under test
-    cases:                          # batch request → expect rules
-      - name: ...
-        request: { url, method, body: { queries: [...] } }
-        expect: [ {in?, find?, equal?|assert?}, ... ]
 
 Bronze rows are `$ref`-resolved (`ref_resolver`), padded and validated against
 `schemas/<table>.yaml` (`schema_validator`) at load time, so a bad ref or a
 misspelled column fails at pytest collection — before the stack comes up.
 
-Shared `schemas/` and `templates/` files are NOT tests (no `cases`).
+What a fixture proves lives in the `test_<name>.py` module beside it; shared
+`schemas/` and `templates/` files are neither.
 """
 
 from __future__ import annotations
@@ -58,7 +55,6 @@ class TestYaml:
     # table fqn ("bronze_m365.email_activity") -> list of resolved+padded rows
     bronze: dict[str, list[dict]] = field(default_factory=dict)
     schemas: dict[str, dict] = field(default_factory=dict)
-    cases: list[dict] = field(default_factory=list)
     # Optional top-level `skip: <reason>` in the .test.yaml. When set, the runner
     # skips the test (pytest.skip) instead of executing it — used for metrics
     # blocked on an external fix (e.g. git metrics until bitbucket-cloud #1877).
@@ -106,7 +102,7 @@ def load(path: Path, *, schemas_dir: Path | None = None) -> TestYaml:
     if not isinstance(doc, dict):
         raise FixtureError(f"{path}: top-level must be a mapping")
 
-    # Resolve `skip` BEFORE validating cases or resolving bronze schemas/data.
+    # Resolve `skip` BEFORE resolving bronze schemas/data.
     # A skipped fixture (a metric blocked on an external fix) may legitimately
     # carry stale or invalid schemas/data, and must still skip cleanly instead
     # of failing pytest collection. Reject non-string `skip` at the boundary:
@@ -177,19 +173,11 @@ def load(path: Path, *, schemas_dir: Path | None = None) -> TestYaml:
         bronze[table] = resolved
         schemas[table] = schema
 
-    cases = doc.get("cases") or []
-    if not isinstance(cases, list):
-        raise FixtureError(f"{path}: `cases` must be a list")
-    for i, case in enumerate(cases):
-        if not isinstance(case, dict) or "request" not in case or "expect" not in case:
-            raise FixtureError(f"{path}: cases[{i}] must be a mapping with `request` and `expect`")
-
     return TestYaml(
         name=path.name[: -len(".test.yaml")],
         path=path,
         bronze=bronze,
         schemas=schemas,
-        cases=cases,
         skip=skip,
         identity_aliases=identity_aliases,
         identity_accounts=identity_accounts,

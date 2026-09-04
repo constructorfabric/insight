@@ -11,8 +11,7 @@
 - [API endpoint coverage gate](#api-endpoint-coverage-gate)
 - [Ports (loopback only)](#ports-loopback-only)
 - [Notes for fixture authors](#notes-for-fixture-authors)
-- [`cases` / `expect` (declarative YAML rig)](#cases--expect-declarative-yaml-rig)
-  - [What is CEL](#what-is-cel)
+- [Cases (pytest, beside the fixture)](#cases-pytest-beside-the-fixture)
 
 <!-- /toc -->
 
@@ -91,7 +90,7 @@ e2e/
 ├── seed/
 │   └── metrics.yaml            # optional test-specific metric overrides (default: empty)
 ├── metrics/                      # <name>.test.yaml + schemas/ + templates/
-└── meta/                       # the rig's own framework tests (dbt runner, expect engine, ref resolver)
+└── meta/                       # the rig's own framework tests (dbt runner, ref resolver)
 ```
 
 ## Metric coverage gate
@@ -140,43 +139,23 @@ These ports avoid conflict with a local gitops dev cluster (which forwards 8123 
 - Build dbt models through the `tracked_models` fixture rather than `dbt_runner` directly: it registers each relation the build writes into that ledger, so the derived staging and silver rows are cleaned up alongside the bronze seed. A build that bypasses it leaves its output in place for the next test to read.
 - Metric definitions are auto-seeded by the analytics binary's SeaORM migrations. Look up the metric UUID with `GET /v1/metrics` once the session is up, or add overrides in `seed/metrics.yaml`.
 
-## `cases` / `expect` (declarative YAML rig)
+## Cases (pytest, beside the fixture)
 
-Tests are `metrics/**/*.test.yaml`; each case posts to `/v1/metric-results`. Rules select a full builtin `metric` key and `view`, then optionally use `find` for a row and `equal` for exact or null values. Use CEL `assert` for nested timeseries points, dimensions, histogram bins, counts, and predicates.
+A fixture's `<name>.test.yaml` holds what to seed — `bronze`, and for the two identity-shaped specs `identity_aliases` or `identity_accounts` — and its `description`. What it proves lives in `metrics/test_<name>.py`. The module names its fixture in `SPEC`; the module-scoped `spec` fixture (`metrics/conftest.py`) seeds it, builds its models, starts the analytics binary, and hands every test a `SpecRun` whose `call(request)` posts to `/v1/metric-results` and returns a `MetricResponse`.
 
-Variables available in an `assert` (CEL) expression — assembled in `lib/expect_engine.py::evaluate_case` (the `bindings` dict), converted to CEL in `_eval_cel`:
+Selection is exact, as it was under the retired YAML engine: one metric per key, one view per kind, one row per selector. Every row a test selects with `r.row(...)` must have its view's required fields asserted before the test ends — `period` value; `peer` target_value, p25, median, p75, min, max, n; `timeseries` points; `breakdown` value; `rollup` value and contributing_entity_count; `histogram` bins — so a case cannot read `value` off a peer row and leave `n` unexamined. The whole-view accessors (`series`, `breakdown`, `histogram`, `rows`) and the entry selectors `one`/`some` are exempt.
 
-| Binding | Value | Present when |
-|---------|-------|--------------|
-| `it` | the single row matched by `find` | only with `find` (else `null`) |
-| `items` | values or series from the selected view | a metric view is selected |
-| `view` | the selected view object | a metric view is selected |
-| `metric` | the selected metric result | a metric is selected |
-| `metrics` | all metric results | always |
-| `status` | the batch HTTP status code (int) | always |
-
-CEL is strictly typed and will not compare an `int` to a `double`. Bindings are passed through unchanged, so when a metric value may be integral (e.g. `40`) and you compare against a fractional literal, cast it: `double(it.value) > 39.5`. `status` and `size(...)` are integers — compare them with integer literals. Use `equal` for exact / `null` comparisons (it uses Python `==`).
-
-### What is CEL
-
-`assert` expressions are written in **CEL — the [Common Expression Language](https://github.com/google/cel-spec)** (the same expression language used by Kubernetes admission policies and Envoy). It is a small, side-effect-free language for boolean/value expressions over structured data: no statements, no loops, no I/O — an expression is evaluated against the bindings above and must return a boolean. The rig evaluates it with the [`cel-python`](https://pypi.org/project/cel-python/) library (`celpy`) in `lib/expect_engine.py::_eval_cel`.
-
-Operators: `== != < <= > >=`, `&& || !`, `+ - * / %`, `in`, ternary `cond ? a : b`. Field/index access: `it.value`, `view.values`, `items[0]`. Useful built-ins & macros: `size(x)`, `has(x.field)`, `x.exists(e, <pred>)`, `x.all(e, <pred>)`, `x.filter(e, <pred>)`, `x.map(e, <expr>)`, string `.startsWith()/.endsWith()/.contains()/.matches(re)`.
-
-Examples:
-
-```yaml
-- assert: "status == 200"
-- metric: collab.emails_sent
-  view: period
-  find: { entity_id: erin@example.com }
-  equal: { value: 50 }
-- metric: collab.messages_sent
-  view: timeseries
-  assert: "items.exists(s, s.points.exists(p, double(p.value) > 0.0))"
-- metric: git.lines_added
-  view: breakdown
-  assert: "items.exists(v, v.dimensions.exists(d, d.key == 'category' && d.value == 'code'))"
+```python
+r = spec.call({"url": "/v1/metric-results", "method": "POST", "body": {...}})
+assert r.status == 200
+r.row("collab.emails_sent", "period", entity_id=ERIN).equals(value=50)
+r.row("collab.emails_sent", "peer", entity_id=ERIN).equals(
+    target_value=50, p25=20, median=30, p75=40, min=10, max=50, n=5
+)
+points = one(r.series("collab.messages_sent"), entity_id=ERIN)["points"]
+assert float(one(points, bucket_start="2026-01-05")["value"]) == 12
+assert some(r.breakdown("collab.messages_sent"), dimensions={"key": "channel", "value": "teams"}) == []
 ```
 
-Prefer `equal` for exact / `null` checks (it uses Python `==`, so `40 == 40.0` and `value: null` work directly); reach for `assert` when you need inequalities, counts, or cross-row predicates.
+`Row.equals` compares exactly (`None` for a served null); `contains` matches one element of a list field; `nonempty` and `check` (a predicate over one field) also count toward completeness. An empty timeseries bucket is served with `value: null` — coerce only the point you selected. Numbers compare within rel 1e-9 / abs 1e-6. Each `row` and whole-view call records the metric and view in `.artifacts/metric_assertions.json`, which the coverage gate reads.
+

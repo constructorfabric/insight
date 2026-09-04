@@ -2,22 +2,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import yaml
-
 _E2E_ROOT = Path(__file__).resolve().parents[1]
-METRICS_DIR = _E2E_ROOT / "metrics"
-_VIEW_FIELDS = {
-    "period": {"value"},
-    "peer": {"target_value", "p25", "median", "p75", "min", "max", "n"},
-    "timeseries": {"points"},
-    "breakdown": {"value"},
-    "histogram": {"bins"},
-}
+LEDGER_FILE = _E2E_ROOT / ".artifacts" / "metric_assertions.json"
 
 
 @dataclass(frozen=True)
@@ -79,61 +69,9 @@ def universe_from_file(path: str | Path) -> dict[str, MetricDefinition]:
     }
 
 
-def _asserted_fields(rule: dict) -> set[str]:
-    fields = set((rule.get("equal") or {}).keys())
-    fields.update((rule.get("contains") or {}).keys())
-    fields.update(rule.get("nonempty") or [])
-    expression = rule.get("assert") or ""
-    fields.update(re.findall(r"\bit\.([a-zA-Z_][a-zA-Z0-9_]*)\b", expression))
-    fields.update(re.findall(r"\bit\[['\"]([a-zA-Z_][a-zA-Z0-9_]*)['\"]\]", expression))
-    return fields
-
-
-def _covers_view(rule: dict, view: str) -> bool:
-    required = _VIEW_FIELDS[view]
-    if "find" in rule:
-        return required <= _asserted_fields(rule)
-    expression = rule.get("assert") or ""
-    if view == "timeseries":
-        return ".points" in expression
-    if view == "breakdown":
-        return (".dimensions" in expression and ".value" in expression) or bool(
-            re.search(r"size\(items\)\s*==\s*0", expression)
-        )
-    if view == "histogram":
-        return ".bins" in expression
-    return False
-
-
-def coverage_from_tests(metrics_dir: Path = METRICS_DIR) -> tuple[dict[str, dict[str, set[str]]], set[str]]:
-    asserted: dict[str, dict[str, set[str]]] = {}
-    requested: set[str] = set()
-    for path in sorted(metrics_dir.rglob("*.test.yaml")):
-        document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        for case in document.get("cases") or []:
-            body = (case.get("request") or {}).get("body") or {}
-            for metric in body.get("metrics") or []:
-                key = metric.get("metric_key")
-                if key:
-                    requested.add(str(key))
-            for rule in case.get("expect") or []:
-                key = rule.get("metric")
-                view = rule.get("view")
-                if not key or view not in _VIEW_FIELDS:
-                    continue
-                if _covers_view(rule, view):
-                    asserted.setdefault(str(key), {}).setdefault(view, set()).add(path.name)
-    return asserted, requested
-
-
-LEDGER_FILE = METRICS_DIR.parent / ".artifacts" / "metric_assertions.json"
-
-
 def coverage_from_ledger(path: Path = LEDGER_FILE) -> tuple[dict[str, dict[str, set[str]]], set[str]]:
-    """What the ported spec modules asserted, as `lib.metric_expect` recorded it at
-    run time. Absent when no ported spec ran, which is not a gap by itself: the
-    YAML specs still contribute through `coverage_from_tests` until the last one
-    moves."""
+    """What the spec modules asserted, as `lib.metric_expect` recorded it at run time.
+    A run that wrote no ledger asserted nothing."""
     if not path.is_file():
         return {}, set()
     from lib.metric_expect import Ledger
@@ -141,15 +79,9 @@ def coverage_from_ledger(path: Path = LEDGER_FILE) -> tuple[dict[str, dict[str, 
     return Ledger.read(path)
 
 
-def build_report(
-    universe: dict[str, MetricDefinition], metrics_dir: Path = METRICS_DIR, ledger: Path = LEDGER_FILE
-) -> CoverageReport:
-    asserted, requested = coverage_from_tests(metrics_dir)
-    ledger_asserted, ledger_requested = coverage_from_ledger(ledger)
-    for key, views in ledger_asserted.items():
-        for view, names in views.items():
-            asserted.setdefault(key, {}).setdefault(view, set()).update(names)
-    return CoverageReport(universe=universe, asserted=asserted, requested=requested | ledger_requested)
+def build_report(universe: dict[str, MetricDefinition], ledger: Path = LEDGER_FILE) -> CoverageReport:
+    asserted, requested = coverage_from_ledger(ledger)
+    return CoverageReport(universe=universe, asserted=asserted, requested=requested)
 
 
 def gate_violations(report: CoverageReport) -> list[str]:
@@ -192,11 +124,10 @@ def render_markdown(report: CoverageReport) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--universe-file", required=True)
-    parser.add_argument("--metrics-dir", type=Path, default=METRICS_DIR)
     parser.add_argument("--ledger", type=Path, default=LEDGER_FILE)
     parser.add_argument("--md", action="store_true")
     args = parser.parse_args(argv)
-    report = build_report(universe_from_file(args.universe_file), args.metrics_dir, args.ledger)
+    report = build_report(universe_from_file(args.universe_file), args.ledger)
     output = render_markdown(report)
     sys.stdout.write(output)
     for violation in gate_violations(report):

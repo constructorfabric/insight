@@ -1,27 +1,28 @@
 ---
 name: metric-test
-description: "Author and validate declarative YAML tests for analytics metrics (src/ingestion/tests/e2e/metrics/*.test.yaml). Use when asked to write/scaffold/validate a test for a metric, seed bronze data for a test, add a fixture for a dashboard metric, or check a *.test.yaml. Covers schemas/, templates/, $ref+sibling composition, bronze records with duplicates, the batch endpoint POST /v1/metrics/queries, and expect rules (in / mongo-style find / equal subset / CEL assert)."
+description: "Author and validate a metric spec for the data-path rig (src/ingestion/tests/e2e/metrics/<name>.test.yaml fixture + test_<name>.py module). Use when asked to write/scaffold/validate a test for a metric, seed bronze data for a test, add a fixture for a dashboard metric, or check a spec. Covers schemas/, templates/, $ref+sibling composition, bronze records with duplicates, POST /v1/metric-results, and the assertion helpers (row/equals/contains, one/some over a view)."
 disable-model-invocation: false
 user-invocable: true
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep
 ---
 
-# Author a metric test (declarative YAML)
+# Author a metric test (YAML fixture + pytest module)
 
-This skill writes and validates `*.test.yaml` fixtures that drive the full
-`bronze → dbt silver → gold view → analytics` path and assert the result.
+This skill writes and validates metric specs: a `<name>.test.yaml` fixture that
+drives the full `bronze → dbt silver → gold view → analytics` path, and the
+`test_<name>.py` module beside it that asserts the result.
 
 ## Source of truth (reference — open only if you need the detail)
 
 This skill is self-contained for authoring. For the precise algorithm, read the
-rig itself: `src/ingestion/tests/e2e/lib/` — `ref-resolver`, `schema-validator`
-and `expect-engine` live there, and the committed `*.test.yaml` files are the
-worked examples.
+rig itself: `src/ingestion/tests/e2e/lib/` — `ref_resolver`, `schema_validator`,
+`metric_expect` and `spec_runner` live there, and the committed specs are the
+worked examples (`metrics/test_ai_edit_acceptance.py` is the reference shape).
 
 ## Commands
 
 - `/metric-test create <name> --metric <uuid> --tables <t1,t2>` — scaffold a new `<name>.test.yaml` (+ any missing `schemas/` and `templates/`).
-- `/metric-test validate <path>` — resolve refs, schema-validate records, lint `cases`/`expect` without running ClickHouse.
+- `/metric-test validate <path>` — resolve refs, schema-validate records, lint the module without running ClickHouse.
 
 (Plain prose like "write a test for the emails-sent metric" triggers the same flow.)
 
@@ -31,16 +32,17 @@ worked examples.
 src/ingestion/tests/e2e/metrics/
   schemas/<db>.<table>.yaml      # one JSON schema per bronze table (all real columns)
   templates/<group>.yaml         # reusable records (people, m365_email, …)
-  <name>.test.yaml               # ONE metric per file (discovered by the *.test.yaml suffix)
+  <name>.test.yaml               # what to seed: description + bronze (ONE metric per spec)
+  test_<name>.py                 # what it proves: SPEC = "<name>", one test per case
 ```
 
-Files under `schemas/` and `templates/` are NOT tests (no `cases`) and are skipped by discovery.
+A spec is the pair; files under `schemas/` and `templates/` are neither.
 
 **One metric per file.** Each `<name>.test.yaml` asserts exactly ONE output `metric_key`
 (e.g. `collab_emails_sent.test.yaml` asserts only `m365_emails_sent`). Several files MAY
 target the same `metric_id` — the collab email specs (`collab_emails_read`/`received`/`sent`)
-all query metric_id `…0012` but each asserts a different `metric_key`. A file may hold many
-`cases` (e.g. one per date window), but they all `find` the same single target metric.
+all query metric_id `…0012` but each asserts a different `metric_key`. A module may hold many
+tests (e.g. one per date window), but they all select the same single target metric.
 
 ## The format
 
@@ -119,58 +121,68 @@ bronze:
       sendCount: 40
 ```
 
-### `cases` — batch request + expectations
+### The module — what the fixture proves
 
-```yaml
-cases:
-  - name: <what this proves>
-    request:
-      url: /v1/metrics/queries
-      method: POST
-      body:
-        queries:
-          - id: collaboration            # echoed back as results[].id
-            metric_id: <uuid>
-            $filter: "person_id eq 'alice@example.com' and metric_date ge '2026-01-01' and metric_date le '2026-01-31'"
-    expect:
-      - assert: "status == 200"                       # HTTP code of the batch
-      - in: collaboration
-        assert: "result.status == 'ok'"                # this query's own status (batch HTTP stays 200 on per-query error)
-      - in: collaboration
-        find: { metric_key: m365_emails_sent }         # mongo-style selector → exactly one row (`it`)
-        equal: { value: 40, median: 20, range_min: 10, range_max: 40 }   # subset; unlisted fields ignored
+```python
+"""<What the spec proves — the description block's gold line, in prose.>"""
+
+from __future__ import annotations
+
+import pytest
+from lib.metric_expect import one, some
+from lib.spec_runner import SpecRun
+
+pytestmark = pytest.mark.fixture
+
+SPEC = "collab_emails_sent"
+
+ALICE = "alice@example.com"
+
+
+def test_emails_sent_over_january(spec: SpecRun) -> None:
+    """The month window takes both rows; the re-synced duplicate does not double the count."""
+    r = spec.call(
+        {
+            "url": "/v1/metric-results",
+            "method": "POST",
+            "body": {
+                "entity": {"type": "person", "ids": [ALICE]},
+                "period": {"from": "2026-01-01", "to": "2026-01-31"},
+                "metrics": [{"metric_key": "collab.emails_sent", "views": [{"view": "period"}, {"view": "peer"}]}],
+            },
+        }
+    )
+    assert r.status == 200
+    r.row("collab.emails_sent", "period", entity_id=ALICE).equals(value=40)
+    r.row("collab.emails_sent", "peer", entity_id=ALICE).equals(
+        target_value=40, p25=10, median=20, p75=40, min=10, max=40, n=3
+    )
 ```
 
-- `in` — select the batch result by request `id` (omit when there is one query).
-- `find` — exact field equality: `{field: value}` (selects one row). Anything richer (inequalities, counts, predicates) goes in a CEL `assert` — there is no second selector language.
-- `equal` — subset equality; use for exact ints / `null`.
-- `assert` — CEL boolean; use for inequalities / floats / counts.
+- `SPEC` names the fixture; the module-scoped `spec` fixture (`metrics/conftest.py`) seeds it,
+  builds its models and starts analytics once per module.
+- `spec.call(request)` posts the request verbatim and returns a `MetricResponse`. Entity ids in
+  requests and rows are the fixture's emails — the runner translates person ids both ways.
+- `r.row(metric_key, view, **find)` — exactly one row must match. Then `equals(**fields)` (exact;
+  `None` for a served null), `contains(field={...})` (one element of a list field),
+  `nonempty(*fields)`, `check(field, predicate, describe)`. By the end of the test every selected
+  row must have its view's required fields asserted: period `value`; peer `target_value p25 median
+  p75 min max n`; timeseries `points`; breakdown `value`; rollup `value contributing_entity_count`;
+  histogram `bins`.
+- Whole views: `r.series(key)`, `r.breakdown(key)`, `r.histogram(key)`, `r.rows(key, view)`.
+  Select inside them with `one(entries, **selector)` / `some(entries, **selector)`; a dict
+  selector matches any element of a list field:
+  `one(r.breakdown(k), entity_id=ALICE, dimensions={"key": "tool", "value": "cursor"})`.
+- An empty timeseries bucket carries `value: null` — coerce only the point you selected:
+  `float(one(points, bucket_start="2026-01-05")["value"])`.
+- Numbers compare within rel 1e-9 / abs 1e-6. Every `row` and whole-view call is recorded in
+  `.artifacts/metric_assertions.json` for the coverage gate.
 
-The request carries only `id` + `metric_id` + `$filter` (person_id + metric_date `ge`/`le`):
-the live FE sends **no** `$top`/`$orderby`/`org_unit`, and the backend computes the team
-(org_unit / department) distribution itself. **Assert only the metric under test** — one `metric_key` per file
-via `find`+`equal`; do NOT assert a fixed positive `size(items)` count or an unrelated
-metric_key. (The team shown in the UI comes from a *separate* identity service and can
-disagree with the analytics team (org_unit) — irrelevant to these assertions.)
-
-### `assert` (CEL) bindings
-
-Assembled in `lib/expect_engine.py::evaluate_case` (the `bindings` dict),
-converted to CEL in `_eval_cel`:
-
-| Binding | Value | Present when |
-|---|---|---|
-| `it` | the single row matched by `find` | only with `find` (else `null` → `it.x` errors) |
-| `items` | the selected result's `items` array | a result is selected (`in` or sole query) |
-| `result` | the selected result `{id, status, metric_id, items, page_info}` | a result is selected |
-| `results` | the full `results[]` of the batch | always |
-| `status` | the batch HTTP status code (int) | always |
-
-CEL is strictly typed and won't compare an `int` to a `double` — when a metric
-value may be integral (`40`) and you compare against a fractional literal, cast it:
-`double(it.value) > 39.5`. `status`/`size(...)` are ints (compare with int literals).
-For exact / `null`, use `equal` (Python `==`), not `assert`. CEL macros available:
-`size()`, `has()`, `.exists()`, `.all()`, `.map()`, `.filter()`.
+The request carries the entity, the period and the metric under test with its views; the
+backend computes the peer (org_unit / department) distribution itself. **Assert only the metric
+under test** — one metric key per spec — and never a fixed positive count of unrelated entries.
+(The team shown in the UI comes from a *separate* identity service and can disagree with the
+analytics team (org_unit) — irrelevant to these assertions.)
 
 ## Date-window test design (metric_date)
 
@@ -184,7 +196,8 @@ with a dedicated spec (see `metrics/collab_emails_read.test.yaml`):
   off-by-one bound fails the `equal`.
 - **Single-day (degenerate):** `ge == le` — a one-day window still matches.
 - **Cross-year:** a window spanning the year boundary (e.g. `ge '2025-12-31' le '2026-01-01'`), both bounds inclusive.
-- **Empty window:** a valid range with no rows → `assert: "size(items) == 0"` (a bare CEL assert, not `equal`).
+- **Empty window:** a valid range with no rows is served as a null, not a zero →
+  `r.row(key, "period", entity_id=ALICE).equals(value=None)`.
 - **Equivalence partitions:** one case per dashboard window kind — week / month / quarter /
   custom — the FE issues these as distinct `ge`/`le` ranges.
 
@@ -241,9 +254,10 @@ with a dedicated spec (see `metrics/collab_emails_read.test.yaml`):
    see § `description`; a spec implementing a tracked feature scenario cites it
    here — see § Feature-scenario traceability), then **`bronze`** with `$ref`+overrides; include a duplicate
    row when the metric should dedup.
-5. **Write `cases`**: one batch `query` per metric under test (and one `metric_key` per
-   file — see File layout); assert ONLY the target metric's few fields via `find`+`equal`,
-   and counts/inequalities via `assert`.
+5. **Write `test_<name>.py`**: one test per window or behaviour, each calling
+   `/v1/metric-results` for the metric under test (one metric key per spec — see File
+   layout); assert the target metric's rows via `r.row(...).equals(...)`, and counts or
+   inequalities over a whole view through `one`/`some`.
 6. **Pick numbers that distinguish behaviors** — e.g. for a median test use values
    where median ≠ mean (`[40,20,10]` → median 20, mean 23.33) so the test actually
    pins the aggregation. Use an **odd-size** team (an odd number of members with data): ClickHouse `quantileExact(0.5)`
@@ -266,8 +280,8 @@ with a dedicated spec (see `metrics/collab_emails_read.test.yaml`):
   print("missing", sorted(s-t), "extra", sorted(t-s))
   PY
   ```
-- Each `expect` rule has `find`+(`equal`|`assert`) or a bare `assert`; `in` matches a
-  declared query `id`; CEL expressions parse.
+- The module sets `SPEC` to the fixture's stem, every test takes `spec: SpecRun`, and
+  `uv run --frozen ruff check metrics/test_<name>.py` passes (run from `src/ingestion`).
 
 ## Running
 
@@ -275,16 +289,17 @@ with a dedicated spec (see `metrics/collab_emails_read.test.yaml`):
 cd src/ingestion/tests/e2e
 ls metrics/*.test.yaml                       # list existing tests
 ./e2e.sh test                              # run all tests (metrics/ + meta/)
-./e2e.sh test -k <name>                    # run one test by name
+./e2e.sh test metrics/test_<name>.py       # run one spec
+./e2e.sh test -k <name>                    # or by substring
 ./e2e.sh test -k <name> -v                 # verbose (per-step log)
 ./e2e.sh down                              # tear down the e2e compose stack + volumes (full reset)
 ```
 
-`<name>` is the file stem (e.g. `collab_emails_sent` for `metrics/collab_emails_sent.test.yaml`).
+`<name>` is the spec's stem (e.g. `collab_emails_sent` for `metrics/collab_emails_sent.test.yaml` + `metrics/test_collab_emails_sent.py`).
 
 Warm re-runs are fine. Isolation is **per-test**: each test first `TRUNCATE`s only the
-tables the PRIOR test recorded in a per-test ledger (`CHSeeder.TouchedLedger`;
-`metrics/test_fixtures.py`, `lib/ch_seeder.py`), then seeds its own. The rig auto-records
+tables the PRIOR spec recorded in a per-spec ledger (`CHSeeder.TouchedLedger`;
+`lib/spec_runner.py`, `lib/ch_seeder.py`), then seeds its own. The rig auto-records
 the built **staging** and **silver** models too (not just bronze) — staging especially,
 because silver reads staging via the `union_by_tag` macro, so an un-truncated prior staging
 row would contaminate the silver rebuild. On TOP of that, a one-time session-start truncate
@@ -294,7 +309,7 @@ makes WARM re-runs deterministic (CI starts fresh). `./e2e.sh down` is the e2e c
 teardown (not a deploy), for when you want a fully clean ClickHouse.
 
 To create a new test, use `/metric-test create` or hand-author `metrics/<name>.test.yaml`
-as above. There is no `./e2e.sh new` — the old CSV-rig scaffolder was removed when the
+and `metrics/test_<name>.py` as above. There is no `./e2e.sh new` — the old CSV-rig scaffolder was removed when the
 declarative `*.test.yaml` rig replaced the CSV rig.
 
 ## New bronze table for a not-yet-seeded connector
@@ -331,7 +346,7 @@ aren't in the snapshot yet:
   Docker Desktop (macOS) the mtimes cargo reads through the bind mount don't
   reliably advance, so cargo relinked a stale object and the binary silently
   lacked new SeaORM migrations (symptoms: `query_ref`/catalog changes have no
-  effect, a `find` matches 0 rows, `size(items)` off by your new key). FIXED in
+  effect, a `row` selector matches 0 rows, a whole-view count off by your new key). FIXED in
   `lib/analytics.py::build` — it now `touch`es the analytics crate
   sources before `cargo build`, forcing a recompile every run (~1-2 min, only
   that crate). So a plain `./e2e.sh test` picks up new migrations now; you should
@@ -343,13 +358,11 @@ aren't in the snapshot yet:
   (only the runner is `--rm`). Query directly:
   `docker exec insight-e2e-mariadb mariadb -uroot -p"$(grep ^MARIADB_ROOT_PASSWORD compose/.env|cut -d= -f2)" analytics -e "SELECT version FROM seaql_migrations"`
   and `docker exec insight-e2e-clickhouse clickhouse-client -q "SELECT … FROM silver.class_<X>"`.
-- **Cross-test impact.** Adding a `metric_key` to a shared bullet section raises
-  that section's `size(items)` for EVERY test that asserts a fixed count on it —
-  bump those count assertions in the same change (e.g. the Zulip add moved the
-  Collaboration bullet 20 → 21). The per-metric specs here deliberately assert
-  ONLY their target `metric_key` (not `size(items)` — see the `cases` guidance
-  above), which immunises them from this coupling; only a spec that pins a
-  positive `size(items)` needs the lockstep bump.
+- **Cross-test impact.** Adding a metric key to a shared response raises the entry
+  count for EVERY test that pins `len(...)` of a whole view — bump those in the
+  same change. The per-metric specs here deliberately assert ONLY their target
+  key (see the module guidance above), which immunises them from this coupling;
+  only a spec that pins a positive count needs the lockstep bump.
 
 ## Feature-scenario traceability
 
