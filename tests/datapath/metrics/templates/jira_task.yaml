@@ -34,7 +34,7 @@ templates:
   jira_user:
     unique_key: null
     source_id: jira-test
-    tenant_id: "11111111-1111-1111-1111-111111111111"
+    tenant_id: "{{ tenant }}"
     account_id: null
     email: null
     display_name: null
@@ -79,7 +79,7 @@ templates:
   jira_history:
     unique_key: null
     source_id: jira-test
-    tenant_id: "11111111-1111-1111-1111-111111111111"
+    tenant_id: "{{ tenant }}"
     id_readable: null
     changelog_id: null
     created_at: ""
@@ -321,7 +321,7 @@ templates:
   # census row and the bronze-issue row merge into one availability entity.
   jira_census:
     id: null
-    tenant_id: "11111111-1111-1111-1111-111111111111"
+    tenant_id: "{{ tenant }}"
     source_id: jira-test
     unique_key: null
     jira_id: null
@@ -347,7 +347,7 @@ templates:
     style: classic
     isPrivate: false
     properties: "{}"
-    tenant_id: "11111111-1111-1111-1111-111111111111"
+    tenant_id: "{{ tenant }}"
     source_id: jira-test
     unique_key: null
     project_id: null
@@ -367,7 +367,7 @@ templates:
     worklogId: null
     updatedTime: 1766700000000
     properties: "[]"
-    tenant_id: "11111111-1111-1111-1111-111111111111"
+    tenant_id: "{{ tenant }}"
     source_id: jira-test
     unique_key: null
     worklog_id: null

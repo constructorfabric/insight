@@ -13,7 +13,7 @@ bronze:
   bronze_github.commits:
     - $ref: ../templates/git_activity.yaml#/templates/commit
       unique_key: gh-commit-co1
-      tenant_id: "11111111-1111-1111-1111-111111111111"
+      tenant_id: "{{ tenant }}"
       source_id: github-test
       sha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb1"
       author_email: dev1@example.com
@@ -24,7 +24,7 @@ bronze:
       committed_date: "2026-03-02T09:00:00Z"
     - $ref: ../templates/git_activity.yaml#/templates/commit
       unique_key: gh-commit-co2
-      tenant_id: "11111111-1111-1111-1111-111111111111"
+      tenant_id: "{{ tenant }}"
       source_id: github-test
       sha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb2"
       author_email: dev1@example.com

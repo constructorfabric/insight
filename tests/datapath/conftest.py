@@ -56,6 +56,12 @@ def stand_manifest() -> Manifest:
 
 
 @pytest.fixture(scope="session")
+def tenant(stand_manifest: Manifest) -> str:
+    """The tenant this instance serves, which every seeded row belongs to."""
+    return stand_manifest.tenant
+
+
+@pytest.fixture(scope="session")
 def caller_session(stand_manifest: Manifest) -> PersonaSession:
     """The seeded persona whose subtree a spec's people are grafted into."""
     return open_session(CALLER_FIXTURE, stand_manifest, resolve_endpoint().base_url)

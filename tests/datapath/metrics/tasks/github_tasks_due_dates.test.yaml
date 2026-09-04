@@ -51,7 +51,7 @@ bronze:
   # names, `field_id` is what the timeline and the binding name.
   bronze_github.issue_fields:
     - unique_key: gh-field-target
-      tenant_id: "11111111-1111-1111-1111-111111111111"
+      tenant_id: "{{ tenant }}"
       source_id: github-test
       data_source: github
       collected_at: "2026-03-01T00:00:00Z"

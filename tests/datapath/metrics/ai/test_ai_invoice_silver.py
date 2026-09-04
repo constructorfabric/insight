@@ -28,7 +28,9 @@ from insight_datapath.instance import InstanceConfig
 TABLE = "bronze_claude_team_invoices.claude_team_invoice_lines"
 SELECTOR = "tag:claude-team-invoices+"
 
-TENANT = "11111111-1111-1111-1111-111111111111"
+#: Only a component of the connector's own key text; the row's tenant is the
+#: instance's, stamped as it is seeded.
+KEY_TENANT = "11111111-1111-1111-1111-111111111111"
 SOURCE = "claude-team-invoices-test"
 # Its own source: the class keeps every test's rows for the session, and each
 # recovery pair is only legible on its own.
@@ -69,7 +71,7 @@ def _base(source_id: str, read_at: str) -> dict:
         "_airbyte_extracted_at": read_at,
         "_airbyte_meta": "{}",
         "_airbyte_generation_id": 0,
-        "tenant_id": TENANT,
+        "tenant_id": None,
         "source_id": source_id,
         "unique_key": None,
         "collected_at": read_at,
@@ -122,7 +124,7 @@ def _invoice_row(
     row = _base(source_id, read_at)
     key = f"invoice-{ref}" if ref else f"invoice-{RAISED_AT}-{intent}-{total}-None"
     row.update(
-        unique_key=f"{TENANT}-{source_id}-{key}",
+        unique_key=f"{KEY_TENANT}-{source_id}-{key}",
         invoice_ref=ref,
         invoice_payment_intent=intent,
         invoice_total=total,
@@ -148,7 +150,7 @@ def _line_row(
     """
     row = _base(source_id, read_at)
     row.update(
-        unique_key=f"{TENANT}-{source_id}-{invoice_id}-{line_id}",
+        unique_key=f"{KEY_TENANT}-{source_id}-{invoice_id}-{line_id}",
         invoice_ref=ref,
         invoice_id=invoice_id,
         line_id=line_id,
@@ -278,10 +280,12 @@ _SELECT = (
 )
 
 
-def _seed_and_build(ch_seeder: CHSeeder, dbt_runner: DbtRunner, rows: list[dict]) -> None:
+def _seed_and_build(
+    ch_seeder: CHSeeder, dbt_runner: DbtRunner, rows: list[dict], tenant: str
+) -> None:
     schema_file = Path(__file__).parents[1] / "schemas" / f"{TABLE}.yaml"
     schemas = yaml.safe_load(schema_file.read_text(encoding="utf-8"))["schemas"]
-    ch_seeder.seed_bronze({TABLE: rows}, schemas)
+    ch_seeder.seed_bronze({TABLE: [{**row, "tenant_id": tenant} for row in rows]}, schemas)
     dbt_runner.build(SELECTOR)
 
 
@@ -292,10 +296,10 @@ def _read_class(cfg: InstanceConfig, source_id: str, order_by: str = "unique_key
 
 @pytest.fixture
 def invoice_silver(
-    instance_cfg: InstanceConfig, ch_seeder: CHSeeder, dbt_runner: DbtRunner
+    instance_cfg: InstanceConfig, ch_seeder: CHSeeder, dbt_runner: DbtRunner, tenant: str
 ) -> list[dict]:
     """Seed bronze, build the connector's models, read the class back."""
-    _seed_and_build(ch_seeder, dbt_runner, BRONZE_ROWS)
+    _seed_and_build(ch_seeder, dbt_runner, BRONZE_ROWS, tenant)
     return _read_class(instance_cfg, SOURCE)
 
 
@@ -430,20 +434,20 @@ def _recovered_rows(source_id: str, read_at: str) -> list[dict]:
 
 @pytest.fixture
 def recovered_in_one_build(
-    instance_cfg: InstanceConfig, ch_seeder: CHSeeder, dbt_runner: DbtRunner
+    instance_cfg: InstanceConfig, ch_seeder: CHSeeder, dbt_runner: DbtRunner, tenant: str
 ) -> list[dict]:
     """Both syncs' rows already in bronze when the model first runs."""
     rows = [
         _broken_row(SOURCE_ONE_BUILD, ONE_BUILD_BROKEN_AT),
         *_recovered_rows(SOURCE_ONE_BUILD, ONE_BUILD_RECOVERED_AT),
     ]
-    _seed_and_build(ch_seeder, dbt_runner, rows)
+    _seed_and_build(ch_seeder, dbt_runner, rows, tenant)
     return _read_class(instance_cfg, SOURCE_ONE_BUILD, order_by="line_id NULLS FIRST")
 
 
 @pytest.fixture
 def recovered_across_two_builds(
-    instance_cfg: InstanceConfig, ch_seeder: CHSeeder, dbt_runner: DbtRunner
+    instance_cfg: InstanceConfig, ch_seeder: CHSeeder, dbt_runner: DbtRunner, tenant: str
 ) -> list[dict]:
     """The gap built into the class first, the enrichment only on the next run.
 
@@ -451,9 +455,11 @@ def recovered_across_two_builds(
     following night does the chain complete. The gap row is in the class before the
     enrichment is even read, so nothing the second build selects can filter it out.
     """
-    _seed_and_build(ch_seeder, dbt_runner, [_broken_row(SOURCE_TWO_BUILDS, TWO_BUILDS_BROKEN_AT)])
     _seed_and_build(
-        ch_seeder, dbt_runner, _recovered_rows(SOURCE_TWO_BUILDS, TWO_BUILDS_RECOVERED_AT)
+        ch_seeder, dbt_runner, [_broken_row(SOURCE_TWO_BUILDS, TWO_BUILDS_BROKEN_AT)], tenant
+    )
+    _seed_and_build(
+        ch_seeder, dbt_runner, _recovered_rows(SOURCE_TWO_BUILDS, TWO_BUILDS_RECOVERED_AT), tenant
     )
     return _read_class(instance_cfg, SOURCE_TWO_BUILDS, order_by="line_id NULLS FIRST")
 
@@ -480,7 +486,7 @@ def test_a_recovery_across_two_builds_leaves_no_gap_behind(
 
 @pytest.fixture
 def second_instance_silver(
-    instance_cfg: InstanceConfig, ch_seeder: CHSeeder, dbt_runner: DbtRunner
+    instance_cfg: InstanceConfig, ch_seeder: CHSeeder, dbt_runner: DbtRunner, tenant: str
 ) -> list[dict]:
     """A second source instance, read BEFORE everything the class already holds."""
     rows = [
@@ -496,7 +502,7 @@ def second_instance_silver(
             period_end_ts=SEP_START,
         )
     ]
-    _seed_and_build(ch_seeder, dbt_runner, rows)
+    _seed_and_build(ch_seeder, dbt_runner, rows, tenant)
     return _read_class(instance_cfg, SOURCE_SECOND_INSTANCE)
 
 

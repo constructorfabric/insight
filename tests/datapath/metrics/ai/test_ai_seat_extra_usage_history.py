@@ -24,7 +24,6 @@ BRONZE_TABLE = "claude_team_overage_spend"
 STAGING_SELECTOR = "+claude_team__ai_overage"
 SILVER_SELECTOR = "class_ai_overage"
 
-TENANT = "11111111-1111-1111-1111-111111111111"
 SOURCE = "claude-team-history-test"
 SEAT_EMAIL = "grace@example.com"
 SEAT_UUID = "seat-grace"
@@ -34,17 +33,17 @@ SEAT_UUID = "seat-grace"
 SeatSnapshot = dict[str, str | int | bool | None]
 
 
-def _snapshot(read_at: str, used_credits: int) -> SeatSnapshot:
+def _snapshot(tenant: str, read_at: str, used_credits: int) -> SeatSnapshot:
     """One seat's spend state as the endpoint returns it: current period to date."""
     return {
         "_airbyte_raw_id": "00000000-0000-0000-0000-000000000000",
         "_airbyte_extracted_at": read_at,
         "_airbyte_meta": "{}",
         "_airbyte_generation_id": 0,
-        "tenant_id": TENANT,
+        "tenant_id": tenant,
         "source_id": SOURCE,
         # No month in the key — the seat's identity is all the connector emits.
-        "unique_key": f"{TENANT}-{SOURCE}-{SEAT_UUID}",
+        "unique_key": f"{tenant}-{SOURCE}-{SEAT_UUID}",
         "collected_at": read_at,
         "data_source": "insight_claude_team",
         "account_uuid": SEAT_UUID,
@@ -73,7 +72,7 @@ def _sync(ch_seeder: CHSeeder, dbt_runner: DbtRunner, row: SeatSnapshot) -> None
 
 
 def test_a_month_survives_the_next_month_snapshot(
-    ch_seeder: CHSeeder, dbt_runner: DbtRunner
+    ch_seeder: CHSeeder, dbt_runner: DbtRunner, tenant: str
 ) -> None:
     clear(ch_seeder.cfg, ch_seeder.ledger.drain())
 
@@ -90,15 +89,15 @@ def test_a_month_survives_the_next_month_snapshot(
     for schema, table in touched:
         ch_seeder.ledger.record(schema, table)
 
-    _sync(ch_seeder, dbt_runner, _snapshot("2026-11-15T00:00:00Z", 500))
-    _sync(ch_seeder, dbt_runner, _snapshot("2026-12-10T00:00:00Z", 250))
+    _sync(ch_seeder, dbt_runner, _snapshot(tenant, "2026-11-15T00:00:00Z", 500))
+    _sync(ch_seeder, dbt_runner, _snapshot(tenant, "2026-12-10T00:00:00Z", 250))
 
     months = clickhouse.query(
         ch_seeder.cfg,
         f"""
         SELECT toString(period_month), used_amount_cents
         FROM silver.class_ai_overage FINAL
-        WHERE email = '{SEAT_EMAIL}'
+        WHERE email = '{SEAT_EMAIL}='
         ORDER BY period_month
         """,
     )
