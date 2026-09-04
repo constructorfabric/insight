@@ -2,6 +2,9 @@
 
 Single canonical unit of delivery for the Insight platform.
 
+See [MCP authentication](../../deploy/MCP_AUTHENTICATION.md) for connection lifetime,
+revocation, and upgrade behavior.
+
 - **Chart**: `insight`
 - **Version**: see `Chart.yaml` → `version`
 - **App version**: see `Chart.yaml` → `appVersion` (matches image tags)

@@ -26,8 +26,9 @@ use crate::session::SessionRecord;
 use super::store::McpOAuthStoreError;
 use super::types::{
     AuthorizationCodeGrant, AuthorizationDecision, AuthorizeQuery, ClientRegistrationRequest,
-    MCP_SCOPE, OAuthError, PendingAuthorization, RefreshGrant, RegisteredClient, RevocationRequest,
-    TokenRequest, TokenResponse, redirect_uri_matches, valid_code_verifier, validated_registration,
+    GRANT_LIFETIME_SECONDS, MCP_SCOPE, OAuthError, PendingAuthorization, RefreshGrant,
+    RegisteredClient, RevocationRequest, TokenRequest, TokenResponse, redirect_uri_matches,
+    valid_code_verifier, validated_registration,
 };
 
 const ADMIN_ROLE: &str = "admin";
@@ -228,6 +229,7 @@ pub async fn decide(
         session_id: session_id.clone(),
         resource: pending.resource.clone(),
         scope: pending.scope.clone(),
+        expires_at: now_secs() + GRANT_LIFETIME_SECONDS,
     };
     if let Err(error) = state
         .mcp_oauth
@@ -485,11 +487,23 @@ async fn exchange_refresh(
     {
         return invalid_grant();
     }
-    let Some(record) = active_admin_session(state, &grant.session_id).await else {
+    if grant.remaining_seconds(now_secs()).is_none() {
         return invalid_grant();
-    };
+    }
+    match state
+        .resolver
+        .active_roles(&grant.person_id, &grant.tenant_id)
+        .await
+    {
+        Ok(roles) if roles.iter().any(|role| role == ADMIN_ROLE) => {}
+        Ok(_) => return invalid_grant(),
+        Err(error) => {
+            tracing::warn!(error = %error, "could not refresh MCP admin authorization");
+            return temporarily_unavailable();
+        }
+    }
 
-    issue_rotated_tokens(state, headers, &record, &old_hash, &grant).await
+    issue_rotated_tokens(state, headers, &old_hash, &grant).await
 }
 
 async fn issue_initial_tokens(
@@ -501,11 +515,14 @@ async fn issue_initial_tokens(
     let refresh_token = random_token();
     let refresh_grant = RefreshGrant {
         client_id: grant.client_id.clone(),
-        session_id: grant.session_id.clone(),
+        grant_id: Uuid::now_v7().to_string(),
+        person_id: record.person_id.clone(),
+        tenant_id: record.tenant_id.clone(),
         resource: grant.resource.clone(),
         scope: grant.scope.clone(),
+        expires_at: grant.expires_at,
     };
-    let Some(ttl) = session_ttl(record) else {
+    let Some(ttl) = refresh_grant.remaining_seconds(now_secs()) else {
         return invalid_grant();
     };
     if let Err(error) = state
@@ -520,7 +537,6 @@ async fn issue_initial_tokens(
     token_response(
         state,
         headers,
-        record,
         &refresh_grant,
         refresh_token,
         "mcp_token_issued",
@@ -530,13 +546,12 @@ async fn issue_initial_tokens(
 async fn issue_rotated_tokens(
     state: &AppState,
     headers: &HeaderMap,
-    record: &SessionRecord,
     old_hash: &str,
     grant: &RefreshGrant,
 ) -> Response {
     let refresh_token = random_token();
     let new_hash = token_hash(&refresh_token);
-    let Some(ttl) = session_ttl(record) else {
+    let Some(ttl) = grant.remaining_seconds(now_secs()) else {
         return invalid_grant();
     };
     match state
@@ -544,14 +559,7 @@ async fn issue_rotated_tokens(
         .rotate_refresh(old_hash, grant, &new_hash, grant, ttl)
         .await
     {
-        Ok(true) => token_response(
-            state,
-            headers,
-            record,
-            grant,
-            refresh_token,
-            "mcp_token_refreshed",
-        ),
+        Ok(true) => token_response(state, headers, grant, refresh_token, "mcp_token_refreshed"),
         Ok(false) => invalid_grant(),
         Err(error) => {
             tracing::error!(error = %error, "could not rotate MCP refresh token");
@@ -563,7 +571,6 @@ async fn issue_rotated_tokens(
 fn token_response(
     state: &AppState,
     headers: &HeaderMap,
-    record: &SessionRecord,
     grant: &RefreshGrant,
     refresh_token: String,
     action: &'static str,
@@ -573,17 +580,16 @@ fn token_response(
         .cfg
         .mcp_oauth
         .access_token_ttl_seconds
-        .min(record.expires_at.saturating_sub(now))
-        .min(record.absolute_expires_at.saturating_sub(now));
+        .min(grant.expires_at.saturating_sub(now));
     if expires_in == 0 {
         return invalid_grant();
     }
     let claims = McpAccessClaims {
-        sub: record.person_id.clone(),
-        tenant_id: record.tenant_id.clone(),
+        sub: grant.person_id.clone(),
+        tenant_id: grant.tenant_id.clone(),
         roles: vec![ADMIN_ROLE.to_owned()],
         sub_type: "user".to_owned(),
-        sid: grant.session_id.clone(),
+        sid: grant.grant_id.clone(),
         iss: public_origin(state),
         aud: grant.resource.clone(),
         scope: grant.scope.clone(),
@@ -599,15 +605,26 @@ fn token_response(
         }
     };
 
-    audit(
-        state,
+    state.audit.emit(AuditEvent {
         action,
-        "success",
-        record,
-        &grant.session_id,
-        headers,
-        json!({"client_id": grant.client_id}),
-    );
+        outcome: "success",
+        tenant_id: grant.tenant_id.clone(),
+        actor_person_id: grant.person_id.clone(),
+        actor_ip: String::new(),
+        actor_user_agent: headers
+            .get("user-agent")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_owned(),
+        correlation_id: headers
+            .get("x-correlation-id")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_owned(),
+        resource_type: "mcp_connection",
+        resource_id: grant.grant_id.clone(),
+        details: json!({"client_id": grant.client_id}),
+    });
     json_response(
         StatusCode::OK,
         &TokenResponse {
@@ -698,7 +715,7 @@ fn consent_page(
     let nonce = random_token();
     let redirect_origin = redirect_origin(&pending.redirect_uri);
     let body = format!(
-        r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Authorize data access</title><style>body{{font:16px system-ui;max-width:42rem;margin:4rem auto;padding:0 1rem;color:#17202a}}main{{border:1px solid #d5d8dc;border-radius:12px;padding:2rem}}button{{font:inherit;padding:.65rem 1rem;margin-right:.5rem}}.approve{{background:#17202a;color:white;border:0;border-radius:6px}}</style></head><body><main><h1>Authorize data exploration</h1><p>Client-provided name: <strong>{}</strong> (unverified).</p><p>Redirect destination: <strong>{}</strong>.</p><p>This client is requesting read-only SQL access to this Insight instance.</p><p>This connection will act as <strong>{}</strong> and requires an active administrator role.</p><form id="decision"><input type="hidden" name="request_id" value="{}"><input type="hidden" id="csrf" value="{}"><button class="approve" name="decision" value="approve">Approve access</button><button name="decision" value="cancel">Cancel</button></form><p id="error" role="alert"></p></main><script nonce="{}">const form=document.getElementById('decision');form.addEventListener('submit',async event=>{{event.preventDefault();const button=event.submitter;const data=new URLSearchParams(new FormData(form));data.set('decision',button.value);const csrf=document.getElementById('csrf').value;const response=await fetch('/auth/oauth/decision',{{method:'POST',headers:{{'content-type':'application/x-www-form-urlencoded','x-csrf-token':csrf}},body:data}});const result=await response.json();if(response.ok&&result.redirect_to){{location.assign(result.redirect_to)}}else{{document.getElementById('error').textContent=result.error_description||'Authorization failed'}}}});</script></body></html>"#,
+        r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Authorize data access</title><style>body{{font:16px system-ui;max-width:42rem;margin:4rem auto;padding:0 1rem;color:#17202a}}main{{border:1px solid #d5d8dc;border-radius:12px;padding:2rem}}button{{font:inherit;padding:.65rem 1rem;margin-right:.5rem}}.approve{{background:#17202a;color:white;border:0;border-radius:6px}}</style></head><body><main><h1>Authorize data exploration</h1><p>Client-provided name: <strong>{}</strong> (unverified).</p><p>Redirect destination: <strong>{}</strong>.</p><p>This client is requesting read-only SQL access to this Insight instance.</p><p>This connection will act as <strong>{}</strong> and requires an active administrator role.</p><p>Access lasts 30 days from approval, including after signing out of Insight. Revoke this MCP connection to end access sooner; issued access tokens remain valid until they expire.</p><form id="decision"><input type="hidden" name="request_id" value="{}"><input type="hidden" id="csrf" value="{}"><button class="approve" name="decision" value="approve">Approve access</button><button name="decision" value="cancel">Cancel</button></form><p id="error" role="alert"></p></main><script nonce="{}">const form=document.getElementById('decision');form.addEventListener('submit',async event=>{{event.preventDefault();const button=event.submitter;const data=new URLSearchParams(new FormData(form));data.set('decision',button.value);const csrf=document.getElementById('csrf').value;const response=await fetch('/auth/oauth/decision',{{method:'POST',headers:{{'content-type':'application/x-www-form-urlencoded','x-csrf-token':csrf}},body:data}});const result=await response.json();if(response.ok&&result.redirect_to){{location.assign(result.redirect_to)}}else{{document.getElementById('error').textContent=result.error_description||'Authorization failed'}}}});</script></body></html>"#,
         html_escape(&pending.client_name),
         html_escape(&redirect_origin),
         html_escape(&record.email),
@@ -959,11 +976,6 @@ fn session_expired(record: &SessionRecord) -> bool {
     now >= record.expires_at || now >= record.absolute_expires_at
 }
 
-fn session_ttl(record: &SessionRecord) -> Option<u64> {
-    let ttl = record.absolute_expires_at.saturating_sub(now_secs());
-    (ttl > 0).then_some(ttl)
-}
-
 fn now_secs() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1006,6 +1018,10 @@ fn audit(
         details,
     });
 }
+
+#[cfg(test)]
+#[path = "grant_tests.rs"]
+mod grant_tests;
 
 #[cfg(test)]
 mod tests {

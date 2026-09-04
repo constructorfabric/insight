@@ -215,9 +215,9 @@ fn pending_key(request_id: &str) -> String {
 }
 
 fn code_key(code: &str) -> String {
-    format!("{{mcp_oauth}}:code:{code}")
+    format!("{{mcp_oauth}}:v2:code:{code}")
 }
 
 fn refresh_key(token_hash: &str) -> String {
-    format!("{{mcp_oauth}}:refresh:{token_hash}")
+    format!("{{mcp_oauth}}:v2:refresh:{token_hash}")
 }

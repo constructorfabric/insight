@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 pub const MCP_SCOPE: &str = "mcp:query";
+pub const GRANT_LIFETIME_SECONDS: u64 = 30 * 24 * 60 * 60;
 
 #[derive(Debug, Deserialize)]
 pub struct ClientRegistrationRequest {
@@ -62,14 +63,25 @@ pub struct AuthorizationCodeGrant {
     pub session_id: String,
     pub resource: String,
     pub scope: String,
+    pub expires_at: u64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RefreshGrant {
     pub client_id: String,
-    pub session_id: String,
+    pub grant_id: String,
+    pub person_id: String,
+    pub tenant_id: String,
     pub resource: String,
     pub scope: String,
+    pub expires_at: u64,
+}
+
+impl RefreshGrant {
+    pub fn remaining_seconds(&self, now: u64) -> Option<u64> {
+        let remaining = self.expires_at.saturating_sub(now);
+        (remaining > 0).then_some(remaining)
+    }
 }
 
 #[derive(Debug, Deserialize)]

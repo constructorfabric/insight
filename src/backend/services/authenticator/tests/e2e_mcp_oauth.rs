@@ -20,6 +20,7 @@ struct RegisteredClient {
 struct TokenResponse {
     access_token: String,
     refresh_token: String,
+    expires_in: u64,
 }
 
 fn env(key: &str, default: &str) -> String {
@@ -70,7 +71,7 @@ async fn authorize(
     test_user: &str,
     client_id: &str,
     resource: &str,
-) -> String {
+) -> (String, String, String) {
     let session = common::kc::login(http, auth_base, test_user).await;
     let csrf = http
         .get(format!("{auth_base}/auth/csrf"))
@@ -118,10 +119,11 @@ async fn authorize(
         .unwrap()
         .to_owned();
     let redirect = reqwest::Url::parse(&redirect_to).unwrap();
-    redirect
+    let code = redirect
         .query_pairs()
         .find_map(|(name, value)| (name == "code").then(|| value.into_owned()))
-        .expect("approval redirect must carry an authorization code")
+        .expect("approval redirect must carry an authorization code");
+    (code, session, csrf)
 }
 
 async fn exchange_code(
@@ -177,9 +179,28 @@ async fn oauth_lifecycle_issues_rotates_and_revokes_tokens() {
 
     assert_metadata(&http, &auth_base).await;
     let client = register_client(&http, &auth_base).await;
-    let code = authorize(&http, &auth_base, &test_user, &client.client_id, &resource).await;
+    let (code, session, csrf) =
+        authorize(&http, &auth_base, &test_user, &client.client_id, &resource).await;
     let issued = exchange_code(&http, &auth_base, &client.client_id, &resource, &code).await;
     assert!(!issued.access_token.is_empty());
+    assert_eq!(issued.expires_in, 600);
+
+    let logout = http
+        .post(format!("{auth_base}/auth/logout"))
+        .header(reqwest::header::COOKIE, format!("{COOKIE}={session}"))
+        .header("X-CSRF-Token", csrf)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(logout.status(), 200);
+
+    let logged_out = http
+        .get(format!("{auth_base}/auth/me"))
+        .header(reqwest::header::COOKIE, format!("{COOKIE}={session}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(logged_out.status(), 401);
 
     let refreshed = refresh_token(
         &http,
