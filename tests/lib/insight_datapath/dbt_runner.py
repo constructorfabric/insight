@@ -83,6 +83,7 @@ class DbtRunner:
                 "--exclude",
                 "tag:gold",
                 *self._base_flags(),
+                *self._warm_parse_flags(),
             ]
         )
         if not res.success:
@@ -109,6 +110,7 @@ class DbtRunner:
                 "--select",
                 selector,
                 *self._base_flags(),
+                *self._warm_parse_flags(),
                 "--defer",
                 "--state",
                 str(self.target_dir),
@@ -131,6 +133,7 @@ class DbtRunner:
                 selector,
                 *(["--full-refresh"] if full_refresh else []),
                 *self._base_flags(),
+                *self._warm_parse_flags(),
                 "--defer",
                 "--state",
                 str(self.target_dir),
@@ -320,6 +323,17 @@ class DbtRunner:
     # internals
     # ----------------------------------------------------------------------
 
+    def _warm_parse_flags(self) -> list[str]:
+        """Skip the project file walk when the parse cache can supply the file set.
+
+        dbt walks every `model-paths` entry without pruning, and one of them holds a
+        connector's virtualenv, so the walk costs more than the build it precedes.
+        Without the cache the flag makes dbt find zero models and report success,
+        so it is only ever passed alongside one.
+        """
+        cache = self.target_dir / "partial_parse.msgpack"
+        return ["--no-partial-parse-file-diff"] if cache.exists() else []
+
     def _base_flags(self) -> list[str]:
         """Flags shared by every invocation: which project, profile, target.
 
@@ -328,6 +342,7 @@ class DbtRunner:
         would `cd` into.
         """
         return [
+            "--no-send-anonymous-usage-stats",
             "--profiles-dir",
             str(self.profiles_dir),
             "--project-dir",
