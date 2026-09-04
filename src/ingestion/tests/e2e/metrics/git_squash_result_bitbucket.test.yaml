@@ -5,8 +5,11 @@ description: >
   Bitbucket Cloud answers `merge_commit.hash` with a 12-character prefix where
   GitHub answers the full 40, so the result commit of a merged pull request has
   to be resolved against the collected commit rather than compared to it.
-  Without that, the squash counts as a third commit and its A-to-C file row
-  counts the twice-touched path's lines again.
+  Without that, the squash counts as a third commit.
+
+  The commit count is what discriminates. The line figures are pinned here too,
+  but content identity already folds a squash into the branch commit it ends
+  on, so they read the same either way.
 
   Fixtures isolate per repository:
     * squash-bb: two branch commits, the second re-touching the first's file,
@@ -14,12 +17,15 @@ description: >
       Both branch commits are linked to the request, so coverage is complete
       and the result carries no credit of its own.
     * other-bb: a commit in an unrelated repository whose hash starts with the
-      same 12 characters. Resolving a prefix has to stay inside the request's
-      own repository, or this commit loses its credit to a request it has
-      nothing to do with.
+      same 12 characters. A guard on the resolution, not a case main gets
+      wrong: resolving a prefix has to stay inside the request's own
+      repository.
     * ff-bb: a fast-forward merge under a shortened hash — the request reports
-      the prefix of a commit it also links. That commit is the work, not a copy
-      of it, so it stays authored.
+      the prefix of a commit it also links. Also a guard: that commit is the
+      work, not a copy of it, so it stays authored.
+    * ambig-bb: two commits in ONE repository share the reported prefix. The
+      prefix names neither, so nothing is marked and both keep their credit —
+      the guard against deleting an author's work on a weak key.
 
   Assertions read the `repository` breakdown so they are unaffected by any
   other fixture in the suite.
@@ -40,13 +46,18 @@ bronze:
     - { $ref: templates/bitbucket_git.yaml#/templates/commit, unique_key: "c:bboth-1", repository: https://bitbucket.org/acme/other-bb.git, sha: 4f1c9a20d3e5aaaaaaaaaaaaaaaaaaaaaaaaaaaa, author_name: Erin Epsilon, author_email: erin@example.com, committer_name: Erin Epsilon, committer_email: erin@example.com, additions: 4, changed_files: 1, is_in_default_branch: true }
     # ff-bb: the request reports this commit's own prefix as its merge result.
     - { $ref: templates/bitbucket_git.yaml#/templates/commit, unique_key: "c:bbff-1", repository: https://bitbucket.org/acme/ff-bb.git, sha: 9c2b71fe40a3d5e8b6740c19af23568d1b0e7f42, author_name: Erin Epsilon, author_email: erin@example.com, committer_name: Erin Epsilon, committer_email: erin@example.com, additions: 6, changed_files: 1, is_in_default_branch: true }
+    # ambig-bb: two commits sharing the reported prefix, plus the branch commit
+    # the request links.
+    - { $ref: templates/bitbucket_git.yaml#/templates/commit, unique_key: "c:bbam-x", repository: https://bitbucket.org/acme/ambig-bb.git, sha: 7e3d0b91c4f2000000000000000000000000000a, author_name: Erin Epsilon, author_email: erin@example.com, committer_name: Erin Epsilon, committer_email: erin@example.com, additions: 5, changed_files: 1, is_in_default_branch: true }
+    - { $ref: templates/bitbucket_git.yaml#/templates/commit, unique_key: "c:bbam-y", repository: https://bitbucket.org/acme/ambig-bb.git, sha: 7e3d0b91c4f2000000000000000000000000000b, author_name: Erin Epsilon, author_email: erin@example.com, committer_name: Erin Epsilon, committer_email: erin@example.com, additions: 7, changed_files: 1, is_in_default_branch: true }
+    - { $ref: templates/bitbucket_git.yaml#/templates/commit, unique_key: "c:bbam-b", repository: https://bitbucket.org/acme/ambig-bb.git, sha: bbam-b, author_name: Erin Epsilon, author_email: erin@example.com, committer_name: Erin Epsilon, committer_email: erin@example.com, additions: 3, changed_files: 1, is_in_default_branch: false }
 
   bronze_bitbucket_cloud.file_changes:
     # One path, touched twice on the branch: null-to-B then B-to-C.
     - { $ref: templates/bitbucket_git.yaml#/templates/file_change, unique_key: "fc:bbsq-b1:one.py", repository: https://bitbucket.org/acme/squash-bb.git, sha: bbsq-b1, filename: src/one.py, status: added, additions: 10, changes: 10, post_image_oid: oid-b }
     - { $ref: templates/bitbucket_git.yaml#/templates/file_change, unique_key: "fc:bbsq-b2:one.py", repository: https://bitbucket.org/acme/squash-bb.git, sha: bbsq-b2, committed_date: "2026-10-01T10:00:00Z", filename: src/one.py, additions: 8, deletions: 2, changes: 10, pre_image_oid: oid-b, post_image_oid: oid-c }
-    # The squash's own null-to-C row matches neither branch transition, so blob
-    # identity cannot fold it and the lines count again if the commit counts.
+    # The squash ends where the branch ended, so content identity folds this
+    # row into the branch commit's.
     - { $ref: templates/bitbucket_git.yaml#/templates/file_change, unique_key: "fc:bbsq-r:one.py", repository: https://bitbucket.org/acme/squash-bb.git, sha: 4f1c9a20d3e57b8f6a1c0d92e4b73a58c6d90f11, committed_date: "2026-10-01T11:00:00Z", filename: src/one.py, status: added, additions: 18, deletions: 2, changes: 20, post_image_oid: oid-c }
 
   bronze_bitbucket_cloud.pull_requests:
@@ -55,6 +66,8 @@ bronze:
     - { $ref: templates/bitbucket_git.yaml#/templates/pull_request, unique_key: "pr:91", repo_full_name: acme/squash-bb, id: 91, author_display_name: Erin Epsilon, source_commit_sha: bbsq-b2, destination_commit_sha: dst-91, merge_commit_sha: 4f1c9a20d3e5 }
     # ff-bb: a fast-forward, so the reported result is one of the linked commits.
     - { $ref: templates/bitbucket_git.yaml#/templates/pull_request, unique_key: "pr:92", repo_full_name: acme/ff-bb, id: 92, author_display_name: Erin Epsilon, source_commit_sha: bbff-1, destination_commit_sha: dst-92, merge_commit_sha: 9c2b71fe40a3 }
+    # ambig-bb: the reported prefix fits both bbam-x and bbam-y.
+    - { $ref: templates/bitbucket_git.yaml#/templates/pull_request, unique_key: "pr:93", repo_full_name: acme/ambig-bb, id: 93, author_display_name: Erin Epsilon, source_commit_sha: bbam-b, destination_commit_sha: dst-93, merge_commit_sha: 7e3d0b91c4f2 }
 
   bronze_bitbucket_cloud.pull_request_commits:
     # Both branch commits are linked and both were collected, so coverage is
@@ -62,12 +75,13 @@ bronze:
     - { $ref: templates/bitbucket_git.yaml#/templates/pull_request_commit, unique_key: "prc:91:bbsq-b1", repo_full_name: acme/squash-bb, pr_id: 91, sha: bbsq-b1, author_name: Erin Epsilon, author_email: erin@example.com }
     - { $ref: templates/bitbucket_git.yaml#/templates/pull_request_commit, unique_key: "prc:91:bbsq-b2", repo_full_name: acme/squash-bb, pr_id: 91, sha: bbsq-b2, committed_date: "2026-10-01T10:00:00Z", author_name: Erin Epsilon, author_email: erin@example.com }
     - { $ref: templates/bitbucket_git.yaml#/templates/pull_request_commit, unique_key: "prc:92:bbff-1", repo_full_name: acme/ff-bb, pr_id: 92, sha: 9c2b71fe40a3d5e8b6740c19af23568d1b0e7f42, author_name: Erin Epsilon, author_email: erin@example.com }
+    - { $ref: templates/bitbucket_git.yaml#/templates/pull_request_commit, unique_key: "prc:93:bbam-b", repo_full_name: acme/ambig-bb, pr_id: 93, sha: bbam-b, author_name: Erin Epsilon, author_email: erin@example.com }
 
   bronze_bitbucket_cloud.pull_request_activity:
     - { $ref: templates/bitbucket_git.yaml#/templates/activity, unique_key: "ac:91:ev1", repo_full_name: acme/squash-bb, pr_id: 91, update_state: MERGED }
 
 cases:
-  - name: A squash result reported under a shortened hash carries no commit and no lines
+  - name: A squash result reported under a shortened hash carries no commit of its own
     request:
       url: /v1/metric-results
       method: POST
@@ -91,7 +105,7 @@ cases:
         view: breakdown
         find: { entity_id: erin@example.com, dimensions: { key: repository, value: "bitbucket-test:acme/squash-bb" } }
         equal: { value: 2 }
-      # The branch's own lines, once: 10 + 8. With the squash counted, 36.
+      # The branch's own lines, once: 10 + 8.
       - metric: git.lines_added
         view: breakdown
         find: { entity_id: erin@example.com, dimensions: { key: repository, value: "bitbucket-test:acme/squash-bb" } }
@@ -113,3 +127,8 @@ cases:
         view: breakdown
         find: { entity_id: erin@example.com, dimensions: { key: repository, value: "bitbucket-test:acme/ff-bb" } }
         equal: { value: 1 }
+      # An ambiguous prefix names neither commit, so all three still count.
+      - metric: git.commits
+        view: breakdown
+        find: { entity_id: erin@example.com, dimensions: { key: repository, value: "bitbucket-test:acme/ambig-bb" } }
+        equal: { value: 3 }

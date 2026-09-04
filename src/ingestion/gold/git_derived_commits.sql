@@ -23,9 +23,7 @@
 --   completes, which never loses work or per-author credit — the content
 --   dedup on file oids still folds the overlapping lines). The result hash
 --   is never marked when it is itself a linked commit: a fast-forward merge
---   promotes an original, which stays authored. Nor when the result commit
---   was never collected in that repository — there is then nothing for the
---   evidence build to exclude.
+--   promotes an original, which stays authored.
 --
 -- * patch_duplicate: a commit whose diff content (patch id) an earlier commit
 --   IN THE SAME REPOSITORY already carries — a rebase copy or a cherry-pick.
@@ -76,12 +74,25 @@ pull_request_links AS (
     FROM {{ ref('class_git_pull_requests_commits') }} FINAL
     GROUP BY tenant_id, source_id, project_key, repo_slug, pr_id
 ),
+-- The requests that produced a result commit at all. Narrowed before the
+-- resolution below, whose prefix test is a residual predicate: the join's only
+-- equi key is the repository, so every row that reaches it is compared against
+-- that repository's whole commit set.
+merged_requests AS (
+    SELECT
+        tenant_id,
+        source_id,
+        project_key,
+        repo_slug,
+        data_source,
+        pr_id,
+        merge_commit_hash
+    FROM {{ ref('class_git_pull_requests') }} FINAL
+    WHERE state = 'MERGED'
+      AND merge_commit_hash != ''
+),
 -- The result commit each merged request produced, resolved to a collected
--- commit rather than compared to one.
---
--- WORKAROUND: Bitbucket Cloud answers `merge_commit.hash` with a 12-character
--- prefix where GitHub answers the full 40, so an equality join marks no
--- Bitbucket result at all. #3161
+-- commit rather than compared to one — see `git_merge_result_match`.
 --
 -- SAFETY: marking a commit removes its lines along with itself, so a prefix
 -- that names more than one collected commit marks neither. Over-counting the
@@ -92,7 +103,7 @@ resolved_merge_results AS (
         prs.data_source AS data_source,
         groupUniqArray(result.commit_hash) AS candidates,
         any(links.linked_hashes) AS linked_hashes
-    FROM {{ ref('class_git_pull_requests') }} AS prs FINAL
+    FROM merged_requests AS prs
     INNER JOIN pull_request_links AS links
         ON links.tenant_id = prs.tenant_id
         AND links.source_id = prs.source_id
@@ -100,15 +111,8 @@ resolved_merge_results AS (
         AND links.repo_slug = prs.repo_slug
         AND links.pr_id = prs.pr_id
     INNER JOIN collected_branch_commits AS result
-        ON result.tenant_id = prs.tenant_id
-        AND result.source_id = prs.source_id
-        AND result.project_key = prs.project_key
-        AND result.repo_slug = prs.repo_slug
-        AND result.data_source = prs.data_source
-        AND startsWith(result.commit_hash, prs.merge_commit_hash)
-    WHERE prs.state = 'MERGED'
-      AND prs.merge_commit_hash != ''
-      AND links.collected_branch_commit_count = length(links.linked_hashes)
+        ON {{ git_merge_result_match('prs', 'result') }}
+    WHERE links.collected_branch_commit_count = length(links.linked_hashes)
     GROUP BY
         prs.tenant_id,
         prs.source_id,
