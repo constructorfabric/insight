@@ -73,9 +73,17 @@ WITH base AS (
     WHERE user_email IS NOT NULL
       AND trim(user_email) != ''
     {% if is_incremental() %}
-      AND toDate(date) > (
-          SELECT coalesce(max(day), toDate('1970-01-01')) - INTERVAL 3 DAY
-          FROM {{ this }}
+      -- Empty-table guard. Over an empty `this` max(day) is NULL, the coalesce
+      -- falls to the Date epoch, and `- INTERVAL 3 DAY` underflows the Date
+      -- range, wrapping to ~2149-06-04 — which filters out every row and leaves
+      -- the model empty for good. Short-circuit when empty so the full set is
+      -- (re)loaded. Mirrors the sibling ai_dev_usage / cursor / claude_team guard.
+      AND (
+        (SELECT count() FROM {{ this }}) = 0
+        OR toDate(date) > (
+            SELECT coalesce(max(day), toDate('1970-01-01')) - INTERVAL 3 DAY
+            FROM {{ this }}
+        )
       )
     {% endif %}
 ),

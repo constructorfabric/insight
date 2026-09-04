@@ -60,7 +60,13 @@ def _snapshot(read_at: str, used_credits: int) -> SeatSnapshot:
 
 
 def _sync(ch_seeder: CHSeeder, dbt_runner: DbtRunner, row: SeatSnapshot) -> None:
-    """One sync: bronze is replaced by the new snapshot, then the models run."""
+    """One sync: bronze is replaced by the new snapshot, then the models run.
+
+    Replaced, not added to: the promoted relation dedups by unique_key only once
+    its parts merge, so a second snapshot left beside the first would re-emit the
+    first month into an appending staging model.
+    """
+    clear(ch_seeder.cfg, [(BRONZE_SCHEMA, BRONZE_TABLE)])
     ch_seeder.seed_records(BRONZE_SCHEMA, BRONZE_TABLE, [row])
     dbt_runner.build(STAGING_SELECTOR)
     dbt_runner.build(SILVER_SELECTOR)

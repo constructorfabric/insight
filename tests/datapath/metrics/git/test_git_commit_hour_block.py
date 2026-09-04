@@ -23,6 +23,11 @@ def hour_block(value: str) -> dict[str, str]:
     return {"key": "hour_block", "value": value}
 
 
+def hour_block_label(start: int) -> str:
+    """The label a reader sees. The product writes the range with an en dash."""
+    return f"{start:02d}\u2013{start + 2:02d}"
+
+
 def test_commits_break_down_by_the_block_they_landed_in(spec: SpecRun) -> None:
     """09:14, 09:52 and 09:30 all fall in the 08-10 block; the label is what a heatmap
     axis shows."""
@@ -51,7 +56,7 @@ def test_commits_break_down_by_the_block_they_landed_in(spec: SpecRun) -> None:
     r.row("git.commits", "breakdown", entity_id=ALICE, dimensions=hour_block("08")).equals(value=3)
     block_14 = r.row("git.commits", "breakdown", entity_id=ALICE, dimensions=hour_block("14"))
     block_14.equals(value=1)
-    block_14.contains(dimensions={"key": "hour_block", "label": "14-16"})
+    block_14.contains(dimensions={"key": "hour_block", "label": hour_block_label(14)})
 
 
 def test_each_branch_scope_breaks_down_over_the_same_dimension(spec: SpecRun) -> None:
