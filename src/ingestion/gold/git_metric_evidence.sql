@@ -413,11 +413,12 @@ pull_requests_source AS (
         ) AS entity_id,
         -- identity's source_type vocabulary, not data_source's: the binding
         -- rows say 'bitbucket', the class rows say 'insight_bitbucket_cloud'.
-        -- '' (gitlab — no identity inputs exist) keeps the account join
+        -- '' for a connector with no identity inputs keeps the account join
         -- unmatched and resolution on the email path.
         multiIf(
             prs.data_source = 'insight_github', 'github',
             prs.data_source = 'insight_bitbucket_cloud', 'bitbucket',
+            prs.data_source = 'insight_gitlab', 'gitlab',
             ''
         ) AS account_source_type,
         prs.source_id AS account_source_id,

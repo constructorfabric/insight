@@ -42,5 +42,7 @@ SELECT
     )                                               AS has_id,
     toDateTime64(f._airbyte_extracted_at, 3)      AS observed_at,
     toUnixTimestamp64Milli(f._airbyte_extracted_at) AS _version
-FROM {{ source('bronze_jira', 'jira_fields') }} f
--- `jira_fields` bronze = MergeTree (full_refresh + overwrite), FINAL not supported.
+FROM {{ source('bronze_jira', 'jira_fields') }} f FINAL
+-- FINAL: `jira_fields` is promoted to ReplacingMergeTree keyed by `unique_key`
+-- (see `jira__bronze_promoted`), and the stream is append-only, so an unmerged
+-- read returns one row per emission of the same field.

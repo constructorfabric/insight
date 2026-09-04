@@ -1,4 +1,5 @@
 -- depends_on: {{ ref('jira__bronze_promoted') }}
+-- depends_on: {{ ref('jira__task_field_kind') }}
 {{ config(
     materialized='table',
     alias='jira_issue_field_snapshot',
@@ -15,185 +16,102 @@
     tags=['staging', 'jira']
 ) }}
 
-{#-
-  `allow_nullable_key` is a MergeTree TABLE setting (CREATE TABLE … SETTINGS).
-  The `max_bytes_before_external_*` spill knobs are QUERY-execution settings that
-  dbt-clickhouse appends to the INSERT … SELECT; they are kept as a safety net for
-  the GROUP BY below, which stays far under the threshold at current data volumes.
--#}
-
--- One row per (issue, field_id) with current value_ids / value_displays.
--- Consumed by `jira-enrich` to populate `IssueSnapshot.current_fields` so
--- synthetic_initial rows can be emitted for every field — even ones that never appear
--- in the changelog.
+-- One row per (issue, field) with the field's current value, for EVERY field the
+-- issue actually carries — not a hand-picked list. Consumed by `jira-enrich` to
+-- populate `IssueSnapshot.current_fields`, so a field that never appears in the
+-- changelog still produces a `synthetic_initial` row.
 --
--- All fields extracted from custom_fields_json via JSONExtract (ClickHouse destination
--- nests Jira fields inside a single JSON column rather than top-level columns).
+-- Fields are classified by `jira__task_field_kind` and read by the
+-- `jira_norm_value` macros; see
+-- `connectors/task-tracking/jira/specs/FIELD-HISTORY-IN-DBT.md` §3-§4. Nothing
+-- here names a field id: the previous shape of this model enumerated ~10 generic
+-- fields by hand, which is why every custom field was missing from the modelled
+-- current state and — through `reconstruct_initial` — from the history as well.
 --
--- Dedup MUST be an argMax GROUP BY, not `ORDER BY _airbyte_extracted_at LIMIT 1 BY`:
--- with the sort form the optimizer lifts the JSONExtract projections ABOVE the sort
--- ("lifted up part" in EXPLAIN), so the raw multi-KiB custom_fields_json of every
--- bronze row travels through the sort buffer — and the WITH subquery is inlined into
--- each UNION branch, multiplying that by the number of branches. On virtuozzo
--- (~160k rows, ~5.6 GiB of JSON) that overran the server-wide memory cap even with
--- external sort enabled: the spill's merge phase buffers gigabyte-scale String blocks
--- (Code 241 MEMORY_LIMIT_EXCEEDED in MergingSortedTransform). The aggregation form
--- streams the JSON: extraction happens per block inside argMax and only the small
--- extracted tuple is kept per issue (~0.6 GiB peak, single scan). The ARRAY JOIN
--- unpivot keeps it to one scan instead of one per field.
+-- MEMORY. This model reads a JSON column that is gigabytes wide, and earlier
+-- shapes of it exhausted the server twice (#1425, #1817). Two rules hold it in
+-- place:
+--   1. dedup resolves to a raw-id per issue FIRST, in an aggregation that
+--      carries only that String — never the JSON. Selecting the JSON into an
+--      argMax state, or sorting rows that carry it, puts every issue's payload
+--      into one buffer.
+--   2. the key/value unpivot happens AFTER that join, so it streams over one
+--      row per issue instead of one per bronze emission.
+-- A single `argMax` over a wide tuple (the previous shape) also works, but only
+-- because the tuple is small; it cannot be extended to all fields.
+--
+-- The two-pass form has a second benefit: every column is read from ONE chosen
+-- bronze row. Independent per-column `argMax` calls can each resolve to a
+-- different row when `_airbyte_extracted_at` ties, silently mixing two versions
+-- of an issue.
 
--- Story-points resolution (specs/DATA-COMPLETENESS.md): the field id is
--- instance-specific, so it is resolved from bronze_jira.jira_fields metadata —
--- the canonical greenhopper story-points schema marker first, then the exact
--- field names — and the snapshot emits the RESOLVED Jira-native field_id
--- (matching the changelog's fieldId, same rule as duedate below). Company- and
--- team-managed projects store the value in different fields, so extraction
--- coalesces over all candidates per issue.
-WITH sp_fields AS (
-    -- arraySort over the aggregated tuples, not ORDER BY before groupArray:
-    -- parallel aggregation does not preserve input order, and a
-    -- non-deterministic candidate order could resolve a different field id
-    -- per run for issues valued in more than one candidate.
+WITH winner AS (
     SELECT
-        COALESCE(source_id, '')                                       AS insight_source_id,
-        arrayMap(t -> t.2, arraySort(groupArray((priority, candidate_field_id))))
-                                                                      AS sp_field_ids
-    FROM (
-        SELECT
-            source_id,
-            assumeNotNull(field_id)                                   AS candidate_field_id,
-            multiIf(
-                schema_custom = 'com.pyxis.greenhopper.jira:jsw-story-points', 1,
-                lowerUTF8(COALESCE(name, '')) = 'story points',            2,
-                                                                           3
-            )                                                         AS priority
-        FROM {{ source('bronze_jira', 'jira_fields') }} FINAL
-        WHERE field_id IS NOT NULL
-          AND (schema_custom = 'com.pyxis.greenhopper.jira:jsw-story-points'
-               OR lowerUTF8(COALESCE(name, '')) IN ('story points', 'story point estimate'))
-    )
-    GROUP BY source_id
+        unique_key,
+        argMax(_airbyte_raw_id, _airbyte_extracted_at) AS raw_id
+    FROM {{ source('bronze_jira', 'jira_issue') }}
+    WHERE unique_key IS NOT NULL
+    GROUP BY unique_key
 ),
 
-issue AS (
+-- One row per (issue, field key present in the issue JSON).
+unpivoted AS (
     SELECT
-        COALESCE(b.source_id, '')                                     AS insight_source_id,
-        COALESCE(toString(b.jira_id), '')                             AS issue_id,
-        -- Latest bronze row per issue, projected down to the small extracted tuple.
-        -- Tuple indexes: 1 id_readable, 2 created_at, 3/4 status id/name,
-        -- 5/6 priority, 7/8 issuetype, 9/10 resolution, 11/12 assignee,
-        -- 13/14 reporter, 15 parent_id, 16 project_key, 17 labels_raw, 18 due_date.
-        argMax(
-            (
-                COALESCE(toString(id_readable), ''),
-                COALESCE(parseDateTime64BestEffortOrNull(created, 3),
-                         toDateTime64(0, 3)),
-                JSONExtractString(custom_fields_json, 'status', 'id'),
-                JSONExtractString(custom_fields_json, 'status', 'name'),
-                JSONExtractString(custom_fields_json, 'priority', 'id'),
-                JSONExtractString(custom_fields_json, 'priority', 'name'),
-                JSONExtractString(custom_fields_json, 'issuetype', 'id'),
-                JSONExtractString(custom_fields_json, 'issuetype', 'name'),
-                JSONExtractString(custom_fields_json, 'resolution', 'id'),
-                JSONExtractString(custom_fields_json, 'resolution', 'name'),
-                JSONExtractString(custom_fields_json, 'assignee', 'accountId'),
-                JSONExtractString(custom_fields_json, 'assignee', 'displayName'),
-                JSONExtractString(custom_fields_json, 'reporter', 'accountId'),
-                JSONExtractString(custom_fields_json, 'reporter', 'displayName'),
-                parent_id,
-                project_key,
-                -- Labels is a JSON array; `JSONExtractString` at an array path
-                -- returns '', so take the raw JSON and parse it as Array(String)
-                -- in the unpivot below.
-                JSONExtractRaw(custom_fields_json, 'labels'),
-                due_date,
-                -- 19/20: resolved story-points (field_id, raw numeric value) —
-                -- first candidate field that holds a value on this issue.
-                arrayFirst(
-                    x -> x.2 NOT IN ('', 'null'),
-                    arrayMap(fid -> (fid, JSONExtractRaw(custom_fields_json, fid)),
-                             sp.sp_field_ids)
-                ).1,
-                arrayFirst(
-                    x -> x.2 NOT IN ('', 'null'),
-                    arrayMap(fid -> (fid, JSONExtractRaw(custom_fields_json, fid)),
-                             sp.sp_field_ids)
-                ).2
-            ),
-            _airbyte_extracted_at
-        ) AS t
-    FROM {{ source('bronze_jira', 'jira_issue') }} AS b
-    LEFT JOIN sp_fields AS sp
-        ON sp.insight_source_id = COALESCE(b.source_id, '')
-    GROUP BY insight_source_id, issue_id
+        COALESCE(i.source_id, '')                                     AS insight_source_id,
+        COALESCE(toString(i.jira_id), '')                             AS issue_id,
+        COALESCE(toString(i.id_readable), '')                         AS id_readable,
+        COALESCE(parseDateTime64BestEffortOrNull(i.created, 3),
+                 toDateTime64(0, 3))                                  AS created_at,
+        kv.1                                                          AS field_id,
+        kv.2                                                          AS raw_value
+    FROM {{ source('bronze_jira', 'jira_issue') }} AS i
+    INNER JOIN winner AS w ON i._airbyte_raw_id = w.raw_id
+    ARRAY JOIN JSONExtractKeysAndValuesRaw(COALESCE(i.custom_fields_json, '{}')) AS kv
+),
+
+classified AS (
+    SELECT
+        u.*,
+        k.field_kind AS field_kind
+    FROM unpivoted AS u
+    INNER JOIN {{ ref('jira__task_field_kind') }} AS k
+        ON k.insight_source_id = u.insight_source_id
+       AND k.field_id = u.field_id
+    -- A key absent from the field catalogue cannot be classified even in
+    -- principle (§3.2). None occur today, and the classifier resolves the whole
+    -- catalogue, so this is a guard rather than a filter: an unclassifiable
+    -- shape must stop the run, not be normalized by a rule written for
+    -- something else.
+    -- ClickHouse requires the message to be a constant, so it names where to
+    -- look rather than which field: `jira__task_field_kind` is a view, and
+    -- `assert_jira_field_kind_covers_catalogue` lists the offending rows.
+    WHERE throwIf(k.field_kind = 'UNKNOWN',
+                  'unmapped Jira field kind: select from staging.jira__task_field_kind where field_kind is UNKNOWN') = 0
+
+      -- `ignored` keys are containers and derived aggregates, not field state.
+      AND k.field_kind != 'ignored'
+
+      -- Only fields the issue actually holds a value for. An absent key already
+      -- produced no row; a key present with an empty value means the field
+      -- applies to this issue's context but is unset (§6), a state that is
+      -- recoverable from bronze on demand and is deliberately not materialized
+      -- here — it is four fifths of the key/value pairs and would multiply this
+      -- table, and every `synthetic_initial` row derived from it, sevenfold.
+      AND u.raw_value NOT IN ('', 'null', '[]', '""', '{}')
 )
 
 SELECT
-       CAST(concat(
-           coalesce(insight_source_id, ''), '-',
-           coalesce(issue_id, ''), '-',
-           coalesce(field_id, '')
-       ) AS String)                                                           AS unique_key,
-       insight_source_id,
-       issue_id,
-       t.1                                                                    AS id_readable,
-       t.2                                                                    AS created_at,
-       f.1                                                                    AS field_id,
-       CAST(arrayMap(x -> COALESCE(x, ''), f.2)            AS Array(String)) AS value_ids,
-       CAST(arrayMap(x -> COALESCE(x, ''), f.3)            AS Array(String)) AS value_displays,
-       toUnixTimestamp64Milli(now64(3))                                      AS _version
-FROM issue
-ARRAY JOIN [
-    ('status',
-     if(t.3  = '', [], [t.3]),
-     if(t.3  = '', [], [t.4])),
-    ('priority',
-     if(t.5  = '', [], [t.5]),
-     if(t.5  = '', [], [t.6])),
-    ('issuetype',
-     if(t.7  = '', [], [t.7]),
-     if(t.7  = '', [], [t.8])),
-    ('resolution',
-     if(t.9  = '', [], [t.9]),
-     if(t.9  = '', [], [t.10])),
-    ('assignee',
-     if(t.11 = '', [], [t.11]),
-     if(t.11 = '', [], [t.12])),
-    ('reporter',
-     if(t.13 = '', [], [t.13]),
-     if(t.13 = '', [], [t.14])),
-    ('project',
-     if(t.16 IS NULL OR t.16 = '', [], [t.16]),
-     if(t.16 IS NULL OR t.16 = '', [], [t.16])),
-    ('parent',
-     if(t.15 IS NULL OR t.15 = '', [], [t.15]),
-     if(t.15 IS NULL OR t.15 = '', [], [t.15])),
-    ('labels',
-     JSONExtract(COALESCE(nullIf(t.17, ''), '[]'), 'Array(Nullable(String))'),
-     JSONExtract(COALESCE(nullIf(t.17, ''), '[]'), 'Array(Nullable(String))')),
-
-    {#- `story_points` is deliberately omitted here — Jira stores it in an
-        instance-specific `customfield_NNNNN` column whose ID must be resolved per
-        tenant. Tracked as a gap in
-        `docs/components/connectors/task-tracking/specs/task-metrics-map.md`. -#}
-
-    {#- duedate: emit the Jira-native field_id `duedate` (NOT `due_date`): the
-        changelog stream uses Jira's `fieldId="duedate"`, jira__task_field_metadata
-        carries `duedate` from bronze jira_fields, and the downstream consumer
-        `insight.task_issue_current_state` filters `field_id = 'duedate'`. Emitting
-        the underscored `due_date` here made snapshot-only due dates (set at
-        creation, never changed in the changelog) silently invisible to
-        due_date_compliance. -#}
-    ('duedate',
-     if(t.18 IS NULL OR t.18 = '', [], [toString(t.18)]),
-     if(t.18 IS NULL OR t.18 = '', [], [toString(t.18)])),
-
-    {#- story points: field_id is the RESOLVED instance-specific customfield id
-        (t.19), so snapshot rows merge with changelog rows for the same field.
-        Issues with no story points resolve to field_id '' and are dropped by
-        the WHERE below. -#}
-    (t.19,
-     if(t.20 = '', [], [t.20]),
-     if(t.20 = '', [], [t.20]))
-] AS f
-WHERE f.1 != ''
+    CAST(concat(
+        insight_source_id, '-',
+        issue_id, '-',
+        field_id
+    ) AS String)                                          AS unique_key,
+    insight_source_id,
+    issue_id,
+    id_readable,
+    created_at,
+    field_id,
+    CAST({{ jira_norm_value('field_kind', 'raw_value') }}.1 AS Array(String)) AS value_ids,
+    CAST({{ jira_norm_value('field_kind', 'raw_value') }}.2 AS Array(String)) AS value_displays,
+    toUnixTimestamp64Milli(now64(3))                      AS _version
+FROM classified

@@ -27,7 +27,14 @@ name: jira
 # only reaches rows the binary writes, and it skips any issue that already has
 # them — the deploy hook empties the staging table and the one-shot sync a major
 # dispatches is what re-bootstraps every issue with its summary (#2738).
-version: "5.3.0"
+# 5.4.0 (minor): stop emitting the raw `fields` object on jira_issue. It was
+# the same payload `custom_fields_json` already carries, re-serialized — the key
+# sets are identical and every value difference is nested-key ordering — and it
+# was the larger of the two by a wide margin. MINOR, not major: nothing needs
+# re-deriving, the column is simply no longer produced. It must be removed from
+# bronze in this order, or the destination recreates it: bump and deploy, let a
+# sync complete, then the ALTER migration.
+version: "5.4.0"
 schedule: "0 3 * * *"
 workflow: sync
 # CI build metadata + runtime image refs (ADR-0016). The `images:` block is

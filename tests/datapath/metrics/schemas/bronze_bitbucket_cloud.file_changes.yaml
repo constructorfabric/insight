@@ -21,6 +21,8 @@ schemas:
       deletions: { type: [integer, "null"] }
       changes: { type: [integer, "null"] }
       is_binary: { type: [boolean, "null"] }
+      pre_image_oid: { type: [string, "null"] }
+      post_image_oid: { type: [string, "null"] }
       patch: { type: [string, "null"] }
       patch_truncated: { type: [boolean, "null"] }
       _airbyte_raw_id: { type: string }

@@ -26,8 +26,24 @@
 -- Bronze dedup is handled by argMax on the natural key (source_id, changelog_id) picking the
 -- latest Airbyte emission, then the final GROUP BY below collapses content-identical items
 -- within a single changelog.
+--
+-- MEMORY. The dedup resolves to a raw id FIRST, in an aggregation that carries
+-- only that String, and the payload is fetched by joining back. The earlier
+-- shape — `SELECT *` ordered by the extraction stamp with `LIMIT 1 BY` — put
+-- every row's `items` JSON into the sort buffer, which is the pattern that
+-- exhausted the server in #1425 and #1817. It was fixed in the issue snapshot
+-- model and left here.
 
-WITH exploded AS (
+WITH winner AS (
+    SELECT
+        source_id,
+        changelog_id,
+        argMax(_airbyte_raw_id, _airbyte_extracted_at) AS raw_id
+    FROM {{ source('bronze_jira', 'jira_issue_history') }}
+    GROUP BY source_id, changelog_id
+),
+
+exploded AS (
     SELECT
         COALESCE(h.source_id, '')                                AS insight_source_id,
         COALESCE(h.tenant_id, '')                                AS tenant_id,
@@ -36,11 +52,8 @@ WITH exploded AS (
         COALESCE(parseDateTime64BestEffortOrNull(h.created_at, 3), toDateTime64(0, 3)) AS created_at,
         h.author_account_id                                      AS author_account_id,
         arrayJoin(JSONExtractArrayRaw(COALESCE(h.items, '[]')))  AS item_raw
-    FROM (
-        SELECT * FROM {{ source('bronze_jira', 'jira_issue_history') }}
-        ORDER BY _airbyte_extracted_at DESC
-        LIMIT 1 BY source_id, changelog_id
-    ) h
+    FROM {{ source('bronze_jira', 'jira_issue_history') }} AS h
+    INNER JOIN winner AS w ON h._airbyte_raw_id = w.raw_id
     WHERE h.items IS NOT NULL AND h.items != '[]'
 ),
 parsed AS (

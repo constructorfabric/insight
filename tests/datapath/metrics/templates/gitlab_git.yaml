@@ -66,6 +66,23 @@ templates:
     public_email: ""
     bot: false
 
+  # The merge request <-> commit link. Its own author fields are the commit's,
+  # not the request author's — the two are different identities.
+  merge_request_commit:
+    $ref: "#/templates/base"
+    project_id: 101
+    mr_iid: null
+    id: null
+    short_id: null
+    title: change
+    message: change
+    author_name: null
+    author_email: null
+    authored_date: "2026-10-01T08:30:00Z"
+    committer_name: null
+    committer_email: null
+    committed_date: "2026-10-01T08:30:00Z"
+
   merge_request:
     $ref: "#/templates/base"
     project_id: 101

@@ -121,7 +121,6 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_issue
     `id` Nullable(String),
     `self` Nullable(String),
     `key` Nullable(String),
-    `fields` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `unique_key` Nullable(String),

@@ -24,6 +24,9 @@ bronze:
     - $ref: ../templates/people.yaml#/templates/erin
 
   bronze_github.commits:
+    # Both dates are set on every row: the active day comes from the AUTHOR
+    # date (#3153), so overriding the committer date alone leaves every
+    # commit on the template's default day and the denominator reads 1.
     - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: cpad-a1, repository: "https://github.com/acme/api.git", sha: cpad-a1, authored_date: "2026-10-01T09:00:00Z", committed_date: "2026-10-01T09:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com}
     - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: cpad-a2, repository: "https://github.com/acme/api.git", sha: cpad-a2, authored_date: "2026-10-01T10:00:00Z", committed_date: "2026-10-01T10:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com}
     - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: cpad-a3, repository: "https://github.com/acme/api.git", sha: cpad-a3, authored_date: "2026-10-02T09:00:00Z", committed_date: "2026-10-02T09:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com}
