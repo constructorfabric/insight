@@ -21,7 +21,10 @@ whole Jira chain to arrange one row would test the chain instead.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
+from conftest import Warehouse
 
 SOURCE = "jira-title-role-test"
 TENANT = "11111111-1111-1111-1111-111111111111"
@@ -40,7 +43,7 @@ def row(
     kind: str = "synthetic_initial",
     at: str = "2026-01-05 09:00:00",
     data_source: str = "jira",
-) -> dict:
+) -> dict[str, Any]:
     """One journal row: `column_title` is the denormalized column, `field_value`
     the value the field itself carries."""
     values = [] if field_value is None else [field_value]
@@ -68,7 +71,7 @@ def row(
     }
 
 
-def assignee_row(issue: str, *, column_title: str | None, data_source: str = "jira") -> dict:
+def assignee_row(issue: str, *, column_title: str | None, data_source: str = "jira") -> dict[str, Any]:
     """Gold reaches a person through the assignee role — `task_issue_state`
     inner-joins `class_task_users` on it. Without this row the issue never
     reaches the serving table, and a test would fail for a reason that has
@@ -102,7 +105,7 @@ def gold(warehouse):
     return warehouse
 
 
-def seed_and_build(warehouse, rows: list[dict]) -> dict[str, str]:
+def seed_and_build(warehouse, rows: list[dict[str, Any]]) -> dict[str, str]:
     warehouse.insert(HISTORY_TABLE, rows)
     # The role view is a parent gold reads by name, and `+task_issue_state` would
     # drag in the silver unions, whose other arms this warehouse does not have.
@@ -116,7 +119,7 @@ def seed_and_build(warehouse, rows: list[dict]) -> dict[str, str]:
     }
 
 
-def test_the_role_wins_over_the_column(gold):
+def test_the_role_wins_over_the_column(gold: Warehouse) -> None:
     """When both channels answer, the role is the one that counts.
 
     The column is a snapshot of the issue's summary as the binary last saw it;
@@ -134,7 +137,7 @@ def test_the_role_wins_over_the_column(gold):
     assert titles["ROLE-1"] == "renamed, from the role"
 
 
-def test_the_column_carries_an_issue_the_role_cannot_name(gold):
+def test_the_column_carries_an_issue_the_role_cannot_name(gold: Warehouse) -> None:
     """A Jira issue never renamed: the binary emits no `summary` value, so the
     role has nothing to offer and the column is the only title there is.
 
@@ -152,7 +155,7 @@ def test_the_column_carries_an_issue_the_role_cannot_name(gold):
     assert titles["ROLE-2"] == "named by the column only"
 
 
-def test_a_source_with_no_column_is_named_by_the_role(gold):
+def test_a_source_with_no_column_is_named_by_the_role(gold: Warehouse) -> None:
     """The shape after cutover: no column value at all, and the role answers.
 
     Modelled on Jira rather than GitHub because gold reaches a person through
@@ -171,7 +174,7 @@ def test_a_source_with_no_column_is_named_by_the_role(gold):
     assert titles["ROLE-3"] == "named by the role"
 
 
-def test_an_issue_with_neither_reads_as_null(gold):
+def test_an_issue_with_neither_reads_as_null(gold: Warehouse) -> None:
     """Neither channel answers: NULL, not an empty string. `argMaxIf` returns
     the type default when nothing matches, and this is a serving column the
     backend reads — its nullability is part of the contract."""

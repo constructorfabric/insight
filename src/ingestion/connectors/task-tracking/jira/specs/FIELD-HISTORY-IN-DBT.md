@@ -3,7 +3,7 @@
 Design for replacing the Rust `jira-enrich` binary with dbt models that derive
 `staging.jira__task_field_history` from bronze.
 
-Status: design, not yet implemented.
+Status: implemented up to the cutover. The models of §2–§9 are built alongside the Rust binary, which stays the silver producer until §10 is carried out.
 
 ## 1. Why
 
@@ -337,7 +337,7 @@ convention to invert:
 | kind | separator | why it is unambiguous |
 |---|---|---|
 | `string_array` | single space | Jira rejects a label containing whitespace, so a space is always a separator and a comma is always content |
-| `option_array` | `[`, `, `, `]` on the id side; bare comma on the display side | ids are numeric, so the bracket form parses without ambiguity; displays are matched positionally to ids |
+| `option_array` | `[`, comma followed by a space, `]` on the id side; bare comma on the display side | ids are numeric, so the bracket form parses without ambiguity; displays are matched positionally to ids |
 | `legacy_list` | `", "` | the pre-2020 Sprint serialization |
 
 ### 3.4 Id spaces that do not reconcile
@@ -738,7 +738,7 @@ therefore produce byte-identical keys, and ReplacingMergeTree collapses them.
 
 ## 8. Long text in a side table
 
-Status: **required in this change set**, not yet implemented. §5's normalizers
+Status: implemented (`jira__task_field_text`). §5's normalizers
 cover every other kind; this is the remaining one.
 
 `long_text` values are large, change often, and are stored per event, so a naive

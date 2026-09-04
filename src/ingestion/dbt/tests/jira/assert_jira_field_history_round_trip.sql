@@ -28,7 +28,8 @@
 --     issue stream and the history stream are read at different points inside
 --     one sync, so an event the snapshot has not caught up with is expected and
 --     self-heals on the next run (§7).
---   * `long_text`, which carries no state row until the side table of §8 exists.
+--   * `long_text`: the issue JSON holds an ADF document and the changelog Jira's
+--     rendering of it, so the two content addresses cannot agree (§8).
 --   * element ORDER within a multi-value field. Jira does not promise one, and
 --     the contract only requires ids and displays to stay parallel — so both
 --     sides are sorted before comparison.

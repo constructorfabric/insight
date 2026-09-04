@@ -13,21 +13,24 @@ undoing the whole chain.
 
 from __future__ import annotations
 
+from typing import Any
+
+from conftest import Scenario
 from helpers import event, field, issue, item
 
 COMPONENTS = "components"
 COMPONENTS_FIELD = field(COMPONENTS, name="Components", schema_type="array", schema_items="component")
 
 
-def _add(cid: str, name: str) -> dict:
+def _add(cid: str, name: str) -> dict[str, Any]:
     return item(COMPONENTS, to=cid, to_str=name)
 
 
-def _remove(cid: str, name: str) -> dict:
+def _remove(cid: str, name: str) -> dict[str, Any]:
     return item(COMPONENTS, frm=cid, frm_str=name)
 
 
-def test_elements_present_with_no_events_are_the_initial_state(scenario):
+def test_elements_present_with_no_events_are_the_initial_state(scenario: Scenario) -> None:
     scenario.seed(
         fields=[COMPONENTS_FIELD],
         issues=[issue("TST-1", fields={COMPONENTS: [{"id": "501", "name": "api"}, {"id": "502", "name": "storage"}]})],
@@ -38,7 +41,7 @@ def test_elements_present_with_no_events_are_the_initial_state(scenario):
     assert scenario.round_trip_holds()
 
 
-def test_two_additions_accumulate(scenario):
+def test_two_additions_accumulate(scenario: Scenario) -> None:
     """Each row holds the state AFTER its event, not the element that changed —
     that is what lets a consumer read any point in time without folding."""
     scenario.seed(
@@ -55,7 +58,7 @@ def test_two_additions_accumulate(scenario):
     assert scenario.round_trip_holds()
 
 
-def test_two_elements_added_in_one_entry_make_one_row(scenario):
+def test_two_elements_added_in_one_entry_make_one_row(scenario: Scenario) -> None:
     """One changelog entry can touch several elements: Jira emits one item per
     element under the same changelog id. The entry is one user action and the
     contract orders events by `event_id`, so the journal holds ONE row for it,
@@ -76,7 +79,7 @@ def test_two_elements_added_in_one_entry_make_one_row(scenario):
     assert scenario.round_trip_holds()
 
 
-def test_an_entry_that_removes_and_adds_is_a_replacement(scenario):
+def test_an_entry_that_removes_and_adds_is_a_replacement(scenario: Scenario) -> None:
     """Swapping one component for another is one entry with a removal item and
     an addition item. Neither verb describes the whole entry, so the row says
     `set` — the contract's word for a multi-value state given in full."""
@@ -93,7 +96,7 @@ def test_an_entry_that_removes_and_adds_is_a_replacement(scenario):
     assert scenario.round_trip_holds()
 
 
-def test_additions_and_removals_interleave(scenario):
+def test_additions_and_removals_interleave(scenario: Scenario) -> None:
     scenario.seed(
         fields=[COMPONENTS_FIELD],
         issues=[issue("TST-1", fields={COMPONENTS: [{"id": "502", "name": "storage"}]})],
@@ -109,7 +112,7 @@ def test_additions_and_removals_interleave(scenario):
     assert scenario.round_trip_holds()
 
 
-def test_an_element_removed_then_a_different_one_added(scenario):
+def test_an_element_removed_then_a_different_one_added(scenario: Scenario) -> None:
     """The reconstruction has to put back what was removed and take away what
     was added, or the issue looks as though it was created with today's set."""
     scenario.seed(
@@ -126,7 +129,7 @@ def test_an_element_removed_then_a_different_one_added(scenario):
     assert scenario.round_trip_holds()
 
 
-def test_a_field_emptied_by_removals_ends_empty(scenario):
+def test_a_field_emptied_by_removals_ends_empty(scenario: Scenario) -> None:
     scenario.seed(
         fields=[COMPONENTS_FIELD],
         issues=[issue("TST-1", fields={COMPONENTS: []})],
@@ -141,7 +144,7 @@ def test_a_field_emptied_by_removals_ends_empty(scenario):
     assert scenario.round_trip_holds()
 
 
-def test_the_same_element_added_twice_counts_once(scenario):
+def test_the_same_element_added_twice_counts_once(scenario: Scenario) -> None:
     """Jira can emit a redundant addition. Counting it twice would make a
     "components per issue" metric wrong without any array looking malformed."""
     scenario.seed(
@@ -158,7 +161,7 @@ def test_the_same_element_added_twice_counts_once(scenario):
     assert scenario.round_trip_holds()
 
 
-def test_an_element_renamed_since_the_event_is_still_the_same_element(scenario):
+def test_an_element_renamed_since_the_event_is_still_the_same_element(scenario: Scenario) -> None:
     """A component renamed after it was added arrives with one name in the
     changelog and another in the issue JSON. It is one element, identified by
     its id, so the addition must still be undone when reconstructing the
@@ -185,7 +188,7 @@ LINKS = "issuelinks"
 LINKS_FIELD = field(LINKS, name="Linked Issues", schema_type="array", schema_items="issuelinks")
 
 
-def _link(key: str, sentence: str, *, removed: bool = False) -> dict:
+def _link(key: str, sentence: str, *, removed: bool = False) -> dict[str, Any]:
     """One changelog item for a link. Jira puts the LINKED ISSUE's key in the id
     side and a rendered sentence in the display side."""
     if removed:
@@ -193,7 +196,7 @@ def _link(key: str, sentence: str, *, removed: bool = False) -> dict:
     return item(LINKS, to=key, to_str=sentence)
 
 
-def test_a_link_is_identified_by_the_linked_issue_key(scenario):
+def test_a_link_is_identified_by_the_linked_issue_key(scenario: Scenario) -> None:
     """The issue resource names the LINK OBJECT by its own id, with the linked
     issue's key nested inside; the changelog names the LINKED ISSUE by key and
     never mentions the link's id at all.
@@ -232,7 +235,7 @@ def test_a_link_is_identified_by_the_linked_issue_key(scenario):
     assert scenario.round_trip_holds()
 
 
-def test_an_inward_link_is_the_same_shape(scenario):
+def test_an_inward_link_is_the_same_shape(scenario: Scenario) -> None:
     """Direction is a property of the link, not of the element: an issue holds
     the link once either way, and only the rendered text says which side it is
     on."""
@@ -251,7 +254,7 @@ def test_an_inward_link_is_the_same_shape(scenario):
     assert scenario.round_trip_holds()
 
 
-def test_links_added_and_removed_accumulate(scenario):
+def test_links_added_and_removed_accumulate(scenario: Scenario) -> None:
     """Links are element-wise like components, so they fold the same way."""
     scenario.seed(
         fields=[LINKS_FIELD],
@@ -274,7 +277,7 @@ SUBTASKS = "subtasks"
 SUBTASKS_FIELD = field(SUBTASKS, name="Sub-tasks", schema_type="array", schema_items="issuelinks")
 
 
-def test_subtasks_are_identified_by_the_child_key(scenario):
+def test_subtasks_are_identified_by_the_child_key(scenario: Scenario) -> None:
     """Jira reports `subtasks` with the same `schema_items` as `issuelinks`, so
     it lands in the same kind — but its element is the referenced issue itself,
     with the key at the top level and no link object around it.
@@ -305,7 +308,7 @@ def test_subtasks_are_identified_by_the_child_key(scenario):
     assert scenario.round_trip_holds()
 
 
-def test_an_element_removed_and_added_again_comes_back(scenario):
+def test_an_element_removed_and_added_again_comes_back(scenario: Scenario) -> None:
     """The case set arithmetic cannot express.
 
     `(initial ∪ additions up to k) \\ removals up to k` subtracts an element for
@@ -330,7 +333,7 @@ def test_an_element_removed_and_added_again_comes_back(scenario):
     assert scenario.round_trip_holds()
 
 
-def test_a_re_added_element_carries_the_later_display(scenario):
+def test_a_re_added_element_carries_the_later_display(scenario: Scenario) -> None:
     """An `add` replaces the element's entry rather than appending a second one,
     so the display is the one the latest event rendered — and the element is
     still counted once."""

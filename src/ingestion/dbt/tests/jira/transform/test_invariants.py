@@ -8,7 +8,7 @@ of the Jira staging chain, the pipeline breaks and no narrow selector notices.
 
 from __future__ import annotations
 
-from conftest import PROD_SELECTOR
+from conftest import PROD_SELECTOR, Scenario
 from helpers import event, field, issue, item
 
 FIELDS = [
@@ -85,7 +85,7 @@ def _seed(scenario):
     scenario.seed(fields=FIELDS, issues=[issue("TST-1", fields=VALUES), issue("TST-2", fields=VALUES)], events=HISTORY)
 
 
-def test_every_jira_invariant_holds_on_a_healthy_issue(scenario):
+def test_every_jira_invariant_holds_on_a_healthy_issue(scenario: Scenario) -> None:
     """Ten fields across every kind, two issues, one with history and one
     without. All of it must satisfy the contract tests at once — the parallel
     arrays, the single-value bound, the event-id conventions, the cardinality
@@ -100,7 +100,7 @@ def test_every_jira_invariant_holds_on_a_healthy_issue(scenario):
     )
 
 
-def test_the_pipeline_selector_builds(scenario):
+def test_the_pipeline_selector_builds(scenario: Scenario) -> None:
     """`tag:jira,tag:staging` is the string the prod staging step runs.
 
     Selecting it here is the only thing that catches a field-history model that

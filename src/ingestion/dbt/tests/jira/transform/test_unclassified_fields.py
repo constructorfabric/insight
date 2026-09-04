@@ -14,6 +14,9 @@ not arrived yet.
 
 from __future__ import annotations
 
+from typing import Any
+
+from conftest import Scenario
 from helpers import LATER_SYNC, SOURCE_ID, event, field, issue, item
 
 GHOST = "customfield_19001"
@@ -21,7 +24,7 @@ POINTS = "customfield_10001"
 POINTS_FIELD = field(POINTS, name="Story Points", schema_type="number")
 
 
-def _ghost_history(key: str = "TST-1") -> list[dict]:
+def _ghost_history(key: str = "TST-1") -> list[dict[str, Any]]:
     return [
         event(key, 101, "2026-01-06T10:00:00", [item(GHOST, frm=None, frm_str=None, to="7001", to_str="Kernel")]),
         event(
@@ -30,7 +33,7 @@ def _ghost_history(key: str = "TST-1") -> list[dict]:
     ]
 
 
-def test_an_uncatalogued_field_keeps_its_last_value(scenario):
+def test_an_uncatalogued_field_keeps_its_last_value(scenario: Scenario) -> None:
     """Two events, no catalogue row: exactly one row, carrying the newest `to`
     side verbatim and stamped with that event's own time.
 
@@ -52,7 +55,7 @@ def test_an_uncatalogued_field_keeps_its_last_value(scenario):
     assert rows[0]["value_id_type"] == "none"
 
 
-def test_the_field_keeps_the_name_the_changelog_gave_it(scenario):
+def test_the_field_keeps_the_name_the_changelog_gave_it(scenario: Scenario) -> None:
     """The item's own display name is the only naming there is, and it is
     present even when the catalogue row is not."""
     scenario.seed(
@@ -67,7 +70,7 @@ def test_the_field_keeps_the_name_the_changelog_gave_it(scenario):
     assert scenario.journal(field=GHOST)[0]["field_id"] == GHOST
 
 
-def test_a_classified_field_never_lands_here(scenario):
+def test_a_classified_field_never_lands_here(scenario: Scenario) -> None:
     """The exclusion is keyed on the WHOLE catalogue. A field that is `ignored`
     or `UNKNOWN` has been looked at and decided, so it must not be swept in as
     unclassifiable."""
@@ -83,7 +86,7 @@ def test_a_classified_field_never_lands_here(scenario):
     assert [r["field_id"] for r in scenario.journal(issue="TST-1")] == ["created", POINTS]
 
 
-def test_the_registry_records_the_exclusion(scenario):
+def test_the_registry_records_the_exclusion(scenario: Scenario) -> None:
     """The exclusion has to be queryable, or it is just a silent drop with extra
     steps."""
     scenario.seed(fields=[POINTS_FIELD], issues=[issue("TST-1", fields={POINTS: 5})], events=_ghost_history())
@@ -101,7 +104,7 @@ def test_the_registry_records_the_exclusion(scenario):
     assert rows[0]["issues_affected"] == 1
 
 
-def test_a_field_whose_metadata_has_not_arrived_yet_fails_the_guard(scenario):
+def test_a_field_whose_metadata_has_not_arrived_yet_fails_the_guard(scenario: Scenario) -> None:
     """The dangerous half of §3.2.
 
     A field deleted before the connector's first field sync can only have OLD
@@ -127,7 +130,7 @@ def test_a_field_whose_metadata_has_not_arrived_yet_fails_the_guard(scenario):
     assert not scenario.invariants_hold("assert_jira_unclassified_fields_are_old")
 
 
-def test_an_ancient_deleted_field_passes_the_guard(scenario):
+def test_an_ancient_deleted_field_passes_the_guard(scenario: Scenario) -> None:
     """The other half: events older than the catalogue's first sync are what a
     long-deleted field looks like, and the run must not fail on it."""
     scenario.seed(
@@ -140,7 +143,7 @@ def test_an_ancient_deleted_field_passes_the_guard(scenario):
     assert scenario.invariants_hold("assert_jira_unclassified_fields_are_old")
 
 
-def test_the_first_sync_watermark_does_not_drift(scenario):
+def test_the_first_sync_watermark_does_not_drift(scenario: Scenario) -> None:
     """`bronze_jira.jira_fields` keeps only each field's latest extraction once
     its parts merge, so a watermark recomputed from it creeps towards the newest
     sync and an ever-younger set of events counts as "old". The first-seen

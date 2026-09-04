@@ -13,6 +13,9 @@ clearing event, which is the defect class this whole change exists to expose.
 
 from __future__ import annotations
 
+from typing import Any
+
+from conftest import Scenario
 from helpers import OBSERVED_AT, event, field, issue, item
 
 SEVERITY = "customfield_10003"
@@ -35,11 +38,11 @@ PRODUCTS_FIELD = field(
 LATER = "2026-04-01T12:00:00"
 
 
-def _severity_history(key: str = "TST-1") -> list[dict]:
+def _severity_history(key: str = "TST-1") -> list[dict[str, Any]]:
     return [event(key, 101, "2026-01-06T10:00:00", [item(SEVERITY, frm=None, frm_str=None, to="9001", to_str="High")])]
 
 
-def test_absent_key_after_history_yields_one_withdrawal(scenario):
+def test_absent_key_after_history_yields_one_withdrawal(scenario: Scenario) -> None:
     """The field was set, then left the issue's configuration.
 
     The journal must end at "holds nothing", and it must say so as an event
@@ -59,7 +62,7 @@ def test_absent_key_after_history_yields_one_withdrawal(scenario):
     assert scenario.round_trip_holds()
 
 
-def test_the_withdrawal_is_dated_by_the_observation(scenario):
+def test_the_withdrawal_is_dated_by_the_observation(scenario: Scenario) -> None:
     """Jira exposes no date for a configuration change, so the honest stamp is
     when the absence was seen — the issue's own extraction mark. That is also
     the stamp the round trip treats as the issue's freshness, so the event can
@@ -75,7 +78,7 @@ def test_the_withdrawal_is_dated_by_the_observation(scenario):
     assert withdrawal[0]["author_id"] is None
 
 
-def test_a_present_but_empty_key_is_not_a_withdrawal(scenario):
+def test_a_present_but_empty_key_is_not_a_withdrawal(scenario: Scenario) -> None:
     """The field still applies to the issue and is unset — an ordinary state.
 
     If the journal disagrees with it, a clearing event is missing and that must
@@ -90,7 +93,7 @@ def test_a_present_but_empty_key_is_not_a_withdrawal(scenario):
     assert kinds == ["synthetic_initial", "changelog"]
 
 
-def test_a_withdrawal_keeps_the_field_identifier_type(scenario):
+def test_a_withdrawal_keeps_the_field_identifier_type(scenario: Scenario) -> None:
     """`value_id_type` is asserted stable per (source, field), so a row of that
     field may not carry a different one just because its arrays are empty."""
     scenario.seed(fields=[SEVERITY_FIELD], issues=[issue("TST-1", fields={})], events=_severity_history())
@@ -100,7 +103,7 @@ def test_a_withdrawal_keeps_the_field_identifier_type(scenario):
     assert types == {"opaque_id"}
 
 
-def test_cardinality_decides_how_the_withdrawal_reads(scenario):
+def test_cardinality_decides_how_the_withdrawal_reads(scenario: Scenario) -> None:
     """A single field is `set` to nothing; a multi field has its elements
     removed. Same rule the cardinality contract states for a value going away.
     """
@@ -127,7 +130,7 @@ def test_cardinality_decides_how_the_withdrawal_reads(scenario):
     assert withdrawals == {SEVERITY: ("single", "set"), PRODUCTS: ("multi", "remove")}
 
 
-def test_a_field_that_comes_back_leaves_no_withdrawal_behind(scenario):
+def test_a_field_that_comes_back_leaves_no_withdrawal_behind(scenario: Scenario) -> None:
     """A configuration change is reversible, so the withdrawal must not be.
 
     The second sync is modelled the way Airbyte produces one — another row for

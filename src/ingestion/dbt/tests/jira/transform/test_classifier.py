@@ -7,6 +7,7 @@ metadata, and require different results.
 
 from __future__ import annotations
 
+from conftest import Scenario
 from helpers import event, field, issue, item
 
 TAGS = "customfield_10007"
@@ -15,7 +16,7 @@ CUSTOM_VERSIONS = "customfield_10009"
 POINTS = "customfield_10001"
 
 
-def test_identical_values_are_read_by_their_own_metadata(scenario):
+def test_identical_values_are_read_by_their_own_metadata(scenario: Scenario) -> None:
     """Two fields, byte-identical items, different kinds.
 
     A labels-type field puts its whole list, space-separated, in the rendered
@@ -58,7 +59,7 @@ def test_identical_values_are_read_by_their_own_metadata(scenario):
     assert scenario.changelog_states(PICKS) == [["alpha beta"]]
 
 
-def test_a_custom_picker_over_a_system_item_type_is_a_full_list(scenario):
+def test_a_custom_picker_over_a_system_item_type_is_a_full_list(scenario: Scenario) -> None:
     """`fixVersions` and a custom multi-version picker are both `array` /
     `version`. Same structure, different changelog shape — the system field
     emits one item per element, the custom one the whole list — so whether
@@ -103,7 +104,7 @@ def test_a_custom_picker_over_a_system_item_type_is_a_full_list(scenario):
     assert scenario.round_trip_holds()
 
 
-def test_a_comment_item_produces_no_field_state(scenario):
+def test_a_comment_item_produces_no_field_state(scenario: Scenario) -> None:
     """A comment item carries the body in the rendered `from` side with every
     other side empty — byte-identical to a labels field cleared to empty. The
     only thing that tells them apart is that `comment` is not field state, and
@@ -121,7 +122,7 @@ def test_a_comment_item_produces_no_field_state(scenario):
     assert [r["field_id"] for r in scenario.journal(issue="TST-1")] == ["created", POINTS]
 
 
-def test_an_unclassifiable_field_stops_the_run(scenario):
+def test_an_unclassifiable_field_stops_the_run(scenario: Scenario) -> None:
     """`schema_type = 'any'` means an app owns the type, so structure says
     nothing. An unrecognised app key there must fail loudly: the two defects
     this design replaces were both silent, and a field with real changelog
@@ -146,7 +147,7 @@ def test_an_unclassifiable_field_stops_the_run(scenario):
     assert "jira__task_field_kind" in output
 
 
-def test_the_newest_catalogue_row_decides(scenario):
+def test_the_newest_catalogue_row_decides(scenario: Scenario) -> None:
     """A field's type can change, and bronze keeps every version it has seen.
     The classifier must read the current one — reading an older row would parse
     today's values by yesterday's rule."""
@@ -169,7 +170,7 @@ def test_the_newest_catalogue_row_decides(scenario):
     assert scenario.states(POINTS) == [["2026-02-01 07:00:00.000"]]
 
 
-def test_the_catalogue_created_field_does_not_shadow_the_creation_marker(scenario):
+def test_the_catalogue_created_field_does_not_shadow_the_creation_marker(scenario: Scenario) -> None:
     """Jira's catalogue contains a real `created` field, and `created` is also
     the sentinel field id of the per-issue creation marker. Emitting both
     produces two rows with the same unique key, and ReplacingMergeTree then

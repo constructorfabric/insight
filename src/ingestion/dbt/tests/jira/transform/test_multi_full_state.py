@@ -18,6 +18,7 @@ accepts it.
 
 from __future__ import annotations
 
+from conftest import Scenario
 from helpers import event, field, issue, item
 
 LABELS = "labels"
@@ -52,7 +53,7 @@ ASSISTING_FIELD = field(
 # ── string_array: the family with no id side ────────────────────────────────
 
 
-def test_a_labels_event_is_not_discarded(scenario):
+def test_a_labels_event_is_not_discarded(scenario: Scenario) -> None:
     """The item's id sides are both NULL and the whole list sits in the rendered
     sides, space-separated. Jira rejects whitespace inside a label, so a space
     is always a separator — there is nothing to detect."""
@@ -74,7 +75,7 @@ def test_a_labels_event_is_not_discarded(scenario):
     assert scenario.round_trip_holds()
 
 
-def test_a_label_is_its_own_identifier(scenario):
+def test_a_label_is_its_own_identifier(scenario: Scenario) -> None:
     """A label has no id, so the string is both value and identifier — which is
     what `value_id_type` has to say, or a consumer treats it as an opaque key."""
     scenario.seed(fields=[LABELS_FIELD], issues=[issue("TST-1", fields={LABELS: ["alpha"]})])
@@ -86,7 +87,7 @@ def test_a_label_is_its_own_identifier(scenario):
     assert row["field_cardinality"] == "multi"
 
 
-def test_a_comma_inside_a_label_is_content(scenario):
+def test_a_comma_inside_a_label_is_content(scenario: Scenario) -> None:
     """The separator is a space, so a comma is part of the label. Splitting on
     `", "` — which is how the shape used to be guessed — turns one label into
     two."""
@@ -108,7 +109,7 @@ def test_a_comma_inside_a_label_is_content(scenario):
     assert scenario.round_trip_holds()
 
 
-def test_labels_cleared_to_empty_is_an_ordinary_event(scenario):
+def test_labels_cleared_to_empty_is_an_ordinary_event(scenario: Scenario) -> None:
     """An empty right side is a value, not a degenerate item: the left side
     still names what was removed."""
     scenario.seed(
@@ -132,7 +133,7 @@ def test_labels_cleared_to_empty_is_an_ordinary_event(scenario):
 # ── option_array: the bracketed-id family ──────────────────────────────────
 
 
-def test_a_bracketed_id_list_parses_into_its_elements(scenario):
+def test_a_bracketed_id_list_parses_into_its_elements(scenario: Scenario) -> None:
     """`[7001, 7002]` is two ids, not one. The id side is authoritative here
     because numeric ids inside brackets parse without ambiguity; displays are
     matched to them positionally."""
@@ -158,7 +159,7 @@ def test_a_bracketed_id_list_parses_into_its_elements(scenario):
     assert scenario.round_trip_holds()
 
 
-def test_a_display_containing_a_comma_falls_back_to_the_ids(scenario):
+def test_a_display_containing_a_comma_falls_back_to_the_ids(scenario: Scenario) -> None:
     """Displays are joined by a BARE comma, so a display that contains one
     cannot be split back. When the two sides disagree on length the ids stand
     in as displays rather than emitting a mismatched pair — the arrays must stay
@@ -185,7 +186,7 @@ def test_a_display_containing_a_comma_falls_back_to_the_ids(scenario):
     assert scenario.round_trip_holds()
 
 
-def test_an_id_repeated_by_jira_counts_once(scenario):
+def test_an_id_repeated_by_jira_counts_once(scenario: Scenario) -> None:
     """Jira's own bracketed list can repeat an id. Deduplicating the (id,
     display) PAIRS is not enough — the same element can carry different
     displays on the two sides — so the dedup keys on the id."""
@@ -207,7 +208,7 @@ def test_an_id_repeated_by_jira_counts_once(scenario):
     assert scenario.round_trip_holds()
 
 
-def test_a_display_only_item_keeps_the_event(scenario):
+def test_a_display_only_item_keeps_the_event(scenario: Scenario) -> None:
     """Not every field of this family supplies ids: an app field can send items
     whose id side is empty and whose display holds the value. Falling back to
     the empty id side loses the event — the failure mode this design removes —
@@ -239,7 +240,7 @@ def test_a_display_only_item_keeps_the_event(scenario):
 # ── legacy_list: the one named exception ───────────────────────────────────
 
 
-def test_the_legacy_sprint_serialization_splits_on_comma_space(scenario):
+def test_the_legacy_sprint_serialization_splits_on_comma_space(scenario: Scenario) -> None:
     """Sprint is the one kind whose separator really is `", "`, on both sides.
 
     Its element ids also arrive UNQUOTED in the issue JSON — a bare number
@@ -266,7 +267,7 @@ def test_the_legacy_sprint_serialization_splits_on_comma_space(scenario):
     assert scenario.round_trip_holds()
 
 
-def test_a_sprint_name_containing_comma_space_falls_back_to_the_ids(scenario):
+def test_a_sprint_name_containing_comma_space_falls_back_to_the_ids(scenario: Scenario) -> None:
     """A sprint NAME can itself contain `", "`, so splitting the display side by
     it over-splits. The id side is numeric and unambiguous, so it decides, and
     the displays follow only when the two agree on length."""

@@ -11,6 +11,7 @@ of events changes the resulting set — so that is where it is tested.
 
 from __future__ import annotations
 
+from conftest import Scenario
 from helpers import CREATED_AT, LATER_SYNC, event, field, issue, item
 
 COMPONENTS = "components"
@@ -21,7 +22,7 @@ POINTS_FIELD = field(POINTS, name="Story Points", schema_type="number")
 SAME_INSTANT = "2026-01-06T10:00:00"
 
 
-def test_events_sharing_an_instant_are_ordered_by_changelog_id(scenario):
+def test_events_sharing_an_instant_are_ordered_by_changelog_id(scenario: Scenario) -> None:
     """Two events in the same second, one adding an element and one removing it.
 
     Their relative order decides whether the field ends up holding the element,
@@ -43,7 +44,7 @@ def test_events_sharing_an_instant_are_ordered_by_changelog_id(scenario):
     assert scenario.round_trip_holds()
 
 
-def test_the_same_changelog_re_emitted_produces_one_row(scenario):
+def test_the_same_changelog_re_emitted_produces_one_row(scenario: Scenario) -> None:
     """Airbyte appends, so a changelog the connector has seen before arrives
     again on the next sync. Two rows in bronze, one event in the journal."""
     original = event("TST-1", 101, SAME_INSTANT, [item(POINTS, frm="3", frm_str="3", to="5", to_str="5")])
@@ -55,7 +56,7 @@ def test_the_same_changelog_re_emitted_produces_one_row(scenario):
     assert scenario.round_trip_holds()
 
 
-def test_an_item_repeated_inside_one_changelog_produces_one_row(scenario):
+def test_an_item_repeated_inside_one_changelog_produces_one_row(scenario: Scenario) -> None:
     """Jira sometimes puts the same (field, from, to) twice in one entry's
     items array. Both would carry the same event id, so the second is not a
     second event."""
@@ -70,7 +71,7 @@ def test_an_item_repeated_inside_one_changelog_produces_one_row(scenario):
     assert scenario.states(POINTS) == [["3"], ["5"]]
 
 
-def test_building_twice_changes_nothing(scenario):
+def test_building_twice_changes_nothing(scenario: Scenario) -> None:
     """Idempotence is what lets the model be rebuilt or re-run at will, and it
     rests on `unique_key` being a pure function of content — no clock, no run
     id, no row order."""
@@ -88,7 +89,7 @@ def test_building_twice_changes_nothing(scenario):
     assert first == second
 
 
-def test_a_newer_issue_version_supersedes_the_older(scenario):
+def test_a_newer_issue_version_supersedes_the_older(scenario: Scenario) -> None:
     """The issue's current value comes from ONE chosen bronze row. Resolving it
     per column instead lets two syncs mix, which is how an issue ends up with a
     status from one version and a value from another."""
@@ -102,7 +103,7 @@ def test_a_newer_issue_version_supersedes_the_older(scenario):
     assert scenario.round_trip_holds()
 
 
-def test_an_issue_moved_between_projects_records_the_move(scenario):
+def test_an_issue_moved_between_projects_records_the_move(scenario: Scenario) -> None:
     """`project` is an ordinary object field with real changelog traffic, not a
     container: an issue moved between projects has to show it."""
     scenario.seed(
@@ -127,7 +128,7 @@ def test_an_issue_moved_between_projects_records_the_move(scenario):
     assert scenario.round_trip_holds()
 
 
-def test_an_event_on_the_creation_instant_still_wins(scenario):
+def test_an_event_on_the_creation_instant_still_wins(scenario: Scenario) -> None:
     """An issue whose first event happened at its own creation.
 
     Both rows then carry the same `event_at`, and `_seq` sorts them the wrong

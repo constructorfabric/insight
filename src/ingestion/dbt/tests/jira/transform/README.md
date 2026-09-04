@@ -4,7 +4,7 @@ What these prove that nothing else does: given a field catalogue, an issue's
 current JSON and its changelog, the models produce **exactly** the journal rows
 they should. Real dbt, real ClickHouse, no stubs.
 
-```
+```text
 bronze_jira.jira_fields          the field's metadata
 bronze_jira.jira_issue           the value the issue holds now
 bronze_jira.jira_issue_history   the changelog items
@@ -110,4 +110,4 @@ The `.sql` files one level up are dbt singular tests, run by
   catches a shape rule which is wrong for some *other* Jira instance.
 - `assert_jira_field_kind_covers_catalogue` — fails on any unclassified field.
 
-The macros themselves are documented in [`../../macros/jira/README.md`](../../macros/jira/README.md).
+The macros themselves are documented in [`../../../macros/jira/README.md`](../../../macros/jira/README.md).

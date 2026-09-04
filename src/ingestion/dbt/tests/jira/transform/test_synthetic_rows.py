@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 
+from conftest import Scenario
 from helpers import CREATED_AT, field, issue
 
 # One field per kind that reads differently, so a single scenario proves the
@@ -51,7 +52,7 @@ VALUES = {
 }
 
 
-def test_every_field_the_issue_carries_gets_an_initial_row(scenario):
+def test_every_field_the_issue_carries_gets_an_initial_row(scenario: Scenario) -> None:
     """Six fields of six kinds, not one changelog event between them.
 
     This is the shape of the reported defect: the issue holds all six values and
@@ -75,7 +76,7 @@ def test_every_field_the_issue_carries_gets_an_initial_row(scenario):
     assert {r["event_kind"] for r in rows} == {"synthetic_initial"}
 
 
-def test_displays_come_from_the_field_shape_not_from_the_id(scenario):
+def test_displays_come_from_the_field_shape_not_from_the_id(scenario: Scenario) -> None:
     """The human-readable side is probed per element spelling: `value` for an
     option, `name` for a component, `displayName` for a user."""
     scenario.seed(fields=CATALOGUE, issues=[issue("TST-1", fields=VALUES)])
@@ -88,7 +89,7 @@ def test_displays_come_from_the_field_shape_not_from_the_id(scenario):
     assert displays["labels"] == ["alpha", "beta"]
 
 
-def test_initial_rows_are_sequenced_by_field_id(scenario):
+def test_initial_rows_are_sequenced_by_field_id(scenario: Scenario) -> None:
     """`_seq` orders the rows that share one timestamp.
 
     Every initial row of an issue is stamped with the same `created`, so
@@ -110,7 +111,7 @@ def test_initial_rows_are_sequenced_by_field_id(scenario):
     ]
 
 
-def test_creation_marker_carries_the_reporter_and_no_value(scenario):
+def test_creation_marker_carries_the_reporter_and_no_value(scenario: Scenario) -> None:
     """One row per issue that consumers read as "the issue exists from here".
 
     `task_issue_current_state.created_at` finds it by `event_kind`, so its shape
@@ -130,7 +131,7 @@ def test_creation_marker_carries_the_reporter_and_no_value(scenario):
     assert marker[0]["event_at"].startswith(CREATED_AT.replace("T", " "))
 
 
-def test_a_field_present_but_unset_gets_no_row(scenario):
+def test_a_field_present_but_unset_gets_no_row(scenario: Scenario) -> None:
     """ "Applicable and empty" is a real state, and it is deliberately not
     materialized: it is most of the key/value pairs an issue carries and stays
     recoverable from bronze. What must not happen is a row that claims a value.
@@ -141,7 +142,7 @@ def test_a_field_present_but_unset_gets_no_row(scenario):
     assert [r["field_id"] for r in scenario.journal(issue="TST-1")] == ["created"]
 
 
-def test_container_fields_are_not_field_state(scenario):
+def test_container_fields_are_not_field_state(scenario: Scenario) -> None:
     """Vote counts, watch counts and the time-tracking container are aggregates
     Jira computes, not values a person set. They are in the issue JSON, so
     without an explicit decision they would be normalized by whatever rule
@@ -170,7 +171,7 @@ def test_container_fields_are_not_field_state(scenario):
     assert [r["field_id"] for r in scenario.journal(issue="TST-1")] == ["created", POINTS]
 
 
-def test_long_text_is_stored_by_content_address(scenario):
+def test_long_text_is_stored_by_content_address(scenario: Scenario) -> None:
     """A description is kilobytes, and ClickHouse reads a whole column: a body
     inline in `value_displays` would be dragged through every read of every
     field. The journal keeps the hash and a prefix; the body goes to a side
@@ -201,7 +202,7 @@ def test_long_text_is_stored_by_content_address(scenario):
     assert json.loads(side[0]["content"]) == body
 
 
-def test_a_long_text_prefix_never_splits_a_character(scenario):
+def test_a_long_text_prefix_never_splits_a_character(scenario: Scenario) -> None:
     """The prefix is measured in characters, not bytes.
 
     ClickHouse's `substring` counts bytes, so a body whose 200th character

@@ -8,6 +8,7 @@ failure just as much as a row missing.
 
 from __future__ import annotations
 
+from conftest import Scenario
 from helpers import CREATED_AT, event, field, issue, item
 
 STORY_POINTS = "customfield_10001"
@@ -19,7 +20,7 @@ def _shape(rows):
     return [(r["field_id"], r["event_kind"], r["value_ids"]) for r in rows]
 
 
-def test_field_set_at_creation_and_never_changed_still_has_history(scenario):
+def test_field_set_at_creation_and_never_changed_still_has_history(scenario: Scenario) -> None:
     """The defect this whole change exists for.
 
     A custom field the issue carries, with no changelog event of its own, must
@@ -39,7 +40,7 @@ def test_field_set_at_creation_and_never_changed_still_has_history(scenario):
     ]
 
 
-def test_value_at_creation_is_recovered_from_the_first_event(scenario):
+def test_value_at_creation_is_recovered_from_the_first_event(scenario: Scenario) -> None:
     """Bronze holds no initial state — it is derived, and this is the rule.
 
     The issue currently holds 5 and changed twice. The value it was created with
@@ -64,7 +65,7 @@ def test_value_at_creation_is_recovered_from_the_first_event(scenario):
     ]
 
 
-def test_initial_row_is_dated_by_the_issue_creation(scenario):
+def test_initial_row_is_dated_by_the_issue_creation(scenario: Scenario) -> None:
     """A synthetic row is stamped from the issue's own `created`, not from the
     event it was derived from — otherwise the field looks as though it appeared
     when it first changed."""
@@ -82,7 +83,7 @@ def test_initial_row_is_dated_by_the_issue_creation(scenario):
     assert initial[0]["event_at"].startswith(CREATED_AT.replace("T", " "))
 
 
-def test_field_cleared_ends_empty_and_agrees_with_the_issue(scenario):
+def test_field_cleared_ends_empty_and_agrees_with_the_issue(scenario: Scenario) -> None:
     """Clearing a field is an ordinary event, not a degenerate one: the `from`
     side still names what was removed, and the resulting state is empty."""
     scenario.seed(
@@ -97,7 +98,7 @@ def test_field_cleared_ends_empty_and_agrees_with_the_issue(scenario):
     assert scenario.states(STORY_POINTS) == [["3"], []]
 
 
-def test_field_absent_from_the_issue_context_produces_no_row(scenario):
+def test_field_absent_from_the_issue_context_produces_no_row(scenario: Scenario) -> None:
     """A key the issue JSON does not carry means the field is not in this
     issue's field configuration. That is not an empty value — there is nothing
     to measure, so there is no row."""
@@ -115,7 +116,7 @@ REMAINING = "timeestimate"
 REMAINING_FIELD = field(REMAINING, name="Remaining Estimate", schema_type="number")
 
 
-def test_work_logged_on_an_unestimated_issue_leaves_no_estimate(scenario):
+def test_work_logged_on_an_unestimated_issue_leaves_no_estimate(scenario: Scenario) -> None:
     """Jira emits `timeestimate: null -> 0` when work is logged against an issue
     that was never estimated, and the issue resource still reports `null`.
 
@@ -136,7 +137,7 @@ def test_work_logged_on_an_unestimated_issue_leaves_no_estimate(scenario):
     assert scenario.round_trip_holds()
 
 
-def test_an_estimate_consumed_to_zero_ends_empty(scenario):
+def test_an_estimate_consumed_to_zero_ends_empty(scenario: Scenario) -> None:
     """A real estimate worked down to nothing: the resource reports `null` here
     too, so the journal must land on the same empty state."""
     scenario.seed(
@@ -154,7 +155,7 @@ def test_an_estimate_consumed_to_zero_ends_empty(scenario):
     assert scenario.round_trip_holds()
 
 
-def test_a_story_point_estimate_of_zero_is_still_a_value(scenario):
+def test_a_story_point_estimate_of_zero_is_still_a_value(scenario: Scenario) -> None:
     """The zero-is-nothing rule is named for the time-tracking fields, not
     inferred from a value being numeric. A story-point field is the same
     structure, and a zero there is something somebody typed."""
