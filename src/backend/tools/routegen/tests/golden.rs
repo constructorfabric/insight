@@ -47,6 +47,29 @@ fn golden_strip_prefix() {
 }
 
 #[test]
+fn instance_token_routes_reject_effective_prefix_stripping() {
+    for (defaults, route, accepted) in [
+        ("", "", true),
+        ("", "    strip_prefix: true\n", false),
+        ("defaults:\n  strip_prefix: true\n", "", false),
+        (
+            "defaults:\n  strip_prefix: true\n",
+            "    strip_prefix: false\n",
+            true,
+        ),
+    ] {
+        let routes = format!(
+            "version: 1\n{defaults}routes:\n  - prefix: /api/sql/query\n    upstream: http://analytics:8086\n    auth: instance_token\n{route}"
+        );
+        let result = generate(&routes, &Settings::default());
+        assert_eq!(result.is_ok(), accepted, "route configuration: {routes}");
+        if let Err(error) = result {
+            assert!(error.to_string().contains("must not enable strip_prefix"));
+        }
+    }
+}
+
+#[test]
 fn instance_token_route_bypasses_session_and_mcp_oauth() {
     let routes = "version: 1\nroutes:\n  - prefix: /api/sql/query\n    upstream: http://analytics:8086\n    auth: instance_token\n";
     let conf = generate(routes, &Settings::default()).unwrap();

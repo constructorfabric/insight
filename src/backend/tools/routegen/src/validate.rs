@@ -96,6 +96,11 @@ pub fn validate(config: &RouteConfig) -> Result<(), ValidationErrors> {
         }
 
         let resolved = route.resolve(&config.defaults);
+        if resolved.auth == Authentication::InstanceToken && resolved.strip_prefix {
+            errors.push(format!(
+                "instance-token route '{p}' must not enable strip_prefix"
+            ));
+        }
         if resolved.timeout_ms == 0 && !resolved.websocket {
             errors.push(format!(
                 "route '{p}': timeout_ms 0 is only allowed with websocket: true"

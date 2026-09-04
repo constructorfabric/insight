@@ -45,6 +45,14 @@ fn api_only_startup_requires_credentials_but_not_oauth_metadata() {
         api.token = SecretString::from(token.to_owned());
         assert!(validate_config(&mcp, &api).is_err(), "token case: {token}");
     }
+    for (length, accepted) in [(32, true), (1024, true), (1025, false)] {
+        api.token = SecretString::from("a".repeat(length));
+        assert_eq!(
+            validate_config(&mcp, &api).is_ok(),
+            accepted,
+            "token length: {length}"
+        );
+    }
     api.token = SecretString::from("synthetic-test-token-not-a-real-secret".to_owned());
     assert!(validate_config(&mcp, &api).is_ok());
     mcp.enabled = true;
