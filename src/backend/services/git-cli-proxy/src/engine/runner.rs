@@ -128,7 +128,11 @@ const PACK_THREADS: usize = 2;
 const PACK_WINDOW_MEMORY_MB: usize = 256;
 /// Delta cache budget, shared across threads.
 const PACK_DELTA_CACHE_MB: usize = 256;
-const READ_TIMEOUT: Duration = Duration::from_mins(5);
+/// Wedge detection, not a work cap: a read command's line counts scale with
+/// the window's blob bytes, so a legitimate page over blob-heavy commits
+/// runs for minutes of pure CPU. The true ceiling on the request is the API
+/// handler budget; this only has to catch a git that hangs outright.
+const READ_TIMEOUT: Duration = Duration::from_mins(30);
 const PREFETCH_TIMEOUT: Duration = Duration::from_mins(10);
 const HEAVY_OP_TIMEOUT: Duration = Duration::from_mins(30);
 /// How often a capped run re-measures the tree it is filling. The cap can be
@@ -923,11 +927,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_read_gives_up_long_before_whole_repository_work() {
+    async fn no_read_budget_outlives_the_heavy_ceiling() {
+        // The read budget is wedge detection, not a work cap — a page over
+        // blob-heavy commits legitimately runs for minutes — but no tier may
+        // outlast the heavy ceiling that bounds the write side.
         let defaults = Timeouts::default();
         assert!(
-            defaults.read < defaults.prefetch && defaults.prefetch < defaults.heavy,
-            "a read holds the entry's read lock; it must give up first: {defaults:?}"
+            defaults.read <= defaults.heavy && defaults.prefetch <= defaults.heavy,
+            "no budget may exceed the heavy ceiling: {defaults:?}"
         );
 
         let root = heavy_origin("budgets");
