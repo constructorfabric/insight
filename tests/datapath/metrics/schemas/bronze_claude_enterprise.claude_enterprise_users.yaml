@@ -1,0 +1,53 @@
+# JSON schema for bronze_claude_enterprise.claude_enterprise_users (all real columns).
+# Mirrors the connector InlineSchemaLoader (connectors/ai/claude-enterprise/connector.yaml
+# — stream claude_enterprise_users) plus the 4 _airbyte_* CDK columns. NOTE: `date` is
+# a parseable date string; tool_use_accepted ← code_tool_accepted_count, tool_use_offered
+# ← accepted + rejected. user_email (not email) is the identity column.
+schemas:
+  bronze_claude_enterprise.claude_enterprise_users:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      _airbyte_raw_id: { type: string }
+      _airbyte_extracted_at: { type: string, format: date-time }
+      _airbyte_meta: { type: string }
+      _airbyte_generation_id: { type: integer }
+      unique_key: { type: string }
+      tenant_id: { type: [string, "null"] }
+      source_id: { type: [string, "null"] }
+      date: { type: string }
+      user_id: { type: [string, "null"] }
+      user_email: { type: [string, "null"] }
+      chat_conversation_count: { type: [integer, "null"] }
+      chat_message_count: { type: [integer, "null"] }
+      chat_projects_created_count: { type: [integer, "null"] }
+      chat_projects_used_count: { type: [integer, "null"] }
+      chat_files_uploaded_count: { type: [integer, "null"] }
+      chat_artifacts_created_count: { type: [integer, "null"] }
+      chat_thinking_message_count: { type: [integer, "null"] }
+      chat_skills_used_count: { type: [integer, "null"] }
+      chat_connectors_used_count: { type: [integer, "null"] }
+      code_commit_count: { type: [integer, "null"] }
+      code_pull_request_count: { type: [integer, "null"] }
+      code_lines_added: { type: [integer, "null"] }
+      code_lines_removed: { type: [integer, "null"] }
+      code_session_count: { type: [integer, "null"] }
+      code_tool_accepted_count: { type: [integer, "null"] }
+      code_tool_rejected_count: { type: [integer, "null"] }
+      web_search_count: { type: [integer, "null"] }
+      excel_session_count: { type: [integer, "null"] }
+      excel_message_count: { type: [integer, "null"] }
+      powerpoint_session_count: { type: [integer, "null"] }
+      powerpoint_message_count: { type: [integer, "null"] }
+      cowork_session_count: { type: [integer, "null"] }
+      cowork_message_count: { type: [integer, "null"] }
+      cowork_action_count: { type: [integer, "null"] }
+      cowork_dispatch_turn_count: { type: [integer, "null"] }
+      cowork_skills_used_count: { type: [integer, "null"] }
+      chat_metrics_json: { type: [string, "null"] }
+      claude_code_metrics_json: { type: [string, "null"] }
+      office_metrics_json: { type: [string, "null"] }
+      cowork_metrics_json: { type: [string, "null"] }
+      collected_at: { type: [string, "null"] }
+      data_source: { type: [string, "null"] }

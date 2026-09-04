@@ -119,6 +119,7 @@ addopts = "-ra --strict-markers --strict-config"
 # and only when `--base-url` / $PYTEST_BASE_URL / this key has not set it.
 markers = [
     "requires_seed(*names): stand fixtures this test needs, validated against the manifest's fixture catalog at COLLECTION time",
+    "fixture: a data-path spec — it seeds bronze, builds the models above it and asserts what the API serves, so it needs an instance of its own (tests/datapath)",
     "requires_ingestion: needs a stand whose manifest declares the 'ingestion' capability; skipped with a reason when it does not",
     "requires_service_principal: needs a stand whose authenticator token listener this runner can reach, so a service principal can be obtained; skipped with a reason when it cannot",
     "stand_smoke: the post-deploy gate — a handful of tests from this same suite (a login-derived identity check, /auth/me, one metric with real data) selected with `-m stand_smoke` to prove a freshly deployed stand works, rather than a separate package",

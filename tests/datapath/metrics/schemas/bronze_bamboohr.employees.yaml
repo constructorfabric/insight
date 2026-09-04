@@ -1,0 +1,38 @@
+# Reusable JSON schema for the table (all real fields). The rig resolves it by
+# table name from schemas/<table>.yaml. Files under schemas/ and templates/ are
+# not tests (no `cases`) and are skipped by discovery.
+schemas:
+  bronze_bamboohr.employees:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      _airbyte_raw_id: { type: string }
+      _airbyte_extracted_at: { type: string, format: date-time }
+      _airbyte_meta: { type: string }
+      _airbyte_generation_id: { type: integer }
+      id: { type: [string, "null"] }
+      city: { type: [string, "null"] }
+      status: { type: [string, "null"] }
+      country: { type: [string, "null"] }
+      division: { type: [string, "null"] }
+      hireDate: { type: [string, "null"] }
+      jobTitle: { type: [string, "null"] }
+      lastName: { type: [string, "null"] }
+      location: { type: [string, "null"] }
+      raw_data: { type: [object, "null"] }
+      firstName: { type: [string, "null"] }
+      source_id: { type: [string, "null"] }
+      tenant_id: { type: [string, "null"] }
+      workEmail: { type: [string, "null"] }
+      department: { type: [string, "null"] }
+      supervisor: { type: [string, "null"] }
+      unique_key: { type: [string, "null"] }
+      displayName: { type: [string, "null"] }
+      lastChanged: { type: [string, "null"] }
+      supervisorEId: { type: [string, "null"] }
+      employeeNumber: { type: [string, "null"] }
+      supervisorEmail: { type: [string, "null"] }
+      terminationDate: { type: [string, "null"] }
+      originalHireDate: { type: [string, "null"] }
+      employmentHistoryStatus: { type: [string, "null"] }

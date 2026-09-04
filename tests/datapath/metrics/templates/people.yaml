@@ -1,0 +1,103 @@
+# Reusable people records (bronze_bamboohr.employees).
+# A record is a plain field map; an optional `$ref` inherits from another record
+# and sibling keys override it (closest wins). The nested `$ref: "#/..."` below
+# stays local to this file. All three share one department (Engineering) → one
+# team (org_unit) for "team median" checks.
+#
+# The base record lists EVERY schema field so a merged bronze row is complete;
+# unused fields default to null. The 4 `_airbyte_*` CDK columns are included too
+# (non-nullable) — transformations rely on them (e.g. the insight.people view
+# picks the latest row via `argMax(..., _airbyte_extracted_at)`).
+#
+# `raw_data` is the one field NOT stated here: the fixture-loader derives it from
+# each record's own fields, so a record that overrides a column cannot end up
+# with a payload that disagrees with it. A record MAY state it — a map is laid
+# over the derived keys (how to add a field no column holds), and `null` says the
+# row carries no payload at all.
+templates:
+  bamboohr_employee:
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-01-05T00:00:00"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+    tenant_id: "11111111-1111-1111-1111-111111111111"
+    source_id: "bamboohr-test"
+    id: null
+    unique_key: null
+    status: "Active"
+    firstName: null
+    lastName: null
+    displayName: null
+    workEmail: null
+    jobTitle: null
+    department: "Engineering"
+    division: "Product"
+    supervisor: "Carol Gamma"
+    supervisorEmail: "carol@example.com"
+    supervisorEId: null
+    employeeNumber: null
+    city: null
+    country: null
+    location: null
+    hireDate: null
+    originalHireDate: null
+    terminationDate: null
+    lastChanged: "2026-01-01T00:00:00Z"
+    employmentHistoryStatus: null
+
+  alice:
+    $ref: "#/templates/bamboohr_employee"
+    id: e001
+    unique_key: bamboohr-test-e001
+    firstName: Alice
+    lastName: Alpha
+    displayName: Alice Alpha
+    workEmail: alice@example.com
+    jobTitle: Senior Software Engineer
+
+  bob:
+    $ref: "#/templates/bamboohr_employee"
+    id: e002
+    unique_key: bamboohr-test-e002
+    firstName: Bob
+    lastName: Beta
+    displayName: Bob Beta
+    workEmail: bob@example.com
+
+  carol:
+    $ref: "#/templates/bamboohr_employee"
+    id: e003
+    unique_key: bamboohr-test-e003
+    firstName: Carol
+    lastName: Gamma
+    displayName: Carol Gamma
+    workEmail: carol@example.com
+
+  dave:
+    $ref: "#/templates/bamboohr_employee"
+    id: e004
+    unique_key: bamboohr-test-e004
+    firstName: Dave
+    lastName: Delta
+    displayName: Dave Delta
+    workEmail: dave@example.com
+
+  erin:
+    $ref: "#/templates/bamboohr_employee"
+    id: e005
+    unique_key: bamboohr-test-e005
+    firstName: Erin
+    lastName: Epsilon
+    displayName: Erin Epsilon
+    workEmail: erin@example.com
+
+  # A sixth department member, for a test that needs one person inside the cohort
+  # to carry no value while the other five keep the peer pool at its minimum.
+  heidi:
+    $ref: "#/templates/bamboohr_employee"
+    id: e006
+    unique_key: bamboohr-test-e006
+    firstName: Heidi
+    lastName: Eta
+    displayName: Heidi Eta
+    workEmail: heidi@example.com
