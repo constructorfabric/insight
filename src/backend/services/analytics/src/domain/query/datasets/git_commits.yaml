@@ -1,0 +1,34 @@
+key: git_commits
+database: insight
+relation: git_commits
+
+read_discipline: plain
+
+tenant_field: tenant_id
+
+time_fields:
+  - field: authored_at
+    default: true
+
+dimensions:
+  - field: author_email
+  - field: branch_scope
+    label_field: branch_scope_label
+  - field: repository
+    label_field: repository_label
+  - field: project
+    label_field: project_label
+  - field: source
+    label_field: source_label
+  # Nullable, so its absent rows need a value the answer and a filter can name.
+  - field: source_id
+    absent_value: __unknown__
+
+measurables:
+  - field: lines_added
+  - field: lines_removed
+
+row_identity:
+  - tenant_id
+  - source
+  - commit_hash

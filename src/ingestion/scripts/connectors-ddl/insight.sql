@@ -310,6 +310,35 @@ ORDER BY (tenant_id, data_source, commit_hash)
 SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
 ;
 
+CREATE TABLE IF NOT EXISTS insight.git_commits
+(
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `project_key` String,
+    `repo_slug` String,
+    `commit_hash` String,
+    `author_email` String,
+    `author_name` String,
+    `message` String,
+    `authored_at` DateTime,
+    `authored_date` Date,
+    `branch_scope` String,
+    `branch_scope_label` String,
+    `repository` String,
+    `repository_label` String,
+    `project` String,
+    `project_label` String,
+    `source` String,
+    `source_label` String,
+    `lines_added` Nullable(Int64),
+    `lines_removed` Nullable(Int64)
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(authored_date)
+ORDER BY (tenant_id, author_email, authored_at)
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
 CREATE TABLE IF NOT EXISTS insight.git_default_branch_commits
 (
     `tenant_id` Nullable(String),
@@ -352,6 +381,41 @@ CREATE TABLE IF NOT EXISTS insight.git_file_change_coverage
 )
 ENGINE = MergeTree
 ORDER BY (tenant_id, data_source, source_id)
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS insight.git_file_changes
+(
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `project_key` String,
+    `repo_slug` String,
+    `commit_hash` String,
+    `file_path` String,
+    `author_email` String,
+    `author_name` String,
+    `authored_at` DateTime,
+    `authored_date` Date,
+    `category` String,
+    `category_label` String,
+    `file_extension` String,
+    `file_extension_label` String,
+    `change_type` String,
+    `change_type_label` String,
+    `branch_scope` String,
+    `branch_scope_label` String,
+    `repository` String,
+    `repository_label` String,
+    `project` String,
+    `project_label` String,
+    `source` String,
+    `source_label` String,
+    `lines_added` Nullable(Int64),
+    `lines_removed` Nullable(Int64)
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(authored_date)
+ORDER BY (tenant_id, author_email, authored_at)
 SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
 ;
 

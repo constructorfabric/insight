@@ -14,6 +14,7 @@ use opentelemetry::metrics::{Counter, Histogram, Meter};
 // so the `kind` label on `analytics.metric_query.duration` stays bounded.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum QueryKind {
+    Query,
     Ranking,
     PeriodBatch,
     PeerBatch,
@@ -30,6 +31,7 @@ pub(crate) enum QueryKind {
 impl QueryKind {
     const fn as_str(self) -> &'static str {
         match self {
+            Self::Query => "query",
             Self::Ranking => "ranking",
             Self::PeriodBatch => "period_batch",
             Self::PeerBatch => "peer_batch",

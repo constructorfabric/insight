@@ -107,7 +107,7 @@ until curl -sf "http://localhost:8123/ping" >/dev/null; do sleep 1; done
 ./bootstrap-db.sh connectors-config.yaml
 
 set -a; source .env; set +a   # dump-ddl.sh expects the CLICKHOUSE_* vars exported
-./dump-ddl.sh              # refresh ../connectors-ddl/*.sql; commit the diff if any
+./dump-ddl.sh              # refresh ../connectors-ddl/*.sql + the analytics column snapshot; commit the diff if any
 ./check-field-parity.py    # exit 1 on field-contract failures
 
 docker rm -f bootstrap-db-clickhouse
@@ -143,7 +143,7 @@ Contributors whose physical table is not owned by dbt are covered too. `jira__ta
 | `bootstrap-db.sh <config.yaml>` | Sources `pins.env` and `.env` (if present), runs `seed-connectors.sh`, runs all dbt models, runs `../apply-ch-migrations.sh`. |
 | `run-dbt.sh [dbt args]` | Helper: generates a profiles.yml from the `CLICKHOUSE_*` variables and runs `dbt run` in `src/ingestion/dbt`. |
 | `check-field-parity.py [--manifest PATH]` | Audits every staging contributor against its silver union target (column set, positional order, exact type) plus manifest-vs-warehouse coverage. Same `CLICKHOUSE_*` env contract as the other scripts. Non-zero exit on any finding. |
-| `dump-ddl.sh` | Dumps `SHOW CREATE` for every `bronze_*` table, the `identity`/`silver`/`insight` databases (tables and views), and the gold-referenced `staging` tables into `../connectors-ddl/*.sql` — the committed snapshot that `../create-bronze-placeholders.sh` applies on fresh clusters. **Run it manually** after `bootstrap-db.sh` (see step above) whenever a schema changes, and commit the diff. `.github/workflows/connectors-ddl.yml` re-runs the whole pipeline on every `src/ingestion/**` PR and on every commit to `main`, and fails loudly when the committed snapshot no longer matches, with the full diff inline and as the `connectors-ddl-drift` artifact. Regenerate with the one-block recipe above (no credentials needed) and commit the result. |
+| `dump-ddl.sh` | Dumps `SHOW CREATE` for every `bronze_*` table, the `identity`/`silver`/`insight` databases (tables and views), and the gold-referenced `staging` tables into `../connectors-ddl/*.sql` — the committed snapshot that `../create-bronze-placeholders.sh` applies on fresh clusters — and writes the same `silver`/`insight` schema as machine-readable columns into `src/backend/services/analytics/src/domain/field_catalog/columns.snapshot.json`, the validation universe the analytics field catalog embeds. **Run it manually** after `bootstrap-db.sh` (see step above) whenever a schema changes, and commit the diff. `.github/workflows/connectors-ddl.yml` re-runs the whole pipeline on every `src/ingestion/**` PR and on every commit to `main`, and fails loudly when the committed snapshot no longer matches, with the full diff inline and as the `connectors-ddl-drift` artifact. Regenerate with the one-block recipe above (no credentials needed) and commit the result. |
 
 ## Image pins (pins.env)
 

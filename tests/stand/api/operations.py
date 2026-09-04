@@ -41,6 +41,11 @@ SOME_ACCOUNT_ID: Final[str] = "stand-in-account"
 #: refused before the gate under test was reached.
 SOME_CONNECTOR: Final[str] = "stand-in-connector"
 
+#: Stand-in for `{key}`, the dataset a query names. Lowercase snake_case
+#: because that is the only shape a dataset key takes, so a stand-in outside it
+#: would be a spelling rejection rather than the miss the sweep addresses.
+SOME_DATASET_KEY: Final[str] = "stand_in_dataset"
+
 #: Stand-in for `{metric_key}`, which is a dotted `family.name` string rather
 #: than a UUID. Kept a DOTTED key on purpose: the literal `export`/`import`
 #: segments of the sibling routes must not collide with it, so the template
@@ -54,6 +59,7 @@ SOME_METRIC_KEY: Final[str] = "scratch.probe"
 _PARAMETERS: Final[dict[str, str]] = {
     SOME_ID: "{id}",
     SOME_METRIC_KEY: "{metric_key}",
+    SOME_DATASET_KEY: "{key}",
     SOME_ACCOUNT_ID: "{account_id}",
     SOME_CONNECTOR: "{connector}",
 }
@@ -99,7 +105,7 @@ def _i(method: str, suffix: str) -> Operation:
     return Operation(method=method, path=identity_path(suffix), service="identity")
 
 
-#: analytics — 26 operations.
+#: analytics — 29 operations.
 ANALYTICS_OPERATIONS: Final[tuple[Operation, ...]] = (
     _a("GET", "/v1/queries"),
     _a("POST", "/v1/queries"),
@@ -109,6 +115,13 @@ ANALYTICS_OPERATIONS: Final[tuple[Operation, ...]] = (
     _a("POST", f"/v1/queries/{SOME_ID}/run"),
     _a("GET", "/v1/metric-definitions"),
     _a("POST", "/v1/metric-results"),
+    # The query contract over the declared datasets. One literal url: it takes a
+    # body and no path parameter, and the dataset it reads is named in the body.
+    _a("POST", "/v1/query"),
+    # What a query may be built over. Read-only over the declarations the build
+    # loaded at boot, so both are installation-wide reads with no tenant scope.
+    _a("GET", "/v1/datasets"),
+    _a("GET", f"/v1/datasets/{SOME_DATASET_KEY}"),
     _a("POST", "/v1/reports/preview"),
     _a("POST", "/v1/reports/export"),
     _a("POST", "/v1/metric-drilldown"),

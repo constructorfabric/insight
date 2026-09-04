@@ -2,6 +2,7 @@
 
 pub(crate) mod ai;
 mod connector_health;
+mod datasets;
 pub(crate) mod error;
 mod feedback;
 mod ingestion;
@@ -10,6 +11,7 @@ mod metric_drilldown;
 mod metric_results;
 mod metrics;
 mod person_names;
+mod query;
 mod reports;
 mod saved_queries;
 pub(crate) mod usage;
@@ -43,6 +45,7 @@ use crate::domain::connector_health as connector_health_domain;
 use crate::domain::external_links::ExternalSourceRegistry;
 use crate::domain::metric_crud;
 use crate::domain::metric_definitions::listing as metric_definitions_listing;
+use crate::domain::query::datasets::describe as dataset_describe;
 use crate::domain::saved_query;
 use crate::infra::anthropic::AnthropicClient;
 use crate::infra::identity::IdentityClient;
@@ -480,6 +483,65 @@ pub(crate) fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) ->
         )
         .standard_errors(openapi)
         .handler(ai::explain::explain_metric)
+        .register(router, openapi);
+
+    // The query surface: one query contract over the declared datasets. Tenancy
+    // binds from the session, so the body names no tenant and every refusal is
+    // a field-named `invalid_argument`.
+    router = OperationBuilder::post("/v1/query")
+        .operation_id("analytics_api.query.create")
+        .summary("Answer a query over a declared dataset")
+        .authenticated()
+        .no_license_required()
+        .json_request::<crate::domain::query::contract::dto::QueryRequest>(
+            openapi,
+            "The question to answer",
+        )
+        .json_response_with_schema::<crate::domain::query::contract::dto::QueryAnswer>(
+            openapi,
+            StatusCode::OK,
+            "A typed table",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_415(openapi)
+        .error_500(openapi)
+        .handler(query::query)
+        .register(router, openapi);
+
+    // What a query may be built over. Read-only over the declarations loaded at
+    // boot, so both operations answer the same object and neither touches the
+    // warehouse.
+    router = OperationBuilder::get("/v1/datasets")
+        .operation_id("analytics_api.datasets.list")
+        .summary("List the datasets a query may be built over")
+        .authenticated()
+        .no_license_required()
+        .json_response_with_schema::<dataset_describe::DatasetListDescription>(
+            openapi,
+            StatusCode::OK,
+            "The declared datasets",
+        )
+        .error_401(openapi)
+        .error_500(openapi)
+        .handler(datasets::list_datasets)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/v1/datasets/{key}")
+        .operation_id("analytics_api.datasets.get")
+        .summary("Describe one dataset a query may be built over")
+        .path_param("key", "The dataset key, as a query names it")
+        .authenticated()
+        .no_license_required()
+        .json_response_with_schema::<dataset_describe::DatasetDescription>(
+            openapi,
+            StatusCode::OK,
+            "The declared dataset",
+        )
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .handler(datasets::get_dataset)
         .register(router, openapi);
 
     router = OperationBuilder::post("/v1/metric-results")

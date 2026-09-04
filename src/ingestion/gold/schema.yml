@@ -113,6 +113,102 @@ models:
         tests:
           - not_null
 
+  - name: git_commits
+    description: >
+      Authored commits: one row per commit a person wrote, with the lines that
+      commit actually contributed (its own stats less what lost the file-content
+      dedup). A projection of the shared commit stage, so which commits are one
+      commit — deduplicated across connector instances and mirrored
+      repositories, and excluding the commits whose work another commit already
+      carries — is settled in one place. A query-engine dataset — queries
+      aggregate it and evidence projects it. Identity stays as the source gave
+      it (author_email); the person is resolved when a query runs.
+    columns:
+      - name: tenant_id
+        description: "Owning tenant"
+        tests:
+          - not_null
+      - name: commit_hash
+        description: "Commit identifier within the repository"
+        tests:
+          - not_null
+      - name: author_email
+        description: "Lowercased source-native author email; the entity a query resolves"
+        tests:
+          - not_null
+      - name: authored_at
+        description: "When the commit was authored; the dataset's event time"
+      - name: authored_date
+        description: "Authored day, the partition key"
+      - name: branch_scope
+        description: "Whether the commit reached the default branch: default | non_default"
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['default', 'non_default']
+      - name: repository
+        description: "Repository dimension value, qualified by source"
+      - name: project
+        description: "Project dimension value, qualified by source"
+      - name: source
+        description: "Source system dimension value"
+      - name: lines_added
+        description: >
+          Lines this commit contributed: its own reported stats less the lines of
+          the file changes that lost the content dedup, floored at zero. Nullable
+          when the source reports no stats.
+      - name: lines_removed
+        description: >
+          Lines this commit removed: its own reported stats less the lines of the
+          file changes that lost the content dedup, floored at zero. Nullable when
+          the source reports no stats.
+
+  - name: git_file_changes
+    description: >
+      Authored file changes: one row per change a person wrote, deduplicated by
+      change content so a cherry-pick or a squashed branch counts once. A
+      projection of the shared file-change stage, so the changes attach to the
+      same surviving commits the metric evidence counts. Commit context
+      (branch_scope, repository, person, time) is inherited from the commit,
+      never recomputed.
+    columns:
+      - name: tenant_id
+        description: "Owning tenant"
+        tests:
+          - not_null
+      - name: commit_hash
+        description: "Commit the change belongs to"
+        tests:
+          - not_null
+      - name: file_path
+        description: "Path of the changed file within the repository"
+        tests:
+          - not_null
+      - name: author_email
+        description: "Lowercased source-native author email; the entity a query resolves"
+        tests:
+          - not_null
+      - name: authored_at
+        description: "When the change's commit was authored; the dataset's event time"
+      - name: authored_date
+        description: "Authored day, the partition key"
+      - name: category
+        description: "What kind of file changed: code | test | config | docs | vendored | other"
+      - name: file_extension
+        description: "Lowercased file extension, or __unknown__"
+      - name: change_type
+        description: "Lowercased change kind (added, modified, renamed, deleted), or __unknown__"
+      - name: branch_scope
+        description: "Inherited from the commit: default | non_default"
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['default', 'non_default']
+      - name: lines_added
+        description: "Lines this change added"
+      - name: lines_removed
+        description: "Lines this change removed"
+
   - name: git_default_branch_commits
     description: >
       Commits that reached a repository's default branch, either through a
