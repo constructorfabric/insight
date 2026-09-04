@@ -118,7 +118,6 @@ See `docs/CONNECTORS_REFERENCE.md` for full Bronze column-level details.
 
 | Model | Purpose |
 |---|---|
-| `ms_entra__bronze_promoted` | Promote raw Bronze tables to `ReplacingMergeTree` (per `promote_bronze_to_rmt` macro) |
 | `ms_entra__users_snapshot` | SCD2 append-only snapshot of users (change tracking) |
 | `ms_entra__users_fields_history` | Field-level change log derived from snapshot |
 | `ms_entra__identity_inputs` | Emit identity signals (`mail`, `userPrincipalName`, `employeeId`, `displayName`, `onPremisesSamAccountName`) into `silver:identity_inputs` |

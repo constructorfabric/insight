@@ -206,7 +206,7 @@ MUST NOT:
 - Set `concurrency_level.default_concurrency: 1`. With a single worker the concurrent CDK **self-deadlocks** once one sync generates ≥ ~10k partitions (the CDK futures limit): the only worker thread runs `generate_partitions` and throttles on "futures limit reached" (`partition_enqueuer.py`), while the partition-read futures it waits on have no other worker to run them. Symptom: CPU-busy spin, zero I/O, zero records, forever — and the records counter freezing at exactly 10000 is the fingerprint. Hit in production by jira (`jira_issue_history` full-window fan-out) and confluence (`wiki_page_versions`). Use `default_concurrency: 4` (verified: the same full-window run that deadlocked at 1 emitted 4208 records in 75 s at 4).
 
 Substream-parent rules (each one was a production incident):
-- Reconcile auto-selects **every** discovered stream (ADR-0015) — there is no "helper, don't sync it" escape for top-level streams. A lightweight parent defined at top level WILL land as a bronze table, so it MUST carry the standard `tenant_id`/`source_id`/`unique_key` stamp and have a `promote_bronze_to_rmt` line like every other stream. Alternative: define the parent **inline inside `partition_router.parent_stream_configs[].stream`** (see `_scrum_boards` inside jira's `jira_sprints`) — inline parents are invisible to `discover`, so no table appears; they are still response-cached, so keep them lightweight too.
+- Reconcile auto-selects **every** discovered stream (ADR-0015) — there is no "helper, don't sync it" escape for top-level streams. A lightweight parent defined at top level WILL land as a bronze table, so it MUST carry the standard `tenant_id`/`source_id`/`unique_key` stamp like every other stream (catalog normalization fails on a keyless stream). Alternative: define the parent **inline inside `partition_router.parent_stream_configs[].stream`** (see `_scrum_boards` inside jira's `jira_sprints`) — inline parents are invisible to `discover`, so no table appears; they are still response-cached, so keep them lightweight too.
 - The `cursor_field` of `DatetimeBasedCursor` is read from the **top level** of the emitted record. If the API nests it (Jira `/search/jql` returns `fields.updated`), hoist it via `AddFields` (`value: "{{ (record.get('fields') or {}).get('updated') }}"`) — otherwise the cursor never observes values and state never advances, silently re-reading the full window every sync.
 
 NOTE on integer-typed slots: Airbyte declarative CDK accepts BOTH integers AND Jinja-interpolated strings for `OffsetIncrement.page_size`, `CursorPagination.page_size`, and similar slots — `page_size: "{{ config.get('x_page_size', 100) }}"` is valid and recommended for config-driven pagination. (Earlier guidance in this file was wrong; the strict validator's "literal integer" rejection in our YouTrack work was a downstream symptom of a different `$ref` issue, not of templated page_size.)
@@ -389,7 +389,6 @@ model uses the **slug** (hyphenated `name`) — see §3.5 NAMING. (`<snake>` and
 
 ```sql
 -- dbt/<snake>__users_snapshot.sql
--- depends_on: {{ ref('<snake>__bronze_promoted') }}
 {{ config(materialized='incremental', incremental_strategy='append',
           schema='staging', tags=['<slug>']) }}
 {{ snapshot(
@@ -440,9 +439,9 @@ Rules:
   `fields_history` stringifies via `toString()`, so a ClickHouse Bool becomes
   `'true'`/`'false'` — compare with `lower(new_value) = 'true'` in
   `deactivation_condition`.
-- The snapshot reads its source with `FINAL`, so the bronze table MUST already
-  be RMT-promoted (`<snake>__bronze_promoted` + the `-- depends_on` header on
-  the snapshot model).
+- The snapshot reads its source with `FINAL`; bronze tables are
+  ReplacingMergeTree by construction (the destination creates them via
+  append_dedup), so `FINAL` is always well-defined.
 - Add `-- depends_on: {{ ref('<snake>__identity_inputs') }}` to
   `src/ingestion/silver/_shared/identity_inputs.sql` so the first run
   materialises the staging model before the shared union.

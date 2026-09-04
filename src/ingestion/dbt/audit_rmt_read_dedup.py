@@ -34,33 +34,42 @@ USAGE
   python3 audit_rmt_read_dedup.py [path-to-src/ingestion]   # default: ../ from dbt/
 EXIT: non-zero if any gap is found (usable as a CI gate).
 """
-import re, glob, sys, os
 
-ROOT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(__file__), "..")
+import os
+import re
+import sys
+from pathlib import Path
+
+ROOT = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).parent / ".."
 os.chdir(ROOT)
+
 
 def strip(s):
     s = re.sub(r"\{#.*?#\}", " ", s, flags=re.S)
     s = re.sub(r"/\*.*?\*/", " ", s, flags=re.S)
     return re.sub(r"--[^\n]*", " ", s)
 
-# --- promoted bronze tables (RMT) ---
-prom = set()
-for f in glob.glob("connectors/**/*.sql", recursive=True):
-    for m in re.finditer(r"promote_bronze_to_rmt\(\s*table\s*=\s*['\"]([^'\"]+)['\"]", strip(open(f).read())):
-        prom.add(m.group(1))
+
+# Every bronze table is ReplacingMergeTree by construction: the Airbyte
+# destination creates it that way (append_dedup, primary key unique_key),
+# so every source() read of a bronze_* relation needs read-time dedup.
 
 # --- map model name -> is its materialized table RMT? (default yes unless config says otherwise) ---
-ALL = sorted(glob.glob("connectors/**/*.sql", recursive=True) + glob.glob("silver/**/*.sql", recursive=True))
-def model_name(path): return os.path.splitext(os.path.basename(path))[0]
-non_rmt = set()   # models whose engine is NOT replacing, or delete+insert (no read dedup needed)
+ALL = sorted([*Path().glob("connectors/**/*.sql"), *Path().glob("silver/**/*.sql")])
+
+
+def model_name(path):
+    return path.stem
+
+
+non_rmt = set()  # models whose engine is NOT replacing, or delete+insert (no read dedup needed)
 for f in ALL:
-    t = strip(open(f).read())
+    t = strip(f.read_text())
     eng = re.search(r"engine\s*=\s*['\"]([^'\"]+)['\"]", t)
     strat = re.search(r"incremental_strategy\s*=\s*['\"]([^'\"]+)['\"]", t)
-    is_rmt = ('Replacing' in eng.group(1)) if eng else True   # project default = RMT
-    if strat and strat.group(1) == 'delete+insert':
-        is_rmt = False   # physically unique table; readers need no FINAL
+    is_rmt = ("Replacing" in eng.group(1)) if eng else True  # project default = RMT
+    if strat and strat.group(1) == "delete+insert":
+        is_rmt = False  # physically unique table; readers need no FINAL
     if not is_rmt:
         non_rmt.add(model_name(f))
 
@@ -68,61 +77,72 @@ DEDUP = re.compile(r"\bFINAL\b|LIMIT\s+1\s+BY|QUALIFY|ROW_NUMBER\s*\(|argMax\s*\
 TRAIL = re.compile(r"^\s*\}*\s*(AS\s+\w+\s+|\w+\s+)?FINAL\b", re.I)
 read_re = re.compile(r"(ref|source)\(\s*['\"]([^'\"]+)['\"](?:\s*,\s*['\"]([^'\"]+)['\"])?\s*\)")
 
+
 def encl(txt, start):
-    d = 0; i = start; o = -1
+    d = 0
+    i = start
+    o = -1
     while i > 0:
         c = txt[i]
-        if c == ')': d += 1
-        elif c == '(':
-            if d == 0: o = i; break
+        if c == ")":
+            d += 1
+        elif c == "(":
+            if d == 0:
+                o = i
+                break
             d -= 1
         i -= 1
-    if o == -1: return None
-    d = 0; j = o
+    if o == -1:
+        return None
+    d = 0
+    j = o
     while j < len(txt):
-        if txt[j] == '(': d += 1
-        elif txt[j] == ')':
+        if txt[j] == "(":
+            d += 1
+        elif txt[j] == ")":
             d -= 1
-            if d == 0: break
+            if d == 0:
+                break
         j += 1
-    return txt[o:j+1]
+    return txt[o : j + 1]
+
 
 gaps, ok = [], []
 for f in ALL:
-    txt = strip(open(f).read())
+    txt = strip(f.read_text())
     snap = re.search(r"\{\{\s*snapshot\(", txt) is not None
     if snap:
         gaps.append((f, "<source_ref via snapshot() macro>", "snapshot"))
         continue
     for m in read_re.finditer(txt):
         kind = m.group(1)
-        if kind == 'source':
+        if kind == "source":
             target = f"{m.group(2)}.{m.group(3)}"
-            is_rmt = target in prom
+            is_rmt = target.startswith("bronze")
         else:
             target = m.group(2)
-            is_rmt = target not in non_rmt   # every dbt model is RMT unless delete+insert/non-RMT
+            is_rmt = target not in non_rmt  # every dbt model is RMT unless delete+insert/non-RMT
         if not is_rmt:
             continue
         sub = encl(txt, m.start())
-        deduped = bool(DEDUP.search(sub)) if sub is not None else bool(TRAIL.match(txt[m.end():m.end()+40]))
+        deduped = bool(DEDUP.search(sub)) if sub is not None else bool(TRAIL.match(txt[m.end() : m.end() + 40]))
         (ok if deduped else gaps).append((f, target, kind))
 
 # --- classify each model's write strategy (for the gold-view layer check) ---
 # dedup-on-write (delete+insert) or full rebuild (table) => readers need no FINAL.
 # incremental + append + RMT => readers MUST use FINAL.
-strategy = {}   # model name -> 'safe' | 'needs_final'
+strategy = {}  # model name -> 'safe' | 'needs_final'
 for f in ALL:
-    t = strip(open(f).read())
+    t = strip(f.read_text())
     mat = re.search(r"materialized\s*=\s*['\"]([^'\"]+)['\"]", t)
     strat = re.search(r"incremental_strategy\s*=\s*['\"]([^'\"]+)['\"]", t)
     name = model_name(f)
-    if mat and mat.group(1) in ('table', 'view', 'ephemeral'):
-        strategy[name] = 'safe'
-    elif strat and strat.group(1) in ('delete+insert', 'insert_overwrite'):
-        strategy[name] = 'safe'
+    if mat and mat.group(1) in ("table", "view", "ephemeral"):
+        strategy[name] = "safe"
+    elif strat and strat.group(1) in ("delete+insert", "insert_overwrite"):
+        strategy[name] = "safe"
     else:
-        strategy[name] = 'needs_final'   # incremental + append (or default) => RMT, needs FINAL on read
+        strategy[name] = "needs_final"  # incremental + append (or default) => RMT, needs FINAL on read
 
 # --- gold layer: raw CREATE VIEW migrations reading silver/staging by name ---
 # NOTE: migrations are immutable history — a later migration may DROP+recreate a
@@ -131,26 +151,30 @@ for f in ALL:
 # Reads of silver tables are safe now (silver is delete+insert); a real gap here
 # is a gold view reading a `staging.*` (append+RMT) table directly without FINAL.
 gold_gaps = []
-gold_files = sorted(glob.glob("scripts/migrations/*.sql"))
+gold_files = sorted(Path().glob("scripts/migrations/*.sql"))
 goldread = re.compile(r"\b(?:FROM|JOIN)\s+(?:silver|staging|identity|insight)\.([A-Za-z0-9_]+)\b", re.I)
 for f in gold_files:
-    txt = strip(open(f).read())
+    txt = strip(f.read_text())
     for m in goldread.finditer(txt):
         tbl = m.group(1)
-        if strategy.get(tbl) != 'needs_final':
-            continue   # delete+insert/table/view producer, or not a dbt model (e.g. a gold view) => safe
+        if strategy.get(tbl) != "needs_final":
+            continue  # delete+insert/table/view producer, or not a dbt model (e.g. a gold view) => safe
         sub = encl(txt, m.start())
-        deduped = bool(DEDUP.search(sub)) if sub is not None else bool(TRAIL.match(txt[m.end():m.end()+40]))
+        deduped = bool(DEDUP.search(sub)) if sub is not None else bool(TRAIL.match(txt[m.end() : m.end() + 40]))
         if not deduped:
             gold_gaps.append((f, tbl))
 
-def short(p): return p.replace("connectors/", "c/").replace("silver/", "s/").replace("scripts/migrations/", "m/")
-print(f"RMT bronze tables promoted: {len(prom)} | dedup-on-write (delete+insert/table) models: {len(non_rmt)}")
-print(f"\n### GOLD-VIEW GAPS — gold view reads an append+RMT silver/staging table without FINAL ({len(gold_gaps)})")
+
+def short(p):
+    return str(p).replace("connectors/", "c/").replace("silver/", "s/").replace("scripts/migrations/", "m/")
+
+
+print(f"dedup-on-write (delete+insert/table) models: {len(non_rmt)}")  # noqa: T201
+print(f"\n### GOLD-VIEW GAPS — gold view reads an append+RMT silver/staging table without FINAL ({len(gold_gaps)})")  # noqa: T201
 for f, tbl in gold_gaps:
-    print(f"  {short(f):60} {tbl}  (producer is incremental+append → needs FINAL or make it delete+insert)")
-print(f"\n### GAPS — RMT read without read-time dedup ({len(gaps)})")
+    print(f"  {short(f):60} {tbl}  (producer is incremental+append → needs FINAL or make it delete+insert)")  # noqa: T201
+print(f"\n### GAPS — RMT read without read-time dedup ({len(gaps)})")  # noqa: T201
 for f, tgt, k in gaps:
-    print(f"  {short(f):60} <{k}> {tgt}")
-print(f"\n### OK — deduped RMT reads: {len(ok)} (union_by_tag calls dedup internally and are not listed)")
+    print(f"  {short(f):60} <{k}> {tgt}")  # noqa: T201
+print(f"\n### OK — deduped RMT reads: {len(ok)} (union_by_tag calls dedup internally and are not listed)")  # noqa: T201
 sys.exit(1 if (gaps or gold_gaps) else 0)

@@ -797,7 +797,7 @@ reconcile_connections() {
     | python3 "${_RECONCILE_PY_DIR}/select_connections_by_source.py" "${source_id}")"
   if [[ -z "${filtered}" ]]; then
     # Bootstrap path: source exists but has no connection yet (clean cluster
-    # / first run). Create one with discovered schema, append-only sync mode,
+    # / first run). Create one with discovered schema, append_dedup sync mode,
     # manual schedule (Argo CronWorkflow is the sole scheduler — see
     # templates/cron-workflow.yaml.tpl), and reconcile tags. Caller treats
     # this as data-affecting.
@@ -820,9 +820,9 @@ reconcile_connections() {
       return 1
     fi
     if ! sync_catalog="$(printf '%s' "${discover_json}" \
-          | python3 "${_RECONCILE_PY_DIR}/normalize_catalog_to_append.py")"; then
+          | python3 "${_RECONCILE_PY_DIR}/normalize_catalog.py")"; then
       reconcile__log ERROR "${connector_name}" \
-        "normalize_catalog_to_append failed for source ${source_id}"
+        "normalize_catalog failed for source ${source_id}"
       return 1
     fi
     # catalogId → sourceCatalogId: anchor schema-change detection to the
@@ -959,7 +959,7 @@ print("\n".join(sorted(i for i in ids if i)))')"
 # reconcile_refresh_catalog <connector_name> <source_id> <connection_id>
 # Per ADR-0015 / cpt-insightspec-algo-reconcile-refresh-catalog-on-republish:
 # called whenever the definition was republished and a connection already
-# exists. Re-discovers the source schema, normalizes append-only with
+# exists. Re-discovers the source schema, normalizes to append_dedup with
 # every stream and field selected, then POSTs /connections/update to PATCH
 # the sync_catalog in place. State (per-stream cursors) survives the
 # update because Airbyte keys state on (connectionId, streamName), not on
@@ -990,9 +990,9 @@ reconcile_refresh_catalog() {
     return 1
   fi
   if ! sync_catalog="$(printf '%s' "${discover_json}" \
-        | python3 "${_RECONCILE_PY_DIR}/normalize_catalog_to_append.py")"; then
+        | python3 "${_RECONCILE_PY_DIR}/normalize_catalog.py")"; then
     reconcile__log ERROR "${connector_name}" \
-      "normalize_catalog_to_append failed during catalog refresh for source ${source_id}"
+      "normalize_catalog failed during catalog refresh for source ${source_id}"
     return 1
   fi
   # catalogId anchors the connection's sourceCatalogId to the catalog we just

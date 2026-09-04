@@ -1,4 +1,3 @@
--- depends_on: {{ ref('chatgpt_team__bronze_promoted') }}
 -- Bronze → Silver: ChatGPT Team per-user per-day chat usage → class_ai_assistant_usage.
 --
 -- Source: bronze_chatgpt_team.chatgpt_team_chat_activity — daily per-user chat
@@ -70,7 +69,7 @@ SELECT
     toUnixTimestamp64Milli(_airbyte_extracted_at)                   AS _version
 FROM (
     -- Bronze dedup: keep the latest extract per (email, date). Defensive depth —
-    -- becomes a no-op once promote_bronze_to_rmt merges (ADR-0002), but guards
+    -- is a no-op with bronze on ReplacingMergeTree (destination append_dedup), but guards
     -- against duplicate raw rows from multiple sync attempts.
     SELECT *
     FROM {{ source('bronze_chatgpt_team', 'chatgpt_team_chat_activity') }}

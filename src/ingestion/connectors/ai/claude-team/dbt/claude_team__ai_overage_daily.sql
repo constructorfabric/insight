@@ -1,4 +1,3 @@
--- depends_on: {{ ref('claude_team__bronze_promoted') }}
 
 -- Per-seat reading of the month-to-date overage spend, one row per day the
 -- endpoint was read. The sibling claude_team__ai_overage keeps the month's

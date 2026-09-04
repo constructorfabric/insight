@@ -1,4 +1,3 @@
--- depends_on: {{ ref('github__bronze_promoted') }}
 {{ config(
     materialized='view',
     alias='github__task_users',

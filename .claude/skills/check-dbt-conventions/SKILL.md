@@ -1,6 +1,6 @@
 ---
 name: check-dbt-conventions
-description: "Audit dbt models and connector configurations against the data-flow conventions in .cf-studio/config/rules/architecture.md. Verifies engine=ReplacingMergeTree, order_by=['unique_key'], silver delete+insert, read-time dedup of every RMT read (FINAL/QUALIFY/LIMIT 1 BY/union_by_tag), unique_key formula, bronze→RMT promotion, ephemeral usage for Rust-owned tables, and Airbyte append-only sync mode. Reports deviations with file paths and line numbers."
+description: "Audit dbt models and connector configurations against the data-flow conventions in .cf-studio/config/rules/architecture.md. Verifies engine=ReplacingMergeTree, order_by=['unique_key'], silver delete+insert, read-time dedup of every RMT read (FINAL/QUALIFY/LIMIT 1 BY/union_by_tag), unique_key formula, absence of promotion machinery, ephemeral usage for Rust-owned tables, and Airbyte append_dedup sync mode. Reports deviations with file paths and line numbers."
 disable-model-invocation: false
 user-invocable: true
 allowed-tools: Bash, Read, Glob, Grep
@@ -44,7 +44,7 @@ For each file: read the `{{ config(...) }}` block. Report violations with file p
 For every `.sql` file under `src/ingestion/connectors/*/dbt/`:
 
 - If `materialized` is `incremental` or `table` → `engine='ReplacingMergeTree(_version)'` + `order_by=['unique_key']`
-- If `materialized` is `view` → confirm it's a thin pass-through (no GROUP BY / window) AND the bronze upstream has been promoted
+- If `materialized` is `view` → confirm it's a thin pass-through (no GROUP BY / window)
 - If `materialized` is `ephemeral` → confirm it's a pass-through over a Rust-written staging table (currently only `jira__task_field_history.sql`)
 - The SELECT body MUST project a `unique_key` column (either propagated from bronze: `u.unique_key AS unique_key`, or computed: `CAST(concat(...) AS String) AS unique_key`)
 
@@ -67,23 +67,21 @@ For every Python CDK connector at `src/ingestion/connectors/*/source_*/`:
 - Helper must include `tenant_id` and `source_id` as the first two arguments
 - Helper output must contain those two before the natural key parts
 
-Known deviation: claude-admin uses field name `unique` instead of `unique_key` and omits `tenant`/`source` prefix. Tracked as follow-up — flag it but don't double-report.
+### Check 4 — no promotion machinery reappears
 
-### Check 4 — `promote_bronze_to_rmt` calls in bootstrap models
+Bronze tables are ReplacingMergeTree by construction (the destination creates them
+via append_dedup with primary key `unique_key`); the old bronze→RMT promotion is
+retired (#2877). FAIL if any of these reappear:
 
-For every `<connector>__bronze_promoted.sql` under `src/ingestion/connectors/*/dbt/`:
+- a `promote_bronze_to_rmt` macro or any call to it
+- a `<connector>__bronze_promoted.sql` model
+- a `-- depends_on: {{ ref('<connector>__bronze_promoted') }}` line
 
-- Body must call `promote_bronze_to_rmt(table=..., order_by='unique_key')` for each bronze table the connector has (every table in its `sources:` block)
-- All other connector models that read bronze must declare `-- depends_on: {{ ref('<connector>__bronze_promoted') }}`
+### Check 5 — Airbyte sync mode in the catalog builders
 
-**Every connector MUST have a `<connector>__bronze_promoted.sql`** — a missing one is a FAIL.
-Known exceptions: `claude-admin` is a tracked follow-up (its bronze lacks a `unique_key`
-column, so promotion is blocked until the connector emits one — flag, don't double-report).
-
-### Check 5 — Airbyte sync mode in connect.sh
-
-- `src/ingestion/airbyte-toolkit/connect.sh` must have `dest_sync_mode = "append"` literal
-- Must NOT have `append_dedup` or `overwrite` anywhere
+- `src/ingestion/reconcile-connectors/python/normalize_catalog.py` must emit `destinationSyncMode = "append_dedup"` with `primaryKey = [["unique_key"]]` for every stream, and FAIL (non-zero exit) on any stream whose schema lacks a `unique_key` property
+- `src/ingestion/scripts/bootstrap-db/create-connector-tables.sh` must enforce the same contract (snapshot shape = real sync shape; keyless stream = hard error)
+- Must NOT emit `append` or `overwrite` anywhere
 
 ### Check 6 — Ephemeral wrapping for Rust-owned staging
 
@@ -172,15 +170,15 @@ Check 1 — Silver engine + order_by — PASS (34 models, 0 violations)
 Check 2 — Connector staging engine/order_by/unique_key — FAIL (2 violations)
   - src/ingestion/connectors/.../foo.sql:8 — order_by='(...)' should be ['unique_key']
   - src/ingestion/connectors/.../bar.sql:14 — missing unique_key projection in SELECT
-Check 3 — unique_key formula — FAIL (8 violations in claude-admin — tracked)
-Check 4 — promote_bronze_to_rmt bootstrap — PASS (1 connector covered: jira)
-Check 5 — Airbyte append-only — PASS
+Check 3 — unique_key formula — PASS
+Check 4 — no promotion machinery — PASS
+Check 5 — Airbyte append_dedup catalog builders — PASS
 Check 6 — Ephemeral wrapping — PASS
 Check 7 — Incremental-by-default — PASS
 Check 8 — Read-time dedup of RMT reads — FAIL (1 violation)
   - src/ingestion/connectors/.../foo.sql:42 — count()/sum() over source('bronze_*') without FINAL/LIMIT 1 BY
 
-Summary: 6/8 PASS, 2 FAIL (Checks 2, 8 — fixes above), 1 known-tracked (Check 3 — claude-admin)
+Summary: 6/8 PASS, 2 FAIL (Checks 2, 8 — fixes above)
 ```
 
 Refuse to report PASS without having read each spec doc this turn (anti-pattern: stale reasoning). Refuse to invent file paths — only report files actually scanned.

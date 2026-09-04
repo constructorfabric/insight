@@ -1,4 +1,3 @@
--- depends_on: {{ ref('jira__bronze_promoted') }}
 -- @cpt-principle:cpt-dataflow-principle-ephemeral-passthrough:p1
 {{ config(
     materialized='ephemeral',

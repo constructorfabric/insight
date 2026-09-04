@@ -1,4 +1,3 @@
--- depends_on: {{ ref('claude_team__bronze_promoted') }}
 -- Bronze → Silver step 1: Claude Team per-user per-day CC usage → class_ai_dev_usage
 --
 -- Source: bronze_claude_team.claude_team_code_metrics — daily aggregate stream

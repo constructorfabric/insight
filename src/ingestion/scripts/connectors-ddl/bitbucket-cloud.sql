@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.branches
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.branches
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.commit_authors
@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.commit_authors
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.commit_authors
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.commits
@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.commits
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -74,7 +74,7 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.commits
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.deployments
@@ -83,7 +83,7 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.deployments
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -100,7 +100,7 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.deployments
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.file_changes
@@ -109,7 +109,7 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.file_changes
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -130,7 +130,7 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.file_changes
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pipelines
@@ -139,7 +139,7 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pipelines
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -161,7 +161,7 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pipelines
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_request_activity
@@ -170,7 +170,7 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_request_activity
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -194,7 +194,7 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_request_activity
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_request_comments
@@ -203,7 +203,7 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_request_comments
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -226,7 +226,7 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_request_comments
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_request_commits
@@ -235,7 +235,7 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_request_commits
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -257,7 +257,7 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_request_commits
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_request_diffstat
@@ -266,7 +266,7 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_request_diffstat
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -282,7 +282,7 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_request_diffstat
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_requests
@@ -291,7 +291,7 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_requests
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -326,7 +326,7 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_requests
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.repositories
@@ -335,7 +335,7 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.repositories
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -369,7 +369,7 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.repositories
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.workspace_members
@@ -378,7 +378,7 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.workspace_members
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -391,6 +391,6 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.workspace_members
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 

@@ -79,7 +79,13 @@ for line in sys.stdin:
         source_pk = entry.get('source_defined_primary_key', [])
 
         sync_mode = 'incremental' if 'incremental' in supported else 'full_refresh'
-        dest_mode = 'append_dedup' if sync_mode == 'incremental' else 'overwrite'
+        if 'unique_key' not in (schema.get('properties') or {}):
+            # unique_key is the bronze dedup key; a stream without it lands as
+            # an ever-duplicating table. Same contract as normalize_catalog.py.
+            print(f'ERROR: stream {name} has no unique_key schema property — '
+                  'every stream must carry the identity stamp '
+                  '(tenant_id, source_id, unique_key)', file=sys.stderr)
+            sys.exit(1)
 
         stream_entry = {
             'stream': {
@@ -88,7 +94,7 @@ for line in sys.stdin:
                 'supported_sync_modes': supported,
             },
             'sync_mode': sync_mode,
-            'destination_sync_mode': dest_mode,
+            'destination_sync_mode': 'append_dedup',
         }
 
         if source_pk:

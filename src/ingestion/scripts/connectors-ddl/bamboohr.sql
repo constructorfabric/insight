@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS bronze_bamboohr.employees
     `workEmail` Nullable(String),
     `department` Nullable(String),
     `supervisor` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `displayName` Nullable(String),
     `lastChanged` Nullable(String),
     `supervisorEId` Nullable(String),
@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS bronze_bamboohr.employees
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_bamboohr.leave_requests
@@ -57,11 +57,11 @@ CREATE TABLE IF NOT EXISTS bronze_bamboohr.leave_requests
     `source_id` Nullable(String),
     `tenant_id` Nullable(String),
     `employeeId` Nullable(String),
-    `unique_key` Nullable(String)
+    `unique_key` String
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_bamboohr.meta_fields
@@ -78,10 +78,10 @@ CREATE TABLE IF NOT EXISTS bronze_bamboohr.meta_fields
     `source_id` Nullable(String),
     `tenant_id` Nullable(String),
     `deprecated` Nullable(Bool),
-    `unique_key` Nullable(String)
+    `unique_key` String
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 

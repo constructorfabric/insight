@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS bronze_zendesk.support_agents
     `_airbyte_generation_id` UInt32,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `collected_at` Nullable(String),
     `data_source` Nullable(String),
     `agent_id` Nullable(String),
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS bronze_zendesk.support_agents
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_zendesk.support_ticket_events
@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS bronze_zendesk.support_ticket_events
     `_airbyte_generation_id` UInt32,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `collected_at` Nullable(String),
     `data_source` Nullable(String),
     `audit_id` Nullable(String),
@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS bronze_zendesk.support_ticket_events
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_zendesk.support_ticket_ids
@@ -54,14 +54,14 @@ CREATE TABLE IF NOT EXISTS bronze_zendesk.support_ticket_ids
     `_airbyte_generation_id` UInt32,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `collected_at` Nullable(String),
     `data_source` Nullable(String),
     `ticket_id` Nullable(String),
     `updated_at` Nullable(String)
 )
-ENGINE = MergeTree
-ORDER BY _airbyte_raw_id
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
 SETTINGS index_granularity = 8192
 ;
 
@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS bronze_zendesk.support_tickets
     `_airbyte_generation_id` UInt32,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `collected_at` Nullable(String),
     `data_source` Nullable(String),
     `ticket_id` Nullable(String),
@@ -98,7 +98,7 @@ CREATE TABLE IF NOT EXISTS bronze_zendesk.support_tickets
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_zendesk.zendesk_satisfaction_ratings
@@ -109,7 +109,7 @@ CREATE TABLE IF NOT EXISTS bronze_zendesk.zendesk_satisfaction_ratings
     `_airbyte_generation_id` UInt32,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `collected_at` Nullable(String),
     `data_source` Nullable(String),
     `rating_id` Nullable(String),
@@ -125,6 +125,6 @@ CREATE TABLE IF NOT EXISTS bronze_zendesk.zendesk_satisfaction_ratings
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 

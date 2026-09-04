@@ -1,6 +1,6 @@
 # bootstrap-db
 
-Creates all connector bronze tables in ClickHouse without running Airbyte, then promotes them to ReplacingMergeTree and builds the dbt/gold layers. Table schemas come from the connectors themselves (`discover`), so they never drift from what a real sync would create.
+Creates all connector bronze tables in ClickHouse without running Airbyte (the destination creates them as ReplacingMergeTree directly via append_dedup), then builds the dbt/gold layers. Table schemas come from the connectors themselves (`discover`), so they never drift from what a real sync would create.
 
 How it works: for every connector the source image runs `discover` (every connector's stream schemas are static, so fake credentials work), the resulting catalog is fed to the same `destination-clickhouse` connector Airbyte uses with a zero-record input, which creates every stream table empty.
 
@@ -139,7 +139,7 @@ Contributors whose physical table is not owned by dbt are covered too. `jira__ta
 |---|---|
 | `generate-connectors-config.sh [pattern]` | Finds `descriptor.yaml` files, extracts every required config field from the connector spec, writes the config YAML with fake values to stdout. |
 | `seed-connectors.sh <config.yaml>` | Iterates over the config file, resolves `value`/`env` fields into a config JSON, calls `create-connector-tables.sh` per connector. Errors are printed and skipped. |
-| `create-connector-tables.sh <connector-dir> <config.json>` | One connector: `discover` → configured catalog → `destination-clickhouse write` with a zero-record stream-status input (creates empty tables) → `dbt run --select <name>__bronze_promoted` (MergeTree → ReplacingMergeTree). |
+| `create-connector-tables.sh <connector-dir> <config.json>` | One connector: `discover` → configured catalog (append_dedup, primary key `unique_key`) → `destination-clickhouse write` with a zero-record stream-status input (creates empty ReplacingMergeTree tables). |
 | `bootstrap-db.sh <config.yaml>` | Sources `pins.env` and `.env` (if present), runs `seed-connectors.sh`, runs all dbt models, runs `../apply-ch-migrations.sh`. |
 | `run-dbt.sh [dbt args]` | Helper: generates a profiles.yml from the `CLICKHOUSE_*` variables and runs `dbt run` in `src/ingestion/dbt`. |
 | `check-field-parity.py [--manifest PATH]` | Audits every staging contributor against its silver union target (column set, positional order, exact type) plus manifest-vs-warehouse coverage. Same `CLICKHOUSE_*` env contract as the other scripts. Non-zero exit on any finding. |

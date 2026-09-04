@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS bronze_cursor.cursor_audit_logs
     `_airbyte_generation_id` UInt32,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `event_id` Nullable(String),
     `timestamp` Nullable(String),
     `user_email` Nullable(String),
@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS bronze_cursor.cursor_audit_logs
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_cursor.cursor_daily_usage
@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS bronze_cursor.cursor_daily_usage
     `_airbyte_generation_id` UInt32,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `userId` Nullable(String),
     `email` Nullable(String),
     `day` Nullable(String),
@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS bronze_cursor.cursor_daily_usage
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_cursor.cursor_members
@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS bronze_cursor.cursor_members
     `_airbyte_generation_id` UInt32,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `id` Nullable(String),
     `name` Nullable(String),
     `email` Nullable(String),
@@ -79,7 +79,7 @@ CREATE TABLE IF NOT EXISTS bronze_cursor.cursor_members
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_cursor.cursor_usage_events
@@ -90,7 +90,7 @@ CREATE TABLE IF NOT EXISTS bronze_cursor.cursor_usage_events
     `_airbyte_generation_id` UInt32,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `userEmail` Nullable(String),
     `timestamp` Nullable(String),
     `kind` Nullable(String),
@@ -107,7 +107,7 @@ CREATE TABLE IF NOT EXISTS bronze_cursor.cursor_usage_events
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_cursor.cursor_usage_events_daily_resync
@@ -118,7 +118,7 @@ CREATE TABLE IF NOT EXISTS bronze_cursor.cursor_usage_events_daily_resync
     `_airbyte_generation_id` UInt32,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `userEmail` Nullable(String),
     `timestamp` Nullable(String),
     `kind` Nullable(String),
@@ -135,6 +135,6 @@ CREATE TABLE IF NOT EXISTS bronze_cursor.cursor_usage_events_daily_resync
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 

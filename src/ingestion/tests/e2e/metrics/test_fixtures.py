@@ -217,7 +217,7 @@ def test_metric_smoke(
     ch_seeder.seed_bronze(test_yaml.bronze, test_yaml.schemas)
 
     # 3. Build the dbt models the seeded tables feed: staging first (the `+`
-    #    pulls <connector>__bronze_promoted), then the silver class models.
+    #    then the silver class models.
     staging, silver = dbt_runner.derive_selectors(test_yaml.touched_tables)
     tracked_models.build(staging, worker_ctx=worker_ctx, with_ancestors=True)
     # 3b. Connector enrich steps (descriptor.images.enrich), between staging and

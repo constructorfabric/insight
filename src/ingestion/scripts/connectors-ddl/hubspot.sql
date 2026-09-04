@@ -25,14 +25,14 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.companies
     `properties_type` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
     `raw_data` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_hubspot.companies_archived
@@ -60,14 +60,14 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.companies_archived
     `properties_type` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
     `raw_data` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_hubspot.contacts
@@ -95,7 +95,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.contacts
     `properties_state` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
     `raw_data` Nullable(String),
@@ -104,7 +104,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.contacts
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_hubspot.contacts_archived
@@ -132,7 +132,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.contacts_archived
     `properties_state` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
     `raw_data` Nullable(String),
@@ -141,7 +141,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.contacts_archived
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_hubspot.deals
@@ -177,7 +177,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.deals
     `properties_pipeline` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
     `raw_data` Nullable(String),
@@ -186,7 +186,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.deals
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_hubspot.deals_archived
@@ -222,7 +222,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.deals_archived
     `properties_pipeline` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
     `raw_data` Nullable(String),
@@ -231,7 +231,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.deals_archived
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_hubspot.engagements_calls
@@ -255,7 +255,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.engagements_calls
     `properties_hubspot_owner_id` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
     `raw_data` Nullable(String),
@@ -265,7 +265,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.engagements_calls
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_hubspot.engagements_calls_archived
@@ -289,7 +289,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.engagements_calls_archived
     `properties_hubspot_owner_id` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
     `raw_data` Nullable(String),
@@ -299,7 +299,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.engagements_calls_archived
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_hubspot.engagements_emails
@@ -321,7 +321,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.engagements_emails
     `properties_hubspot_owner_id` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
     `raw_data` Nullable(String),
@@ -331,7 +331,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.engagements_emails
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_hubspot.engagements_emails_archived
@@ -353,7 +353,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.engagements_emails_archived
     `properties_hubspot_owner_id` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
     `raw_data` Nullable(String),
@@ -363,7 +363,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.engagements_emails_archived
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_hubspot.engagements_meetings
@@ -389,7 +389,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.engagements_meetings
     `properties_hubspot_owner_id` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
     `raw_data` Nullable(String),
@@ -399,7 +399,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.engagements_meetings
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_hubspot.engagements_tasks
@@ -423,7 +423,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.engagements_tasks
     `properties_hubspot_owner_id` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
     `raw_data` Nullable(String),
@@ -433,7 +433,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.engagements_tasks
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_hubspot.engagements_tasks_archived
@@ -457,7 +457,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.engagements_tasks_archived
     `properties_hubspot_owner_id` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
     `raw_data` Nullable(String),
@@ -467,7 +467,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.engagements_tasks_archived
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_hubspot.leads
@@ -483,7 +483,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.leads
     `archivedAt` Nullable(DateTime64(3)),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
     `raw_data` Nullable(String),
@@ -492,7 +492,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.leads
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_hubspot.leads_archived
@@ -508,7 +508,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.leads_archived
     `archivedAt` Nullable(DateTime64(3)),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
     `raw_data` Nullable(String),
@@ -517,7 +517,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.leads_archived
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_hubspot.owners
@@ -537,14 +537,14 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.owners
     `archivedAt` Nullable(DateTime64(3)),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
     `raw_data` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_hubspot.owners_archived
@@ -564,14 +564,14 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.owners_archived
     `archivedAt` Nullable(DateTime64(3)),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
     `raw_data` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_hubspot.tickets
@@ -587,7 +587,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.tickets
     `archivedAt` Nullable(DateTime64(3)),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
     `raw_data` Nullable(String),
@@ -597,7 +597,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.tickets
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_hubspot.tickets_archived
@@ -613,7 +613,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.tickets_archived
     `archivedAt` Nullable(DateTime64(3)),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
     `raw_data` Nullable(String),
@@ -623,6 +623,6 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.tickets_archived
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 

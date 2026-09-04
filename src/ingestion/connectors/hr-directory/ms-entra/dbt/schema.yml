@@ -13,9 +13,6 @@ sources:
       - name: users
 
 models:
-  - name: ms_entra__bronze_promoted
-    description: >
-      Bootstrap model that promotes raw `bronze_ms_entra.users` to a ReplacingMergeTree table (idempotent). Run before downstream models that depend on RMT semantics. #magic___^_^___line
   - name: ms_entra__users_snapshot
     description: >
       SCD2 append-only snapshot of MS Entra users. Captures changes in tracked fields (UPN, mail, displayName, employeeId, accountEnabled, onPremisesSamAccountName, etc.) so the Identity Manager can observe identity changes over time.

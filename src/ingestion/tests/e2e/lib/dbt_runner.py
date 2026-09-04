@@ -133,7 +133,7 @@ class DbtRunner:
         Returns (staging_models, silver_class_models). A staging model is any model
         whose `source(...)` is one of the seeded bronze tables; the silver targets
         are read off each staging model's `silver:<class>` tag. The caller builds
-        `+<staging>` first (pulls `<connector>__bronze_promoted`), then the silver
+        `+<staging>` first, then the silver
         class models.
         """
         manifest_path = self.target_dir / "manifest.json"

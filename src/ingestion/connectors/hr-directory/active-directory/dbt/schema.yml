@@ -13,9 +13,6 @@ sources:
       - name: users
 
 models:
-  - name: active_directory__bronze_promoted
-    description: >
-      Bootstrap model that promotes raw `bronze_active_directory.users` to a ReplacingMergeTree table (idempotent). Run before downstream models that depend on RMT semantics. #magic___^_^___line
   - name: active_directory__users_snapshot
     description: >
       SCD2 append-only snapshot of Active Directory users. Captures changes in tracked fields (UPN, mail, displayName, employeeId, accountEnabled, sAMAccountName, etc.) so the Identity Manager can observe identity changes over time.

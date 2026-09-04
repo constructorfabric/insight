@@ -7971,7 +7971,7 @@ streams:
   # as a real (tiny: key + updated per issue) bronze_jira.jira_issue_keys
   # table. It therefore carries the standard identity stamp
   # (tenant_id/source_id/unique_key) and is promoted to RMT in
-  # dbt/jira__bronze_promoted.sql like every other jira bronze table.
+  # the destination (append_dedup) like every other jira bronze table.
   - type: DeclarativeStream
     name: jira_issue_keys
     primary_key:
