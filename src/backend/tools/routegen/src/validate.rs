@@ -7,7 +7,7 @@ use std::fmt;
 
 use url::Url;
 
-use crate::schema::{RouteConfig, SUPPORTED_VERSION};
+use crate::schema::{Authentication, RouteConfig, SUPPORTED_VERSION};
 
 /// All validation violations found in one pass, reported together so an operator
 /// fixes a `routes.yaml` in one edit rather than one error at a time.
@@ -74,10 +74,14 @@ pub fn validate(config: &RouteConfig) -> Result<(), ValidationErrors> {
             errors.push(format!("duplicate route prefix '{p}'"));
         }
 
-        if !p.starts_with("/api/") {
-            errors.push(format!(
-                "route prefix '{p}' must start with '/api/' (operator routes live only under /api/)"
-            ));
+        match route.auth {
+            Authentication::Session if !p.starts_with("/api/") => errors.push(format!(
+                "session-authenticated route prefix '{p}' must start with '/api/'"
+            )),
+            Authentication::Bearer if p != "/mcp" => errors.push(format!(
+                "bearer-authenticated route prefix '{p}' must be exactly '/mcp'"
+            )),
+            Authentication::Session | Authentication::Bearer => {}
         }
 
         match parse_upstream(&route.upstream) {

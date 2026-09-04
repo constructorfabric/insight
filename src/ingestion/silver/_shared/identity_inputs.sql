@@ -10,6 +10,7 @@
 -- depends_on: {{ ref('github_directory__identity_inputs') }}
 -- depends_on: {{ ref('github__identity_inputs') }}
 -- depends_on: {{ ref('bitbucket_cloud__identity_inputs') }}
+-- depends_on: {{ ref('gitlab__identity_inputs') }}
 -- @cpt-principle:cpt-dataflow-principle-rmt-with-version:p1
 {{ config(
     materialized='incremental',
@@ -23,7 +24,24 @@
 ) }}
 
 
-SELECT * FROM (
+-- Named, not `SELECT *`: the union inside is POSITIONAL and takes its column
+-- names from whichever contributor lands first, so a producer that adds or
+-- reorders a column would silently re-point this relation's columns at other
+-- producers' values. Selecting by name here makes that a build failure instead.
+-- check-field-parity.py audits the contributors against this shape.
+SELECT
+    unique_key,
+    insight_tenant_id,
+    insight_source_id,
+    insight_source_type,
+    source_account_id,
+    value_type,
+    value,
+    value_field_name,
+    operation_type,
+    _synced_at,
+    _version
+FROM (
     {{ union_by_tag('silver:identity_inputs') }}
 )
 {% if is_incremental() %}

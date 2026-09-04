@@ -39,6 +39,14 @@ pub struct Defaults {
 /// sets one.
 pub const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Authentication {
+    #[default]
+    Session,
+    Bearer,
+}
+
 impl Default for Defaults {
     fn default() -> Self {
         Self {
@@ -56,12 +64,14 @@ fn default_timeout_ms() -> u64 {
     DEFAULT_TIMEOUT_MS
 }
 
-/// A single operator-defined route under `/api/`.
+/// A single operator-defined edge route.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Route {
     pub prefix: String,
     pub upstream: String,
+    #[serde(default)]
+    pub auth: Authentication,
     #[serde(default)]
     pub timeout_ms: Option<u64>,
     #[serde(default)]
@@ -75,6 +85,7 @@ pub struct Route {
 pub struct ResolvedRoute {
     pub prefix: String,
     pub upstream: String,
+    pub auth: Authentication,
     pub timeout_ms: u64,
     pub strip_prefix: bool,
     pub websocket: bool,
@@ -87,6 +98,7 @@ impl Route {
         ResolvedRoute {
             prefix: self.prefix.clone(),
             upstream: self.upstream.clone(),
+            auth: self.auth,
             timeout_ms: self.timeout_ms.unwrap_or(defaults.timeout_ms),
             strip_prefix: self.strip_prefix.unwrap_or(defaults.strip_prefix),
             websocket: self.websocket.unwrap_or(defaults.websocket),

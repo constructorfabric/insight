@@ -2,5 +2,5 @@ apiVersion: v2
 name: insight-gateway
 description: Insight gateway — OpenResty edge (routing, cookie-to-JWT exchange, header hygiene, HSTS)
 version: 0.1.0
-appVersion: "2026.09.03.12.06-c4114de"
+appVersion: "2026.09.04.03.52-352fd72"
 type: application

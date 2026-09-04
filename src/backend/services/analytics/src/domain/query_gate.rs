@@ -7,7 +7,9 @@
 //! statement. Defense in depth: the `presentation_ro` grants (#1963) are the
 //! real boundary, except for the databases named in [`ADMIN_ONLY_DATABASES`].
 
-use sqlparser::ast::Statement;
+use std::ops::ControlFlow;
+
+use sqlparser::ast::{Query, Statement, Visit as _, Visitor};
 use sqlparser::dialect::ClickHouseDialect;
 use sqlparser::keywords::Keyword;
 use sqlparser::parser::Parser;
@@ -87,6 +89,62 @@ pub fn validate_single_select(sql: &str) -> Result<(), String> {
             _ => Err("query must be a single SELECT or WITH statement".to_owned()),
         },
         _ => Err("only one statement is allowed on the query path".to_owned()),
+    }
+}
+
+/// Gate SQL submitted through the MCP explorer.
+pub fn validate_mcp_sql(sql: &str) -> Result<(), String> {
+    let statements = parse_read_statements(sql)?;
+
+    let query = match statements.as_slice() {
+        [] => return Err("query is empty".to_owned()),
+        [Statement::Query(query)] => query,
+        [_] => return Err("query must be a single SELECT or WITH statement".to_owned()),
+        _ => return Err("only one statement is allowed on the query path".to_owned()),
+    };
+
+    match query_output_control(query) {
+        Some(QueryOutputControl::Settings) => {
+            return Err("query-level SETTINGS are not allowed".to_owned());
+        }
+        Some(QueryOutputControl::Format) => {
+            return Err("query-level FORMAT is not allowed".to_owned());
+        }
+        None => {}
+    }
+    if let Some(name) = first_denied_table_function(sql) {
+        return Err(format!("table function `{name}` is not allowed"));
+    }
+
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy)]
+enum QueryOutputControl {
+    Settings,
+    Format,
+}
+
+struct QueryOutputControlVisitor;
+
+impl Visitor for QueryOutputControlVisitor {
+    type Break = QueryOutputControl;
+
+    fn pre_visit_query(&mut self, query: &Query) -> ControlFlow<Self::Break> {
+        if query.settings.is_some() {
+            return ControlFlow::Break(QueryOutputControl::Settings);
+        }
+        if query.format_clause.is_some() {
+            return ControlFlow::Break(QueryOutputControl::Format);
+        }
+        ControlFlow::Continue(())
+    }
+}
+
+fn query_output_control(query: &Query) -> Option<QueryOutputControl> {
+    match query.visit(&mut QueryOutputControlVisitor) {
+        ControlFlow::Break(control) => Some(control),
+        ControlFlow::Continue(()) => None,
     }
 }
 
@@ -275,7 +333,55 @@ fn first_denied_table_function(sql: &str) -> Option<String> {
 mod tests {
     use super::admin_only_database as admin_only;
     use super::validate_custom_observation_sql as custom;
+    use super::validate_mcp_sql as mcp;
     use super::validate_single_select as check;
+
+    #[test]
+    fn mcp_gate_rejects_query_output_controls() {
+        assert_eq!(
+            mcp("SELECT * FROM system.one SETTINGS max_threads = 1"),
+            Err("query-level SETTINGS are not allowed".to_owned())
+        );
+        assert_eq!(
+            mcp("SELECT * FROM system.one FORMAT JSON"),
+            Err("query-level FORMAT is not allowed".to_owned())
+        );
+    }
+
+    #[test]
+    fn mcp_gate_rejects_settings_in_nested_queries() {
+        for sql in [
+            "WITH rows AS (SELECT id FROM silver.events SETTINGS max_threads = 1) SELECT * FROM rows",
+            "SELECT * FROM (SELECT id FROM silver.events SETTINGS max_threads = 1)",
+        ] {
+            assert_eq!(
+                mcp(sql),
+                Err("query-level SETTINGS are not allowed".to_owned()),
+                "should reject: {sql}"
+            );
+        }
+    }
+
+    #[test]
+    fn mcp_gate_rejects_external_functions_and_non_queries() {
+        assert_eq!(
+            mcp("SELECT * FROM file('/etc/passwd', CSV)"),
+            Err("table function `file` is not allowed".to_owned())
+        );
+        assert!(mcp("DROP TABLE silver.events").is_err());
+        assert!(mcp("SELECT 1; SELECT 2").is_err());
+    }
+
+    #[test]
+    fn mcp_gate_accepts_nested_read_queries() {
+        for sql in [
+            "SELECT name FROM system.tables LIMIT 5",
+            "WITH rows AS (SELECT id FROM silver.events) SELECT * FROM rows",
+            "SELECT * FROM (SELECT 1 AS value)",
+        ] {
+            assert!(mcp(sql).is_ok(), "should accept: {sql}");
+        }
+    }
 
     #[test]
     fn a_read_of_the_usage_event_store_is_admin_only() {

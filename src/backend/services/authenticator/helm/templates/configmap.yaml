@@ -141,6 +141,9 @@ data:
       authenticator:
         config:
           signing_keys_path: {{ .Values.signingKeysPath | quote }}
+          mcp_oauth:
+            enabled: {{ .Values.global.mcp.enabled }}
+            public_url: {{ if .Values.global.mcp.enabled }}{{ required "global.mcp.publicUrl is required when MCP is enabled" .Values.global.mcp.publicUrl | quote }}{{ else }}""{{ end }}
           # Audit events to the platform Redpanda topic (PRD nfr-auth-audit).
           audit:
             brokers: {{ .Values.audit.brokers | quote }}

@@ -33,6 +33,7 @@ mod issuers;
 mod janitor;
 mod jwt;
 mod local_client;
+mod mcp_oauth;
 mod oidc;
 mod ratelimit;
 mod refresher;

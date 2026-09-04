@@ -1,0 +1,144 @@
+spec_version: 1
+description: >
+  Metrics: git.prs_created and git.prs_merged — GitLab merge requests attribute
+  through the author's account, not only through an address, #3142
+  (#3067, #3068).
+  How it's computed (bronze → silver → gold):
+    • bronze: merge requests naming their author's numeric account id, and the
+      user records that may or may not carry an address for it
+    • silver: one class row per merge request, carrying both the author's
+      address and the author's account id
+    • gold:   the account binding resolves the author first; the address map
+      decides only when no account id exists
+
+  GitLab returns a user's address only to a token with admin scope, so an
+  installation without one has merge requests whose author has no address
+  anywhere — and a squash-merged request whose commits were never collected has
+  no address to borrow either. Before the account key existed those requests
+  counted for nobody.
+
+  Both metrics are here because ONE test decides them: every pull-request
+  measure is emitted from the same gold row, which survives on an address or an
+  account id and is dropped whole when it has neither. A request that reaches
+  nobody is therefore missing from its author's created count and merged count
+  alike, and the two are asserted together so a later change cannot restore one
+  and quietly leave the other behind.
+
+  Cases: a merged request whose author has no address and no collected commits
+  still counts, through the account binding alone; a request carrying SOMEBODY
+  ELSE'S commit still counts for the request's author and not for the person who
+  wrote the commit; the created count follows the same binding, in the window the
+  requests were opened in; and a request from an account nothing has bound counts
+  for nobody, so the binding is what carries it and not some other path.
+
+identity_accounts:
+  - {source_type: gitlab, source_id: gitlab-test, account_id: "700", person: bob@example.com}
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+
+  bronze_gitlab.projects:
+    - {$ref: templates/gitlab_git.yaml#/templates/project, unique_key: gl-proj-101}
+
+  bronze_gitlab.users:
+    # Neither address is set — the state an installation without an admin token
+    # is in. The name is all an operator would have to recognise the account by.
+    - {$ref: templates/gitlab_git.yaml#/templates/user, unique_key: gl-user-bob, id: 700, username: bob-gl, name: Bob Beta}
+    - {$ref: templates/gitlab_git.yaml#/templates/user, unique_key: gl-user-carol, id: 701, username: carol-gl, name: Carol Gamma}
+
+  bronze_gitlab.merge_requests:
+    # Squash-merged, source branch gone: no merge-request commits were ever
+    # collected, so no commit address can stand in for the missing profile one.
+    - {$ref: templates/gitlab_git.yaml#/templates/merge_request, unique_key: gl-mr-201, iid: 201, id: 90201, author_id: 700, author_username: bob-gl, created_at: "2026-09-20T08:00:00Z", merged_at: "2026-10-01T09:00:00Z", merge_commit_sha: gl-squash-201}
+    # Bob's request, dave's commit. The address the request can borrow names
+    # dave, and the account it carries names bob — only one of them opened it.
+    - {$ref: templates/gitlab_git.yaml#/templates/merge_request, unique_key: gl-mr-202, iid: 202, id: 90202, author_id: 700, author_username: bob-gl, created_at: "2026-09-20T08:00:00Z", merged_at: "2026-10-01T11:00:00Z", merge_commit_sha: gl-merge-202}
+    # Same shape as 201, but account 701 is bound to nobody.
+    - {$ref: templates/gitlab_git.yaml#/templates/merge_request, unique_key: gl-mr-301, iid: 301, id: 90301, author_id: 701, author_username: carol-gl, created_at: "2026-09-20T08:00:00Z", merged_at: "2026-10-01T10:00:00Z", merge_commit_sha: gl-squash-301}
+
+  bronze_gitlab.merge_request_commits:
+    # The link that makes dave's address reachable from bob's request.
+    - {$ref: templates/gitlab_git.yaml#/templates/merge_request_commit, unique_key: gl-mc-202, mr_iid: 202, id: gl-commit-dave, author_name: Dave Delta, author_email: dave@example.com}
+
+  bronze_gitlab.commits:
+    - {$ref: templates/gitlab_git.yaml#/templates/commit, unique_key: gl-commit-dave, id: gl-commit-dave, short_id: gl-commi, author_name: Dave Delta, author_email: dave@example.com, committer_name: Dave Delta, committer_email: dave@example.com, stats_additions: 5, stats_total: 5}
+
+cases:
+  - name: A merge request with no author address counts through the account binding
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [bob@example.com, carol@example.com, dave@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.prs_merged
+            views:
+              - {view: period}
+              - {view: breakdown, dimensions: [source]}
+    expect:
+      - assert: "status == 200"
+      # Both of bob's requests. Account 700 is bound to him and that binding is
+      # the only thing naming him on 201 — the user record carries no address and
+      # the request no commits. On 202 the binding has to WIN against dave's
+      # commit address rather than merely fill a gap.
+      - metric: git.prs_merged
+        view: period
+        find: {entity_id: bob@example.com}
+        equal: {value: 2}
+      - metric: git.prs_merged
+        view: breakdown
+        find: {entity_id: bob@example.com, dimensions: {key: source, value: gitlab}}
+        equal: {value: 2}
+      # Dave wrote the commit request 202 carries and opened nothing, so the
+      # merge is not his. An address borrowed from a commit must never move a
+      # request off the person who opened it.
+      - metric: git.prs_merged
+        view: period
+        find: {entity_id: dave@example.com}
+        equal: {value: null}
+      # Account 701 is bound to nobody, so its merge request reaches nobody —
+      # which is what makes the assertions above about the binding.
+      - metric: git.prs_merged
+        view: period
+        find: {entity_id: carol@example.com}
+        equal: {value: null}
+
+  - name: The created count follows the same binding, in the window they were opened in
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [bob@example.com, carol@example.com, dave@example.com]}
+        period: {from: "2026-09-20", to: "2026-09-21"}
+        metrics:
+          - metric_key: git.prs_created
+            views:
+              - {view: period}
+              - {view: breakdown, dimensions: [source]}
+    expect:
+      - assert: "status == 200"
+      # Every pull-request measure rides the same gold row, so a request that
+      # reaches nobody is missing from the created count exactly as it is from
+      # the merged one. Both of bob's requests were opened on the 20th.
+      - metric: git.prs_created
+        view: period
+        find: {entity_id: bob@example.com}
+        equal: {value: 2}
+      - metric: git.prs_created
+        view: breakdown
+        find: {entity_id: bob@example.com, dimensions: {key: source, value: gitlab}}
+        equal: {value: 2}
+      # Dave opened nothing; writing a commit that a request carries does not
+      # make him its author here any more than it does for the merge.
+      - metric: git.prs_created
+        view: period
+        find: {entity_id: dave@example.com}
+        equal: {value: null}
+      - metric: git.prs_created
+        view: period
+        find: {entity_id: carol@example.com}
+        equal: {value: null}

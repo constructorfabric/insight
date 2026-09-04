@@ -52,6 +52,22 @@ pub struct GatewayClaims {
     pub jti: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpAccessClaims {
+    pub sub: String,
+    pub tenant_id: String,
+    #[serde(with = "space_delimited")]
+    pub roles: Vec<String>,
+    pub sub_type: String,
+    pub sid: String,
+    pub iss: String,
+    pub aud: String,
+    pub scope: String,
+    pub iat: u64,
+    pub exp: u64,
+    pub jti: String,
+}
+
 /// One loaded signing key: its `kid`, the signer, the public JWK, and a matching
 /// verifier (used by the JWKS-verify path and tests).
 struct LoadedKey {
@@ -175,6 +191,16 @@ impl KeyStore {
         let mut header = Header::new(Algorithm::ES256);
         header.kid = Some(self.current.kid.clone());
         encode(&header, claims, &self.current.encoding).context("sign gateway JWT")
+    }
+
+    pub fn sign_mcp_access_token(&self, claims: &McpAccessClaims) -> anyhow::Result<String> {
+        anyhow::ensure!(
+            !claims.tenant_id.trim().is_empty(),
+            "refusing to sign an MCP access token with an empty tenant_id"
+        );
+        let mut header = Header::new(Algorithm::ES256);
+        header.kid = Some(self.current.kid.clone());
+        encode(&header, claims, &self.current.encoding).context("sign MCP access token")
     }
 
     /// Build a store directly from a PKCS#8 PEM (tests only).

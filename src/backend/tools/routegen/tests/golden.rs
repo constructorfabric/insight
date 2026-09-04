@@ -108,11 +108,44 @@ fn stub_status_is_loopback_only() {
 }
 
 #[test]
-fn jwks_is_not_fronted_by_the_gateway() {
-    // JWKS is public and served directly by the authenticator (the key issuer),
-    // never proxied through the edge.
+fn mcp_oauth_metadata_and_jwks_are_fronted_by_the_gateway() {
     let conf = generate(&fixture("full.routes.yaml"), &Settings::default()).unwrap();
-    assert!(!conf.contains("jwks"), "gateway must not front JWKS");
+    assert!(conf.contains("location = /.well-known/oauth-authorization-server"));
+    assert!(conf.contains("location = /.well-known/oauth-protected-resource/mcp"));
+    assert!(conf.contains("location = /.well-known/jwks.json"));
+    assert!(!conf.contains("location = /.well-known/openid-configuration"));
+}
+
+#[test]
+fn configured_mcp_origin_reaches_bearer_challenges() {
+    let conf = generate(
+        &fixture("full.routes.yaml"),
+        &Settings {
+            mcp_public_url: Some("https://insight.example.com".to_owned()),
+            ..Settings::default()
+        },
+    )
+    .unwrap();
+    assert!(conf.contains(
+        "mcp_resource_metadata_url = \"https://insight.example.com/.well-known/oauth-protected-resource/mcp\""
+    ));
+}
+
+#[test]
+fn rejects_mcp_public_url_with_a_path() {
+    let result = generate(
+        &fixture("full.routes.yaml"),
+        &Settings {
+            mcp_public_url: Some("https://insight.example.com/base".to_owned()),
+            ..Settings::default()
+        },
+    );
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("MCP public URL must be an HTTP(S) origin")
+    );
 }
 
 fn reject(yaml: &str) -> String {

@@ -1,5 +1,10 @@
 replicaCount: 1
 
+global:
+  mcp:
+    enabled: false
+    publicUrl: ""
+
 podAnnotations: {}
 
 image:

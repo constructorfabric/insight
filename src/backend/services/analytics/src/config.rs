@@ -7,10 +7,28 @@
 //! `APP__gears__analytics__config__<field>` (the prefix changed from the
 //! old `ANALYTICS__*`).
 
+use std::path::PathBuf;
+
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
+use secrecy::SecretString;
 use serde::Deserialize;
-use std::path::PathBuf;
+
+const REDACTED_SECRET: &str = "<redacted>";
+
+pub(crate) fn redacted_yaml(config: &toolkit::bootstrap::AppConfig) -> anyhow::Result<String> {
+    let mut redacted = config.clone();
+    if let Some(password) = redacted
+        .gears
+        .get_mut("analytics")
+        .and_then(|gear| gear.get_mut("config"))
+        .and_then(|config| config.get_mut("mcp"))
+        .and_then(|mcp| mcp.get_mut("clickhouse_password"))
+    {
+        *password = serde_json::Value::String(REDACTED_SECRET.to_owned());
+    }
+    redacted.to_yaml()
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -35,6 +53,32 @@ pub enum VisibilityPolicy {
     #[default]
     OrgChart,
     Flat,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct McpConfig {
+    pub enabled: bool,
+    pub bind_addr: String,
+    pub public_url: String,
+    pub allow_insecure_private_network: bool,
+    pub max_concurrent_queries: usize,
+    pub clickhouse_user: String,
+    pub clickhouse_password: SecretString,
+}
+
+impl Default for McpConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            bind_addr: "0.0.0.0:8086".to_owned(),
+            public_url: String::new(),
+            allow_insecure_private_network: false,
+            max_concurrent_queries: 16,
+            clickhouse_user: "insight_mcp".to_owned(),
+            clickhouse_password: SecretString::from(String::new()),
+        }
+    }
 }
 
 /// Configuration consumed by the analytics gear. Deserialized from
@@ -88,6 +132,8 @@ pub struct GearConfig {
     /// Synchronous report generation configuration.
     pub reports: ReportsConfig,
 
+    pub mcp: McpConfig,
+
     pub external_sources: Vec<ExternalSourceConfig>,
 }
 
@@ -107,6 +153,7 @@ impl Default for GearConfig {
             usage: UsageConfig::default(),
             ai_assist: AiAssistConfig::default(),
             reports: ReportsConfig::default(),
+            mcp: McpConfig::default(),
             external_sources: Vec::new(),
         }
     }
@@ -285,6 +332,26 @@ fn default_clickhouse_database() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn printed_config_redacts_mcp_clickhouse_password() -> anyhow::Result<()> {
+        let password = "mcp-password-that-must-not-print";
+        let mut config = toolkit::bootstrap::AppConfig::default();
+        config.gears.insert(
+            "analytics".to_owned(),
+            serde_json::json!({
+                "config": {
+                    "mcp": { "clickhouse_password": password }
+                }
+            }),
+        );
+
+        let printed = redacted_yaml(&config)?;
+
+        assert!(printed.contains(REDACTED_SECRET));
+        assert!(!printed.contains(password));
+        Ok(())
+    }
 
     #[test]
     fn ai_assist_defaults_to_disabled() -> anyhow::Result<()> {

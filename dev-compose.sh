@@ -642,6 +642,17 @@ YML
   fi
   local kc_base="http://${kc_ip:-localhost}:${KEYCLOAK_PORT:-8085}/kc"
 
+  if [[ "${MCP_ENABLED:-false}" == "true" ]]; then
+    : "${CLICKHOUSE_MCP_PASSWORD:?CLICKHOUSE_MCP_PASSWORD must be set when MCP_ENABLED=true}"
+    if [[ -z "${MCP_PUBLIC_URL:-}" && -z "$kc_ip" ]]; then
+      echo "ERROR: no host IP detected — MCP_PUBLIC_URL cannot be derived." >&2
+      echo "       Pin MCP_PUBLIC_URL in $env_file and re-run." >&2
+      return 1
+    fi
+    export MCP_PUBLIC_URL="${MCP_PUBLIC_URL:-http://${kc_ip}:${GATEWAY_PORT:-8080}}"
+    echo "MCP endpoint → ${MCP_PUBLIC_URL}/mcp"
+  fi
+
   echo "=== Generating Keycloak realm import (deploy/compose/keycloak/realm-insight.generated.json) ==="
   # The generator's own --authenticator-redirect REPLACES its defaults rather
   # than appending, so whenever we pass any URI we must re-state the two
@@ -902,6 +913,19 @@ report_service_urls() {
   printf '  %-18s %s\n' "Analytics API"   "http://$h:${ANALYTICS_PORT:-8081}"
   printf '  %-18s %s\n' "Identity API"    "http://$h:${IDENTITY_RESOLUTION_PORT:-8086}"
   printf '  %-18s %s\n' "Authenticator"   "http://$h:${AUTHENTICATOR_PORT:-8083}"
+  if [[ "${MCP_ENABLED:-false}" == "true" ]]; then
+    local mcp_url="${MCP_PUBLIC_URL:-}"
+    if [[ -z "$mcp_url" ]]; then
+      local mcp_ip
+      mcp_ip="$(detect_host_ip || true)"
+      [[ -n "$mcp_ip" ]] && mcp_url="http://${mcp_ip}:${GATEWAY_PORT:-8080}"
+    fi
+    if [[ -n "$mcp_url" ]]; then
+      printf '  %-18s %s\n' "MCP SQL explorer" "${mcp_url}/mcp"
+    else
+      printf '  %-18s %s\n' "MCP SQL explorer" "unavailable: set MCP_PUBLIC_URL"
+    fi
+  fi
   printf '  %-18s %s\n' "Keycloak" \
     "http://$h:${KEYCLOAK_PORT:-8085}/kc/admin/  (admin console: admin/admin)"  # RULE-DEFAULTS-OK: display-only port default, mirrors the pre-existing per-service *_PORT lines above
   if [[ "${CLICKHOUSE_EXTERNAL:-false}" != "true" ]]; then

@@ -67,6 +67,13 @@ SQL
 echo "=== Provisioning presentation access (role + grant-less user) (#1963/#1964) ==="
 bash "$SCRIPT_DIR/bootstrap-db/provision-presentation-access.sh"
 
+if [[ "${MCP_ENABLED:-false}" == "true" ]]; then
+  echo "=== Provisioning MCP SQL explorer access ==="
+  bash "$SCRIPT_DIR/bootstrap-db/provision-mcp-access.sh"
+else
+  echo "=== MCP SQL explorer disabled; skipping access provisioning ==="
+fi
+
 echo "=== Provisioning grafana access (SELECT-only role + grant-less user) (#2888) ==="
 bash "$SCRIPT_DIR/bootstrap-db/provision-grafana-access.sh"
 
