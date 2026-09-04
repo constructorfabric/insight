@@ -118,8 +118,8 @@ pub enum ScalarDto {
     Text(String),
 }
 
-// The derive cannot annotate a newtype variant's field, and `serde_json::Number`
-// has no schema of its own; the contract is simply "one JSON scalar".
+// WORKAROUND: the derive cannot annotate a newtype variant's field, and
+// `serde_json::Number` carries no schema of its own.
 impl utoipa::PartialSchema for ScalarDto {
     fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
         utoipa::openapi::schema::OneOfBuilder::new()
