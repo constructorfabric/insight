@@ -255,7 +255,9 @@ file_changes_source AS (
                 lower(raw_file_change.change_type) = 'added', 'Added',
                 lower(raw_file_change.change_type) = 'modified', 'Modified',
                 lower(raw_file_change.change_type) = 'renamed', 'Renamed',
-                lower(raw_file_change.change_type) = 'deleted', 'Deleted',
+                lower(raw_file_change.change_type) IN ('deleted', 'removed'), 'Deleted',
+                lower(raw_file_change.change_type) = 'copied', 'Copied',
+                lower(raw_file_change.change_type) = 'type_changed', 'Type changed',
                 raw_file_change.change_type
             ) AS change_type_label,
             sum(lines_added) AS lines_added,
