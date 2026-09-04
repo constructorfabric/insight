@@ -59,14 +59,27 @@ name: claude-team
 #   give something to rebuild from. The daily trajectory begins here — readings
 #   already overwritten cannot be recovered, so months before this version keep
 #   their single closing figure.
-# 3.3.0: claude_team_code_metrics_org declares total_users, the day's headcount
-#   the response envelope already carries and the stream already fetched and
-#   threw away. Without it nothing downstream can tell a day stored short from a
-#   quiet one, which is what #3172 needs to become detectable. MINOR per
-#   ADR-0015 — additive Bronze field, no dbt output change, nothing
+# 3.3.0: closes #3172. claude_team_code_metrics pages an offset window over
+#   sort_by=total_lines_accepted, which is not a total order — everyone with no
+#   accepted lines ties on it — so a person could sit past the page boundary in
+#   one request and before it in the next, returned by neither, while both
+#   requests succeeded. Three changes together:
+#   claude_team_code_metrics_org declares total_users, the day's headcount the
+#   envelope already carried and the stream already fetched and threw away, and
+#   its unique_key gains the read so each read keeps its own reference —
+#   total_users is only true as of the read that returned it, and a day still in
+#   progress reports fewer people than it ends with, so a gate judging an older
+#   read against the newest reference would reject sound reads. The per-user
+#   page rises to 200, which keeps a roster that fits inside it to a single
+#   answer no window can shift under; that is a mitigation, not the fix.
+#   The fix is the completeness gate in claude_team__ai_dev_usage: a read whose
+#   distinct people do not equal its own total_users never becomes the day's
+#   state in staging or silver.
+#   MINOR per ADR-0015 — additive Bronze field, no dbt output change, nothing
 #   re-materializes; the reconciler adds the snapshot column, so no ALTER ships
-#   with it. Days written before this version carry a NULL headcount and are
-#   simply not checkable, which is what they honestly are.
+#   with it. Reads written before this version carry no reference and stay
+#   admitted as legacy, which is what they honestly are; every read after the
+#   first reference lands must carry one or it is rejected.
 version: "3.3.0"
 # Daily at 23:50 UTC, as late in the day as the boundary allows. The seat
 # endpoint reports the billing month in progress and carries no history, so a

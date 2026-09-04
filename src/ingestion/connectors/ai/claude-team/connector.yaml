@@ -362,11 +362,16 @@ streams:
         extractor:
           type: DpathExtractor
           field_path: [users]
+      # An offset window is only exact over a total order, and sort_by names a
+      # measure everyone with no accepted lines ties on. A roster that fits in
+      # one page is one answer and cannot shift under the window; past the page
+      # the loss is real, which is what the staging completeness gate is for.
+      # 200 is a mitigation, not the fix — see #3172.
       paginator:
         type: DefaultPaginator
         pagination_strategy:
           type: OffsetIncrement
-          page_size: 100
+          page_size: 200
         page_token_option:
           type: RequestOption
           field_name: offset
@@ -534,7 +539,14 @@ streams:
             value: "{{ config['insight_source_id'] }}"
           - type: AddedFieldDefinition
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_interval.start_time }}"
+            # The read is in the key, so each read of a day keeps its own
+            # envelope instead of overwriting the last. total_users is only
+            # true as of the read that returned it — a day still in progress
+            # legitimately reports fewer people than it ends with — so the
+            # completeness gate needs the reference belonging to the read it
+            # is judging, not the day's newest one. Same move as
+            # claude_team_overage_spend in 3.2.0.
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_interval.start_time }}-{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
           - type: AddedFieldDefinition
             path: [collected_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
