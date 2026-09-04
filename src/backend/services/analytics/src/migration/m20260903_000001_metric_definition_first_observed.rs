@@ -5,9 +5,11 @@
 //! covering both never-seen and retained-no-longer, which the probe cannot
 //! tell apart and neither can a reader.
 //!
-//! Paired with `last_observed_date`, it separates a day no reading exists for
-//! from a day measured as empty. Unlike that column it is not monotonic: it
-//! follows the relation forward as retention drops the oldest rows.
+//! It is what separates a day no reading exists for from a day measured as
+//! empty. Not the counterpart of `last_observed_date`: that column is a
+//! monotonic high-water mark of the newest day ever seen and is never cleared,
+//! while this one follows the relation forward as retention drops the oldest
+//! rows.
 
 use sea_orm_migration::prelude::*;
 
