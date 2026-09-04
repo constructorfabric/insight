@@ -11,7 +11,7 @@ repeated sync of the same snapshot changes nothing.
 from __future__ import annotations
 
 import pytest
-from insight_datapath.metric_expect import one
+from insight_datapath.metric_expect import approx, one
 from insight_datapath.spec_runner import SpecRun
 
 pytestmark = pytest.mark.fixture
@@ -62,26 +62,26 @@ def test_ai_seat_extra_usage(spec: SpecRun) -> None:
         target_value=2.5, p25=1, median=1.5, p75=2, min=0.5, max=2.5, n=5
     )
     cost = one(r.series("ai.extra_usage_cost"), entity_id=ERIN)["points"]
-    assert float(one(cost, bucket_start="2026-12-01")["value"]) == 2.5
+    assert float(one(cost, bucket_start="2026-12-01")["value"]) == approx(2.5)
     by_tier = one(
         r.breakdown("ai.extra_usage_cost"),
         entity_id=ERIN,
         dimensions={"key": "seat_tier", "value": "team_tier_1"},
     )
-    assert float(by_tier["value"]) == 2.5
+    assert float(by_tier["value"]) == approx(2.5)
 
     r.row("ai.extra_usage_utilisation", "period", entity_id=ERIN).equals(value=25.0)
     r.row("ai.extra_usage_utilisation", "peer", entity_id=ERIN).equals(
         target_value=25.0, p25=10.0, median=15.0, p75=20.0, min=5.0, max=25.0, n=5
     )
     utilisation = one(r.series("ai.extra_usage_utilisation"), entity_id=ERIN)["points"]
-    assert float(one(utilisation, bucket_start="2026-12-01")["value"]) == 25.0
+    assert float(one(utilisation, bucket_start="2026-12-01")["value"]) == approx(25.0)
     by_tier = one(
         r.breakdown("ai.extra_usage_utilisation"),
         entity_id=ERIN,
         dimensions={"key": "seat_tier", "value": "team_tier_1"},
     )
-    assert float(by_tier["value"]) == 25.0
+    assert float(by_tier["value"]) == approx(25.0)
 
 
 def test_ai_seat_with_no_ceiling(spec: SpecRun) -> None:

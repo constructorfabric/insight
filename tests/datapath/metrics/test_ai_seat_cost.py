@@ -11,7 +11,7 @@ to, is served as null rather than a share of the invoice total.
 from __future__ import annotations
 
 import pytest
-from insight_datapath.metric_expect import one
+from insight_datapath.metric_expect import approx, one
 from insight_datapath.spec_runner import SpecRun
 
 pytestmark = pytest.mark.fixture
@@ -55,13 +55,13 @@ def test_ai_seat_cost_on_the_standard_tier(spec: SpecRun) -> None:
         target_value=12.0, p25=12.0, median=12.0, p75=25.0, min=12.0, max=25.0, n=5
     )
     points = one(r.series("ai.seat_cost"), entity_id=ALICE)["points"]
-    assert float(one(points, bucket_start="2026-12-01")["value"]) == 12.0
+    assert float(one(points, bucket_start="2026-12-01")["value"]) == approx(12.0)
     by_tier = one(
         r.breakdown("ai.seat_cost"),
         entity_id=ALICE,
         dimensions={"key": "seat_tier", "value": "team_standard"},
     )
-    assert float(by_tier["value"]) == 12.0
+    assert float(by_tier["value"]) == approx(12.0)
 
 
 def test_ai_seat_cost_on_the_premium_tier(spec: SpecRun) -> None:

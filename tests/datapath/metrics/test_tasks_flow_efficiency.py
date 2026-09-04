@@ -10,7 +10,7 @@ being the department distribution with max as the plain cohort max. Every issue 
 from __future__ import annotations
 
 import pytest
-from insight_datapath.metric_expect import one
+from insight_datapath.metric_expect import approx, one
 from insight_datapath.spec_runner import SpecRun
 
 pytestmark = pytest.mark.fixture
@@ -50,7 +50,7 @@ def test_tasks_flow_efficiency(spec: SpecRun) -> None:
         target_value=100, p25=40, median=60, p75=80, min=20, max=100, n=5
     )
     points = one(r.series("tasks.flow_efficiency"), entity_id=ERIN)["points"]
-    assert float(one(points, bucket_start="2026-03-25")["value"]) == 100.0
+    assert float(one(points, bucket_start="2026-03-25")["value"]) == approx(100.0)
 
 
 def test_tasks_flow_efficiency_empty_window(spec: SpecRun) -> None:

@@ -9,7 +9,7 @@ both counts per person over the window; the peer view is the department distribu
 from __future__ import annotations
 
 import pytest
-from insight_datapath.metric_expect import one
+from insight_datapath.metric_expect import approx, one
 from insight_datapath.spec_runner import SpecRun
 
 pytestmark = pytest.mark.fixture
@@ -57,14 +57,14 @@ def test_wiki_edit_sessions_and_pages_edited(spec: SpecRun) -> None:
         target_value=5, p25=2, median=3, p75=4, min=1, max=5, n=5
     )
     edits = one(r.series("wiki.edits"), entity_id=ERIN)["points"]
-    assert float(one(edits, bucket_start="2026-05-06")["value"]) == 5.0
+    assert float(one(edits, bucket_start="2026-05-06")["value"]) == approx(5.0)
 
     r.row("wiki.pages_edited", "period", entity_id=ERIN).equals(value=1)
     r.row("wiki.pages_edited", "peer", entity_id=ERIN).equals(
         target_value=1, p25=1, median=1, p75=1, min=1, max=1, n=5
     )
     pages = one(r.series("wiki.pages_edited"), entity_id=ERIN)["points"]
-    assert float(one(pages, bucket_start="2026-05-06")["value"]) == 1.0
+    assert float(one(pages, bucket_start="2026-05-06")["value"]) == approx(1.0)
 
 
 def test_unified_wiki_edits_empty_window(spec: SpecRun) -> None:

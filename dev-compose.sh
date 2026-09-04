@@ -2261,7 +2261,27 @@ cmd_test_stand() {
         echo "       Bring the stand up first: ./dev-compose.sh test-stand up" >&2
         return 1; }
 
+      local datapath=0 other=0 tree
+      for tree in "${trees[@]}"; do
+        case "$tree" in
+          tests/datapath|tests/datapath/*) datapath=1 ;;
+          *) other=1 ;;
+        esac
+      done
+      if (( datapath && other )); then
+        echo "ERROR: tests/datapath cannot share a run with another tree." >&2
+        echo "       Its dbt dependency conflicts with the default group. Run it alone:" >&2
+        echo "         ./dev-compose.sh test-stand test --tree=tests/datapath" >&2
+        return 2
+      fi
+
       if [[ -n "$image" ]]; then
+        if (( datapath )); then
+          echo "ERROR: tests/datapath cannot run from a runner image." >&2
+          echo "       The image installs the default dependency group and skips the sync" >&2
+          echo "       that would replace it. Run it host-side instead." >&2
+          return 2
+        fi
         test_stand_test_in_image "$image" "$gw_port" "$@"
         return $?
       fi
@@ -2286,10 +2306,13 @@ cmd_test_stand() {
       # run over any other tree would die on an unrecognised argument. Each of
       # the three sits below an explicit flag in the suite's own precedence, so
       # --base-url / --stand-manifest still win.
+      local uv_args=(--project tests --frozen)
+      (( datapath )) && uv_args+=(--group datapath --no-group dev)
+
       INSIGHT_STAND_ENV_FILE="$TEST_STAND_ENV_FILE" \
       INSIGHT_STAND_MANIFEST="$TEST_STAND_MANIFEST_FILE" \
       INSIGHT_STAND_REALM_EXPORT="$TEST_STAND_REALM_FILE" \
-      uv run --project tests --frozen pytest "${trees[@]}" "$@"
+      uv run "${uv_args[@]}" pytest "${trees[@]}" "$@"
       ;;
 
     down)

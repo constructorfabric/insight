@@ -12,7 +12,7 @@ peer view its quartiles, and every window sum equals what ai.extra_usage_cost re
 from __future__ import annotations
 
 import pytest
-from insight_datapath.metric_expect import one
+from insight_datapath.metric_expect import approx, one
 from insight_datapath.spec_runner import SpecRun
 
 pytestmark = pytest.mark.fixture
@@ -57,15 +57,15 @@ def test_ai_daily_extra_usage_across_the_served_views(spec: SpecRun) -> None:
         target_value=3.0, p25=4.0, median=5.0, p75=7.0, min=3.0, max=9.0, n=5
     )
     daily = one(r.series("ai.daily_approximate_extra_usage_cost"), entity_id=ALICE)["points"]
-    assert float(one(daily, bucket_start="2026-12-05")["value"]) == 1.0
-    assert float(one(daily, bucket_start="2026-12-06")["value"]) == 2.0
-    assert float(one(daily, bucket_start="2026-12-07")["value"]) == 0.0
+    assert float(one(daily, bucket_start="2026-12-05")["value"]) == approx(1.0)
+    assert float(one(daily, bucket_start="2026-12-06")["value"]) == approx(2.0)
+    assert float(one(daily, bucket_start="2026-12-07")["value"]) == approx(0.0)
     by_tool = one(
         r.breakdown("ai.daily_approximate_extra_usage_cost"),
         entity_id=ALICE,
         dimensions={"key": "tool", "value": "claude"},
     )
-    assert float(by_tool["value"]) == 3.0
+    assert float(by_tool["value"]) == approx(3.0)
 
 
 def test_ai_daily_extra_usage_never_reports_a_negative_day(spec: SpecRun) -> None:
@@ -92,8 +92,8 @@ def test_ai_daily_extra_usage_never_reports_a_negative_day(spec: SpecRun) -> Non
     r.row("ai.daily_approximate_extra_usage_cost", "period", entity_id=ERIN).equals(value=4.0)
     series = r.series("ai.daily_approximate_extra_usage_cost")
     daily = one(series, entity_id=ERIN)["points"]
-    assert float(one(daily, bucket_start="2026-12-05")["value"]) == 4.0
-    assert float(one(daily, bucket_start="2026-12-06")["value"]) == 0.0
+    assert float(one(daily, bucket_start="2026-12-05")["value"]) == approx(4.0)
+    assert float(one(daily, bucket_start="2026-12-06")["value"]) == approx(0.0)
     for entry in series:
         spent = [float(point["value"]) for point in entry["points"] if point["value"] is not None]
         assert all(day >= 0.0 for day in spent), (
@@ -126,8 +126,8 @@ def test_ai_daily_extra_usage_holds_a_month_against_its_last_day_reading(spec: S
     r.row("ai.daily_approximate_extra_usage_cost", "period", entity_id=ALICE).equals(value=6.0)
     r.row("ai.extra_usage_cost", "period", entity_id=ALICE).equals(value=6.0)
     daily = one(r.series("ai.daily_approximate_extra_usage_cost"), entity_id=ALICE)["points"]
-    assert float(one(daily, bucket_start="2026-09-29")["value"]) == 6.0
-    assert float(one(daily, bucket_start="2026-09-30")["value"]) == 0.0
+    assert float(one(daily, bucket_start="2026-09-29")["value"]) == approx(6.0)
+    assert float(one(daily, bucket_start="2026-09-30")["value"]) == approx(0.0)
 
 
 def test_ai_daily_extra_usage_keeps_an_overstated_first_reading_erased(spec: SpecRun) -> None:
@@ -155,8 +155,8 @@ def test_ai_daily_extra_usage_keeps_an_overstated_first_reading_erased(spec: Spe
     r.row("ai.daily_approximate_extra_usage_cost", "period", entity_id=BOB).equals(value=3.0)
     r.row("ai.extra_usage_cost", "period", entity_id=BOB).equals(value=3.0)
     daily = one(r.series("ai.daily_approximate_extra_usage_cost"), entity_id=BOB)["points"]
-    assert float(one(daily, bucket_start="2026-10-01")["value"]) == 1.0
-    assert float(one(daily, bucket_start="2026-10-31")["value"]) == 2.0
+    assert float(one(daily, bucket_start="2026-10-01")["value"]) == approx(1.0)
+    assert float(one(daily, bucket_start="2026-10-31")["value"]) == approx(2.0)
 
 
 def test_ai_daily_extra_usage_sums_to_the_monthly_figure(spec: SpecRun) -> None:
@@ -182,18 +182,18 @@ def test_ai_daily_extra_usage_sums_to_the_monthly_figure(spec: SpecRun) -> None:
     assert r.status == 200
 
     daily = r.rows("ai.daily_approximate_extra_usage_cost", "period")
-    assert float(one(daily, entity_id=ALICE)["value"]) == 3.0
-    assert float(one(daily, entity_id=BOB)["value"]) == 5.0
-    assert float(one(daily, entity_id=CAROL)["value"]) == 7.0
-    assert float(one(daily, entity_id=DAVE)["value"]) == 9.0
-    assert float(one(daily, entity_id=ERIN)["value"]) == 4.0
+    assert float(one(daily, entity_id=ALICE)["value"]) == approx(3.0)
+    assert float(one(daily, entity_id=BOB)["value"]) == approx(5.0)
+    assert float(one(daily, entity_id=CAROL)["value"]) == approx(7.0)
+    assert float(one(daily, entity_id=DAVE)["value"]) == approx(9.0)
+    assert float(one(daily, entity_id=ERIN)["value"]) == approx(4.0)
 
     monthly = r.rows("ai.extra_usage_cost", "period")
-    assert float(one(monthly, entity_id=ALICE)["value"]) == 3.0
-    assert float(one(monthly, entity_id=BOB)["value"]) == 5.0
-    assert float(one(monthly, entity_id=CAROL)["value"]) == 7.0
-    assert float(one(monthly, entity_id=DAVE)["value"]) == 9.0
-    assert float(one(monthly, entity_id=ERIN)["value"]) == 4.0
+    assert float(one(monthly, entity_id=ALICE)["value"]) == approx(3.0)
+    assert float(one(monthly, entity_id=BOB)["value"]) == approx(5.0)
+    assert float(one(monthly, entity_id=CAROL)["value"]) == approx(7.0)
+    assert float(one(monthly, entity_id=DAVE)["value"]) == approx(9.0)
+    assert float(one(monthly, entity_id=ERIN)["value"]) == approx(4.0)
 
 
 def test_ai_daily_extra_usage_empty_window(spec: SpecRun) -> None:

@@ -10,7 +10,7 @@ covered by seats still counts, and an active day with no priced event reads null
 from __future__ import annotations
 
 import pytest
-from insight_datapath.metric_expect import one
+from insight_datapath.metric_expect import approx, one
 from insight_datapath.spec_runner import SpecRun
 
 pytestmark = pytest.mark.fixture
@@ -49,11 +49,11 @@ def test_ai_usage_cost_from_cursor_events(spec: SpecRun) -> None:
 
     r.row("ai.cost", "period", entity_id=ALICE).equals(value=10.5)
     points = one(r.series("ai.cost"), entity_id=ALICE)["points"]
-    assert float(one(points, bucket_start="2026-01-05")["value"]) == 10.5
+    assert float(one(points, bucket_start="2026-01-05")["value"]) == approx(10.5)
     by_tool = one(
         r.breakdown("ai.cost"), entity_id=ALICE, dimensions={"key": "tool", "value": "cursor"}
     )
-    assert float(by_tool["value"]) == 10.5
+    assert float(by_tool["value"]) == approx(10.5)
 
 
 def test_ai_usage_cost_rounds_the_daily_sum_once(spec: SpecRun) -> None:
@@ -100,11 +100,11 @@ def test_ai_usage_cost_across_tools(spec: SpecRun) -> None:
     cursor = one(
         r.breakdown("ai.cost"), entity_id=BOB, dimensions={"key": "tool", "value": "cursor"}
     )
-    assert float(cursor["value"]) == 2.0
+    assert float(cursor["value"]) == approx(2.0)
     claude_code = one(
         r.breakdown("ai.cost"), entity_id=BOB, dimensions={"key": "tool", "value": "claude_code"}
     )
-    assert float(claude_code["value"]) == 0.03
+    assert float(claude_code["value"]) == approx(0.03)
 
 
 def test_ai_usage_cost_on_an_active_day_without_priced_events(spec: SpecRun) -> None:

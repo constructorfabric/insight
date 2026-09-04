@@ -10,7 +10,7 @@ null.
 from __future__ import annotations
 
 import pytest
-from insight_datapath.metric_expect import one
+from insight_datapath.metric_expect import approx, one
 from insight_datapath.spec_runner import SpecRun
 
 pytestmark = pytest.mark.fixture
@@ -49,7 +49,7 @@ def test_wiki_pages_created(spec: SpecRun) -> None:
         target_value=5, p25=2, median=3, p75=4, min=1, max=5, n=5
     )
     points = one(r.series("wiki.pages_created"), entity_id=ERIN)["points"]
-    assert float(one(points, bucket_start="2026-02-04")["value"]) == 5.0
+    assert float(one(points, bucket_start="2026-02-04")["value"]) == approx(5.0)
 
 
 def test_wiki_pages_created_empty_window(spec: SpecRun) -> None:

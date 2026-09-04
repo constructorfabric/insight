@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 VIEW_ITEMS: dict[str, str] = {
     "period": "values",
     "peer": "values",
@@ -39,6 +41,10 @@ class ExpectError(AssertionError):
     """A selection or an expectation over the response did not hold."""
 
 
+REL_TOL = 1e-9
+ABS_TOL = 1e-6
+
+
 def values_equal(got: Any, expected: Any) -> bool:
     numeric = (int, float)
     if (
@@ -47,8 +53,17 @@ def values_equal(got: Any, expected: Any) -> bool:
         and not isinstance(got, bool)
         and not isinstance(expected, bool)
     ):
-        return math.isclose(got, expected, rel_tol=1e-9, abs_tol=1e-6)
+        return math.isclose(got, expected, rel_tol=REL_TOL, abs_tol=ABS_TOL)
     return bool(got == expected)
+
+
+def approx(expected: float) -> Any:
+    """A served number, compared the way this module compares one.
+
+    For an assertion written against a served field directly rather than through
+    `Row.equals`, so a ratio the warehouse computed is not held to exact equality.
+    """
+    return pytest.approx(expected, rel=REL_TOL, abs=ABS_TOL)
 
 
 def matches(value: Any, selector: Any) -> bool:

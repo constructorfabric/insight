@@ -17,6 +17,7 @@ from __future__ import annotations
 from insight_datapath import clickhouse
 from insight_datapath.ch_seeder import CHSeeder
 from insight_datapath.dbt_runner import DbtRunner
+from insight_datapath.reset import clear
 
 BRONZE_SCHEMA = "bronze_claude_team"
 BRONZE_TABLE = "claude_team_overage_spend"
@@ -68,17 +69,19 @@ def _sync(ch_seeder: CHSeeder, dbt_runner: DbtRunner, row: SeatSnapshot) -> None
 def test_a_month_survives_the_next_month_snapshot(
     ch_seeder: CHSeeder, dbt_runner: DbtRunner
 ) -> None:
-    ch_seeder.truncate_touched()
+    clear(ch_seeder.cfg, ch_seeder.ledger.drain())
+
     # Truncate up front, not only via the ledger: silver is incremental on
     # `_version > max(_version)`, so a row left by an earlier session with a
     # later read time would filter November's insert out and the first sync
     # would land nothing.
-    for schema, table in (
+    touched = (
         (BRONZE_SCHEMA, BRONZE_TABLE),
         ("staging", "claude_team__ai_overage"),
         ("silver", "class_ai_overage"),
-    ):
-        ch_seeder.truncate_table(schema, table)
+    )
+    clear(ch_seeder.cfg, touched)
+    for schema, table in touched:
         ch_seeder.ledger.record(schema, table)
 
     _sync(ch_seeder, dbt_runner, _snapshot("2026-11-15T00:00:00Z", 500))

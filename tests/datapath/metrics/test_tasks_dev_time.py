@@ -11,7 +11,7 @@ cohort P95 and equals the max on a five-point ladder. One Jira instance means a 
 from __future__ import annotations
 
 import pytest
-from insight_datapath.metric_expect import one, some
+from insight_datapath.metric_expect import approx, one, some
 from insight_datapath.spec_runner import SpecRun
 
 pytestmark = pytest.mark.fixture
@@ -53,12 +53,12 @@ def test_tasks_dev_time(spec: SpecRun) -> None:
         target_value=5, p25=2, median=3, p75=4, min=1, max=5, n=5
     )
     points = one(r.series("tasks.dev_time"), entity_id=ERIN)["points"]
-    assert float(one(points, bucket_start="2026-03-25")["value"]) == 5.0
+    assert float(one(points, bucket_start="2026-03-25")["value"]) == approx(5.0)
     assert len(one(r.histogram("tasks.dev_time"), entity_id=ERIN)["bins"]) > 0
     by_source = one(
         r.breakdown("tasks.dev_time"), entity_id=ERIN, dimensions={"key": "source", "value": "jira"}
     )
-    assert float(by_source["value"]) == 5.0
+    assert float(by_source["value"]) == approx(5.0)
     assert len(some(r.breakdown("tasks.dev_time"), entity_id=ERIN)) == 1
 
 
@@ -85,7 +85,7 @@ def test_tasks_dev_time_by_issue_type(spec: SpecRun) -> None:
     by_type = one(
         r.breakdown("tasks.dev_time"), entity_id=ERIN, dimensions={"key": "type", "value": "Task"}
     )
-    assert float(by_type["value"]) == 5.0
+    assert float(by_type["value"]) == approx(5.0)
     assert len(some(r.breakdown("tasks.dev_time"), entity_id=ERIN)) == 1
 
 

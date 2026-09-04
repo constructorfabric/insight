@@ -10,7 +10,7 @@ vendor billed on top of the seat fee: a subset served side by side, never added.
 from __future__ import annotations
 
 import pytest
-from insight_datapath.metric_expect import one
+from insight_datapath.metric_expect import approx, one
 from insight_datapath.spec_runner import SpecRun
 
 pytestmark = pytest.mark.fixture
@@ -51,12 +51,12 @@ def test_ai_cost(spec: SpecRun) -> None:
         target_value=3, p25=1.2, median=1.8, p75=2.4, min=0.6, max=3, n=5
     )
     cost = one(r.series("ai.cost"), entity_id=ERIN)["points"]
-    assert float(one(cost, bucket_start="2026-11-15")["value"]) == 2.0
-    assert float(one(cost, bucket_start="2026-12-10")["value"]) == 1.0
+    assert float(one(cost, bucket_start="2026-11-15")["value"]) == approx(2.0)
+    assert float(one(cost, bucket_start="2026-12-10")["value"]) == approx(1.0)
     by_tool = one(
         r.breakdown("ai.cost"), entity_id=ERIN, dimensions={"key": "tool", "value": "claude_code"}
     )
-    assert float(by_tool["value"]) == 3.0
+    assert float(by_tool["value"]) == approx(3.0)
 
 
 def test_ai_cost_empty_window(spec: SpecRun) -> None:

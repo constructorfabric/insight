@@ -10,7 +10,7 @@ but not this one, and the gap is the retry tax.
 from __future__ import annotations
 
 import pytest
-from insight_datapath.metric_expect import one, some
+from insight_datapath.metric_expect import approx, one, some
 from insight_datapath.spec_runner import SpecRun
 
 pytestmark = pytest.mark.fixture
@@ -52,4 +52,4 @@ def test_a_retried_success_is_green_but_not_first_try_green(spec: SpecRun) -> No
         r.breakdown("ci.gate_first_try_pass_rate"),
         dimensions={"key": "repository", "value": "acme/app"},
     )
-    assert float(by_repository["value"]) == 50.0
+    assert float(by_repository["value"]) == approx(50.0)

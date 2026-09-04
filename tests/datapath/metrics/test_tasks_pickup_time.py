@@ -10,7 +10,7 @@ the department spreads {1,2,3,4,5}; a window with no issues serves null.
 from __future__ import annotations
 
 import pytest
-from insight_datapath.metric_expect import one, some
+from insight_datapath.metric_expect import approx, one, some
 from insight_datapath.spec_runner import SpecRun
 
 pytestmark = pytest.mark.fixture
@@ -58,7 +58,7 @@ def test_tasks_pickup_time(spec: SpecRun) -> None:
         entity_id=ERIN,
         dimensions={"key": "source", "value": "jira"},
     )
-    assert float(by_source["value"]) == 5.0
+    assert float(by_source["value"]) == approx(5.0)
     assert len(some(r.breakdown("tasks.pickup_time"), entity_id=ERIN)) == 1
 
 
@@ -87,7 +87,7 @@ def test_tasks_pickup_time_by_issue_type(spec: SpecRun) -> None:
         entity_id=ERIN,
         dimensions={"key": "type", "value": "Task"},
     )
-    assert float(by_type["value"]) == 5.0
+    assert float(by_type["value"]) == approx(5.0)
     assert len(some(r.breakdown("tasks.pickup_time"), entity_id=ERIN)) == 1
 
 

@@ -10,7 +10,7 @@ neither side, and visible as a third group in the type breakdown.
 from __future__ import annotations
 
 import pytest
-from insight_datapath.metric_expect import one, some
+from insight_datapath.metric_expect import approx, one, some
 from insight_datapath.spec_runner import SpecRun
 
 pytestmark = pytest.mark.fixture
@@ -57,4 +57,4 @@ def test_bug_split_across_mapped_and_unmapped_types(spec: SpecRun) -> None:
     by_type = r.breakdown("tasks.closed")
     assert len(some(by_type, entity_id=CAROL)) == 3
     incident = one(by_type, entity_id=CAROL, dimensions={"key": "type", "value": "Incident"})
-    assert float(incident["value"]) == 1.0
+    assert float(incident["value"]) == approx(1.0)

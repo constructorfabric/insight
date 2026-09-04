@@ -10,7 +10,7 @@ stays its own group. An empty window serves null.
 from __future__ import annotations
 
 import pytest
-from insight_datapath.metric_expect import one, some
+from insight_datapath.metric_expect import approx, one, some
 from insight_datapath.spec_runner import SpecRun
 
 pytestmark = pytest.mark.fixture
@@ -53,7 +53,7 @@ def test_tasks_closed(spec: SpecRun) -> None:
         target_value=5, p25=2, median=3, p75=4, min=1, max=5, n=5
     )
     closed = one(r.series("tasks.closed"), entity_id=ERIN)["points"]
-    assert float(one(closed, bucket_start="2026-12-25")["value"]) == 5.0
+    assert float(one(closed, bucket_start="2026-12-25")["value"]) == approx(5.0)
     by_type = r.breakdown("tasks.closed")
     assert (
         float(one(by_type, entity_id=ERIN, dimensions={"key": "type", "value": "Task"})["value"])

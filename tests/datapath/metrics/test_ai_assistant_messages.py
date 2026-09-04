@@ -9,7 +9,7 @@ Alice's row is re-synced once and must not double.
 from __future__ import annotations
 
 import pytest
-from insight_datapath.metric_expect import one, some
+from insight_datapath.metric_expect import approx, one, some
 from insight_datapath.spec_runner import SpecRun
 
 pytestmark = pytest.mark.fixture
@@ -49,7 +49,7 @@ def test_ai_assistant_messages(spec: SpecRun) -> None:
         target_value=40, p25=None, median=None, p75=None, min=None, max=None, n=3
     )
     points = one(r.series("ai.assistant_messages"), entity_id=ALICE)["points"]
-    assert float(one(points, bucket_start="2026-01-05")["value"]) == 40.0
+    assert float(one(points, bucket_start="2026-01-05")["value"]) == approx(40.0)
 
     by_tool = one(
         r.breakdown("ai.assistant_messages"),
@@ -58,4 +58,4 @@ def test_ai_assistant_messages(spec: SpecRun) -> None:
     )
     assert len(by_tool["dimensions"]) == 2
     assert some(by_tool["dimensions"], key="surface", value="chat")
-    assert float(by_tool["value"]) == 40.0
+    assert float(by_tool["value"]) == approx(40.0)

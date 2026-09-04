@@ -10,7 +10,7 @@ Teams days, so the department spreads {1,2,3,4,5} and erin's count is 5.
 from __future__ import annotations
 
 import pytest
-from insight_datapath.metric_expect import one, some
+from insight_datapath.metric_expect import approx, one, some
 from insight_datapath.spec_runner import SpecRun
 
 pytestmark = pytest.mark.fixture
@@ -54,7 +54,7 @@ def test_collab_meeting_free_days(spec: SpecRun) -> None:
     points = one(r.series("collab.meeting_free_days"), entity_id=ERIN)["points"]
     assert len(some(points, value=1.0)) == 5
     for day in ERIN_MEETING_FREE_DAYS:
-        assert float(one(points, bucket_start=day)["value"]) == 1.0, (
+        assert float(one(points, bucket_start=day)["value"]) == approx(1.0), (
             f"should be meeting-free: {day}"
         )
 

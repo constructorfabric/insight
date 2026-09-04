@@ -10,7 +10,7 @@ the peer view is the department distribution, and an empty window serves null.
 from __future__ import annotations
 
 import pytest
-from insight_datapath.metric_expect import one
+from insight_datapath.metric_expect import approx, one
 from insight_datapath.spec_runner import SpecRun
 
 pytestmark = pytest.mark.fixture
@@ -50,7 +50,7 @@ def test_tasks_estimation_accuracy(spec: SpecRun) -> None:
         target_value=100, p25=70, median=80, p75=90, min=60, max=100, n=5
     )
     points = one(r.series("tasks.estimation_accuracy"), entity_id=ERIN)["points"]
-    assert float(one(points, bucket_start="2026-12-25")["value"]) == 100.0
+    assert float(one(points, bucket_start="2026-12-25")["value"]) == approx(100.0)
 
 
 def test_tasks_estimation_accuracy_empty_window(spec: SpecRun) -> None:

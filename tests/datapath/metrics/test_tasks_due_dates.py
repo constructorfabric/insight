@@ -11,7 +11,7 @@ serves null.
 from __future__ import annotations
 
 import pytest
-from insight_datapath.metric_expect import one
+from insight_datapath.metric_expect import approx, one
 from insight_datapath.spec_runner import SpecRun
 
 pytestmark = pytest.mark.fixture
@@ -68,21 +68,21 @@ def test_unified_task_due_date_metrics(spec: SpecRun) -> None:
         target_value=75, p25=None, median=None, p75=None, min=None, max=None, n=4
     )
     compliance = one(r.series("tasks.due_date_compliance"), entity_id=ERIN)["points"]
-    assert float(one(compliance, bucket_start=CLOSE_DAY)["value"]) == 75.0
+    assert float(one(compliance, bucket_start=CLOSE_DAY)["value"]) == approx(75.0)
 
     r.row("tasks.on_time_delivery", "period", entity_id=ERIN).equals(value=75)
     r.row("tasks.on_time_delivery", "peer", entity_id=ERIN).equals(
         target_value=75, p25=None, median=None, p75=None, min=None, max=None, n=4
     )
     on_time = one(r.series("tasks.on_time_delivery"), entity_id=ERIN)["points"]
-    assert float(one(on_time, bucket_start=CLOSE_DAY)["value"]) == 75.0
+    assert float(one(on_time, bucket_start=CLOSE_DAY)["value"]) == approx(75.0)
 
     r.row("tasks.avg_slip", "period", entity_id=ERIN).equals(value=5)
     r.row("tasks.avg_slip", "peer", entity_id=ERIN).equals(
         target_value=5, p25=5, median=5, p75=5, min=5, max=5, n=5
     )
     slip = one(r.series("tasks.avg_slip"), entity_id=ERIN)["points"]
-    assert float(one(slip, bucket_start=CLOSE_DAY)["value"]) == 5.0
+    assert float(one(slip, bucket_start=CLOSE_DAY)["value"]) == approx(5.0)
 
 
 def test_unified_task_due_date_metrics_empty_window(spec: SpecRun) -> None:

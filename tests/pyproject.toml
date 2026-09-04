@@ -89,6 +89,9 @@ dev = [
 ]
 
 [tool.uv]
+# Do not resolve a version published in the last week: a freshly pushed release is
+# where a compromised maintainer account shows up first.
+exclude-newer = "7 days"
 conflicts = [[{ group = "datapath" }, { group = "dev" }]]
 
 # The library lives under lib/; the suite under stand/ is collected by pytest

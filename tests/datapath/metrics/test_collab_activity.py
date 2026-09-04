@@ -10,7 +10,7 @@ single-email days, so the department spreads {1,2,3,4,5}; the peer view is that 
 from __future__ import annotations
 
 import pytest
-from insight_datapath.metric_expect import one
+from insight_datapath.metric_expect import approx, one
 from insight_datapath.spec_runner import SpecRun
 
 pytestmark = pytest.mark.fixture
@@ -59,20 +59,20 @@ def test_unified_collaboration_activity(spec: SpecRun) -> None:
         target_value=5, p25=2, median=3, p75=4, min=1, max=5, n=5
     )
     active_days = one(r.series("collab.active_days"), entity_id=ERIN)["points"]
-    assert float(one(active_days, bucket_start="2026-12-23")["value"]) == 1.0
+    assert float(one(active_days, bucket_start="2026-12-23")["value"]) == approx(1.0)
     by_tool = one(
         r.breakdown("collab.active_days"),
         entity_id=ERIN,
         dimensions={"key": "tool", "value": "m365"},
     )
-    assert float(by_tool["value"]) == 5.0
+    assert float(by_tool["value"]) == approx(5.0)
 
     r.row("collab.breadth", "period", entity_id=ERIN).equals(value=1)
     r.row("collab.breadth", "peer", entity_id=ERIN).equals(
         target_value=1, p25=1, median=1, p75=1, min=1, max=1, n=5
     )
     breadth = one(r.series("collab.breadth"), entity_id=ERIN)["points"]
-    assert float(one(breadth, bucket_start="2026-12-23")["value"]) == 1.0
+    assert float(one(breadth, bucket_start="2026-12-23")["value"]) == approx(1.0)
 
 
 def test_unified_collaboration_activity_empty_window(spec: SpecRun) -> None:

@@ -9,7 +9,7 @@ view is the department distribution. A re-synced duplicate row changes nothing.
 from __future__ import annotations
 
 import pytest
-from insight_datapath.metric_expect import one
+from insight_datapath.metric_expect import approx, one
 from insight_datapath.spec_runner import SpecRun
 
 pytestmark = pytest.mark.fixture
@@ -59,28 +59,28 @@ def test_accepted_edits_and_acceptance_rate_over_a_custom_window(spec: SpecRun) 
         target_value=80, p25=50, median=60, p75=70, min=40, max=80, n=5
     )
     accepted = one(r.series("ai.accepted_edit_actions"), entity_id=ERIN)["points"]
-    assert float(one(accepted, bucket_start="2026-11-15")["value"]) == 45.0
-    assert float(one(accepted, bucket_start="2026-12-10")["value"]) == 35.0
+    assert float(one(accepted, bucket_start="2026-11-15")["value"]) == approx(45.0)
+    assert float(one(accepted, bucket_start="2026-12-10")["value"]) == approx(35.0)
     by_tool = one(
         r.breakdown("ai.accepted_edit_actions"),
         entity_id=ERIN,
         dimensions={"key": "tool", "value": "claude_code"},
     )
-    assert float(by_tool["value"]) == 80.0
+    assert float(by_tool["value"]) == approx(80.0)
 
     r.row("ai.tool_acceptance_rate", "period", entity_id=ERIN).equals(value=40)
     r.row("ai.tool_acceptance_rate", "peer", entity_id=ERIN).equals(
         target_value=40, p25=25, median=30, p75=35, min=20, max=40, n=5
     )
     rate = one(r.series("ai.tool_acceptance_rate"), entity_id=ERIN)["points"]
-    assert float(one(rate, bucket_start="2026-11-15")["value"]) == 45.0
-    assert float(one(rate, bucket_start="2026-12-10")["value"]) == 35.0
+    assert float(one(rate, bucket_start="2026-11-15")["value"]) == approx(45.0)
+    assert float(one(rate, bucket_start="2026-12-10")["value"]) == approx(35.0)
     by_tool = one(
         r.breakdown("ai.tool_acceptance_rate"),
         entity_id=ERIN,
         dimensions={"key": "tool", "value": "claude_code"},
     )
-    assert float(by_tool["value"]) == 40.0
+    assert float(by_tool["value"]) == approx(40.0)
 
 
 def test_acceptance_rate_over_an_empty_window_is_null(spec: SpecRun) -> None:

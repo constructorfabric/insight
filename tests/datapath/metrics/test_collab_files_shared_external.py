@@ -10,7 +10,7 @@ duplicate row changes nothing.
 from __future__ import annotations
 
 import pytest
-from insight_datapath.metric_expect import one
+from insight_datapath.metric_expect import approx, one
 from insight_datapath.spec_runner import SpecRun
 
 pytestmark = pytest.mark.fixture
@@ -51,13 +51,13 @@ def test_collab_files_shared_external(spec: SpecRun) -> None:
         target_value=50, p25=20, median=30, p75=40, min=10, max=50, n=5
     )
     shared = one(r.series("collab.files_shared_external"), entity_id=ERIN)["points"]
-    assert float(one(shared, bucket_start="2026-12-25")["value"]) == 50.0
+    assert float(one(shared, bucket_start="2026-12-25")["value"]) == approx(50.0)
     by_tool = one(
         r.breakdown("collab.files_shared_external"),
         entity_id=ERIN,
         dimensions={"key": "tool", "value": "m365"},
     )
-    assert float(by_tool["value"]) == 50.0
+    assert float(by_tool["value"]) == approx(50.0)
 
 
 def test_collab_files_shared_external_empty_window(spec: SpecRun) -> None:

@@ -10,7 +10,7 @@ accounts (10 + 20 + 5). A person with several accounts is one peer, so the pool 
 from __future__ import annotations
 
 import pytest
-from insight_datapath.metric_expect import one
+from insight_datapath.metric_expect import approx, one
 from insight_datapath.spec_runner import SpecRun
 
 pytestmark = pytest.mark.fixture
@@ -51,6 +51,6 @@ def test_two_accounts_of_one_person_count_as_one_active_day(spec: SpecRun) -> No
         target_value=1, p25=None, median=None, p75=None, min=None, max=None, n=3
     )
     active = one(r.series("ai.active_days"), entity_id=ALICE)["points"]
-    assert float(one(active, bucket_start="2026-01-05")["value"]) == 1.0
+    assert float(one(active, bucket_start="2026-01-05")["value"]) == approx(1.0)
 
     r.row("ai.accepted_lines", "period", entity_id=ALICE).equals(value=35)

@@ -10,7 +10,7 @@ surface.
 from __future__ import annotations
 
 import pytest
-from insight_datapath.metric_expect import one, some
+from insight_datapath.metric_expect import approx, one, some
 from insight_datapath.spec_runner import SpecRun
 
 pytestmark = pytest.mark.fixture
@@ -60,7 +60,7 @@ def test_ai_assistant_actions_and_chat_conversations(spec: SpecRun) -> None:
         target_value=50, p25=20, median=30, p75=40, min=10, max=50, n=5
     )
     actions = one(r.series("ai.assistant_actions"), entity_id=ERIN)["points"]
-    assert float(one(actions, bucket_start="2026-01-05")["value"]) == 50.0
+    assert float(one(actions, bucket_start="2026-01-05")["value"]) == approx(50.0)
     claude_actions = some(
         r.breakdown("ai.assistant_actions"),
         entity_id=ERIN,
@@ -68,14 +68,14 @@ def test_ai_assistant_actions_and_chat_conversations(spec: SpecRun) -> None:
     )
     cowork = one(claude_actions, dimensions={"key": "surface", "value": "cowork"})
     assert len(cowork["dimensions"]) == 2
-    assert float(cowork["value"]) == 50.0
+    assert float(cowork["value"]) == approx(50.0)
 
     r.row("ai.chat_assistant_conversations", "period", entity_id=ERIN).equals(value=25)
     r.row("ai.chat_assistant_conversations", "peer", entity_id=ERIN).equals(
         target_value=25, p25=10, median=15, p75=20, min=5, max=25, n=5
     )
     conversations = one(r.series("ai.chat_assistant_conversations"), entity_id=ERIN)["points"]
-    assert float(one(conversations, bucket_start="2026-01-05")["value"]) == 25.0
+    assert float(one(conversations, bucket_start="2026-01-05")["value"]) == approx(25.0)
     claude_conversations = some(
         r.breakdown("ai.chat_assistant_conversations"),
         entity_id=ERIN,
@@ -83,4 +83,4 @@ def test_ai_assistant_actions_and_chat_conversations(spec: SpecRun) -> None:
     )
     chat = one(claude_conversations, dimensions={"key": "surface", "value": "chat"})
     assert len(chat["dimensions"]) == 2
-    assert float(chat["value"]) == 25.0
+    assert float(chat["value"]) == approx(25.0)

@@ -10,7 +10,7 @@ pool holds three.
 from __future__ import annotations
 
 import pytest
-from insight_datapath.metric_expect import one
+from insight_datapath.metric_expect import approx, one
 from insight_datapath.spec_runner import SpecRun
 
 pytestmark = pytest.mark.fixture
@@ -50,4 +50,4 @@ def test_ai_active_days(spec: SpecRun) -> None:
         target_value=1, p25=None, median=None, p75=None, min=None, max=None, n=3
     )
     active = one(r.series("ai.active_days"), entity_id=ALICE)["points"]
-    assert float(one(active, bucket_start="2026-01-05")["value"]) == 1.0
+    assert float(one(active, bucket_start="2026-01-05")["value"]) == approx(1.0)

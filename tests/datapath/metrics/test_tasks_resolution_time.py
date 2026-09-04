@@ -9,7 +9,7 @@ resolution days, the peer view the five-member distribution. An empty window is 
 from __future__ import annotations
 
 import pytest
-from insight_datapath.metric_expect import one, some
+from insight_datapath.metric_expect import approx, one, some
 from insight_datapath.spec_runner import SpecRun
 
 pytestmark = pytest.mark.fixture
@@ -58,7 +58,7 @@ def test_tasks_resolution_time(spec: SpecRun) -> None:
         entity_id=ERIN,
         dimensions={"key": "source", "value": "jira"},
     )
-    assert float(by_source["value"]) == 5.0
+    assert float(by_source["value"]) == approx(5.0)
     assert len(some(r.breakdown("tasks.resolution_time"), entity_id=ERIN)) == 1
 
 
@@ -87,7 +87,7 @@ def test_tasks_resolution_time_by_issue_type(spec: SpecRun) -> None:
         entity_id=ERIN,
         dimensions={"key": "type", "value": "Task"},
     )
-    assert float(by_type["value"]) == 5.0
+    assert float(by_type["value"]) == approx(5.0)
     assert len(some(r.breakdown("tasks.resolution_time"), entity_id=ERIN)) == 1
 
 

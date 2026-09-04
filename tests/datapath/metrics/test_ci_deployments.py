@@ -11,7 +11,7 @@ environment whose failure was later superseded by success -- success 2, pending 
 from __future__ import annotations
 
 import pytest
-from insight_datapath.metric_expect import one, some
+from insight_datapath.metric_expect import approx, one, some
 from insight_datapath.spec_runner import SpecRun
 
 pytestmark = pytest.mark.fixture
@@ -46,8 +46,12 @@ def test_deployments_fold_the_latest_status_and_keep_pending_visible(spec: SpecR
 
     r.row("ci.deployments", "period", entity_id=spec.tenant).equals(value=3.0)
     by_outcome = r.breakdown("ci.deployments")
-    assert float(one(by_outcome, dimensions={"key": "outcome", "value": "success"})["value"]) == 2.0
-    assert float(one(by_outcome, dimensions={"key": "outcome", "value": "pending"})["value"]) == 1.0
+    assert float(
+        one(by_outcome, dimensions={"key": "outcome", "value": "success"})["value"]
+    ) == approx(2.0)
+    assert float(
+        one(by_outcome, dimensions={"key": "outcome", "value": "pending"})["value"]
+    ) == approx(1.0)
     assert any(
         some(s["points"], bucket_start="2026-03-01", value=1.0) for s in r.series("ci.deployments")
     )

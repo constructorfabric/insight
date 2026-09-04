@@ -10,7 +10,7 @@ issues on one day, (r-1) bugs and (5-r) tasks, so the shares spread {0,25,50,75,
 from __future__ import annotations
 
 import pytest
-from insight_datapath.metric_expect import one
+from insight_datapath.metric_expect import approx, one
 from insight_datapath.spec_runner import SpecRun
 
 pytestmark = pytest.mark.fixture
@@ -59,14 +59,14 @@ def test_unified_task_bug_metrics(spec: SpecRun) -> None:
         target_value=4, p25=None, median=None, p75=None, min=None, max=None, n=4
     )
     fixed = one(r.series("tasks.bugs_fixed"), entity_id=ERIN)["points"]
-    assert float(one(fixed, bucket_start="2026-06-25")["value"]) == 4.0
+    assert float(one(fixed, bucket_start="2026-06-25")["value"]) == approx(4.0)
 
     r.row("tasks.bugs_ratio", "period", entity_id=ERIN).equals(value=100)
     r.row("tasks.bugs_ratio", "peer", entity_id=ERIN).equals(
         target_value=100, p25=None, median=None, p75=None, min=None, max=None, n=4
     )
     ratio = one(r.series("tasks.bugs_ratio"), entity_id=ERIN)["points"]
-    assert float(one(ratio, bucket_start="2026-06-25")["value"]) == 100.0
+    assert float(one(ratio, bucket_start="2026-06-25")["value"]) == approx(100.0)
 
 
 def test_non_bug_closed_issues_are_the_complement_subset(spec: SpecRun) -> None:
@@ -98,7 +98,7 @@ def test_non_bug_closed_issues_are_the_complement_subset(spec: SpecRun) -> None:
         target_value=4, p25=None, median=None, p75=None, min=None, max=None, n=4
     )
     non_bug = one(r.series("tasks.closed_non_bug"), entity_id=ALICE)["points"]
-    assert float(one(non_bug, bucket_start="2026-06-25")["value"]) == 4.0
+    assert float(one(non_bug, bucket_start="2026-06-25")["value"]) == approx(4.0)
 
 
 def test_unified_task_bug_metrics_empty_window(spec: SpecRun) -> None:
