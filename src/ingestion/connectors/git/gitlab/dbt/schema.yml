@@ -52,9 +52,43 @@ models:
         data_tests:
           - accepted_values:
               values: ["gitlab"]
+      - name: insight_tenant_id
+        description: "The tenant the claim belongs to, hashed from the connector's tenant_id"
+        data_tests:
+          - not_null
+      - name: insight_source_id
+        description: "The connector instance the claim came from, hashed from its source_id — the same id names different accounts under two GitLab connections"
+        data_tests:
+          - not_null
       - name: source_account_id
         description: "The numeric GitLab user id, stringified"
+      - name: value_type
+        description: "`email` for an address the account publishes, `display_name` for the user's name"
+        data_tests:
+          - accepted_values:
+              values: ["email", "display_name"]
       - name: value
         description: "An address the account itself publishes, or the user's name for a display_name row"
+        data_tests:
+          - not_null
+      - name: value_field_name
+        description: "The bronze field the claim was read from, for provenance. `email` outranks `public_email` when a user publishes one address in both"
+        data_tests:
+          - accepted_values:
+              values:
+                - bronze_gitlab.users.email
+                - bronze_gitlab.users.public_email
+                - bronze_gitlab.users.name
+      - name: operation_type
+        description: "`UPSERT` — GitLab reports what an account currently states, never a retraction"
+        data_tests:
+          - accepted_values:
+              values: ["UPSERT"]
+      - name: _synced_at
+        description: "Insertion time, not the observation time: the shared union admits only rows above its global max(_version) watermark"
+        data_tests:
+          - not_null
+      - name: _version
+        description: "`_synced_at` in epoch milliseconds — the ReplacingMergeTree version the shared union orders by"
         data_tests:
           - not_null

@@ -36,7 +36,7 @@
 -- Column order matches the macro's output — silver.identity_inputs is a
 -- positional UNION ALL, and check-field-parity.py audits the shape.
 
-WITH observations AS (
+WITH claims AS (
     SELECT
         toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, '')))) AS insight_tenant_id,
         toUUID(UUIDNumToString(sipHash128(coalesce(source_id, '')))) AS insight_source_id,
@@ -50,7 +50,12 @@ WITH observations AS (
         -- identity_inputs model admits only rows above its global max(_version)
         -- watermark, so a claim versioned by a past instant would be silently
         -- dropped whenever any other feeder has already stamped a newer version.
-        now64(3) AS _synced_at
+        now64(3) AS _synced_at,
+        -- Which field the claim is preferred from when two carry the same
+        -- address. `email` is what GitLab hands an admin token and is the one
+        -- the account is reachable at; `public_email` is what the user chose to
+        -- show, and the same address often sits in both.
+        1 AS field_rank
     FROM {{ source('bronze_gitlab', 'users') }} FINAL
     WHERE COALESCE(id, 0) > 0
       AND COALESCE(email, '') != ''
@@ -66,7 +71,8 @@ WITH observations AS (
         lower(trimBoth(COALESCE(public_email, ''))) AS value,
         'bronze_gitlab.users.public_email' AS value_field_name,
         'UPSERT' AS operation_type,
-        now64(3) AS _synced_at
+        now64(3) AS _synced_at,
+        2 AS field_rank
     FROM {{ source('bronze_gitlab', 'users') }} FINAL
     WHERE COALESCE(id, 0) > 0
       AND COALESCE(public_email, '') != ''
@@ -82,10 +88,40 @@ WITH observations AS (
         COALESCE(name, '') AS value,
         'bronze_gitlab.users.name' AS value_field_name,
         'UPSERT' AS operation_type,
-        now64(3) AS _synced_at
+        now64(3) AS _synced_at,
+        1 AS field_rank
     FROM {{ source('bronze_gitlab', 'users') }} FINAL
     WHERE COALESCE(id, 0) > 0
       AND COALESCE(name, '') != ''
+),
+
+-- INVARIANT: one row per claim key, and the key is exactly what `unique_key`
+-- below hashes. A user may publish the SAME address as both `email` and
+-- `public_email`, which are two rows here and one key — a collision the anti
+-- join against the target cannot see, because neither row is in the target yet.
+-- `field_rank` decides which survives, so the provenance a claim carries does
+-- not depend on the order rows happen to arrive in.
+distinct_claims AS (
+    SELECT
+        insight_tenant_id,
+        insight_source_id,
+        insight_source_type,
+        source_account_id,
+        value_type,
+        value,
+        value_field_name,
+        operation_type,
+        _synced_at
+    FROM claims
+    ORDER BY field_rank
+    LIMIT 1 BY
+        insight_tenant_id,
+        insight_source_id,
+        insight_source_type,
+        source_account_id,
+        value_type,
+        value,
+        operation_type
 )
 
 SELECT
@@ -101,9 +137,17 @@ SELECT
         o.operation_type, '-',
         hex(sipHash64(o.value))
     ) AS String) AS unique_key,
-    o.*,
+    o.insight_tenant_id,
+    o.insight_source_id,
+    o.insight_source_type,
+    o.source_account_id,
+    o.value_type,
+    o.value,
+    o.value_field_name,
+    o.operation_type,
+    o._synced_at,
     toUnixTimestamp64Milli(o._synced_at) AS _version
-FROM observations AS o
+FROM distinct_claims AS o
 {% if is_incremental() %}
 LEFT ANTI JOIN {{ this }} AS existing
     ON  o.value_type                 = existing.value_type
