@@ -90,10 +90,16 @@ alloy:
       // ── Parse OUR structured JSON to promote `level` to a label.
       //    Non-JSON lines (raw Airbyte / dbt output) fall through the
       //    stage untouched — they still arrive in Loki, just without a
-      //    `level` label.
+      //    `level` label. The gears services (tracing-subscriber JSON)
+      //    write "INFO"/"ERROR" uppercase; lowercase before labelling so
+      //    every dashboard and alert matches one spelling.
       loki.process "parse" {
         stage.json {
           expressions = { level = "level" }
+        }
+        stage.template {
+          source   = "level"
+          template = "{{ ToLower .Value }}"
         }
         stage.labels {
           values = { level = "" }

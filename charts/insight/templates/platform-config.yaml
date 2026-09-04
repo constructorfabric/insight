@@ -69,7 +69,11 @@ data:
   # any OTel SDK (.NET, Python) picks them up with zero custom glue. Each
   # service still sets its OWN OTEL_SERVICE_NAME. No endpoint → no OTEL_*
   # vars → services log to stdout only and whoever runs the cluster collects.
-  INSIGHT_LOG_LEVEL: {{ $obsLogs.level | default "info" | quote }}
+  INSIGHT_LOG_LEVEL:  {{ $obsLogs.level | default "info" | quote }}
+  # INVARIANT: format reads global.observability.logs.format ONLY — the gears
+  # subcharts can't see the legacy top-level observability block, so honouring
+  # it here would let the two surfaces render different formats.
+  INSIGHT_LOG_FORMAT: {{ ((((.Values.global).observability).logs).format) | default "json" | quote }}
   {{- if $otlpEndpoint }}
   {{- $otlpProtocol := $obsOtlp.protocol | default "grpc" }}
   OTEL_EXPORTER_OTLP_ENDPOINT: {{ $otlpEndpoint | quote }}

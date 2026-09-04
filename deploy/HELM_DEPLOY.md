@@ -26,6 +26,7 @@ This runbook shows a platform or DevOps engineer how to install the Insight busi
 - [Step 3 — Create the namespace and apply the secrets](#step-3--create-the-namespace-and-apply-the-secrets)
 - [Step 4 — Install with Helm](#step-4--install-with-helm)
 - [Step 5 — Verify the install](#step-5--verify-the-install)
+  - [Where the logs go](#where-the-logs-go)
 - [Step 6 — Configure connectors (optional)](#step-6--configure-connectors-optional)
 - [Step 7 — Seed demo data (test stands only)](#step-7--seed-demo-data-test-stands-only)
 - [Appendix — Reference](#appendix--reference)
@@ -402,6 +403,10 @@ kubectl -n insight get cronworkflow
 ```
 
 Then open `https://<HOST>` — the host from Step 1 — and confirm the login redirect to your OIDC provider.
+
+### Where the logs go
+
+On a default install no log collector is configured (`global.observability.otlp.endpoint` is empty), and the umbrella never installs one. Every pod then writes its log lines to its own standard output/error and nowhere else; read them with `kubectl -n insight logs deploy/<service>`. The five gears services emit JSON (one object per line), governed by two install-wide knobs: `global.observability.logs.level` (`info` by default) and `global.observability.logs.format` (`json` by default; set `text` for human-readable lines, at the cost of any collector's level parsing). The gateway, frontend and ingestion workflow pods keep formats of their own for now (constructorfabric/insight#2488 tracks converging them).
 
 ## Step 6 — Configure connectors (optional)
 

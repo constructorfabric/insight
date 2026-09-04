@@ -131,7 +131,7 @@ global:
   # it is separate releases, driven by the deploy pipeline (inventory
   # toggles; see deploy/gitops/system/README.md). This block only governs what
   # services EMIT. The values are published into the `{release}-platform`
-  # ConfigMap as INSIGHT_LOG_LEVEL / OTEL_* env vars (plus the gears-rust
+  # ConfigMap as INSIGHT_LOG_LEVEL / INSIGHT_LOG_FORMAT / OTEL_* env vars (plus the gears-rust
   # dialect, APP__opentelemetry__*), so every pod that does `envFrom` picks
   # them up uniformly. Lives under `global` so the service subcharts can hash
   # it into a pod-template annotation and roll on change (a top-level
@@ -139,6 +139,7 @@ global:
   observability:
     logs:
       level: info # debug|info|warn|error — default level for all services
+      format: json # json|text — console line shape for the gears services
     otlp:
       endpoint: "" # empty = stdout only; set = services export OTLP here
       protocol: grpc # grpc | http/protobuf
