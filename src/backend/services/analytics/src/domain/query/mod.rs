@@ -7,4 +7,10 @@
 // the handler lands on top of them.
 #![allow(dead_code)]
 
+pub mod contract;
 pub mod datasets;
+#[cfg(test)]
+pub mod fixtures;
+pub mod plan;
+pub mod validation;
+pub mod violation;
