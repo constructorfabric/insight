@@ -185,21 +185,17 @@ def all_persona_emails(bronze: dict[str, list[dict[str, Any]]]) -> list[str]:
 
 
 def email_of_person(person_ids: dict[str, str], aliases: dict[str, list[str]]) -> dict[str, str]:
-    """person id -> the one email a response is translated back to. Alias spellings
-    collapse to their canonical address; two unrelated spellings sharing an id is a
-    fixture defect, not a translation choice."""
+    """person id -> the one spelling a test names.
+
+    `person_id_for` normalizes, so several bronze spellings of one address share a
+    person id; a declared alias binds a different address to the same person. Both
+    resolve here to the normalized canonical spelling, which is the one a test writes.
+    """
     canonical_of = {alias.strip().lower(): canonical for canonical, group in aliases.items() for alias in group}
-    to_email: dict[str, str] = {}
-    for email, person_id in sorted(person_ids.items()):
-        seen = to_email.get(person_id)
-        if seen is None:
-            to_email[person_id] = canonical_of.get(email.lower(), email)
-            continue
-        canonical = canonical_of.get(email.lower()) or canonical_of.get(seen.lower())
-        if canonical is None:
-            raise AssertionError(f"two spellings share a person id: {seen!r} and {email!r}")
-        to_email[person_id] = canonical
-    return to_email
+    return {
+        person_id: canonical_of.get(email.strip().lower(), email.strip().lower())
+        for email, person_id in sorted(person_ids.items())
+    }
 
 
 @dataclass
