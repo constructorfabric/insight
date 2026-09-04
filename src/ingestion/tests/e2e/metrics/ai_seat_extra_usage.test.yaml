@@ -31,12 +31,19 @@ description: >
     dave         200¢          1000¢    20.0 %
     erin         250¢          1000¢    25.0 %
 
+  Utilisation therefore rises 5 → 10 → 15 → 20 → 25 % across the cohort, and the peer
+  spread asserted below is that order. grace completes it at the top: her seat has
+  spent its ceiling exactly, so she reads 100 % — the point at which the vendor stops
+  the seat. Read as proximity to being blocked, 100 % is the ceiling of the scale and
+  not an error, and it is the reading the cohort's 5..25 % cannot reach.
+
   Five ceilings, not four: the peer view suppresses its quartiles below five
-  contributing entities. frank holds a seat with no ceiling and is absent from the HR
-  feed, so he is present in ai.extra_usage_cost, absent from
-  ai.extra_usage_utilisation — honest-NULL, not a zero — without joining the cohort
-  the peer pools are drawn from. Cases: custom scope · dedup of a repeated snapshot ·
-  the no-ceiling seat · empty window.
+  contributing entities. frank and grace are absent from the HR feed, so they join no
+  cohort the peer pools are drawn from and neither moves the spread. frank holds a seat
+  with no ceiling, so he is present in ai.extra_usage_cost and absent from
+  ai.extra_usage_utilisation — honest-NULL, not a zero. Cases: custom scope · dedup of
+  a repeated snapshot · the no-ceiling seat · the seat stopped at its ceiling · empty
+  window.
 
 bronze:
   bronze_bamboohr.employees:
@@ -58,6 +65,8 @@ bronze:
     - { $ref: templates/claude_team_overage.yaml#/templates/erin,  _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-erin,  used_credits: 250, monthly_credit_limit: 1000 }
     # ── frank — NO ceiling: money yes, utilisation absent ────────────────────────
     - { $ref: templates/claude_team_overage.yaml#/templates/frank, _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-frank, used_credits: 300, monthly_credit_limit: null, seat_tier: unassigned, limit_type: null }
+    # ── grace — spent the ceiling exactly: 100 %, the point the vendor blocks at ──
+    - { $ref: templates/claude_team_overage.yaml#/templates/grace, _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-grace, used_credits: 1000, monthly_credit_limit: 1000, out_of_credits: true }
 
 cases:
   # ── CUSTOM scope (Nov 01 .. Dec 12) — the December snapshot ──────────────────
@@ -137,6 +146,36 @@ cases:
         view: period
         find: { entity_id: frank@example.com }
         equal: { value: null }
+
+  # ── A seat stopped at its ceiling: utilisation reads the blocking point ──────
+  - name: AI seat stopped at its ceiling
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [grace@example.com] }
+        period: { from: "2026-11-01", to: "2026-12-12" }
+        metrics:
+          - metric_key: ai.extra_usage_cost
+            views:
+              - { view: period }
+          - metric_key: ai.extra_usage_utilisation
+            views:
+              - { view: period }
+    expect:
+      - assert: "status == 200"
+      - metric: ai.extra_usage_cost
+        view: period
+        find: { entity_id: grace@example.com }
+        equal: { value: 10.0 }
+      # 100, not capped to something lower and not an error: the ratio is spend
+      # against the ceiling, and a seat that spent it exactly is at the point the
+      # vendor stops it. Above the cohort's 25 %, which is the ordering AC-2 asks
+      # for — lowest, higher, then blocked.
+      - metric: ai.extra_usage_utilisation
+        view: period
+        find: { entity_id: grace@example.com }
+        equal: { value: 100.0 }
 
   # ── EMPTY window (no snapshot read in range) ─────────────────────────────────
   - name: AI seat extra usage empty window

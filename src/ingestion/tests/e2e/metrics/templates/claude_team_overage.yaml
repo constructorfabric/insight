@@ -64,6 +64,13 @@ templates:
     account_email: frank@example.com
     account_uuid: seat-frank
 
+  # A second seat holder outside every cohort, for the same reason as frank: a
+  # test can push this seat to its ceiling without moving a peer pool's spread.
+  grace:
+    $ref: "#/templates/claude_team_seat"
+    account_email: grace@example.com
+    account_uuid: seat-grace
+
   # A seat holder who IS in the HR feed, for a test that needs a cohort member
   # holding a seat whose tier a measure cannot price.
   heidi:
