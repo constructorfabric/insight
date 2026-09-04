@@ -19,7 +19,7 @@ from insight_datapath.dbt_runner import DbtRunner
 from insight_datapath.enrich import EnrichRunner
 from insight_datapath.instance import InstanceConfig, resolve_instance
 from insight_datapath.reset import refuse_a_seeded_warehouse, session_floor
-from insight_datapath.schema import apply_all
+from insight_datapath.schema import apply_all, restart_analytics
 from insight_datapath.subjects import Subjects
 from insight_stand.manifest import Manifest, load_manifest
 from insight_stand.personas import PersonaSession, open_session
@@ -35,10 +35,13 @@ CALLER_FIXTURE = "dev_lead"
 DEFAULT_TENANT = "00000000-df51-5b42-9538-d2b56b7ee953"
 
 
+def _env_file() -> Path:
+    return Path(os.environ.get("INSIGHT_STAND_ENV_FILE", ".env.compose.test-stand"))
+
+
 def _instance_name() -> str:
     """The compose project the instance runs under, taken from its env file's name."""
-    env_file = Path(os.environ.get("INSIGHT_STAND_ENV_FILE", ".env.compose.test-stand"))
-    suffix = env_file.name.removeprefix(".env.compose.test-stand")
+    suffix = _env_file().name.removeprefix(".env.compose.test-stand")
     return f"insight-{suffix.lstrip('-')}" if suffix.strip("-") else "insight"
 
 
@@ -83,7 +86,9 @@ def warehouse_schema(instance_cfg: InstanceConfig, warehouse_is_ours: None) -> i
     A stand raised with `test-stand minimal` carries identity and nothing else, so
     the databases a spec seeds have to be created before anything can write them.
     """
-    return apply_all(instance_cfg, repo_root=REPO_ROOT)
+    applied = apply_all(instance_cfg, repo_root=REPO_ROOT)
+    restart_analytics(repo_root=REPO_ROOT, project=_instance_name(), env_file=_env_file())
+    return applied
 
 
 @pytest.fixture(scope="session")
@@ -116,7 +121,7 @@ def enrich_runner(instance_cfg: InstanceConfig) -> EnrichRunner:
         instance_cfg,
         repo_root=REPO_ROOT,
         project=_instance_name(),
-        env_file=Path(os.environ.get("INSIGHT_STAND_ENV_FILE", ".env.compose.test-stand")),
+        env_file=_env_file(),
     )
 
 
@@ -126,6 +131,6 @@ def subjects(instance_cfg: InstanceConfig) -> Subjects:
         instance_cfg,
         repo_root=REPO_ROOT,
         project=_instance_name(),
-        env_file=Path(os.environ.get("INSIGHT_STAND_ENV_FILE", ".env.compose.test-stand")),
+        env_file=_env_file(),
         tenant_id=os.environ.get("TENANT_DEFAULT_ID", DEFAULT_TENANT),
     )

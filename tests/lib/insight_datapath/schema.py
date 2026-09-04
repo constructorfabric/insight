@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import importlib.util
 import logging
+import os
 import re
+import subprocess
 import sys
 from functools import lru_cache
 from pathlib import Path
@@ -170,3 +172,39 @@ def _split_statements(sql: str) -> list[str]:
     stripped = _COMMENT_LINE.sub("", sql)
     parts = [p.strip() for p in stripped.split(";")]
     return [p for p in parts if p]
+
+
+def restart_analytics(
+    *, repo_root: Path, project: str, env_file: Path, timeout_s: float = 300.0
+) -> None:
+    """Make analytics re-read which metrics it can serve.
+
+    It decides that once, at startup, from the relations present then. On an instance
+    whose warehouse was empty when it booted, every metric key is reported unknown
+    until it looks again.
+    """
+    result = subprocess.run(
+        [
+            "docker",
+            "compose",
+            "--project-name",
+            project,
+            "--env-file",
+            str(env_file),
+            "-f",
+            "docker-compose.yml",
+            "restart",
+            "analytics",
+        ],
+        cwd=repo_root,
+        env={**os.environ, "COMPOSE_PROJECT_NAME": project},
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=timeout_s,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"could not restart analytics (exit {result.returncode}):\n{result.stderr[-1000:]}"
+        )
+    LOG.info("analytics restarted; its metric catalogue is re-read")
