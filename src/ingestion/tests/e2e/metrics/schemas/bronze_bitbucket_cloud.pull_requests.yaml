@@ -31,6 +31,14 @@ schemas:
       description: { type: [string, "null"] }
       destination_commit_sha: { type: [string, "null"] }
       participants: { type: [string, "null"] }
+      author_account_id: { type: [string, "null"] }
+      author_nickname: { type: [string, "null"] }
+      closed_by_account_id: { type: [string, "null"] }
+      closed_by_display_name: { type: [string, "null"] }
+      source_repo_full_name: { type: [string, "null"] }
+      destination_repo_full_name: { type: [string, "null"] }
+      close_source_branch: { type: [boolean, "null"] }
+      reason: { type: [string, "null"] }
       _airbyte_raw_id: { type: string }
       _airbyte_extracted_at: { type: string, format: date-time }
       _airbyte_meta: { type: string }

@@ -1,0 +1,231 @@
+spec_version: 1
+description: >
+  Metric: git.prs_merged — Pull requests merged, #3068.
+  How it's computed (bronze → silver → gold):
+    • bronze: the pull requests each git connector reports, plus whatever that
+      connector uses to say when a request landed — GitHub's merged_at, GitLab's
+      merged_at, and Bitbucket's terminal update event
+    • silver: one class row per request, its state normalised to one uppercase
+      vocabulary and its close time to one column
+    • gold:   a request in the MERGED state with a known close time contributes
+      exactly 1, dated by the CLOSE, and is attributed to the request's AUTHOR
+
+  Cases: a merged request counts once on its merge day; an open one and a
+  closed-but-never-merged one never count; the author receives the request even
+  when its commits were written by somebody else; the branch-scope split says
+  where the request was aimed; GitLab counts only the merged state; Bitbucket
+  dates the request by the terminal merge event and drops the declined one; and
+  the window the requests were CREATED in holds no merges at all.
+
+identity_accounts:
+  # Bitbucket exposes no author address, so the account binding is the only way
+  # its requests reach a person.
+  - {source_type: bitbucket, source_id: bitbucket-test, account_id: "carol-acct", person: carol@example.com}
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+
+  bronze_github.branches:
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: br-main, repository: "https://github.com/constructor/insight.git", name: main, head_sha: head-main, is_default: true}
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: br-release, repository: "https://github.com/constructor/insight.git", name: release/1.x, head_sha: head-release, is_default: false}
+
+  bronze_github.pull_requests:
+    # Merged into the default branch. GitHub's REST list reports it as `closed`
+    # — merged_at is the only thing that says it landed.
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-101, id: 101, number: 101, author_login: alice, created_at: "2026-09-28T08:00:00Z", closed_at: "2026-10-01T09:00:00Z", merged_at: "2026-10-01T09:00:00Z", merge_commit_sha: merge-101}
+    # The same row again — an Airbyte re-sync must not make it two merges.
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-101, id: 101, number: 101, author_login: alice, created_at: "2026-09-28T08:00:00Z", closed_at: "2026-10-01T09:00:00Z", merged_at: "2026-10-01T09:00:00Z", merge_commit_sha: merge-101}
+    # Still open: no close time, no merge.
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-102, id: 102, number: 102, author_login: alice, state: open, created_at: "2026-09-28T08:00:00Z", closed_at: "", merged_at: "", merge_commit_sha: ""}
+    # Closed on the same day the others merged, but never merged.
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-103, id: 103, number: 103, author_login: alice, created_at: "2026-09-28T08:00:00Z", closed_at: "2026-10-01T11:00:00Z", merged_at: "", merge_commit_sha: ""}
+    # Merged into a release branch: counted in the total, split out by scope.
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-104, id: 104, number: 104, author_login: alice, base_ref: release/1.x, created_at: "2026-09-28T08:00:00Z", closed_at: "2026-10-01T12:00:00Z", merged_at: "2026-10-01T12:00:00Z", merge_commit_sha: merge-104}
+    # Alice's request carrying dave's commit — the request is hers, the commit
+    # is his, and only one of them may be credited with the merge.
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-105, id: 105, number: 105, author_login: alice, created_at: "2026-09-28T08:00:00Z", closed_at: "2026-10-01T13:00:00Z", merged_at: "2026-10-01T13:00:00Z", merge_commit_sha: merge-105}
+
+  bronze_github.pull_request_diff_stats:
+    # GitHub staging reads a request's author_email from here and nowhere else.
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-101, pull_number: 101, additions: 10, author_email: alice@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-102, pull_number: 102, additions: 10, author_email: alice@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-103, pull_number: 103, additions: 10, author_email: alice@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-104, pull_number: 104, additions: 10, author_email: alice@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-105, pull_number: 105, additions: 10, author_email: alice@example.com}
+
+  bronze_github.pull_request_commits:
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: prc-105, repo_full_name: constructor/insight, pull_number: 105, sha: hash-dave, author_email: dave@example.com, is_merge: false}
+
+  bronze_github.commits:
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-dave, sha: hash-dave, author_name: dave, author_email: dave@example.com, committer_name: dave, committer_email: dave@example.com, additions: 7}
+
+  bronze_gitlab.projects:
+    - {$ref: templates/gitlab_git.yaml#/templates/project, unique_key: gl-proj-101}
+
+  bronze_gitlab.users:
+    # A merge request carries only the username; this row is what turns it into
+    # an address the metric can attribute.
+    - {$ref: templates/gitlab_git.yaml#/templates/user, unique_key: gl-user-bob, id: 700, username: bob-gl, name: Bob Beta, email: bob@example.com}
+
+  bronze_gitlab.merge_requests:
+    # Merged: GitLab reports merged_at and leaves closed_at empty.
+    - {$ref: templates/gitlab_git.yaml#/templates/merge_request, unique_key: gl-mr-201, iid: 201, id: 90201, author_id: 700, author_username: bob-gl, created_at: "2026-09-20T08:00:00Z", merged_at: "2026-10-01T09:00:00Z", merge_commit_sha: gl-merge-201}
+    # Abandoned: a close time, but no merge.
+    - {$ref: templates/gitlab_git.yaml#/templates/merge_request, unique_key: gl-mr-202, iid: 202, id: 90202, state: closed, author_id: 700, author_username: bob-gl, created_at: "2026-09-20T08:00:00Z", closed_at: "2026-10-01T10:00:00Z"}
+    # Still open.
+    - {$ref: templates/gitlab_git.yaml#/templates/merge_request, unique_key: gl-mr-203, iid: 203, id: 90203, state: opened, author_id: 700, author_username: bob-gl, created_at: "2026-09-20T08:00:00Z"}
+
+  bronze_bitbucket_cloud.pull_requests:
+    # `updated_on` deliberately sits on a LATER day than the merge event, so the
+    # metric's date can only be right if it came from the activity row.
+    - {$ref: templates/bitbucket_git.yaml#/templates/pull_request, unique_key: "bb-pr:301", id: 301, author_display_name: Carol Gamma, author_account_id: carol-acct, created_on: "2026-09-25T08:00:00Z", updated_on: "2026-10-02T13:00:00Z", source_commit_sha: bb-src-301, destination_commit_sha: bb-dst-301, merge_commit_sha: bb-merge-301}
+    - {$ref: templates/bitbucket_git.yaml#/templates/pull_request, unique_key: "bb-pr:302", id: 302, state: DECLINED, author_display_name: Carol Gamma, author_account_id: carol-acct, created_on: "2026-09-25T08:00:00Z", updated_on: "2026-10-02T13:00:00Z", source_commit_sha: bb-src-302, destination_commit_sha: bb-dst-302}
+
+  bronze_bitbucket_cloud.pull_request_activity:
+    # A Bitbucket pull request records no close time of its own; the terminal
+    # update event in its activity is the only one there is.
+    - {$ref: templates/bitbucket_git.yaml#/templates/activity, unique_key: "bb-ac:301", pr_id: 301, update_state: MERGED, event_date: "2026-10-01T09:00:00Z"}
+    - {$ref: templates/bitbucket_git.yaml#/templates/activity, unique_key: "bb-ac:302", pr_id: 302, update_state: DECLINED, event_date: "2026-10-01T10:00:00Z"}
+
+cases:
+  - name: A merged request counts on its merge day and an unmerged one never does
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [alice@example.com, dave@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.prs_merged
+            views:
+              - {view: period}
+              - {view: timeseries, bucket: day}
+              - {view: breakdown, dimensions: [source]}
+    expect:
+      - assert: "status == 200"
+      # Three of alice's five requests merged. The open one, the closed-but-never
+      # -merged one and the re-synced duplicate of pr-101 all stay out.
+      - metric: git.prs_merged
+        view: period
+        find: {entity_id: alice@example.com}
+        equal: {value: 3}
+      - metric: git.prs_merged
+        view: timeseries
+        find: {entity_id: alice@example.com}
+        contains: {points: {bucket_start: "2026-10-01", value: 3}}
+      - metric: git.prs_merged
+        view: breakdown
+        find: {entity_id: alice@example.com, dimensions: {key: source, value: github}}
+        equal: {value: 3}
+      # pr-105 carries dave's commit. The merge belongs to the request's author,
+      # so dave is credited with none of it.
+      - metric: git.prs_merged
+        view: period
+        find: {entity_id: dave@example.com}
+        equal: {value: null}
+
+  - name: The branch-scope split says where each request was aimed
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [alice@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.prs_merged
+            views:
+              - {view: breakdown, dimensions: [branch_scope]}
+    expect:
+      - assert: "status == 200"
+      # Two requests aimed at the default branch, one at a release branch, and
+      # the two halves partition the period total.
+      - metric: git.prs_merged
+        view: breakdown
+        find: {entity_id: alice@example.com, dimensions: {key: branch_scope, value: default}}
+        equal: {value: 2}
+      - metric: git.prs_merged
+        view: breakdown
+        find: {entity_id: alice@example.com, dimensions: {key: branch_scope, value: non_default}}
+        equal: {value: 1}
+
+  - name: A GitLab merge request counts only in the merged state
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [bob@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.prs_merged
+            views:
+              - {view: period}
+              - {view: timeseries, bucket: day}
+              - {view: breakdown, dimensions: [source]}
+    expect:
+      - assert: "status == 200"
+      # Merged counts; closed-without-merging and open do not.
+      - metric: git.prs_merged
+        view: period
+        find: {entity_id: bob@example.com}
+        equal: {value: 1}
+      - metric: git.prs_merged
+        view: timeseries
+        find: {entity_id: bob@example.com}
+        contains: {points: {bucket_start: "2026-10-01", value: 1}}
+      - metric: git.prs_merged
+        view: breakdown
+        find: {entity_id: bob@example.com, dimensions: {key: source, value: gitlab}}
+        equal: {value: 1}
+
+  - name: A Bitbucket request is dated by its terminal merge event and a declined one is dropped
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [carol@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.prs_merged
+            views:
+              - {view: period}
+              - {view: timeseries, bucket: day}
+              - {view: breakdown, dimensions: [source]}
+    expect:
+      - assert: "status == 200"
+      # One merged request, reaching carol through her account binding alone.
+      - metric: git.prs_merged
+        view: period
+        find: {entity_id: carol@example.com}
+        equal: {value: 1}
+      # The merge event is a day before the request's own updated_on, so this
+      # bucket pins which of the two the metric reads.
+      - metric: git.prs_merged
+        view: timeseries
+        find: {entity_id: carol@example.com}
+        contains: {points: {bucket_start: "2026-10-01", value: 1}}
+      - metric: git.prs_merged
+        view: breakdown
+        find: {entity_id: carol@example.com, dimensions: {key: source, value: bitbucket_cloud}}
+        equal: {value: 1}
+
+  - name: The window the requests were created in holds no merges
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [alice@example.com, bob@example.com, carol@example.com]}
+        period: {from: "2026-09-20", to: "2026-09-30"}
+        metrics:
+          - metric_key: git.prs_merged
+            views:
+              - {view: period}
+    expect:
+      - assert: "status == 200"
+      # Every request above was opened inside this window and merged after it.
+      - {metric: git.prs_merged, view: period, find: {entity_id: alice@example.com}, equal: {value: null}}
+      - {metric: git.prs_merged, view: period, find: {entity_id: bob@example.com}, equal: {value: null}}
+      - {metric: git.prs_merged, view: period, find: {entity_id: carol@example.com}, equal: {value: null}}

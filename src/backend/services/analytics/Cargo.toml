@@ -20,7 +20,8 @@ insight-migration = { workspace = true }
 # but doesn't re-export the row-deserialization derives.
 clickhouse = { workspace = true }
 
-sqlparser = { workspace = true }
+sqlparser = { workspace = true, features = ["visitor"] }
+rmcp = { workspace = true }
 
 axum = { workspace = true }
 sea-orm = { workspace = true }
@@ -49,11 +50,13 @@ grpc_hub = { workspace = true }
 gear_orchestrator = { workspace = true }
 types_registry = { workspace = true }
 reqwest = { workspace = true }
+jsonwebtoken = { workspace = true }
 redis = { workspace = true }
 
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
+schemars = { workspace = true }
 url = { workspace = true }
 # OpenAPI schemas for request/response DTOs. Version pinned to 5.5 to match the
 # `utoipa::ToSchema` the toolkit (`OperationBuilder::json_request` /
@@ -75,6 +78,7 @@ aes-gcm = { workspace = true }
 zeroize = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
+secrecy = { workspace = true }
 csv = { workspace = true }
 rust_xlsxwriter = { workspace = true }
 tracing = { workspace = true }
@@ -94,3 +98,4 @@ clickhouse = { workspace = true, features = ["test-util"] }
 tokio = { workspace = true, features = ["test-util"] }
 tempfile = "3.27"
 zip = { version = "8.6", default-features = false, features = ["deflate"] }
+p256 = { version = "0.14", features = ["pkcs8", "pem", "ecdsa", "getrandom"] }

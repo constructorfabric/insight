@@ -36,6 +36,10 @@ def test_gitlab_git_metrics_build_and_resolve_through_the_source_breakdown(spec:
                     {"metric_key": "git.lines_added", "views": [{"view": "breakdown", "dimensions": ["source"]}]},
                     {"metric_key": "git.lines_removed", "views": [{"view": "breakdown", "dimensions": ["source"]}]},
                     {"metric_key": "git.commit_size", "views": [{"view": "breakdown", "dimensions": ["source"]}]},
+                    {
+                        "metric_key": "git.commits_per_active_day",
+                        "views": [{"view": "breakdown", "dimensions": ["source"]}],
+                    },
                 ],
             },
         }
@@ -46,6 +50,7 @@ def test_gitlab_git_metrics_build_and_resolve_through_the_source_breakdown(spec:
     r.row("git.lines_added", "breakdown", entity_id=ERIN, dimensions=SOURCE_GITLAB).equals(value=24)
     r.row("git.lines_removed", "breakdown", entity_id=ERIN, dimensions=SOURCE_GITLAB).equals(value=4)
     r.row("git.commit_size", "breakdown", entity_id=ERIN, dimensions=SOURCE_GITLAB).equals(value=8)
+    r.row("git.commits_per_active_day", "breakdown", entity_id=ERIN, dimensions=SOURCE_GITLAB).equals(value=4)
 
 
 def test_gitlab_git_metrics_empty_window(spec: SpecRun) -> None:

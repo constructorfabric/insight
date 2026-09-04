@@ -15,7 +15,8 @@ schemas:
       sha: {type: string}
       filename: {type: string}
       status: {type: string}
-      additions: {type: integer}
-      deletions: {type: integer}
+      additions: {type: [integer, "null"]}
+      deletions: {type: [integer, "null"]}
+      is_binary: {type: [boolean, "null"]}
       pre_image_oid: {type: [string, "null"]}
       post_image_oid: {type: [string, "null"]}

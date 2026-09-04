@@ -59,9 +59,10 @@ repository_default_branches AS (
 ),
 -- One row per change CONTENT, not per commit that carries it. The same content
 -- entering a repository on two lines of history — a branch whose copy of a
--- tree also landed on the default branch, a cherry-pick, a
--- reverted-then-restored file — is one authored change with one oid pair, and
--- summing both commits' diffs would count those lines twice.
+-- tree also landed on the default branch, a cherry-pick, a squash that
+-- re-applies its branch's whole span, a reverted-then-restored file — is one
+-- authored change, and summing every carrier's diff would count those lines
+-- more than once. `git_file_content_identity` is what "same content" means.
 --
 -- Earliest commit wins, so the value lands in the period the content was first
 -- authored and does not move when a later commit repeats it.
@@ -70,6 +71,11 @@ repository_default_branches AS (
 -- that reports no oid, or a row collected before the proxy did) distinct per
 -- commit: without it every such row for one path would collapse into one,
 -- because LIMIT 1 BY reads their NULL keys as equal.
+--
+-- The superseded set is the case content identity alone cannot reach: a squash
+-- whose branch was only PARTLY collected carries the collected commits' work
+-- under a span no single commit made, so nothing folds it. See
+-- git_superseded_file_changes.
 deduplicated_file_changes AS (
     SELECT
         tenant_id,
@@ -84,6 +90,10 @@ deduplicated_file_changes AS (
         lines_added,
         lines_removed
     FROM {{ ref('git_commit_file_changes') }}
+    WHERE (tenant_id, data_source, commit_hash, file_path) NOT IN (
+        SELECT tenant_id, data_source, commit_hash, file_path
+        FROM {{ ref('git_superseded_file_changes') }}
+    )
     -- INVARIANT: committer_date breaks the tie, and must stay ahead of the
     -- hash. observed_at is the AUTHOR date, which a rebase preserves — so the
     -- copy and its original tie there, and without this the survivor (and with
@@ -96,9 +106,7 @@ deduplicated_file_changes AS (
         project_key,
         repo_slug,
         file_path,
-        lower(change_type),
-        pre_image_oid,
-        post_image_oid,
+        {{ git_file_content_identity('post_image_oid', 'pre_image_oid') }},
         if(
             coalesce(pre_image_oid, '') = ''
                 AND coalesce(post_image_oid, '') = '',
@@ -247,7 +255,9 @@ file_changes_source AS (
                 lower(raw_file_change.change_type) = 'added', 'Added',
                 lower(raw_file_change.change_type) = 'modified', 'Modified',
                 lower(raw_file_change.change_type) = 'renamed', 'Renamed',
-                lower(raw_file_change.change_type) = 'deleted', 'Deleted',
+                lower(raw_file_change.change_type) IN ('deleted', 'removed'), 'Deleted',
+                lower(raw_file_change.change_type) = 'copied', 'Copied',
+                lower(raw_file_change.change_type) = 'type_changed', 'Type changed',
                 raw_file_change.change_type
             ) AS change_type_label,
             sum(lines_added) AS lines_added,

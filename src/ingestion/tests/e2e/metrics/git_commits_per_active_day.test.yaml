@@ -1,0 +1,35 @@
+spec_version: 1
+description: >
+  Metric: git.commits_per_active_day — authored commits divided by the number
+  of DISTINCT calendar days with at least one authored commit. Values chosen so
+  every wrong denominator disagrees: erin lands 6 commits on 2 active days
+  inside a 7-day window, so the period reads 3.0 — dividing by the window's
+  calendar days (7) reads 0.86, counting the commit_day ROWS instead of
+  distinct dates (3 rows: two repositories share one of the days) reads 2.0,
+  and counting the merge-only day as active (3 days) reads 2.0 as well.
+
+  Fixture:
+    * erin, acme/api: two commits on 2026-10-01, one on 2026-10-02 — 3 commits
+      over 2 active days, a fractional 1.5 per repository.
+    * erin, acme/web: three commits on 2026-10-01 — 3 commits over 1 day, 3.0.
+    * erin, acme/api, 2026-10-03: a merge commit ONLY. A merge commit is not
+      an authored commit, so the day must not count as active.
+
+  Cases: fractional period ratio with cross-repository day dedup, per-day
+  timeseries (and no bucket for the merge-only day), per-repository breakdown
+  with distinct ratios, empty window.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/erin
+
+  bronze_github.commits:
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: cpad-a1, repository: "https://github.com/acme/api.git", sha: cpad-a1, committed_date: "2026-10-01T09:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: cpad-a2, repository: "https://github.com/acme/api.git", sha: cpad-a2, committed_date: "2026-10-01T10:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: cpad-a3, repository: "https://github.com/acme/api.git", sha: cpad-a3, committed_date: "2026-10-02T09:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: cpad-w1, repository: "https://github.com/acme/web.git", sha: cpad-w1, committed_date: "2026-10-01T11:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: cpad-w2, repository: "https://github.com/acme/web.git", sha: cpad-w2, committed_date: "2026-10-01T12:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: cpad-w3, repository: "https://github.com/acme/web.git", sha: cpad-w3, committed_date: "2026-10-01T13:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com}
+    # A day whose only commit is a merge: 2026-10-03 must not be active.
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: cpad-m, repository: "https://github.com/acme/api.git", sha: cpad-m, committed_date: "2026-10-03T09:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, is_merge: true}
+

@@ -1,0 +1,208 @@
+spec_version: 1
+description: >
+  Metrics: git.lines_added / git.lines_removed — per-file line counts of a
+  person's authored commits, summed and broken down by file category, change
+  type, file extension and branch scope. One commit carries every file kind
+  the classifier distinguishes, with distinct counts per row, so each
+  breakdown value is unique to the rows it should contain and no two
+  classifications can be confused.
+
+  Classifier precedence pinned (vendored > test > docs > config > code):
+    * node_modules/pkg/x.test.js  — vendored, although its name says test
+    * Cargo.lock                  — vendored, although lockfiles look like config
+    * tests/fixture.yaml          — test, although .yaml looks like config
+    * tests/app_test.rs           — test (tests/ folder)
+    * docs/guide.md               — docs
+    * config.yaml                 — config
+    * src/app.rs, src/new.rs, src/gone.rs, src/feature.rs — code
+    * assets/logo.png             — a binary file: the proxy reports no line
+      counts (null), so it contributes 0 lines, not null, and does not blank
+      the commit
+
+  Change types use the proxy vocabulary: a rename counts only its edited
+  lines, a removal only its removed lines.
+
+  Landed commit (default branch): +155 / −107 across ten files. In-flight
+  commit (non-default): +9 / −4 on one code file. Totals +164 / −111.
+
+  Per category (added/removed): code 22/37, test 11/1, docs 7/3, config 4/0,
+  vendored 120/70. Per change type: modified 46/29, added 115/51, renamed 3/1,
+  removed 0/30. Per extension: rs 27/38, yaml 10/0 (spans test AND config).
+  Per branch scope: default 155/107, other 9/4 — and git.code_lines reads 22,
+  the code category alone, so vendored lines never reach it.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/erin
+
+  bronze_github.commits:
+    # Stats equal the sum of the file rows below; the binary file adds 0.
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: lc-landed, repository: "https://github.com/acme/api.git", sha: lc-landed, committed_date: "2026-10-01T09:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 155, deletions: 107, changed_files: 10, is_in_default_branch: true}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: lc-inflight, repository: "https://github.com/acme/api.git", sha: lc-inflight, committed_date: "2026-10-01T10:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 9, deletions: 4, changed_files: 1, is_in_default_branch: false}
+
+  bronze_github.file_changes:
+    # code
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: lc-f-app, repository: "https://github.com/acme/api.git", sha: lc-landed, filename: src/app.rs, status: modified, additions: 10, deletions: 2}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: lc-f-renamed, repository: "https://github.com/acme/api.git", sha: lc-landed, filename: src/new.rs, status: renamed, additions: 3, deletions: 1}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: lc-f-removed, repository: "https://github.com/acme/api.git", sha: lc-landed, filename: src/gone.rs, status: removed, additions: 0, deletions: 30}
+    # test — folder wins over the .yaml extension
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: lc-f-test, repository: "https://github.com/acme/api.git", sha: lc-landed, filename: tests/app_test.rs, status: added, additions: 5, deletions: 1}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: lc-f-fixture, repository: "https://github.com/acme/api.git", sha: lc-landed, filename: tests/fixture.yaml, status: added, additions: 6, deletions: 0}
+    # docs
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: lc-f-docs, repository: "https://github.com/acme/api.git", sha: lc-landed, filename: docs/guide.md, status: modified, additions: 7, deletions: 3}
+    # config
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: lc-f-config, repository: "https://github.com/acme/api.git", sha: lc-landed, filename: config.yaml, status: added, additions: 4, deletions: 0}
+    # vendored — wins over the test-looking name and over the lockfile
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: lc-f-vendored, repository: "https://github.com/acme/api.git", sha: lc-landed, filename: node_modules/pkg/x.test.js, status: added, additions: 100, deletions: 50}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: lc-f-lock, repository: "https://github.com/acme/api.git", sha: lc-landed, filename: Cargo.lock, status: modified, additions: 20, deletions: 20}
+    # binary: no line counts from the proxy
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: lc-f-binary, repository: "https://github.com/acme/api.git", sha: lc-landed, filename: assets/logo.png, status: added, additions: null, deletions: null, is_binary: true}
+    # the in-flight commit's one file
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: lc-f-feature, repository: "https://github.com/acme/api.git", sha: lc-inflight, filename: src/feature.rs, status: modified, additions: 9, deletions: 4}
+
+cases:
+  - name: Lines sum over every file row and split by category
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [erin@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.lines_added
+            views:
+              - {view: period}
+              - {view: breakdown, dimensions: [category]}
+          - metric_key: git.lines_removed
+            views:
+              - {view: period}
+              - {view: breakdown, dimensions: [category]}
+          - metric_key: git.code_lines
+            views:
+              - {view: period}
+    expect:
+      - assert: "status == 200"
+
+      # Totals: every file row counts, the binary one as 0.
+      - {metric: git.lines_added, view: period, find: {entity_id: erin@example.com}, equal: {value: 164}}
+      - {metric: git.lines_removed, view: period, find: {entity_id: erin@example.com}, equal: {value: 111}}
+
+      # Category precedence. vendored holds BOTH the test-named file under
+      # node_modules and the lockfile; test holds the .yaml under tests/.
+      - {metric: git.lines_added, view: breakdown, find: {entity_id: erin@example.com, dimensions: {key: category, value: vendored}}, equal: {value: 120}}
+      - {metric: git.lines_removed, view: breakdown, find: {entity_id: erin@example.com, dimensions: {key: category, value: vendored}}, equal: {value: 70}}
+      - {metric: git.lines_added, view: breakdown, find: {entity_id: erin@example.com, dimensions: {key: category, value: test}}, equal: {value: 11}}
+      - {metric: git.lines_removed, view: breakdown, find: {entity_id: erin@example.com, dimensions: {key: category, value: test}}, equal: {value: 1}}
+      - {metric: git.lines_added, view: breakdown, find: {entity_id: erin@example.com, dimensions: {key: category, value: docs}}, equal: {value: 7}}
+      - {metric: git.lines_removed, view: breakdown, find: {entity_id: erin@example.com, dimensions: {key: category, value: docs}}, equal: {value: 3}}
+      - {metric: git.lines_added, view: breakdown, find: {entity_id: erin@example.com, dimensions: {key: category, value: config}}, equal: {value: 4}}
+      - {metric: git.lines_removed, view: breakdown, find: {entity_id: erin@example.com, dimensions: {key: category, value: config}}, equal: {value: 0}}
+      # code: app + renamed + removed + feature; the binary adds 0 here.
+      - {metric: git.lines_added, view: breakdown, find: {entity_id: erin@example.com, dimensions: {key: category, value: code}}, equal: {value: 22}}
+      - {metric: git.lines_removed, view: breakdown, find: {entity_id: erin@example.com, dimensions: {key: category, value: code}}, equal: {value: 37}}
+      # Every file row has its grain, so no Unknown bucket appears.
+      - {metric: git.lines_added, view: breakdown, assert: "!items.exists(v, v.dimensions.exists(d, d.key == 'category' && d.value == '__unknown__'))"}
+
+      # Vendored lines reach Lines added but never Code lines.
+      - {metric: git.code_lines, view: period, find: {entity_id: erin@example.com}, equal: {value: 22}}
+
+  - name: A rename counts its edited lines and a removal its removed lines
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [erin@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.lines_added
+            views:
+              - {view: breakdown, dimensions: [change_type]}
+          - metric_key: git.lines_removed
+            views:
+              - {view: breakdown, dimensions: [change_type]}
+    expect:
+      - assert: "status == 200"
+      - {metric: git.lines_added, view: breakdown, find: {entity_id: erin@example.com, dimensions: {key: change_type, value: modified}}, equal: {value: 46}}
+      - {metric: git.lines_removed, view: breakdown, find: {entity_id: erin@example.com, dimensions: {key: change_type, value: modified}}, equal: {value: 29}}
+      - {metric: git.lines_added, view: breakdown, find: {entity_id: erin@example.com, dimensions: {key: change_type, value: added}}, equal: {value: 115}}
+      - {metric: git.lines_removed, view: breakdown, find: {entity_id: erin@example.com, dimensions: {key: change_type, value: added}}, equal: {value: 51}}
+      - {metric: git.lines_added, view: breakdown, find: {entity_id: erin@example.com, dimensions: {key: change_type, value: renamed}}, equal: {value: 3}}
+      - {metric: git.lines_removed, view: breakdown, find: {entity_id: erin@example.com, dimensions: {key: change_type, value: renamed}}, equal: {value: 1}}
+      - {metric: git.lines_added, view: breakdown, find: {entity_id: erin@example.com, dimensions: {key: change_type, value: removed}}, equal: {value: 0}}
+      - {metric: git.lines_removed, view: breakdown, find: {entity_id: erin@example.com, dimensions: {key: change_type, value: removed}}, equal: {value: 30}}
+
+  - name: File extension is independent of category
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [erin@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.lines_added
+            views:
+              - {view: breakdown, dimensions: [file_extension]}
+          - metric_key: git.lines_removed
+            views:
+              - {view: breakdown, dimensions: [file_extension]}
+    expect:
+      - assert: "status == 200"
+      # .yaml spans test and config; .rs spans every code change type.
+      - {metric: git.lines_added, view: breakdown, find: {entity_id: erin@example.com, dimensions: {key: file_extension, value: rs}}, equal: {value: 27}}
+      - {metric: git.lines_removed, view: breakdown, find: {entity_id: erin@example.com, dimensions: {key: file_extension, value: rs}}, equal: {value: 38}}
+      - {metric: git.lines_added, view: breakdown, find: {entity_id: erin@example.com, dimensions: {key: file_extension, value: yaml}}, equal: {value: 10}}
+      - {metric: git.lines_removed, view: breakdown, find: {entity_id: erin@example.com, dimensions: {key: file_extension, value: yaml}}, equal: {value: 0}}
+      # The binary file is present with zero lines, not absent.
+      - {metric: git.lines_added, view: breakdown, find: {entity_id: erin@example.com, dimensions: {key: file_extension, value: png}}, equal: {value: 0}}
+
+  - name: Branch scope partitions the total and the scoped metrics read the same halves
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [erin@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.lines_added
+            views:
+              - {view: breakdown, dimensions: [branch_scope]}
+          - metric_key: git.lines_removed
+            views:
+              - {view: breakdown, dimensions: [branch_scope]}
+          - metric_key: git.default_branch_lines_added
+            views:
+              - {view: period}
+          - metric_key: git.non_default_branch_lines_added
+            views:
+              - {view: period}
+          - metric_key: git.default_branch_lines_removed
+            views:
+              - {view: period}
+          - metric_key: git.non_default_branch_lines_removed
+            views:
+              - {view: period}
+    expect:
+      - assert: "status == 200"
+      - {metric: git.lines_added, view: breakdown, find: {entity_id: erin@example.com, dimensions: {key: branch_scope, value: default}}, equal: {value: 155}}
+      - {metric: git.lines_added, view: breakdown, find: {entity_id: erin@example.com, dimensions: {key: branch_scope, value: non_default}}, equal: {value: 9}}
+      - {metric: git.lines_removed, view: breakdown, find: {entity_id: erin@example.com, dimensions: {key: branch_scope, value: default}}, equal: {value: 107}}
+      - {metric: git.lines_removed, view: breakdown, find: {entity_id: erin@example.com, dimensions: {key: branch_scope, value: non_default}}, equal: {value: 4}}
+      - {metric: git.default_branch_lines_added, view: period, find: {entity_id: erin@example.com}, equal: {value: 155}}
+      - {metric: git.non_default_branch_lines_added, view: period, find: {entity_id: erin@example.com}, equal: {value: 9}}
+      - {metric: git.default_branch_lines_removed, view: period, find: {entity_id: erin@example.com}, equal: {value: 107}}
+      - {metric: git.non_default_branch_lines_removed, view: period, find: {entity_id: erin@example.com}, equal: {value: 4}}
+
+  - name: Empty window
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [erin@example.com]}
+        period: {from: "2025-01-01", to: "2025-01-31"}
+        metrics:
+          - {metric_key: git.lines_added, views: [{view: period}]}
+          - {metric_key: git.lines_removed, views: [{view: period}]}
+    expect:
+      - assert: "status == 200"
+      - {metric: git.lines_added, view: period, find: {entity_id: erin@example.com}, equal: {value: null}}
+      - {metric: git.lines_removed, view: period, find: {entity_id: erin@example.com}, equal: {value: null}}

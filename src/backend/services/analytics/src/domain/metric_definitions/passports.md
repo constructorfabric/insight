@@ -354,7 +354,7 @@ this file and the registry disagree.
 - Reads: pr_merged
 - Formula: sum(pr_merged)
 - Shape: integer, higher_is_better, unit PRs
-- Notes: Authored pull requests that merged, dated by the merge — so a request counts in the period it landed and can carry commits written in earlier ones. Under a branch-scope breakdown the split says where the request was aimed, not where its commits sit.
+- Notes: Authored pull requests that merged, dated by the merge in UTC — so a request counts in the period it landed and can carry commits written in earlier ones. Under a branch-scope breakdown the split says where the request was aimed, not where its commits sit.
 
 ## git.default_branch_prs_merged — Pull requests merged into the default branch
 

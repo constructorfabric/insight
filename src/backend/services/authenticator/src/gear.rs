@@ -21,6 +21,7 @@ use crate::identity::{IdentityPersonResolver, PersonResolver};
 use crate::issuers::IssuerSelector;
 use crate::jwt::KeyStore;
 use crate::local_client::LocalClient;
+use crate::mcp_oauth::McpOAuthStore;
 use crate::service_token::{self, ServiceRegistry};
 use crate::session::SessionManager;
 
@@ -64,6 +65,7 @@ impl Gear for AuthenticatorGear {
         // boot so a missing Redis surfaces here rather than on first request.
         let sessions = SessionManager::connect(&cfg.redis_url).await?;
         sessions.ping().await?;
+        let mcp_oauth = McpOAuthStore::connect(&cfg.redis_url).await?;
 
         let oidc = IssuerSelector::build(&cfg)?;
         // The resolver authenticates its internal Identity lookup with a service
@@ -110,6 +112,7 @@ impl Gear for AuthenticatorGear {
             service_registry,
             authn_client,
             audit,
+            mcp_oauth,
         });
         self.state
             .set(state)

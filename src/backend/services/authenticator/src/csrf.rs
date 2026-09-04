@@ -24,7 +24,12 @@ use crate::api::error::SessionError;
 use crate::cookie;
 
 /// Paths under `/auth/` that skip CSRF checks: not browser-session-driven.
-const EXEMPT_PATHS: &[&str] = &["/auth/oidc/back-channel-logout"];
+const EXEMPT_PATHS: &[&str] = &[
+    "/auth/oidc/back-channel-logout",
+    "/auth/oauth/register",
+    "/auth/oauth/token",
+    "/auth/oauth/revoke",
+];
 
 /// The verdict of the pure check (unit-tested separately from the middleware).
 #[derive(Debug, PartialEq, Eq)]

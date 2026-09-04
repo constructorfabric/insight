@@ -39,6 +39,10 @@ def test_bitbucket_git_metrics_resolve_through_the_source_breakdown(spec: SpecRu
                     {"metric_key": "git.lines_added", "views": [{"view": "breakdown", "dimensions": ["source"]}]},
                     {"metric_key": "git.lines_removed", "views": [{"view": "breakdown", "dimensions": ["source"]}]},
                     {"metric_key": "git.commit_size", "views": [{"view": "breakdown", "dimensions": ["source"]}]},
+                    {
+                        "metric_key": "git.commits_per_active_day",
+                        "views": [{"view": "breakdown", "dimensions": ["source"]}],
+                    },
                 ],
             },
         }
@@ -49,6 +53,7 @@ def test_bitbucket_git_metrics_resolve_through_the_source_breakdown(spec: SpecRu
     r.row("git.lines_added", "breakdown", entity_id=ERIN, dimensions=SOURCE_BITBUCKET).equals(value=10)
     r.row("git.lines_removed", "breakdown", entity_id=ERIN, dimensions=SOURCE_BITBUCKET).equals(value=2)
     r.row("git.commit_size", "breakdown", entity_id=ERIN, dimensions=SOURCE_BITBUCKET).equals(value=12)
+    r.row("git.commits_per_active_day", "breakdown", entity_id=ERIN, dimensions=SOURCE_BITBUCKET).equals(value=2)
 
 
 def test_bitbucket_git_metrics_empty_window(spec: SpecRun) -> None:

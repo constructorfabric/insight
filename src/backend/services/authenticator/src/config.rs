@@ -296,6 +296,28 @@ impl Default for RateLimitConfig {
     }
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct McpOAuthConfig {
+    pub enabled: bool,
+    pub public_url: String,
+    pub allow_insecure_private_network: bool,
+    pub authorization_code_ttl_seconds: u64,
+    pub access_token_ttl_seconds: u64,
+}
+
+impl Default for McpOAuthConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            public_url: String::new(),
+            allow_insecure_private_network: false,
+            authorization_code_ttl_seconds: 300,
+            access_token_ttl_seconds: 300,
+        }
+    }
+}
+
 /// The authenticator gear configuration. Deserialized from
 /// `gears.authenticator.config`.
 #[derive(Debug, Clone, Deserialize)]
@@ -402,6 +424,8 @@ pub struct AuthenticatorConfig {
 
     /// Service-token issuance (§10 G1): the second listener + registry.
     pub service_tokens: ServiceTokensConfig,
+
+    pub mcp_oauth: McpOAuthConfig,
 }
 
 /// Deserialize `oidc_scopes` from either a YAML list (`["openid","email"]`) or a
@@ -482,6 +506,7 @@ impl Default for AuthenticatorConfig {
             bind_addr: "0.0.0.0:8083".to_owned(),
             idp: IdpConfig::default(),
             service_tokens: ServiceTokensConfig::default(),
+            mcp_oauth: McpOAuthConfig::default(),
         }
     }
 }
@@ -506,17 +531,7 @@ impl AuthenticatorConfig {
             "session_ttl_seconds must be <= session_absolute_lifetime_seconds"
         );
 
-        // Required fields (all injected per-deployment). `idp.client_secret` is
-        // intentionally optional — public OIDC clients authenticate with PKCE
-        // and no secret. `redis_url` is checked in SessionManager::connect.
-        for (name, value) in [
-            ("gateway_issuer", &self.gateway_issuer),
-            ("redirect_uri", &self.redirect_uri),
-            ("signing_keys_path", &self.signing_keys_path),
-            ("identity_url", &self.identity_url),
-        ] {
-            anyhow::ensure!(!value.trim().is_empty(), "{name} is required (empty)");
-        }
+        validate_required_fields(self)?;
 
         // Only the external-id mode reads these. Requiring them in email mode
         // would make an install name a source_type its login never asks about,
@@ -622,8 +637,64 @@ impl AuthenticatorConfig {
                 );
             }
         }
+
+        validate_mcp_oauth(&self.mcp_oauth)?;
         Ok(())
     }
+}
+
+fn validate_required_fields(config: &AuthenticatorConfig) -> anyhow::Result<()> {
+    for (name, value) in [
+        ("gateway_issuer", &config.gateway_issuer),
+        ("redirect_uri", &config.redirect_uri),
+        ("signing_keys_path", &config.signing_keys_path),
+        ("identity_url", &config.identity_url),
+    ] {
+        anyhow::ensure!(!value.trim().is_empty(), "{name} is required (empty)");
+    }
+    Ok(())
+}
+
+fn validate_mcp_oauth(config: &McpOAuthConfig) -> anyhow::Result<()> {
+    if !config.enabled {
+        return Ok(());
+    }
+
+    let public_url = url::Url::parse(&config.public_url)
+        .map_err(|error| anyhow::anyhow!("mcp_oauth.public_url is invalid: {error}"))?;
+    let private_http = public_url.scheme() == "http"
+        && config.allow_insecure_private_network
+        && public_url
+            .host_str()
+            .and_then(|host| host.parse::<std::net::IpAddr>().ok())
+            .is_some_and(|address| match address {
+                std::net::IpAddr::V4(address) => address.is_private(),
+                std::net::IpAddr::V6(address) => (address.segments()[0] & 0xfe00) == 0xfc00,
+            });
+    anyhow::ensure!(
+        matches!(public_url.scheme(), "https" | "http")
+            && (public_url.scheme() == "https"
+                || matches!(
+                    public_url.host_str(),
+                    Some("localhost" | "127.0.0.1" | "::1")
+                )
+                || private_http)
+            && public_url.path() == "/"
+            && public_url.query().is_none()
+            && public_url.fragment().is_none()
+            && public_url.username().is_empty()
+            && public_url.password().is_none(),
+        "mcp_oauth.public_url must be an HTTPS origin or an allowed local HTTP origin"
+    );
+    anyhow::ensure!(
+        config.authorization_code_ttl_seconds > 0,
+        "mcp_oauth.authorization_code_ttl_seconds must be > 0"
+    );
+    anyhow::ensure!(
+        config.access_token_ttl_seconds > 0,
+        "mcp_oauth.access_token_ttl_seconds must be > 0"
+    );
+    Ok(())
 }
 
 #[cfg(test)]

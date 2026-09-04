@@ -94,6 +94,13 @@ impl RequestBuilder {
         }
     }
 
+    pub fn query<T: serde::Serialize + ?Sized>(self, query: &T) -> Self {
+        Self {
+            inner: self.inner.query(query),
+            ..self
+        }
+    }
+
     pub async fn send(self) -> reqwest::Result<reqwest::Response> {
         // Build first so the request's final method + URL are readable; a
         // build error surfaces exactly like reqwest's own send() would.

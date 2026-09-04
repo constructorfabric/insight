@@ -53,3 +53,38 @@ templates:
     lines_added: 0
     lines_removed: 0
     diff_truncated: false
+
+  # A merge request carries only its author's username; this row is what turns
+  # that into an address.
+  user:
+    $ref: "#/templates/base"
+    id: null
+    username: null
+    name: null
+    state: active
+    email: null
+    public_email: ""
+    bot: false
+
+  merge_request:
+    $ref: "#/templates/base"
+    project_id: 101
+    iid: null
+    id: null
+    title: change
+    description: body
+    state: merged
+    draft: false
+    author_id: null
+    author_username: null
+    source_branch: feature
+    target_branch: main
+    created_at: "2026-10-01T08:00:00Z"
+    updated_at: "2026-10-01T13:00:00Z"
+    merged_at: null
+    closed_at: null
+    sha: null
+    merge_commit_sha: null
+    squash: false
+    merge_status: can_be_merged
+    user_notes_count: 0
