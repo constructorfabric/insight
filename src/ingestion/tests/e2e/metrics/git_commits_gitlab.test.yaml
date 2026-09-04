@@ -64,6 +64,9 @@ cases:
           - metric_key: git.commit_size
             views:
               - {view: breakdown, dimensions: [source]}
+          - metric_key: git.commits_per_active_day
+            views:
+              - {view: breakdown, dimensions: [source]}
     expect:
       - assert: "status == 200"
       # commit-a, commit-b and both carriers of the repeated content; the
@@ -88,6 +91,12 @@ cases:
         view: breakdown
         find: {entity_id: erin@example.com, dimensions: {key: source, value: gitlab}}
         equal: {value: 8}
+      # Four authored commits, one calendar day: 4.0. The merge commit adds
+      # neither a commit nor an active day.
+      - metric: git.commits_per_active_day
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: source, value: gitlab}}
+        equal: {value: 4}
 
   - name: GitLab git metrics empty window
     request:
