@@ -20,7 +20,8 @@ pub enum TypeClass {
 }
 
 /// How a relation must be scanned for its rows to be the deduplicated truth.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ReadDiscipline {
     Plain,
     /// A replacing engine: every read must collapse superseded rows.
@@ -38,7 +39,6 @@ pub struct CatalogRelation {
     pub database: String,
     pub relation: String,
     pub read_discipline: ReadDiscipline,
-    pub sorting_key: Vec<String>,
     pub columns: Vec<CatalogColumn>,
 }
 

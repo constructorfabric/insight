@@ -17,7 +17,6 @@ struct SnapshotRelation {
     database: String,
     relation: String,
     engine: String,
-    sorting_key: String,
     columns: Vec<SnapshotColumn>,
 }
 
@@ -46,7 +45,6 @@ pub fn load(snapshot_json: &str) -> Result<FieldCatalog, CatalogError> {
 
         relations.push(CatalogRelation {
             read_discipline: ReadDiscipline::for_engine(&raw.engine),
-            sorting_key: parse_sorting_key(&raw.sorting_key),
             columns: raw
                 .columns
                 .into_iter()
@@ -61,14 +59,6 @@ pub fn load(snapshot_json: &str) -> Result<FieldCatalog, CatalogError> {
     }
 
     Ok(FieldCatalog { relations })
-}
-
-fn parse_sorting_key(raw: &str) -> Vec<String> {
-    raw.split(',')
-        .map(str::trim)
-        .filter(|part| !part.is_empty())
-        .map(str::to_owned)
-        .collect()
 }
 
 #[cfg(test)]
@@ -100,10 +90,6 @@ mod tests {
             .expect("the relation is catalogued");
 
         assert_eq!(relation.read_discipline, ReadDiscipline::Plain);
-        assert_eq!(
-            relation.sorting_key,
-            ["tenant_id", "author_email", "authored_at"]
-        );
 
         let tenant = relation.column("tenant_id").expect("column is present");
         assert_eq!(tenant.field_type.class, TypeClass::Text);

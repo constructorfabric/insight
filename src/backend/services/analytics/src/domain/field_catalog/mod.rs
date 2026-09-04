@@ -3,8 +3,8 @@
 //! INVARIANT: `columns.snapshot.json` is compiled in, so a declaration naming a
 //! column the warehouse does not carry fails a test run rather than a request.
 
-// The catalog's only callers today are its own tests; the API layer
-// reaches it through the query engine.
+// The catalog's only callers today are the dataset declarations and their
+// tests; the API layer reaches it through the ask engine.
 #![allow(dead_code)]
 
 pub mod loader;
