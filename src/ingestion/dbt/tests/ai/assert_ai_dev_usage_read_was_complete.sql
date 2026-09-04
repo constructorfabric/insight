@@ -30,8 +30,7 @@ WITH reference AS (
         -- Not aliased `total_users`: the alias would shadow the source
         -- column and ClickHouse then resolves the outer WHERE to the
         -- aggregate itself.
-        max(toInt64OrNull(toString(total_users)))       AS read_total_users,
-        min(_airbyte_extracted_at)                      AS read_at
+        max(toInt64OrNull(toString(total_users)))       AS read_total_users
     FROM {{ source('bronze_claude_team', 'claude_team_code_metrics_org') }}
     WHERE metric_date IS NOT NULL
       AND total_users IS NOT NULL
@@ -41,10 +40,13 @@ WITH reference AS (
 
 first_reference AS (
 
+    -- The boundary is the READ, not its timestamp: both streams are written by
+    -- the same job but not at the same instant, so on the first sync after the
+    -- upgrade the per-user rows can predate the envelope that judges them.
     SELECT
         insight_tenant_id,
         source_id,
-        min(read_at)                                    AS since
+        min(read_id)                                    AS since_read
     FROM reference
     GROUP BY insight_tenant_id, source_id
 
@@ -52,16 +54,12 @@ first_reference AS (
 
 newest_read AS (
 
-    -- The inner alias is deliberately not `read_at`: ClickHouse resolves the
-    -- outer aggregate's argument against the outer name first and then reports
-    -- an aggregate inside an aggregate.
     SELECT
         insight_tenant_id,
         source_id,
         day,
         argMax(read_id, last_seen)                      AS read_id,
-        argMax(people, last_seen)                       AS people,
-        max(last_seen)                                  AS read_at
+        argMax(people, last_seen)                       AS people
     FROM (
         SELECT
             coalesce(tenant_id, '')                     AS insight_tenant_id,
@@ -95,7 +93,7 @@ LEFT JOIN reference AS r
       AND r.source_id = n.source_id
       AND r.day = n.day
       AND r.read_id = n.read_id
--- Only reads that should have carried a reference: anything older than this
--- instance's first one predates the field.
-WHERE n.read_at >= f.since
+-- Only reads that should have carried a reference: anything before this
+-- instance's first reference-carrying read predates the field.
+WHERE n.read_id >= f.since_read
   AND (r.read_total_users IS NULL OR n.people != r.read_total_users)

@@ -66,8 +66,7 @@ WITH reference AS (
         JSONExtractInt(_airbyte_meta, 'sync_id')        AS read_id,
         -- Not aliased `total_users`: the alias shadows the source column and
         -- ClickHouse then resolves the outer reference to the aggregate itself.
-        max(toInt64OrNull(toString(total_users)))       AS read_total_users,
-        min(_airbyte_extracted_at)                      AS read_at
+        max(toInt64OrNull(toString(total_users)))       AS read_total_users
     FROM {{ source('bronze_claude_team', 'claude_team_code_metrics_org') }}
     WHERE metric_date IS NOT NULL
       AND total_users IS NOT NULL
@@ -77,14 +76,20 @@ WITH reference AS (
 
 first_reference AS (
 
-    -- When this instance began carrying references at all. Reads older than
-    -- that predate the field and cannot be judged; reads after it must carry
-    -- one, or they are rejected — an unreferenced recent read is the silent
-    -- hole this gate exists to close.
+    -- Which read first carried a reference on this instance. Reads before it
+    -- predate the field and cannot be judged; that read and everything after
+    -- must carry one, or they are rejected — an unreferenced later read is the
+    -- silent hole this gate exists to close.
+    --
+    -- The boundary is the READ, not its timestamp. Both streams are written by
+    -- the same job, but not at the same instant: on the first sync after the
+    -- upgrade the per-user rows can land a moment before the envelope that
+    -- would judge them. A timestamp boundary would wave exactly those through
+    -- as legacy.
     SELECT
         insight_tenant_id,
         source_id,
-        min(read_at)                                    AS since,
+        min(read_id)                                    AS since_read,
         toUInt8(1)                                      AS instance_has_references
     FROM reference
     GROUP BY insight_tenant_id, source_id
@@ -98,8 +103,7 @@ read_state AS (
         coalesce(source_id, '')                         AS source_id,
         toDate(metric_date)                             AS day,
         JSONExtractInt(_airbyte_meta, 'sync_id')        AS read_id,
-        uniqExact(lower(trim(coalesce(email, ''))))     AS people,
-        max(_airbyte_extracted_at)                      AS read_at
+        uniqExact(lower(trim(coalesce(email, ''))))     AS people
     FROM {{ source('bronze_claude_team', 'claude_team_code_metrics') }}
     WHERE metric_date IS NOT NULL
     GROUP BY insight_tenant_id, source_id, day, read_id
@@ -125,7 +129,7 @@ admitted_reads AS (
               FROM reference
           )
        OR coalesce(f.instance_has_references, 0) = 0
-       OR r.read_at < f.since
+       OR r.read_id < f.since_read
 
 )
 

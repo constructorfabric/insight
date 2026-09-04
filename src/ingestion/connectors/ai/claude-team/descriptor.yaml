@@ -77,9 +77,12 @@ name: claude-team
 #   state in staging or silver.
 #   MINOR per ADR-0015 — additive Bronze field, no dbt output change, nothing
 #   re-materializes; the reconciler adds the snapshot column, so no ALTER ships
-#   with it. Reads written before this version carry no reference and stay
-#   admitted as legacy, which is what they honestly are; every read after the
-#   first reference lands must carry one or it is rejected.
+#   with it. Reads before the first one that carried a reference stay admitted
+#   as legacy, which is what they honestly are; that read and every one after it
+#   must carry its own or be rejected. The boundary is the read, not its clock:
+#   both streams are written by the same job but not at the same instant, so on
+#   the first sync after the upgrade the per-user rows can land just before the
+#   envelope that judges them.
 version: "3.3.0"
 # Daily at 23:50 UTC, as late in the day as the boundary allows. The seat
 # endpoint reports the billing month in progress and carries no history, so a

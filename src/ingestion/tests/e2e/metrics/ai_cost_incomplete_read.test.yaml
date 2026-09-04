@@ -15,26 +15,44 @@ description: >
   model admits a per-user row only when its own read's distinct people equal that
   read's total_users.
 
-  Four days, one per branch of that gate — alice is the requested person and
-  every day is hers to carry:
+  The boundary between "predates the field" and "should have been judged" is the
+  READ, not its timestamp. Both streams are written by the same job but not at
+  the same instant, so on the first sync after the upgrade the per-user rows can
+  land a moment before the envelope that judges them; a timestamp boundary would
+  wave exactly those through.
 
-    Nov 10  legacy      no envelope, and read BEFORE this instance's first one.
-                        Nothing to judge it against, so it is admitted. This is
-                        what keeps history that predates the field servable.   0.50
-    Nov 15  complete    envelope says 2, the read returned alice and bob.
-                        Admitted.                                              1.00
-    Nov 16  short       envelope says 2, the read returned alice only. Rejected
-                        WHOLE — alice's own row goes too, because a read short in
-                        an unknown place says nothing about the people it did
-                        return.                                                2.00
-    Nov 17  unreferenced  read AFTER the first envelope, and carries none of its
-                        own. Rejected: an unreferenced recent read is the silent
-                        hole the gate exists to close.                         4.00
+  Six days, one per branch of the gate. alice is the requested person except
+  where noted:
 
-  alice's window therefore sums the two admitted days only: 0.50 + 1.00 = 1.50.
+    Nov 10  legacy      no envelope, and read 10 — BEFORE the first read that
+                        carried one. Nothing to judge it against, so it is
+                        admitted. This is what keeps history that predates the
+                        field servable.                                        0.50
+    Nov 15  complete    envelope of read 15 says 2, read 15 returned alice and
+                        bob. Admitted.                                         1.00
+    Nov 16  short       envelope of read 16 says 2, read 16 returned alice only.
+                        Rejected WHOLE — alice's own row goes too, because a read
+                        short in an unknown place says nothing about the people
+                        it did return.                                         2.00
+    Nov 17  unreferenced  read 17 is after the first reference and carries none
+                        of its own. Rejected: an unreferenced later read is the
+                        silent hole the gate exists to close.                   4.00
+    Nov 18  two reads   read 18's envelope says 1 and it returned bob — complete,
+                        admitted. Read 19's envelope says 2 and it returned alice
+                        only — short, rejected. Each read is judged against its
+                        OWN envelope: were the newest reference used for both,
+                        bob's sound read would be rejected too and the day would
+                        be empty.                              bob 0.75 · alice 8.00
+    Nov 19  bootstrap   read 15 — the very read that first carried an envelope —
+                        but there is none for THIS day, and the row was extracted
+                        a minute BEFORE that envelope. Rejected, not legacy: the
+                        boundary is the read id, and 15 is not before 15.      16.00
+
+  alice's window therefore sums the two days admitted for her: 0.50 + 1.00 = 1.50.
   With the gate removed every day would count and the same request would answer
-  7.50, so the case cannot pass by accident. The timeseries view pins which days
-  survived rather than only the total.
+  31.50, so the case cannot pass by accident. bob's window sums his two admitted
+  days: 1.00 + 0.75 = 1.75. The timeseries views pin which days survived rather
+  than only the totals.
 
 bronze:
   bronze_bamboohr.employees:
@@ -50,6 +68,14 @@ bronze:
     - { $ref: templates/claude_team_metrics_org.yaml#/templates/claude_team_metrics_org,
         metric_date: "2026-11-16", unique_key: org-20261116-r16, total_users: 2,
         _airbyte_extracted_at: "2026-11-16T23:50:00Z", _airbyte_meta: '{"sync_id":16,"changes":[]}' }
+    # Nov 18 read twice, and BOTH envelopes survive because unique_key names the
+    # read. The counts differ because the day was still filling up.
+    - { $ref: templates/claude_team_metrics_org.yaml#/templates/claude_team_metrics_org,
+        metric_date: "2026-11-18", unique_key: org-20261118-r18, total_users: 1,
+        _airbyte_extracted_at: "2026-11-18T20:00:00Z", _airbyte_meta: '{"sync_id":18,"changes":[]}' }
+    - { $ref: templates/claude_team_metrics_org.yaml#/templates/claude_team_metrics_org,
+        metric_date: "2026-11-18", unique_key: org-20261118-r19, total_users: 2,
+        _airbyte_extracted_at: "2026-11-18T23:50:00Z", _airbyte_meta: '{"sync_id":19,"changes":[]}' }
 
   bronze_claude_team.claude_team_code_metrics:
     # ── Nov 10 · legacy: extracted before the first envelope above ────────────
@@ -74,6 +100,26 @@ bronze:
     - { $ref: templates/claude_team_usage.yaml#/templates/alice, metric_date: "2026-11-17",
         unique_key: cc-alice-20261117, total_cost: "4.00", total_sessions: 1,
         _airbyte_extracted_at: "2026-11-17T23:50:00Z", _airbyte_meta: '{"sync_id":17,"changes":[]}' }
+
+    # ── Nov 18 · two reads of one day, judged against their own envelopes ─────
+    # Read 18 matched its own count of 1 → bob's row is admitted.
+    - { $ref: templates/claude_team_usage.yaml#/templates/bob, metric_date: "2026-11-18",
+        unique_key: cc-bob-20261118, total_cost: "0.75", total_sessions: 1,
+        _airbyte_extracted_at: "2026-11-18T20:00:00Z", _airbyte_meta: '{"sync_id":18,"changes":[]}' }
+    # Read 19 returned one of the two its own envelope counted → rejected. A
+    # different person, so the two reads do not share a Bronze key and neither
+    # can mask the other.
+    - { $ref: templates/claude_team_usage.yaml#/templates/alice, metric_date: "2026-11-18",
+        unique_key: cc-alice-20261118, total_cost: "8.00", total_sessions: 1,
+        _airbyte_extracted_at: "2026-11-18T23:50:00Z", _airbyte_meta: '{"sync_id":19,"changes":[]}' }
+
+    # ── Nov 19 · bootstrap: read 15 again, but no envelope for THIS day, and
+    #    extracted a minute before the envelope that made read 15 the first
+    #    reference. Under a timestamp boundary this looks legacy; under the read
+    #    boundary it is not, and it is rejected. ─────────────────────────────
+    - { $ref: templates/claude_team_usage.yaml#/templates/alice, metric_date: "2026-11-19",
+        unique_key: cc-alice-20261119, total_cost: "16.00", total_sessions: 1,
+        _airbyte_extracted_at: "2026-11-15T23:49:00Z", _airbyte_meta: '{"sync_id":15,"changes":[]}' }
 
 cases:
   - name: an incomplete read never becomes the day's state
@@ -102,10 +148,44 @@ cases:
       - metric: ai.cost
         view: timeseries
         assert: "items.exists(s, s.entity_id == 'alice@example.com' && s.points.exists(p, p.bucket_start == '2026-11-15' && double(p.value) == 1.0))"
-      # …and the two rejected days carry nothing, alice's own row included.
+      # …and every rejected day carries nothing, alice's own row included.
       - metric: ai.cost
         view: timeseries
         assert: "items.exists(s, s.entity_id == 'alice@example.com' && !s.points.exists(p, p.bucket_start == '2026-11-16' && double(p.value) > 0.0))"
       - metric: ai.cost
         view: timeseries
         assert: "items.exists(s, s.entity_id == 'alice@example.com' && !s.points.exists(p, p.bucket_start == '2026-11-17' && double(p.value) > 0.0))"
+      # Nov 18: read 19 was short, so alice's row for that day is gone even
+      # though read 18 of the same day was sound.
+      - metric: ai.cost
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'alice@example.com' && !s.points.exists(p, p.bucket_start == '2026-11-18' && double(p.value) > 0.0))"
+      # Nov 19: the bootstrap read. Rejected despite being extracted before the
+      # first envelope — the boundary is the read id, not the clock.
+      - metric: ai.cost
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'alice@example.com' && !s.points.exists(p, p.bucket_start == '2026-11-19' && double(p.value) > 0.0))"
+
+  - name: each read of a day is judged against its own headcount
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [bob@example.com] }
+        period: { from: "2026-11-01", to: "2026-11-30" }
+        metrics:
+          - metric_key: ai.cost
+            views:
+              - { view: period }
+              - { view: timeseries, bucket: day }
+    expect:
+      - assert: "status == 200"
+      # 1.00 (Nov 15, read 15) + 0.75 (Nov 18, read 18). Read 19's later, short
+      # envelope for the same day does not reach back and disqualify read 18.
+      - metric: ai.cost
+        view: period
+        find: { entity_id: bob@example.com }
+        equal: { value: 1.75 }
+      - metric: ai.cost
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'bob@example.com' && s.points.exists(p, p.bucket_start == '2026-11-18' && double(p.value) == 0.75))"
