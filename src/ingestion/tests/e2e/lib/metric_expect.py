@@ -34,15 +34,6 @@ REQUIRED_VIEW_FIELDS: dict[str, frozenset[str]] = {
     "histogram": frozenset({"bins"}),
 }
 
-# What a whole-view assertion is taken to have examined, per view kind. Mirrors the
-# coverage gate's reading of the retired CEL rules: a timeseries check reads points, a
-# breakdown check reads dimensions and value, a histogram check reads bins.
-VIEW_ASSERTED_FIELDS: dict[str, frozenset[str]] = {
-    "timeseries": frozenset({"points"}),
-    "breakdown": frozenset({"dimensions", "value"}),
-    "histogram": frozenset({"bins"}),
-}
-
 
 class ExpectError(AssertionError):
     """A selection or an expectation over the response did not hold."""
