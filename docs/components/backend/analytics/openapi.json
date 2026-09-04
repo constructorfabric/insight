@@ -2636,6 +2636,105 @@
         ],
         "type": "string"
       },
+      "QueryDataset": {
+        "properties": {
+          "dimensions": {
+            "description": "The axes a query may group by, and filter on beside the measurables.",
+            "items": {
+              "$ref": "#/components/schemas/QueryDatasetDimension"
+            },
+            "type": "array"
+          },
+          "key": {
+            "type": "string"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/QueryLimits",
+            "description": "The bounds a request against this dataset must stay inside."
+          },
+          "measurables": {
+            "description": "The columns an aggregate may fold.",
+            "items": {
+              "$ref": "#/components/schemas/QueryDatasetMeasurable"
+            },
+            "type": "array"
+          },
+          "time_fields": {
+            "description": "The columns a query may bound its window by, and bucket on.",
+            "items": {
+              "$ref": "#/components/schemas/QueryDatasetTimeField"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "key",
+          "time_fields",
+          "dimensions",
+          "measurables",
+          "limits"
+        ],
+        "type": "object"
+      },
+      "QueryDatasetDimension": {
+        "properties": {
+          "absent_value": {
+            "description": "The value absent rows group under, and a filter matches them by.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "field": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "field"
+        ],
+        "type": "object"
+      },
+      "QueryDatasetList": {
+        "properties": {
+          "datasets": {
+            "items": {
+              "$ref": "#/components/schemas/QueryDataset"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "datasets"
+        ],
+        "type": "object"
+      },
+      "QueryDatasetMeasurable": {
+        "properties": {
+          "field": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "field"
+        ],
+        "type": "object"
+      },
+      "QueryDatasetTimeField": {
+        "properties": {
+          "default": {
+            "description": "The field a query's window binds to when it names none.",
+            "type": "boolean"
+          },
+          "field": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "field",
+          "default"
+        ],
+        "type": "object"
+      },
       "QueryDimensionAxis": {
         "additionalProperties": false,
         "properties": {
@@ -2987,6 +3086,59 @@
             ]
           }
         ]
+      },
+      "QueryLimits": {
+        "description": "The contract's request bounds, identical for every dataset.",
+        "properties": {
+          "default_limit": {
+            "description": "Rows a query gets when it sets no ceiling of its own.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_aggregates": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_filter_values": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_filters": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_group_axes": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_limit": {
+            "description": "Rows a query may ask for at most; over it the query is refused, not clipped.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_name_chars": {
+            "description": "Longest an aggregate's name may be, in characters.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_order_terms": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "max_filters",
+          "max_filter_values",
+          "max_aggregates",
+          "max_group_axes",
+          "max_order_terms",
+          "max_name_chars",
+          "default_limit",
+          "max_limit"
+        ],
+        "type": "object"
       },
       "QueryOrder": {
         "additionalProperties": false,
@@ -5323,6 +5475,113 @@
           }
         ],
         "summary": "Recent syncs of one connector, newest first"
+      }
+    },
+    "/v1/datasets": {
+      "get": {
+        "operationId": "analytics_api.datasets.list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueryDatasetList"
+                }
+              }
+            },
+            "description": "The declared datasets"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List the datasets a query may be built over"
+      }
+    },
+    "/v1/datasets/{key}": {
+      "get": {
+        "operationId": "analytics_api.datasets.get",
+        "parameters": [
+          {
+            "description": "The dataset key, as a query names it",
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueryDataset"
+                }
+              }
+            },
+            "description": "The declared dataset"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Describe one dataset a query may be built over"
       }
     },
     "/v1/feedback": {

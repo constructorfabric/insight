@@ -4,6 +4,7 @@
 //! outgrown the warehouse fails a test run rather than a request.
 
 pub mod declaration;
+pub mod describe;
 pub mod validate;
 
 use std::sync::OnceLock;

@@ -760,6 +760,29 @@ class QueryColumnType(StrEnum):
     date = 'date'
 
 
+class QueryDatasetDimension(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    absent_value: str | None = Field(None, description='The value absent rows group under, and a filter matches them by.')
+    field: str
+
+
+class QueryDatasetMeasurable(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    field: str
+
+
+class QueryDatasetTimeField(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    default: bool = Field(..., description="The field a query's window binds to when it names none.")
+    field: str
+
+
 class QueryDimensionAxis(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -834,6 +857,23 @@ class QueryGroupAxis1(QueryDimensionAxis):
 
 class Axis1(StrEnum):
     time = 'time'
+
+
+class QueryLimits(BaseModel):
+    """
+    The contract's request bounds, identical for every dataset.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    default_limit: int = Field(..., description='Rows a query gets when it sets no ceiling of its own.', ge=0)
+    max_aggregates: int = Field(..., ge=0)
+    max_filter_values: int = Field(..., ge=0)
+    max_filters: int = Field(..., ge=0)
+    max_group_axes: int = Field(..., ge=0)
+    max_limit: int = Field(..., description='Rows a query may ask for at most; over it the query is refused, not clipped.', ge=0)
+    max_name_chars: int = Field(..., description="Longest an aggregate's name may be, in characters.", ge=0)
+    max_order_terms: int = Field(..., ge=0)
 
 
 class QueryOrder(BaseModel):
@@ -1470,6 +1510,24 @@ class QueryAnswerColumn(BaseModel):
     kind: QueryColumnKind
     name: str
     type: QueryColumnType
+
+
+class QueryDataset(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    dimensions: list[QueryDatasetDimension] = Field(..., description='The axes a query may group by, and filter on beside the measurables.')
+    key: str
+    limits: QueryLimits = Field(..., description='The bounds a request against this dataset must stay inside.')
+    measurables: list[QueryDatasetMeasurable] = Field(..., description='The columns an aggregate may fold.')
+    time_fields: list[QueryDatasetTimeField] = Field(..., description='The columns a query may bound its window by, and bucket on.')
+
+
+class QueryDatasetList(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    datasets: list[QueryDataset]
 
 
 class QueryFilter8(QueryFilterNotNull):

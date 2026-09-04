@@ -19,6 +19,12 @@ pub struct MetricError;
 #[resource_error("gts.cf.insight.analytics_api.query.v1~")]
 pub struct QueryError;
 
+/// Resource namespace for `/v1/datasets*` (what a query may be built over). A
+/// key this build declares no dataset for is a `not_found`, not a refused
+/// request.
+#[resource_error("gts.cf.insight.analytics_api.dataset.v1~")]
+pub struct DatasetError;
+
 /// Resource namespace for `/v1/reports*`.
 #[resource_error("gts.cf.insight.analytics_api.report.v1~")]
 pub struct ReportError;
