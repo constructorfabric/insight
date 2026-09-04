@@ -52,7 +52,7 @@ name: gitlab
 #   install keeps attributing its history the old way.
 #   Safe: author_id has been in Bronze all along, and the model falls back to
 #   the address map where a request reports no author. #3142
-version: "3.0.0"
+version: "3.1.0"
 type: cdk
 schedule: "0 2 * * *"
 workflow: sync
@@ -61,7 +61,7 @@ images:
     name: source-gitlab-insight
     dockerfile: ./Dockerfile
     context: .
-    image: "ghcr.io/constructorfabric/source-gitlab-insight:2026.09.03.08.06-08aee3d"
+    image: "ghcr.io/constructorfabric/source-gitlab-insight:2026.09.04.08.40-c532484"
 dbt_select: "tag:gitlab+"
 connection:
   namespace: "bronze_gitlab"
