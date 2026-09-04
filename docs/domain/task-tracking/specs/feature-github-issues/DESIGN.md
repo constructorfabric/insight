@@ -210,6 +210,7 @@ organization defines take their real GraphQL node identifiers.
 | `created` | sentinel, not a field | — | — |
 | `state` | `ClosedEvent`, `ReopenedEvent`, snapshot `state` and `state_reason` | `open`, `closed:completed`, `closed:not_planned`, `closed:duplicate` | single |
 | `assignees` | `AssignedEvent`, `UnassignedEvent`, snapshot `assignee_ids` | numeric account id as text, empty when unassigned | single, see 3.5 |
+| `title` | `RenamedTitleEvent`, snapshot `title` | the title text | single |
 | `type` | `IssueTypeChangedEvent`, snapshot `type.node_id` | issue type node id | single |
 | `IFD_…` | `IssueFieldChangedEvent`, hoisted field values | ISO date | single |
 | `IFN_…` | same | number as text | single |

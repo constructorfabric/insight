@@ -86,7 +86,11 @@ name: github
 #   means clearing the cursors of `pull_request_timeline_events` (for the link
 #   columns) and `issue_timeline_events` (for the board status changes already
 #   missed) and re-walking; without that both heal forward only.
-version: "8.2.0"
+# 8.3.0: `issue_timeline_events` collects `RenamedTitleEvent`, giving the
+#   issue title a history; the staging model already emits the title as a
+#   field. MINOR: additive, and the consuming model is a table. Renames before
+#   this version are recovered by clearing the stream's cursor, a rollout step.
+version: "8.3.0"
 schedule: "0 */4 * * *"
 workflow: sync
 
