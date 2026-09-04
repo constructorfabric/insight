@@ -62,6 +62,23 @@ plugins:
 envFromSecrets:
   - name: grafana-clickhouse-creds
     optional: true
+  # Zulip incoming-webhook URL for alert routing (#2895); key
+  # ZULIP_ALERT_WEBHOOK_URL. Ordering is load-bearing: envFrom precedence is
+  # last-source-wins, so the placeholder default below loses to a sealed
+  # grafana-zulip-creds — and an empty URL fails alerting provisioning at boot.
+  - name: grafana-alerting-defaults
+  - name: grafana-zulip-creds
+    optional: true
+
+# The placeholder receiver the alerts notify until grafana-zulip-creds is
+# sealed (#2895).
+extraObjects:
+  - apiVersion: v1
+    kind: Secret
+    metadata:
+      name: grafana-alerting-defaults
+    stringData:
+      ZULIP_ALERT_WEBHOOK_URL: "http://zulip-webhook-not-configured.invalid"
 
 # Loki wired as the default datasource so Explore works out of the box,
 # VictoriaMetrics as the PromQL datasource for metrics, Tempo as the trace
@@ -11620,6 +11637,562 @@ dashboards:
           "title": "Insight · Ingestion resources",
           "uid": "insight-ingestion-resources"
         }
+
+# ─── Alerting as code (#2895) ──────────────────────────────────────────
+# Rule groups over the same fixed-uid datasources as the dashboards, routed
+# to the Zulip incoming webhook. The alert set and thresholds are the
+# decision recorded on #2895.
+# The webhook URL rides $ZULIP_ALERT_WEBHOOK_URL from the optional
+# grafana-zulip-creds Secret (ns insight-infra) — absent, alerts evaluate
+# but notify a dead placeholder receiver.
+alerting:
+  rules.yaml:
+    apiVersion: 1
+    groups:
+    - orgId: 1
+      name: insight-availability
+      folder: Insight Alerts
+      interval: 1m
+      rules:
+      - uid: insight-pod-restarts
+        title: Container restarted unexpectedly
+        condition: C
+        data:
+        - refId: A
+          relativeTimeRange:
+            from: 900
+            to: 0
+          datasourceUid: vm
+          model:
+            refId: A
+            expr: sum by (namespace, pod) (increase(kube_pod_container_status_restarts_total{namespace=~"insight.*"}[15m]))
+            instant: true
+            range: false
+        - refId: B
+          relativeTimeRange:
+            from: 0
+            to: 0
+          datasourceUid: __expr__
+          model:
+            refId: B
+            type: reduce
+            reducer: last
+            expression: A
+        - refId: C
+          relativeTimeRange:
+            from: 0
+            to: 0
+          datasourceUid: __expr__
+          model:
+            refId: C
+            type: threshold
+            expression: B
+            conditions:
+            - evaluator:
+                type: gt
+                params:
+                - 0.5
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ \"{{ $labels.pod }}\" }} restarted \u2014 check the last-terminated reason (OOMKilled\
+            \ vs Error) on Insight \xB7 Resources"
+      - uid: insight-workload-degraded
+        title: Workload below desired replicas
+        condition: C
+        data:
+        - refId: A
+          relativeTimeRange:
+            from: 900
+            to: 0
+          datasourceUid: vm
+          model:
+            refId: A
+            expr: (kube_deployment_spec_replicas{namespace=~"insight.*"} - kube_deployment_status_replicas_ready{namespace=~"insight.*"})
+              or (kube_statefulset_replicas{namespace=~"insight.*"} - kube_statefulset_status_replicas_ready{namespace=~"insight.*"})
+            instant: true
+            range: false
+        - refId: B
+          relativeTimeRange:
+            from: 0
+            to: 0
+          datasourceUid: __expr__
+          model:
+            refId: B
+            type: reduce
+            reducer: last
+            expression: A
+        - refId: C
+          relativeTimeRange:
+            from: 0
+            to: 0
+          datasourceUid: __expr__
+          model:
+            refId: C
+            type: threshold
+            expression: B
+            conditions:
+            - evaluator:
+                type: gt
+                params:
+                - 0.5
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: '{{ "{{ $labels.deployment }}" }}{{ "{{ $labels.statefulset }}" }} has fewer ready
+            replicas than desired for 10m'
+      - uid: insight-pod-stuck-waiting
+        title: Pod stuck in CrashLoopBackOff / ImagePullBackOff
+        condition: C
+        data:
+        - refId: A
+          relativeTimeRange:
+            from: 900
+            to: 0
+          datasourceUid: vm
+          model:
+            refId: A
+            expr: sum by (namespace, pod, reason) (kube_pod_container_status_waiting_reason{namespace=~"insight.*",
+              reason=~"CrashLoopBackOff|ImagePullBackOff"})
+            instant: true
+            range: false
+        - refId: B
+          relativeTimeRange:
+            from: 0
+            to: 0
+          datasourceUid: __expr__
+          model:
+            refId: B
+            type: reduce
+            reducer: last
+            expression: A
+        - refId: C
+          relativeTimeRange:
+            from: 0
+            to: 0
+          datasourceUid: __expr__
+          model:
+            refId: C
+            type: threshold
+            expression: B
+            conditions:
+            - evaluator:
+                type: gt
+                params:
+                - 0.5
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: '{{ "{{ $labels.pod }}" }} is {{ "{{ $labels.reason }}" }}'
+    - orgId: 1
+      name: insight-traffic
+      folder: Insight Alerts
+      interval: 1m
+      rules:
+      - uid: insight-http-5xx
+        title: 5xx error ratio over 2%
+        condition: C
+        data:
+        - refId: A
+          relativeTimeRange:
+            from: 900
+            to: 0
+          datasourceUid: vm
+          model:
+            refId: A
+            expr: 100 * sum by (job) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[15m]))
+              / sum by (job) (rate(http_server_request_duration_seconds_count[15m]))
+            instant: true
+            range: false
+        - refId: B
+          relativeTimeRange:
+            from: 0
+            to: 0
+          datasourceUid: __expr__
+          model:
+            refId: B
+            type: reduce
+            reducer: last
+            expression: A
+        - refId: D
+          relativeTimeRange:
+            from: 900
+            to: 0
+          datasourceUid: vm
+          model:
+            refId: D
+            expr: sum by (job) (increase(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[15m]))
+            instant: true
+            range: false
+        - refId: E
+          relativeTimeRange:
+            from: 0
+            to: 0
+          datasourceUid: __expr__
+          model:
+            refId: E
+            type: reduce
+            reducer: last
+            expression: D
+        - refId: C
+          relativeTimeRange:
+            from: 0
+            to: 0
+          datasourceUid: __expr__
+          model:
+            refId: C
+            type: math
+            expression: ($B > 2) && ($E > 4.5)
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ \"{{ $labels.job }}\" }} is serving over 2% 5xx (and at least 5 in 15m) \u2014\
+            \ Insight \xB7 RED by service"
+      - uid: insight-red-telemetry-absent
+        title: RED telemetry missing for a known service
+        condition: C
+        data:
+        - refId: A
+          relativeTimeRange:
+            from: 900
+            to: 0
+          datasourceUid: vm
+          model:
+            refId: A
+            expr: absent(http_server_request_duration_seconds_count{job="insight-analytics"}) or absent(http_server_request_duration_seconds_count{job="insight-authenticator"})
+              or absent(http_server_request_duration_seconds_count{job="insight-identity-resolution"})
+            instant: true
+            range: false
+        - refId: B
+          relativeTimeRange:
+            from: 0
+            to: 0
+          datasourceUid: __expr__
+          model:
+            refId: B
+            type: reduce
+            reducer: last
+            expression: A
+        - refId: C
+          relativeTimeRange:
+            from: 0
+            to: 0
+          datasourceUid: __expr__
+          model:
+            refId: C
+            type: threshold
+            expression: B
+            conditions:
+            - evaluator:
+                type: gt
+                params:
+                - 0.5
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: '{{ "{{ $labels.job }}" }} stopped exporting RED telemetry (or the OTLP pipeline is
+            down)'
+      - uid: insight-gateway-exporter-absent
+        title: Gateway nginx exporter not reporting
+        condition: C
+        data:
+        - refId: A
+          relativeTimeRange:
+            from: 900
+            to: 0
+          datasourceUid: vm
+          model:
+            refId: A
+            expr: absent(nginx_up{job="gateway-nginx"})
+            instant: true
+            range: false
+        - refId: B
+          relativeTimeRange:
+            from: 0
+            to: 0
+          datasourceUid: __expr__
+          model:
+            refId: B
+            type: reduce
+            reducer: last
+            expression: A
+        - refId: C
+          relativeTimeRange:
+            from: 0
+            to: 0
+          datasourceUid: __expr__
+          model:
+            refId: C
+            type: threshold
+            expression: B
+            conditions:
+            - evaluator:
+                type: gt
+                params:
+                - 0.5
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No nginx_up samples \u2014 the gateway exporter or its scrape is down"
+    - orgId: 1
+      name: insight-data
+      folder: Insight Alerts
+      interval: 5m
+      rules:
+      - uid: insight-connector-stale
+        title: Connector stale for over 26h
+        condition: C
+        data:
+        - refId: A
+          relativeTimeRange:
+            from: 600
+            to: 0
+          datasourceUid: clickhouse
+          model:
+            refId: A
+            editorType: sql
+            format: 1
+            rawSql: WITH configured AS (SELECT DISTINCT connector FROM ingestion_history.sync_events WHERE
+              event = 'connector.configured' AND tick_id = (SELECT argMax(tick_id, ts) FROM ingestion_history.sync_events
+              WHERE event = 'sweep.completed')), succeeded AS (SELECT connector, max(coalesce(job_updated_at,
+              ts)) AS last_ok FROM ingestion_history.sync_events WHERE event = 'sync.completed' AND status
+              = 'succeeded' GROUP BY connector), first_seen AS (SELECT connector, min(ts) AS since FROM
+              ingestion_history.sync_events WHERE event = 'connector.configured' GROUP BY connector) SELECT
+              configured.connector AS connector, dateDiff('hour', coalesce(succeeded.last_ok, first_seen.since),
+              now()) AS stale_hours FROM configured LEFT JOIN succeeded ON succeeded.connector = configured.connector
+              LEFT JOIN first_seen ON first_seen.connector = configured.connector SETTINGS join_use_nulls
+              = 1
+        - refId: C
+          relativeTimeRange:
+            from: 0
+            to: 0
+          datasourceUid: __expr__
+          model:
+            refId: C
+            type: threshold
+            expression: A
+            conditions:
+            - evaluator:
+                type: gt
+                params:
+                - 26
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ \"{{ $labels.connector }}\" }} has no successful sync for over 26h \u2014 Insight\
+            \ \xB7 Connectors"
+      - uid: insight-sweep-seal-stale
+        title: Connector sweep stopped sealing
+        condition: C
+        data:
+        - refId: A
+          relativeTimeRange:
+            from: 600
+            to: 0
+          datasourceUid: clickhouse
+          model:
+            refId: A
+            editorType: sql
+            format: 1
+            rawSql: SELECT toUInt64(dateDiff('minute', max(ts), now())) AS seal_age_min FROM ingestion_history.sync_events
+              WHERE event = 'sweep.completed' HAVING count() > 0
+        - refId: C
+          relativeTimeRange:
+            from: 0
+            to: 0
+          datasourceUid: __expr__
+          model:
+            refId: C
+            type: threshold
+            expression: A
+            conditions:
+            - evaluator:
+                type: gt
+                params:
+                - 120
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: warning
+        annotations:
+          summary: "No sealed sweep tick for over 2h \u2014 connector staleness data itself is stale"
+      - uid: insight-clickhouse-failed-queries
+        title: ClickHouse failed-query rate elevated
+        condition: C
+        data:
+        - refId: A
+          relativeTimeRange:
+            from: 900
+            to: 0
+          datasourceUid: vm
+          model:
+            refId: A
+            expr: sum(rate(ClickHouseProfileEvents_FailedQuery[10m]))
+            instant: true
+            range: false
+        - refId: B
+          relativeTimeRange:
+            from: 0
+            to: 0
+          datasourceUid: __expr__
+          model:
+            refId: B
+            type: reduce
+            reducer: last
+            expression: A
+        - refId: C
+          relativeTimeRange:
+            from: 0
+            to: 0
+          datasourceUid: __expr__
+          model:
+            refId: C
+            type: threshold
+            expression: B
+            conditions:
+            - evaluator:
+                type: gt
+                params:
+                - 0.5
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "ClickHouse is failing more than 0.5 queries/s \u2014 Insight \xB7 Databases"
+      - uid: insight-deploy-hook-errors
+        title: Deploy hook logged errors
+        condition: C
+        data:
+        - refId: A
+          relativeTimeRange:
+            from: 1800
+            to: 0
+          datasourceUid: loki
+          model:
+            refId: A
+            expr: sum(count_over_time({namespace="insight", pod=~"insight-(post-upgrade|post-install).*"}
+              |~ `(?i)\berror\b` [30m]))
+            queryType: instant
+        - refId: B
+          relativeTimeRange:
+            from: 0
+            to: 0
+          datasourceUid: __expr__
+          model:
+            refId: B
+            type: reduce
+            reducer: last
+            expression: A
+        - refId: C
+          relativeTimeRange:
+            from: 0
+            to: 0
+          datasourceUid: __expr__
+          model:
+            refId: C
+            type: threshold
+            expression: B
+            conditions:
+            - evaluator:
+                type: gt
+                params:
+                - 0.5
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: critical
+        annotations:
+          summary: "The deploy hook logged errors in the last 30m \u2014 Insight \xB7 Ingestion & deploys"
+      - uid: insight-volume-fill
+        title: Data volume over 80% full
+        condition: C
+        data:
+        - refId: A
+          relativeTimeRange:
+            from: 900
+            to: 0
+          datasourceUid: vm
+          model:
+            refId: A
+            expr: 100 * kubelet_volume_stats_used_bytes{namespace=~"insight.*"} / kubelet_volume_stats_capacity_bytes{namespace=~"insight.*"}
+            instant: true
+            range: false
+        - refId: B
+          relativeTimeRange:
+            from: 0
+            to: 0
+          datasourceUid: __expr__
+          model:
+            refId: B
+            type: reduce
+            reducer: last
+            expression: A
+        - refId: C
+          relativeTimeRange:
+            from: 0
+            to: 0
+          datasourceUid: __expr__
+          model:
+            refId: C
+            type: threshold
+            expression: B
+            conditions:
+            - evaluator:
+                type: gt
+                params:
+                - 80
+        noDataState: OK
+        execErrState: Error
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: '{{ "{{ $labels.persistentvolumeclaim }}" }} is over 80% full'
+  contactpoints.yaml:
+    apiVersion: 1
+    contactPoints:
+    - orgId: 1
+      name: zulip
+      receivers:
+      - uid: zulip-webhook
+        type: webhook
+        settings:
+          url: $ZULIP_ALERT_WEBHOOK_URL
+  policies.yaml:
+    apiVersion: 1
+    policies:
+    - orgId: 1
+      receiver: zulip
+      group_by:
+      - alertname
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 4h
 
 # Admin credentials. For anything past a throwaway PoC, seal a Secret named
 # `grafana-creds` (keys: admin-user, admin-password) — `make system-grafana`
