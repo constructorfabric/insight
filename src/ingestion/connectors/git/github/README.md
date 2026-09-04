@@ -99,6 +99,11 @@ events carry those columns only after a re-walk — issue timelines are retained
 indefinitely, so clearing that stream's cursor recovers the whole board status
 history. Card field values cannot be backfilled: the snapshot is all there is.
 
+`issue_timeline_events` also collects `RenamedTitleEvent`, so the title has a
+history rather than a current value copied onto every row. Renames made before
+the descriptor carrying it are recovered the same way: by clearing that
+stream's cursor.
+
 ## What `github_start_date` bounds
 
 One bound, one direction: every stream fetches everything from the start date to

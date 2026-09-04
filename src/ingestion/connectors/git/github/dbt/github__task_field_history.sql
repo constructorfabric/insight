@@ -87,6 +87,7 @@ events AS (
         toString(e.actor_id)                                    AS actor_id,
         multiIf(
             e.event_type IN ('ClosedEvent', 'ReopenedEvent'),          'state',
+            e.event_type = 'RenamedTitleEvent',                        'title',
             e.event_type IN ('AssignedEvent', 'UnassignedEvent'),      'assignees',
             e.event_type = 'IssueTypeChangedEvent',                    'type',
             e.event_type = 'IssueFieldChangedEvent',                   COALESCE(e.field_id, ''),
@@ -102,6 +103,7 @@ events AS (
         multiIf(
             e.event_type = 'ClosedEvent',   concat('closed:', lower(COALESCE(e.state_reason, ''))),
             e.event_type = 'ReopenedEvent', 'open',
+            e.event_type = 'RenamedTitleEvent', COALESCE(e.new_value, ''),
             e.event_type = 'AssignedEvent', toString(e.target_id),
             -- Removing an assignee states no remaining owner. An empty value
             -- reaches gold as an unresolvable account and correctly leaves the
@@ -140,7 +142,7 @@ events AS (
         e._airbyte_extracted_at                                 AS _airbyte_extracted_at
     FROM {{ source('bronze_github', 'issue_timeline_events') }} AS e FINAL
     WHERE e.event_type IN (
-        'ClosedEvent', 'ReopenedEvent', 'AssignedEvent', 'UnassignedEvent',
+        'ClosedEvent', 'ReopenedEvent', 'RenamedTitleEvent', 'AssignedEvent', 'UnassignedEvent',
         'IssueTypeChangedEvent', 'IssueFieldChangedEvent',
         'ProjectV2ItemStatusChangedEvent'
     )
@@ -199,7 +201,13 @@ snapshot_values AS (
         i.author_login, i.author_id,
         'title'                                                 AS field_id,
         i.title                                                 AS value_id,
-        i.title                                                 AS value_display,
+        -- No display of its own: the title IS its value, and `initial_values`
+        -- rewinds the value to the first rename's previous title. A display
+        -- carried separately would stay at the CURRENT title and disagree with
+        -- it — and gold reads the display, so a renamed issue would report
+        -- today's name as the one it was opened with. The final projection
+        -- falls back to the value.
+        ''                                                      AS value_display,
         i._airbyte_extracted_at
     FROM issues AS i
     WHERE i.title != ''

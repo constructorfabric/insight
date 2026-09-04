@@ -46,7 +46,11 @@ name: github
 #   scoped `dbt --full-refresh` a major bump dispatches re-materializes them.
 #   Safe: both dates have been in Bronze all along, and the author date falls
 #   back to the committer date where a source left it empty. #3153
-version: "8.0.0"
+# 8.1.0: `issue_timeline_events` collects `RenamedTitleEvent`, giving the
+#   issue title a history; the staging model already emits the title as a
+#   field. MINOR: additive, and the consuming model is a table. Renames before
+#   this version are recovered by clearing the stream's cursor, a rollout step.
+version: "8.1.0"
 schedule: "0 */4 * * *"
 workflow: sync
 

@@ -664,6 +664,14 @@ def test_issue_timeline_carries_board_and_field_changes(http_mocker: HttpMocker)
                                             "issueType": {"id": "IT_bug", "name": "Bug"},
                                             "prevIssueType": {"id": "IT_task", "name": "Task"},
                                         },
+                                        {
+                                            "__typename": "RenamedTitleEvent",
+                                            "id": "RT_1",
+                                            "createdAt": "2026-06-14T00:00:00Z",
+                                            "actor": {"login": "alice"},
+                                            "previousTitle": "Login fails",
+                                            "currentTitle": "Login fails on Safari",
+                                        },
                                     ],
                                 }
                             }
@@ -685,6 +693,9 @@ def test_issue_timeline_carries_board_and_field_changes(http_mocker: HttpMocker)
     assert (field["field_name"], field["prev_value"], field["new_value"]) == ("Estimate", "3", "5")
     kind = by_type["IssueTypeChangedEvent"]
     assert (kind["prev_value"], kind["new_value"]) == ("Task", "Bug")
+    rename = by_type["RenamedTitleEvent"]
+    assert (rename["prev_value"], rename["new_value"]) == ("Login fails", "Login fails on Safari")
+    assert rename["field_id"] == "", "the title is a product field, named by the staging model"
     # Identifiers, not just labels: a rename must not orphan the history.
     assert field["field_id"] == "IFN_1"
     assert (kind["prev_value_id"], kind["new_value_id"]) == ("IT_task", "IT_bug")
