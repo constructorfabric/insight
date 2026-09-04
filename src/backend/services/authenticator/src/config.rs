@@ -313,7 +313,7 @@ impl Default for McpOAuthConfig {
             public_url: String::new(),
             allow_insecure_private_network: false,
             authorization_code_ttl_seconds: 300,
-            access_token_ttl_seconds: 300,
+            access_token_ttl_seconds: 600,
         }
     }
 }

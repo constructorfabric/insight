@@ -205,7 +205,7 @@ impl KeyStore {
 
     /// Build a store directly from a PKCS#8 PEM (tests only).
     #[cfg(test)]
-    fn from_pem_for_test(current_pem: &str) -> anyhow::Result<Self> {
+    pub(crate) fn from_pem_for_test(current_pem: &str) -> anyhow::Result<Self> {
         Ok(Self {
             current: LoadedKey::from_pkcs8_pem(current_pem)?,
             previous: None,
