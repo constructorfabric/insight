@@ -24,14 +24,17 @@ bronze:
     - $ref: templates/people.yaml#/templates/erin
 
   bronze_github.commits:
-    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: cpad-a1, repository: "https://github.com/acme/api.git", sha: cpad-a1, committed_date: "2026-10-01T09:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com}
-    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: cpad-a2, repository: "https://github.com/acme/api.git", sha: cpad-a2, committed_date: "2026-10-01T10:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com}
-    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: cpad-a3, repository: "https://github.com/acme/api.git", sha: cpad-a3, committed_date: "2026-10-02T09:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com}
-    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: cpad-w1, repository: "https://github.com/acme/web.git", sha: cpad-w1, committed_date: "2026-10-01T11:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com}
-    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: cpad-w2, repository: "https://github.com/acme/web.git", sha: cpad-w2, committed_date: "2026-10-01T12:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com}
-    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: cpad-w3, repository: "https://github.com/acme/web.git", sha: cpad-w3, committed_date: "2026-10-01T13:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com}
+    # Both dates are set on every row: the active day comes from the AUTHOR
+    # date (#3153), so overriding the committer date alone leaves every
+    # commit on the template's default day and the denominator reads 1.
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: cpad-a1, repository: "https://github.com/acme/api.git", sha: cpad-a1, authored_date: "2026-10-01T09:00:00Z", committed_date: "2026-10-01T09:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: cpad-a2, repository: "https://github.com/acme/api.git", sha: cpad-a2, authored_date: "2026-10-01T10:00:00Z", committed_date: "2026-10-01T10:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: cpad-a3, repository: "https://github.com/acme/api.git", sha: cpad-a3, authored_date: "2026-10-02T09:00:00Z", committed_date: "2026-10-02T09:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: cpad-w1, repository: "https://github.com/acme/web.git", sha: cpad-w1, authored_date: "2026-10-01T11:00:00Z", committed_date: "2026-10-01T11:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: cpad-w2, repository: "https://github.com/acme/web.git", sha: cpad-w2, authored_date: "2026-10-01T12:00:00Z", committed_date: "2026-10-01T12:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: cpad-w3, repository: "https://github.com/acme/web.git", sha: cpad-w3, authored_date: "2026-10-01T13:00:00Z", committed_date: "2026-10-01T13:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com}
     # A day whose only commit is a merge: 2026-10-03 must not be active.
-    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: cpad-m, repository: "https://github.com/acme/api.git", sha: cpad-m, committed_date: "2026-10-03T09:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, is_merge: true}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: cpad-m, repository: "https://github.com/acme/api.git", sha: cpad-m, authored_date: "2026-10-03T09:00:00Z", committed_date: "2026-10-03T09:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, is_merge: true}
 
 cases:
   - name: Commits divide by distinct active days, not window days or day rows

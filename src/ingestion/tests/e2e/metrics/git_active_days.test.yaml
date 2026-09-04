@@ -1,0 +1,256 @@
+spec_version: 1
+description: >
+  Metric: git.active_days — distinct calendar days with at least one authored,
+  non-merge commit, #3041.
+
+  How it's computed (bronze → silver → gold):
+    • bronze: the commits each git connector reports, with the author date as
+      the connector received it — offset and all
+    • silver: one class row per commit, its author date parsed to a single
+      instant, so two spellings of one moment become one value
+    • gold:   one `commit_day` row per (person, day, dimension tuple), and the
+      metric counts those days DISTINCTLY — never the rows
+
+  Every level collapses its own days: one day reached twice in a repository,
+  from two repositories of a project, or from two connectors counts once in
+  that level and once in the total. The breakdown values therefore sum to more
+  than the total, and that gap is the rule.
+
+  Cases: the total against the repository split, whose values sum to 6 for a
+  total of 3; the source split across all three connectors; the project split,
+  where one label covers three separate namespaces; one instant written two
+  ways, which must not become two days; the week bucket, the only one whose
+  window is wider than the distinct key; and an empty window.
+
+  Fixture — erin only:
+    * github git-test:acme/api — two commits on 10-01, and ONE moment written
+      twice: `2026-10-04T01:30:00+03:00` and `2026-10-03T22:30:00Z` are the
+      same instant. Two active days, not three. Reading the offset as
+      decoration files the pair on two different dates.
+    * github git-test:acme/web — one commit on 10-01. Same day, same project,
+      another repository.
+    * github git-test:globex/tools — one commit on 10-02. A second project.
+    * bitbucket bitbucket-test:acme/mobile — one commit on 10-01. Same day
+      again, from another connector.
+    * gitlab gitlab-test:acme/platform — one commit on 10-02, the day
+      globex/tools already holds. Present so the third connector reaches the
+      source and project splits.
+    * github git-test:acme/api, 10-05 — a MERGE commit and nothing else, so
+      that day is not active.
+
+  Distinct days are three. Counting `commit_day` rows reads 7, counting the
+  merge day reads 4, and splitting the two spellings of one instant reads 4.
+
+  INVARIANT: no assertion names an absolute date for the offset pair. `toDate`
+  renders in the warehouse's own timezone, so which date those two rows land
+  on is a property of the stand — while the fact that they land on the SAME
+  date holds under every timezone.
+
+  The rig resolves `view: breakdown` and `view: timeseries` to exactly one
+  view per metric, so each split and each bucket needs its own case.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/erin
+
+  bronze_github.commits:
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: ad-api-1, repository: "https://github.com/acme/api.git", sha: ad-api-1, authored_date: "2026-10-01T09:00:00Z", committed_date: "2026-10-01T09:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: ad-api-2, repository: "https://github.com/acme/api.git", sha: ad-api-2, authored_date: "2026-10-01T10:00:00Z", committed_date: "2026-10-01T10:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com}
+    # One instant, two spellings: 01:30 three hours ahead of UTC is 22:30 the
+    # previous day in UTC.
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: ad-api-3, repository: "https://github.com/acme/api.git", sha: ad-api-3, authored_date: "2026-10-04T01:30:00+03:00", committed_date: "2026-10-04T01:30:00+03:00", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: ad-api-4, repository: "https://github.com/acme/api.git", sha: ad-api-4, authored_date: "2026-10-03T22:30:00Z", committed_date: "2026-10-03T22:30:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com}
+    # A merge is not authored work, so this day is not active.
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: ad-api-m, repository: "https://github.com/acme/api.git", sha: ad-api-m, authored_date: "2026-10-05T09:00:00Z", committed_date: "2026-10-05T09:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, is_merge: true}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: ad-web-1, repository: "https://github.com/acme/web.git", sha: ad-web-1, authored_date: "2026-10-01T11:00:00Z", committed_date: "2026-10-01T11:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: ad-tools-1, repository: "https://github.com/globex/tools.git", sha: ad-tools-1, authored_date: "2026-10-02T09:00:00Z", committed_date: "2026-10-02T09:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com}
+
+  bronze_bitbucket_cloud.commits:
+    - {$ref: templates/bitbucket_git.yaml#/templates/commit, unique_key: ad-mob-1, repository: "https://bitbucket.org/acme/mobile.git", sha: ad-mob-1, authored_date: "2026-10-01T12:00:00Z", committed_date: "2026-10-01T12:00:00Z", author_name: Erin Epsilon, author_email: erin@example.com, committer_name: Erin Epsilon, committer_email: erin@example.com}
+
+  bronze_gitlab.projects:
+    # Resolves the gitlab commit's project and repository keys; the join is a
+    # LEFT one, so without this row they read `__unknown__`.
+    - {$ref: templates/gitlab_git.yaml#/templates/project, unique_key: "ad-proj:101"}
+
+  bronze_gitlab.commits:
+    - {$ref: templates/gitlab_git.yaml#/templates/commit, unique_key: "ad-gl:1", id: ad-gl-1, authored_date: "2026-10-02T14:00:00Z", committed_date: "2026-10-02T14:00:00Z", author_name: Erin Epsilon, author_email: erin@example.com, committer_name: Erin Epsilon, committer_email: erin@example.com}
+
+cases:
+  - name: A repository counts its own days, and the total counts each day once
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [erin@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-07"}
+        metrics:
+          - metric_key: git.active_days
+            views:
+              - {view: period}
+              - {view: breakdown, dimensions: [repository]}
+    expect:
+      - assert: "status == 200"
+      - metric: git.active_days
+        view: period
+        find: {entity_id: erin@example.com}
+        equal: {value: 3}
+      # The five values below sum to 6 against a total of 3: every repository
+      # that saw 10-01 counts it, and the total counts it once.
+      - metric: git.active_days
+        view: breakdown
+        assert: "size(items) == 5"
+      - metric: git.active_days
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:acme/api"}}
+        equal: {value: 2}
+      - metric: git.active_days
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:acme/web"}}
+        equal: {value: 1}
+      - metric: git.active_days
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:globex/tools"}}
+        equal: {value: 1}
+      - metric: git.active_days
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: repository, value: "bitbucket-test:acme/mobile"}}
+        equal: {value: 1}
+      - metric: git.active_days
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: repository, value: "gitlab-test:acme/platform"}}
+        equal: {value: 1}
+
+  - name: A connector counts only the days it saw
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [erin@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-07"}
+        metrics:
+          - metric_key: git.active_days
+            views:
+              - {view: breakdown, dimensions: [source]}
+    expect:
+      - assert: "status == 200"
+      - metric: git.active_days
+        view: breakdown
+        assert: "size(items) == 3"
+      - metric: git.active_days
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: source, value: github}}
+        equal: {value: 3}
+      # 10-01 for bitbucket and 10-02 for gitlab are days github also holds,
+      # and each connector still counts its own.
+      - metric: git.active_days
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: source, value: bitbucket_cloud}}
+        equal: {value: 1}
+      - metric: git.active_days
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: source, value: gitlab}}
+        equal: {value: 1}
+
+  - name: A project gathers its repositories' days and stays inside its connector
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [erin@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-07"}
+        metrics:
+          - metric_key: git.active_days
+            views:
+              - {view: breakdown, dimensions: [project]}
+    expect:
+      - assert: "status == 200"
+      # Four values, three of which render as the label `acme`: the source id
+      # inside the VALUE is the only thing keeping those namespaces apart.
+      - metric: git.active_days
+        view: breakdown
+        assert: "size(items) == 4"
+      # acme/api contributes two days and acme/web one, but they share 10-01,
+      # so the project reads 2 rather than the 3 its repositories sum to.
+      - metric: git.active_days
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: project, value: "git-test:acme"}}
+        equal: {value: 2}
+      - metric: git.active_days
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: project, value: "git-test:globex"}}
+        equal: {value: 1}
+      - metric: git.active_days
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: project, value: "bitbucket-test:acme"}}
+        equal: {value: 1}
+      - metric: git.active_days
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: project, value: "gitlab-test:acme"}}
+        equal: {value: 1}
+
+  - name: One instant written two ways is one active day, and a merge day is none
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [erin@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-07"}
+        metrics:
+          - metric_key: git.active_days
+            views:
+              - {view: timeseries, bucket: day}
+    expect:
+      - assert: "status == 200"
+      # Four commits from two connectors share 10-01 and read as one day.
+      - metric: git.active_days
+        view: timeseries
+        find: {entity_id: erin@example.com}
+        contains: {points: {bucket_start: "2026-10-01", value: 1}}
+      - metric: git.active_days
+        view: timeseries
+        find: {entity_id: erin@example.com}
+        contains: {points: {bucket_start: "2026-10-02", value: 1}}
+      # 10-05 holds a merge and nothing else.
+      - metric: git.active_days
+        view: timeseries
+        find: {entity_id: erin@example.com}
+        assert: "it.points.exists(p, p.bucket_start == '2026-10-05' && p.value == null)"
+
+  - name: A week bucket collapses the days inside it rather than summing them
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [erin@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-07"}
+        metrics:
+          - metric_key: git.active_days
+            views:
+              - {view: timeseries, bucket: week}
+    expect:
+      - assert: "status == 200"
+      # The only bucket wider than the distinct key, so the only place where
+      # summing day rows instead of counting days would show: 7 rows, 3 days.
+      - metric: git.active_days
+        view: timeseries
+        find: {entity_id: erin@example.com}
+        assert: "it.points.exists(p, p.value == 3.0)"
+
+  - name: An empty window is null, not zero
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [erin@example.com]}
+        period: {from: "2026-11-01", to: "2026-11-30"}
+        metrics:
+          - metric_key: git.active_days
+            views:
+              - {view: period}
+    expect:
+      - assert: "status == 200"
+      - metric: git.active_days
+        view: period
+        find: {entity_id: erin@example.com}
+        equal: {value: null}
