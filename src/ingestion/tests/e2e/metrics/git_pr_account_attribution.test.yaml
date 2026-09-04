@@ -5,19 +5,20 @@ description: >
     • bronze: pull requests plus the GraphQL diff-stats row carrying the
       author's immutable numeric account id and (rarely) a profile email
     • silver: one row per pull request with author_email and author_account_id
-    • gold:   the author's account binding resolves the person first; the
-      email map (profile email, else the linked commits' one shared email)
-      decides only when no account id exists
+    • gold:   the author's account binding resolves the person first and the
+      author's own profile email second — those two and nothing else, so a
+      request the source names no author for stays unresolved (#3176)
 
   Cases: a squash-merged pull request whose branch commits were never
   collected attributes through the account id alone; an author whose source
-  account is gone (ghost) still attributes through the linked commit's email;
-  a pull request whose account binding and profile email name DIFFERENT
+  account is gone (ghost) stays unresolved, because the only address the
+  request could reach is one its commits carry and that names whoever wrote
+  them; a pull request whose account binding and profile email name DIFFERENT
   persons follows the account; a bot's pull request (account bound to the
   excluded person) attributes to nobody even though its linked commit carries
   a human's resolvable email.
-  Expected: alice merged 2 (squash + precedence), bob merged 1 (ghost only —
-  neither the bot's commit email nor the precedence profile email leaks to him).
+  Expected: alice merged 2 (squash + precedence), bob merged nothing — he wrote
+  commits on two of these requests and opened none of them.
 
 identity_accounts:
   - {source_type: github, source_id: git-test, account_id: "9001", person: alice@example.com}
@@ -77,10 +78,12 @@ cases:
         view: period
         find: {entity_id: alice@example.com}
         equal: {value: 2}
-      # Ghost author (no account id anywhere): the linked commit's email still
-      # attributes the pull request. Neither the precedence PR's bob-flavored
-      # profile email NOR the excluded bot's bob-authored commit may leak here.
+      # Bob wrote the commits the ghost request and the bot request carry, and
+      # opened neither. A ghost author leaves the request unresolved rather
+      # than handing it to whoever wrote its commits; the bot's excluded
+      # binding terminates resolution; and the precedence request's
+      # bob-flavoured profile email loses to alice's account.
       - metric: git.prs_merged
         view: period
         find: {entity_id: bob@example.com}
-        equal: {value: 1}
+        equal: {value: null}
