@@ -11,6 +11,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONNECTORS_DIR="$(cd "${SCRIPT_DIR}/../../connectors" && pwd)"
 DDL_DIR="${SCRIPT_DIR}/../connectors-ddl"
 
+# The same schema in a second serialization: the DDL is what a fresh cluster
+# applies, this is what a program reads. The analytics service's field catalog
+# embeds it as its validation universe, so it covers exactly the databases a
+# dataset declaration may name and it lands inside the service's own tree — the
+# analytics image builds with `src/backend` as its context and cannot reach a
+# file under `src/ingestion`.
+COLUMN_SNAPSHOT="${SCRIPT_DIR}/../../../backend/services/analytics/src/domain/field_catalog/columns.snapshot.json"
+COLUMN_SNAPSHOT_DATABASES="'silver', 'insight'"
+
 ch() {
   curl -sS --fail-with-body "${CLICKHOUSE_PROTOCOL}://${CLICKHOUSE_HOST}:${CLICKHOUSE_PORT}/" \
     -H "X-ClickHouse-User: ${CLICKHOUSE_USER}" \
@@ -126,5 +135,24 @@ while IFS= read -r tbl; do
   dump_relation staging "${tbl}" "${staging_out}"
 done < <(grep -ohrE 'staging\.[a-zA-Z0-9_]+' "${DDL_DIR}/insight.sql" "${DDL_DIR}/silver.sql" \
            | sed 's/^staging\.//' | sort -u)
+
+echo "dumping column snapshot -> $(basename "${COLUMN_SNAPSHOT}")"
+ch "SELECT
+      t.database AS database,
+      t.name AS relation,
+      t.engine AS engine,
+      t.sorting_key AS sorting_key,
+      arrayMap(col -> map('name', col.2, 'type', col.3), arraySort(col -> col.1, c.cols)) AS columns
+    FROM system.tables AS t
+    INNER JOIN (
+      SELECT database, table, groupArray((position, name, type)) AS cols
+      FROM system.columns
+      WHERE database IN (${COLUMN_SNAPSHOT_DATABASES})
+      GROUP BY database, table
+    ) AS c ON c.database = t.database AND c.table = t.name
+    WHERE t.database IN (${COLUMN_SNAPSHOT_DATABASES})
+    ORDER BY database, relation
+    FORMAT JSONEachRow" \
+  | jq --sort-keys --slurp '.' > "${COLUMN_SNAPSHOT}"
 
 ls -l "${DDL_DIR}"

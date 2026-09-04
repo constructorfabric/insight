@@ -32,18 +32,21 @@ name: connectors-ddl
 
 # Path-filtered: the contracts this lane guards can only move when something
 # under src/ingestion changes (connectors, dbt, migrations, the snapshot, the
-# bootstrap scripts) — or when the lane itself does.
+# bootstrap scripts), when the column snapshot the analytics field catalog
+# embeds changes — or when the lane itself does.
 on:
   pull_request:
     branches: [main]
     paths:
       - src/ingestion/**
+      - src/backend/services/analytics/src/domain/field_catalog/columns.snapshot.json
       - .github/workflows/connectors-ddl.yml
       - .github/workflows/scripts/start-clickhouse.sh
   push:
     branches: [main]
     paths:
       - src/ingestion/**
+      - src/backend/services/analytics/src/domain/field_catalog/columns.snapshot.json
       - .github/workflows/connectors-ddl.yml
       - .github/workflows/scripts/start-clickhouse.sh
   workflow_dispatch:
@@ -116,13 +119,19 @@ jobs:
         run: |
           set -euo pipefail
           "${BOOTSTRAP_DIR}/dump-ddl.sh"
+          # Both artifacts dump-ddl.sh writes: the cluster DDL a fresh install
+          # applies, and the column snapshot the analytics field catalog embeds.
+          DUMPED=(
+            src/ingestion/scripts/connectors-ddl
+            src/backend/services/analytics/src/domain/field_catalog/columns.snapshot.json
+          )
           # --intent-to-add so a brand-new connector's .sql file (untracked, and
           # therefore invisible to a plain `git diff`) counts as drift too.
-          git add --intent-to-add --all -- src/ingestion/scripts/connectors-ddl
-          git diff -- src/ingestion/scripts/connectors-ddl > "$RUNNER_TEMP/connectors-ddl.diff"
+          git add --intent-to-add --all -- "${DUMPED[@]}"
+          git diff -- "${DUMPED[@]}" > "$RUNNER_TEMP/connectors-ddl.diff"
           if [[ -s "$RUNNER_TEMP/connectors-ddl.diff" ]]; then
             echo "::error title=connectors-ddl snapshot is stale::This branch's connectors/dbt/migrations produce different DDL than the committed snapshot. Regenerate and commit it — no credentials needed: the one-block recipe in src/ingestion/scripts/bootstrap-db/README.md (bootstrap-db.sh, then dump-ddl.sh). Full diff below and in the connectors-ddl-drift artifact."
-            git diff --stat -- src/ingestion/scripts/connectors-ddl
+            git diff --stat -- "${DUMPED[@]}"
             head -n 200 "$RUNNER_TEMP/connectors-ddl.diff"
             exit 1
           fi
