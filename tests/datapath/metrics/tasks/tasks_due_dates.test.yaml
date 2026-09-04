@@ -16,9 +16,11 @@ description: >
   due, denominator>0 so NOT dropped); erin(r=5)=100%. value = the requested
   member's OWN compliance; median/p25/p75/range = the department distribution.
 
-  REGRESSION GUARD: the due date is set ONLY on the bronze `due_date` column (no
-  `duedate` changelog item), so it must reach due_date_compliance via the
-  Jira-native field_id `duedate` -- fails if jira__issue_field_snapshot regresses.
+  The due date is carried the way the connector emits it: inside
+  `custom_fields_json`, which is Jira's whole `fields` object, with the bronze
+  `due_date` column a flattened copy of the same value. No `duedate` changelog
+  item is seeded, so the value must reach due_date_compliance through the
+  catalogued field's snapshot -- fails if the snapshot stops reading it.
   Empty window 2026-06 -> no items.
 
 bronze:
@@ -56,7 +58,7 @@ bronze:
       id_readable: DAW1
       created: "2026-01-05T09:00:00"
       due_date: "2026-06-20"
-      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+      custom_fields_json: '{"duedate":"2026-06-20","status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue
       id: DAW-2
       jira_id: DAW-2
@@ -64,7 +66,7 @@ bronze:
       id_readable: DAW2
       created: "2026-01-05T09:00:00"
       due_date: "2026-06-20"
-      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+      custom_fields_json: '{"duedate":"2026-06-20","status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue
       id: DAW-3
       jira_id: DAW-3
@@ -72,7 +74,7 @@ bronze:
       id_readable: DAW3
       created: "2026-01-05T09:00:00"
       due_date: "2026-06-20"
-      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+      custom_fields_json: '{"duedate":"2026-06-20","status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue
       id: DAW-4
       jira_id: DAW-4
@@ -80,7 +82,7 @@ bronze:
       id_readable: DAW4
       created: "2026-01-05T09:00:00"
       due_date: "2026-06-20"
-      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
+      custom_fields_json: '{"duedate":"2026-06-20","status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
     # ── Bob Beta (rank 2) ──
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue
       id: DBW-1
@@ -89,7 +91,7 @@ bronze:
       id_readable: DBW1
       created: "2026-01-05T09:00:00"
       due_date: "2026-06-30"
-      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"bob-jira-acct","displayName":"Bob Beta"}}'
+      custom_fields_json: '{"duedate":"2026-06-30","status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"bob-jira-acct","displayName":"Bob Beta"}}'
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue
       id: DBW-2
       jira_id: DBW-2
@@ -97,7 +99,7 @@ bronze:
       id_readable: DBW2
       created: "2026-01-05T09:00:00"
       due_date: "2026-06-20"
-      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"bob-jira-acct","displayName":"Bob Beta"}}'
+      custom_fields_json: '{"duedate":"2026-06-20","status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"bob-jira-acct","displayName":"Bob Beta"}}'
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue
       id: DBW-3
       jira_id: DBW-3
@@ -105,7 +107,7 @@ bronze:
       id_readable: DBW3
       created: "2026-01-05T09:00:00"
       due_date: "2026-06-20"
-      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"bob-jira-acct","displayName":"Bob Beta"}}'
+      custom_fields_json: '{"duedate":"2026-06-20","status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"bob-jira-acct","displayName":"Bob Beta"}}'
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue
       id: DBW-4
       jira_id: DBW-4
@@ -113,7 +115,7 @@ bronze:
       id_readable: DBW4
       created: "2026-01-05T09:00:00"
       due_date: "2026-06-20"
-      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"bob-jira-acct","displayName":"Bob Beta"}}'
+      custom_fields_json: '{"duedate":"2026-06-20","status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"bob-jira-acct","displayName":"Bob Beta"}}'
     # ── Carol Gamma (rank 3) ──
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue
       id: DCW-1
@@ -122,7 +124,7 @@ bronze:
       id_readable: DCW1
       created: "2026-01-05T09:00:00"
       due_date: "2026-06-30"
-      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
+      custom_fields_json: '{"duedate":"2026-06-30","status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue
       id: DCW-2
       jira_id: DCW-2
@@ -130,7 +132,7 @@ bronze:
       id_readable: DCW2
       created: "2026-01-05T09:00:00"
       due_date: "2026-06-30"
-      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
+      custom_fields_json: '{"duedate":"2026-06-30","status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue
       id: DCW-3
       jira_id: DCW-3
@@ -138,7 +140,7 @@ bronze:
       id_readable: DCW3
       created: "2026-01-05T09:00:00"
       due_date: "2026-06-20"
-      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
+      custom_fields_json: '{"duedate":"2026-06-20","status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue
       id: DCW-4
       jira_id: DCW-4
@@ -146,7 +148,7 @@ bronze:
       id_readable: DCW4
       created: "2026-01-05T09:00:00"
       due_date: "2026-06-20"
-      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
+      custom_fields_json: '{"duedate":"2026-06-20","status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
     # ── Dave Delta (rank 4) ──
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue
       id: DDW-1
@@ -155,7 +157,7 @@ bronze:
       id_readable: DDW1
       created: "2026-01-05T09:00:00"
       due_date: "2026-06-30"
-      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"dave-jira-acct","displayName":"Dave Delta"}}'
+      custom_fields_json: '{"duedate":"2026-06-30","status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"dave-jira-acct","displayName":"Dave Delta"}}'
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue
       id: DDW-2
       jira_id: DDW-2
@@ -163,7 +165,7 @@ bronze:
       id_readable: DDW2
       created: "2026-01-05T09:00:00"
       due_date: "2026-06-30"
-      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"dave-jira-acct","displayName":"Dave Delta"}}'
+      custom_fields_json: '{"duedate":"2026-06-30","status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"dave-jira-acct","displayName":"Dave Delta"}}'
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue
       id: DDW-3
       jira_id: DDW-3
@@ -171,7 +173,7 @@ bronze:
       id_readable: DDW3
       created: "2026-01-05T09:00:00"
       due_date: "2026-06-30"
-      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"dave-jira-acct","displayName":"Dave Delta"}}'
+      custom_fields_json: '{"duedate":"2026-06-30","status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"dave-jira-acct","displayName":"Dave Delta"}}'
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue
       id: DDW-4
       jira_id: DDW-4
@@ -179,7 +181,7 @@ bronze:
       id_readable: DDW4
       created: "2026-01-05T09:00:00"
       due_date: "2026-06-20"
-      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"dave-jira-acct","displayName":"Dave Delta"}}'
+      custom_fields_json: '{"duedate":"2026-06-20","status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"dave-jira-acct","displayName":"Dave Delta"}}'
     # ── Erin Epsilon (rank 5) ──
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue
       id: DEW-1
@@ -188,7 +190,7 @@ bronze:
       id_readable: DEW1
       created: "2026-01-05T09:00:00"
       due_date: "2026-06-30"
-      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}'
+      custom_fields_json: '{"duedate":"2026-06-30","status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}'
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue
       id: DEW-2
       jira_id: DEW-2
@@ -196,7 +198,7 @@ bronze:
       id_readable: DEW2
       created: "2026-01-05T09:00:00"
       due_date: "2026-06-30"
-      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}'
+      custom_fields_json: '{"duedate":"2026-06-30","status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}'
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue
       id: DEW-3
       jira_id: DEW-3
@@ -204,7 +206,7 @@ bronze:
       id_readable: DEW3
       created: "2026-01-05T09:00:00"
       due_date: "2026-06-30"
-      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}'
+      custom_fields_json: '{"duedate":"2026-06-30","status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}'
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue
       id: DEW-4
       jira_id: DEW-4
@@ -212,7 +214,7 @@ bronze:
       id_readable: DEW4
       created: "2026-01-05T09:00:00"
       due_date: "2026-06-20"
-      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}'
+      custom_fields_json: '{"duedate":"2026-06-20","status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}'
 
   bronze_jira.jira_issue_history:
     # ── Alice Alpha (rank 1) ──
