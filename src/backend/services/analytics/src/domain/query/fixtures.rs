@@ -2,8 +2,6 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use chrono::NaiveDate;
-
 use crate::domain::field_catalog::loader;
 
 use super::contract::dto::QueryRequest;
@@ -73,8 +71,4 @@ pub fn commits() -> Dataset {
 
 pub fn query(json: &str) -> QueryRequest {
     serde_json::from_str(json).expect("the fixture query is in the contract")
-}
-
-pub fn day(year: i32, month: u32, day: u32) -> NaiveDate {
-    NaiveDate::from_ymd_opt(year, month, day).expect("a real calendar day")
 }

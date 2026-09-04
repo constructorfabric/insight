@@ -55,6 +55,7 @@ BODY_ROUTES: tuple[tuple[str, str], ...] = (
     ("PUT", f"/v1/queries/{scratch.UNKNOWN_ID}"),
     ("POST", f"/v1/queries/{scratch.UNKNOWN_ID}/run"),
     ("POST", "/v1/metric-results"),
+    ("POST", "/v1/query"),
     ("POST", "/v1/reports/preview"),
     ("POST", "/v1/reports/export"),
     ("POST", "/v1/metric-drilldown"),

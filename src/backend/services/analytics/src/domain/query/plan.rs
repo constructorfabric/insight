@@ -126,17 +126,3 @@ pub const BUCKET_COLUMN: &str = "time";
 pub fn column_alias(index: usize) -> String {
     format!("c{index}")
 }
-
-impl QueryPlan<'_> {
-    pub fn buckets_by_time(&self) -> bool {
-        self.group_by
-            .iter()
-            .any(|axis| matches!(axis, PlannedAxis::Time))
-    }
-
-    /// The columns a row groups by, which is every column the aggregates are
-    /// folded within.
-    pub fn grouped_columns(&self) -> impl Iterator<Item = &AnswerColumn> {
-        self.columns.iter().take(self.group_by.len())
-    }
-}

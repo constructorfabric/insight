@@ -555,7 +555,7 @@ mod tests {
         let plan = plan_against(&fixtures::query(COUNT_BY_WEEK), &dataset).expect("admissible");
 
         assert_eq!(plan.limit, 50);
-        assert!(plan.buckets_by_time());
+        assert!(plan.group_by.contains(&PlannedAxis::Time));
         assert_eq!(plan.time.grain, Some(Grain::Week));
         assert_eq!(plan.time.field.field, "authored_at");
         assert_eq!(
@@ -593,7 +593,7 @@ mod tests {
 
         assert_eq!(plan.limit, DEFAULT_ROW_LIMIT);
         assert_eq!(plan.time.grain, None);
-        assert!(!plan.buckets_by_time());
+        assert!(!plan.group_by.contains(&PlannedAxis::Time));
     }
 
     #[test]

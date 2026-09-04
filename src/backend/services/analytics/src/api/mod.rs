@@ -10,6 +10,7 @@ mod metric_drilldown;
 mod metric_results;
 mod metrics;
 mod person_names;
+mod query;
 mod reports;
 mod saved_queries;
 pub(crate) mod usage;
@@ -480,6 +481,30 @@ pub(crate) fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) ->
         )
         .standard_errors(openapi)
         .handler(ai::explain::explain_metric)
+        .register(router, openapi);
+
+    // The query surface: one query contract over the declared datasets. Tenancy
+    // binds from the session, so the body names no tenant and every refusal is
+    // a field-named `invalid_argument`.
+    router = OperationBuilder::post("/v1/query")
+        .operation_id("analytics_api.query.create")
+        .summary("Answer a query over a declared dataset")
+        .authenticated()
+        .no_license_required()
+        .json_request::<crate::domain::query::contract::dto::QueryRequest>(
+            openapi,
+            "The question to answer",
+        )
+        .json_response_with_schema::<crate::domain::query::contract::dto::QueryAnswer>(
+            openapi,
+            StatusCode::OK,
+            "A typed table",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_415(openapi)
+        .error_500(openapi)
+        .handler(query::query)
         .register(router, openapi);
 
     router = OperationBuilder::post("/v1/metric-results")

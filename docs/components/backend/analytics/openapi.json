@@ -2365,6 +2365,688 @@
         ],
         "type": "object"
       },
+      "Query": {
+        "additionalProperties": false,
+        "properties": {
+          "aggregates": {
+            "items": {
+              "$ref": "#/components/schemas/QueryAggregate"
+            },
+            "type": "array"
+          },
+          "dataset": {
+            "type": "string"
+          },
+          "filters": {
+            "description": "Row filters, narrowing the scan before aggregation.",
+            "items": {
+              "$ref": "#/components/schemas/QueryFilter"
+            },
+            "type": "array"
+          },
+          "group_by": {
+            "items": {
+              "$ref": "#/components/schemas/QueryGroupAxis"
+            },
+            "type": "array"
+          },
+          "limit": {
+            "description": "Row ceiling; a query over the cap is refused rather than clipped.",
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "order": {
+            "items": {
+              "$ref": "#/components/schemas/QueryOrder"
+            },
+            "type": "array"
+          },
+          "time": {
+            "$ref": "#/components/schemas/QueryTime",
+            "description": "The window every scan is bounded by, and the width of its buckets."
+          }
+        },
+        "required": [
+          "dataset",
+          "aggregates",
+          "time"
+        ],
+        "type": "object"
+      },
+      "QueryAggregate": {
+        "oneOf": [
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/QueryAggregateCount"
+              },
+              {
+                "properties": {
+                  "fn": {
+                    "enum": [
+                      "count"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "fn"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/QueryAggregateFold"
+              },
+              {
+                "properties": {
+                  "fn": {
+                    "enum": [
+                      "sum"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "fn"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/QueryAggregateFold"
+              },
+              {
+                "properties": {
+                  "fn": {
+                    "enum": [
+                      "avg"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "fn"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/QueryAggregateFold"
+              },
+              {
+                "properties": {
+                  "fn": {
+                    "enum": [
+                      "min"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "fn"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/QueryAggregateFold"
+              },
+              {
+                "properties": {
+                  "fn": {
+                    "enum": [
+                      "max"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "fn"
+                ],
+                "type": "object"
+              }
+            ]
+          }
+        ]
+      },
+      "QueryAggregateCount": {
+        "additionalProperties": false,
+        "properties": {
+          "filter": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/QueryFilter",
+                "description": "Restricts this fold to the rows one filter selects."
+              }
+            ]
+          },
+          "name": {
+            "description": "What the answer column is called.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "QueryAggregateFold": {
+        "additionalProperties": false,
+        "properties": {
+          "field": {
+            "description": "A declared measurable of the dataset.",
+            "type": "string"
+          },
+          "filter": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/QueryFilter",
+                "description": "Restricts this fold to the rows one filter selects."
+              }
+            ]
+          },
+          "name": {
+            "description": "What the answer column is called.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "field"
+        ],
+        "type": "object"
+      },
+      "QueryAnswer": {
+        "properties": {
+          "columns": {
+            "items": {
+              "$ref": "#/components/schemas/QueryAnswerColumn"
+            },
+            "type": "array"
+          },
+          "rows": {
+            "items": {
+              "items": {},
+              "type": "array"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "columns",
+          "rows"
+        ],
+        "type": "object"
+      },
+      "QueryAnswerColumn": {
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/QueryColumnKind"
+          },
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "$ref": "#/components/schemas/QueryColumnType"
+          }
+        },
+        "required": [
+          "name",
+          "kind",
+          "type"
+        ],
+        "type": "object"
+      },
+      "QueryColumnKind": {
+        "enum": [
+          "dimension",
+          "bucket",
+          "aggregate"
+        ],
+        "type": "string"
+      },
+      "QueryColumnType": {
+        "enum": [
+          "text",
+          "number",
+          "date"
+        ],
+        "type": "string"
+      },
+      "QueryDimensionAxis": {
+        "additionalProperties": false,
+        "properties": {
+          "field": {
+            "description": "A declared dimension of the dataset.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "field"
+        ],
+        "type": "object"
+      },
+      "QueryDirection": {
+        "enum": [
+          "asc",
+          "desc"
+        ],
+        "type": "string"
+      },
+      "QueryFilter": {
+        "oneOf": [
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/QueryFilterEq"
+              },
+              {
+                "properties": {
+                  "op": {
+                    "enum": [
+                      "eq"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "op"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/QueryFilterIn"
+              },
+              {
+                "properties": {
+                  "op": {
+                    "enum": [
+                      "in"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "op"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/QueryFilterCompare"
+              },
+              {
+                "properties": {
+                  "op": {
+                    "enum": [
+                      "gt"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "op"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/QueryFilterCompare"
+              },
+              {
+                "properties": {
+                  "op": {
+                    "enum": [
+                      "gte"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "op"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/QueryFilterCompare"
+              },
+              {
+                "properties": {
+                  "op": {
+                    "enum": [
+                      "lt"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "op"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/QueryFilterCompare"
+              },
+              {
+                "properties": {
+                  "op": {
+                    "enum": [
+                      "lte"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "op"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/QueryFilterBetween"
+              },
+              {
+                "properties": {
+                  "op": {
+                    "enum": [
+                      "between"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "op"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/QueryFilterNotNull"
+              },
+              {
+                "properties": {
+                  "op": {
+                    "enum": [
+                      "not_null"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "op"
+                ],
+                "type": "object"
+              }
+            ]
+          }
+        ]
+      },
+      "QueryFilterBetween": {
+        "additionalProperties": false,
+        "properties": {
+          "field": {
+            "description": "A declared dimension or measurable of the dataset.",
+            "type": "string"
+          },
+          "high": {
+            "$ref": "#/components/schemas/QueryFilterValue",
+            "description": "Inclusive upper bound."
+          },
+          "low": {
+            "$ref": "#/components/schemas/QueryFilterValue",
+            "description": "Inclusive lower bound."
+          }
+        },
+        "required": [
+          "field",
+          "low",
+          "high"
+        ],
+        "type": "object"
+      },
+      "QueryFilterCompare": {
+        "additionalProperties": false,
+        "properties": {
+          "field": {
+            "description": "A declared dimension or measurable of the dataset.",
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/components/schemas/QueryFilterValue"
+          }
+        },
+        "required": [
+          "field",
+          "value"
+        ],
+        "type": "object"
+      },
+      "QueryFilterEq": {
+        "additionalProperties": false,
+        "properties": {
+          "field": {
+            "description": "A declared dimension or measurable of the dataset.",
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/components/schemas/QueryFilterValue"
+          }
+        },
+        "required": [
+          "field",
+          "value"
+        ],
+        "type": "object"
+      },
+      "QueryFilterIn": {
+        "additionalProperties": false,
+        "properties": {
+          "field": {
+            "description": "A declared dimension or measurable of the dataset.",
+            "type": "string"
+          },
+          "values": {
+            "description": "At least one value, and at most the contract's cap.",
+            "items": {
+              "$ref": "#/components/schemas/QueryFilterValue"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "field",
+          "values"
+        ],
+        "type": "object"
+      },
+      "QueryFilterNotNull": {
+        "additionalProperties": false,
+        "properties": {
+          "field": {
+            "description": "A declared dimension or measurable of the dataset.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "field"
+        ],
+        "type": "object"
+      },
+      "QueryFilterValue": {
+        "description": "A filter value: text, a number, or a boolean",
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "format": "double",
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          }
+        ]
+      },
+      "QueryGrain": {
+        "enum": [
+          "day",
+          "week",
+          "month"
+        ],
+        "type": "string"
+      },
+      "QueryGroupAxis": {
+        "oneOf": [
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/QueryDimensionAxis"
+              },
+              {
+                "properties": {
+                  "axis": {
+                    "enum": [
+                      "dimension"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "axis"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/QueryTimeAxis"
+              },
+              {
+                "properties": {
+                  "axis": {
+                    "enum": [
+                      "time"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "axis"
+                ],
+                "type": "object"
+              }
+            ]
+          }
+        ]
+      },
+      "QueryOrder": {
+        "additionalProperties": false,
+        "properties": {
+          "by": {
+            "description": "A column the answer reports: a grouped dimension, `time`, or an aggregate name.",
+            "type": "string"
+          },
+          "dir": {
+            "$ref": "#/components/schemas/QueryDirection"
+          }
+        },
+        "required": [
+          "by"
+        ],
+        "type": "object"
+      },
+      "QueryTime": {
+        "additionalProperties": false,
+        "properties": {
+          "field": {
+            "description": "A declared time field; the dataset's default when omitted.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "from": {
+            "description": "Inclusive first day, UTC.",
+            "format": "date",
+            "type": "string"
+          },
+          "grain": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/QueryGrain",
+                "description": "Bucket width. Required with an `{\"axis\": \"time\"}` axis, refused without one."
+              }
+            ]
+          },
+          "to": {
+            "description": "Inclusive last day, UTC.",
+            "format": "date",
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "type": "object"
+      },
+      "QueryTimeAxis": {
+        "additionalProperties": false,
+        "description": "The time bucket as a group axis; its width is `time.grain`.",
+        "type": "object"
+      },
       "ReportCell": {
         "oneOf": [
           {
@@ -6527,6 +7209,80 @@
           }
         ],
         "summary": "Run a saved query"
+      }
+    },
+    "/v1/query": {
+      "post": {
+        "operationId": "analytics_api.query.create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Query"
+              }
+            }
+          },
+          "description": "The question to answer",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueryAnswer"
+                }
+              }
+            },
+            "description": "A typed table"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "415": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Answer a query over a declared dataset"
       }
     },
     "/v1/reports/export": {

@@ -218,6 +218,7 @@ pub struct FoldAggregateDto {
 
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
+#[schema(as = QueryTime)]
 pub struct TimeDto {
     /// A declared time field; the dataset's default when omitted.
     #[serde(default)]
@@ -233,6 +234,7 @@ pub struct TimeDto {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
+#[schema(as = QueryGrain)]
 pub enum Grain {
     Day,
     Week,
@@ -241,6 +243,7 @@ pub enum Grain {
 
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
+#[schema(as = QueryOrder)]
 pub struct OrderDto {
     /// A column the answer reports: a grouped dimension, `time`, or an aggregate name.
     pub by: String,
@@ -250,6 +253,7 @@ pub struct OrderDto {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
+#[schema(as = QueryDirection)]
 pub enum Direction {
     #[default]
     Asc,
@@ -260,11 +264,21 @@ pub enum Direction {
 pub struct QueryAnswer {
     pub columns: Vec<AnswerColumn>,
     /// One cell per column, in column order; a fold that observed nothing is null.
-    #[schema(value_type = Vec<Vec<Object>>)]
+    #[schema(schema_with = answer_rows_schema)]
     pub rows: Vec<Vec<serde_json::Value>>,
 }
 
+fn answer_rows_schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+    use utoipa::openapi::schema::{ArrayBuilder, Object, SchemaType};
+
+    let cell = Object::with_type(SchemaType::AnyValue);
+    ArrayBuilder::new()
+        .items(ArrayBuilder::new().items(cell))
+        .into()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[schema(as = QueryAnswerColumn)]
 pub struct AnswerColumn {
     pub name: String,
     pub kind: ColumnKind,
@@ -274,6 +288,7 @@ pub struct AnswerColumn {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
+#[schema(as = QueryColumnKind)]
 pub enum ColumnKind {
     Dimension,
     Bucket,
@@ -282,11 +297,15 @@ pub enum ColumnKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
+#[schema(as = QueryColumnType)]
 pub enum ColumnType {
     Text,
     Number,
     Date,
 }
+
+impl toolkit::api::api_dto::RequestApiDto for QueryRequest {}
+impl toolkit::api::api_dto::ResponseApiDto for QueryAnswer {}
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
