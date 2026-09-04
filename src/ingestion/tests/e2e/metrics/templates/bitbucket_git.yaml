@@ -64,6 +64,27 @@ templates:
     merge_commit_sha: null
     participants: "[]"
 
+  # The pull request <-> commit link. Its author fields are the COMMIT's, not
+  # the request author's — Bitbucket names both an address and an account here,
+  # and they belong to whoever wrote the commit.
+  pull_request_commit:
+    $ref: "#/templates/base"
+    collected_at: "2026-10-02T00:00:00Z"
+    repo_full_name: acme/platform
+    pr_id: null
+    sha: null
+    author_email: null
+    author_name: null
+    author_account_id: null
+    author_uuid: null
+    author_nickname: null
+    author_display_name: null
+    message: change
+    committed_date: "2026-10-01T08:30:00Z"
+    parent_shas: "[\"parent\"]"
+    is_merge: false
+    pr_updated_on: "2026-10-01T13:00:00Z"
+
   diffstat:
     $ref: "#/templates/base"
     repo_full_name: acme/platform

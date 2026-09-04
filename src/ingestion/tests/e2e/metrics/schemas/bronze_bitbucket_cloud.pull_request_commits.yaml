@@ -1,0 +1,29 @@
+schemas:
+  bronze_bitbucket_cloud.pull_request_commits:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      _airbyte_raw_id: {type: string}
+      _airbyte_extracted_at: {type: string, format: date-time}
+      _airbyte_meta: {type: string}
+      _airbyte_generation_id: {type: integer}
+      unique_key: {type: [string, "null"]}
+      tenant_id: {type: [string, "null"]}
+      source_id: {type: [string, "null"]}
+      data_source: {type: [string, "null"]}
+      collected_at: {type: [string, "null"]}
+      sha: {type: [string, "null"]}
+      pr_id: {type: [integer, "null"]}
+      repo_full_name: {type: [string, "null"]}
+      author_email: {type: [string, "null"]}
+      author_name: {type: [string, "null"]}
+      author_account_id: {type: [string, "null"]}
+      author_uuid: {type: [string, "null"]}
+      author_nickname: {type: [string, "null"]}
+      author_display_name: {type: [string, "null"]}
+      message: {type: [string, "null"]}
+      committed_date: {type: [string, "null"]}
+      parent_shas: {type: [string, "null"]}
+      is_merge: {type: [boolean, "null"]}
+      pr_updated_on: {type: [string, "null"]}

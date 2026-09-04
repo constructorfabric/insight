@@ -10,28 +10,35 @@ description: >
     • gold:   a request reaches a person through the author's account first and
       the author's own address second — and through nothing else
 
-  Three requests, one per way a source can name an author: an account bound to a
-  person, an account bound to nobody, and no account at all. None publishes an
-  author address. All three carry commits written by the same third person, who
-  opened none of them — the condition under which an address borrowed from the
-  commits would look unambiguous.
+  Five requests over two connectors, covering every way a source can name an
+  author: an account bound to a person, an account bound to nobody, and no
+  account at all. None publishes an author address — on Bitbucket that is
+  structural, since the connector has no author address to publish, which makes
+  it the strictest test of the rule. Every request carries commits written by
+  the same third person, who opened none of them: the condition under which an
+  address borrowed from the commits would look unambiguous.
 
-  Cases: only the request whose author account is bound reaches anybody, and it
-  reaches the account's person for prs_created and prs_merged alike; the
-  unbound-account request and the account-less one stay unresolved instead of
-  reaching the commit author; and the resolved request still carries its
-  dimensions, so leaving the other two unattributed cost the breakdown nothing.
+  Cases: only the requests whose author account is bound reach anybody, and each
+  reaches its own account's person for prs_created and prs_merged alike; the
+  unbound-account requests and the account-less one stay unresolved instead of
+  reaching the commit author; and a resolved request still carries its
+  dimensions, so leaving the others unattributed cost the breakdown nothing.
 
 identity_accounts:
   # Account 9002 is alice's. Account 9001 is deliberately absent — an account
   # the identity store has never been taught about, which is what a service
   # account or a departed user looks like here.
   - {source_type: github, source_id: git-test, account_id: "9002", person: alice@example.com}
+  # The same pair on Bitbucket, where it carries more weight: the connector
+  # publishes no author address at all, so the account binding is the only
+  # thing that can ever attribute a request.
+  - {source_type: bitbucket, source_id: bitbucket-test, account_id: "bb-carol", person: carol@example.com}
 
 bronze:
   bronze_bamboohr.employees:
     - $ref: templates/people.yaml#/templates/alice
     - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
 
   bronze_github.branches:
     - {$ref: templates/git_activity.yaml#/templates/base, unique_key: br-main, repository: "https://github.com/constructor/insight.git", name: main, head_sha: head-main, is_default: true}
@@ -62,13 +69,34 @@ bronze:
     - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-bob-2, sha: hash-bob-2, author_name: bob, author_email: bob@example.com, committer_name: bob, committer_email: bob@example.com, additions: 5}
     - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-bob-3, sha: hash-bob-3, author_name: bob, author_email: bob@example.com, committer_name: bob, committer_email: bob@example.com, additions: 5}
 
+  # Bitbucket is the provider that publishes no author address whatsoever, so a
+  # request there rests on the account binding alone. One bound account, one the
+  # store has never seen, and bob's commits on both.
+  bronze_bitbucket_cloud.pull_requests:
+    - {$ref: templates/bitbucket_git.yaml#/templates/pull_request, unique_key: "bb-pr:801", id: 801, author_display_name: Carol Gamma, author_account_id: bb-carol, created_on: "2026-11-02T08:00:00Z", updated_on: "2026-11-03T09:00:00Z", source_commit_sha: bb-src-801, destination_commit_sha: bb-dst-801, merge_commit_sha: bb-merge-801}
+    - {$ref: templates/bitbucket_git.yaml#/templates/pull_request, unique_key: "bb-pr:802", id: 802, author_display_name: Releaser Bot, author_account_id: bb-unbound, created_on: "2026-11-02T10:00:00Z", updated_on: "2026-11-03T11:00:00Z", source_commit_sha: bb-src-802, destination_commit_sha: bb-dst-802, merge_commit_sha: bb-merge-802}
+
+  bronze_bitbucket_cloud.pull_request_activity:
+    # A Bitbucket request records no close time of its own; the terminal update
+    # event in its activity is what gives prs_merged a date.
+    - {$ref: templates/bitbucket_git.yaml#/templates/activity, unique_key: "bb-ac:801", pr_id: 801, update_state: MERGED, event_date: "2026-11-03T09:00:00Z"}
+    - {$ref: templates/bitbucket_git.yaml#/templates/activity, unique_key: "bb-ac:802", pr_id: 802, update_state: MERGED, event_date: "2026-11-03T11:00:00Z"}
+
+  bronze_bitbucket_cloud.pull_request_commits:
+    - {$ref: templates/bitbucket_git.yaml#/templates/pull_request_commit, unique_key: "bb-prc:801", pr_id: 801, sha: bb-hash-bob-1, author_email: bob@example.com, author_name: bob, committed_date: "2026-11-02T07:00:00Z"}
+    - {$ref: templates/bitbucket_git.yaml#/templates/pull_request_commit, unique_key: "bb-prc:802", pr_id: 802, sha: bb-hash-bob-2, author_email: bob@example.com, author_name: bob, committed_date: "2026-11-02T09:00:00Z"}
+
+  bronze_bitbucket_cloud.commits:
+    - {$ref: templates/bitbucket_git.yaml#/templates/commit, unique_key: "bb-c:1", sha: bb-hash-bob-1, author_name: bob, author_email: bob@example.com, committer_name: bob, committer_email: bob@example.com, committed_date: "2026-11-02T07:00:00Z", additions: 5}
+    - {$ref: templates/bitbucket_git.yaml#/templates/commit, unique_key: "bb-c:2", sha: bb-hash-bob-2, author_name: bob, author_email: bob@example.com, committer_name: bob, committer_email: bob@example.com, committed_date: "2026-11-02T09:00:00Z", additions: 5}
+
 cases:
-  - name: Only the request whose author account is bound reaches anybody
+  - name: Only the requests whose author account is bound reach anybody
     request:
       url: /v1/metric-results
       method: POST
       body:
-        entity: {type: person, ids: [alice@example.com, bob@example.com]}
+        entity: {type: person, ids: [alice@example.com, bob@example.com, carol@example.com]}
         period: {from: "2026-11-01", to: "2026-11-30"}
         metrics:
           - metric_key: git.prs_created
@@ -81,10 +109,16 @@ cases:
       # every commit on it is bob's.
       - {metric: git.prs_created, view: period, find: {entity_id: alice@example.com}, equal: {value: 1}}
       - {metric: git.prs_merged, view: period, find: {entity_id: alice@example.com}, equal: {value: 1}}
-      # Bob wrote the commits on all three requests and opened none. An unbound
-      # account (pr-902) and an author the source does not name at all (pr-903)
-      # both leave their request unresolved — neither turns his commits into a
-      # claim on his behalf, for the creation date or the merge date.
+      # bb-pr:801 only, and on Bitbucket the binding is doing all of the work:
+      # the connector publishes no author address, so nothing else could have
+      # carried this request to her.
+      - {metric: git.prs_created, view: period, find: {entity_id: carol@example.com}, equal: {value: 1}}
+      - {metric: git.prs_merged, view: period, find: {entity_id: carol@example.com}, equal: {value: 1}}
+      # Bob wrote the commits on all five requests and opened none. An unbound
+      # account (pr-902, bb-pr:802) and an author the source does not name at
+      # all (pr-903) leave their request unresolved — none of them turns his
+      # commits into a claim on his behalf, for the creation date or the merge
+      # date, on either connector.
       - {metric: git.prs_created, view: period, find: {entity_id: bob@example.com}, equal: {value: null}}
       - {metric: git.prs_merged, view: period, find: {entity_id: bob@example.com}, equal: {value: null}}
 
@@ -100,10 +134,10 @@ cases:
             views: [{view: breakdown, dimensions: [source]}]
     expect:
       - assert: "status == 200"
-      # One of the three requests reaches somebody and it is still dimensioned,
-      # so dropping the borrowed address cost the breakdown path nothing. The
-      # other two contribute to no dimension at all, which is what leaving a
-      # request unattributed means.
+      # The resolved GitHub request is still dimensioned, so dropping the
+      # borrowed address cost the breakdown path nothing. The unresolved ones
+      # contribute to no dimension at all, which is what leaving a request
+      # unattributed means.
       - metric: git.prs_created
         view: breakdown
         find: {entity_id: alice@example.com, dimensions: {key: source, value: github}}
