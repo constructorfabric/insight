@@ -1,0 +1,35 @@
+spec_version: 1
+description: >
+  Metric: m365_files_shared_external — IC Bullet Collaboration (…0012), #1413.
+  How it's computed (bronze → silver → gold):
+    • bronze: daily OneDrive and SharePoint file-activity reports per person
+    • silver: each product deduped to per-person/day share counts
+    • gold:   value = the requested member's per-person SUM of files shared
+              externally over the window (across both products); median/p25/p75/range
+              = the distribution of those per-person SUMs across the member's
+              DEPARTMENT (same org_unit_id).
+
+  Department: 5 Engineering members (alice, bob, carol, dave, erin), base rates
+  r ∈ {10,20,30,40,50}, each seeded one OneDrive row on the same day inside the
+  queried window → per-person window SUM = r. The IC case requests erin (r=50), so
+  value = 50; the department of 5 yields the median/p25/p75/range below.
+
+  dave/erin OneDrive rows are composed inline from the base m365_onedrive template
+  with a userPrincipalName override (named per-person records cover alice/bob/carol).
+  Cases: custom scope (department of 5) · empty window.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/alice
+    - $ref: ../templates/people.yaml#/templates/bob
+    - $ref: ../templates/people.yaml#/templates/carol
+    - $ref: ../templates/people.yaml#/templates/dave
+    - $ref: ../templates/people.yaml#/templates/erin
+
+  bronze_m365.onedrive_activity:
+    - { $ref: ../templates/m365_onedrive.yaml#/templates/alice_onedrive, reportRefreshDate: "2026-12-25", unique_key: ext-alice-20261225, sharedExternallyFileCount: 10 }   # r=10
+    - { $ref: ../templates/m365_onedrive.yaml#/templates/alice_onedrive, reportRefreshDate: "2026-12-25", unique_key: ext-alice-20261225, sharedExternallyFileCount: 10 }   # duplicate → dedup to 10, not 20
+    - { $ref: ../templates/m365_onedrive.yaml#/templates/bob_onedrive,   reportRefreshDate: "2026-12-25", unique_key: ext-bob-20261225,   sharedExternallyFileCount: 20 }   # r=20
+    - { $ref: ../templates/m365_onedrive.yaml#/templates/carol_onedrive, reportRefreshDate: "2026-12-25", unique_key: ext-carol-20261225, sharedExternallyFileCount: 30 }   # r=30
+    - { $ref: ../templates/m365_onedrive.yaml#/templates/m365_onedrive, userPrincipalName: dave@example.com, reportRefreshDate: "2026-12-25", unique_key: ext-dave-20261225, sharedExternallyFileCount: 40 }   # r=40 (inline base + UPN override)
+    - { $ref: ../templates/m365_onedrive.yaml#/templates/m365_onedrive, userPrincipalName: erin@example.com, reportRefreshDate: "2026-12-25", unique_key: ext-erin-20261225, sharedExternallyFileCount: 50 }   # r=50 (the requested IC member; inline base + UPN override)

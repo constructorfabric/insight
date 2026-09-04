@@ -1,0 +1,18 @@
+spec_version: 1
+description: "Unified collaboration messaging metrics across period, peer, timeseries, and tool breakdown views."
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/alice
+    - $ref: ../templates/people.yaml#/templates/bob
+    - $ref: ../templates/people.yaml#/templates/carol
+    - $ref: ../templates/people.yaml#/templates/dave
+    - $ref: ../templates/people.yaml#/templates/erin
+
+  bronze_m365.teams_activity:
+    - { $ref: ../templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: alice@example.com, reportRefreshDate: "2026-12-25", unique_key: tc-alice-20261225, privateChatMessageCount: 10, teamChatMessageCount: 0 }
+    - { $ref: ../templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: alice@example.com, reportRefreshDate: "2026-12-25", unique_key: tc-alice-20261225, privateChatMessageCount: 10, teamChatMessageCount: 0 }   # duplicate → dedup, not 20
+    - { $ref: ../templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: bob@example.com,   reportRefreshDate: "2026-12-25", unique_key: tc-bob-20261225,   privateChatMessageCount: 20, teamChatMessageCount: 0 }
+    - { $ref: ../templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: carol@example.com, reportRefreshDate: "2026-12-25", unique_key: tc-carol-20261225, privateChatMessageCount: 30, teamChatMessageCount: 0 }
+    - { $ref: ../templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: dave@example.com,  reportRefreshDate: "2026-12-25", unique_key: tc-dave-20261225,  privateChatMessageCount: 40, teamChatMessageCount: 0 }
+    - { $ref: ../templates/m365_teams.yaml#/templates/m365_teams, userPrincipalName: erin@example.com,  reportRefreshDate: "2026-12-25", unique_key: tc-erin-20261225,  privateChatMessageCount: 50, teamChatMessageCount: 0 }

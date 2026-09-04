@@ -11,6 +11,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from insight_datapath.bindings import Bindings
 from insight_datapath.caller import StandCaller
 from insight_datapath.ch_seeder import CHSeeder
 from insight_datapath.dbt_runner import DbtRunner
@@ -46,6 +47,7 @@ def spec(
     caller: StandCaller,
     caller_session: PersonaSession,
     stand_manifest: Manifest,
+    bindings: Bindings,
 ) -> SpecRun:
     name = getattr(request.module, "SPEC", None)
     if not name:
@@ -53,7 +55,7 @@ def spec(
             f"{request.module.__name__}: a spec module must set SPEC = '<fixture name>'"
         )
     loaded = load(
-        METRICS_ROOT / f"{name}.test.yaml",
+        Path(request.module.__file__).parent / f"{name}.test.yaml",
         substitutions={
             "tenant": stand_manifest.tenant,
             "supervisor_email": caller_session.email,
@@ -71,6 +73,7 @@ def spec(
         caller=caller,
         caller_email=caller_session.email,
         tenant=stand_manifest.tenant,
+        bindings=bindings,
         ledger=LEDGER,
     )
 

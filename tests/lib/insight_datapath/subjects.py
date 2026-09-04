@@ -18,6 +18,7 @@ import os
 import subprocess
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 from insight_datapath import clickhouse as ch
 from insight_datapath.instance import InstanceConfig
@@ -94,6 +95,33 @@ class Subjects:
             f"persons-seed exited {result.returncode}: {reason}\n"
             f"stdout tail:\n{result.stdout[-1500:]}\nstderr tail:\n{result.stderr[-1500:]}"
         )
+
+    def person_ids_of_records(self, records: Sequence[dict[str, Any]]) -> dict[str, str]:
+        """The person the product minted for each employment record, by that record.
+
+        The email map answers only where one person owns every account claiming an
+        address, which a spec may deliberately arrange not to be true. A record is
+        the spec's own statement of who someone is, and the account it mints under
+        names that person whatever else claims their address.
+        """
+        by_account = {
+            str(row["id"]): str(row["workEmail"]).strip().lower()
+            for row in records
+            if isinstance(row, dict) and row.get("id") and row.get("workEmail")
+        }
+        if not by_account:
+            return {}
+        wanted = ", ".join("'" + key.replace("'", "''") + "'" for key in by_account)
+        rows = ch.query(
+            self.cfg,
+            "SELECT account_id, toString(person_id) FROM identity.account_assignment "
+            f"WHERE source_type = 'bamboohr' AND account_id IN ({wanted})",
+        )
+        return {
+            by_account[str(account)]: str(person_id)
+            for account, person_id in rows
+            if str(account) in by_account
+        }
 
     def person_ids(self, emails: Sequence[str]) -> dict[str, str]:
         """Each address the product resolved, as the map answers it.

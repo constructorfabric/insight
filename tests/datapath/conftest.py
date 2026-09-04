@@ -13,6 +13,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from insight_datapath.bindings import Bindings
 from insight_datapath.caller import StandCaller
 from insight_datapath.ch_seeder import CHSeeder
 from insight_datapath.dbt_runner import DbtRunner
@@ -22,7 +23,7 @@ from insight_datapath.reset import refuse_a_seeded_warehouse, session_floor
 from insight_datapath.schema import apply_all, restart_analytics
 from insight_datapath.subjects import Subjects
 from insight_stand.manifest import Manifest, load_manifest
-from insight_stand.personas import PersonaSession, open_session
+from insight_stand.personas import ADMIN_OPERATOR_FIXTURE, PersonaSession, open_session
 from insight_stand.stand import resolve_endpoint
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -63,6 +64,20 @@ def caller_session(stand_manifest: Manifest) -> PersonaSession:
 @pytest.fixture(scope="session")
 def caller(caller_session: PersonaSession) -> StandCaller:
     return StandCaller(caller_session.client)
+
+
+@pytest.fixture(scope="session")
+def operator_session(stand_manifest: Manifest) -> PersonaSession:
+    """The seeded persona that may make an operator decision about an account.
+
+    A binding is admin-gated, and the caller a spec reads as is an ordinary lead.
+    """
+    return open_session(ADMIN_OPERATOR_FIXTURE, stand_manifest, resolve_endpoint().base_url)
+
+
+@pytest.fixture(scope="session")
+def bindings(instance_cfg: InstanceConfig, operator_session: PersonaSession) -> Bindings:
+    return Bindings(instance_cfg, client=operator_session.client)
 
 
 @pytest.fixture(scope="session")

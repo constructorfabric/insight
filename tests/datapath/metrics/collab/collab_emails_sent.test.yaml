@@ -1,0 +1,36 @@
+spec_version: 1
+description: >
+  Metric: m365_emails_sent — IC Bullet Collaboration (…0012), #1413.
+  How it's computed (bronze → silver → gold):
+    • bronze: daily M365 email-activity report per person (send/receive/read counts)
+    • silver: deduped to one row per person/day with the sent-email count
+    • gold:   value = the requested member's per-person SUM of emails sent over the
+              window; median/p25/p75/range = the distribution of those per-person
+              SUMs across the member's DEPARTMENT (same org_unit_id).
+
+  Department: 5 Engineering members (alice, bob, carol, dave, erin), base rates
+  r ∈ {10,20,30,40,50}. Each member is seeded one send-row on Dec 25 with
+  sendCount = r, all inside the custom window Dec 23–29, so each member's
+  per-person window SUM = r → dept {10,20,30,40,50}.
+
+  The IC case requests erin (r=50), so value = 50; the department of 5 yields
+  median 30, p25 20, p75 40, range [10,50].
+  Cases: custom scope (department of 5) · empty window.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/alice
+    - $ref: ../templates/people.yaml#/templates/bob
+    - $ref: ../templates/people.yaml#/templates/carol
+    - $ref: ../templates/people.yaml#/templates/dave
+    - $ref: ../templates/people.yaml#/templates/erin
+
+  bronze_m365.email_activity:
+    # One send-row per member on Dec 25 (sendCount = base rate r), all in the
+    # kept custom window Dec 23–29. Per-person SUM = r → dept {10,20,30,40,50}.
+    - { $ref: ../templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-12-25", unique_key: sent-alice-20261225, sendCount: 10 }   # r=10
+    - { $ref: ../templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-12-25", unique_key: sent-alice-20261225, sendCount: 10 }   # duplicate → dedup to 10, not 20
+    - { $ref: ../templates/m365_email.yaml#/templates/bob_email,   reportRefreshDate: "2026-12-25", unique_key: sent-bob-20261225,   sendCount: 20 }   # r=20
+    - { $ref: ../templates/m365_email.yaml#/templates/carol_email, reportRefreshDate: "2026-12-25", unique_key: sent-carol-20261225, sendCount: 30 }   # r=30
+    - { $ref: ../templates/m365_email.yaml#/templates/dave_email,  reportRefreshDate: "2026-12-25", unique_key: sent-dave-20261225,  sendCount: 40 }   # r=40
+    - { $ref: ../templates/m365_email.yaml#/templates/erin_email,  reportRefreshDate: "2026-12-25", unique_key: sent-erin-20261225,  sendCount: 50 }   # r=50 (the requested IC member)

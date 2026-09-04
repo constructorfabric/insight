@@ -21,6 +21,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from insight_datapath.bindings import Bindings
 from insight_datapath.caller import StandCaller
 from insight_datapath.ch_seeder import CHSeeder
 from insight_datapath.dbt_runner import DbtRunner
@@ -141,6 +142,7 @@ def run_spec(
     caller: StandCaller,
     caller_email: str,
     tenant: str,
+    bindings: Bindings,
     ledger: Ledger,
 ) -> SpecRun:
     """Seed, build and publish one spec; returns the caller its tests read through."""
@@ -174,7 +176,10 @@ def run_spec(
     if cast:
         subjects.publish()
     emails = all_persona_emails(spec.bronze, excluding=caller_email)
-    person_ids = subjects.person_ids(emails)
+    person_ids = {
+        **subjects.person_ids(emails),
+        **subjects.person_ids_of_records(spec.bronze.get(_HR_RECORDS) or []),
+    }
     unresolved = sorted(cast - set(person_ids))
     if unresolved:
         raise SubjectError(
@@ -183,6 +188,8 @@ def run_spec(
             "identity inputs those records feed, so an address with a record and no person "
             "means resolution declined it."
         )
+
+    bindings.apply(spec.identity_accounts, spec.identity_aliases, person_ids)
 
     dbt_runner.run("tag:identity:map")
     dbt_runner.run("tag:gold")

@@ -1,0 +1,63 @@
+spec_version: 1
+description: >
+  Metric: ai.cost — the Claude Code input (see ai_cost_cursor for Cursor).
+  How it's computed (bronze → silver → gold):
+    • bronze: Claude Team daily per-user metrics (cost as a decimal string, e.g. "2.00")
+    • silver: deduped to one row per user/day carrying that amount in cents
+    • gold:   metric = sum of those daily amounts over the window, in dollars; the
+              peer view reports the DEPARTMENT distribution of the per-person sums.
+
+  The amount is usage priced at the vendor's rates, not the amount invoiced —
+  usage the seat already covers is included and seat fees are excluded.
+
+  The last case pairs it with ai.extra_usage_cost, which prices ONLY the part the
+  vendor billed on top of the seat fee. The two overlap — extra usage is a subset of
+  what ai.cost values — so they are served side by side and never added. erin's seat
+  spends 75¢ extra against $3.00 of priced consumption; a measure wired to the wrong
+  source would return 3.00 for both and the case would fail.
+
+  NOTE on the served stat set: the IC Bullet AI query_ref (id …0013) is last
+  re-seeded by migration m20260618_000001 (cc_overage), which carries only
+  value/median/range_min/range_max — NOT p25/p75/n. So these AI fixtures assert the
+  four stats the API actually returns; the no-unasserted-stat gate is self-scoping
+  and never requires p25/p75 on a row that does not carry them.
+
+  Department: 5 Engineering members (alice, bob, carol, dave, erin), base rates
+  r ∈ {20,40,60,80,100} cents. Each member is seeded two cost-rows inside the custom
+  window (Nov 01 .. Dec 12) — one Nov 15 (2*r) + one Dec 10 (1*r) — so each per-person
+  window SUM = 3*r cents; total_cost is the decimal dollar string (cents/100). The IC
+  case requests erin (r=100) → value 300; the department of 5 yields the median/range
+  below. Cases: custom scope · empty window.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/alice
+    - $ref: ../templates/people.yaml#/templates/bob
+    - $ref: ../templates/people.yaml#/templates/carol
+    - $ref: ../templates/people.yaml#/templates/dave
+    - $ref: ../templates/people.yaml#/templates/erin
+
+  bronze_claude_team.claude_team_code_metrics:
+    # Per member: Nov 15 = 2*r¢, Dec 10 = 1*r¢ → window SUM = 3*r¢.
+    # ── alice, r=20¢ ────────────────────────────────────────────────────────────
+    - { $ref: ../templates/claude_team_usage.yaml#/templates/alice, metric_date: "2026-11-15", unique_key: cc-alice-20261115, total_cost: "0.40" }  # 2r = 40¢
+    - { $ref: ../templates/claude_team_usage.yaml#/templates/alice, metric_date: "2026-12-10", unique_key: cc-alice-20261210, total_cost: "0.20" }  # 1r = 20¢
+    - { $ref: ../templates/claude_team_usage.yaml#/templates/alice, metric_date: "2026-12-10", unique_key: cc-alice-20261210, total_cost: "0.20" }  # duplicate → dedup to 20¢, not 40¢
+    # ── bob, r=40¢ ──────────────────────────────────────────────────────────────
+    - { $ref: ../templates/claude_team_usage.yaml#/templates/bob,   metric_date: "2026-11-15", unique_key: cc-bob-20261115,   total_cost: "0.80" }  # 2r = 80¢
+    - { $ref: ../templates/claude_team_usage.yaml#/templates/bob,   metric_date: "2026-12-10", unique_key: cc-bob-20261210,   total_cost: "0.40" }  # 1r = 40¢
+    # ── carol, r=60¢ ────────────────────────────────────────────────────────────
+    - { $ref: ../templates/claude_team_usage.yaml#/templates/carol, metric_date: "2026-11-15", unique_key: cc-carol-20261115, total_cost: "1.20" }  # 2r = 120¢
+    - { $ref: ../templates/claude_team_usage.yaml#/templates/carol, metric_date: "2026-12-10", unique_key: cc-carol-20261210, total_cost: "0.60" }  # 1r = 60¢
+    # ── dave, r=80¢ ─────────────────────────────────────────────────────────────
+    - { $ref: ../templates/claude_team_usage.yaml#/templates/claude_team_metrics, email: dave@example.com, metric_date: "2026-11-15", unique_key: cc-dave-20261115,  total_cost: "1.60" }  # 2r = 160¢
+    - { $ref: ../templates/claude_team_usage.yaml#/templates/claude_team_metrics, email: dave@example.com, metric_date: "2026-12-10", unique_key: cc-dave-20261210,  total_cost: "0.80" }  # 1r = 80¢
+    # ── erin, r=100¢ (the requested IC member) ──────────────────────────────────
+    - { $ref: ../templates/claude_team_usage.yaml#/templates/claude_team_metrics, email: erin@example.com, metric_date: "2026-11-15", unique_key: cc-erin-20261115,  total_cost: "2.00" }  # 2r = 200¢
+    - { $ref: ../templates/claude_team_usage.yaml#/templates/claude_team_metrics, email: erin@example.com, metric_date: "2026-12-10", unique_key: cc-erin-20261210,  total_cost: "1.00" }  # 1r = 100¢
+
+  bronze_claude_team.claude_team_overage_spend:
+    # erin only — the pairing case reads one person; 75¢ over the window. One
+    # snapshot, because bronze keys a seat without its month and keeps only the
+    # newest row per seat; silver is where months accumulate.
+    - { $ref: ../templates/claude_team_overage.yaml#/templates/erin, _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-erin, used_credits: 75, monthly_credit_limit: 1000 }
