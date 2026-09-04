@@ -43,3 +43,20 @@ def test_a_record_is_matched_however_its_address_is_spelt() -> None:
 
 def test_a_record_without_an_address_declares_nobody() -> None:
     assert declared_people(_bronze([{"workEmail": None}, {"firstName": "Nameless"}])) == set()
+
+
+def test_a_person_is_read_back_by_the_address_on_their_record() -> None:
+    """Bound accounts give a person several addresses; a response names them once."""
+    from insight_datapath.spec_runner import canonical_emails
+
+    person_ids = {
+        "alice.caps@example.com": "p1",
+        "alice.dev@example.com": "p1",
+        "alice@example.com": "p1",
+        "bob@example.com": "p2",
+    }
+    of_record = {"alice@example.com": "p1", "bob@example.com": "p2"}
+    assert canonical_emails(person_ids, of_record) == {
+        "p1": "alice@example.com",
+        "p2": "bob@example.com",
+    }

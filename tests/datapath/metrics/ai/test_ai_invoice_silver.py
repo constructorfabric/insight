@@ -279,7 +279,7 @@ _SELECT = (
 
 
 def _seed_and_build(ch_seeder: CHSeeder, dbt_runner: DbtRunner, rows: list[dict]) -> None:
-    schema_file = Path(__file__).parent / "schemas" / f"{TABLE}.yaml"
+    schema_file = Path(__file__).parents[1] / "schemas" / f"{TABLE}.yaml"
     schemas = yaml.safe_load(schema_file.read_text(encoding="utf-8"))["schemas"]
     ch_seeder.seed_bronze({TABLE: rows}, schemas)
     dbt_runner.build(SELECTOR)

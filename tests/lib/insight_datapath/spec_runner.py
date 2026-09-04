@@ -96,6 +96,19 @@ def translate(value: Any, mapping: dict[str, str]) -> Any:
     return value
 
 
+def canonical_emails(person_ids: dict[str, str], of_record: dict[str, str]) -> dict[str, str]:
+    """One address per person for reading a response back in the spec's terms.
+
+    Several of a person's addresses can resolve to them once their accounts are
+    bound together, and a response names the person once. The address on their
+    employment record is the one a spec calls them by, so it wins; anything else
+    resolves to whichever address the map happened to answer first.
+    """
+    by_person = {person_id: email for email, person_id in person_ids.items()}
+    by_person.update({person_id: email for email, person_id in of_record.items()})
+    return by_person
+
+
 @dataclass
 class SpecRun:
     """A spec's built data path and the caller that reads it."""
@@ -176,10 +189,8 @@ def run_spec(
     if cast:
         subjects.publish()
     emails = all_persona_emails(spec.bronze, excluding=caller_email)
-    person_ids = {
-        **subjects.person_ids(emails),
-        **subjects.person_ids_of_records(spec.bronze.get(_HR_RECORDS) or []),
-    }
+    of_record = subjects.person_ids_of_records(spec.bronze.get(_HR_RECORDS) or [])
+    person_ids = {**subjects.person_ids(emails), **of_record}
     unresolved = sorted(cast - set(person_ids))
     if unresolved:
         raise SubjectError(
@@ -199,6 +210,6 @@ def run_spec(
         caller=caller,
         tenant=tenant,
         to_person_id=person_ids,
-        to_email={person_id: email for email, person_id in person_ids.items()},
+        to_email=canonical_emails(person_ids, of_record),
         ledger=ledger,
     )
