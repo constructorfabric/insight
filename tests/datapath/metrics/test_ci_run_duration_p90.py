@@ -17,8 +17,6 @@ pytestmark = pytest.mark.fixture
 
 SPEC = "ci_run_duration_p90"
 
-TENANT = "11111111-1111-1111-1111-111111111111"
-
 
 def test_p90_duration_reads_the_tail_of_the_run_distribution(spec: SpecRun) -> None:
     """Nine runs of 1..9 minutes: the exact 0.9-quantile lands in [8, 9] for the period,
@@ -46,10 +44,10 @@ def test_p90_duration_reads_the_tail_of_the_run_distribution(spec: SpecRun) -> N
     )
     assert r.status == 200
 
-    r.row("ci.run_duration_min_p90", "period", entity_id=TENANT).check(
+    r.row("ci.run_duration_min_p90", "period", entity_id=spec.tenant).check(
         "value", lambda v: 8.0 <= float(v) <= 9.0, "8 <= value <= 9"
     )
-    r.row("ci.run_duration_min_p90", "histogram", entity_id=TENANT).nonempty("bins")
+    r.row("ci.run_duration_min_p90", "histogram", entity_id=spec.tenant).nonempty("bins")
 
     day = some(
         [p for s in r.series("ci.run_duration_min_p90") for p in s["points"]],

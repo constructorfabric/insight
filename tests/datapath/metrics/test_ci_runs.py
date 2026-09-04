@@ -17,8 +17,6 @@ pytestmark = pytest.mark.fixture
 
 SPEC = "ci_runs"
 
-TENANT = "11111111-1111-1111-1111-111111111111"
-
 
 def test_every_decided_run_counts_once_whatever_the_trigger(spec: SpecRun) -> None:
     """Three decided runs across push, schedule and pull_request: period 3, the Mar 01
@@ -45,7 +43,7 @@ def test_every_decided_run_counts_once_whatever_the_trigger(spec: SpecRun) -> No
     )
     assert r.status == 200
 
-    r.row("ci.runs", "period", entity_id=TENANT).equals(value=3.0)
+    r.row("ci.runs", "period", entity_id=spec.tenant).equals(value=3.0)
     assert any(
         some(series["points"], bucket_start="2026-03-01", value=3.0)
         for series in r.series("ci.runs")

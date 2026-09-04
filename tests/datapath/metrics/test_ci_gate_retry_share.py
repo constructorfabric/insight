@@ -16,8 +16,6 @@ pytestmark = pytest.mark.fixture
 
 SPEC = "ci_gate_retry_share"
 
-TENANT = "11111111-1111-1111-1111-111111111111"
-
 
 def test_retry_share_counts_a_run_once_at_its_last_attempt(spec: SpecRun) -> None:
     """Four gate runs, one on its second attempt: 25% for the period, the Mar 01 day
@@ -44,7 +42,7 @@ def test_retry_share_counts_a_run_once_at_its_last_attempt(spec: SpecRun) -> Non
     )
     assert r.status == 200
 
-    r.row("ci.gate_retry_share", "period", entity_id=TENANT).equals(value=25.0)
+    r.row("ci.gate_retry_share", "period", entity_id=spec.tenant).equals(value=25.0)
     points = [p for s in r.series("ci.gate_retry_share") for p in s["points"]]
     assert some(points, bucket_start="2026-03-01", value=25.0)
     assert some(

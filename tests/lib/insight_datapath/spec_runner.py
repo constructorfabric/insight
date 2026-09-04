@@ -65,6 +65,25 @@ def all_persona_emails(
     return sorted(found - {excluding.strip().lower()})
 
 
+_HR_RECORDS = "bronze_bamboohr.employees"
+
+
+def declared_people(bronze: dict[str, list[dict[str, Any]]], *, excluding: str = "") -> set[str]:
+    """The addresses the spec seeds an employment record for.
+
+    Seeding one is how a spec says "this is a person"; every other address in its
+    bronze is activity data, and the product is right to leave an account whose
+    owner it was never told about unresolved.
+    """
+    rows = bronze.get(_HR_RECORDS) or []
+    found = {
+        str(row["workEmail"]).strip().lower()
+        for row in rows
+        if isinstance(row, dict) and row.get("workEmail")
+    }
+    return found - {excluding.strip().lower()}
+
+
 def translate(value: Any, mapping: dict[str, str]) -> Any:
     """Deep-copy `value`, swapping every mapped string."""
     if isinstance(value, str):
@@ -82,6 +101,7 @@ class SpecRun:
 
     spec: TestYaml
     caller: StandCaller
+    tenant: str
     to_person_id: dict[str, str]
     to_email: dict[str, str]
     ledger: Ledger
@@ -120,6 +140,7 @@ def run_spec(
     subjects: Subjects,
     caller: StandCaller,
     caller_email: str,
+    tenant: str,
     ledger: Ledger,
 ) -> SpecRun:
     """Seed, build and publish one spec; returns the caller its tests read through."""
@@ -149,15 +170,18 @@ def run_spec(
         tracked.run(["class_focus_metrics"], full_refresh=True)
 
     tracked.run(["identity_inputs"], full_refresh=True)
-    subjects.publish()
+    cast = declared_people(spec.bronze, excluding=caller_email)
+    if cast:
+        subjects.publish()
     emails = all_persona_emails(spec.bronze, excluding=caller_email)
     person_ids = subjects.person_ids(emails)
-    unresolved = sorted({email.strip().lower() for email in emails} - set(person_ids))
+    unresolved = sorted(cast - set(person_ids))
     if unresolved:
         raise SubjectError(
-            f"{spec.name}: identity resolved no person for {', '.join(unresolved)}. "
-            "A spec's cast is minted from the HR rows it seeds, so an address without one "
-            "never becomes a person the caller can read."
+            f"{spec.name}: identity resolved no person for {', '.join(unresolved)}, "
+            "though the spec seeds an employment record for each. Minting runs over the "
+            "identity inputs those records feed, so an address with a record and no person "
+            "means resolution declined it."
         )
 
     dbt_runner.run("tag:identity:map")
@@ -166,6 +190,7 @@ def run_spec(
     return SpecRun(
         spec=spec,
         caller=caller,
+        tenant=tenant,
         to_person_id=person_ids,
         to_email={person_id: email for email, person_id in person_ids.items()},
         ledger=ledger,

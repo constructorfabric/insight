@@ -55,6 +55,7 @@ bronze:
     - $ref: templates/people.yaml#/templates/dave
     - $ref: templates/people.yaml#/templates/erin
     - $ref: templates/people.yaml#/templates/heidi
+    - {$ref: templates/people.yaml#/templates/bamboohr_employee, id: e099, unique_key: bamboohr-test-e099, firstName: Frank, lastName: Zeta, displayName: Frank Zeta, workEmail: frank@example.com}
 
   # Which seats carry a tier, and which tier. Read once, on Dec 10.
   bronze_claude_team.claude_team_overage_spend:

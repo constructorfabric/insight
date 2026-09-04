@@ -42,9 +42,7 @@ def test_ci_hours_sum_wall_clock_and_split_red_by_outcome(spec: SpecRun) -> None
     )
     assert r.status == 200
 
-    r.row("ci.run_hours", "period", entity_id="11111111-1111-1111-1111-111111111111").equals(
-        value=2.0
-    )
+    r.row("ci.run_hours", "period", entity_id=spec.tenant).equals(value=2.0)
     points = [p for s in r.series("ci.run_hours") for p in s["points"]]
     assert some(points, bucket_start="2026-03-02", value=2.0)
     assert some(

@@ -43,9 +43,7 @@ def test_a_retried_success_is_green_but_not_first_try_green(spec: SpecRun) -> No
     )
     assert r.status == 200
 
-    r.row(
-        "ci.gate_first_try_pass_rate", "period", entity_id="11111111-1111-1111-1111-111111111111"
-    ).equals(value=50.0)
+    r.row("ci.gate_first_try_pass_rate", "period", entity_id=spec.tenant).equals(value=50.0)
     assert any(
         some(entry["points"], bucket_start="2026-03-01", value=50.0)
         for entry in r.series("ci.gate_first_try_pass_rate")

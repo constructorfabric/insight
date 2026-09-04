@@ -9,6 +9,7 @@ bronze:
     - $ref: templates/people.yaml#/templates/dave
     - $ref: templates/people.yaml#/templates/erin
     - {$ref: templates/people.yaml#/templates/bamboohr_employee, id: e006, unique_key: bamboohr-test-e006, firstName: Frank, lastName: Zeta, displayName: Frank Zeta, workEmail: frank@example.com, department: Quality}
+    - {$ref: templates/people.yaml#/templates/bamboohr_employee, id: e007, unique_key: bamboohr-test-e007, firstName: Grace, lastName: Eta, displayName: Grace Eta, workEmail: grace@example.com, department: Quality}
   bronze_github.commits:
     # Commit stats agree with the file-change rows below, so the commit sizes
     # are additions plus deletions: 12, 24, 36, 48, 60 — and erin's second

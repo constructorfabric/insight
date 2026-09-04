@@ -18,8 +18,6 @@ pytestmark = pytest.mark.fixture
 
 SPEC = "ci_deployments"
 
-TENANT = "11111111-1111-1111-1111-111111111111"
-
 
 def test_deployments_fold_the_latest_status_and_keep_pending_visible(spec: SpecRun) -> None:
     """Period total 3; the outcome breakdown proves the fold (success 2) and the visible
@@ -46,7 +44,7 @@ def test_deployments_fold_the_latest_status_and_keep_pending_visible(spec: SpecR
     )
     assert r.status == 200
 
-    r.row("ci.deployments", "period", entity_id=TENANT).equals(value=3.0)
+    r.row("ci.deployments", "period", entity_id=spec.tenant).equals(value=3.0)
     by_outcome = r.breakdown("ci.deployments")
     assert float(one(by_outcome, dimensions={"key": "outcome", "value": "success"})["value"]) == 2.0
     assert float(one(by_outcome, dimensions={"key": "outcome", "value": "pending"})["value"]) == 1.0

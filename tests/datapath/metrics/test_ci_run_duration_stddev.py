@@ -17,8 +17,6 @@ pytestmark = pytest.mark.fixture
 
 SPEC = "ci_run_duration_stddev"
 
-TENANT = "11111111-1111-1111-1111-111111111111"
-
 
 def test_duration_spread_is_the_sample_stddev_over_runs(spec: SpecRun) -> None:
     """Eight runs in Mar 01 .. Mar 07 spread sqrt(32/7), pinned to (2.1, 2.2) in the
@@ -45,7 +43,7 @@ def test_duration_spread_is_the_sample_stddev_over_runs(spec: SpecRun) -> None:
     )
     assert r.status == 200
 
-    r.row("ci.run_duration_min_stddev", "period", entity_id=TENANT).check(
+    r.row("ci.run_duration_min_stddev", "period", entity_id=spec.tenant).check(
         "value", lambda v: 2.1 < float(v) < 2.2, "2.1 < value < 2.2"
     )
 
@@ -82,4 +80,4 @@ def test_a_single_run_has_no_measurable_spread_and_reads_null(spec: SpecRun) -> 
         }
     )
     assert r.status == 200
-    r.row("ci.run_duration_min_stddev", "period", entity_id=TENANT).equals(value=None)
+    r.row("ci.run_duration_min_stddev", "period", entity_id=spec.tenant).equals(value=None)

@@ -18,6 +18,7 @@ bronze:
   bronze_bamboohr.employees:
     - $ref: templates/people.yaml#/templates/alice
     - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
   bronze_github.commits:
     # Written on the 1st, 2nd and 3rd; all three rebased onto main on the 4th.
     - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: c-alice-1, sha: sha-alice-1, author_name: alice, author_email: alice@example.com, committer_name: alice, committer_email: alice@example.com, additions: 10, authored_date: "2026-10-01T09:00:00Z", committed_date: "2026-10-04T18:00:00Z"}

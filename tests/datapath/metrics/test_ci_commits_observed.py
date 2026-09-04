@@ -16,8 +16,6 @@ pytestmark = pytest.mark.fixture
 
 SPEC = "ci_commits_observed"
 
-TENANT = "11111111-1111-1111-1111-111111111111"
-
 
 def test_every_collected_commit_counts_once_at_its_commit_date(spec: SpecRun) -> None:
     """Two commits on Mar 02 and Mar 03 make a period total of 2 and one point per day."""
@@ -39,7 +37,7 @@ def test_every_collected_commit_counts_once_at_its_commit_date(spec: SpecRun) ->
     )
     assert r.status == 200
 
-    r.row("ci.commits_observed", "period", entity_id=TENANT).equals(value=2.0)
+    r.row("ci.commits_observed", "period", entity_id=spec.tenant).equals(value=2.0)
     daily = [s["points"] for s in r.series("ci.commits_observed")]
     assert any(
         some(points, bucket_start="2026-03-02", value=1.0)

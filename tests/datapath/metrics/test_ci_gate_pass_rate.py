@@ -18,8 +18,6 @@ pytestmark = pytest.mark.fixture
 
 SPEC = "ci_gate_pass_rate"
 
-TENANT = "11111111-1111-1111-1111-111111111111"
-
 
 def test_dedups_gates_and_counts_merge_queue_and_retried_runs_in_the_gate(spec: SpecRun) -> None:
     """Eight gate runs, four passed: the re-sync duplicate counts once, merge-queue runs sit
@@ -46,7 +44,7 @@ def test_dedups_gates_and_counts_merge_queue_and_retried_runs_in_the_gate(spec: 
     )
     assert r.status == 200
 
-    r.row("ci.gate_pass_rate", "period", entity_id=TENANT).equals(value=50.0)
+    r.row("ci.gate_pass_rate", "period", entity_id=spec.tenant).equals(value=50.0)
     points = [p for s in r.series("ci.gate_pass_rate") for p in s["points"]]
     assert some(points, bucket_start="2026-03-01", value=50.0)
     assert some(
@@ -70,4 +68,4 @@ def test_gate_pass_rate_empty_window_is_null_not_zero(spec: SpecRun) -> None:
         }
     )
     assert r.status == 200
-    r.row("ci.gate_pass_rate", "period", entity_id=TENANT).equals(value=None)
+    r.row("ci.gate_pass_rate", "period", entity_id=spec.tenant).equals(value=None)

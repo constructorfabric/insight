@@ -70,6 +70,7 @@ def spec(
         subjects=subjects,
         caller=caller,
         caller_email=caller_session.email,
+        tenant=stand_manifest.tenant,
         ledger=LEDGER,
     )
 

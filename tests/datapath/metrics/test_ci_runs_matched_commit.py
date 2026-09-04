@@ -17,8 +17,6 @@ pytestmark = pytest.mark.fixture
 
 SPEC = "ci_runs_matched_commit"
 
-TENANT = "11111111-1111-1111-1111-111111111111"
-
 
 def test_only_the_run_whose_head_commit_was_collected_counts(spec: SpecRun) -> None:
     """Of two decided runs, only the one whose head commit exists among the
@@ -41,6 +39,6 @@ def test_only_the_run_whose_head_commit_was_collected_counts(spec: SpecRun) -> N
     )
     assert r.status == 200
 
-    r.row("ci.runs_matched_commit", "period", entity_id=TENANT).equals(value=1.0)
+    r.row("ci.runs_matched_commit", "period", entity_id=spec.tenant).equals(value=1.0)
     points = [p for s in r.series("ci.runs_matched_commit") for p in s["points"]]
     assert some(points, bucket_start="2026-03-01", value=1.0)

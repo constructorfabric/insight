@@ -17,8 +17,6 @@ pytestmark = pytest.mark.fixture
 
 SPEC = "ci_run_duration_min"
 
-TENANT = "11111111-1111-1111-1111-111111111111"
-
 
 def test_duration_is_the_median_over_runs_not_the_mean(spec: SpecRun) -> None:
     """The period value is the median 2, the daily point and the per-pipeline
@@ -46,7 +44,7 @@ def test_duration_is_the_median_over_runs_not_the_mean(spec: SpecRun) -> None:
     )
     assert r.status == 200
 
-    r.row("ci.run_duration_min", "period", entity_id=TENANT).equals(value=2.0)
+    r.row("ci.run_duration_min", "period", entity_id=spec.tenant).equals(value=2.0)
     points = [p for s in r.series("ci.run_duration_min") for p in s["points"]]
     assert some(points, bucket_start="2026-03-02", value=2.0)
     assert some(
@@ -54,4 +52,4 @@ def test_duration_is_the_median_over_runs_not_the_mean(spec: SpecRun) -> None:
         dimensions={"key": "pipeline", "value": ".github/workflows/ci.yml"},
         value=2.0,
     )
-    r.row("ci.run_duration_min", "histogram", entity_id=TENANT).nonempty("bins")
+    r.row("ci.run_duration_min", "histogram", entity_id=spec.tenant).nonempty("bins")
