@@ -22,6 +22,16 @@ bronze:
     - $ref: ../templates/people.yaml#/templates/alice
     - $ref: ../templates/people.yaml#/templates/bob
     - $ref: ../templates/people.yaml#/templates/carol
+  # Identity learns a Cursor account from the team's member list, never from
+  # usage: an account seen only in usage is one the product was never told
+  # exists, so nothing can be said about who owns it.
+  bronze_cursor.cursor_members:
+    - {$ref: ../templates/cursor_members.yaml#/templates/cursor_member, unique_key: cursor-member-alice, id: cursor-alice, name: Alice Alpha, email: alice@example.com}
+    - {$ref: ../templates/cursor_members.yaml#/templates/cursor_member, unique_key: cursor-member-alice-dev, id: cursor-alice-dev, name: Alice Alpha, email: alice.dev@example.com}
+    - {$ref: ../templates/cursor_members.yaml#/templates/cursor_member, unique_key: cursor-member-alice-caps, id: cursor-alice-caps, name: Alice Alpha, email: "  Alice.Caps@Example.COM "}
+    - {$ref: ../templates/cursor_members.yaml#/templates/cursor_member, unique_key: cursor-member-bob, id: cursor-bob, name: Bob Beta, email: bob@example.com}
+    - {$ref: ../templates/cursor_members.yaml#/templates/cursor_member, unique_key: cursor-member-carol, id: cursor-carol, name: Carol Gamma, email: carol@example.com}
+
   bronze_cursor.cursor_daily_usage:
     # date 1767571200000 ms = 2026-01-05.
     - $ref: ../templates/cursor_usage.yaml#/templates/alice

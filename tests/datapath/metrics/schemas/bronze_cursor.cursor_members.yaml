@@ -1,0 +1,26 @@
+# JSON schema for bronze_cursor.cursor_members (all real columns).
+# Resolved by table name. Mirrors the connector's InlineSchemaLoader
+# (src/ingestion/connectors/ai/cursor/connector.yaml — stream cursor_members,
+# GET /teams/members) plus the 4 _airbyte_* CDK columns.
+# NOTE: this is the stream identity learns a Cursor account from. Usage rows
+# carry an email but no membership, so an account seen only in usage is one the
+# product has never been told exists.
+schemas:
+  bronze_cursor.cursor_members:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      _airbyte_raw_id: { type: string }
+      _airbyte_extracted_at: { type: string, format: date-time }
+      _airbyte_meta: { type: string }
+      _airbyte_generation_id: { type: integer }
+      tenant_id: { type: [string, "null"] }
+      source_id: { type: [string, "null"] }
+      unique_key: { type: string }
+      id: { type: [string, "null"] }
+      name: { type: [string, "null"] }
+      email: { type: [string, "null"] }
+      role: { type: [string, "null"] }
+      isRemoved: { type: [boolean, "null"] }
+    required: [unique_key]
