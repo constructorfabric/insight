@@ -468,6 +468,13 @@ streams:
           pr_attribution: { type: [object, "null"] }
           top_users_by_prs: { type: [array, "null"] }
           top_users_by_lines_of_code: { type: [array, "null"] }
+          # The day's headcount as the vendor counts it. The per-user stream
+          # pages the same envelope, so this is the only figure that can say
+          # whether a stored day is complete — see #3172.
+          # Declared last on purpose: the reconciler appends a new column to a
+          # table that already exists, so anywhere else would give a fresh
+          # install a different column order from a reconciled one.
+          total_users: { type: [number, "null"] }
     retriever:
       type: SimpleRetriever
       requester:

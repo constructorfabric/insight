@@ -44,7 +44,8 @@ CREATE TABLE IF NOT EXISTS bronze_claude_team.claude_team_code_metrics_org
     `metric_date` Nullable(String),
     `pr_attribution` Nullable(String),
     `top_users_by_prs` Nullable(String),
-    `top_users_by_lines_of_code` Nullable(String)
+    `top_users_by_lines_of_code` Nullable(String),
+    `total_users` Nullable(Decimal(38, 9))
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key

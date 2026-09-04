@@ -59,7 +59,15 @@ name: claude-team
 #   give something to rebuild from. The daily trajectory begins here — readings
 #   already overwritten cannot be recovered, so months before this version keep
 #   their single closing figure.
-version: "3.2.0"
+# 3.3.0: claude_team_code_metrics_org declares total_users, the day's headcount
+#   the response envelope already carries and the stream already fetched and
+#   threw away. Without it nothing downstream can tell a day stored short from a
+#   quiet one, which is what #3172 needs to become detectable. MINOR per
+#   ADR-0015 — additive Bronze field, no dbt output change, nothing
+#   re-materializes; the reconciler adds the snapshot column, so no ALTER ships
+#   with it. Days written before this version carry a NULL headcount and are
+#   simply not checkable, which is what they honestly are.
+version: "3.3.0"
 # Daily at 23:50 UTC, as late in the day as the boundary allows. The seat
 # endpoint reports the billing month in progress and carries no history, so a
 # month's spend is frozen at the last read INSIDE it and whatever follows is
