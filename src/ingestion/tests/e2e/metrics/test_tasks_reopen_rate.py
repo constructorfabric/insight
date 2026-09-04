@@ -22,7 +22,7 @@ ERIN = "erin@example.com"
 
 def test_tasks_reopen_rate(spec: SpecRun) -> None:
     """Erin's five-close chain rates 80; the four-person pool reports n but no percentiles,
-    and per day the reopened closes are 100 while the final close is 0."""
+    and per day a reopened close rates 100 while a day with no close carries no rate."""
     r = spec.call(
         {
             "url": "/v1/metric-results",
@@ -47,7 +47,7 @@ def test_tasks_reopen_rate(spec: SpecRun) -> None:
     )
     points = one(r.series("tasks.reopen_rate"), entity_id=ERIN)["points"]
     assert some(points, value=100.0)
-    assert some(points, value=0.0)
+    assert [point for point in points if point["value"] is None]
 
 
 def test_tasks_reopen_rate_empty_window(spec: SpecRun) -> None:

@@ -69,7 +69,9 @@ def test_unified_collaboration_messaging(spec: SpecRun) -> None:
     r.row("collab.channel_posts", "peer", entity_id=ERIN).equals(
         target_value=None, p25=None, median=None, p75=None, min=None, max=None, n=0
     )
-    assert erin_value_on(r, "collab.channel_posts", "2026-12-25") == 0.0
+    assert (
+        one(one(r.series("collab.channel_posts"), entity_id=ERIN)["points"], bucket_start="2026-12-25")["value"] is None
+    )
     assert len(r.breakdown("collab.channel_posts")) == 0
 
     r.row("collab.dm_ratio", "period", entity_id=ERIN).equals(value=100)
