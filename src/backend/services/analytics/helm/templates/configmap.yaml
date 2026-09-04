@@ -140,6 +140,12 @@ data:
       analytics:
         config:
           visibility_policy: {{ .Values.visibilityPolicy | default "org_chart" | quote }}
+          mcp:
+            enabled: {{ .Values.global.mcp.enabled }}
+            bind_addr: "0.0.0.0:{{ .Values.mcp.port }}"
+            public_url: {{ if .Values.global.mcp.enabled }}{{ required "global.mcp.publicUrl is required when MCP is enabled" .Values.global.mcp.publicUrl | quote }}{{ else }}""{{ end }}
+            max_concurrent_queries: {{ .Values.mcp.maxConcurrentQueries }}
+            clickhouse_user: {{ .Values.mcp.clickhouseUser | quote }}
           metric_catalog:
             tenant_metrics_enabled: {{ .Values.metricCatalog.tenantMetricsEnabled }}
           reports:

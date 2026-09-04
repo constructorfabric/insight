@@ -49,6 +49,10 @@ spec:
               value: {{ tpl .Values.gateway.authenticatorUrl . | quote }}
             - name: GATEWAY_FRONT_URL
               value: {{ tpl .Values.gateway.frontUrl . | quote }}
+            {{- if .Values.global.mcp.enabled }}
+            - name: GATEWAY_MCP_PUBLIC_URL
+              value: {{ required "global.mcp.publicUrl is required when MCP is enabled" .Values.global.mcp.publicUrl | quote }}
+            {{- end }}
             {{- with .Values.gateway.setRealIpFrom }}
             - name: GATEWAY_SET_REAL_IP_FROM
               value: {{ join "," . | quote }}

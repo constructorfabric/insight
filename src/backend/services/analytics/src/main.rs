@@ -33,6 +33,7 @@ mod config;
 mod domain;
 mod gear;
 mod infra;
+mod mcp;
 mod migration;
 
 // System gears — linked via inventory for the REST host + auth pipeline.
@@ -107,7 +108,10 @@ async fn main() -> Result<()> {
     config.apply_cli_overrides(cli.verbose);
 
     if cli.print_config {
-        println!("Effective configuration:\n{}", config.to_yaml()?);
+        println!(
+            "Effective configuration:\n{}",
+            config::redacted_yaml(&config)?
+        );
         return Ok(());
     }
 

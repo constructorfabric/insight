@@ -401,6 +401,13 @@ write_compose() {
   local fe_mode="dev"
   [[ "$NO_FRONTEND" == "true" ]] && fe_mode="ghcr"
 
+  local mcp_enabled=false
+  local clickhouse_mcp_password=""
+  if [[ "$CLICKHOUSE_EXTERNAL" != "true" ]]; then
+    mcp_enabled=true
+    clickhouse_mcp_password="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
+  fi
+
   # ── Seeding decision for external DBs ─────────────────────────────
   local seed_external=false
   if [[ "$MARIADB_EXTERNAL" == "true" || "$CLICKHOUSE_EXTERNAL" == "true" ]]; then
@@ -427,6 +434,8 @@ write_compose() {
   update_env_var "$env_file" CLICKHOUSE_DATABASE           "$CLICKHOUSE_DATABASE"
   update_env_var "$env_file" CLICKHOUSE_USER               "$CLICKHOUSE_USER"
   update_env_var "$env_file" CLICKHOUSE_PASSWORD           "$CLICKHOUSE_PASSWORD"
+  update_env_var "$env_file" MCP_ENABLED                   "$mcp_enabled"
+  update_env_var "$env_file" CLICKHOUSE_MCP_PASSWORD       "$clickhouse_mcp_password"
   update_env_var "$env_file" TENANT_DEFAULT_ID             "$TENANT_DEFAULT_ID"
   update_env_var "$env_file" DEV_USER_EMAIL                "$DEV_USER_EMAIL"
   update_env_var "$env_file" FRONTEND_MODE                 "$fe_mode"
