@@ -561,15 +561,13 @@ where
     F: Fn(RepoGuard) -> BoxFuture<'a, Result<Page<T>, ApiError>>,
 {
     let guard = open(state, context, paging).await?;
-    // INVARIANT: the permit spans the whole serve — the promotion retry below
-    // AND the caller's serialization, which is why it is returned alongside
-    // the page: a serialized patch page holds the whole body in memory, so
-    // dropping the slot before encoding would let bodies stack uncapped. The
-    // semaphore IS the cap on concurrent page serves, and the pod's peak
-    // memory is that cap times the heaviest window. Taken AFTER open, so a
-    // slot is never spent waiting on a preparation; holding the entry's read
-    // guard while queueing here delays only that entry's own writers, and
-    // the long-poll ceiling bounds the queueing.
+    // INVARIANT: the permit spans the read AND the caller's serialization,
+    // which is why it is returned alongside the page — a serialized patch
+    // page holds the whole body in memory, so releasing the slot before
+    // encoding would let bodies stack uncapped. The semaphore IS the cap on
+    // concurrent page serves, and the pod's peak memory is that cap times
+    // the heaviest window. Taken AFTER open, so a slot is never spent
+    // waiting on a preparation.
     let slot = serve_slot(state).await?;
     let outcome = read(guard).await;
     check_for_drift(state, context);
@@ -578,6 +576,14 @@ where
         Err(e) if !refuses_promisor_wants(&e) => return Err(e),
         Err(_) => {}
     }
+
+    // SAFETY: the slot is released before promotion and taken again after.
+    // Promotion takes the entry's WRITE lock, and a concurrent request that
+    // already holds that entry's read guard queues here for a slot — keeping
+    // this one would leave the promoter waiting for the reader while the
+    // reader waits for the slot, both stalled until the queue ceiling
+    // expires. No slot holder may await a write lock.
+    drop(slot);
 
     let generation = state
         .store
@@ -591,6 +597,7 @@ where
     }
 
     let guard = open(state, context, paging).await?;
+    let slot = serve_slot(state).await?;
     let outcome = read(guard).await;
     check_for_drift(state, context);
     outcome.map(|page| (page, slot))
@@ -797,6 +804,77 @@ mod tests {
             state.serves.available_permits(),
             1,
             "and returns once the caller is done with the page"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_promoting_serve_does_not_hold_the_slot_its_writer_waits_behind() {
+        // Promotion takes the entry's WRITE lock. A second request already
+        // holding that entry's read guard queues for a slot, so a promoter
+        // that kept its own slot would wait for the reader while the reader
+        // waits for the slot — deadlocked until the queue ceiling expires.
+        // Without the release this test reaches its timeout.
+        let fixture = crate::engine::store::tests::fixture("api-promote-slot");
+        let state = Arc::new(AppState {
+            store: Arc::clone(&fixture.store),
+            config: crate::config::GearConfig {
+                bind_addr: "127.0.0.1:0".to_owned(),
+                data_dir: fixture.root.display().to_string(),
+                disk_budget_bytes: 1_000_000_000,
+                max_repo_bytes: 500_000_000,
+                default_max_staleness_seconds: 300,
+                heavy_ops_concurrency: 2,
+                serve_concurrency: 1,
+                proxy_token: "t0ken".to_owned(),
+                ca_cert_path: String::new(),
+                allow_file_repos: true,
+                allowed_repo_hosts: Vec::new(),
+            },
+            serves: Arc::new(tokio::sync::Semaphore::new(1)),
+        });
+        let context = RequestContext {
+            key: crate::engine::store::tests::key(&fixture),
+            creds: crate::engine::store::tests::creds(),
+            max_staleness: None,
+        };
+        let Ok(paging) = Paging::parse(None, None) else {
+            panic!("default paging must parse")
+        };
+
+        // Warm the entry so neither side waits on a clone.
+        match open(&state, &context, &paging).await {
+            Ok(guard) => drop(guard),
+            Err(e) => panic!("the fixture must open: {e}"),
+        }
+        let reader = match open(&state, &context, &paging).await {
+            Ok(guard) => guard,
+            Err(e) => panic!("the fixture must open: {e}"),
+        };
+
+        let raced = tokio::time::timeout(Duration::from_secs(30), async {
+            tokio::join!(
+                read_snapshot(&state, &context, &paging, |_guard: RepoGuard| {
+                    Box::pin(async {
+                        Err::<Page<u64>, ApiError>(ApiError::Git(GitError::PromisorRefused))
+                    })
+                }),
+                async {
+                    let slot = serve_slot(&state).await;
+                    // Release the read guard only once the slot is in hand:
+                    // the promoter must have let go of it on its own.
+                    drop(reader);
+                    slot.is_ok()
+                }
+            )
+        })
+        .await;
+
+        let Ok((_, queued_serve_got_a_slot)) = raced else {
+            panic!("the promoting serve and the queued serve deadlocked")
+        };
+        assert!(
+            queued_serve_got_a_slot,
+            "the queued serve must get the slot the promoter released"
         );
     }
 
