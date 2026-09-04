@@ -1187,7 +1187,7 @@ class MetricDefinitionView(BaseModel):
     drilldown: MetricDrilldownCapability | None = None
     entity_type: EntityType
     explanation: str | None = None
-    first_observed_date: date_aliased | None = Field(None, description="Oldest `metric_date` the definition's input measures currently hold;\nabsent when no observation has ever been seen. With `last_observed_date`\nit bounds what can be read, so a day outside the pair is one no reading\nexists for.\n\nThe oldest observation still available, NOT the date collection began:\nit moves forward when retention drops the oldest rows.")
+    first_observed_date: date_aliased | None = Field(None, description="Oldest `metric_date` the definition's input measures currently hold;\nabsent when they hold none — whether nothing was ever observed or\nretention took the last of it, which a sweep cannot tell apart.\n\nThe oldest observation still available, NOT the date collection began:\nit moves forward as retention drops the oldest rows, and is cleared when\na sweep reads the relation and finds nothing. It does not pair with\n`last_observed_date` as an interval of what is readable — that one is a\nhigh-water mark and is never cleared.")
     format: MetricFormat
     is_enabled: bool
     label: str

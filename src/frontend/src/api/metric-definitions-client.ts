@@ -48,13 +48,16 @@ export interface MetricDefinition {
   /** Why schema_status is "error"; null otherwise. */
   schema_error_code: MetricSchemaErrorCode | null;
   /**
-   * ISO date of the oldest observation the metric currently holds; null = no
-   * data yet. With `last_observed_date` it bounds what can be read, so a day
-   * outside the pair is one no reading exists for. It moves forward when
-   * retention drops old rows, so it is not the date collection began.
+   * ISO date of the oldest observation the metric currently holds; null = it
+   * holds none, whether never observed or retained no longer. It moves forward
+   * as retention drops old rows, so it is not the date collection began, and it
+   * does not pair with `last_observed_date` as an interval of what is readable.
    */
   first_observed_date: string | null;
-  /** ISO date of the newest observation ever seen; null = no data yet. */
+  /**
+   * ISO date of the newest observation ever seen; null = none ever. A
+   * high-water mark, never cleared.
+   */
   last_observed_date: string | null;
   /**
    * ISO date of the newest delivered day that can no longer change. Absent

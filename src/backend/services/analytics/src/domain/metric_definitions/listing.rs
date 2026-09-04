@@ -68,12 +68,14 @@ pub struct MetricDefinitionView {
     /// biconditional).
     pub schema_error_code: Option<MetricSchemaErrorCode>,
     /// Oldest `metric_date` the definition's input measures currently hold;
-    /// absent when no observation has ever been seen. With `last_observed_date`
-    /// it bounds what can be read, so a day outside the pair is one no reading
-    /// exists for.
+    /// absent when they hold none — whether nothing was ever observed or
+    /// retention took the last of it, which a sweep cannot tell apart.
     ///
     /// The oldest observation still available, NOT the date collection began:
-    /// it moves forward when retention drops the oldest rows.
+    /// it moves forward as retention drops the oldest rows, and is cleared when
+    /// a sweep reads the relation and finds nothing. It does not pair with
+    /// `last_observed_date` as an interval of what is readable — that one is a
+    /// high-water mark and is never cleared.
     pub first_observed_date: Option<chrono::NaiveDate>,
     /// Newest `metric_date` ever observed across the definition's input
     /// measures; absent when no observation has ever been seen. Freshness

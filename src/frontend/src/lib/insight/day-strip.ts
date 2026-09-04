@@ -58,12 +58,11 @@ function calendar(from: string, to: string): string[] {
  * the same on a bar chart and mean opposite things: one is silence from the
  * source, the other is a day this person did none of it.
  *
- * `collectedFrom` and `collectedThrough` split that silence again. They are the
- * oldest and newest observation the metric currently holds, so outside the pair
- * there is nothing to read and nothing can be said about the day — between
- * them, silence is the answer. A missing bound leaves that side open, which is
- * what the catalogue reports for a metric it cannot date rather than one nobody
- * has collected.
+ * `collectedFrom` and `collectedThrough` split that silence again. Outside them
+ * the metric has no reading to show for the day, so nothing can be said about
+ * it — between them, silence is the answer. A missing bound leaves that side
+ * open, which is what the catalogue reports for a metric it cannot date rather
+ * than one nobody has collected.
  *
  * `settledThrough` is the newest day whose reading is final; delivered days
  * after it are marked. Their readings are real and are drawn as such — the
