@@ -217,7 +217,15 @@ fn build_views(
                     .ok_or_else(|| config_error(&row.metric_key, "schema_error_code", code))
             })
             .transpose()?;
-        let rule = revision_rules.get(row.metric_key.as_str()).copied();
+        // INVARIANT: keyed by metric_key AND gated on origin. `metric_key` is
+        // unique per tenant, not globally, so a custom definition may carry a
+        // builtin's key and win the listing over it (`select_rows`). It reads
+        // its own SQL and no managed source, so the source's revision rule is
+        // not its to report.
+        let rule = match origin {
+            MetricOrigin::Builtin => revision_rules.get(row.metric_key.as_str()).copied(),
+            MetricOrigin::Custom => None,
+        };
         let settled_through = rule.and_then(|rule| settled_through(rule, row.last_observed_date));
         let revision_window_days = rule.map(legacy_revision_window_days);
         metrics.push(MetricDefinitionView {
@@ -456,6 +464,39 @@ mod tests {
             settled_through(RevisionRule::BillingMonth, Some(date("2026-01-01"))),
             Some(date("2025-12-31"))
         );
+    }
+
+    #[test]
+    fn a_custom_definition_reports_no_revision_metadata_under_a_builtin_key() {
+        // metric_key is unique per tenant, so a tenant's custom definition can
+        // carry a builtin AI key and override it in the listing. It executes
+        // its own SQL and never reads `ai_cost`, so neither the boundary nor
+        // the legacy window may be attributed to it.
+        let key = "ai.daily_approximate_extra_usage_cost";
+        let mut custom = row(key, Some(Uuid::now_v7()), "Tenant's own");
+        custom.origin = "custom".to_owned();
+        custom.last_observed_date = Some(date("2026-03-10"));
+
+        let Ok(views) = build_views(vec![custom], HashMap::new(), HashMap::new()) else {
+            panic!("canonical rows must map");
+        };
+        let Some(view) = views.first() else {
+            panic!("one view");
+        };
+        assert_eq!(view.settled_through, None);
+        assert_eq!(view.revision_window_days, None);
+
+        // The product row under the same key still reports both.
+        let mut builtin = row(key, None, "AI actual usage cost — approximate distribution");
+        builtin.last_observed_date = Some(date("2026-03-10"));
+        let Ok(views) = build_views(vec![builtin], HashMap::new(), HashMap::new()) else {
+            panic!("canonical rows must map");
+        };
+        let Some(view) = views.first() else {
+            panic!("one view");
+        };
+        assert_eq!(view.settled_through, Some(date("2026-02-28")));
+        assert_eq!(view.revision_window_days, Some(LONGEST_MONTH_DAYS));
     }
 
     #[test]

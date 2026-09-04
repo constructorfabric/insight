@@ -1,8 +1,13 @@
-//! Adds the lower bound of collection to metric definitions. The schema
-//! validator records the oldest `metric_date` its sweep found across a
-//! definition's input measures; NULL means no observation has ever been seen.
-//! Paired with `last_observed_date`, it separates a day nobody measured from
-//! a day measured as empty.
+//! Adds the oldest observation a metric definition currently holds. The schema
+//! validator records the oldest `metric_date` its sweep found across the
+//! definition's input measures, and clears the column when a sweep reads the
+//! relation and finds nothing — so NULL means "no observation is held now",
+//! covering both never-seen and retained-no-longer, which the probe cannot
+//! tell apart and neither can a reader.
+//!
+//! Paired with `last_observed_date`, it separates a day no reading exists for
+//! from a day measured as empty. Unlike that column it is not monotonic: it
+//! follows the relation forward as retention drops the oldest rows.
 
 use sea_orm_migration::prelude::*;
 

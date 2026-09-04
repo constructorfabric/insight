@@ -12,7 +12,7 @@ use crate::domain::metric_definitions::definition::{
 use crate::domain::metric_definitions::error_code::{MetricSchemaErrorCode, SchemaStatus};
 use crate::domain::metric_definitions::evidence_presentation::StoredPresentation;
 use crate::domain::metric_definitions::repository::{
-    MetricDefinitionValidationSpec, SourceMeasureEvidence, all_managed_sources,
+    MetricDefinitionValidationSpec, OldestObservation, SourceMeasureEvidence, all_managed_sources,
     managed_definition_validation_specs, source_evidence_contracts, update_definition_status,
     update_definitions_for_source_status, update_evidence_status, update_source_status,
 };
@@ -301,8 +301,8 @@ impl MetricDefinitionValidator {
                         spec.definition_id,
                         status,
                         error_code,
-                        observed.first,
-                        observed.last,
+                        observed.oldest(),
+                        observed.newest(),
                     )
                     .await
                     {
@@ -329,9 +329,11 @@ impl MetricDefinitionValidator {
         spec: &MetricDefinitionValidationSpec,
     ) -> (ProbeOutcome, ObservedSpan) {
         let Some(target) = resolve_probe_target(&spec.inputs, relation) else {
+            // Nothing was read: the definition never resolved to a relation to
+            // read from, so the stored bounds are not contradicted.
             return (
                 ProbeOutcome::Definitive(ValidationState::Error(MetricSchemaErrorCode::Unknown)),
-                ObservedSpan::default(),
+                ObservedSpan::Unknown,
             );
         };
 
@@ -350,22 +352,25 @@ impl MetricDefinitionValidator {
             Ok(dates) => dates,
             Err(error) => {
                 tracing::warn!(error = %error, "metric measure probe failed");
-                return (ProbeOutcome::Inconclusive, ObservedSpan::default());
+                return (ProbeOutcome::Inconclusive, ObservedSpan::Unknown);
             }
         };
         let last_dates = dates.last;
 
         let freshness = classify_freshness(&target.measure_keys, &last_dates);
         if freshness == Freshness::NeverObserved {
+            // The query succeeded and matched no row. Whatever lower bound was
+            // stored describes rows that are no longer there — most often a
+            // retention drop that took the last of them.
             return (
                 ProbeOutcome::Definitive(ValidationState::Unchecked),
-                ObservedSpan::default(),
+                ObservedSpan::Empty,
             );
         }
         // Widest across the measures on both ends: a definition is readable
         // wherever any of its inputs is, and narrowing to the intersection
         // would call a day uncollected because one input started later.
-        let observed = ObservedSpan {
+        let observed = ObservedSpan::Seen {
             first: dates.first.values().min().copied(),
             last: last_dates.values().max().copied(),
         };
@@ -714,10 +719,42 @@ struct MeasureDates {
 }
 
 /// What a definition's measures currently cover, across all of them.
-#[derive(Debug, Clone, Copy, Default)]
-struct ObservedSpan {
-    first: Option<NaiveDate>,
-    last: Option<NaiveDate>,
+///
+/// `Empty` is not `Unknown` with no dates: the first says the relation was read
+/// and holds nothing, which retires a stored lower bound, and the second says
+/// the probe never got far enough to claim anything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ObservedSpan {
+    Unknown,
+    Empty,
+    Seen {
+        first: Option<NaiveDate>,
+        last: Option<NaiveDate>,
+    },
+}
+
+impl ObservedSpan {
+    /// The oldest date to store, in the shape the writer needs to tell a
+    /// cleared bound from an untouched one.
+    fn oldest(self) -> OldestObservation {
+        match self {
+            Self::Unknown => OldestObservation::Unknown,
+            Self::Empty => OldestObservation::Absent,
+            Self::Seen { first, .. } => {
+                first.map_or(OldestObservation::Unknown, OldestObservation::At)
+            }
+        }
+    }
+
+    /// The newest date to store. `None` leaves the stored value alone, which is
+    /// what keeps it the monotonic freshness marker it is: an empty relation
+    /// does not make a definition less fresh than it was last seen to be.
+    fn newest(self) -> Option<NaiveDate> {
+        match self {
+            Self::Unknown | Self::Empty => None,
+            Self::Seen { last, .. } => last,
+        }
+    }
 }
 
 #[derive(Row, Deserialize)]
@@ -1178,6 +1215,38 @@ mod tests {
                 last_date: "2026-07-01".to_owned(),
             }])
             .is_err()
+        );
+    }
+
+    #[test]
+    fn an_empty_relation_retires_the_lower_bound_and_a_failed_probe_leaves_it() {
+        // Both reach the writer carrying no dates, and they mean opposite
+        // things: one read the relation, the other never got to.
+        assert_eq!(ObservedSpan::Empty.oldest(), OldestObservation::Absent);
+        assert_eq!(ObservedSpan::Unknown.oldest(), OldestObservation::Unknown);
+        assert_eq!(
+            ObservedSpan::Seen {
+                first: Some(date("2026-01-04")),
+                last: Some(date("2026-07-01")),
+            }
+            .oldest(),
+            OldestObservation::At(date("2026-01-04"))
+        );
+    }
+
+    #[test]
+    fn an_empty_relation_leaves_the_freshness_marker_where_it_stood() {
+        // `last_observed_date` is monotonic: a relation that holds nothing
+        // today does not unsay the newest day it was once seen to hold.
+        assert_eq!(ObservedSpan::Empty.newest(), None);
+        assert_eq!(ObservedSpan::Unknown.newest(), None);
+        assert_eq!(
+            ObservedSpan::Seen {
+                first: Some(date("2026-01-04")),
+                last: Some(date("2026-07-01")),
+            }
+            .newest(),
+            Some(date("2026-07-01"))
         );
     }
 
