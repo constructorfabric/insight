@@ -15,6 +15,10 @@ Create two operator-managed Kubernetes Secrets in the release namespace:
   `openssl rand -hex 32`, and store it in your secret manager. Never commit
   plaintext credentials; SealedSecrets can carry them in GitOps.
 
+Token strength is the operator's responsibility. Startup checks length and
+character validity, not randomness; never use a memorable phrase or repeated
+characters as the token. Rate limiting is not a substitute for a random secret.
+
 Enable the endpoint in Helm values:
 
 ```yaml
@@ -75,8 +79,11 @@ and execution-time limits remain in force. Exceeding a limit fails the query;
 results are not silently truncated.
 
 Responses use canonical problem JSON for errors: 400 for invalid requests/SQL,
-401 for missing or invalid tokens, 429 for capacity or size limits, 504 for query
-timeouts, and 500 for backend failures. Responses are marked `Cache-Control:
+401 for missing or invalid tokens, 413 for oversized bodies or SQL, 429 for
+query capacity, result-size, or database resource limits, 504 for query timeouts,
+and 500 for other backend failures. Recognized database exceptions are classified
+using [ClickHouse's numeric error codes](https://github.com/ClickHouse/ClickHouse/blob/master/src/Common/ErrorCodes.cpp);
+unrecognized exceptions remain generic backend failures. Responses are marked `Cache-Control:
 no-store`. Database details and the token are not returned in errors.
 
 ## Access scope

@@ -130,16 +130,14 @@ impl Gear for AnalyticsApiGear {
             .set(Arc::new(state))
             .map_err(|_| anyhow::anyhow!("{} gear already initialized", Self::MODULE_NAME))?;
 
-        if mcp.enabled || sql_api.enabled {
-            crate::sql_explorer::start(
-                &mcp,
-                &sql_api,
-                &mcp_clickhouse_url,
-                &mcp_clickhouse_database,
-                ctx.cancellation_token().child_token(),
-            )
-            .await?;
-        }
+        crate::sql_explorer::start(
+            &mcp,
+            &sql_api,
+            &mcp_clickhouse_url,
+            &mcp_clickhouse_database,
+            ctx.cancellation_token().child_token(),
+        )
+        .await?;
 
         // INVARIANT: periodic and never gating boot — the stamp lands after
         // boot (post-install migrate hook) and a later in-place bump must

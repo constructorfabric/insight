@@ -201,13 +201,13 @@ async fn query_execution_reports_busy_backend_and_response_failures() -> anyhow:
     ));
     let busy = SqlExplorer::new(QueryExecutor::new(client, 0))
         .executor
-        .execute("SELECT 1")
+        .query("SELECT 1".to_owned(), Ok)
         .await;
     assert!(matches!(busy, Err(QueryFailure::Busy)));
 
     let (invalid, invalid_server) = spawn_clickhouse(StatusCode::OK, b"not-json".to_vec()).await?;
     assert!(matches!(
-        invalid.executor.execute("SELECT 1").await,
+        invalid.executor.query("SELECT 1".to_owned(), Ok).await,
         Err(QueryFailure::InvalidResponse(_))
     ));
     invalid_server.abort();
@@ -215,7 +215,7 @@ async fn query_execution_reports_busy_backend_and_response_failures() -> anyhow:
     let (failed, failed_server) =
         spawn_clickhouse(StatusCode::INTERNAL_SERVER_ERROR, Vec::new()).await?;
     assert!(matches!(
-        failed.executor.execute("SELECT 1").await,
+        failed.executor.query("SELECT 1".to_owned(), Ok).await,
         Err(QueryFailure::ClickHouse(_))
     ));
     failed_server.abort();
@@ -223,7 +223,7 @@ async fn query_execution_reports_busy_backend_and_response_failures() -> anyhow:
     let (large, large_server) =
         spawn_clickhouse(StatusCode::OK, vec![b'x'; MAX_RESULT_BYTES + 1]).await?;
     assert!(matches!(
-        large.executor.execute("SELECT 1").await,
+        large.executor.query("SELECT 1".to_owned(), Ok).await,
         Err(QueryFailure::ResultTooLarge)
     ));
     large_server.abort();

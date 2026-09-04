@@ -122,14 +122,68 @@ async fn busy_and_backend_errors_use_generic_http_errors() -> R {
 
 #[tokio::test]
 async fn oversized_requests_are_bounded() -> R {
-    let body = json!({"sql":"x".repeat(MAX_REQUEST_BODY_BYTES)}).to_string();
-    let response = send(
-        app("http://127.0.0.1:1", 1),
-        Some(&format!("Bearer {TOKEN}")),
-        &body,
-    )
-    .await?;
-    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    for size in [
+        super::super::executor::MAX_SQL_BYTES + 1,
+        MAX_REQUEST_BODY_BYTES,
+    ] {
+        let body = json!({"sql":"x".repeat(size)}).to_string();
+        let response = send(
+            app("http://127.0.0.1:1", 1),
+            Some(&format!("Bearer {TOKEN}")),
+            &body,
+        )
+        .await?;
+        assert_eq!(
+            response.status(),
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "size: {size}"
+        );
+        let problem: Value = serde_json::from_slice(&to_bytes(response.into_body(), 4096).await?)?;
+        assert_eq!(problem["status"], 413, "size: {size}");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn database_exception_codes_map_to_timeout_and_resource_responses() -> R {
+    for (code, expected) in [
+        (159, StatusCode::GATEWAY_TIMEOUT),
+        (209, StatusCode::GATEWAY_TIMEOUT),
+        (158, StatusCode::TOO_MANY_REQUESTS),
+        (191, StatusCode::TOO_MANY_REQUESTS),
+        (201, StatusCode::TOO_MANY_REQUESTS),
+        (202, StatusCode::TOO_MANY_REQUESTS),
+        (241, StatusCode::TOO_MANY_REQUESTS),
+        (290, StatusCode::TOO_MANY_REQUESTS),
+        (307, StatusCode::TOO_MANY_REQUESTS),
+        (396, StatusCode::TOO_MANY_REQUESTS),
+        (9999, StatusCode::INTERNAL_SERVER_ERROR),
+    ] {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        let upstream = Router::new().route(
+            "/",
+            post(move || async move {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Code: {code}. DB::Exception: synthetic-internal-detail"),
+                )
+            }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, upstream).await });
+        let response = send(
+            app(&format!("http://{address}"), 1),
+            Some(&format!("Bearer {TOKEN}")),
+            r#"{"sql":"SELECT 1"}"#,
+        )
+        .await?;
+        assert_eq!(response.status(), expected, "code: {code}");
+        let bytes = to_bytes(response.into_body(), 4096).await?;
+        let problem: Value = serde_json::from_slice(&bytes)?;
+        assert_eq!(problem["status"], expected.as_u16(), "code: {code}");
+        assert!(!String::from_utf8(bytes.to_vec())?.contains("synthetic-internal-detail"));
+        server.abort();
+    }
     Ok(())
 }
 

@@ -9,7 +9,7 @@ use secrecy::ExposeSecret as _;
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
 use subtle::ConstantTimeEq as _;
-use toolkit_canonical_errors::{CanonicalError, resource_error};
+use toolkit_canonical_errors::{CanonicalError, Http, resource_error};
 
 use super::executor::{MAX_REQUEST_BODY_BYTES, QueryExecutor, QueryFailure};
 use crate::config::SqlApiConfig;
@@ -86,9 +86,7 @@ async fn query(
 ) -> Result<Response, CanonicalError> {
     let Json(request) = body.map_err(|error| {
         if error.status() == StatusCode::PAYLOAD_TOO_LARGE {
-            SqlQueryError::resource_exhausted("Request body exceeds limit")
-                .with_quota_violation("request", "request body exceeds limit")
-                .create()
+            oversized_input("body", "Request body exceeds limit")
         } else {
             invalid_request("Expected a JSON object containing only a sql string")
         }
@@ -106,12 +104,18 @@ fn invalid_request(reason: &str) -> CanonicalError {
         .create()
 }
 
+fn oversized_input(field: &str, reason: &str) -> CanonicalError {
+    SqlQueryError::invalid_argument()
+        .with_field_violation(field, reason, "TOO_LARGE")
+        .with_override(Http::status_code(413))
+        .create()
+}
+
 fn query_error(error: &QueryFailure) -> CanonicalError {
     match error {
-        QueryFailure::InvalidSql(_) | QueryFailure::SqlTooLarge => {
-            invalid_request(error.public_message())
-        }
-        QueryFailure::Busy | QueryFailure::ResultTooLarge => {
+        QueryFailure::InvalidSql(_) => invalid_request(&error.public_message()),
+        QueryFailure::SqlTooLarge => oversized_input("sql", &error.public_message()),
+        QueryFailure::Busy | QueryFailure::ResultTooLarge | QueryFailure::ResourceLimit => {
             SqlQueryError::resource_exhausted("Query exceeded resource limits")
                 .with_quota_violation("sql_explorer", error.public_message())
                 .create()

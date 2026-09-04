@@ -3,6 +3,37 @@ use secrecy::SecretString;
 use super::*;
 
 #[test]
+fn database_error_classification_requires_an_exact_leading_code() {
+    use super::executor::QueryFailure;
+
+    for message in [
+        "",
+        "TIMEOUT_EXCEEDED",
+        "Code: not-a-number",
+        "Code: 159x.",
+        "Code: 65536.",
+        "unexpected Code: 159.",
+        "Code: 9999. nested Code: 159.",
+    ] {
+        let failure = QueryFailure::from(clickhouse::error::Error::BadResponse(message.to_owned()));
+        assert!(
+            matches!(failure, QueryFailure::ClickHouse(_)),
+            "message: {message}"
+        );
+    }
+    assert!(matches!(
+        QueryFailure::from(clickhouse::error::Error::BadResponse(
+            "Code: 159".to_owned()
+        )),
+        QueryFailure::Timeout
+    ));
+    assert!(matches!(
+        QueryFailure::from(clickhouse::error::Error::TimedOut),
+        QueryFailure::Timeout
+    ));
+}
+
+#[test]
 fn api_only_startup_requires_credentials_but_not_oauth_metadata() {
     let mut mcp = McpConfig::default();
     let mut api = SqlApiConfig::default();

@@ -37,16 +37,18 @@ pub(crate) struct QuerySqlResult {
 pub(crate) enum QueryFailure {
     #[error("{0}")]
     InvalidSql(String),
-    #[error("SQL exceeds the 65536-byte request limit")]
+    #[error("SQL exceeds the {}-byte request limit", MAX_SQL_BYTES)]
     SqlTooLarge,
-    #[error("query capacity is exhausted")]
+    #[error("the SQL explorer is busy; retry shortly")]
     Busy,
     #[error("query result exceeded the response limit")]
     ResultTooLarge,
+    #[error("query exceeded database resource limits")]
+    ResourceLimit,
     #[error("query timed out")]
     Timeout,
     #[error("ClickHouse query failed: {0}")]
-    ClickHouse(#[from] clickhouse::error::Error),
+    ClickHouse(clickhouse::error::Error),
     #[error("ClickHouse returned an invalid JSON response: {0}")]
     InvalidResponse(#[from] serde_json::Error),
     #[error("query result processing task failed: {0}")]
@@ -54,18 +56,45 @@ pub(crate) enum QueryFailure {
 }
 
 impl QueryFailure {
-    pub(crate) fn public_message(&self) -> &str {
+    pub(crate) fn public_message(&self) -> String {
         match self {
-            Self::InvalidSql(reason) => reason,
-            Self::SqlTooLarge => "SQL exceeds the 65536-byte request limit",
-            Self::Busy => "the SQL explorer is busy; retry shortly",
-            Self::ResultTooLarge => "query result exceeded the response limit",
-            Self::Timeout => "query timed out",
+            Self::InvalidSql(_)
+            | Self::SqlTooLarge
+            | Self::Busy
+            | Self::ResultTooLarge
+            | Self::ResourceLimit
+            | Self::Timeout => self.to_string(),
             Self::ClickHouse(_) | Self::InvalidResponse(_) | Self::ProcessingTask(_) => {
-                "query execution failed"
+                "query execution failed".to_owned()
             }
         }
     }
+}
+
+impl From<clickhouse::error::Error> for QueryFailure {
+    fn from(error: clickhouse::error::Error) -> Self {
+        if matches!(error, clickhouse::error::Error::TimedOut) {
+            return Self::Timeout;
+        }
+        let code = match &error {
+            clickhouse::error::Error::BadResponse(message) => exception_code(message),
+            _ => None,
+        };
+        match code {
+            Some(159 | 209) => Self::Timeout,
+            Some(158 | 191 | 201 | 202 | 241 | 290 | 307 | 396) => Self::ResourceLimit,
+            _ => Self::ClickHouse(error),
+        }
+    }
+}
+
+fn exception_code(message: &str) -> Option<u16> {
+    message
+        .strip_prefix("Code: ")?
+        .split('.')
+        .next()?
+        .parse()
+        .ok()
 }
 
 #[derive(Clone)]
@@ -89,19 +118,6 @@ impl QueryExecutor {
             client,
             query_slots: Arc::new(Semaphore::new(max_concurrent_queries)),
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) async fn execute(&self, sql: &str) -> Result<QuerySqlResult, QueryFailure> {
-        let permit = self
-            .query_slots
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| QueryFailure::Busy)?;
-        // INVARIANT: the permit bounds database work and result decoding.
-        let result = self.execute_admitted(sql).await;
-        drop(permit);
-        result
     }
 
     async fn execute_admitted(&self, sql: &str) -> Result<QuerySqlResult, QueryFailure> {

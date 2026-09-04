@@ -54,6 +54,23 @@ fn instance_token_route_bypasses_session_and_mcp_oauth() {
     assert!(conf.contains("require(\"gateway\").pass_instance_token()"));
     assert!(!conf.contains("require(\"gateway\").pass_bearer()"));
     assert!(!conf.contains("require(\"gateway\").exchange()"));
+    let sql_location = conf
+        .split("location = /api/sql/query {")
+        .nth(1)
+        .unwrap()
+        .split("        }\n")
+        .next()
+        .unwrap();
+    for directive in [
+        "proxy_set_header Host $host;",
+        "proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+        "proxy_set_header X-Forwarded-Proto $scheme;",
+        "proxy_connect_timeout 5s;",
+        "proxy_read_timeout 30s;",
+        "proxy_buffering off;",
+    ] {
+        assert!(sql_location.contains(directive), "missing: {directive}");
+    }
     for path in ["/mcp", "/api/analytics", "/api/sql/query/extra"] {
         assert!(
             generate(
@@ -70,7 +87,7 @@ fn instance_token_route_bypasses_session_and_mcp_oauth() {
 /// 3.9): the Lua exchange, no browser Authorization survives, the session cookie
 /// is stripped in Lua, a fresh correlation id, and gateway-authored forwarding.
 #[test]
-fn every_api_location_has_the_hygiene_block() {
+fn every_session_location_has_the_hygiene_block() {
     let conf = generate(&fixture("full.routes.yaml"), &Settings::default()).unwrap();
     // One access_by_lua per /api route (3 routes in the fixture).
     assert_eq!(
