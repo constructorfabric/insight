@@ -39,6 +39,9 @@ from helpers import SOURCE_ID
 DBT_DIR = Path(__file__).resolve().parents[3]
 INGESTION_DIR = DBT_DIR.parent
 JIRA_BRONZE_DDL = INGESTION_DIR / "scripts" / "connectors-ddl" / "jira.sql"
+# The class tables gold reads. `test_title_role.py` seeds them directly, and
+# the union models that normally create them need every source's staging arm.
+SILVER_DDL = INGESTION_DIR / "scripts" / "connectors-ddl" / "silver.sql"
 
 # What the prod staging step selects. Building it is its own assertion — that
 # the field-history models coexist with every other Jira staging model — and
@@ -50,10 +53,6 @@ PROD_SELECTOR = "tag:jira,tag:staging"
 # the prod selector but read none of the three bronze tables these tests seed,
 # so building them per test costs about thirty seconds and proves nothing.
 FIELD_HISTORY_SELECTOR = "+jira__field_history_derived +jira__task_field_text +jira__task_field_unclassified"
-
-JOURNAL = "staging.jira__field_history_derived"
-
-BRONZE_TABLES = ("bronze_jira.jira_fields", "bronze_jira.jira_issue", "bronze_jira.jira_issue_history")
 
 
 def _env(name: str) -> str:
@@ -80,13 +79,16 @@ class Warehouse:
             host=self.host, port=self.port, username=self.user, password=self.password, database=database
         )
 
-    def execute(self, sql: str) -> None:
+    def execute(self, sql: str, parameters: dict[str, Any] | None = None) -> None:
+        """Run a statement. Values go through `parameters`, never through the
+        string — ClickHouse binds them server-side, so nothing in a fixture can
+        end up parsed as SQL."""
         with self.client() as c:
-            c.command(sql)
+            c.command(sql, parameters=parameters)
 
-    def rows(self, sql: str) -> list[dict[str, Any]]:
+    def rows(self, sql: str, parameters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         with self.client() as c:
-            result = c.query(sql)
+            result = c.query(sql, parameters=parameters)
             return [dict(zip(result.column_names, row)) for row in result.result_rows]
 
     def insert(self, table: str, records: list[dict[str, Any]]) -> None:
@@ -116,7 +118,12 @@ class Warehouse:
         # scenario written to make an invariant fail — and there is one, because
         # the failure is the point — would look like a broken model instead.
         # Invariants are asserted explicitly, per scenario, below.
-        self.dbt("run", "--select", *selector.split())
+        #
+        # `--full-refresh` because one model is incremental and keeps state
+        # across runs on purpose (`jira__catalogue_first_seen`): every scenario
+        # seeds its own bronze and reads its own answer. The one test that is
+        # ABOUT the persistence runs that model again without the flag.
+        self.dbt("run", "--select", *selector.split(), "--full-refresh")
 
 
 def _apply_sql_file(warehouse: Warehouse, path: Path) -> None:
@@ -132,7 +139,7 @@ def _apply_sql_file(warehouse: Warehouse, path: Path) -> None:
 
 @pytest.fixture(scope="session")
 def warehouse() -> Warehouse:
-    """Session setup: databases, bronze DDL, a dbt profile pointing at them."""
+    """Session setup: databases, bronze and silver DDL, a dbt profile pointing at them."""
     with tempfile.TemporaryDirectory() as tmp:
         profiles_dir = Path(tmp)
         wh = Warehouse(profiles_dir)
@@ -158,9 +165,12 @@ def warehouse() -> Warehouse:
             # push a model-level setting into the SELECT plan, so it lives here.
             "        allow_experimental_correlated_subqueries: 1\n"
         )
-        for database in ("staging", "silver", "config", "insight"):
-            wh.execute(f"CREATE DATABASE IF NOT EXISTS {database}")
+        wh.execute("CREATE DATABASE IF NOT EXISTS staging")
+        wh.execute("CREATE DATABASE IF NOT EXISTS silver")
+        wh.execute("CREATE DATABASE IF NOT EXISTS config")
+        wh.execute("CREATE DATABASE IF NOT EXISTS insight")
         _apply_sql_file(wh, JIRA_BRONZE_DDL)
+        _apply_sql_file(wh, SILVER_DDL)
         yield wh
 
 
@@ -186,17 +196,19 @@ class Scenario:
         FINAL because the model is a ReplacingMergeTree and unmerged parts would
         otherwise read as duplicates.
         """
-        where = [f"insight_source_id = '{SOURCE_ID}'"]
-        if issue:
-            where.append(f"id_readable = '{issue}'")
-        if field:
-            where.append(f"field_id = '{field}'")
+        # One constant statement, every filter switched off by its own
+        # parameter. Composing the WHERE from pieces would put a formatted
+        # string in front of the driver for no gain — the values are bound
+        # either way, and a query that is never assembled cannot be assembled
+        # wrongly.
         return self.warehouse.rows(
             "SELECT field_id, event_kind, event_id, toString(event_at) AS event_at, _seq,"
             "       field_cardinality, delta_action, value_ids, value_displays, value_id_type,"
             "       author_id"
-            f" FROM {JOURNAL} FINAL"
-            f" WHERE {' AND '.join(where)}"
+            " FROM staging.jira__field_history_derived FINAL"
+            " WHERE insight_source_id = {src:String}"
+            "   AND ({issue:String} = '' OR id_readable = {issue:String})"
+            "   AND ({field:String} = '' OR field_id = {field:String})"
             # The reading order, matching the round-trip invariant: the kind
             # first (an initial row is the state at creation, so it precedes any
             # event of the same instant), then `_seq` among the initial rows,
@@ -204,7 +216,8 @@ class Scenario:
             " ORDER BY field_id, event_at,"
             "          multiIf(event_kind = 'synthetic_initial', 0,"
             "                  event_kind = 'changelog', 1, 2),"
-            "          _seq, toUInt64OrZero(event_id), event_id"
+            "          _seq, toUInt64OrZero(event_id), event_id",
+            {"src": SOURCE_ID, "issue": issue or "", "field": field or ""},
         )
 
     def invariants_hold(self, select: str = "tests/jira") -> bool:
@@ -265,6 +278,7 @@ def scenario(warehouse: Warehouse) -> Scenario:
     rows it holds among others. The staging models are `table`-materialized, so
     the next build rewrites them from the bronze this test seeded.
     """
-    for table in BRONZE_TABLES:
-        warehouse.execute(f"TRUNCATE TABLE IF EXISTS {table}")
+    warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_fields")
+    warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_issue")
+    warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_issue_history")
     return Scenario(warehouse)

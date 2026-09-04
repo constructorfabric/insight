@@ -29,14 +29,9 @@
 --   * events newer than that — the field exists (or existed recently) and its
 --     metadata has not arrived. That is a collection gap, not a dead field, and
 --     `assert_jira_unclassified_fields_are_old` fails on it.
-
-WITH catalogue_first_seen AS (
-    SELECT
-        COALESCE(source_id, '')                           AS insight_source_id,
-        min(_airbyte_extracted_at)                        AS catalogue_first_sync
-    FROM {{ source('bronze_jira', 'jira_fields') }}
-    GROUP BY insight_source_id
-)
+--
+-- The first sync comes from `jira__catalogue_first_seen`, not from bronze: the
+-- catalogue table forgets its older extractions as its parts merge.
 
 SELECT
     ci.insight_source_id                                  AS insight_source_id,
@@ -54,6 +49,6 @@ FROM {{ ref('jira__changelog_items') }} AS ci
 LEFT ANTI JOIN {{ ref('jira__task_field_kind') }} AS k
     ON k.insight_source_id = ci.insight_source_id
    AND k.field_id = ci.field_id
-LEFT JOIN catalogue_first_seen AS c
+LEFT JOIN {{ ref('jira__catalogue_first_seen') }} AS c
     ON c.insight_source_id = ci.insight_source_id
 GROUP BY ci.insight_source_id, ci.field_id

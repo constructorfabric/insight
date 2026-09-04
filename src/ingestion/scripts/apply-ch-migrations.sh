@@ -165,6 +165,36 @@ heal_ai_assistant_staging claude_enterprise__ai_assistant_usage
 heal_ai_assistant_staging chatgpt_team__ai_assistant_usage
 heal_ai_invoice_staging claude_team__ai_invoice
 
+echo "=== Healing task field-history staging arms ==="
+# `author_display`, `delta_value_id` and `delta_value_display` left the class
+# contract: nothing reads them, and a consumer needing the detail of one change
+# joins back to the event it came from. The silver side drops in
+# migrations/*.sql; these three drop here because a staging table exists only
+# after dbt has built it, and dbt runs after the migrations.
+#
+# They cannot be skipped. All three models are `incremental`, so their tables
+# survive a run carrying whatever column list they were created with, and
+# `class_task_field_history` unions them with `SELECT *` — an arm still holding
+# a dropped column fails the union with "different number of columns in
+# queries". The GitHub arm needs no heal: it is a `table`, rebuilt every run.
+#
+# `staging.jira__task_field_history` is deliberately absent from this list. It
+# is the Rust binary's output and the binary still writes all four columns.
+heal_task_field_history_arm() {
+  local table="$1"
+  ch_table_exists staging "${table}" || return 0
+  echo "  staging.${table}"
+  run_ch <<SQL
+ALTER TABLE staging.${table} DROP COLUMN IF EXISTS author_display;
+ALTER TABLE staging.${table} DROP COLUMN IF EXISTS delta_value_id;
+ALTER TABLE staging.${table} DROP COLUMN IF EXISTS delta_value_display;
+SQL
+}
+
+heal_task_field_history_arm jira__availability_events
+heal_task_field_history_arm jira__comment_lifecycle_events
+heal_task_field_history_arm jira__worklog_lifecycle_events
+
 echo "=== Healing CRM staging contract schemas ==="
 # The CRM overflow blob left the contract — the connectors carry the
 # unabridged record in raw_data — so the column must leave the physical

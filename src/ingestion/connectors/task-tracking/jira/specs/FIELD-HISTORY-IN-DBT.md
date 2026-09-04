@@ -309,7 +309,12 @@ Handling:
   queryable rather than implicit;
 - `assert_jira_unclassified_fields_are_old` fails when a field is excluded whose
   changelog activity is *recent* — any event newer than the catalogue's own
-  first sync for that source. An ancient deleted field can only have old events
+  first sync for that source. That instant is written once into
+  `jira__catalogue_first_seen` and kept: `bronze_jira.jira_fields` is a
+  ReplacingMergeTree versioned by the extraction stamp, so once its parts merge
+  `min(_airbyte_extracted_at)` reads as the latest sync, not the first, and a
+  guard recomputed from bronze would pass an ever-younger set of events. An
+  ancient deleted field can only have old events
   and passes; a newly created field fails immediately. This separates cause 1
   from cause 3 without blocking the run, which is why it is a test and not a
   `throwIf`: the condition is about collection, not about a shape the model
@@ -870,40 +875,33 @@ to widen `event_kind` so the action is part of the kind for a sub-entity
 enum change with its own migration and its own consumers to check, so it is
 recorded here rather than folded into this one.
 
-### 10.1.1 Retiring the `title` column
+### 10.1.1 The `title` column: how the role takes over
 
-`title` is dropped from both `staging.jira__task_field_history` and
-`silver.class_task_field_history`. It is an issue attribute repeated on every
-event row of that issue — the GitHub model that populates it says so in its own
-comment — and the Jira side never populated it at all.
-
-The title is an ordinary field, so it moves into the journal as one:
+The title is an ordinary field, so it moves into the journal as one and binds to
+a role; the column stays for the reason §10.1 gives, and this is the order of
+the pieces:
 
 1. **Jira**: the new model emits `summary` like any other `scalar` field — a
    `synthetic_initial` row from the issue JSON plus its changelog events. Jira
    gains rename history it does not have today.
-2. **GitHub**: `github__task_field_history` replaces the joined-in column with a
-   union arm emitting `field_id = 'title'`, sourced from the issue-title CTE it
-   already joins.
+2. **GitHub**: `github__task_field_history` adds a union arm emitting
+   `field_id = 'title'`, sourced from the issue-title CTE it already joins, and
+   keeps filling the column from the same CTE.
 3. **Role binding**: `summary` and `title` bind to a `title` role in
    `config.task_field_roles`. Gold reads roles, never vendor field ids — the
    invariant is stated in `github__task_field_history` itself.
-4. **Gold**: `task_issue_state` replaces `argMax(title, (event_at, _version))`
-   with `argMaxIf(value_displays[1], (event_at, _version), role = 'title')`.
+4. **Gold**: `task_issue_state` reads the role first and falls back to the
+   column:
+   `coalesce(nullIf(argMaxIf(value_displays[1], (event_at, _version), role = 'title'), ''), argMax(title, (event_at, _version)))`.
    `task_metric_evidence` needs no change: it reads `title` from
    `task_issue_state`, not from the journal.
+   `tests/jira/transform/test_title_role.py` holds the precedence in place.
 
-Files touched: the three Jira sibling models that emit a NULL literal
-(`jira__availability_events`, `jira__comment_lifecycle_events`,
-`jira__worklog_lifecycle_events`), the ephemeral pass-through
-`jira__task_field_history`, `github__task_field_history`, and
-`gold/task_issue_state`. Silver inherits the change through `SELECT *`.
-
-The DDL macro declares `title` and self-migrates it with an
-`ADD COLUMN IF NOT EXISTS ... AFTER id_readable`. Both go away with the macro
-itself: the replacement model owns its own DDL and does not declare the column.
-Dropping the physical column from the existing table is a migration under
-`src/ingestion/scripts/migrations/`.
+Dropping `title` from the staging arms and from `silver.class_task_field_history`
+is a migration under `src/ingestion/scripts/migrations/` in the cutover change,
+once the derived model has produced a `summary` row for every issue; the
+`ADD COLUMN IF NOT EXISTS ... AFTER id_readable` self-migration in the DDL macro
+goes with the macro itself.
 
 Note that the "Rust owns this table" decision is referenced in code comments as
 ADR-003 but has no ADR file in the repository. Retiring the binary should record

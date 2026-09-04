@@ -28,7 +28,7 @@ nothing. `test_invariants.py` pays for the full pipeline selector once — that
 is what would catch a field-history model which works alone but breaks the
 chain.
 
-Bronze is created from [`scripts/connectors-ddl/jira.sql`](../../../scripts/connectors-ddl/jira.sql),
+Bronze is created from [`scripts/connectors-ddl/jira.sql`](../../../../scripts/connectors-ddl/jira.sql),
 the snapshot the connectors-ddl gate keeps byte-identical to what the real
 connectors write — so the tables carry production's engines and types,
 including the plain MergeTree that `jira__bronze_promoted` promotes.

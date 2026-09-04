@@ -417,31 +417,43 @@ WHERE e.field_kind NOT IN {{ jira_element_wise_kinds() }}
 UNION ALL
 
 -- ── row 3: changelog rows for the element-wise kinds, with running state ────
+-- One row per changelog ENTRY, not per item. An entry that touches two elements
+-- of one field arrives as two items under the same changelog id; the entry is
+-- one user action, and the contract orders events by `event_id`, so two rows
+-- for one id could not be told apart by a reader — and the ReplacingMergeTree
+-- would keep one of them anyway. Items of one entry name distinct elements, so
+-- the state after the entry is the fold that has consumed every item, in
+-- whichever order the window visited them.
 SELECT
     CAST(concat(a.insight_source_id, '-jira-', a.id_readable, '-', a.field_id, '-', a.changelog_id) AS String) AS unique_key,
     a.insight_source_id,
     CAST('jira' AS String)                                AS data_source,
-    COALESCE(i.issue_id, '')                              AS issue_id,
+    COALESCE(any(i.issue_id), '')                         AS issue_id,
     a.id_readable,
     a.changelog_id                                        AS event_id,
-    a.event_at,
+    any(a.event_at)                                       AS event_at,
     CAST('changelog' AS String)                           AS event_kind,
     toUInt32(0)                                           AS _seq,
-    a.author_id,
+    any(a.author_id)                                      AS author_id,
     a.field_id,
-    a.field_name,
-    {{ jira_field_cardinality('a.field_kind') }}          AS field_cardinality,
-    a.delta_action,
-    -- state after this event, as parallel arrays again
-    CAST(arrayMap(x -> splitByChar('\x1f', x)[1], a.state_pairs) AS Array(String)) AS value_ids,
-    CAST(arrayMap(x -> splitByChar('\x1f', x)[2], a.state_pairs) AS Array(String)) AS value_displays,
-    {{ jira_field_id_type('a.field_kind') }}              AS value_id_type,
+    any(a.field_name)                                     AS field_name,
+    {{ jira_field_cardinality('any(a.field_kind)') }}     AS field_cardinality,
+    -- An entry that only adds or only removes keeps that verb; one that does
+    -- both replaced elements, and `set` is the contract's word for that.
+    if(uniqExact(a.delta_action) = 1, any(a.delta_action), 'set')    AS delta_action,
+    -- state after the whole entry, as parallel arrays again
+    CAST(arrayMap(x -> splitByChar('\x1f', x)[1],
+                  argMax(a.state_pairs, length(a.ops_upto))) AS Array(String))  AS value_ids,
+    CAST(arrayMap(x -> splitByChar('\x1f', x)[2],
+                  argMax(a.state_pairs, length(a.ops_upto))) AS Array(String))  AS value_displays,
+    {{ jira_field_id_type('any(a.field_kind)') }}         AS value_id_type,
     now64(3)                                              AS collected_at,
     toUnixTimestamp64Milli(now64(3))                      AS _version
 FROM element_wise_state AS a
 LEFT JOIN issues AS i
     ON i.insight_source_id = a.insight_source_id
    AND i.id_readable = a.id_readable
+GROUP BY a.insight_source_id, a.id_readable, a.field_id, a.changelog_id
 
 
 UNION ALL

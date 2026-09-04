@@ -15,8 +15,9 @@
 --     with no history at all.
 --
 -- The event timestamp separates them. An event newer than the catalogue's own
--- first sync means the field is not ancient, so its metadata is missing rather
--- than gone: re-sync the field stream, or add an override row.
+-- first sync — kept in `jira__catalogue_first_seen`, because bronze forgets it
+-- as its parts merge — means the field is not ancient, so its metadata is
+-- missing rather than gone: re-sync the field stream, or add an override row.
 --
 -- This is deliberately not a `throwIf` in a model. The condition is about
 -- collection, not about a shape the model cannot handle, and the journal still

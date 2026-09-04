@@ -55,6 +55,44 @@ def test_two_additions_accumulate(scenario):
     assert scenario.round_trip_holds()
 
 
+def test_two_elements_added_in_one_entry_make_one_row(scenario):
+    """One changelog entry can touch several elements: Jira emits one item per
+    element under the same changelog id. The entry is one user action and the
+    contract orders events by `event_id`, so the journal holds ONE row for it,
+    carrying the state after every item — two rows with one id would be
+    indistinguishable to a reader, and the ReplacingMergeTree would keep one
+    of them anyway."""
+    scenario.seed(
+        fields=[COMPONENTS_FIELD],
+        issues=[issue("TST-1", fields={COMPONENTS: [{"id": "501", "name": "api"}, {"id": "502", "name": "storage"}]})],
+        events=[event("TST-1", 101, "2026-01-06T10:00:00", [_add("501", "api"), _add("502", "storage")])],
+    )
+    scenario.build()
+
+    rows = scenario.journal(field=COMPONENTS)
+    assert [r["event_id"] for r in rows if r["event_kind"] == "changelog"] == ["101"]
+    assert scenario.states(COMPONENTS) == [[], ["501", "502"]]
+    assert [r["delta_action"] for r in rows if r["event_kind"] == "changelog"] == ["add"]
+    assert scenario.round_trip_holds()
+
+
+def test_an_entry_that_removes_and_adds_is_a_replacement(scenario):
+    """Swapping one component for another is one entry with a removal item and
+    an addition item. Neither verb describes the whole entry, so the row says
+    `set` — the contract's word for a multi-value state given in full."""
+    scenario.seed(
+        fields=[COMPONENTS_FIELD],
+        issues=[issue("TST-1", fields={COMPONENTS: [{"id": "502", "name": "storage"}]})],
+        events=[event("TST-1", 101, "2026-01-06T10:00:00", [_remove("501", "api"), _add("502", "storage")])],
+    )
+    scenario.build()
+
+    rows = scenario.journal(field=COMPONENTS)
+    assert scenario.states(COMPONENTS) == [["501"], ["502"]]
+    assert [r["delta_action"] for r in rows if r["event_kind"] == "changelog"] == ["set"]
+    assert scenario.round_trip_holds()
+
+
 def test_additions_and_removals_interleave(scenario):
     scenario.seed(
         fields=[COMPONENTS_FIELD],

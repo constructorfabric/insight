@@ -27,16 +27,7 @@ SOURCE = "jira-title-role-test"
 TENANT = "11111111-1111-1111-1111-111111111111"
 EMAIL = "title-role@example.com"
 
-COLUMNS = (
-    "unique_key, insight_source_id, data_source, issue_id, id_readable, title,"
-    " event_id, event_at, event_kind, _seq, author_id, field_id, field_name,"
-    " field_cardinality, delta_action, value_ids, value_displays, value_id_type,"
-    " collected_at, _version"
-)
-
-
-def _sql_str(value: str | None) -> str:
-    return "NULL" if value is None else "'" + value.replace("'", "\\'") + "'"
+HISTORY_TABLE = "silver.class_task_field_history"
 
 
 def row(
@@ -49,19 +40,35 @@ def row(
     kind: str = "synthetic_initial",
     at: str = "2026-01-05 09:00:00",
     data_source: str = "jira",
-) -> str:
+) -> dict:
     """One journal row: `column_title` is the denormalized column, `field_value`
     the value the field itself carries."""
-    values = "[]" if field_value is None else "[" + _sql_str(field_value) + "]"
-    return (
-        f"('{issue}-{field_id}-{seq}', '{SOURCE}', '{data_source}', '{issue}', '{issue}',"
-        f" {_sql_str(column_title)}, 'initial:{issue}', toDateTime64('{at}', 3),"
-        f" '{kind}', {seq}, 'actor', '{field_id}', '{field_id}', 'single', 'set',"
-        f" {values}, {values}, 'none', now64(3), 1)"
-    )
+    values = [] if field_value is None else [field_value]
+    return {
+        "unique_key": f"{issue}-{field_id}-{seq}",
+        "insight_source_id": SOURCE,
+        "data_source": data_source,
+        "issue_id": issue,
+        "id_readable": issue,
+        "title": column_title,
+        "event_id": f"initial:{issue}",
+        "event_at": at,
+        "event_kind": kind,
+        "_seq": seq,
+        "author_id": "actor",
+        "field_id": field_id,
+        "field_name": field_id,
+        "field_cardinality": "single",
+        "delta_action": "set",
+        "value_ids": values,
+        "value_displays": values,
+        "value_id_type": "none",
+        "collected_at": at,
+        "_version": 1,
+    }
 
 
-def assignee_row(issue: str, *, column_title: str | None, data_source: str = "jira") -> str:
+def assignee_row(issue: str, *, column_title: str | None, data_source: str = "jira") -> dict:
     """Gold reaches a person through the assignee role — `task_issue_state`
     inner-joins `class_task_users` on it. Without this row the issue never
     reaches the serving table, and a test would fail for a reason that has
@@ -72,25 +79,39 @@ def assignee_row(issue: str, *, column_title: str | None, data_source: str = "ji
 @pytest.fixture
 def gold(warehouse):
     """A clean slate for this source, and an actor gold can attribute to."""
-    for table in ("class_task_field_history", "class_task_users"):
-        warehouse.execute(f"DELETE FROM silver.{table} WHERE insight_source_id = '{SOURCE}'")
     warehouse.execute(
-        "INSERT INTO silver.class_task_users"
-        " (unique_key, tenant_id, insight_source_id, data_source, user_id, email,"
-        "  display_name, collected_at, _version) VALUES"
-        f" ('{SOURCE}-actor', '{TENANT}', '{SOURCE}', 'jira', 'actor', '{EMAIL}',"
-        "  'Title Role', now64(3), 1)"
+        "DELETE FROM silver.class_task_field_history WHERE insight_source_id = {src:String}", {"src": SOURCE}
+    )
+    warehouse.execute("DELETE FROM silver.class_task_users WHERE insight_source_id = {src:String}", {"src": SOURCE})
+    warehouse.insert(
+        "silver.class_task_users",
+        [
+            {
+                "unique_key": f"{SOURCE}-actor",
+                "tenant_id": TENANT,
+                "insight_source_id": SOURCE,
+                "data_source": "jira",
+                "user_id": "actor",
+                "email": EMAIL,
+                "display_name": "Title Role",
+                "collected_at": "2026-01-05 09:00:00",
+                "_version": 1,
+            }
+        ],
     )
     return warehouse
 
 
-def seed_and_build(warehouse, rows: list[str]) -> dict[str, str]:
-    warehouse.execute(f"INSERT INTO silver.class_task_field_history ({COLUMNS}) VALUES " + ", ".join(rows))
-    warehouse.dbt("run", "--select", "task_issue_state", "--full-refresh")
+def seed_and_build(warehouse, rows: list[dict]) -> dict[str, str]:
+    warehouse.insert(HISTORY_TABLE, rows)
+    # The role view is a parent gold reads by name, and `+task_issue_state` would
+    # drag in the silver unions, whose other arms this warehouse does not have.
+    warehouse.dbt("run", "--select", "task_field_roles_current", "task_issue_state", "--full-refresh")
     return {
         r["id_readable"]: r["title"]
         for r in warehouse.rows(
-            f"SELECT id_readable, title FROM insight.task_issue_state WHERE insight_source_id = '{SOURCE}'"
+            "SELECT id_readable, title FROM insight.task_issue_state WHERE insight_source_id = {src:String}",
+            {"src": SOURCE},
         )
     }
 

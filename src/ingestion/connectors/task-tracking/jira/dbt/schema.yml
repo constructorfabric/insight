@@ -74,6 +74,8 @@ models:
     description: "Per-source staging projection of Jira field catalog. Unioned into silver.class_task_field_metadata."
   - name: jira__task_field_unclassified
     description: "Registry of fields the changelog names but the field catalogue does not contain, with their event range. Their history cannot be reconstructed; see specs/FIELD-HISTORY-IN-DBT.md §3.2."
+  - name: jira__catalogue_first_seen
+    description: "Per-source instant of the first field-catalogue sync, written once and kept: bronze keeps only each field's latest extraction once its parts merge, so the value cannot be recomputed later. Input to the recency guard of specs/FIELD-HISTORY-IN-DBT.md §3.2."
   - name: jira__task_field_kind
     description: "Per-source field classification into the closed field_kind enum that drives value normalization and delta application. Matched on Jira type constants, never on instance-specific field ids. See specs/FIELD-HISTORY-IN-DBT.md."
   - name: jira__task_statuses

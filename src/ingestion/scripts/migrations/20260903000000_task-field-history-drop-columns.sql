@@ -16,6 +16,14 @@
 -- is what guarantees that path exists. The two lifecycle arms kept the entity
 -- id in `delta_value_id` AND in `value_ids[1]`, so nothing is lost there.
 --
+-- Only `silver.class_*` belongs in a numbered migration. The three Jira arms
+-- that union into the class need the same columns dropped — they are
+-- `incremental`, so their tables survive a run with whatever column list they
+-- were created with, and the class unions them with `SELECT *` — but a staging
+-- table exists only after dbt has built it, and dbt runs AFTER migrations. That
+-- drop is therefore a guarded heal in apply-ch-migrations.sh, per the warehouse
+-- contract rules in AGENTS.md.
+--
 -- `staging.jira__task_field_history` is deliberately NOT touched. That relation
 -- is the Rust binary's output and the binary still writes all four columns, so
 -- dropping them there would make the next enrich run fail on unknown columns —
@@ -26,8 +34,8 @@
 -- Order matters. The models stop emitting these columns in the same change, so
 -- this runs after they are deployed; on a cluster where the old models are
 -- still live the columns simply stay until they are replaced. Every clause is
--- `DROP COLUMN IF EXISTS` on every clause, so re-running is a no-op and a
--- partially-applied state converges. The table itself is NOT guarded —
+-- `DROP COLUMN IF EXISTS`, so re-running is a no-op and a partially-applied
+-- state converges. The table itself is NOT guarded —
 -- ClickHouse has no `ALTER TABLE IF EXISTS`, and the migrations run after the
 -- connectors-ddl snapshot has created every class table, so it is always there.
 --
@@ -35,27 +43,6 @@
 -- §10.1.
 
 ALTER TABLE silver.class_task_field_history
-    DROP COLUMN IF EXISTS author_display,
-    DROP COLUMN IF EXISTS delta_value_id,
-    DROP COLUMN IF EXISTS delta_value_display;
-
--- The three Jira arms that union into the class are `incremental`, so their
--- tables survive a run and keep whatever column list they were created with.
--- The class model unions them with `SELECT *`, so an arm still carrying these
--- columns while the models no longer emit them fails the union outright:
--- "different number of columns in queries". The GitHub arm needs no clause —
--- it is a `table`, rebuilt from scratch every run.
-ALTER TABLE staging.jira__availability_events
-    DROP COLUMN IF EXISTS author_display,
-    DROP COLUMN IF EXISTS delta_value_id,
-    DROP COLUMN IF EXISTS delta_value_display;
-
-ALTER TABLE staging.jira__comment_lifecycle_events
-    DROP COLUMN IF EXISTS author_display,
-    DROP COLUMN IF EXISTS delta_value_id,
-    DROP COLUMN IF EXISTS delta_value_display;
-
-ALTER TABLE staging.jira__worklog_lifecycle_events
     DROP COLUMN IF EXISTS author_display,
     DROP COLUMN IF EXISTS delta_value_id,
     DROP COLUMN IF EXISTS delta_value_display;

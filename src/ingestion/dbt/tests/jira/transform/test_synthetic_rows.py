@@ -191,6 +191,9 @@ def test_long_text_is_stored_by_content_address(scenario):
     text_id = rows[0]["value_ids"][0]
     assert len(text_id) == 32, f"expected a 128-bit hex address, got {text_id!r}"
     assert "Steps to reproduce" in rows[0]["value_displays"][0]
+    # The address is a value a consumer can key on, so the row says so rather
+    # than `none`; the shared enum gains no Jira-only word for it.
+    assert rows[0]["value_id_type"] == "string_literal"
 
     side = scenario.text_rows()
     assert [r["text_id"] for r in side] == [text_id]

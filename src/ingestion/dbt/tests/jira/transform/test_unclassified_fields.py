@@ -14,7 +14,7 @@ not arrived yet.
 
 from __future__ import annotations
 
-from helpers import event, field, issue, item
+from helpers import LATER_SYNC, SOURCE_ID, event, field, issue, item
 
 GHOST = "customfield_19001"
 POINTS = "customfield_10001"
@@ -93,7 +93,8 @@ def test_the_registry_records_the_exclusion(scenario):
         "SELECT field_id, field_name, changelog_items, issues_affected,"
         "       toString(newest_event) AS newest_event, metadata_is_missing"
         " FROM staging.jira__task_field_unclassified"
-        f" WHERE field_id = '{GHOST}'"
+        " WHERE field_id = {field:String}",
+        {"field": GHOST},
     )
     assert len(rows) == 1
     assert rows[0]["changelog_items"] == 2
@@ -118,7 +119,8 @@ def test_a_field_whose_metadata_has_not_arrived_yet_fails_the_guard(scenario):
 
     assert (
         scenario.warehouse.rows(
-            f"SELECT metadata_is_missing FROM staging.jira__task_field_unclassified WHERE field_id = '{GHOST}'"
+            "SELECT metadata_is_missing FROM staging.jira__task_field_unclassified WHERE field_id = {field:String}",
+            {"field": GHOST},
         )[0]["metadata_is_missing"]
         == 1
     )
@@ -136,3 +138,32 @@ def test_an_ancient_deleted_field_passes_the_guard(scenario):
     scenario.build()
 
     assert scenario.invariants_hold("assert_jira_unclassified_fields_are_old")
+
+
+def test_the_first_sync_watermark_does_not_drift(scenario):
+    """`bronze_jira.jira_fields` keeps only each field's latest extraction once
+    its parts merge, so a watermark recomputed from it creeps towards the newest
+    sync and an ever-younger set of events counts as "old". The first-seen
+    instant is therefore written once and left alone: a later sync of the same
+    source must not move it."""
+    scenario.seed(
+        fields=[field(POINTS, name="Story Points", schema_type="number", extracted_at="2026-01-01T00:00:00")],
+        issues=[issue("TST-1", fields={POINTS: 5})],
+    )
+    scenario.build()
+    scenario.warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_fields")
+    scenario.warehouse.insert(
+        "bronze_jira.jira_fields", [field(POINTS, name="Story Points", schema_type="number", extracted_at=LATER_SYNC)]
+    )
+    # The incremental run, as the pipeline does it — without the suite's
+    # `--full-refresh`.
+    scenario.warehouse.dbt("run", "--select", "jira__catalogue_first_seen")
+
+    rows = scenario.warehouse.rows(
+        "SELECT toString(catalogue_first_sync) AS first_sync"
+        " FROM staging.jira__catalogue_first_seen"
+        " WHERE insight_source_id = {src:String}",
+        {"src": SOURCE_ID},
+    )
+    assert len(rows) == 1
+    assert rows[0]["first_sync"].startswith("2026-01-01 00:00:00")

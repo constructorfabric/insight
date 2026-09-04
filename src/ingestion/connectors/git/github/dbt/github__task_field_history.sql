@@ -192,8 +192,8 @@ snapshot_values AS (
 
     -- The title, as a FIELD rather than a column repeated on every event row.
     -- Gold reads it through the `title` role like any other value; the
-    -- denormalized `title` column it replaces was an issue attribute copied
-    -- onto every row of that issue, and Jira never populated it at all.
+    -- denormalized `title` column is an issue attribute copied onto every row
+    -- of that issue, and goes once every source serves the role.
     SELECT
         i.tenant_id, i.source_id, i.issue_id, i.id_readable, i.created_at,
         i.author_login, i.author_id,

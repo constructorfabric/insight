@@ -11,7 +11,9 @@
 
   `scalar` reports `none`: its id and display are the same text, so there is no
   separate identifier to describe. `issue_ref` reports `string_literal` because
-  the value it carries is the referenced issue's key (§3.1).
+  the value it carries is the referenced issue's key (§3.1); so does `long_text`,
+  whose id is the body's content address (§8) — the enum is shared across
+  sources and gains no Jira-only value for it, see `jira_norm_long_text`.
 -#}
 
 {#- The kinds whose changelog emits ONE ELEMENT per item rather than the whole
@@ -23,7 +25,8 @@
 
 {% macro jira_field_id_type(kind) %}
     multiIf(
-        {{ kind }} IN ('string_array', 'issue_ref', 'link_array'),   'string_literal',
+        {{ kind }} IN ('string_array', 'issue_ref', 'link_array',
+                       'long_text'),                                'string_literal',
         {{ kind }} = 'user',                                        'account_id',
         {{ kind }} IN ('option', 'obj', 'obj_array',
                        'option_array', 'legacy_list'),              'opaque_id',
