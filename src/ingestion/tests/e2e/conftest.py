@@ -30,15 +30,12 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-import yaml
 from lib import compose, mariadb, session_reset
 from lib.analytics import AnalyticsProcess, find_free_port, locate_binary
 from lib.ch_seeder import CHSeeder
 from lib.config import SessionConfig
 from lib.dbt_runner import DbtRunner
 from lib.enrich import EnrichRunner
-from lib.fixture_loader import TestYaml, discover_tests
-from lib.fixture_loader import load as load_test
 from lib.identity_stub import IdentityStub
 from lib.migration_applier import apply_all as apply_ch_migrations
 from lib.tracked_models import TrackedModels
@@ -210,36 +207,6 @@ def enrich_runner(ch_migrations_applied: SessionConfig) -> EnrichRunner:
     return EnrichRunner(ch_migrations_applied)
 
 
-# ----------------------------------------------------------------------
-# yaml-rig: per-test parametrization and execution
-# ----------------------------------------------------------------------
-
-
-_METRICS_ROOT = Path(__file__).parent / "metrics"
-
-
 def pytest_collection_modifyitems(config, items):
     """Convenience: order the fast rig tests (meta/) first."""
     items.sort(key=lambda i: 0 if "meta/" in str(i.path) else 1)
-
-
-def _has_cases(path: Path) -> bool:
-    """A spec whose cases were ported to a Python module keeps only its bronze."""
-    document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    return bool(document.get("cases"))
-
-
-def pytest_generate_tests(metafunc):
-    """Generate one `test_metric_smoke` invocation per discovered `*.test.yaml`."""
-    if "test_yaml" in metafunc.fixturenames and metafunc.function.__name__ == "test_metric_smoke":
-        paths = [path for path in discover_tests(_METRICS_ROOT) if _has_cases(path)]
-        metafunc.parametrize("test_path", paths, ids=[p.name[: -len(".test.yaml")] for p in paths])
-
-
-@pytest.fixture
-def test_yaml(test_path: Path) -> TestYaml:
-    """Load + resolve the test file; malformed files fail here as a test failure."""
-    ty = load_test(test_path)
-    if ty.skip:
-        pytest.skip(ty.skip)
-    return ty

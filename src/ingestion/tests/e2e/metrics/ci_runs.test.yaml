@@ -27,29 +27,3 @@ bronze:
       run_number: 3
       event: pull_request
       conclusion: cancelled
-cases:
-  - name: every decided run counts once, whatever the trigger
-    request:
-      url: /v1/metric-results
-      method: POST
-      body:
-        entity: { type: tenant }
-        period: { from: "2026-03-01", to: "2026-03-07" }
-        metrics:
-          - metric_key: ci.runs
-            views:
-              - { view: period }
-              - { view: timeseries, bucket: day }
-              - { view: breakdown, dimensions: [trigger] }
-    expect:
-      - assert: "status == 200"
-      - metric: ci.runs
-        view: period
-        find: { entity_id: "11111111-1111-1111-1111-111111111111" }
-        assert: "double(it.value) == 3.0"
-      - metric: ci.runs
-        view: timeseries
-        assert: "items.exists(s, s.points.exists(p, p.bucket_start == '2026-03-01' && double(p.value) == 3.0))"
-      - metric: ci.runs
-        view: breakdown
-        assert: "items.exists(v, v.dimensions.exists(d, d.key == 'trigger' && d.value == 'schedule') && double(v.value) == 1.0)"

@@ -333,13 +333,13 @@ jobs:
       # pre-pull is needed.
       #
       # This lane runs only the metrics/ suite — the bronze→dbt→gold→API metric
-      # fixtures (the yaml rig) — split across the shard matrix: each leg gets
+      # fixtures — split across the shard matrix: each leg gets
       # its own runner VM, hence its own ClickHouse/MariaDB/dbt target/analytics
       # — full isolation with zero changes to the session rig. The slice is
       # this shard's fixture family (see the matrix comment for why families
-      # must stay whole), expanded into explicit pytest node ids: exhaustive by
-      # construction (no `-k` substring traps — an id that is a prefix of
-      # another cannot leak across shards, and a new test can never silently
+      # must stay whole), expanded into explicit module paths: exhaustive by
+      # construction (no `-k` substring traps — a path that is a prefix of
+      # another cannot leak across shards, and a new spec can never silently
       # fall out of CI thanks to the complement `rest` shard).
       #
       # WITHIN a shard the tests still run serially: the session rig is not
@@ -371,23 +371,13 @@ jobs:
           # `rest` must exclude exactly the prefixes that have their own matrix
           # leg — keep this list in lockstep with `matrix.shard` above.
           case "$SHARD" in
-            rest) filter=(grep -v -e '^metrics/ai_' -e '^metrics/collab_' -e '^metrics/tasks_') ;;
-            *)    filter=(grep -e "^metrics/${SHARD}_") ;;
+            rest) filter=(grep -v -e '^metrics/test_ai_' -e '^metrics/test_collab_' -e '^metrics/test_tasks_') ;;
+            *)    filter=(grep -e "^metrics/test_${SHARD}_") ;;
           esac
           nodes=()
-          # Hand-authored tests assert what the yaml rig cannot express — a second
-          # sync, a silver-only contract. The loop below only ever yields
-          # yaml-derived nodes, so they are listed per shard or they never run.
-          case "$SHARD" in
-            ai)
-              nodes+=("metrics/test_ai_seat_extra_usage_history.py")
-              nodes+=("metrics/test_ai_invoice_silver.py")
-              ;;
-          esac
-          while IFS= read -r stem; do
-            nodes+=("metrics/test_fixtures.py::test_metric_smoke[${stem}]")
-          done < <(printf '%s\n' metrics/*.test.yaml | "${filter[@]}" | sort \
-                     | xargs -n1 basename | sed 's/\.test\.yaml$//')
+          while IFS= read -r module; do
+            nodes+=("$module")
+          done < <(printf '%s\n' metrics/test_*.py | "${filter[@]}" | sort)
           # Fail loudly on an empty slice — pytest exits 4 on unknown node ids
           # but an empty arg list would silently run the FULL suite instead.
           [ "${#nodes[@]}" -gt 0 ] || { echo "::error::shard ${SHARD} selected no tests"; exit 1; }

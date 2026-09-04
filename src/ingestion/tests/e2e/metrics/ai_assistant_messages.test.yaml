@@ -32,35 +32,3 @@ bronze:
       unique_key: chat-carol-20260105
       date: "2026-01-05"
       messages: 10
-
-cases:
-  - name: AI assistant messages
-    request:
-      url: /v1/metric-results
-      method: POST
-      body:
-        entity: { type: person, ids: [alice@example.com] }
-        period: { from: "2026-01-01", to: "2026-01-31" }
-        metrics:
-          - metric_key: ai.assistant_messages
-            views:
-              - { view: period }
-              - { view: peer }
-              - { view: timeseries, bucket: day }
-              - { view: breakdown, dimensions: [tool, surface] }
-    expect:
-      - assert: "status == 200"
-      - metric: ai.assistant_messages
-        view: period
-        find: { entity_id: alice@example.com }
-        equal: { value: 40 }
-      - metric: ai.assistant_messages
-        view: peer
-        find: { entity_id: alice@example.com }
-        equal: { target_value: 40, p25: null, median: null, p75: null, min: null, max: null, n: 3 }
-      - metric: ai.assistant_messages
-        view: timeseries
-        assert: "items.exists(s, s.entity_id == 'alice@example.com' && s.points.exists(p, p.bucket_start == '2026-01-05' && double(p.value) == 40.0))"
-      - metric: ai.assistant_messages
-        view: breakdown
-        assert: "items.exists(v, v.entity_id == 'alice@example.com' && size(v.dimensions) == 2 && v.dimensions.exists(d, d.key == 'tool' && d.value == 'chatgpt') && v.dimensions.exists(d, d.key == 'surface' && d.value == 'chat') && double(v.value) == 40.0)"

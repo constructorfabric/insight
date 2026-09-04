@@ -31,29 +31,3 @@ bronze:
       id: 4
       run_number: 4
       conclusion: failure
-cases:
-  - name: a retried success is green but not first-try green
-    request:
-      url: /v1/metric-results
-      method: POST
-      body:
-        entity: { type: tenant }
-        period: { from: "2026-03-01", to: "2026-03-07" }
-        metrics:
-          - metric_key: ci.gate_first_try_pass_rate
-            views:
-              - { view: period }
-              - { view: timeseries, bucket: day }
-              - { view: breakdown, dimensions: [repository] }
-    expect:
-      - assert: "status == 200"
-      - metric: ci.gate_first_try_pass_rate
-        view: period
-        find: { entity_id: "11111111-1111-1111-1111-111111111111" }
-        assert: "double(it.value) == 50.0"
-      - metric: ci.gate_first_try_pass_rate
-        view: timeseries
-        assert: "items.exists(s, s.points.exists(p, p.bucket_start == '2026-03-01' && double(p.value) == 50.0))"
-      - metric: ci.gate_first_try_pass_rate
-        view: breakdown
-        assert: "items.exists(v, v.dimensions.exists(d, d.key == 'repository' && d.value == 'acme/app') && double(v.value) == 50.0)"

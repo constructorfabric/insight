@@ -31,35 +31,3 @@ bronze:
       unique_key: codex-carol-20260105
       date: "2026-01-05"
       n_threads: 3
-
-cases:
-  - name: AI development conversations
-    request:
-      url: /v1/metric-results
-      method: POST
-      body:
-        entity: { type: person, ids: [alice@example.com] }
-        period: { from: "2026-01-01", to: "2026-01-31" }
-        metrics:
-          - metric_key: ai.dev_conversations
-            views:
-              - { view: period }
-              - { view: peer }
-              - { view: timeseries, bucket: day }
-              - { view: breakdown, dimensions: [tool] }
-    expect:
-      - assert: "status == 200"
-      - metric: ai.dev_conversations
-        view: period
-        find: { entity_id: alice@example.com }
-        equal: { value: 12 }
-      - metric: ai.dev_conversations
-        view: peer
-        find: { entity_id: alice@example.com }
-        equal: { target_value: 12, p25: null, median: null, p75: null, min: null, max: null, n: 3 }
-      - metric: ai.dev_conversations
-        view: timeseries
-        assert: "items.exists(s, s.entity_id == 'alice@example.com' && s.points.exists(p, p.bucket_start == '2026-01-05' && double(p.value) == 12.0))"
-      - metric: ai.dev_conversations
-        view: breakdown
-        assert: "items.exists(v, v.entity_id == 'alice@example.com' && v.dimensions.exists(d, d.key == 'tool' && d.value == 'codex') && double(v.value) == 12.0)"
