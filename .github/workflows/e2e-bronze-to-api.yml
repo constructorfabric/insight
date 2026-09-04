@@ -512,6 +512,7 @@ jobs:
       - build
       - e2e-metrics
       - e2e-identity
+      - metric-coverage-gate
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -531,9 +532,12 @@ jobs:
           # Matrix aggregate: 'success' only when EVERY shard passed.
           METRICS: ${{ needs.e2e-metrics.result }}
           IDENTITY: ${{ needs.e2e-identity.result }}
+          # A metric the catalogue serves and no spec asserts is a red check,
+          # not a report: the gate is what makes a missing spec block.
+          GATE: ${{ needs.metric-coverage-gate.result }}
         run: |
           set -euo pipefail
-          echo "changes=$CHANGES relevant=$RELEVANT build=$BUILD metrics=$METRICS identity=$IDENTITY"
+          echo "changes=$CHANGES relevant=$RELEVANT build=$BUILD metrics=$METRICS identity=$IDENTITY gate=$GATE"
 
           # Fail closed. A `changes` job that did not succeed leaves `relevant`
           # empty, which would otherwise read as "irrelevant" and green a
@@ -546,11 +550,11 @@ jobs:
           if [ "$RELEVANT" != "true" ]; then
             echo "nothing on the bronze → dbt → ClickHouse → analytics path changed — nothing to prove."
           else
-            for lane in "build=$BUILD" "metrics=$METRICS" "identity=$IDENTITY"; do
+            for lane in "build=$BUILD" "metrics=$METRICS" "identity=$IDENTITY" "gate=$GATE"; do
               if [ "${lane#*=}" != "success" ]; then
                 echo "::error::${lane%%=*} did not pass (${lane#*=}) — the E2E suite did not fully run for this change."
                 exit 1
               fi
             done
-            echo "E2E suite passed: build + both data-path lanes succeeded."
+            echo "E2E suite passed: build, both data-path lanes and the metric coverage gate succeeded."
           fi
