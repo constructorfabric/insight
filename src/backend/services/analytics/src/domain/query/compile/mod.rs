@@ -397,6 +397,53 @@ mod tests {
     }
 
     #[test]
+    fn a_query_over_the_file_change_dataset_scans_its_own_relation() {
+        let request = fixtures::query(
+            r#"{"dataset": "git_file_changes",
+                 "group_by": [{"axis": "dimension", "field": "file_extension"}, {"axis": "time"}],
+                 "aggregates": [
+                   {"name": "changes", "fn": "count"},
+                   {"name": "added_to_tests", "fn": "sum", "field": "lines_added",
+                    "filter": {"field": "category", "op": "eq", "value": "test"}}
+                 ],
+                 "time": {"from": "2026-01-01", "to": "2026-03-31", "grain": "month"},
+                 "order": [{"by": "changes", "dir": "desc"}],
+                 "limit": 500}"#,
+        );
+        let plan = crate::domain::query::validation::plan(&request).expect("admissible");
+        let compiled = compile(&plan, TENANT);
+
+        assert_eq!(
+            compiled.sql,
+            lines(&[
+                "SELECT",
+                "    toString(file_extension) AS c0,",
+                "    toStartOfMonth(toDate(authored_at)) AS c1,",
+                "    count() AS c2,",
+                "    sumIfOrNull(lines_added, coalesce(toString(category) = ?, 0)) AS c3",
+                "FROM insight.git_file_changes",
+                "WHERE tenant_id = ?",
+                "  AND toDate(authored_at) >= toDate(?)",
+                "  AND toDate(authored_at) <= toDate(?)",
+                "GROUP BY c0, c1",
+                "ORDER BY c2 DESC, c0 ASC, c1 ASC",
+                "LIMIT ?",
+            ])
+        );
+        assert_eq!(
+            compiled.params,
+            vec![
+                text("test"),
+                text(TENANT),
+                text("2026-01-01"),
+                text("2026-03-31"),
+                QueryParam::UInt(500),
+            ]
+        );
+        assert_eq!(compiled.sql.matches('?').count(), compiled.params.len());
+    }
+
+    #[test]
     fn the_shipped_dataset_compiles_the_same_query_the_fixture_does() {
         let request = fixtures::query(
             r#"{"dataset": "git_commits",

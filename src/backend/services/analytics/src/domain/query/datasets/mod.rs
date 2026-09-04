@@ -13,7 +13,10 @@ use crate::domain::field_catalog::product_catalog;
 use declaration::{Dataset, DatasetDocument};
 use validate::DeclarationError;
 
-const DECLARATIONS: &[&str] = &[include_str!("git_commits.yaml")];
+const DECLARATIONS: &[&str] = &[
+    include_str!("git_commits.yaml"),
+    include_str!("git_file_changes.yaml"),
+];
 
 pub fn product_datasets() -> Result<&'static [Dataset], &'static DeclarationError> {
     static DATASETS: OnceLock<Result<Vec<Dataset>, DeclarationError>> = OnceLock::new();
@@ -91,9 +94,56 @@ mod tests {
     }
 
     #[test]
+    fn the_file_change_dataset_declares_the_grain_below_a_commit() {
+        let changes = dataset("git_file_changes").expect("git_file_changes is declared");
+
+        assert_eq!(changes.database, "insight");
+        assert_eq!(changes.relation, "git_file_changes");
+        assert_eq!(changes.tenant_field, "tenant_id");
+        assert_eq!(
+            changes
+                .default_time_field()
+                .map(|field| field.field.as_str()),
+            Some("authored_at")
+        );
+        for field in ["file_extension", "change_type", "category"] {
+            assert!(
+                changes.dimension(field).is_some(),
+                "{field} must be groupable"
+            );
+        }
+        assert_eq!(
+            changes.row_identity,
+            [
+                "tenant_id",
+                "source",
+                "commit_hash",
+                "file_path",
+                "change_type"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_column_one_dataset_groups_by_is_not_thereby_groupable_on_another() {
+        let commits = dataset("git_commits").expect("git_commits is declared");
+        let changes = dataset("git_file_changes").expect("git_file_changes is declared");
+
+        assert!(changes.dimension("file_extension").is_some());
+        assert!(
+            commits.dimension("file_extension").is_none(),
+            "a commit has no one file extension"
+        );
+        assert!(
+            changes.dimension("file_path").is_none(),
+            "a path is row identity, not a group axis"
+        );
+    }
+
+    #[test]
     fn a_key_no_declaration_carries_resolves_to_nothing() {
         assert!(dataset("git_tags").is_none());
-        assert!(declared_keys().contains(&"git_commits"));
+        assert_eq!(declared_keys(), ["git_commits", "git_file_changes"]);
     }
 
     #[test]

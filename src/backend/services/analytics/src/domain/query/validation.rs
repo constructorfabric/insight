@@ -865,6 +865,34 @@ mod tests {
     }
 
     #[test]
+    fn a_dimension_another_dataset_declares_is_still_refused_here() {
+        let axis = r#""group_by": [{"axis": "dimension", "field": "file_extension"}]"#;
+        let query = |dataset: &str| {
+            fixtures::query(&format!(
+                r#"{{"dataset": "{dataset}", {axis},
+                     "aggregates": [{{"name": "changes", "fn": "count"}}],
+                     "time": {{"from": "2026-01-01", "to": "2026-01-31"}}}}"#
+            ))
+        };
+
+        plan(&query("git_file_changes")).expect("the file-change dataset groups by it");
+
+        let violations = plan(&query("git_commits")).expect_err("the commit dataset does not");
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert_eq!(violations[0].field, "group_by[0].field");
+        assert_eq!(violations[0].reason, Reason::Unknown);
+        let (_, admissible) = violations[0]
+            .detail
+            .split_once("declared: ")
+            .expect("the refusal reports what would have been admissible");
+        assert!(
+            !admissible.contains("file_extension"),
+            "the admissible set must be the commit dataset's own: {admissible:?}"
+        );
+        assert!(admissible.contains("repository"), "{admissible:?}");
+    }
+
+    #[test]
     fn the_shipped_dataset_answers_the_same_query_the_fixture_does() {
         plan(&fixtures::query(COUNT_BY_WEEK)).expect("the shipped declaration admits it");
     }

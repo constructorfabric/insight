@@ -23,10 +23,11 @@ from . import query_window
 
 QUERY = analytics_path("/v1/query")
 
-#: The one dataset this build declares. A key the service does not carry is the
+#: The datasets this build declares. A key the service does not carry is the
 #: other half of the pair, and it is well-formed so a refusal is the
 #: declaration's rather than a spelling rejection dressed as one.
 GIT_COMMITS = "git_commits"
+GIT_FILE_CHANGES = "git_file_changes"
 UNKNOWN_DATASET = "stand_does_not_exist"
 
 
@@ -176,6 +177,57 @@ def test_a_query_the_dataset_cannot_answer_is_refused_naming_the_field(
     )
     assert field in _violated_fields(response), (
         f"{label}: the refusal did not name {field!r}: {response.text[:300]}"
+    )
+
+
+@pytest.mark.requires_seed("dev_lead")
+@pytest.mark.versatility
+def test_the_file_change_dataset_answers_over_its_own_declared_dimensions(
+    api: ApiClient, stand_manifest: Manifest
+) -> None:
+    """`file_extension` is a dimension of this dataset alone, so a 200 is evidence
+    the query reached THIS relation rather than the commit one."""
+    body = _query(
+        stand_manifest,
+        grain="month",
+        dataset=GIT_FILE_CHANGES,
+        group_by=[{"axis": "dimension", "field": "file_extension"}, {"axis": "time"}],
+        aggregates=[
+            {"name": "changes", "fn": "count"},
+            {
+                "name": "added_to_tests",
+                "fn": "sum",
+                "field": "lines_added",
+                "filter": {"field": "category", "op": "eq", "value": "test"},
+            },
+        ],
+        limit=500,
+    )
+
+    response = _post(api, body)
+    assert response.status_code == 200, f"status={response.status_code} {response.text[:300]}"
+
+    answer = response.parse(QueryAnswer)
+    assert _column_names(answer) == ["file_extension", "time", "changes", "added_to_tests"]
+    for row in answer.rows:
+        assert len(row) == len(answer.columns), (
+            f"a row carries {len(row)} values for {len(answer.columns)} columns: {row}"
+        )
+
+
+@pytest.mark.reliability
+def test_a_dimension_belongs_to_its_dataset_and_not_to_the_build(
+    api: ApiClient, stand_manifest: Manifest
+) -> None:
+    """The other half of the pair above: the same axis refused on the dataset that
+    does not declare it, which is what proves validation is dataset-scoped."""
+    body = _query(stand_manifest, group_by=[{"axis": "dimension", "field": "file_extension"}])
+
+    response = _post(api, body)
+
+    assert response.status_code == 400, f"status={response.status_code} {response.text[:300]}"
+    assert "group_by[0].field" in _violated_fields(response), (
+        f"the refusal did not name the axis: {response.text[:300]}"
     )
 
 
