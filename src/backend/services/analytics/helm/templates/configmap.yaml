@@ -140,6 +140,8 @@ data:
       analytics:
         config:
           visibility_policy: {{ .Values.visibilityPolicy | default "org_chart" | quote }}
+          sql_api:
+            enabled: {{ .Values.global.sqlApi.enabled }}
           mcp:
             enabled: {{ .Values.global.mcp.enabled }}
             bind_addr: "0.0.0.0:{{ .Values.mcp.port }}"

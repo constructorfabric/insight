@@ -47,8 +47,9 @@ impl Gear for AnalyticsApiGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
         let cfg: GearConfig = ctx.config()?;
         validate_reports_config(&cfg.reports)?;
-        crate::mcp::validate_config(&cfg.mcp)?;
+        crate::sql_explorer::validate_config(&cfg.mcp, &cfg.sql_api)?;
         let mcp = cfg.mcp.clone();
+        let sql_api = cfg.sql_api.clone();
         let mcp_clickhouse_url = cfg.clickhouse_url.clone();
         let mcp_clickhouse_database = cfg.clickhouse_database.clone();
         let report_temp_dir = cfg.reports.temp_dir.clone();
@@ -129,9 +130,10 @@ impl Gear for AnalyticsApiGear {
             .set(Arc::new(state))
             .map_err(|_| anyhow::anyhow!("{} gear already initialized", Self::MODULE_NAME))?;
 
-        if mcp.enabled {
-            crate::mcp::start(
+        if mcp.enabled || sql_api.enabled {
+            crate::sql_explorer::start(
                 &mcp,
+                &sql_api,
                 &mcp_clickhouse_url,
                 &mcp_clickhouse_database,
                 ctx.cancellation_token().child_token(),
@@ -252,7 +254,7 @@ pub fn check_config(app: &toolkit::bootstrap::AppConfig) -> anyhow::Result<()> {
         );
     }
     ExternalSourceRegistry::new(&cfg.external_sources)?;
-    crate::mcp::validate_config(&cfg.mcp)?;
+    crate::sql_explorer::validate_config(&cfg.mcp, &cfg.sql_api)?;
     if cfg.ai_assist.enabled {
         if cfg.ai_assist.max_concurrent == 0 {
             anyhow::bail!(

@@ -153,6 +153,7 @@ dependencies = [
  "serde_yaml",
  "sha2 0.11.0",
  "sqlparser",
+ "subtle",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",

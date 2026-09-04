@@ -161,4 +161,9 @@ function _M.pass_bearer()
     set_request_context()
 end
 
+function _M.pass_instance_token()
+    ngx.req.clear_header("Cookie")
+    set_request_context()
+end
+
 return _M

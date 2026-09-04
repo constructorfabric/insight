@@ -46,6 +46,26 @@ fn golden_strip_prefix() {
     assert_golden("stripprefix.routes.yaml", "stripprefix.nginx.conf");
 }
 
+#[test]
+fn instance_token_route_bypasses_session_and_mcp_oauth() {
+    let routes = "version: 1\nroutes:\n  - prefix: /api/sql/query\n    upstream: http://analytics:8086\n    auth: instance_token\n";
+    let conf = generate(routes, &Settings::default()).unwrap();
+    assert!(conf.contains("location = /api/sql/query {"));
+    assert!(conf.contains("require(\"gateway\").pass_instance_token()"));
+    assert!(!conf.contains("require(\"gateway\").pass_bearer()"));
+    assert!(!conf.contains("require(\"gateway\").exchange()"));
+    for path in ["/mcp", "/api/analytics", "/api/sql/query/extra"] {
+        assert!(
+            generate(
+                &routes.replace("/api/sql/query", path),
+                &Settings::default()
+            )
+            .is_err(),
+            "path: {path}"
+        );
+    }
+}
+
 /// Every generated `/api/` location must carry the full hygiene block (DESIGN
 /// 3.9): the Lua exchange, no browser Authorization survives, the session cookie
 /// is stripped in Lua, a fresh correlation id, and gateway-authored forwarding.

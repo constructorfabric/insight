@@ -45,6 +45,7 @@ pub enum Authentication {
     #[default]
     Session,
     Bearer,
+    InstanceToken,
 }
 
 impl Default for Defaults {

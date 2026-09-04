@@ -20,7 +20,7 @@ data:
         {{- end }}
     routes:
       {{- range .Values.gateway.routes }}
-      {{- if or (not (.mcpOnly | default false)) $.Values.global.mcp.enabled }}
+      {{- if and (or (not (.mcpOnly | default false)) $.Values.global.mcp.enabled) (or (not (.sqlApiOnly | default false)) $.Values.global.sqlApi.enabled) }}
       - prefix: {{ .prefix }}
         upstream: {{ tpl .upstream $ | quote }}
         {{- with .auth }}

@@ -77,6 +77,7 @@ base64 = { workspace = true }
 aes-gcm = { workspace = true }
 zeroize = { workspace = true }
 sha2 = { workspace = true }
+subtle = { workspace = true }
 hex = { workspace = true }
 secrecy = { workspace = true }
 csv = { workspace = true }

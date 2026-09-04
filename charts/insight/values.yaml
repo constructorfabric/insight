@@ -93,6 +93,8 @@ credentials:
 global:
   imagePullSecrets: [] # pull-secrets for a private registry
   storageClass: "" # empty = default StorageClass of the cluster
+  sqlApi:
+    enabled: false
   mcp:
     enabled: false
     # Public origin of this Insight instance, for example https://insight.example.com.
@@ -563,6 +565,9 @@ analytics:
     credentialsSecret: insight-mcp-creds
     clickhouseUser: insight_mcp
     clickhousePasswordKey: clickhouse-password
+  sqlApi:
+    tokenSecret: insight-sql-api-creds
+    tokenKey: token
   externalSources: []
   # Explaining a metric with an LLM. Off everywhere until an operator turns it
   # on, and turning it on without `tokenEncryptionKey` stops the service at

@@ -18,14 +18,16 @@ const REDACTED_SECRET: &str = "<redacted>";
 
 pub(crate) fn redacted_yaml(config: &toolkit::bootstrap::AppConfig) -> anyhow::Result<String> {
     let mut redacted = config.clone();
-    if let Some(password) = redacted
-        .gears
-        .get_mut("analytics")
-        .and_then(|gear| gear.get_mut("config"))
-        .and_then(|config| config.get_mut("mcp"))
-        .and_then(|mcp| mcp.get_mut("clickhouse_password"))
-    {
-        *password = serde_json::Value::String(REDACTED_SECRET.to_owned());
+    for (section, key) in [("mcp", "clickhouse_password"), ("sql_api", "token")] {
+        if let Some(secret) = redacted
+            .gears
+            .get_mut("analytics")
+            .and_then(|gear| gear.get_mut("config"))
+            .and_then(|config| config.get_mut(section))
+            .and_then(|section| section.get_mut(key))
+        {
+            *secret = serde_json::Value::String(REDACTED_SECRET.to_owned());
+        }
     }
     redacted.to_yaml()
 }
@@ -65,6 +67,13 @@ pub struct McpConfig {
     pub max_concurrent_queries: usize,
     pub clickhouse_user: String,
     pub clickhouse_password: SecretString,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct SqlApiConfig {
+    pub enabled: bool,
+    pub token: SecretString,
 }
 
 impl Default for McpConfig {
@@ -133,6 +142,7 @@ pub struct GearConfig {
     pub reports: ReportsConfig,
 
     pub mcp: McpConfig,
+    pub sql_api: SqlApiConfig,
 
     pub external_sources: Vec<ExternalSourceConfig>,
 }
@@ -154,6 +164,7 @@ impl Default for GearConfig {
             ai_assist: AiAssistConfig::default(),
             reports: ReportsConfig::default(),
             mcp: McpConfig::default(),
+            sql_api: SqlApiConfig::default(),
             external_sources: Vec::new(),
         }
     }
@@ -336,12 +347,14 @@ mod tests {
     #[test]
     fn printed_config_redacts_mcp_clickhouse_password() -> anyhow::Result<()> {
         let password = "mcp-password-that-must-not-print";
+        let token = "synthetic-sql-api-token-that-must-not-print";
         let mut config = toolkit::bootstrap::AppConfig::default();
         config.gears.insert(
             "analytics".to_owned(),
             serde_json::json!({
                 "config": {
-                    "mcp": { "clickhouse_password": password }
+                    "mcp": { "clickhouse_password": password },
+                    "sql_api": { "token": token }
                 }
             }),
         );
@@ -350,6 +363,7 @@ mod tests {
 
         assert!(printed.contains(REDACTED_SECRET));
         assert!(!printed.contains(password));
+        assert!(!printed.contains(token));
         Ok(())
     }
 

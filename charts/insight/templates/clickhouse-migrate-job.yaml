@@ -109,7 +109,9 @@ spec:
                   optional: true
             - name: MCP_ENABLED
               value: {{ .Values.global.mcp.enabled | quote }}
-            {{- if .Values.global.mcp.enabled }}
+            - name: SQL_API_ENABLED
+              value: {{ .Values.global.sqlApi.enabled | quote }}
+            {{- if or .Values.global.mcp.enabled .Values.global.sqlApi.enabled }}
             - name: CLICKHOUSE_MCP_PASSWORD
               valueFrom:
                 secretKeyRef:

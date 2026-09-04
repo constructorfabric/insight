@@ -2,6 +2,9 @@
 
 Single canonical unit of delivery for the Insight platform.
 
+For token-authenticated, read-only SQL execution, see the
+[SQL query API guide](../../deploy/SQL_QUERY_API.md).
+
 - **Chart**: `insight`
 - **Version**: see `Chart.yaml` → `version`
 - **App version**: see `Chart.yaml` → `appVersion` (matches image tags)

@@ -1,6 +1,8 @@
 replicaCount: 1
 
 global:
+  sqlApi:
+    enabled: false
   mcp:
     enabled: false
     publicUrl: ""
@@ -15,6 +17,10 @@ image:
 service:
   type: ClusterIP
   port: 8081
+
+sqlApi:
+  tokenSecret: insight-sql-api-creds
+  tokenKey: token
 
 mcp:
   port: 8086

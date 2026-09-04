@@ -81,7 +81,10 @@ pub fn validate(config: &RouteConfig) -> Result<(), ValidationErrors> {
             Authentication::Bearer if p != "/mcp" => errors.push(format!(
                 "bearer-authenticated route prefix '{p}' must be exactly '/mcp'"
             )),
-            Authentication::Session | Authentication::Bearer => {}
+            Authentication::InstanceToken if p != "/api/sql/query" => errors.push(format!(
+                "instance-token route prefix '{p}' must be exactly '/api/sql/query'"
+            )),
+            Authentication::Session | Authentication::Bearer | Authentication::InstanceToken => {}
         }
 
         match parse_upstream(&route.upstream) {

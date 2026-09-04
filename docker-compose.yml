@@ -264,6 +264,8 @@ services:
       APP__gears__analytics__config__ai_assist__admin_only: "${AI_ASSIST_ADMIN_ONLY:-true}"
       APP__gears__analytics__config__ai_assist__model: "${AI_ASSIST_MODEL:-claude-sonnet-5}"
       APP__gears__analytics__config__mcp__enabled: "${MCP_ENABLED:-false}"
+      APP__gears__analytics__config__sql_api__enabled: "${SQL_API_ENABLED:-false}"
+      APP__gears__analytics__config__sql_api__token: "${SQL_API_TOKEN:-}"
       APP__gears__analytics__config__mcp__public_url: "${MCP_PUBLIC_URL:-}"
       APP__gears__analytics__config__mcp__allow_insecure_private_network: "true"
       APP__gears__analytics__config__mcp__max_concurrent_queries: "${MCP_MAX_CONCURRENT_QUERIES:-16}"
@@ -775,6 +777,7 @@ services:
       # Grant-less `presentation` user's password (#1964), provisioned on seed.
       CLICKHOUSE_PRESENTATION_PASSWORD: "${CLICKHOUSE_PRESENTATION_PASSWORD:-presentation-local}"
       MCP_ENABLED: "${MCP_ENABLED:-false}"
+      SQL_API_ENABLED: "${SQL_API_ENABLED:-false}"
       CLICKHOUSE_MCP_PASSWORD: "${CLICKHOUSE_MCP_PASSWORD:-}"
       # apply-ch-migrations.sh runs `dbt run` from /ingestion/dbt. The
       # ingestion tree is bind-mounted read-only (below), so redirect dbt's
