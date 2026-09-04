@@ -11,9 +11,11 @@ data:
 
     logging:
       default:
-        # The install-wide knob: global.observability.logs.level — the same
-        # value the platform CM publishes as INSIGHT_LOG_LEVEL.
+        # The install-wide knobs: global.observability.logs.{level,format} —
+        # the same values the platform CM publishes as INSIGHT_LOG_LEVEL /
+        # INSIGHT_LOG_FORMAT.
         console_level: {{ ((((.Values.global).observability).logs).level) | default "info" }}
+        console_format: {{ ((((.Values.global).observability).logs).format) | default "json" }}
 
     opentelemetry:
       resource:

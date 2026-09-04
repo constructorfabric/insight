@@ -1083,7 +1083,7 @@ dashboards:
                 "type": "loki",
                 "uid": "loki"
               },
-              "description": "**Reads near zero on this stand, and that is not a claim that there are no errors.** Since the gitops observability rollout (2026-08-31) Alloy promotes `level` only from JSON logs, so nginx `[error]`, Rust ` ERROR ` and ClickHouse `<Error>` lines carry no level label. The ClickHouse row below matches on line content and is unaffected.\n\nThe starting point: which services are talking, and which of them are unhappy. `error rate` is errors as a share of that service's own lines, so a quiet service with a few failures still stands out.",
+              "description": "**Counts only lines carrying a `level` label.** Alloy promotes `level` from JSON logs; the Rust services emit JSON (insight#3189), so their lines are labelled and counted — nginx `[error]` and ClickHouse `<Error>` lines still carry no level label. The ClickHouse row below matches on line content and is unaffected.\n\nThe starting point: which services are talking, and which of them are unhappy. `error rate` is errors as a share of that service's own lines, so a quiet service with a few failures still stands out.",
               "fieldConfig": {
                 "defaults": {
                   "custom": {
@@ -1236,7 +1236,7 @@ dashboards:
                   "refId": "C"
                 },
                 {
-                  "expr": "100 * sum by (container) (count_over_time({namespace=~\"$ns\", container=~\"$svc\", container!~\"loki|grafana|alloy\", level=~\"error|fatal\"} [$__range])) / sum by (container) (count_over_time({namespace=~\"$ns\", container=~\"$svc\", container!~\"loki|grafana|alloy\", level=~\"error|fatal\"} [$__range]))",
+                  "expr": "100 * sum by (container) (count_over_time({namespace=~\"$ns\", container=~\"$svc\", container!~\"loki|grafana|alloy\", level=~\"error|fatal\"} [$__range])) / sum by (container) (count_over_time({namespace=~\"$ns\", container=~\"$svc\", container!~\"loki|grafana|alloy\"} [$__range]))",
                   "instant": true,
                   "refId": "D"
                 }
@@ -1318,7 +1318,7 @@ dashboards:
             },
             {
               "collapsed": false,
-              "description": "**Reads near zero on this stand, and that is not a claim that there are no errors.** Since the gitops observability rollout (2026-08-31) Alloy promotes `level` only from JSON logs, so nginx `[error]`, Rust ` ERROR ` and ClickHouse `<Error>` lines carry no level label. The ClickHouse row below matches on line content and is unaffected.",
+              "description": "**Counts only lines carrying a `level` label.** Alloy promotes `level` from JSON logs; the Rust services emit JSON (insight#3189), so their lines are labelled and counted — nginx `[error]` and ClickHouse `<Error>` lines still carry no level label. The ClickHouse row below matches on line content and is unaffected.",
               "gridPos": {
                 "h": 1,
                 "w": 24,
@@ -1334,7 +1334,7 @@ dashboards:
                 "type": "loki",
                 "uid": "loki"
               },
-              "description": "**Reads near zero on this stand, and that is not a claim that there are no errors.** Since the gitops observability rollout (2026-08-31) Alloy promotes `level` only from JSON logs, so nginx `[error]`, Rust ` ERROR ` and ClickHouse `<Error>` lines carry no level label. The ClickHouse row below matches on line content and is unaffected.\n\nMatches all four log formats on this stand: Rust tracing (ERROR), ClickHouse (<Error>), nginx ([error]) and JSON (\"level\":\"error\"). Filtering on the `level` label alone would miss most of them — see the dashboard notes.",
+              "description": "**Counts only lines carrying a `level` label.** Alloy promotes `level` from JSON logs; the Rust services emit JSON (insight#3189), so their lines are labelled and counted — nginx `[error]` and ClickHouse `<Error>` lines still carry no level label. The ClickHouse row below matches on line content and is unaffected.\n\nCounts lines labelled `error` or `fatal`. ClickHouse failures are matched on line content in the row below.",
               "fieldConfig": {
                 "defaults": {
                   "color": {
@@ -1393,7 +1393,7 @@ dashboards:
                 "type": "loki",
                 "uid": "loki"
               },
-              "description": "**Reads near zero on this stand, and that is not a claim that there are no errors.** Since the gitops observability rollout (2026-08-31) Alloy promotes `level` only from JSON logs, so nginx `[error]`, Rust ` ERROR ` and ClickHouse `<Error>` lines carry no level label. The ClickHouse row below matches on line content and is unaffected.",
+              "description": "**Counts only lines carrying a `level` label.** Alloy promotes `level` from JSON logs; the Rust services emit JSON (insight#3189), so their lines are labelled and counted — nginx `[error]` and ClickHouse `<Error>` lines still carry no level label. The ClickHouse row below matches on line content and is unaffected.",
               "fieldConfig": {
                 "defaults": {
                   "color": {
@@ -1436,7 +1436,7 @@ dashboards:
                 "type": "loki",
                 "uid": "loki"
               },
-              "description": "**Reads near zero on this stand, and that is not a claim that there are no errors.** Since the gitops observability rollout (2026-08-31) Alloy promotes `level` only from JSON logs, so nginx `[error]`, Rust ` ERROR ` and ClickHouse `<Error>` lines carry no level label. The ClickHouse row below matches on line content and is unaffected.",
+              "description": "**Counts only lines carrying a `level` label.** Alloy promotes `level` from JSON logs; the Rust services emit JSON (insight#3189), so their lines are labelled and counted — nginx `[error]` and ClickHouse `<Error>` lines still carry no level label. The ClickHouse row below matches on line content and is unaffected.",
               "fieldConfig": {
                 "defaults": {
                   "custom": {
@@ -1481,7 +1481,7 @@ dashboards:
                 "type": "loki",
                 "uid": "loki"
               },
-              "description": "**Reads near zero on this stand, and that is not a claim that there are no errors.** Since the gitops observability rollout (2026-08-31) Alloy promotes `level` only from JSON logs, so nginx `[error]`, Rust ` ERROR ` and ClickHouse `<Error>` lines carry no level label. The ClickHouse row below matches on line content and is unaffected.\n\nOnly counts lines whose level was successfully parsed. Access-log lines legitimately have no severity, so this is a share of levelled lines, not of all traffic.",
+              "description": "**Counts only lines carrying a `level` label.** Alloy promotes `level` from JSON logs; the Rust services emit JSON (insight#3189), so their lines are labelled and counted — nginx `[error]` and ClickHouse `<Error>` lines still carry no level label. The ClickHouse row below matches on line content and is unaffected.\n\nOnly counts lines whose level was successfully parsed. Access-log lines legitimately have no severity, so this is a share of levelled lines, not of all traffic.",
               "fieldConfig": {
                 "defaults": {
                   "unit": "short"
@@ -1561,7 +1561,7 @@ dashboards:
                 "type": "loki",
                 "uid": "loki"
               },
-              "description": "**Reads near zero on this stand, and that is not a claim that there are no errors.** Since the gitops observability rollout (2026-08-31) Alloy promotes `level` only from JSON logs, so nginx `[error]`, Rust ` ERROR ` and ClickHouse `<Error>` lines carry no level label. The ClickHouse row below matches on line content and is unaffected.",
+              "description": "**Counts only lines carrying a `level` label.** Alloy promotes `level` from JSON logs; the Rust services emit JSON (insight#3189), so their lines are labelled and counted — nginx `[error]` and ClickHouse `<Error>` lines still carry no level label. The ClickHouse row below matches on line content and is unaffected.",
               "gridPos": {
                 "h": 12,
                 "w": 24,
@@ -3466,7 +3466,7 @@ dashboards:
                     "type": "loki",
                     "uid": "loki"
                   },
-                  "expr": "100 * (1 - ((sum (count_over_time({namespace=\"insight\", container=\"analytics\"} | logfmt | user_agent=~`kube-probe.*` | uri=~`/health.*` | status >= 400 [$__range])) or (sum (count_over_time({namespace=\"insight\", container=\"analytics\"} | logfmt | user_agent=~`kube-probe.*` | uri=~`/health.*` [$__range])) * 0)) / sum (count_over_time({namespace=\"insight\", container=\"analytics\"} | logfmt | user_agent=~`kube-probe.*` | uri=~`/health.*` [$__range]))))",
+                  "expr": "100 * (1 - ((sum (count_over_time({namespace=\"insight\", container=\"analytics\"} | json | fields_user_agent=~`kube-probe.*` | fields_uri=~`/health.*` | fields_status >= 400 [$__range])) or (sum (count_over_time({namespace=\"insight\", container=\"analytics\"} | json | fields_user_agent=~`kube-probe.*` | fields_uri=~`/health.*` [$__range])) * 0)) / sum (count_over_time({namespace=\"insight\", container=\"analytics\"} | json | fields_user_agent=~`kube-probe.*` | fields_uri=~`/health.*` [$__range]))))",
                   "legendFormat": "analytics",
                   "queryType": "instant",
                   "refId": "A"
@@ -3476,7 +3476,7 @@ dashboards:
                     "type": "loki",
                     "uid": "loki"
                   },
-                  "expr": "100 * (1 - ((sum (count_over_time({namespace=\"insight\", container=\"authenticator\"} | logfmt | user_agent=~`kube-probe.*` | uri=~`/health.*` | status >= 400 [$__range])) or (sum (count_over_time({namespace=\"insight\", container=\"authenticator\"} | logfmt | user_agent=~`kube-probe.*` | uri=~`/health.*` [$__range])) * 0)) / sum (count_over_time({namespace=\"insight\", container=\"authenticator\"} | logfmt | user_agent=~`kube-probe.*` | uri=~`/health.*` [$__range]))))",
+                  "expr": "100 * (1 - ((sum (count_over_time({namespace=\"insight\", container=\"authenticator\"} | json | fields_user_agent=~`kube-probe.*` | fields_uri=~`/health.*` | fields_status >= 400 [$__range])) or (sum (count_over_time({namespace=\"insight\", container=\"authenticator\"} | json | fields_user_agent=~`kube-probe.*` | fields_uri=~`/health.*` [$__range])) * 0)) / sum (count_over_time({namespace=\"insight\", container=\"authenticator\"} | json | fields_user_agent=~`kube-probe.*` | fields_uri=~`/health.*` [$__range]))))",
                   "legendFormat": "authenticator",
                   "queryType": "instant",
                   "refId": "B"
@@ -3486,7 +3486,7 @@ dashboards:
                     "type": "loki",
                     "uid": "loki"
                   },
-                  "expr": "100 * (1 - ((sum (count_over_time({namespace=\"insight\", container=\"identity-resolution\"} | logfmt | user_agent=~`kube-probe.*` | uri=~`/health.*` | status >= 400 [$__range])) or (sum (count_over_time({namespace=\"insight\", container=\"identity-resolution\"} | logfmt | user_agent=~`kube-probe.*` | uri=~`/health.*` [$__range])) * 0)) / sum (count_over_time({namespace=\"insight\", container=\"identity-resolution\"} | logfmt | user_agent=~`kube-probe.*` | uri=~`/health.*` [$__range]))))",
+                  "expr": "100 * (1 - ((sum (count_over_time({namespace=\"insight\", container=\"identity-resolution\"} | json | fields_user_agent=~`kube-probe.*` | fields_uri=~`/health.*` | fields_status >= 400 [$__range])) or (sum (count_over_time({namespace=\"insight\", container=\"identity-resolution\"} | json | fields_user_agent=~`kube-probe.*` | fields_uri=~`/health.*` [$__range])) * 0)) / sum (count_over_time({namespace=\"insight\", container=\"identity-resolution\"} | json | fields_user_agent=~`kube-probe.*` | fields_uri=~`/health.*` [$__range]))))",
                   "legendFormat": "identity-resolution",
                   "queryType": "instant",
                   "refId": "C"
@@ -3550,7 +3550,7 @@ dashboards:
                     "type": "loki",
                     "uid": "loki"
                   },
-                  "expr": "sum (count_over_time({namespace=\"insight\", container=~\"analytics|authenticator|identity-resolution\"} | logfmt | user_agent=~`kube-probe.*` | uri=~`/health.*` [$__range]))",
+                  "expr": "sum (count_over_time({namespace=\"insight\", container=~\"analytics|authenticator|identity-resolution\"} | json | fields_user_agent=~`kube-probe.*` | fields_uri=~`/health.*` [$__range]))",
                   "queryType": "instant",
                   "refId": "A"
                 }
@@ -3629,7 +3629,7 @@ dashboards:
                     "type": "loki",
                     "uid": "loki"
                   },
-                  "expr": "sum (count_over_time({namespace=\"insight\", container=~\"analytics|authenticator|identity-resolution\"} | logfmt | user_agent=~`kube-probe.*` | uri=~`/health.*` | status >= 400 [$__range]))",
+                  "expr": "sum (count_over_time({namespace=\"insight\", container=~\"analytics|authenticator|identity-resolution\"} | json | fields_user_agent=~`kube-probe.*` | fields_uri=~`/health.*` | fields_status >= 400 [$__range]))",
                   "queryType": "instant",
                   "refId": "A"
                 }
@@ -3684,7 +3684,7 @@ dashboards:
                     "type": "loki",
                     "uid": "loki"
                   },
-                  "expr": "sum by (container) (count_over_time({namespace=\"insight\", container=~\"analytics|authenticator|identity-resolution\"} | logfmt | user_agent=~`kube-probe.*` | uri=~`/health.*` [1m]))",
+                  "expr": "sum by (container) (count_over_time({namespace=\"insight\", container=~\"analytics|authenticator|identity-resolution\"} | json | fields_user_agent=~`kube-probe.*` | fields_uri=~`/health.*` [1m]))",
                   "interval": "1m",
                   "legendFormat": "{{container}}",
                   "queryType": "range",
@@ -3736,7 +3736,7 @@ dashboards:
                     "type": "loki",
                     "uid": "loki"
                   },
-                  "expr": "quantile_over_time(0.95, {namespace=\"insight\", container=~\"analytics|authenticator|identity-resolution\"} | logfmt | user_agent=~`kube-probe.*` | uri=~`/health.*` | unwrap duration [$__auto]) by (container)",
+                  "expr": "quantile_over_time(0.95, {namespace=\"insight\", container=~\"analytics|authenticator|identity-resolution\"} | json | fields_user_agent=~`kube-probe.*` | fields_uri=~`/health.*` | unwrap fields_duration [$__auto]) by (container)",
                   "legendFormat": "{{container}}",
                   "queryType": "range",
                   "refId": "A"
@@ -3769,7 +3769,7 @@ dashboards:
                     "type": "loki",
                     "uid": "loki"
                   },
-                  "expr": "{namespace=\"insight\", container=~\"analytics|authenticator|identity-resolution\"} | logfmt | user_agent=~`kube-probe.*` | uri=~`/health.*` | status >= 400 | line_format `{{.container}} {{.status}} {{.uri}} {{.duration}}us`",
+                  "expr": "{namespace=\"insight\", container=~\"analytics|authenticator|identity-resolution\"} | json | fields_user_agent=~`kube-probe.*` | fields_uri=~`/health.*` | fields_status >= 400 | line_format `{{.container}} {{.fields_status}} {{.fields_uri}} {{.fields_duration}}us`",
                   "queryType": "range",
                   "refId": "A"
                 }
