@@ -1,0 +1,26 @@
+# Mirrors the bronze_github_directory.org_members DDL in
+# scripts/connectors-ddl/github-directory.sql.
+schemas:
+  bronze_github_directory.org_members:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      _airbyte_raw_id: { type: string }
+      _airbyte_extracted_at: { type: string, format: date-time }
+      _airbyte_meta: { type: string }
+      _airbyte_generation_id: { type: integer }
+      tenant_id: { type: [string, "null"] }
+      source_id: { type: [string, "null"] }
+      unique_key: { type: [string, "null"] }
+      collected_at: { type: [string, "null"] }
+      data_source: { type: [string, "null"] }
+      org: { type: [string, "null"] }
+      login: { type: [string, "null"] }
+      member_id: { type: [integer, "null"] }
+      name: { type: [string, "null"] }
+      email: { type: [string, "null"] }
+      company: { type: [string, "null"] }
+      role: { type: [string, "null"] }
+      created_at: { type: [string, "null"] }
+      updated_at: { type: [string, "null"] }

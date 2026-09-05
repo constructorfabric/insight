@@ -240,6 +240,41 @@ def load(
     )
 
 
+def resolve_record(
+    record: dict[str, Any], *, anchor: Path, substitutions: Mapping[str, str]
+) -> dict[str, Any]:
+    """Resolve one code-built record as `load` resolves a fixture's.
+
+    `anchor` is the file the record would have been written in: `$ref` paths resolve
+    relative to its directory, so a record anchored inside `metrics/` reaches
+    `templates/` the way every spec does.
+    """
+    resolved = _substituted(ref_resolver.resolve(record, anchor), substitutions, anchor)
+    if not isinstance(resolved, dict):
+        raise FixtureError(f"{record!r} did not resolve to a record")
+    return resolved
+
+
+def prepare_rows(
+    schemas_dir: Path, table: str, rows: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Derive payloads and validate code-built rows against `table`'s schema.
+
+    Returns the rows the seeder takes, and the schema it takes beside them.
+    """
+    try:
+        schema = schema_validator.load_schema(schemas_dir, table)
+        prepared = [
+            schema_validator.pad_and_validate(
+                _with_derived_payload(row, schema), schema, table=table
+            )
+            for row in rows
+        ]
+    except schema_validator.SchemaError as e:
+        raise FixtureError(str(e)) from e
+    return prepared, schema
+
+
 #: Columns that are the warehouse's framing rather than the source's payload.
 #: The connector builds `raw_data` from the report row and adds these alongside
 #: it, so a fixture's payload must leave them out too.

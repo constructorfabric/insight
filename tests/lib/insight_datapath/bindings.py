@@ -35,6 +35,20 @@ class BindingError(RuntimeError):
     """The product declined an operator decision a spec depends on."""
 
 
+def hashed_source_id(cfg: InstanceConfig, raw: str) -> str:
+    """The connector instance id the warehouse mints from a bronze `source_id`."""
+    rows = ch.query(
+        cfg,
+        f"SELECT toString(toUUID(UUIDNumToString(sipHash128('{raw}')))) ",
+    )
+    return str(rows[0][0])
+
+
+def wire_account(source_type: str, source_id: str, account_id: str) -> dict[str, str]:
+    """An account as the resolution API names it."""
+    return {"source": source_type, "source_id": source_id, "id": account_id}
+
+
 class Bindings:
     """Applies a spec's declared account decisions as an operator."""
 
@@ -72,11 +86,11 @@ class Bindings:
             person = (
                 EXCLUDED if entry.person == EXCLUDED else self._person(entry.person, person_ids)
             )
-            account = {
-                "source": entry.source_type,
-                "source_id": self._hashed_source_id(entry.source_id),
-                "id": entry.account_id,
-            }
+            account = wire_account(
+                entry.source_type,
+                hashed_source_id(self.cfg, entry.source_id),
+                entry.account_id,
+            )
             out.append((account, person))
         return out
 
@@ -106,13 +120,6 @@ class Bindings:
             )
         return person
 
-    def _hashed_source_id(self, raw: str) -> str:
-        rows = ch.query(
-            self.cfg,
-            f"SELECT toString(toUUID(UUIDNumToString(sipHash128('{raw}')))) ",
-        )
-        return str(rows[0][0])
-
     def _accounts_claiming(self, email: str) -> list[dict[str, str]]:
         rows = ch.query(
             self.cfg,
@@ -129,7 +136,7 @@ class Bindings:
             """,
         )
         return [
-            {"source": str(source), "source_id": str(source_id), "id": str(account)}
+            wire_account(str(source), str(source_id), str(account))
             for source, source_id, account in rows
         ]
 
