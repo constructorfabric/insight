@@ -4,7 +4,7 @@ import {
   Layers,
   LayoutGrid,
   Search,
-  Settings2,
+  Settings,
 } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -163,7 +163,7 @@ export function ContextPane() {
                 <PopoverTrigger
                   render={
                     <SidebarMenuButton>
-                      <Settings2 aria-hidden />
+                      <Settings aria-hidden />
                       <span>Settings</span>
                     </SidebarMenuButton>
                   }
