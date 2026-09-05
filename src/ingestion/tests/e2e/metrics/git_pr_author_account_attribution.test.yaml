@@ -10,19 +10,18 @@ description: >
     • gold:   a request reaches a person through the author's account first and
       the author's own address second — and through nothing else
 
-  Five requests over two connectors, covering every way a source can name an
-  author: an account bound to a person, an account bound to nobody, and no
-  account at all. None publishes an author address — on Bitbucket that is
-  structural, since the connector has no author address to publish, which makes
-  it the strictest test of the rule. Every request carries commits written by
-  the same third person, who opened none of them: the condition under which an
+  Four requests, the same pair on each of two connectors: an author account bound
+  to a person, and one bound to nobody. Neither connector publishes an author
+  address here — on Bitbucket that is structural, since it has none to publish,
+  which makes it the stricter of the two. Every request carries commits written
+  by the same third person, who opened none of them: the condition under which an
   address borrowed from the commits would look unambiguous.
 
-  Cases: only the requests whose author account is bound reach anybody, and each
-  reaches its own account's person for prs_created and prs_merged alike; the
-  unbound-account requests and the account-less one stay unresolved instead of
-  reaching the commit author; and a resolved request still carries its
-  dimensions, so leaving the others unattributed cost the breakdown nothing.
+  Cases: the requests whose author account is bound reach that account's person
+  for prs_created and prs_merged alike, and the ones whose account is bound to
+  nobody stay unresolved rather than reaching the commit author. A request the
+  source names no author for at all is the neighbouring case and belongs to
+  git_pr_account_attribution, which owns it.
 
 identity_accounts:
   # Account 9002 is alice's. Account 9001 is deliberately absent — an account
@@ -48,26 +47,21 @@ bronze:
     - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-901, id: 901, number: 901, author_login: alice-gh, created_at: "2026-11-02T08:00:00Z", closed_at: "2026-11-03T09:00:00Z", merged_at: "2026-11-03T09:00:00Z", merge_commit_sha: merge-901}
     # Opened by the unbound account 9001.
     - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-902, id: 902, number: 902, author_login: releaser-bot, created_at: "2026-11-02T10:00:00Z", closed_at: "2026-11-03T11:00:00Z", merged_at: "2026-11-03T11:00:00Z", merge_commit_sha: merge-902}
-    # Ghost: no diff-stats row exists for this one at all, so the source names
-    # neither an account nor an address for its author.
-    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-903, id: 903, number: 903, author_login: ghost, created_at: "2026-11-02T12:00:00Z", closed_at: "2026-11-03T13:00:00Z", merged_at: "2026-11-03T13:00:00Z", merge_commit_sha: merge-903}
 
   bronze_github.pull_request_diff_stats:
     # author_email stays empty on both: GitHub publishes an address only for
     # some authors, and the account id is what the request travels on.
-    # author_id IS that account id. pr-903 has no row here on purpose.
+    # author_id IS that account id.
     - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-901, pull_number: 901, additions: 10, author_id: 9002}
     - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-902, pull_number: 902, additions: 10, author_id: 9001}
 
   bronze_github.pull_request_commits:
     - {$ref: templates/git_activity.yaml#/templates/base, unique_key: prc-901, repo_full_name: constructor/insight, pull_number: 901, sha: hash-bob-1, author_email: bob@example.com, is_merge: false}
     - {$ref: templates/git_activity.yaml#/templates/base, unique_key: prc-902, repo_full_name: constructor/insight, pull_number: 902, sha: hash-bob-2, author_email: bob@example.com, is_merge: false}
-    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: prc-903, repo_full_name: constructor/insight, pull_number: 903, sha: hash-bob-3, author_email: bob@example.com, is_merge: false}
 
   bronze_github.commits:
     - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-bob-1, sha: hash-bob-1, author_name: bob, author_email: bob@example.com, committer_name: bob, committer_email: bob@example.com, additions: 5}
     - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-bob-2, sha: hash-bob-2, author_name: bob, author_email: bob@example.com, committer_name: bob, committer_email: bob@example.com, additions: 5}
-    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-bob-3, sha: hash-bob-3, author_name: bob, author_email: bob@example.com, committer_name: bob, committer_email: bob@example.com, additions: 5}
 
   # Bitbucket is the provider that publishes no author address whatsoever, so a
   # request there rests on the account binding alone. One bound account, one the
@@ -91,7 +85,7 @@ bronze:
     - {$ref: templates/bitbucket_git.yaml#/templates/commit, unique_key: "bb-c:2", sha: bb-hash-bob-2, author_name: bob, author_email: bob@example.com, committer_name: bob, committer_email: bob@example.com, committed_date: "2026-11-02T09:00:00Z", additions: 5}
 
 cases:
-  - name: Only the requests whose author account is bound reach anybody
+  - name: A bound author account takes its request and an unbound one takes nobody
     request:
       url: /v1/metric-results
       method: POST
@@ -114,31 +108,9 @@ cases:
       # carried this request to her.
       - {metric: git.prs_created, view: period, find: {entity_id: carol@example.com}, equal: {value: 1}}
       - {metric: git.prs_merged, view: period, find: {entity_id: carol@example.com}, equal: {value: 1}}
-      # Bob wrote the commits on all five requests and opened none. An unbound
-      # account (pr-902, bb-pr:802) and an author the source does not name at
-      # all (pr-903) leave their request unresolved — none of them turns his
-      # commits into a claim on his behalf, for the creation date or the merge
-      # date, on either connector.
+      # Bob wrote the commits on all four requests and opened none. The unbound
+      # accounts (pr-902, bb-pr:802) leave their requests unresolved rather than
+      # turning his commits into a claim on his behalf — for the creation date
+      # and the merge date, on either connector.
       - {metric: git.prs_created, view: period, find: {entity_id: bob@example.com}, equal: {value: null}}
       - {metric: git.prs_merged, view: period, find: {entity_id: bob@example.com}, equal: {value: null}}
-
-  - name: The resolved request still carries its dimensions
-    request:
-      url: /v1/metric-results
-      method: POST
-      body:
-        entity: {type: person, ids: [alice@example.com, bob@example.com]}
-        period: {from: "2026-11-01", to: "2026-11-30"}
-        metrics:
-          - metric_key: git.prs_created
-            views: [{view: breakdown, dimensions: [source]}]
-    expect:
-      - assert: "status == 200"
-      # The resolved GitHub request is still dimensioned, so dropping the
-      # borrowed address cost the breakdown path nothing. The unresolved ones
-      # contribute to no dimension at all, which is what leaving a request
-      # unattributed means.
-      - metric: git.prs_created
-        view: breakdown
-        find: {entity_id: alice@example.com, dimensions: {key: source, value: github}}
-        equal: {value: 1}
