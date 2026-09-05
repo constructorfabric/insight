@@ -1,6 +1,6 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 // Names link to the IC page; navigation isn't exercised here, so stub Link
 // to a plain anchor with the `$person` param interpolated.
@@ -32,9 +32,14 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
   };
 });
 
+const settings = vi.hoisted(() => ({ focusMode: "all" }));
 vi.mock("@/hooks/use-settings", () => ({
-  useSettings: () => ({ focusMode: "all" }),
+  useSettings: () => ({ focusMode: settings.focusMode }),
 }));
+
+afterEach(() => {
+  settings.focusMode = "all";
+});
 
 import type { MetricResult } from "@/api/metric-results-client";
 import { MembersGrid } from "@/components/widgets/dashboard/members-grid";
@@ -104,6 +109,28 @@ describe("MembersGrid", () => {
       />,
     );
     expect(screen.getByText("Top 25%").closest("div")).toHaveClass("px-3");
+  });
+
+  it("names only the standings the active focus actually paints", () => {
+    settings.focusMode = "rewards";
+    render(
+      <MembersGrid
+        members={MEMBERS}
+        metricKeys={["ai.active_days"]}
+        byKey={byKeyFor(
+          metric("ai.active_days", [
+            { id: "ann@x.com", value: 20 },
+            { id: "bo@x.com", value: 8 },
+            { id: "cy@x.com", value: 2 },
+          ]),
+        )}
+        caption="Members grid"
+      />,
+    );
+    expect(screen.getByText("Top 25%")).toBeInTheDocument();
+    expect(screen.getByText("Everything else")).toBeInTheDocument();
+    expect(screen.queryByText("Bottom 25%")).not.toBeInTheDocument();
+    expect(screen.queryByText("Near the median")).not.toBeInTheDocument();
   });
 
   it("renders a semantic table: sortable metric columns, member row headers linking to the IC view", () => {

@@ -166,6 +166,12 @@ describe("TeamStateView", () => {
     expect(screen.getAllByText("boss")).toHaveLength(2);
   });
 
+  it("labels each member row with its standing, so the behind-first order reads", () => {
+    render(<TeamStateView />);
+    expect(screen.getAllByText("2 of 2 behind peers")).toHaveLength(2);
+    expect(screen.getAllByText("2 of 2 ahead of peers")).toHaveLength(2);
+  });
+
   it("shows a manager with no reports as a one-person scope", () => {
     mocks.tree = person("boss");
     mocks.roster = peopleFromIdentityTree(mocks.tree);

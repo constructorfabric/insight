@@ -257,6 +257,7 @@ export function TeamStateView() {
               metricKeys={shownKeys}
               byKey={heatByKey}
               previousByKey={grid.previousByKey}
+              showIssues
               caption={`${teamName || "Team"} — people × metrics`}
               cohortLabel={cohortLabel}
             />

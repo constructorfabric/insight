@@ -471,7 +471,7 @@ export function MembersGrid({
           </tbody>
         </table>
       </div>
-      <Legend />
+      <Legend focusMode={focusMode} />
     </div>
   );
 }
@@ -795,13 +795,28 @@ function ColumnHeader({
   );
 }
 
-function Legend() {
+const FOCUS_LEGEND: Record<FocusMode, PeerStatusWithNeutral[]> = {
+  all: ["top", "in_pack", "bottom", "neutral"],
+  critical: ["bottom"],
+  rewards: ["top"],
+  neutral: [],
+};
+
+function Legend({ focusMode }: { focusMode: FocusMode }) {
+  const shown = FOCUS_LEGEND[focusMode];
+  if (shown.length === 0) return null;
   return (
     <div className="flex flex-wrap items-center gap-4 px-3 text-xs text-muted-foreground">
-      <LegendSwatch className={PEER_FILL.top}>Top 25%</LegendSwatch>
-      <LegendSwatch className={PEER_FILL.in_pack}>Near the median</LegendSwatch>
-      <LegendSwatch className={PEER_FILL.bottom}>Bottom 25%</LegendSwatch>
-      <LegendSwatch className={PEER_FILL.neutral}>No comparison</LegendSwatch>
+      {shown.map((status) => (
+        <LegendSwatch key={status} className={PEER_FILL[status]}>
+          {PEER_LABEL[status]}
+        </LegendSwatch>
+      ))}
+      {focusMode === "all" ? null : (
+        <LegendSwatch className={PEER_FILL.neutral}>
+          Everything else
+        </LegendSwatch>
+      )}
     </div>
   );
 }
