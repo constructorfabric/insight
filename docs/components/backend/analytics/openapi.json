@@ -966,7 +966,7 @@
             "description": "`builtin` metrics read managed observation relations; `custom` metrics\nexecute inline SQL at query time. The validator stamps `schema_status`\nand `last_observed_date` from materialized relations only, so for\n`custom` those fields stay `unchecked` / absent regardless of data —\nreaders must not interpret them as \"never measured\" for custom metrics."
           },
           "revision_window_days": {
-            "description": "Deprecated, kept for consumers written before `settled_through`: how many\ndays back from `last_observed_date` a reading may still be revised.\n\nA duration cannot express a boundary anchored to the billing month, so\nfor such a source this is the longest that boundary can ever be — an\nover-statement, never an under-statement. Absence still means \"settles\non arrival\", which is why a source with a rule always reports a number\nhere rather than omitting one it cannot state exactly. Read\n`settled_through` instead.",
+            "description": "Deprecated, kept for consumers written before `settled_through`: how many\ndays back from `last_observed_date` a reading may still be revised.\n\nA duration cannot express a boundary anchored to the billing month, so\nfor a month-anchored measure this is the longest that boundary can ever\nbe — an over-statement, never an under-statement. Absence still means\n\"settles on arrival\", which is why a metric under any rule reports a\nnumber here rather than omitting one it cannot state exactly. Read\n`settled_through` instead.",
             "format": "int32",
             "minimum": 0,
             "type": [

@@ -150,6 +150,14 @@ pub struct BuiltinSource {
 pub struct MeasureSeed {
     pub key: String,
     pub evidence_granularity: EvidenceGranularity,
+    /// Overrides the source's rule where this measure settles differently.
+    ///
+    /// One supplier can report facts on two date anchors: a month-to-date total
+    /// stamped at the month it bills for is rewritten by every later reading,
+    /// while the step between two readings is fixed the moment the second
+    /// arrives. Absent = the source's rule.
+    #[serde(default)]
+    pub revision: Option<RevisionRule>,
     /// Declared per (source, measure): `active_day` is a per-day flag in
     /// `ai_usage` and a distinct-count subject in `collab`.
     #[serde(default)]

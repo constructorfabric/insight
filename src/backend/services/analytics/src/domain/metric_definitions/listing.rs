@@ -96,10 +96,10 @@ pub struct MetricDefinitionView {
     /// days back from `last_observed_date` a reading may still be revised.
     ///
     /// A duration cannot express a boundary anchored to the billing month, so
-    /// for such a source this is the longest that boundary can ever be — an
-    /// over-statement, never an under-statement. Absence still means "settles
-    /// on arrival", which is why a source with a rule always reports a number
-    /// here rather than omitting one it cannot state exactly. Read
+    /// for a month-anchored measure this is the longest that boundary can ever
+    /// be — an over-statement, never an under-statement. Absence still means
+    /// "settles on arrival", which is why a metric under any rule reports a
+    /// number here rather than omitting one it cannot state exactly. Read
     /// `settled_through` instead.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub revision_window_days: Option<u16>,
@@ -199,7 +199,7 @@ fn build_views(
     mut tags: HashMap<Uuid, Vec<String>>,
 ) -> Result<Vec<MetricDefinitionView>, CanonicalError> {
     let mut metrics = Vec::with_capacity(selected.len());
-    let revision_rules = revision_rule_by_metric();
+    let revision_rules = revision_rules_by_metric();
     for row in selected {
         let format = MetricFormat::from_db(&row.format)
             .ok_or_else(|| config_error(&row.metric_key, "format", &row.format))?;
@@ -224,12 +224,13 @@ fn build_views(
         // builtin's key and win the listing over it (`select_rows`). It reads
         // its own SQL and no managed source, so the source's revision rule is
         // not its to report.
-        let rule = match origin {
-            MetricOrigin::Builtin => revision_rules.get(row.metric_key.as_str()).copied(),
+        let rules = match origin {
+            MetricOrigin::Builtin => revision_rules.get(row.metric_key.as_str()),
             MetricOrigin::Custom => None,
         };
-        let settled_through = rule.and_then(|rule| settled_through(rule, row.last_observed_date));
-        let revision_window_days = rule.map(legacy_revision_window_days);
+        let settled_through =
+            rules.and_then(|rules| settled_through_all(rules, row.last_observed_date));
+        let revision_window_days = rules.and_then(|rules| legacy_window_all(rules));
         metrics.push(MetricDefinitionView {
             metric_key: row.metric_key,
             entity_type,
@@ -257,30 +258,73 @@ fn build_views(
     Ok(metrics)
 }
 
-/// Each builtin metric's revision rule, taken from the source it reads.
+/// The revision rules a builtin metric reads through, one per input measure.
 ///
 /// The rule belongs to the supplier, not to the tenant, so it comes from the
 /// seed rather than from `metric_definitions` — a stored copy would be a second
 /// truth to keep in step with the registry. A custom metric reads no managed
 /// source and so appears here for no key.
-fn revision_rule_by_metric() -> HashMap<&'static str, RevisionRule> {
-    let by_source: HashMap<&str, RevisionRule> = builtin_sources()
+///
+/// Per measure rather than per source, because one supplier can report on two
+/// date anchors: `ai_cost` stamps its month-to-date totals at the month they
+/// bill for, which every later reading rewrites, and its per-day steps at the
+/// day they were read, which the next reading does not touch. A measure with no
+/// rule of its own inherits the source's, and a metric whose measures have none
+/// between them appears here not at all.
+fn revision_rules_by_metric() -> HashMap<&'static str, Vec<RevisionRule>> {
+    let by_measure: HashMap<(&str, &str), RevisionRule> = builtin_sources()
         .iter()
-        .filter_map(|source| {
-            source
-                .source
-                .revision
-                .map(|rule| (source.source.key.as_str(), rule))
+        .flat_map(|source| {
+            let key = source.source.key.as_str();
+            let inherited = source.source.revision;
+            source.measures.iter().filter_map(move |measure| {
+                measure
+                    .revision
+                    .or(inherited)
+                    .map(|rule| ((key, measure.key.as_str()), rule))
+            })
         })
         .collect();
     builtin_metrics()
         .iter()
         .filter_map(|metric| {
-            by_source
-                .get(metric.source_key.as_str())
-                .map(|rule| (metric.metric_key.as_str(), *rule))
+            let source = metric.source_key.as_str();
+            let rules = metric
+                .inputs
+                .iter()
+                .filter_map(|input| {
+                    by_measure
+                        .get(&(source, input.measure_key.as_str()))
+                        .copied()
+                })
+                .collect::<Vec<_>>();
+            (!rules.is_empty()).then(|| (metric.metric_key.as_str(), rules))
         })
         .collect()
+}
+
+/// The newest date every one of a metric's rules calls final.
+///
+/// The earliest of them: a metric is only as settled as its least settled
+/// input, and a ratio whose denominator is still moving has not settled because
+/// its numerator has.
+fn settled_through_all(
+    rules: &[RevisionRule],
+    last_observed: Option<NaiveDate>,
+) -> Option<NaiveDate> {
+    rules
+        .iter()
+        .map(|rule| settled_through(*rule, last_observed))
+        .min()
+        .flatten()
+}
+
+/// The legacy window wide enough for every one of a metric's rules.
+fn legacy_window_all(rules: &[RevisionRule]) -> Option<u16> {
+    rules
+        .iter()
+        .map(|rule| legacy_revision_window_days(*rule))
+        .max()
 }
 
 /// The longest a month can be, and so the longest a billing-month boundary can
@@ -497,8 +541,8 @@ mod tests {
         let Some(view) = views.first() else {
             panic!("one view");
         };
-        assert_eq!(view.settled_through, Some(date("2026-02-28")));
-        assert_eq!(view.revision_window_days, Some(LONGEST_MONTH_DAYS));
+        assert_eq!(view.settled_through, Some(date("2026-03-10")));
+        assert_eq!(view.revision_window_days, Some(0));
     }
 
     #[test]
@@ -520,22 +564,83 @@ mod tests {
     }
 
     #[test]
-    fn the_ai_cost_source_settles_by_billing_month_and_ai_usage_by_days() {
-        let rules = revision_rule_by_metric();
+    fn ai_cost_month_facts_settle_by_month_and_its_daily_step_on_arrival() {
+        let rules = revision_rules_by_metric();
+
+        // The step between two readings is fixed once the later one lands, so
+        // it does not wait for the month to close the way the month-to-date
+        // figures beside it do.
         assert_eq!(
             rules.get("ai.daily_approximate_extra_usage_cost"),
-            Some(&RevisionRule::BillingMonth)
+            Some(&vec![RevisionRule::RollingDays(0)])
         );
         assert_eq!(
             rules.get("ai.extra_usage_cost"),
-            Some(&RevisionRule::BillingMonth)
+            Some(&vec![RevisionRule::BillingMonth])
         );
         assert_eq!(
+            rules.get("ai.seat_cost"),
+            Some(&vec![RevisionRule::BillingMonth])
+        );
+        // A ratio carries one rule per side; both of these are month-anchored.
+        assert_eq!(
+            rules.get("ai.extra_usage_utilisation"),
+            Some(&vec![
+                RevisionRule::BillingMonth,
+                RevisionRule::BillingMonth
+            ])
+        );
+        // A measure with no rule of its own inherits the source's.
+        assert_eq!(
             rules.get("ai.accepted_lines"),
-            Some(&RevisionRule::RollingDays(3))
+            Some(&vec![RevisionRule::RollingDays(3)])
         );
         // A source that declares no rule leaves its metrics without one.
         assert_eq!(rules.get("git.commits"), None);
+    }
+
+    #[test]
+    fn a_metric_is_only_as_settled_as_its_least_settled_input() {
+        let last = Some(date("2026-03-10"));
+        // The earlier boundary wins, whichever side it came from.
+        assert_eq!(
+            settled_through_all(
+                &[RevisionRule::RollingDays(0), RevisionRule::BillingMonth],
+                last
+            ),
+            Some(date("2026-02-28"))
+        );
+        assert_eq!(
+            settled_through_all(&[RevisionRule::RollingDays(0)], last),
+            Some(date("2026-03-10"))
+        );
+        // And the legacy window is wide enough for every rule.
+        assert_eq!(
+            legacy_window_all(&[RevisionRule::RollingDays(0), RevisionRule::BillingMonth]),
+            Some(LONGEST_MONTH_DAYS)
+        );
+        assert_eq!(legacy_window_all(&[RevisionRule::RollingDays(0)]), Some(0));
+    }
+
+    #[test]
+    fn a_day_read_is_a_day_settled_for_the_daily_distribution() {
+        // The metric this whole boundary exists for: with the step anchored to
+        // the day it was read, nothing already delivered is left provisional.
+        let mut r = row(
+            "ai.daily_approximate_extra_usage_cost",
+            None,
+            "AI actual usage cost — approximate distribution",
+        );
+        r.last_observed_date = Some(date("2026-03-10"));
+
+        let Ok(views) = build_views(vec![r], HashMap::new(), HashMap::new()) else {
+            panic!("canonical rows must map");
+        };
+        let Some(view) = views.first() else {
+            panic!("one view");
+        };
+        assert_eq!(view.settled_through, Some(date("2026-03-10")));
+        assert_eq!(view.revision_window_days, Some(0));
     }
 
     #[test]
