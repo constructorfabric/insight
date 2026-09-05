@@ -64,9 +64,9 @@ function calendar(from: string, to: string): string[] {
  * open, which is what the catalogue reports for a metric it cannot date rather
  * than one nobody has collected.
  *
- * `settledThrough` is the newest day whose reading is final; delivered days
- * after it are marked. Their readings are real and are drawn as such — the
- * mark says the figure is not yet final, not that it is absent.
+ * `settledThrough` is the newest day reported settled; delivered days after it
+ * are marked. Their readings are real and are drawn as such — the mark says the
+ * figure is not yet settled, not that it is absent.
  */
 export function stripDays(
   readings: DayReading[],

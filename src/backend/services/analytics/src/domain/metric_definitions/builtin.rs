@@ -119,14 +119,17 @@ pub struct SourceSeed {
     pub revision: Option<RevisionRule>,
 }
 
-/// What has to happen before a delivered day is final.
+/// What has to happen before a delivered day is reported settled.
 ///
-/// The distinction is the date the supplier's correction is scoped to. A
-/// supplier that re-reads a fixed tail revises a day for a fixed time after
+/// The distinction is the date the supplier's correction is normally scoped to.
+/// A supplier that re-reads a fixed tail revises a day for a fixed time after
 /// that day. A supplier reporting a month-to-date figure revises within the
-/// month it is reporting and nowhere else, so its days settle together when
-/// that month closes — a duration cannot express that boundary, because how
-/// long a day stays open depends on where in its month it falls.
+/// month it is reporting, so its days settle together when that month closes —
+/// a duration cannot express that boundary, because how long a day stays open
+/// depends on where in its month it falls.
+///
+/// Either way this is the supplier's usual behaviour, and a correction outside
+/// it can still reach a day already reported settled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RevisionRule {
@@ -154,8 +157,9 @@ pub struct MeasureSeed {
     ///
     /// One supplier can report facts on two date anchors: a month-to-date total
     /// stamped at the month it bills for is rewritten by every later reading,
-    /// while the step between two readings is fixed the moment the second
-    /// arrives. Absent = the source's rule.
+    /// while the step between two readings is closed by the ordinary next one.
+    /// A rule describes how the supplier normally revises, not what it cannot
+    /// do. Absent = the source's rule.
     #[serde(default)]
     pub revision: Option<RevisionRule>,
     /// Declared per (source, measure): `active_day` is a per-day flag in

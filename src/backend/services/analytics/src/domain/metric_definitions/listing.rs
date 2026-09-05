@@ -82,10 +82,14 @@ pub struct MetricDefinitionView {
     /// signal, orthogonal to `schema_status`. Not maintained for `custom`
     /// metrics (see `origin`).
     pub last_observed_date: Option<chrono::NaiveDate>,
-    /// Newest delivered date whose reading can no longer change. Absent where
-    /// the source declares no revision rule, and for `custom` metrics, which
-    /// read no managed source — absence means "settles on arrival", not
+    /// Newest delivered date considered settled under the declared revision
+    /// rule. Absent where the source declares none, and for `custom` metrics,
+    /// which read no managed source — absence means "settles on arrival", not
     /// "revised forever".
+    ///
+    /// A rule states how a supplier normally revises, not what it is incapable
+    /// of: a correction outside that behaviour can still reach a date reported
+    /// as settled.
     ///
     /// A date rather than the rule that produced it: how far back revision
     /// reaches depends on the rule's own anchor, and a consumer holding a day
@@ -268,9 +272,9 @@ fn build_views(
 /// Per measure rather than per source, because one supplier can report on two
 /// date anchors: `ai_cost` stamps its month-to-date totals at the month they
 /// bill for, which every later reading rewrites, and its per-day steps at the
-/// day they were read, which the next reading does not touch. A measure with no
-/// rule of its own inherits the source's, and a metric whose measures have none
-/// between them appears here not at all.
+/// day they were read, which the ordinary next reading closes. A measure with
+/// no rule of its own inherits the source's, and a metric whose measures have
+/// none between them appears here not at all.
 fn revision_rules_by_metric() -> HashMap<&'static str, Vec<RevisionRule>> {
     let by_measure: HashMap<(&str, &str), RevisionRule> = builtin_sources()
         .iter()
@@ -303,7 +307,7 @@ fn revision_rules_by_metric() -> HashMap<&'static str, Vec<RevisionRule>> {
         .collect()
 }
 
-/// The newest date every one of a metric's rules calls final.
+/// The newest date every one of a metric's rules considers settled.
 ///
 /// The earliest of them: a metric is only as settled as its least settled
 /// input, and a ratio whose denominator is still moving has not settled because
@@ -344,7 +348,7 @@ fn legacy_revision_window_days(rule: RevisionRule) -> u16 {
     }
 }
 
-/// The newest date the rule declares final, given the newest date delivered.
+/// The newest date the rule considers settled, given the newest date delivered.
 ///
 /// Nothing is settled before anything has been delivered, so a metric with no
 /// observation gets no boundary rather than one in the distant past.
@@ -356,8 +360,8 @@ fn settled_through(rule: RevisionRule, last_observed: Option<NaiveDate>) -> Opti
         }
         // The day before the reported month began. A reading always belongs to
         // the month it reports, so every earlier month has closed and no
-        // reading of the reported one is final yet — not even one already
-        // superseded, since a later reading can lower it again.
+        // reading of the reported one counts as settled yet — not even one
+        // already superseded, since a later reading can lower it again.
         RevisionRule::BillingMonth => last_observed.with_day(1).and_then(|first| first.pred_opt()),
     }
 }
@@ -623,9 +627,11 @@ mod tests {
     }
 
     #[test]
-    fn a_day_read_is_a_day_settled_for_the_daily_distribution() {
-        // The metric this whole boundary exists for: with the step anchored to
-        // the day it was read, nothing already delivered is left provisional.
+    fn the_daily_distribution_treats_a_read_day_as_settled_under_rolling_days_zero() {
+        // The operational semantics the measure declares, not a claim that the
+        // figure cannot move: under `rolling_days: 0` nothing already delivered
+        // is reported provisional, and a later lower reading may still correct
+        // it through the suffix minimum.
         let mut r = row(
             "ai.daily_approximate_extra_usage_cost",
             None,

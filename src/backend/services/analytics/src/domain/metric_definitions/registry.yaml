@@ -342,12 +342,17 @@ sources:
         evidence_granularity: source_summary
         evidence_presentation: *seat_month_row
       - key: daily_extra_usage_usd
-        # A day's step is the difference between two readings, so it is fixed
-        # once the later one arrives — unlike the month-to-date figures above,
-        # which every reading rewrites until the month closes. Only a reading
-        # that comes in LOWER rewrites earlier days (the suffix minimum in
-        # ai_cost_metric_evidence), which is the anomaly that rule guards
-        # against rather than the way the vendor reports.
+        # Describes the supplier's NORMAL revision behaviour, not a guarantee.
+        # A day's step is the difference between two readings, and the ordinary
+        # case — a later cumulative reading at or above the one before it —
+        # closes that step: it is reported as settled from then on. That is
+        # unlike the month-to-date figures above, which every reading rewrites
+        # until the month closes.
+        #
+        # The rarer case is a later reading that comes in LOWER. The suffix
+        # minimum in ai_cost_metric_evidence then corrects earlier steps of the
+        # same month after they were already reported settled. Declaring 0 says
+        # that case is rare enough to report against, not that it cannot happen.
         revision: !rolling_days 0
         evidence_granularity: source_summary
         evidence_presentation:

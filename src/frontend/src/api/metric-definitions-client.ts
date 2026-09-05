@@ -60,8 +60,10 @@ export interface MetricDefinition {
    */
   last_observed_date: string | null;
   /**
-   * ISO date of the newest delivered day that can no longer change. Absent
-   * where nothing revises — never read absence as "revised forever".
+   * ISO date of the newest delivered day considered settled under the metric's
+   * declared revision rule. Absent where nothing revises — never read absence
+   * as "revised forever". The rule states how the supplier normally revises,
+   * so a correction outside that behaviour can still reach a settled day.
    */
   settled_through?: string | null;
   /**

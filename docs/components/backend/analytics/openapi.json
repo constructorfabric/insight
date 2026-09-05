@@ -989,7 +989,7 @@
             "$ref": "#/components/schemas/SchemaStatus"
           },
           "settled_through": {
-            "description": "Newest delivered date whose reading can no longer change. Absent where\nthe source declares no revision rule, and for `custom` metrics, which\nread no managed source — absence means \"settles on arrival\", not\n\"revised forever\".\n\nA date rather than the rule that produced it: how far back revision\nreaches depends on the rule's own anchor, and a consumer holding a day\ncount has to re-derive the anchor to use it.",
+            "description": "Newest delivered date considered settled under the declared revision\nrule. Absent where the source declares none, and for `custom` metrics,\nwhich read no managed source — absence means \"settles on arrival\", not\n\"revised forever\".\n\nA rule states how a supplier normally revises, not what it is incapable\nof: a correction outside that behaviour can still reach a date reported\nas settled.\n\nA date rather than the rule that produced it: how far back revision\nreaches depends on the rule's own anchor, and a consumer holding a day\ncount has to re-derive the anchor to use it.",
             "format": "date",
             "type": [
               "string",

@@ -84,7 +84,7 @@ export interface CollectionBoundary {
   collectedFrom: string | null;
   /** Newest date the metric has an observation for; null = no boundary known. */
   collectedThrough: string | null;
-  /** Newest delivered date that can no longer change; null = none declared. */
+  /** Newest delivered date reported settled; null = no rule declared. */
   settledThrough: string | null;
 }
 
