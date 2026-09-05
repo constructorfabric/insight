@@ -34,7 +34,7 @@ RUN apt-get update \
 # The slow layer, before any source is copied so it survives every edit below.
 # dbt is the silver step's environment rather than an import of the package,
 # which is why the package declares it as an extra and it is installed here.
-RUN pip install --no-cache-dir dbt-clickhouse
+RUN pip install --no-cache-dir "dbt-clickhouse==1.10.2" "dbt-core==1.11.14"
 
 WORKDIR /ingestion
 

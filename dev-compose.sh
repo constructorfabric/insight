@@ -120,6 +120,17 @@ update_env_var() {
   fi
 }
 
+# dockerd retries layer downloads but not manifest or token requests, and
+# compose retries nothing, so one 5xx from a registry fails a pull outright.
+with_retries() {
+  local attempt
+  for attempt in 1 2 3; do
+    "$@" && return 0
+    (( attempt < 3 )) && sleep $(( attempt * 5 ))
+  done
+  return 1
+}
+
 # ──────────────────────────────────────────────────────────────────────
 # up
 # ──────────────────────────────────────────────────────────────────────
@@ -687,7 +698,7 @@ YML
     echo "       Install it (brew install uv) and re-run; see CONTRIBUTING.md." >&2
     return 1; }
   # shellcheck disable=SC2086  # redirect_args is a deliberately word-split flag list
-  uv run --project "$ROOT_DIR/src/ingestion/tools/seed" insight-seed-realm \
+  uv run --project "$ROOT_DIR/src/ingestion/tools/seed" --frozen insight-seed-realm \
     --dev-email "$dev_lead_email" \
     $redirect_args \
     --out "$ROOT_DIR/$realm_out"
@@ -827,6 +838,10 @@ YML
       docker rm -f "$front_ctr" >/dev/null 2>&1 || true
     fi
   fi
+
+  echo "=== docker compose pull ==="
+  with_retries "${compose_cmd[@]}" ${profiles[@]+"${profiles[@]}"} pull --quiet --ignore-buildable ||
+    echo "WARNING: pulling images failed three times; up will try once more." >&2
 
   echo "=== docker compose up ==="
   if ! "${compose_cmd[@]}" ${profiles[@]+"${profiles[@]}"} up -d --remove-orphans; then
@@ -1681,7 +1696,7 @@ test_stand_pull_backends() {
     IFS='|' read -r var chart name <<<"$entry"
     image="$(test_stand_pinned_image "$chart" "$name")" || return 1
     echo "    ${name}: ${image}"
-    docker pull --quiet "$image" >/dev/null || {
+    with_retries docker pull --quiet "$image" >/dev/null || {
       echo "ERROR: cannot pull $image (pinned by $chart's appVersion)." >&2
       echo "       Not falling back to a source build — that would report a pass" >&2
       echo "       for an image this run never ran. Check ghcr access, or pass" >&2

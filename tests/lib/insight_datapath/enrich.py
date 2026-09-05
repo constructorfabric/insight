@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,9 +37,42 @@ _OVERLAY = "deploy/compose/docker-compose.enrich.yml"
 _INTERNAL_CLICKHOUSE_HOST = "clickhouse"
 _INTERNAL_CLICKHOUSE_PORT = "8123"
 
+_PULL_ATTEMPTS = 3
+_PULL_BACKOFF_S = 5.0
+
 
 class EnrichError(RuntimeError):
     """A connector's enrich step failed, or its image could not be run."""
+
+
+def _image_is_local(image: str) -> bool:
+    probe = subprocess.run(
+        ["docker", "image", "inspect", image], capture_output=True, text=True, check=False
+    )
+    return probe.returncode == 0
+
+
+def pull_image(image: str) -> None:
+    """Fetch `image` unless it is already local."""
+    if _image_is_local(image):
+        return
+    for attempt in range(1, _PULL_ATTEMPTS + 1):
+        result = subprocess.run(
+            ["docker", "pull", "--quiet", image], capture_output=True, text=True, check=False
+        )
+        if result.returncode == 0:
+            LOG.info("pulled %s", image)
+            return
+        LOG.warning(
+            "pull %d/%d of %s failed: %s",
+            attempt,
+            _PULL_ATTEMPTS,
+            image,
+            result.stderr.strip()[-300:],
+        )
+        if attempt < _PULL_ATTEMPTS:
+            time.sleep(_PULL_BACKOFF_S * attempt)
+    raise EnrichError(f"could not pull {image} in {_PULL_ATTEMPTS} attempts")
 
 
 @dataclass(frozen=True)
@@ -91,6 +125,11 @@ class EnrichRunner:
         self.env_file = env_file
         self.steps = discover_enrich_steps(repo_root)
 
+    def pull_images(self) -> None:
+        """Fetch every declared step's image before any spec runs."""
+        for step in self.steps:
+            pull_image(step.image)
+
     def steps_for(self, schemas: set[str]) -> list[EnrichStep]:
         """The steps whose bronze namespace the spec seeded."""
         return [step for step in self.steps if step.namespace in schemas]
@@ -140,6 +179,8 @@ class EnrichRunner:
                     "run",
                     "--rm",
                     "--no-deps",
+                    "--pull",
+                    "never",
                     "enrich",
                     f"--insight-source-id={source_id}",
                     f"--clickhouse-host={_INTERNAL_CLICKHOUSE_HOST}",

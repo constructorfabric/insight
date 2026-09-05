@@ -17,8 +17,8 @@ dependencies = [
     "pyjwt>=2.8",
     "cryptography>=42",
     "pandas>=2.2",
-    "dbt-core>=1.9",
-    "dbt-clickhouse>=1.9",
+    "dbt-core>=1.11,<1.12",
+    "dbt-clickhouse>=1.10,<1.11",
 ]
 
 [tool.setuptools.packages.find]

@@ -136,12 +136,14 @@ def dbt_runner(instance_cfg: InstanceConfig, warehouse_floor: int) -> Iterator[D
 
 @pytest.fixture(scope="session")
 def enrich_runner(instance_cfg: InstanceConfig) -> EnrichRunner:
-    return EnrichRunner(
+    runner = EnrichRunner(
         instance_cfg,
         repo_root=REPO_ROOT,
         project=_instance_name(),
         env_file=_env_file(),
     )
+    runner.pull_images()
+    return runner
 
 
 @pytest.fixture(scope="session")
