@@ -302,7 +302,7 @@ fn revision_rules_by_metric() -> HashMap<&'static str, Vec<RevisionRule>> {
                         .copied()
                 })
                 .collect::<Vec<_>>();
-            (!rules.is_empty()).then(|| (metric.metric_key.as_str(), rules))
+            (!rules.is_empty()).then_some((metric.metric_key.as_str(), rules))
         })
         .collect()
 }
