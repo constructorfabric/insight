@@ -14,8 +14,8 @@ This package holds:
 This package is deliberately test-framework agnostic: no pytest import, no
 fixtures, no assertions. `tests/stand/conftest.py` is what turns it into a
 suite, and phases 6-8 add person fixtures and browser journeys on top. Nothing
-here imports from `src/ingestion/tests/e2e/**` — that rig owns in-process
-correctness and feeds four blocking coverage gates; it is read-only reference.
+here imports from `insight_datapath` — that package seeds and clears a warehouse,
+and the dependency runs the other way.
 """
 
 from __future__ import annotations

@@ -7,8 +7,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-_E2E_ROOT = Path(__file__).resolve().parents[1]
-LEDGER_FILE = _E2E_ROOT / ".artifacts" / "metric_assertions.json"
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+LEDGER_FILE = _REPO_ROOT / ".artifacts" / "metric_assertions.json"
 
 # The gate runs as a bare `python3 <path>`, so this module may import no sibling.
 

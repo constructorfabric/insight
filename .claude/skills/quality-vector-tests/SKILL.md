@@ -177,7 +177,7 @@ row that can falsify the claim; issues use the tags, never reproduce this table:
 | Target component | Suite tags, cheapest first |
 |---|---|
 | Frontend | `fe-unit` (vitest `unit` project, jsdom — hooks, clients, pure logic) → `fe-component` (vitest `storybook` browser project — rendered components in isolation) → `stand-ui` (Playwright journeys on a deployed stand, `tests/stand/ui`) |
-| Backend: serving / analytics | `rust-unit` (inline `#[cfg(test)]`) → `metric-spec` (declarative YAML rig, `src/ingestion/tests/e2e/metrics` — seeded bronze → served value) → `stand-api` (HTTP contract on a deployed stand, `tests/stand/api`; the rig's in-process HTTP contract lanes were retired in its favour) |
+| Backend: serving / analytics | `rust-unit` (inline `#[cfg(test)]`) → `metric-spec` (the data-path suite, `tests/datapath/metrics/<class>` — seeded bronze → served value, on a compose test-stand instance) → `stand-api` (HTTP contract on a deployed stand, `tests/stand/api`) |
 | Backend: auth (authenticator / gateway / Keycloak) | `rust-unit` → `auth-rig` (the authenticator's own e2e tests with a container-imported Keycloak realm) → `stand-api` / `stand-ui` (real gateway, real sessions) |
 | Backend: identity / identity-resolution | `rust-unit` → `identity-e2e` (`tests/datapath/identity` — a connector's output reaching persons-seed, corrections surviving it, read as stand personas) → `stand-api` |
 | Ingestion (connectors + dbt) | `connector-tests` (per-connector suites under `src/ingestion/connectors/*/*/tests`) → `dbt-tests` (data tests over silver/gold) → `metric-spec` (bronze → dbt → served metric, end to end) |

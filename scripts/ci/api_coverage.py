@@ -6,8 +6,8 @@ event-hook on the single client every suite request flows through; it records
 `(method, path) -> {status codes}` into a module-level ledger that
 `conftest.pytest_sessionfinish` dumps to `.artifacts/observed_endpoints.json`.
 
-Gate half (`python3 lib/api_coverage.py`, stdlib only; blocking in `./e2e.sh
-gates` and CI): loads that ledger plus the committed OpenAPI spec and reports
+Gate half (`python3 scripts/ci/api_coverage.py`, stdlib only; blocking in CI):
+loads that ledger plus the committed OpenAPI spec and reports
 per-operation coverage. The gate FAILS when a documented operation is
 exercised by no test, a SKIP_LIST entry rots, or a REQUIRED_EXTRA code is
 unproven/stale/redundant (see gate_violations). Ordinary per-status-code
@@ -243,13 +243,12 @@ def reset_observed() -> None:
 def dump_observed(path: str | Path) -> Path:
     """Write the in-process ledger, MERGING into an existing file.
 
-    Each CI lane (e2e-api, e2e-metrics — see e2e-bronze-to-api.yml) is a
-    single fresh pytest session on its own runner, so there's no cross-session
-    ledger to merge there. The merge exists for LOCAL runs instead: `./e2e.sh
-    test api/` followed by `./e2e.sh test metrics/` share one `.artifacts/`
-    dir, and a plain overwrite would drop whichever suite ran first — merging
-    unions statuses per (method, path) across those local sessions. Delete
-    `.artifacts/` first for a from-scratch measurement.
+    Each CI lane is a single fresh pytest session on its own runner, so there
+    is no cross-session ledger to merge there. The merge exists for LOCAL runs
+    instead: two suites run back to back share one `.artifacts/` dir, and a
+    plain overwrite would drop whichever ran first — merging unions statuses
+    per (method, path) across those local sessions. Delete `.artifacts/` first
+    for a from-scratch measurement.
     """
     return _dump(path, _OBSERVED)
 

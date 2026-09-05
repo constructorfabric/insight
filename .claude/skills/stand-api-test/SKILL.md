@@ -1,6 +1,6 @@
 ---
 name: stand-api-test
-description: "Write, fix, or review HTTP contract tests in tests/stand/api/ — the deployed-stand suite against a real gateway, real Keycloak sessions and real backend images. Covers the operation catalogue, which persona session to take, requires_seed markers, the scratch-resource policy, the hand-written vs generated response models, status-code discipline (identity 404 vs analytics 403 outside a scope, 400 vs 415 vs 422) and the endpoint coverage gate. Use when adding or changing anything under tests/stand/api/, closing a coverage-gate gap, or turning a stand-scenarios claim into an API case. For browser journeys use stand-ui-test. The in-process analytics HTTP rig that once lived at src/ingestion/tests/e2e/api/ (the api-test skill) was retired in favour of this suite — only the data-path metrics rig remains in-process (metric-test)."
+description: "Write, fix, or review HTTP contract tests in tests/stand/api/ — the deployed-stand suite against a real gateway, real Keycloak sessions and real backend images. Covers the operation catalogue, which persona session to take, requires_seed markers, the scratch-resource policy, the hand-written vs generated response models, status-code discipline (identity 404 vs analytics 403 outside a scope, 400 vs 415 vs 422) and the endpoint coverage gate. Use when adding or changing anything under tests/stand/api/, closing a coverage-gate gap, or turning a stand-scenarios claim into an API case. For browser journeys use stand-ui-test. Seeded-bronze → served-metric specs are the data-path suite in tests/datapath/ (metric-test)."
 disable-model-invocation: false
 user-invocable: true
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep
@@ -11,11 +11,9 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep
 HTTP tests against a **deployed** Insight — the gateway BFF in front of pinned
 service images, sessions won by real Keycloak logins. No browser.
 
-**`src/ingestion/tests/e2e/api/` no longer exists.** That in-process rig's
-HTTP contract lanes were retired in favour of this suite ("refactor(e2e):
-retire the rig's HTTP contract lanes, keep the data path"); the `api-test`
-skill describes the retired suite and remains only as history. The data-path
-metrics rig stays in-process — see `metric-test`.
+Seeded-bronze → served-metric specs are the data-path suite in
+`tests/datapath/`, which runs against an instance of this same compose stand —
+see `metric-test`. The `api-test` skill remains only as a redirect.
 
 Environment, sessions and triage: `insight-stand`. What to test:
 `stand-scenarios`.
@@ -219,10 +217,13 @@ diagnosed as flakiness.
   value is non-null, that entity ids match, that a union resolved — never a
   number.
 - **No minted tokens.** Sessions are won by driving the deployed OIDC chain.
-  Minting is the rig's path and would mean never exercising the login.
-- **Never import from or edit `src/ingestion/tests/e2e/**`.** Read it freely —
-  `coverage.py` and `tests/stand/meta/` are deliberate ports of rig files — but
-  the dependency runs one way.
+  Minting a token would mean never exercising the login.
+- **Never import `insight_datapath` or reach into `tests/datapath/**`.** The
+  dependency runs one way: the data-path suite builds on `insight_stand` (its
+  sessions, manifest and client), and nothing under `tests/stand/` or
+  `tests/lib/insight_stand/` imports back. That suite seeds and clears a
+  warehouse; a stand test that borrowed its machinery would write to the stand
+  this suite promises to leave read-only.
 - **No production-derived data** (`AGENTS.md`). The roster is synthetic
   (`@company.nonpresent`); scratch names are `stand-scratch-<tag>`.
 
@@ -261,11 +262,11 @@ the gate's central rule and the reason `template` exists.
 7. Run and check the ledger:
 
 ```bash
-# NOT a subset: the verb appends your path to a hardcoded `tests/stand`, and
-# pytest unions path arguments — so this runs the whole suite, browsers included.
-./dev-compose.sh test-stand test -k subchart
+# `--tree` picks the directories (repeatable); a bare path is unioned with
+# the default `tests/stand`, so name the tree.
+./dev-compose.sh test-stand test --tree=tests/stand/api/identity -k subchart
 
-# a genuine subset needs pytest directly
+# a single file still needs pytest directly
 uv run --project tests --frozen pytest tests/stand/api/identity/test_subchart.py
 
 uv run --project tests --frozen ruff check tests/

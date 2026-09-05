@@ -280,5 +280,6 @@ S-10 (deployment, upgrade, migration) tests the act of installing, which this
 suite deliberately cannot do — *a run that could bring its own stand up would
 hide exactly the deployment failures this suite exists to catch*.
 
-The metric×view matrix and per-metric value assertions belong to the blocking
-gate in `src/ingestion/tests/e2e/` and are not re-specified here.
+The metric×view matrix and per-metric value assertions belong to the data-path
+suite in `tests/datapath/` and its blocking gate
+(`tests/lib/insight_datapath/metric_coverage.py`), and are not re-specified here.

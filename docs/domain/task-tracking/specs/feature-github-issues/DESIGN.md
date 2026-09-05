@@ -559,9 +559,9 @@ hole:
 This is the same rule the project already applies to required environment
 configuration: no silent defaults.
 
-**Metric tests** go in `src/ingestion/tests/e2e/metrics/` as `*.test.yaml`
-against the declarative rig, one file per measure family, mirroring the existing
-`tasks_*` suite that covers the Jira path. Seed `bronze_github.issues`,
+**Metric tests** go in `tests/datapath/metrics/tasks/` as a `*.test.yaml` fixture
+beside its pytest module, one per measure family, mirroring the existing
+`tasks_*` specs that cover the Jira path. Seed `bronze_github.issues`,
 `issue_timeline_events`, `issue_fields` and `issue_types` plus the roster the
 identity chain needs, run the batch metrics endpoint, and assert the measures
 listed in [section 1.3](#13-measures-produced-and-withheld).
@@ -612,7 +612,7 @@ gains the two new streams.
    full-table materialization.
 6. **Gold.** Role resolution replacing the literals, unit multiplier, validity
    predicates on the dimension joins.
-7. **Metric fixtures** in `src/ingestion/tests/e2e/metrics/`, coverage tests, then
+7. **Metric fixtures** in `tests/datapath/metrics/tasks/`, coverage tests, then
    the git model split.
 
 Step 4 is a genuine checkpoint. If assignee e-mails do not resolve, the inner
