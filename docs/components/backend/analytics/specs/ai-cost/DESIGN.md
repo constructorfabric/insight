@@ -589,7 +589,7 @@ Registry entry:
       kind: managed_observation
       source_ref: ai_cost_metric_observations
       evidence_ref: ai_cost_metric_evidence
-      revision_window_days: 31
+      revision: billing_month
     measures:
       - key: token_cost_usd
         evidence_granularity: source_summary

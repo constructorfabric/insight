@@ -12,7 +12,7 @@ use crate::domain::metric_definitions::definition::{
 use crate::domain::metric_definitions::error_code::{MetricSchemaErrorCode, SchemaStatus};
 use crate::domain::metric_definitions::evidence_presentation::StoredPresentation;
 use crate::domain::metric_definitions::repository::{
-    MetricDefinitionValidationSpec, SourceMeasureEvidence, all_managed_sources,
+    MetricDefinitionValidationSpec, OldestObservation, SourceMeasureEvidence, all_managed_sources,
     managed_definition_validation_specs, source_evidence_contracts, update_definition_status,
     update_definitions_for_source_status, update_evidence_status, update_source_status,
 };
@@ -292,7 +292,7 @@ impl MetricDefinitionValidator {
         };
 
         for spec in specs {
-            let (outcome, last_observed) = self.validate_definition(&relation, &spec).await;
+            let (outcome, observed) = self.validate_definition(&relation, &spec).await;
             match outcome {
                 ProbeOutcome::Definitive(state) => {
                     let (status, error_code) = state.as_db();
@@ -301,7 +301,8 @@ impl MetricDefinitionValidator {
                         spec.definition_id,
                         status,
                         error_code,
-                        last_observed,
+                        observed.oldest(),
+                        observed.newest(),
                     )
                     .await
                     {
@@ -326,19 +327,21 @@ impl MetricDefinitionValidator {
         &self,
         relation: &ObservationRelation,
         spec: &MetricDefinitionValidationSpec,
-    ) -> (ProbeOutcome, Option<NaiveDate>) {
+    ) -> (ProbeOutcome, ObservedSpan) {
         let Some(target) = resolve_probe_target(&spec.inputs, relation) else {
+            // Nothing was read: the definition never resolved to a relation to
+            // read from, so the stored bounds are not contradicted.
             return (
                 ProbeOutcome::Definitive(ValidationState::Error(MetricSchemaErrorCode::Unknown)),
-                None,
+                ObservedSpan::Unknown,
             );
         };
 
         // One probe answers both questions: which declared measures have
-        // ever been observed (schema), and how fresh each one is (data).
+        // ever been observed (schema), and what span each one covers (data).
         let measure_keys = target.measure_keys.iter().copied().collect::<Vec<_>>();
-        let last_dates = match self
-            .measure_last_dates(
+        let dates = match self
+            .measure_dates(
                 relation,
                 target.source_key,
                 spec.entity_type.as_str(),
@@ -346,18 +349,31 @@ impl MetricDefinitionValidator {
             )
             .await
         {
-            Ok(last_dates) => last_dates,
+            Ok(dates) => dates,
             Err(error) => {
                 tracing::warn!(error = %error, "metric measure probe failed");
-                return (ProbeOutcome::Inconclusive, None);
+                return (ProbeOutcome::Inconclusive, ObservedSpan::Unknown);
             }
         };
+        let last_dates = dates.last;
 
         let freshness = classify_freshness(&target.measure_keys, &last_dates);
         if freshness == Freshness::NeverObserved {
-            return (ProbeOutcome::Definitive(ValidationState::Unchecked), None);
+            // The query succeeded and matched no row. Whatever lower bound was
+            // stored describes rows that are no longer there — most often a
+            // retention drop that took the last of them.
+            return (
+                ProbeOutcome::Definitive(ValidationState::Unchecked),
+                ObservedSpan::Empty,
+            );
         }
-        let last_observed = last_dates.values().max().copied();
+        // Widest across the measures on both ends: a definition is readable
+        // wherever any of its inputs is, and narrowing to the intersection
+        // would call a day uncollected because one input started later.
+        let observed = ObservedSpan::Seen {
+            first: dates.first.values().min().copied(),
+            last: last_dates.values().max().copied(),
+        };
 
         let observed_keys = target
             .measure_keys
@@ -375,13 +391,11 @@ impl MetricDefinitionValidator {
             )
             .await
         {
-            return (outcome, last_observed);
+            return (outcome, observed);
         }
 
         match freshness {
-            Freshness::Complete(_) => {
-                (ProbeOutcome::Definitive(ValidationState::Ok), last_observed)
-            }
+            Freshness::Complete(_) => (ProbeOutcome::Definitive(ValidationState::Ok), observed),
             // A declared measure with no observation ever is a data condition,
             // not a schema error: filtered measures (e.g. tool-scoped
             // conversations) legitimately stay quiet, so the definition stays
@@ -400,7 +414,7 @@ impl MetricDefinitionValidator {
                 );
                 (
                     ProbeOutcome::Definitive(ValidationState::Unchecked),
-                    last_observed,
+                    observed,
                 )
             }
         }
@@ -532,7 +546,7 @@ impl MetricDefinitionValidator {
         for measure in expected {
             observation_query = observation_query.bind(&measure.measure_key);
         }
-        let observed_dates = parse_measure_last_dates(observation_query.fetch_all().await?)?;
+        let observed_dates = parse_measure_dates(observation_query.fetch_all().await?)?.last;
         let observed_measures = observed_dates.keys().cloned().collect::<BTreeSet<_>>();
         let window_start = evidence_window_start(&observed_dates);
 
@@ -559,21 +573,21 @@ impl MetricDefinitionValidator {
         ))
     }
 
-    async fn measure_last_dates(
+    async fn measure_dates(
         &self,
         relation: &ObservationRelation,
         source_key: &str,
         entity_type: &str,
         measure_keys: &[&str],
-    ) -> Result<HashMap<String, NaiveDate>, clickhouse::error::Error> {
+    ) -> Result<MeasureDates, clickhouse::error::Error> {
         let (database, table) = relation.table_ref();
-        let sql = measure_last_dates_sql(database, table, measure_keys.len());
+        let sql = measure_dates_sql(database, table, measure_keys.len());
         let mut query = self.ch.query(&sql).bind(source_key).bind(entity_type);
         for measure_key in measure_keys {
             query = query.bind(*measure_key);
         }
-        let rows = query.fetch_all::<MeasureLastDateProbeRow>().await?;
-        parse_measure_last_dates(rows)
+        let rows = query.fetch_all::<MeasureDateProbeRow>().await?;
+        parse_measure_dates(rows)
     }
 
     async fn dimension_present_on_all_rows(
@@ -690,9 +704,57 @@ struct ColumnProbeRow {
 
 #[derive(Row, Deserialize)]
 #[cfg_attr(test, derive(serde::Serialize))]
-struct MeasureLastDateProbeRow {
+struct MeasureDateProbeRow {
     measure_key: String,
+    first_date: String,
     last_date: String,
+}
+
+/// The span of dates a probe found, per measure. One probe answers both ends,
+/// so they travel together rather than costing a second scan each sweep.
+#[derive(Debug, Default)]
+struct MeasureDates {
+    first: HashMap<String, NaiveDate>,
+    last: HashMap<String, NaiveDate>,
+}
+
+/// What a definition's measures currently cover, across all of them.
+///
+/// `Empty` is not `Unknown` with no dates: the first says the relation was read
+/// and holds nothing, which retires a stored lower bound, and the second says
+/// the probe never got far enough to claim anything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ObservedSpan {
+    Unknown,
+    Empty,
+    Seen {
+        first: Option<NaiveDate>,
+        last: Option<NaiveDate>,
+    },
+}
+
+impl ObservedSpan {
+    /// The oldest date to store, in the shape the writer needs to tell a
+    /// cleared bound from an untouched one.
+    fn oldest(self) -> OldestObservation {
+        match self {
+            Self::Unknown => OldestObservation::Unknown,
+            Self::Empty => OldestObservation::Absent,
+            Self::Seen { first, .. } => {
+                first.map_or(OldestObservation::Unknown, OldestObservation::At)
+            }
+        }
+    }
+
+    /// The newest date to store. `None` leaves the stored value alone, which is
+    /// what keeps it the monotonic freshness marker it is: an empty relation
+    /// does not make a definition less fresh than it was last seen to be.
+    fn newest(self) -> Option<NaiveDate> {
+        match self {
+            Self::Unknown | Self::Empty => None,
+            Self::Seen { last, .. } => last,
+        }
+    }
 }
 
 #[derive(Row, Deserialize)]
@@ -836,10 +898,12 @@ fn measure_windows<'a>(
         .collect()
 }
 
-fn measure_last_dates_sql(database: &str, table: &str, measure_count: usize) -> String {
+fn measure_dates_sql(database: &str, table: &str, measure_count: usize) -> String {
     let placeholders = vec!["?"; measure_count].join(", ");
     format!(
-        "SELECT measure_key, toString(max(metric_date)) AS last_date \
+        "SELECT measure_key, \
+                toString(min(metric_date)) AS first_date, \
+                toString(max(metric_date)) AS last_date \
          FROM {database}.{table} \
          WHERE source_key = ? \
            AND entity_type = ? \
@@ -862,7 +926,9 @@ fn expected_granularities_are_known(expected: &[SourceMeasureEvidence]) -> bool 
 fn evidence_observation_dates_sql(database: &str, table: &str, measure_count: usize) -> String {
     let placeholders = vec!["?"; measure_count].join(", ");
     format!(
-        "SELECT measure_key, toString(max(metric_date)) AS last_date \
+        "SELECT measure_key, \
+                toString(min(metric_date)) AS first_date, \
+                toString(max(metric_date)) AS last_date \
          FROM {database}.{table} \
          WHERE source_key = ? AND measure_key IN ({placeholders}) \
          GROUP BY measure_key"
@@ -977,20 +1043,25 @@ fn declared_details_present(
     })
 }
 
-fn parse_measure_last_dates(
-    rows: Vec<MeasureLastDateProbeRow>,
-) -> Result<HashMap<String, NaiveDate>, clickhouse::error::Error> {
-    rows.into_iter()
-        .map(|row| {
-            let date = row.last_date.parse::<NaiveDate>().map_err(|error| {
-                clickhouse::error::Error::Custom(format!(
-                    "unparseable metric_date {:?} for measure {}: {error}",
-                    row.last_date, row.measure_key
-                ))
-            })?;
-            Ok((row.measure_key, date))
-        })
-        .collect()
+fn parse_measure_dates(
+    rows: Vec<MeasureDateProbeRow>,
+) -> Result<MeasureDates, clickhouse::error::Error> {
+    let mut dates = MeasureDates::default();
+    for row in rows {
+        let first = parse_probe_date(&row.first_date, &row.measure_key)?;
+        let last = parse_probe_date(&row.last_date, &row.measure_key)?;
+        dates.first.insert(row.measure_key.clone(), first);
+        dates.last.insert(row.measure_key, last);
+    }
+    Ok(dates)
+}
+
+fn parse_probe_date(raw: &str, measure_key: &str) -> Result<NaiveDate, clickhouse::error::Error> {
+    raw.parse::<NaiveDate>().map_err(|error| {
+        clickhouse::error::Error::Custom(format!(
+            "unparseable metric_date {raw:?} for measure {measure_key}: {error}"
+        ))
+    })
 }
 
 fn dimension_coverage_sql(database: &str, table: &str, measure_count: usize) -> String {
@@ -1116,26 +1187,75 @@ mod tests {
     }
 
     #[test]
-    fn parse_measure_last_dates_maps_valid_and_rejects_garbage() {
-        let Ok(ok) = parse_measure_last_dates(vec![MeasureLastDateProbeRow {
+    fn parse_measure_dates_maps_both_ends_and_rejects_garbage() {
+        let Ok(ok) = parse_measure_dates(vec![MeasureDateProbeRow {
             measure_key: "a".to_owned(),
+            first_date: "2026-01-04".to_owned(),
             last_date: "2026-07-01".to_owned(),
         }]) else {
-            panic!("valid date parses");
+            panic!("valid dates parse");
         };
-        assert_eq!(ok.get("a"), Some(&date("2026-07-01")));
+        assert_eq!(ok.first.get("a"), Some(&date("2026-01-04")));
+        assert_eq!(ok.last.get("a"), Some(&date("2026-07-01")));
 
-        let err = parse_measure_last_dates(vec![MeasureLastDateProbeRow {
-            measure_key: "a".to_owned(),
-            last_date: "not-a-date".to_owned(),
-        }]);
-        assert!(err.is_err());
+        // Either end being unreadable fails the probe: a span with one usable
+        // bound would be reported as a collection boundary it is not.
+        assert!(
+            parse_measure_dates(vec![MeasureDateProbeRow {
+                measure_key: "a".to_owned(),
+                first_date: "2026-01-04".to_owned(),
+                last_date: "not-a-date".to_owned(),
+            }])
+            .is_err()
+        );
+        assert!(
+            parse_measure_dates(vec![MeasureDateProbeRow {
+                measure_key: "a".to_owned(),
+                first_date: "not-a-date".to_owned(),
+                last_date: "2026-07-01".to_owned(),
+            }])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn an_empty_relation_retires_the_lower_bound_and_a_failed_probe_leaves_it() {
+        // Both reach the writer carrying no dates, and they mean opposite
+        // things: one read the relation, the other never got to.
+        assert_eq!(ObservedSpan::Empty.oldest(), OldestObservation::Absent);
+        assert_eq!(ObservedSpan::Unknown.oldest(), OldestObservation::Unknown);
+        assert_eq!(
+            ObservedSpan::Seen {
+                first: Some(date("2026-01-04")),
+                last: Some(date("2026-07-01")),
+            }
+            .oldest(),
+            OldestObservation::At(date("2026-01-04"))
+        );
+    }
+
+    #[test]
+    fn an_empty_relation_leaves_the_freshness_marker_where_it_stood() {
+        // `last_observed_date` is monotonic: a relation that holds nothing
+        // today does not unsay the newest day it was once seen to hold.
+        assert_eq!(ObservedSpan::Empty.newest(), None);
+        assert_eq!(ObservedSpan::Unknown.newest(), None);
+        assert_eq!(
+            ObservedSpan::Seen {
+                first: Some(date("2026-01-04")),
+                last: Some(date("2026-07-01")),
+            }
+            .newest(),
+            Some(date("2026-07-01"))
+        );
     }
 
     #[test]
     fn sql_builders_emit_one_window_clause_per_measure() {
-        let dates = measure_last_dates_sql("insight", "ai_metric_observations", 2);
+        let dates = measure_dates_sql("insight", "ai_metric_observations", 2);
         assert!(dates.contains("measure_key IN (?, ?)"));
+        assert!(dates.contains("min(metric_date)"));
+        assert!(dates.contains("max(metric_date)"));
 
         let cov = dimension_coverage_sql("insight", "ai_metric_observations", 3);
         assert_eq!(cov.matches("measure_key = ?").count(), 3);
@@ -1442,8 +1562,9 @@ mod tests {
         use clickhouse::test::{Mock, handlers};
 
         let mock = Mock::new();
-        mock.add(handlers::provide(vec![MeasureLastDateProbeRow {
+        mock.add(handlers::provide(vec![MeasureDateProbeRow {
             measure_key: "accepted_lines".to_owned(),
+            first_date: "2026-01-04".to_owned(),
             last_date: "2026-07-01".to_owned(),
         }]));
         mock.add(handlers::provide(vec![EvidenceContractProbeRow {

@@ -6,7 +6,7 @@ sources:
       evidence_ref: ai_metric_evidence
       # Longest lookback_window among the connectors feeding this source:
       # claude-enterprise re-reads 3 days, claude-team and chatgpt-team 2.
-      revision_window_days: 3
+      revision: !rolling_days 3
     measures:
       - key: accepted_lines
         evidence_granularity: source_summary
@@ -323,9 +323,10 @@ sources:
       kind: managed_observation
       source_ref: ai_cost_metric_observations
       evidence_ref: ai_cost_metric_evidence
-      # The month in progress is revisable throughout, and 31 days is the
-      # longest such month.
-      revision_window_days: 31
+      # Every correction in ai_cost_metric_evidence is partitioned by
+      # period_month, so a reading can only rewrite days of the month it
+      # reports and the whole month settles when it closes.
+      revision: billing_month
     measures:
       - key: extra_usage_usd
         evidence_granularity: source_summary
@@ -341,6 +342,18 @@ sources:
         evidence_granularity: source_summary
         evidence_presentation: *seat_month_row
       - key: daily_extra_usage_usd
+        # Describes the supplier's NORMAL revision behaviour, not a guarantee.
+        # A day's step is the difference between two readings, and the ordinary
+        # case — a later cumulative reading at or above the one before it —
+        # closes that step: it is reported as settled from then on. That is
+        # unlike the month-to-date figures above, which every reading rewrites
+        # until the month closes.
+        #
+        # The rarer case is a later reading that comes in LOWER. The suffix
+        # minimum in ai_cost_metric_evidence then corrects earlier steps of the
+        # same month after they were already reported settled. Declaring 0 says
+        # that case is rare enough to report against, not that it cannot happen.
+        revision: !rolling_days 0
         evidence_granularity: source_summary
         evidence_presentation:
           show_value: true

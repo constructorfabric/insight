@@ -14,7 +14,7 @@ use uuid::Uuid;
 use crate::domain::metric_definitions::error_code::SchemaStatus;
 use crate::domain::metric_definitions::listing::list_definition_views;
 use crate::domain::metric_definitions::repository::{
-    update_definition_status, update_evidence_status, update_source_status,
+    OldestObservation, update_definition_status, update_evidence_status, update_source_status,
 };
 use crate::domain::metric_definitions::test_fixture::DrilldownFixture;
 use crate::domain::metric_definitions::validator::MetricDefinitionValidator;
@@ -91,6 +91,21 @@ async fn stored_last_observed(
     row.try_get("", "last_observed_date")
 }
 
+async fn stored_first_observed(
+    db: &DatabaseConnection,
+    id: Uuid,
+) -> Result<Option<chrono::NaiveDate>, sea_orm::DbErr> {
+    let row = db
+        .query_one_raw(Statement::from_sql_and_values(
+            db.get_database_backend(),
+            "SELECT first_observed_date FROM metric_definitions WHERE id = ?",
+            [Value::Bytes(Some(id.as_bytes().to_vec()))],
+        ))
+        .await?
+        .ok_or_else(|| sea_orm::DbErr::Custom("definition disappeared".to_owned()))?;
+    row.try_get("", "first_observed_date")
+}
+
 #[tokio::test]
 #[ignore = "requires live MariaDB 11+; set INTEGRATION_TESTS_MARIADB_URL to enable"]
 async fn listing_resolves_tenant_override_over_product() -> anyhow::Result<()> {
@@ -139,20 +154,105 @@ async fn update_definition_status_advances_but_never_regresses_freshness() -> an
     let older = "2026-01-01".parse::<chrono::NaiveDate>()?;
     let newest = "2026-07-31".parse::<chrono::NaiveDate>()?;
 
-    update_definition_status(&db, id, SchemaStatus::Ok, None, Some(newer)).await?;
+    let seen = OldestObservation::At(older);
+
+    update_definition_status(&db, id, SchemaStatus::Ok, None, seen, Some(newer)).await?;
     assert_eq!(stored_last_observed(&db, id).await?, Some(newer));
 
     // Older sweep result must not regress the stored date.
-    update_definition_status(&db, id, SchemaStatus::Ok, None, Some(older)).await?;
+    update_definition_status(&db, id, SchemaStatus::Ok, None, seen, Some(older)).await?;
     assert_eq!(stored_last_observed(&db, id).await?, Some(newer));
 
-    // A NULL (no observation this sweep) preserves the stored date.
-    update_definition_status(&db, id, SchemaStatus::Ok, None, None).await?;
+    // A sweep that read an empty relation preserves the stored date: freshness
+    // records the newest day ever seen, and today's emptiness does not unsay it.
+    update_definition_status(
+        &db,
+        id,
+        SchemaStatus::Ok,
+        None,
+        OldestObservation::Absent,
+        None,
+    )
+    .await?;
     assert_eq!(stored_last_observed(&db, id).await?, Some(newer));
 
     // A strictly newer date advances it.
-    update_definition_status(&db, id, SchemaStatus::Ok, None, Some(newest)).await?;
+    update_definition_status(&db, id, SchemaStatus::Ok, None, seen, Some(newest)).await?;
     assert_eq!(stored_last_observed(&db, id).await?, Some(newest));
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires live MariaDB 11+; set INTEGRATION_TESTS_MARIADB_URL to enable"]
+async fn update_definition_status_tracks_the_oldest_date_still_held() -> anyhow::Result<()> {
+    let Some(db) = connect_or_skip().await else {
+        return Ok(());
+    };
+    let tenant = Uuid::now_v7();
+    let id = insert_definition(&db, tenant, "git.commits", "collection-start-probe").await?;
+
+    let start = "2026-01-01".parse::<chrono::NaiveDate>()?;
+    let later_start = "2026-03-01".parse::<chrono::NaiveDate>()?;
+    let last = "2026-07-31".parse::<chrono::NaiveDate>()?;
+
+    update_definition_status(
+        &db,
+        id,
+        SchemaStatus::Ok,
+        None,
+        OldestObservation::At(start),
+        Some(last),
+    )
+    .await?;
+    assert_eq!(stored_first_observed(&db, id).await?, Some(start));
+
+    // Unlike the newest date, this one follows the relation forward: rows
+    // dropped by retention are days no reading can be shown for any more.
+    update_definition_status(
+        &db,
+        id,
+        SchemaStatus::Ok,
+        None,
+        OldestObservation::At(later_start),
+        Some(last),
+    )
+    .await?;
+    assert_eq!(stored_first_observed(&db, id).await?, Some(later_start));
+
+    // Retention took the last of the rows. The stored bound described those
+    // rows, so it goes with them rather than claiming a day still readable.
+    update_definition_status(
+        &db,
+        id,
+        SchemaStatus::Ok,
+        None,
+        OldestObservation::Absent,
+        None,
+    )
+    .await?;
+    assert_eq!(stored_first_observed(&db, id).await?, None);
+
+    // A sweep that established nothing — the definition resolved to no
+    // relation to read — leaves whatever is stored standing.
+    update_definition_status(
+        &db,
+        id,
+        SchemaStatus::Ok,
+        None,
+        OldestObservation::At(start),
+        Some(last),
+    )
+    .await?;
+    update_definition_status(
+        &db,
+        id,
+        SchemaStatus::Ok,
+        None,
+        OldestObservation::Unknown,
+        None,
+    )
+    .await?;
+    assert_eq!(stored_first_observed(&db, id).await?, Some(start));
     Ok(())
 }
 

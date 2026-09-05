@@ -31,6 +31,7 @@ const METRIC: MetricDefinition = {
   origin: "builtin" as const,
   schema_status: "ok",
   schema_error_code: null,
+  first_observed_date: "2026-01-04",
   last_observed_date: "2026-07-20",
 };
 

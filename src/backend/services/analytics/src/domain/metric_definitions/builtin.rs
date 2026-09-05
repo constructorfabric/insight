@@ -110,14 +110,33 @@ pub struct SourceSeed {
     /// `ObservationRelation::parse` (pinned by a registry test).
     pub source_ref: String,
     pub evidence_ref: String,
-    /// How many days a delivered day keeps changing before it settles, when the
-    /// suppliers revise one. Absent where nothing revises, or where nobody has
-    /// established it — a reader treats absence as "settles on arrival" rather
-    /// than as zero uncertainty. Where several suppliers feed one source the
-    /// longest window wins: calling a settled day provisional costs less than
-    /// the reverse.
+    /// When a delivered day stops changing, where the suppliers revise one.
+    /// Absent where nothing revises, or where nobody has established it — a
+    /// reader treats absence as "settles on arrival" rather than as zero
+    /// uncertainty. Where several suppliers feed one source the later boundary
+    /// wins: calling a settled day provisional costs less than the reverse.
     #[serde(default)]
-    pub revision_window_days: Option<u16>,
+    pub revision: Option<RevisionRule>,
+}
+
+/// What has to happen before a delivered day is reported settled.
+///
+/// The distinction is the date the supplier's correction is normally scoped to.
+/// A supplier that re-reads a fixed tail revises a day for a fixed time after
+/// that day. A supplier reporting a month-to-date figure revises within the
+/// month it is reporting, so its days settle together when that month closes —
+/// a duration cannot express that boundary, because how long a day stays open
+/// depends on where in its month it falls.
+///
+/// Either way this is the supplier's usual behaviour, and a correction outside
+/// it can still reach a day already reported settled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RevisionRule {
+    /// A delivered day keeps changing for this many days after itself.
+    RollingDays(u16),
+    /// A delivered day settles when the calendar month it falls in closes.
+    BillingMonth,
 }
 
 #[derive(Debug, Deserialize)]
@@ -134,6 +153,15 @@ pub struct BuiltinSource {
 pub struct MeasureSeed {
     pub key: String,
     pub evidence_granularity: EvidenceGranularity,
+    /// Overrides the source's rule where this measure settles differently.
+    ///
+    /// One supplier can report facts on two date anchors: a month-to-date total
+    /// stamped at the month it bills for is rewritten by every later reading,
+    /// while the step between two readings is closed by the ordinary next one.
+    /// A rule describes how the supplier normally revises, not what it cannot
+    /// do. Absent = the source's rule.
+    #[serde(default)]
+    pub revision: Option<RevisionRule>,
     /// Declared per (source, measure): `active_day` is a per-day flag in
     /// `ai_usage` and a distinct-count subject in `collab`.
     #[serde(default)]
