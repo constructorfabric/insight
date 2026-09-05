@@ -78,6 +78,16 @@ const MEMBER_COL_WIDTH =
 const MEMBER_COL_CELL =
   "sticky start-0 z-10 w-[var(--member-col,16rem)] bg-card text-left";
 
+/**
+ * INVARIANT: the cap is what gives the roster a scrollport of its own. The
+ * headings stick to it, never to the page, so without a height they cannot
+ * hold at all.
+ */
+const ROSTER_SCROLLPORT = "max-h-[75svh] overflow-auto";
+
+const HEADING_CELL =
+  "sticky top-0 z-20 bg-card shadow-[0_4px_0_0_var(--card)]";
+
 const METRIC_COL_PX = 108;
 
 export interface MembersGridMember {
@@ -376,7 +386,7 @@ export function MembersGrid({
 
   return (
     <div className={cn("@container flex flex-col gap-3", className)}>
-      <div className={cn("overflow-x-auto", MEMBER_COL_WIDTH)}>
+      <div className={cn(ROSTER_SCROLLPORT, MEMBER_COL_WIDTH)}>
         {/* Fixed layout so metric columns are uniform — auto layout sizes
             each column to its own content, making them ragged. The member
             column takes a fixed width; the metric columns split the rest
@@ -396,7 +406,7 @@ export function MembersGrid({
               <th
                 scope="col"
                 aria-sort={memberDirection}
-                className={cn(MEMBER_COL_CELL, "px-2")}
+                className={cn(MEMBER_COL_CELL, HEADING_CELL, "z-30 px-2")}
               >
                 {hasIssuesFacet ? (
                   // Two member orderings (issues / name) → a small header menu,
@@ -446,7 +456,7 @@ export function MembersGrid({
                   key={col.key}
                   scope="col"
                   aria-sort={directionFor(col.key)}
-                  className="p-0"
+                  className={cn(HEADING_CELL, "p-0")}
                 >
                   <ColumnHeader
                     col={col}

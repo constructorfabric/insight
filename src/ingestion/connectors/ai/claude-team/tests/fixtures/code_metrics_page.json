@@ -1,0 +1,11 @@
+{
+  "organization_id": "org-1",
+  "start_date": "2026-08-19",
+  "end_date": "2026-08-19",
+  "total_users": 0,
+  "users": [],
+  "pagination": {"limit": 100, "offset": 0, "total": 0, "has_next": false},
+  "pr_attribution": null,
+  "top_users_by_prs": [],
+  "top_users_by_lines_of_code": []
+}

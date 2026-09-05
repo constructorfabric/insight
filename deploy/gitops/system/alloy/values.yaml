@@ -90,10 +90,43 @@ alloy:
       // ── Parse OUR structured JSON to promote `level` to a label.
       //    Non-JSON lines (raw Airbyte / dbt output) fall through the
       //    stage untouched — they still arrive in Loki, just without a
-      //    `level` label.
+      //    `level` label. Lowercased before labelling — the gears services
+      //    (tracing-subscriber JSON) write "INFO"/"ERROR" uppercase.
       loki.process "parse" {
         stage.json {
           expressions = { level = "level" }
+        }
+        // WORKAROUND: the chart tpl-renders this config, so no Go-template
+        // funcs here (ToLower breaks the render) — literal per-level replaces.
+        stage.replace {
+          source     = "level"
+          expression = "^(?i)(trace)$"
+          replace    = "trace"
+        }
+        stage.replace {
+          source     = "level"
+          expression = "^(?i)(debug)$"
+          replace    = "debug"
+        }
+        stage.replace {
+          source     = "level"
+          expression = "^(?i)(info|information|notice)$"
+          replace    = "info"
+        }
+        stage.replace {
+          source     = "level"
+          expression = "^(?i)(warn|warning)$"
+          replace    = "warn"
+        }
+        stage.replace {
+          source     = "level"
+          expression = "^(?i)(error|err)$"
+          replace    = "error"
+        }
+        stage.replace {
+          source     = "level"
+          expression = "^(?i)(fatal|crit|alert|emerg|panic)$"
+          replace    = "fatal"
         }
         stage.labels {
           values = { level = "" }

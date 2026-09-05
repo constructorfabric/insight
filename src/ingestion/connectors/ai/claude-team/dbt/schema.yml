@@ -20,6 +20,11 @@ sources:
         freshness:
           warn_after: {count: 72, period: hour}
           error_after: {count: 120, period: hour}
+      - name: claude_team_code_metrics_org   # per-read envelope; total_users is the completeness reference
+        loaded_at_field: parseDateTimeBestEffortOrNull(metric_date)
+        freshness:
+          warn_after: {count: 72, period: hour}
+          error_after: {count: 120, period: hour}
       - name: claude_team_overage_spend   # per-seat spend snapshot — sync-liveness default
 
 models:

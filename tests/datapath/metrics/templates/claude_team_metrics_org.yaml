@@ -1,0 +1,23 @@
+# Reusable Claude Team org-envelope records
+# (bronze_claude_team.claude_team_code_metrics_org). One row per READ of a day,
+# carrying that read's own headcount. The completeness gate in
+# claude_team__ai_dev_usage joins it to the per-user rows on
+# (tenant, source, metric_date, _airbyte_meta.sync_id), so a fixture that wants
+# a day judged must set metric_date, total_users and a matching sync_id in
+# _airbyte_meta on both sides.
+templates:
+  claude_team_metrics_org:
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-01-05T00:00:00Z"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+    tenant_id: "{{ tenant }}"
+    source_id: "claude-team-test"
+    unique_key: null
+    collected_at: null
+    data_source: "insight_claude_team"
+    metric_date: null
+    pr_attribution: null
+    top_users_by_prs: null
+    top_users_by_lines_of_code: null
+    total_users: null

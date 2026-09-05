@@ -131,7 +131,7 @@ global:
   # it is separate releases, driven by the deploy pipeline (inventory
   # toggles; see deploy/gitops/system/README.md). This block only governs what
   # services EMIT. The values are published into the `{release}-platform`
-  # ConfigMap as INSIGHT_LOG_LEVEL / OTEL_* env vars (plus the gears-rust
+  # ConfigMap as INSIGHT_LOG_LEVEL / INSIGHT_LOG_FORMAT / OTEL_* env vars (plus the gears-rust
   # dialect, APP__opentelemetry__*), so every pod that does `envFrom` picks
   # them up uniformly. Lives under `global` so the service subcharts can hash
   # it into a pod-template annotation and roll on change (a top-level
@@ -139,6 +139,7 @@ global:
   observability:
     logs:
       level: info # debug|info|warn|error — default level for all services
+      format: json # json|text — console line shape for the gears services
     otlp:
       endpoint: "" # empty = stdout only; set = services export OTLP here
       protocol: grpc # grpc | http/protobuf
@@ -199,14 +200,14 @@ ingestion:
   # `serviceaccount "argo-workflow" not found`.
   templates:
     enabled: true
-  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.09.04.10.26-985bae8" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
+  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.09.04.23.55-22184ea" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
   # The sample-data seeder's image, for TEST stands only. Nothing in the chart
   # runs it: `src/ingestion/tools/seed/seed-stand.sh` reads this value to render
   # a one-shot Job. Its own image rather than the toolbox on purpose — the
   # toolbox runs migrations on real stands and does not carry demo data. Empty
   # (the default) means the stand cannot be seeded until an operator names an
   # image, either here or with the script's `--image` flag.
-  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.09.04.10.26-985bae8" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
+  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.09.04.23.55-22184ea" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
   # airbyte-sync poll-job tunables — see templates/ingestion/airbyte-sync.yaml.
   # The poll loop replaces a wall-clock deadline with a progress watchdog:
   # it tracks (status, bytesEmitted, recordsEmitted, stateMessagesEmitted)

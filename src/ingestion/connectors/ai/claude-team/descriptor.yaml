@@ -59,7 +59,31 @@ name: claude-team
 #   give something to rebuild from. The daily trajectory begins here — readings
 #   already overwritten cannot be recovered, so months before this version keep
 #   their single closing figure.
-version: "3.2.0"
+# 3.3.0: closes #3172. claude_team_code_metrics pages an offset window over
+#   sort_by=total_lines_accepted, which is not a total order — everyone with no
+#   accepted lines ties on it — so a person could sit past the page boundary in
+#   one request and before it in the next, returned by neither, while both
+#   requests succeeded. Three changes together:
+#   claude_team_code_metrics_org declares total_users, the day's headcount the
+#   envelope already carried and the stream already fetched and threw away, and
+#   its unique_key gains the read so each read keeps its own reference —
+#   total_users is only true as of the read that returned it, and a day still in
+#   progress reports fewer people than it ends with, so a gate judging an older
+#   read against the newest reference would reject sound reads. The per-user
+#   page rises to 200, which keeps a roster that fits inside it to a single
+#   answer no window can shift under; that is a mitigation, not the fix.
+#   The fix is the completeness gate in claude_team__ai_dev_usage: a read whose
+#   distinct people do not equal its own total_users never becomes the day's
+#   state in staging or silver.
+#   MINOR per ADR-0015 — additive Bronze field, no dbt output change, nothing
+#   re-materializes; the reconciler adds the snapshot column, so no ALTER ships
+#   with it. Reads before the first one that carried a reference stay admitted
+#   as legacy, which is what they honestly are; that read and every one after it
+#   must carry its own or be rejected. The boundary is the read, not its clock:
+#   both streams are written by the same job but not at the same instant, so on
+#   the first sync after the upgrade the per-user rows can land just before the
+#   envelope that judges them.
+version: "3.3.0"
 # Daily at 23:50 UTC, as late in the day as the boundary allows. The seat
 # endpoint reports the billing month in progress and carries no history, so a
 # month's spend is frozen at the last read INSIDE it and whatever follows is
