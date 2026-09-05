@@ -78,6 +78,13 @@ cache:
   # fetch holds its entry's write lock while queued here — one slow clone
   # must not convoy every other repository's refresh behind it.
   heavyOpsConcurrency: 2
+  # Concurrent page serves. Each serve runs git children whose memory scales
+  # with the window's blob bytes, so the pod's peak is roughly this cap times
+  # the heaviest window — this is what bounds proxy memory, which is why
+  # resources.limits is read against it rather than raised on its own.
+  # Excess requests wait in-connection for a slot; serves are CPU-bound, so
+  # past ~2x the CPU limit extra slots only add memory risk.
+  serveConcurrency: 4
   # PEM bundle for self-hosted origins behind a private CA. Empty = system
   # trust store (correct for the public clouds).
   caCertPath: ""

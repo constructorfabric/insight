@@ -668,6 +668,11 @@ gitCliProxy:
     # A fetch holds its entry's write lock while queued for a slot, so one
     # slow clone must not convoy every other repository's refresh.
     heavyOpsConcurrency: 2
+    # Concurrent page serves; the pod's peak memory is roughly this times the
+    # heaviest window's blob bytes, so this is the cap that bounds proxy
+    # memory. Serves are CPU-bound — extra slots past ~2x the CPU limit only
+    # add memory risk.
+    serveConcurrency: 4
     caCertPath: ""
   caCertSecret: ""
   # Bearer token the proxy requires on every /v1 request. Empty = generated on

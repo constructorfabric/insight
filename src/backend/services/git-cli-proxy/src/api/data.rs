@@ -159,7 +159,7 @@ pub async fn list_commits(
     let paging = Paging::parse(query.page_token.as_deref(), query.page_size)?;
     let selected = parse_sha_filter(query.sha.as_deref())?;
 
-    let page = read_snapshot(&state, &context, &paging, |guard: RepoGuard| {
+    let (page, _slot) = read_snapshot(&state, &context, &paging, |guard: RepoGuard| {
         let (state, context, paging) = (&state, &context, &paging);
         let since = query.since.as_deref();
         let selected = selected.as_ref();
@@ -251,7 +251,7 @@ pub async fn list_file_changes(
     let include_patch = query.include_patch.unwrap_or(true);
     let max_patch_bytes = clamp_patch_bytes(query.max_patch_bytes);
 
-    let page = read_snapshot(&state, &context, &paging, |guard: RepoGuard| {
+    let (page, _slot) = read_snapshot(&state, &context, &paging, |guard: RepoGuard| {
         let (state, context, paging) = (&state, &context, &paging);
         let since = query.since.as_deref();
         let selected = selected.as_ref();
@@ -409,7 +409,7 @@ pub async fn list_branches(
     let context = RequestContext::from_parts(&headers, repo, state.clone_url_policy())?;
     let paging = Paging::parse(query.page_token.as_deref(), query.page_size)?;
 
-    let page = read_snapshot(&state, &context, &paging, |guard: RepoGuard| {
+    let (page, _slot) = read_snapshot(&state, &context, &paging, |guard: RepoGuard| {
         let (state, context, paging) = (&state, &context, &paging);
         Box::pin(async move {
             let mut all =
@@ -448,7 +448,7 @@ pub async fn list_authors(
     let context = RequestContext::from_parts(&headers, repo, state.clone_url_policy())?;
     let paging = Paging::parse(query.page_token.as_deref(), query.page_size)?;
 
-    let page = read_snapshot(&state, &context, &paging, |guard: RepoGuard| {
+    let (page, _slot) = read_snapshot(&state, &context, &paging, |guard: RepoGuard| {
         let (state, context, paging) = (&state, &context, &paging);
         let since = query.since.as_deref();
         Box::pin(async move {
@@ -553,7 +553,7 @@ async fn read_snapshot<'a, T, F>(
     context: &'a RequestContext,
     paging: &'a Paging,
     read: F,
-) -> Result<Page<T>, ApiError>
+) -> Result<(Page<T>, tokio::sync::OwnedSemaphorePermit), ApiError>
 where
     // INVARIANT: the reader takes the guard BY VALUE, so it is released before
     // promotion is requested. Promotion takes the entry's write lock, and
@@ -561,13 +561,29 @@ where
     F: Fn(RepoGuard) -> BoxFuture<'a, Result<Page<T>, ApiError>>,
 {
     let guard = open(state, context, paging).await?;
+    // INVARIANT: the permit spans the read AND the caller's serialization,
+    // which is why it is returned alongside the page — a serialized patch
+    // page holds the whole body in memory, so releasing the slot before
+    // encoding would let bodies stack uncapped. The semaphore IS the cap on
+    // concurrent page serves, and the pod's peak memory is that cap times
+    // the heaviest window. Taken AFTER open, so a slot is never spent
+    // waiting on a preparation.
+    let slot = serve_slot(state).await?;
     let outcome = read(guard).await;
     check_for_drift(state, context);
     match outcome {
-        Ok(page) => return Ok(page),
+        Ok(page) => return Ok((page, slot)),
         Err(e) if !refuses_promisor_wants(&e) => return Err(e),
         Err(_) => {}
     }
+
+    // SAFETY: the slot is released before promotion and taken again after.
+    // Promotion takes the entry's WRITE lock, and a concurrent request that
+    // already holds that entry's read guard queues here for a slot — keeping
+    // this one would leave the promoter waiting for the reader while the
+    // reader waits for the slot, both stalled until the queue ceiling
+    // expires. No slot holder may await a write lock.
+    drop(slot);
 
     let generation = state
         .store
@@ -581,9 +597,33 @@ where
     }
 
     let guard = open(state, context, paging).await?;
+    let slot = serve_slot(state).await?;
     let outcome = read(guard).await;
     check_for_drift(state, context);
-    outcome
+    outcome.map(|page| (page, slot))
+}
+
+/// Take a page-serve slot, or answer 429 when none frees up in time.
+///
+/// Serves queue in-connection like every other wait, so a taken slot costs
+/// the caller nothing but time; the bounded wait is the backstop that keeps
+/// a saturated pod answering instead of accumulating held requests forever.
+async fn serve_slot(state: &Arc<AppState>) -> Result<tokio::sync::OwnedSemaphorePermit, ApiError> {
+    acquire_within(state.serves.clone(), crate::engine::store::PREPARATION_WAIT).await
+}
+
+async fn acquire_within(
+    serves: Arc<tokio::sync::Semaphore>,
+    budget: Duration,
+) -> Result<tokio::sync::OwnedSemaphorePermit, ApiError> {
+    match tokio::time::timeout(budget, serves.acquire_owned()).await {
+        Ok(Ok(permit)) => Ok(permit),
+        // The semaphore is never closed; a closed error is a bug surfacing.
+        Ok(Err(e)) => Err(ApiError::Serialization(format!(
+            "serve semaphore closed: {e}"
+        ))),
+        Err(_) => Err(ApiError::ServeSaturated),
+    }
 }
 
 /// Hand the entry to the store's post-serve purge, detached.
@@ -701,6 +741,142 @@ mod tests {
     use super::*;
     use crate::engine::read::numstat::{FileStat, FileStatus};
     use crate::engine::read::patches::Patch;
+
+    #[tokio::test]
+    async fn a_serve_holds_its_slot_until_the_caller_is_done_with_the_page() {
+        // The cap bounds SERVES, not merely the read inside one: a page's rows
+        // and the body it serializes into coexist, so the slot has to outlive
+        // the read and come back only when the caller drops it.
+        let fixture = crate::engine::store::tests::fixture("api-serve-slot");
+        let state = Arc::new(AppState {
+            store: Arc::clone(&fixture.store),
+            config: crate::config::GearConfig {
+                bind_addr: "127.0.0.1:0".to_owned(),
+                data_dir: fixture.root.display().to_string(),
+                disk_budget_bytes: 1_000_000_000,
+                max_repo_bytes: 500_000_000,
+                default_max_staleness_seconds: 300,
+                heavy_ops_concurrency: 2,
+                serve_concurrency: 1,
+                proxy_token: "t0ken".to_owned(),
+                ca_cert_path: String::new(),
+                allow_file_repos: true,
+                allowed_repo_hosts: Vec::new(),
+            },
+            serves: Arc::new(tokio::sync::Semaphore::new(1)),
+        });
+        let context = RequestContext {
+            key: crate::engine::store::tests::key(&fixture),
+            creds: crate::engine::store::tests::creds(),
+            max_staleness: None,
+        };
+        let Ok(paging) = Paging::parse(None, None) else {
+            panic!("default paging must parse")
+        };
+
+        let served = read_snapshot(&state, &context, &paging, |guard: RepoGuard| {
+            Box::pin(async move {
+                Ok(Page {
+                    items: vec![guard.generation()],
+                    next_page_token: None,
+                })
+            })
+        })
+        .await;
+        let (page, slot) = match served {
+            Ok(served) => served,
+            Err(e) => panic!("a fixture repository must serve a page: {e}"),
+        };
+
+        assert_eq!(
+            page.items,
+            vec![1],
+            "the clone's first generation is served"
+        );
+        assert_eq!(
+            state.serves.available_permits(),
+            0,
+            "the slot stays taken while the page is alive"
+        );
+
+        drop(slot);
+        assert_eq!(
+            state.serves.available_permits(),
+            1,
+            "and returns once the caller is done with the page"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_promoting_serve_does_not_hold_the_slot_its_writer_waits_behind() {
+        // Promotion takes the entry's WRITE lock. A second request already
+        // holding that entry's read guard queues for a slot, so a promoter
+        // that kept its own slot would wait for the reader while the reader
+        // waits for the slot — deadlocked until the queue ceiling expires.
+        // Without the release this test reaches its timeout.
+        let fixture = crate::engine::store::tests::fixture("api-promote-slot");
+        let state = Arc::new(AppState {
+            store: Arc::clone(&fixture.store),
+            config: crate::config::GearConfig {
+                bind_addr: "127.0.0.1:0".to_owned(),
+                data_dir: fixture.root.display().to_string(),
+                disk_budget_bytes: 1_000_000_000,
+                max_repo_bytes: 500_000_000,
+                default_max_staleness_seconds: 300,
+                heavy_ops_concurrency: 2,
+                serve_concurrency: 1,
+                proxy_token: "t0ken".to_owned(),
+                ca_cert_path: String::new(),
+                allow_file_repos: true,
+                allowed_repo_hosts: Vec::new(),
+            },
+            serves: Arc::new(tokio::sync::Semaphore::new(1)),
+        });
+        let context = RequestContext {
+            key: crate::engine::store::tests::key(&fixture),
+            creds: crate::engine::store::tests::creds(),
+            max_staleness: None,
+        };
+        let Ok(paging) = Paging::parse(None, None) else {
+            panic!("default paging must parse")
+        };
+
+        // Warm the entry so neither side waits on a clone.
+        match open(&state, &context, &paging).await {
+            Ok(guard) => drop(guard),
+            Err(e) => panic!("the fixture must open: {e}"),
+        }
+        let reader = match open(&state, &context, &paging).await {
+            Ok(guard) => guard,
+            Err(e) => panic!("the fixture must open: {e}"),
+        };
+
+        let raced = tokio::time::timeout(Duration::from_secs(30), async {
+            tokio::join!(
+                read_snapshot(&state, &context, &paging, |_guard: RepoGuard| {
+                    Box::pin(async {
+                        Err::<Page<u64>, ApiError>(ApiError::Git(GitError::PromisorRefused))
+                    })
+                }),
+                async {
+                    let slot = serve_slot(&state).await;
+                    // Release the read guard only once the slot is in hand:
+                    // the promoter must have let go of it on its own.
+                    drop(reader);
+                    slot.is_ok()
+                }
+            )
+        })
+        .await;
+
+        let Ok((_, queued_serve_got_a_slot)) = raced else {
+            panic!("the promoting serve and the queued serve deadlocked")
+        };
+        assert!(
+            queued_serve_got_a_slot,
+            "the queued serve must get the slot the promoter released"
+        );
+    }
 
     #[tokio::test]
     async fn a_page_declares_its_own_length() {
@@ -933,5 +1109,40 @@ mod tests {
         );
         assert!(rows.is_empty());
         assert_eq!(cursor, None);
+    }
+
+    #[tokio::test]
+    async fn a_serve_waits_for_a_slot_and_gets_one_when_it_frees() {
+        let serves = Arc::new(tokio::sync::Semaphore::new(1));
+        let held = match serves.clone().try_acquire_owned() {
+            Ok(p) => p,
+            Err(e) => panic!("stage: {e}"),
+        };
+
+        let waiter = tokio::spawn(acquire_within(serves, Duration::from_secs(5)));
+        // Let the waiter reach acquire_owned() so the release below is what
+        // serves it — otherwise the test never exercises the wait path.
+        tokio::task::yield_now().await;
+        drop(held);
+        match waiter.await {
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => panic!("a freed slot must be handed to the waiter: {e}"),
+            Err(e) => panic!("waiter died: {e}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_saturated_pod_answers_429_rather_than_holding_forever() {
+        let serves = Arc::new(tokio::sync::Semaphore::new(1));
+        let _held = match serves.clone().try_acquire_owned() {
+            Ok(p) => p,
+            Err(e) => panic!("stage: {e}"),
+        };
+
+        match acquire_within(serves, Duration::from_millis(20)).await {
+            Err(ApiError::ServeSaturated) => {}
+            Err(e) => panic!("expected ServeSaturated, got {e}"),
+            Ok(_) => panic!("no slot exists; the wait must expire"),
+        }
     }
 }

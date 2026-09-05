@@ -28,6 +28,8 @@ pub enum ApiError {
     Git(#[from] GitError),
     #[error("the proxy token was missing or wrong")]
     ProxyTokenRejected,
+    #[error("every page-serve slot is taken; retry shortly")]
+    ServeSaturated,
     #[error("failed to serialize the response: {0}")]
     Serialization(String),
 }
@@ -47,6 +49,9 @@ const ADMISSION_RETRY_AFTER_SECONDS: u64 = 30;
 /// Origin asked this client to slow down. Longer than the cache's own hint:
 /// a vendor rate-limit window outlives a reader releasing an entry.
 const THROTTLED_RETRY_AFTER_SECONDS: u64 = 60;
+/// Every serve slot stayed taken for the whole bounded wait; slots turn over
+/// as pages finish, so the caller is asked back on the short cadence.
+const SERVE_RETRY_AFTER_SECONDS: u64 = 30;
 
 /// A prefetch refused for space schedules a pressure purge as it rejects, so
 /// "later" is one repack away — much sooner than a full admission cycle.
@@ -61,13 +66,20 @@ impl IntoResponse for ApiError {
             Self::Store(StoreError::Busy { .. }) => {
                 metrics::record_rejection(metrics::RejectReason::PreparationWait);
             }
+            Self::ServeSaturated => {
+                metrics::record_rejection(metrics::RejectReason::ServeSaturated);
+            }
             Self::Store(StoreError::Throttled) | Self::Git(GitError::Throttled) => {
                 metrics::record_rejection(metrics::RejectReason::OriginThrottled);
             }
             Self::Store(StoreError::OriginUnavailable) | Self::Git(GitError::OriginUnavailable) => {
                 metrics::record_origin_unavailable();
             }
-            _ => {}
+            Self::BadRequest(_)
+            | Self::Store(_)
+            | Self::Git(_)
+            | Self::ProxyTokenRejected
+            | Self::Serialization(_) => {}
         }
 
         let retry_after = self.retry_after();
@@ -118,11 +130,14 @@ impl ApiError {
                 StatusCode::NOT_FOUND.as_u16()
             }
             Self::Store(StoreError::SnapshotChanged { .. }) => StatusCode::CONFLICT.as_u16(),
-            Self::Store(StoreError::Busy { .. } | StoreError::Throttled)
+            Self::ServeSaturated
+            | Self::Store(StoreError::Busy { .. } | StoreError::Throttled)
             | Self::Git(
                 GitError::AdmissionRejected | GitError::TransientlyOverCap | GitError::Throttled,
             ) => StatusCode::TOO_MANY_REQUESTS.as_u16(),
-            _ => StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+            Self::Store(_) | Self::Git(_) | Self::Serialization(_) => {
+                StatusCode::INTERNAL_SERVER_ERROR.as_u16()
+            }
         }
     }
 
@@ -131,19 +146,29 @@ impl ApiError {
             Self::Store(StoreError::TooLarge { .. }) | Self::Git(GitError::TooLarge { .. }) => {
                 Some(REPO_TOO_LARGE)
             }
-            _ => None,
+            Self::BadRequest(_)
+            | Self::Store(_)
+            | Self::Git(_)
+            | Self::ProxyTokenRejected
+            | Self::ServeSaturated
+            | Self::Serialization(_) => None,
         }
     }
 
     fn retry_after(&self) -> Option<u64> {
         match self {
             Self::Store(StoreError::Busy { retry_after }) => Some(retry_after.as_secs()),
+            Self::ServeSaturated => Some(SERVE_RETRY_AFTER_SECONDS),
             Self::Git(GitError::AdmissionRejected) => Some(ADMISSION_RETRY_AFTER_SECONDS),
             Self::Git(GitError::TransientlyOverCap) => Some(PRESSURE_RETRY_AFTER_SECONDS),
             Self::Store(StoreError::Throttled) | Self::Git(GitError::Throttled) => {
                 Some(THROTTLED_RETRY_AFTER_SECONDS)
             }
-            _ => None,
+            Self::BadRequest(_)
+            | Self::Store(_)
+            | Self::Git(_)
+            | Self::ProxyTokenRejected
+            | Self::Serialization(_) => None,
         }
     }
 
@@ -203,6 +228,16 @@ impl ApiError {
                 RepositoryError::resource_exhausted("repository is being prepared")
                     .with_quota_violation("repository_preparation", "clone or fetch in progress")
                     .with_quota_violation_retry_after_seconds(retry_after.as_secs())
+                    .create()
+            }
+            // Ours, not the entry's: every serve slot is taken. Same shape as
+            // the other 429s so the connector backs off identically, distinct
+            // quota subject so an operator can tell saturation from
+            // preparation.
+            Self::ServeSaturated => {
+                RepositoryError::resource_exhausted("every page-serve slot is taken")
+                    .with_quota_violation("serve_concurrency", "all serve slots in use")
+                    .with_quota_violation_retry_after_seconds(SERVE_RETRY_AFTER_SECONDS)
                     .create()
             }
             // The vendor's own limiter, not ours. Same shape as a cache
@@ -283,6 +318,19 @@ mod tests {
     use std::time::Duration;
 
     use axum::body::to_bytes;
+
+    #[test]
+    fn serve_saturation_answers_429_with_a_retry_hint() {
+        use axum::response::IntoResponse;
+
+        let response = ApiError::ServeSaturated.into_response();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        let retry_after = match response.headers().get(header::RETRY_AFTER) {
+            Some(value) => value.to_str().unwrap_or_default().to_owned(),
+            None => panic!("saturation must tell the caller when to come back"),
+        };
+        assert_eq!(retry_after, SERVE_RETRY_AFTER_SECONDS.to_string());
+    }
 
     use super::*;
 
@@ -373,12 +421,23 @@ mod tests {
                 GitError::AdmissionRejected.into(),
                 StatusCode::TOO_MANY_REQUESTS,
             ),
+            // Ours, not the entry's: every page-serve slot is taken.
+            (ApiError::ServeSaturated, StatusCode::TOO_MANY_REQUESTS),
+            (
+                ApiError::Serialization("boom".to_owned()),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
         ];
         for (error, expected) in cases {
             let label = error.to_string();
+            // INVARIANT: what a request is RECORDED against and what it is
+            // ANSWERED with are the same status — the metrics middleware
+            // reads the former off the error before the latter exists.
+            let recorded = error.status_code();
             let (status, _, body) = problem(error).await;
             assert_eq!(status, expected, "for {label}");
             assert_eq!(body["status"], expected.as_u16(), "for {label}");
+            assert_eq!(recorded, expected.as_u16(), "recorded status for {label}");
         }
     }
 
