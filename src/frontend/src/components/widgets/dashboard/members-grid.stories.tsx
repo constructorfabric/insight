@@ -28,7 +28,11 @@ const MEMBERS = [
   { entityId: "019e27bc-dec0-7626-81a9-c5524662a6b0", displayName: "Bo Ng" },
 ];
 
-function metric(key: string, shortLabel: string): MetricResult {
+function metric(
+  key: string,
+  shortLabel: string,
+  members: typeof MEMBERS = MEMBERS
+): MetricResult {
   return {
     metric_key: key,
     label: `${shortLabel} over the period`,
@@ -40,14 +44,14 @@ function metric(key: string, shortLabel: string): MetricResult {
     views: [
       {
         view: "period",
-        values: MEMBERS.map((m, index) => ({
+        values: members.map((m, index) => ({
           entity_id: m.entityId,
           value: 100 + index,
         })),
       },
       {
         view: "peer",
-        values: MEMBERS.map((m, index) => ({
+        values: members.map((m, index) => ({
           entity_id: m.entityId,
           target_value: 100 + index,
           p25: 50,
@@ -160,5 +164,66 @@ export const TestWideRosterKeepsTheComfortableNameColumn: Story = {
       width,
       `the member column is ${width}px on a ${CARD_PX_WIDE}px card`
     ).toBe(256);
+  },
+};
+
+const LONG_ROSTER = Array.from({ length: 40 }, (_, index) => ({
+  entityId: `019e27bc-dec0-7626-81a9-c5524662${String(index).padStart(4, "0")}`,
+  displayName: `Member ${index + 1}`,
+}));
+
+const LONG_RESULTS = RESULTS.map((result) =>
+  metric(result.metric_key, result.short_label!, LONG_ROSTER)
+);
+
+/** Every heading stays in the DOM when it scrolls away, so only geometry sees this. */
+export const TestHeadingsHoldWhileTheRosterScrolls: Story = {
+  tags: ["test"],
+  args: {
+    members: LONG_ROSTER,
+    metricKeys: LONG_RESULTS.map((r) => r.metric_key),
+    byKey: normalizeMetricResults(LONG_RESULTS),
+  },
+  decorators: [
+    (Story) => (
+      <div style={{ width: CARD_PX_WIDE }}>
+        <Story />
+      </div>
+    ),
+  ],
+  play: async ({ canvas }) => {
+    const table = canvas.getByRole("table", { name: "Members grid" });
+    const scroller = table.parentElement!;
+
+    scroller.scrollTop = 400;
+    scroller.scrollLeft = 300;
+    await expect(
+      scroller.scrollTop,
+      "the roster does not scroll vertically, so nothing can hold on scroll"
+    ).toBeGreaterThan(0);
+
+    const box = scroller.getBoundingClientRect();
+    const metricHeader = canvas
+      .getByRole("button", {
+        name: "Commits over the period — sort by this column",
+      })
+      .closest("th")!;
+    const memberHeader = table.querySelector("thead th")!;
+
+    const drop = metricHeader.getBoundingClientRect().top - box.top;
+    await expect(
+      Math.abs(drop),
+      `the metric heading sits ${Math.round(drop)}px from the top of the roster`
+    ).toBeLessThanOrEqual(1);
+
+    const corner = memberHeader.getBoundingClientRect();
+    await expect(
+      Math.abs(corner.top - box.top),
+      "the Person heading left the top of the roster"
+    ).toBeLessThanOrEqual(1);
+    await expect(
+      Math.abs(corner.left - box.left),
+      "the Person heading left the start of the roster"
+    ).toBeLessThanOrEqual(1);
   },
 };
