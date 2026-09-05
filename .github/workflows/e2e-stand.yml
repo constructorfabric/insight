@@ -2,9 +2,9 @@ name: E2E — Compose stand
 
 # The deployed-stand suite (tests/stand) run against a real compose stack: ghcr
 # images pinned to each component's chart appVersion, a real Keycloak login, and
-# gold data dbt actually built. Distinct from e2e-bronze-to-api.yml, which
-# exercises the in-process ingestion rig and now carries one blocking gate
-# (metric coverage) — that workflow is untouched by this one.
+# gold data dbt actually built. Distinct from e2e-bronze-to-api.yml, which runs
+# the data-path suite on minimal stands of its own and carries the metric
+# coverage gate — that workflow is untouched by this one.
 #
 # Nothing here builds by default: `test-stand up` pulls the frontend and the
 # four backend services at their charts' appVersions, which name main's build.
@@ -189,22 +189,6 @@ jobs:
       id-token: write
       attestations: write
     uses: ./.github/workflows/build-images.yml
-
-  bronze-to-api-report:
-    name: Run E2E suite
-    needs: changes
-    if: github.event_name == 'pull_request' && !cancelled()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Defer Bronze-to-API to the merge queue
-        env:
-          CHANGES: ${{ needs.changes.result }}
-        run: |
-          if [ "$CHANGES" != success ]; then
-            echo "::error::stand relevance could not be evaluated ($CHANGES)."
-            exit 1
-          fi
-          echo "Bronze-to-API is deferred to the merge queue."
 
   gateway:
     name: Gateway checks

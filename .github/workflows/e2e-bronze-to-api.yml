@@ -31,9 +31,14 @@ name: E2E — Bronze to API
 on:
   # Merge-queue builds: the queue's gh-readonly-queue/* branches emit merge_group,
   # and the required "Run E2E suite" check must report there or every queued PR
-  # times out and is evicted. On a pull request the same check name is emitted
-  # by e2e-stand.yml as a deferral to the queue.
+  # times out and is evicted. On a pull request the umbrella below emits the same
+  # check as a deferral to the queue, so one workflow owns the name in both places.
   merge_group:
+  # No `paths:` filter: GitHub leaves a required check whose workflow never ran
+  # pending forever, so every pull request runs the cheap `changes` job and the
+  # umbrella, which defers the suite itself to the queue.
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 # A new push obsoletes any run still in flight for the same ref — cancel it so a
@@ -51,9 +56,8 @@ permissions:
   actions: read
 
 jobs:
-  # `e2e-suite` is the reusable workflow's aggregate result. The caller emits
-  # the stable "Run E2E suite" pull-request check; merge_group runs emit it
-  # directly here.
+  # `e2e-suite` is the aggregate that emits the stable "Run E2E suite" check:
+  # a deferral on a pull request, the verdict in the merge queue.
   #
   # Skipping cascades by default `needs` semantics: `changes` says irrelevant →
   # `e2e-datapath` skips → `metric-coverage-gate` skips. The umbrella tells that
@@ -139,7 +143,7 @@ jobs:
   e2e-datapath:
     name: data path (shard ${{ matrix.shard }})
     needs: changes
-    if: ${{ needs.changes.outputs.relevant == 'true' }}
+    if: ${{ needs.changes.outputs.relevant == 'true' && github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     # Compiling the backend from this tree is the slow path; pulling the
     # pinned images is not. Same split e2e-stand.yml makes.
@@ -340,6 +344,7 @@ jobs:
       # two apart, and it would also fold in `changes`'s own result.
       - name: Require every data-path shard and the gate to have succeeded
         env:
+          EVENT: ${{ github.event_name }}
           CHANGES: ${{ needs.changes.result }}
           RELEVANT: ${{ needs.changes.outputs.relevant }}
           # Matrix aggregate: 'success' only when EVERY shard passed.
@@ -349,7 +354,7 @@ jobs:
           GATE: ${{ needs.metric-coverage-gate.result }}
         run: |
           set -euo pipefail
-          echo "changes=$CHANGES relevant=$RELEVANT suite=$SUITE gate=$GATE"
+          echo "event=$EVENT changes=$CHANGES relevant=$RELEVANT suite=$SUITE gate=$GATE"
 
           # Fail closed. A `changes` job that did not succeed leaves `relevant`
           # empty, which would otherwise read as "irrelevant" and green a
@@ -359,7 +364,9 @@ jobs:
             exit 1
           fi
 
-          if [ "$RELEVANT" != "true" ]; then
+          if [ "$EVENT" = "pull_request" ]; then
+            echo "the data-path suite runs in the merge queue; deferred there."
+          elif [ "$RELEVANT" != "true" ]; then
             echo "nothing on the bronze → dbt → ClickHouse → analytics path changed — nothing to prove."
           else
             for lane in "suite=$SUITE" "gate=$GATE"; do
