@@ -74,7 +74,7 @@ oracles, and one forbidden one.
 | **The API response the UI just received** | anything on screen | the drilldown table matches the payload behind it |
 | **The endpoint contract** | status codes, media types, problem documents | 415 on a wrong content type |
 | **The code** | a rule whose only statement is an implementation | a suppression threshold that appears in no contract |
-| ~~A number you read off a running stand~~ | **never** | `golden_metrics` is empty by design |
+| ~~A number you read off a running stand~~ | **never** | the seed publishes no expected values |
 
 **No claim may assert an exact metric value.** Reading a number off the stand
 and asserting it back only proves that the code which produced it produced it.
@@ -108,9 +108,10 @@ grep -rn "subchart\|visible-persons\|metric-results" tests/stand/api
 §2 of `SCENARIO-COVERAGE.md` already attributes nine clauses to their tests —
 faster than grep for anything recorded there.
 
-Two blocking gates in the sibling rig also own territory — the metric×view gate
-(`src/ingestion/tests/e2e/lib/metric_coverage.py`) and the per-operation API
-gate (`lib/api_coverage.py`). Do not re-specify what a gate already fails on.
+Two blocking gates elsewhere also own territory — the metric×view gate
+(`tests/lib/insight_datapath/metric_coverage.py`, over the data-path suite in
+`tests/datapath/`) and the per-operation API gate (`scripts/ci/api_coverage.py`).
+Do not re-specify what a gate already fails on.
 
 Mark the verdict on every claim: **new** · **covered by `<test>`** ·
 **partially covered by `<test>`** (say what is missing).

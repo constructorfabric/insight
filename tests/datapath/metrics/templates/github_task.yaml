@@ -1,0 +1,306 @@
+# Reusable GitHub task-tracking rows. The GitHub path runs bronze to gold
+# entirely inside the rig — no enrich binary sits in the middle — so a fixture
+# exercises the real staging models rather than a hand-written silver row.
+#
+# The configuration rows are as much a part of the fixture as the bronze ones:
+# GitHub states no lifecycle category anywhere, so without a binding an issue
+# has no status a metric can read.
+templates:
+  # ── configuration ──────────────────────────────────────────────────────
+  role_state:
+    tenant_id: "{{ tenant }}"
+    insight_source_id: github-test
+    data_source: github
+    field_id: state
+    valid_from: "1970-01-01 00:00:00.000"
+    recorded_at: "2026-01-01 00:00:00.000"
+    unique_key: gh-role-state
+    role: status
+    precedence: 0
+    value_unit: none
+    unit_multiplier: 1
+    is_deleted: 0
+    note: ""
+    recorded_by: fixture
+    _version: "2026-01-01 00:00:00.000"
+
+  role_assignees:
+    $ref: "#/templates/role_state"
+    field_id: assignees
+    unique_key: gh-role-assignees
+    role: assignee
+
+  role_type:
+    $ref: "#/templates/role_state"
+    field_id: type
+    unique_key: gh-role-type
+    role: issuetype
+
+  # `open` and every closure reason are distinct values an operator binds; a
+  # value with no binding is what the coverage test refuses.
+  value_open:
+    tenant_id: "{{ tenant }}"
+    insight_source_id: github-test
+    data_source: github
+    field_id: state
+    value_id: open
+    valid_from: "1970-01-01 00:00:00.000"
+    recorded_at: "2026-01-01 00:00:00.000"
+    unique_key: gh-value-open
+    canonical_value: new
+    value_display: Open
+    is_deleted: 0
+    note: ""
+    recorded_by: fixture
+    _version: "2026-01-01 00:00:00.000"
+
+  value_closed_completed:
+    $ref: "#/templates/value_open"
+    value_id: "closed:completed"
+    unique_key: gh-value-closed-completed
+    canonical_value: done
+    value_display: Completed
+
+  value_closed_not_planned:
+    $ref: "#/templates/value_open"
+    value_id: "closed:not_planned"
+    unique_key: gh-value-closed-not-planned
+    canonical_value: done
+    value_display: Not planned
+
+  # A Projects V2 board's status is its OWN field, one per board, never the
+  # issue's `state`. The field identity is the board, because a status event
+  # names the board and no field object; the value key carries the board too,
+  # so two boards' same-named columns stay distinct dimension rows.
+  #
+  # Binding this to `status` INSTEAD of `state` is the point of a board: the
+  # issue's own lifecycle has no middle, and a board column is the only place
+  # GitHub says work is in progress. Binding both is a defect, not a choice —
+  # consumers join by role and merge what they find. `assert_one_field_per_role`
+  # refuses it.
+  role_board_status:
+    $ref: "#/templates/role_state"
+    field_id: "project_status:PVT_board1"
+    unique_key: gh-role-board-status
+    role: status
+    precedence: 1
+
+  value_board_todo:
+    $ref: "#/templates/value_open"
+    field_id: "project_status:PVT_board1"
+    value_id: "PVT_board1:todo"
+    unique_key: gh-value-board-todo
+    canonical_value: new
+    value_display: Todo
+
+  value_board_in_progress:
+    $ref: "#/templates/value_board_todo"
+    value_id: "PVT_board1:in progress"
+    unique_key: gh-value-board-in-progress
+    canonical_value: in_progress
+    value_display: In progress
+
+  value_board_done:
+    $ref: "#/templates/value_board_todo"
+    value_id: "PVT_board1:done"
+    unique_key: gh-value-board-done
+    canonical_value: done
+    value_display: Done
+
+  # ── catalogues ─────────────────────────────────────────────────────────
+  issue_type_task:
+    unique_key: gh-type-task
+    tenant_id: "{{ tenant }}"
+    source_id: github-test
+    data_source: github
+    collected_at: "2026-01-01T00:00:00Z"
+    org: acme
+    issue_type_id: IT_task
+    issue_type_name: Task
+    description: A specific piece of work
+    is_enabled: true
+    _airbyte_raw_id: gh-type-task
+    _airbyte_extracted_at: "2026-01-01T00:00:00Z"
+    _airbyte_meta: '{"changes":[]}'
+    _airbyte_generation_id: 1
+
+  issue_type_bug:
+    $ref: "#/templates/issue_type_task"
+    unique_key: gh-type-bug
+    issue_type_id: IT_bug
+    issue_type_name: Bug
+    description: An unexpected problem
+    _airbyte_raw_id: gh-type-bug
+
+  # ── the identity bridge ────────────────────────────────────────────────
+  # Gold joins an issue's assignee to a person through an e-mail, so a GitHub
+  # fixture that seeds only issues attributes nothing: `github__task_users` is
+  # built from the (account, e-mail) pairs the commit data carries, and with no
+  # pair the inner join drops every issue.
+  commit_author:
+    unique_key: gh-author
+    tenant_id: "{{ tenant }}"
+    source_id: github-test
+    data_source: github
+    collected_at: "2026-03-01T00:00:00Z"
+    repo_full_name: acme/app
+    author_email: someone@example.com
+    author_login: someone
+    author_id: 1000
+    author_type: User
+    sample_sha: "0000000000000000000000000000000000000000"
+    _airbyte_raw_id: gh-author
+    _airbyte_extracted_at: "2026-03-01T00:00:00Z"
+    _airbyte_meta: '{"changes":[]}'
+    _airbyte_generation_id: 1
+
+  # ── issues and their history ───────────────────────────────────────────
+  issue:
+    unique_key: gh-issue
+    tenant_id: "{{ tenant }}"
+    source_id: github-test
+    data_source: github
+    collected_at: "2026-03-31T00:00:00Z"
+    id: 1
+    number: 1
+    repo_full_name: acme/app
+    state: closed
+    state_reason: completed
+    title: An issue
+    author_login: alice
+    author_id: 1001
+    assignee_logins: alice
+    assignee_ids: "1001"
+    label_names: "[]"
+    issue_type: Task
+    issue_type_id: IT_task
+    closed_by_login: alice
+    closed_by_id: 1001
+    created_at: "2026-03-01T09:00:00Z"
+    updated_at: "2026-03-25T09:00:00Z"
+    closed_at: "2026-03-25T09:00:00Z"
+    issue_field_values_json: "[]"
+    _airbyte_raw_id: gh-issue
+    _airbyte_extracted_at: "2026-03-31T00:00:00Z"
+    _airbyte_meta: '{"changes":[]}'
+    _airbyte_generation_id: 1
+
+  # The board's own field definition. `github__task_field_metadata` declares a
+  # bindable board status only for a board that actually defines a select
+  # column, so without this row the board is not bindable.
+  project_field_status:
+    unique_key: gh-project-field-status
+    tenant_id: "{{ tenant }}"
+    source_id: github-test
+    data_source: github
+    collected_at: "2026-03-01T00:00:00Z"
+    project_id: PVT_board1
+    project_number: 40
+    field_id: PVTSSF_board1_status
+    field_database_id: "1"
+    field_name: Status
+    data_type: SINGLE_SELECT
+    is_multi: false
+    is_mirror: false
+    is_issue_field: false
+    options_json: '[{"id":"opt_todo","name":"Todo"},{"id":"opt_wip","name":"In progress"},{"id":"opt_done","name":"Done"}]'
+    configuration_json: "{}"
+    field_updated_at: "2026-03-01T00:00:00Z"
+    _airbyte_raw_id: gh-project-field-status
+    _airbyte_extracted_at: "2026-03-01T00:00:00Z"
+    _airbyte_meta: '{"changes":[]}'
+    _airbyte_generation_id: 1
+
+  # A board status change. It states the board and the two column NAMES — no
+  # option identifier anywhere, which is why the value key is built from the
+  # name and why casing is normalised downstream.
+  board_status_event:
+    unique_key: gh-board-event
+    tenant_id: "{{ tenant }}"
+    source_id: github-test
+    data_source: github
+    collected_at: "2026-03-31T00:00:00Z"
+    event_id: PSE_1
+    event_type: ProjectV2ItemStatusChangedEvent
+    event_at: "2026-03-05T09:00:00Z"
+    item_number: 1
+    repo_full_name: acme/app
+    actor_login: alice
+    actor_id: 1001
+    target_login: ""
+    target_id: 0
+    label_name: ""
+    state_reason: ""
+    field_id: ""
+    field_name: ""
+    prev_value: ""
+    new_value: Todo
+    prev_value_id: ""
+    new_value_id: ""
+    prev_options_json: "[]"
+    new_options_json: "[]"
+    project_id: PVT_board1
+    project_number: 40
+    was_automated: false
+    _airbyte_raw_id: gh-board-event
+    _airbyte_extracted_at: "2026-03-31T00:00:00Z"
+    _airbyte_meta: '{"changes":[]}'
+    _airbyte_generation_id: 1
+
+  # A card snapshot. Nothing in gold reads it yet, but `assert_boards_yield_cards`
+  # does: boards and board events collected with no cards at all is the shape a
+  # silently rejected incremental filter leaves behind.
+  project_item:
+    unique_key: gh-project-item
+    tenant_id: "{{ tenant }}"
+    source_id: github-test
+    data_source: github
+    collected_at: "2026-03-31T00:00:00Z"
+    project_id: PVT_board1
+    project_number: 40
+    item_id: PVTI_card1
+    item_database_id: "9001"
+    item_type: ISSUE
+    content_type: Issue
+    content_number: 1
+    content_repo_full_name: acme/app
+    is_archived: false
+    creator_login: alice
+    creator_id: 1001
+    created_at: "2026-03-02T09:00:00Z"
+    updated_at: "2026-03-11T09:00:00Z"
+    field_values_json: '[{"__typename":"ProjectV2ItemFieldSingleSelectValue","optionId":"opt_done","name":"Done","field":{"id":"PVTSSF_board1_status","name":"Status","dataType":"SINGLE_SELECT"}}]'
+    _airbyte_raw_id: gh-project-item
+    _airbyte_extracted_at: "2026-03-31T00:00:00Z"
+    _airbyte_meta: '{"changes":[]}'
+    _airbyte_generation_id: 1
+
+  closed_event:
+    unique_key: gh-event
+    tenant_id: "{{ tenant }}"
+    source_id: github-test
+    data_source: github
+    collected_at: "2026-03-31T00:00:00Z"
+    event_id: CE_1
+    event_type: ClosedEvent
+    event_at: "2026-03-25T09:00:00Z"
+    item_number: 1
+    repo_full_name: acme/app
+    actor_login: alice
+    actor_id: 1001
+    target_login: ""
+    target_id: 0
+    label_name: ""
+    state_reason: COMPLETED
+    field_id: ""
+    field_name: ""
+    prev_value: ""
+    new_value: ""
+    prev_value_id: ""
+    new_value_id: ""
+    prev_options_json: "[]"
+    new_options_json: "[]"
+    _airbyte_raw_id: gh-event
+    _airbyte_extracted_at: "2026-03-31T00:00:00Z"
+    _airbyte_meta: '{"changes":[]}'
+    _airbyte_generation_id: 1

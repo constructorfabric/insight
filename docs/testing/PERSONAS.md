@@ -76,11 +76,10 @@ Seed roles (the seed profile's eleven role × team fixtures) map the same way: `
 (`session_for(...)`) declare persona explicitly with a marker.
 
 **Markers** — on the stand-facing suites only (`tests/stand` api + ui); unit and contract suites
-never carry them. Whether the e2e rig is in scope is an open question (§5).
+never carry them. Whether the data-path suite (`tests/datapath`) is in scope is an open question (§5).
 
-- `persona(*codes)` · `mode(policy)` · `scenario(id)` — declared in both strict-marker roots
-  (`tests/pyproject.toml`, `src/ingestion/tests/e2e/pytest.ini`) with a meta test that the two
-  declarations match.
+- `persona(*codes)` · `mode(policy)` · `scenario(id)` — declared in the strict-marker root
+  (`tests/pyproject.toml`).
 - Selection: `--persona` (repeatable), `--mode`, `--scenario`, deselecting in
   `pytest_collection_modifyitems`. An empty selection fails the run; exit-5 is not tolerated.
 - Collection gates, beside the existing vector gate in `tests/stand/conftest.py`: exactly one

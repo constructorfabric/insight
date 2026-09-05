@@ -1,0 +1,64 @@
+spec_version: 1
+description: >-
+  Git output split by branch scope. Three people whose per-metric numbers are
+  identical, but below the peer percentile disclosure threshold. Each arrives
+  at its default-branch total a different way:
+  alice by the connector's flag, bob by the flag too, carol by a merged pull
+  request into the default branch while her flag still says otherwise. Carol is
+  the case that matters: `is_default_branch` is reachability at sync time, and
+  the merged-request heal is what makes the split mean "did this work land".
+  Her second request merges into a release branch and must NOT promote its
+  commit.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/alice
+    - $ref: ../templates/people.yaml#/templates/bob
+    - $ref: ../templates/people.yaml#/templates/carol
+  bronze_github.branches:
+    - {$ref: ../templates/git_activity.yaml#/templates/base, unique_key: br-main, repository: "https://github.com/constructor/insight.git", name: main, head_sha: head-main, is_default: true}
+    - {$ref: ../templates/git_activity.yaml#/templates/base, unique_key: br-release, repository: "https://github.com/constructor/insight.git", name: release/1.x, head_sha: head-release, is_default: false}
+  bronze_github.commits:
+    # One landed commit and one still in flight per person. Same numbers each
+    # time; only carol's landed one is flagged as outside the default branch.
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: c-alice-d, sha: sha-alice-d, author_name: alice, author_email: alice@example.com, committer_name: alice, committer_email: alice@example.com, additions: 10, deletions: 1, is_in_default_branch: true}
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: c-alice-n, sha: sha-alice-n, author_name: alice, author_email: alice@example.com, committer_name: alice, committer_email: alice@example.com, additions: 20, deletions: 2, is_in_default_branch: false}
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: c-bob-d, sha: sha-bob-d, author_name: bob, author_email: bob@example.com, committer_name: bob, committer_email: bob@example.com, additions: 10, deletions: 1, is_in_default_branch: true}
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: c-bob-n, sha: sha-bob-n, author_name: bob, author_email: bob@example.com, committer_name: bob, committer_email: bob@example.com, additions: 20, deletions: 2, is_in_default_branch: false}
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: c-carol-d, sha: sha-carol-d, author_name: carol, author_email: carol@example.com, committer_name: carol, committer_email: carol@example.com, additions: 10, deletions: 1, is_in_default_branch: false}
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: c-carol-n, sha: sha-carol-n, author_name: carol, author_email: carol@example.com, committer_name: carol, committer_email: carol@example.com, additions: 20, deletions: 2, is_in_default_branch: false}
+  bronze_github.file_changes:
+    # `.rs` under src/ classifies as code, so the category and code-lines
+    # assertions read off the same rows.
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: f-alice-d, sha: sha-alice-d, filename: src/alice_d.rs, additions: 10, deletions: 1}
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: f-alice-n, sha: sha-alice-n, filename: src/alice_n.rs, additions: 20, deletions: 2}
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: f-bob-d, sha: sha-bob-d, filename: src/bob_d.rs, additions: 10, deletions: 1}
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: f-bob-n, sha: sha-bob-n, filename: src/bob_n.rs, additions: 20, deletions: 2}
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: f-carol-d, sha: sha-carol-d, filename: src/carol_d.rs, additions: 10, deletions: 1}
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: f-carol-n, sha: sha-carol-n, filename: src/carol_n.rs, additions: 20, deletions: 2}
+  bronze_github.pull_requests:
+    # One request into the default branch and one into a release branch per
+    # person, both merged.
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: pr-alice-main, id: 11, number: 11, author_login: alice, base_ref: main, closed_at: "2026-10-01T12:00:00Z", merged_at: "2026-10-01T12:00:00Z", merge_commit_sha: merge-alice-main}
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: pr-alice-rel, id: 12, number: 12, author_login: alice, base_ref: release/1.x, closed_at: "2026-10-01T12:00:00Z", merged_at: "2026-10-01T12:00:00Z", merge_commit_sha: merge-alice-rel}
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: pr-bob-main, id: 21, number: 21, author_login: bob, base_ref: main, closed_at: "2026-10-01T12:00:00Z", merged_at: "2026-10-01T12:00:00Z", merge_commit_sha: merge-bob-main}
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: pr-bob-rel, id: 22, number: 22, author_login: bob, base_ref: release/1.x, closed_at: "2026-10-01T12:00:00Z", merged_at: "2026-10-01T12:00:00Z", merge_commit_sha: merge-bob-rel}
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: pr-carol-main, id: 31, number: 31, author_login: carol, base_ref: main, closed_at: "2026-10-01T12:00:00Z", merged_at: "2026-10-01T12:00:00Z", merge_commit_sha: merge-carol-main}
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: pr-carol-rel, id: 32, number: 32, author_login: carol, base_ref: release/1.x, closed_at: "2026-10-01T12:00:00Z", merged_at: "2026-10-01T12:00:00Z", merge_commit_sha: merge-carol-rel}
+  bronze_github.pull_request_diff_stats:
+    # GitHub staging reads a request's author_email from here and nowhere else
+    # — bronze `pull_requests` carries only the login. Without a row per
+    # request the author does not resolve, and gold drops the request rather
+    # than attributing it to nobody.
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-alice-main, pull_number: 11, additions: 10, deletions: 1, author_email: alice@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-alice-rel, pull_number: 12, additions: 20, deletions: 2, author_email: alice@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-bob-main, pull_number: 21, additions: 10, deletions: 1, author_email: bob@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-bob-rel, pull_number: 22, additions: 20, deletions: 2, author_email: bob@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-carol-main, pull_number: 31, additions: 10, deletions: 1, author_email: carol@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-carol-rel, pull_number: 32, additions: 20, deletions: 2, author_email: carol@example.com}
+  bronze_github.pull_request_commits:
+    # Carol only. Her default-branch request carries the commit whose flag says
+    # non-default — that link is the heal. Her release request carries the
+    # other one, and must leave it alone.
+    - {$ref: ../templates/git_activity.yaml#/templates/base, unique_key: lnk-carol-d, sha: sha-carol-d, pull_number: 31, repo_full_name: constructor/insight, author_email: carol@example.com, is_merge: false}
+    - {$ref: ../templates/git_activity.yaml#/templates/base, unique_key: lnk-carol-n, sha: sha-carol-n, pull_number: 32, repo_full_name: constructor/insight, author_email: carol@example.com, is_merge: false}

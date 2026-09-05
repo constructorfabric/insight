@@ -332,7 +332,6 @@ src/ingestion/tools/seed/
 │   ├── scale.py             grows the roster past it; opt-in, never imported
 │   │                        on the default path
 │   ├── manifest.py          builds `manifest.json`, the stand's description
-│   ├── golden_metrics.py    the only source for the manifest's golden set
 │   ├── profile_md.py        renders `PROFILE.md` from a manifest
 │   ├── render_profile.py    regenerates / verifies `PROFILE.md`; no database
 │   ├── keycloak_realm.py    the `insight-seed-realm` entry point, same roster

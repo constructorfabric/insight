@@ -36,6 +36,11 @@ REALM_EXPORT_PATH: Final[Path] = (
     _REPO_ROOT / "deploy" / "compose" / "keycloak" / "realm-insight.generated.json"
 )
 
+# Set this to read another stand's export. An isolated instance generates its
+# own (`realm-insight.generated-<instance>.json`), so a run aimed at one must
+# be told, or it would read the default stand's passwords.
+REALM_EXPORT_ENV: Final[str] = "INSIGHT_STAND_REALM_EXPORT"
+
 # Set this to supply the persona password from a secret store / CI secret. It
 # takes precedence over the realm export.
 PASSWORD_ENV: Final[str] = "INSIGHT_STAND_PERSONA_PASSWORD"
@@ -74,13 +79,19 @@ ADMIN_OPERATOR_FIXTURE: Final[str] = "admin_operator"
 OTHER_TENANT_FIXTURE: Final[str] = "other_tenant_lead"
 
 
+def realm_export_path() -> Path:
+    """The realm export to read, honouring `$INSIGHT_STAND_REALM_EXPORT`."""
+    override = (os.environ.get(REALM_EXPORT_ENV) or "").strip()
+    return Path(override) if override else REALM_EXPORT_PATH
+
+
 def _load_realm(path: Path | None = None) -> dict[str, Any] | None:
     """The stand's realm export, or None when it is not on disk.
 
     Absence is not an error here: a stand reached over the network has no local
     realm file, and `PASSWORD_ENV` covers that case.
     """
-    target = path or REALM_EXPORT_PATH
+    target = path or realm_export_path()
     try:
         raw = target.read_text(encoding="utf-8")
     except OSError:
@@ -125,21 +136,21 @@ def persona_password(email: str, *, realm_path: Path | None = None) -> str:
     if realm is None:
         raise PersonaError(
             f"no password for {email!r}: ${PASSWORD_ENV} is unset and no realm export at "
-            f"{realm_path or REALM_EXPORT_PATH}. Bring a stand up "
+            f"{realm_path or realm_export_path()}. Bring a stand up "
             f"(./dev-compose.sh test-stand up), which generates it, or export "
             f"{PASSWORD_ENV}."
         )
 
     user = _realm_user(email, realm)
     if user is None:
-        raise PersonaError(f"{email!r} is not a user in {realm_path or REALM_EXPORT_PATH}")
+        raise PersonaError(f"{email!r} is not a user in {realm_path or realm_export_path()}")
     for credential in user.get("credentials", []):
         if isinstance(credential, Mapping) and credential.get("type") == "password":
             value = str(credential.get("value") or "")
             if value:
                 return value
     raise PersonaError(
-        f"{email!r} has no password credential in {realm_path or REALM_EXPORT_PATH}; "
+        f"{email!r} has no password credential in {realm_path or realm_export_path()}; "
         f"export {PASSWORD_ENV} instead"
     )
 

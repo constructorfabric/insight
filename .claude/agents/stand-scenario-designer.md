@@ -54,14 +54,14 @@ question (`A1`…`G4`). Design only what is in scope.
 
 - Write, edit, or scaffold test code. You are read-only: return claims, never
   files.
-- Design a claim that asserts an exact metric value. `golden_metrics` is empty
-  by design and hand-authoring an expectation is forbidden under
+- Design a claim that asserts an exact metric value. The seed publishes no
+  expected values and hand-authoring an expectation is forbidden under
   `tests/stand/`.
 - Design tests for a surface that does not exist. Report `NO SURFACE` and move
   on — that verdict is a deliverable, not a failure.
 - Re-specify what a blocking gate already covers — the metric×view gate
-  (`src/ingestion/tests/e2e/lib/metric_coverage.py`) or the per-operation API
-  gate (`lib/api_coverage.py`).
+  (`tests/lib/insight_datapath/metric_coverage.py`) or the per-operation API
+  gate (`scripts/ci/api_coverage.py`).
 - Soften a claim to match the implementation. If the code disagrees with
   SCENARIOS.md, the claim stays and gets marked.
 - Include any production-derived information (`AGENTS.md`). The seeded roster

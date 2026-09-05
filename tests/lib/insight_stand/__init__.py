@@ -14,8 +14,8 @@ This package holds:
 This package is deliberately test-framework agnostic: no pytest import, no
 fixtures, no assertions. `tests/stand/conftest.py` is what turns it into a
 suite, and phases 6-8 add person fixtures and browser journeys on top. Nothing
-here imports from `src/ingestion/tests/e2e/**` — that rig owns in-process
-correctness and feeds four blocking coverage gates; it is read-only reference.
+here imports from `insight_datapath` — that package seeds and clears a warehouse,
+and the dependency runs the other way.
 """
 
 from __future__ import annotations
@@ -62,12 +62,14 @@ from .personas import (
     MEMBER_ROLE,
     OTHER_TENANT_FIXTURE,
     PASSWORD_ENV,
+    REALM_EXPORT_ENV,
     REALM_EXPORT_PATH,
     ROLE_TO_REALM_ROLES,
     PersonaSession,
     expected_realm_roles,
     open_session,
     persona_password,
+    realm_export_path,
     resolve_by_realm_role,
     verify_realm_roles,
 )
@@ -128,6 +130,7 @@ __all__: Sequence[str] = (
     "MEMBER_ROLE",
     "OTHER_TENANT_FIXTURE",
     "PASSWORD_ENV",
+    "REALM_EXPORT_ENV",
     "REALM_EXPORT_PATH",
     "ROLE_TO_REALM_ROLES",
     "RUN_TAG",
@@ -174,6 +177,7 @@ __all__: Sequence[str] = (
     "open_session",
     "persona_password",
     "quality_vectors",
+    "realm_export_path",
     "resolve_base_url",
     "resolve_by_realm_role",
     "resolve_endpoint",

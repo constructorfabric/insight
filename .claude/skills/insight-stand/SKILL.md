@@ -146,22 +146,22 @@ the same builder that writes `manifest.json`, so the two cannot disagree.
 Regenerate with `python3 -m insight_seed.render_profile`; `--check` verifies it
 without a database.
 
-Read it for three things:
+Read it for two things:
 
 - **The `fixtures{}` catalogue** — the stable, role-shaped names a test may
   declare against (`dev_lead`, `development_ic`, `admin_operator`, …). *A raw
   email or UUID is never a stable target.* The names are a contract: they
   describe a role in the org, so renaming one breaks every test that declares
   it.
-- **`golden_metrics`** — **empty by design.** No test under `tests/stand/`
-  asserts an exact metric value, and none should until the table has entries.
-  The admission criterion (`src/ingestion/tools/seed/insight_seed/golden_metrics.py`) is that an
-  expectation must be *computable from the seed inputs*, not read back out of
-  the gold layer. Reading a number off a running stand and asserting it back
-  only proves that the code which produced it produced it.
 - **`capabilities`** — e.g. `ingestion: no` (compose seeds silver/gold
   directly, so no connector runs). A test needing a capability the stand may
   lack carries the matching marker rather than assuming.
+
+What it does **not** carry is an expected value for any metric. No test under
+`tests/stand/` asserts one, and none may: an admissible expectation would have
+to be *computable from the seed inputs* rather than read back out of the gold
+layer, and the seed publishes no such set. Reading a number off a running stand
+and asserting it back only proves that the code which produced it produced it.
 
 ## Declaring what a test needs
 
@@ -245,7 +245,7 @@ tests that create rows. What you need here is the triage row below.
 | Everything skips with "capability … not present" | expected on this stand (`ingestion: no`) | not a failure — read the reason |
 | Login loops, then 503 | **base URL is not `localhost`** — see the trap above | join the gateway netns, or use the published port |
 | `scratch resources survived the run` | a test created rows and did not delete them | find it by the `RUN_TAG` in the leaked names |
-| Metric value assertions | there are none, by design | `golden_metrics` is empty — see PROFILE.md |
+| Metric value assertions | there are none, by design | not a failure — the seed publishes no expected values |
 | Tests pass but assert nothing real | a stand where identity is perfect and the SPA renders an empty shell passes every API test | that is what the UI journeys are for |
 
 Every message about the stand quotes the `source_path` it believed, so a

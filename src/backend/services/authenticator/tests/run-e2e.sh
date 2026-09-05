@@ -26,7 +26,7 @@ cd "$HERE/../../.."   # -> src/backend (the cargo workspace root)
 # Endpoint-coverage ledger: tests/common/mod.rs records every test-client
 # request against the authenticator into this file (merged across the serial
 # cargo test invocations below). The endpoint coverage gate consumes it:
-#   python3 src/ingestion/tests/e2e/lib/api_coverage.py --suite authenticator \
+#   python3 scripts/ci/api_coverage.py --suite authenticator \
 #     --observed "$E2E_COVERAGE_LEDGER" \
 #     --spec docs/components/backend/authenticator/openapi.json
 # Reset it up front so dead coverage from a previous run can't survive.

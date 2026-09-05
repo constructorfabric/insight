@@ -1012,7 +1012,7 @@ Jira staging chain with real dbt against a real ClickHouse, and asserts the
 whole journal for the issue. That is where a parsing or reconstruction defect is
 visible, and it is strictly stronger than a metric assertion for these shapes.
 
-Their **metrics-layer** counterparts in `tests/e2e/metrics/` are deliberately
+Their **metrics-layer** counterparts in `tests/datapath/metrics/tasks/` are deliberately
 NOT written yet, for two reasons that both dissolve at cutover:
 
 - the journal that reaches silver today is the Rust binary's, not this model's,

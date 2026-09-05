@@ -1,0 +1,137 @@
+spec_version: 1
+description: >
+  Regression for #3172: a read that did not bring a day's whole roster must not
+  become that day's state.
+
+  claude_team_code_metrics pages an offset window over sort_by=total_lines_accepted.
+  Everyone with no accepted lines ties on that key and the endpoint promises no
+  tiebreak, so between two paged requests a person can cross the page boundary in
+  either direction — returned by neither, or returned twice — while both requests
+  succeed. Nothing in the response says the day came back short.
+
+  The envelope does carry the day's headcount, and claude_team_code_metrics_org
+  stores it per READ (its unique_key names the read, because a day still in
+  progress legitimately reports fewer people than it ends with). The staging
+  model admits a per-user row only when its own read's distinct people equal that
+  read's total_users.
+
+  The boundary between "predates the field" and "should have been judged" is the
+  READ, not its timestamp. Both streams are written by the same job but not at
+  the same instant, so on the first sync after the upgrade the per-user rows can
+  land a moment before the envelope that judges them; a timestamp boundary would
+  wave exactly those through.
+
+  Six days, one per branch of the gate. alice is the requested person except
+  where noted:
+
+    Nov 10  legacy      no envelope, and read 10 — BEFORE the first read that
+                        carried one. Nothing to judge it against, so it is
+                        admitted. This is what keeps history that predates the
+                        field servable.                                        0.50
+    Nov 15  complete    envelope of read 15 says 2, read 15 returned alice and
+                        bob. Admitted.                                         1.00
+    Nov 16  short       envelope of read 16 says 2, read 16 returned alice only.
+                        Rejected WHOLE — alice's own row goes too, because a read
+                        short in an unknown place says nothing about the people
+                        it did return.                                         2.00
+    Nov 17  unreferenced  read 17 is after the first reference and carries none
+                        of its own. Rejected: an unreferenced later read is the
+                        silent hole the gate exists to close.                   4.00
+    Nov 18  two reads   read 18's envelope says 1 and it returned bob — complete,
+                        admitted. Read 19's envelope says 2 and it returned alice
+                        only — short, rejected. Each read is judged against its
+                        OWN envelope: were the newest reference used for both,
+                        bob's sound read would be rejected too and the day would
+                        be empty.                              bob 0.75 · alice 8.00
+    Nov 19  bootstrap   read 15 — the very read that first carried an envelope —
+                        but there is none for THIS day, and the row was extracted
+                        a minute BEFORE that envelope. Rejected, not legacy: the
+                        boundary is the read id, and 15 is not before 15.      16.00
+    Nov 20  empty       read 20's envelope counted 2 and stored no per-user row
+                        at all. The whole day is missing, not part of it, so the
+                        check has to reach it from the envelope — a candidate set
+                        built from stored rows alone has nothing to group here
+                        and would pass over it.                                  —
+    Nov 21  quiet       read 21's envelope counted 0 and stored no row. Nobody
+                        worked; nothing is missing and nothing is reported.      —
+
+  alice's window therefore sums the two days admitted for her: 0.50 + 1.00 = 1.50.
+  With the gate removed every day would count and the same request would answer
+  31.50, so the case cannot pass by accident. bob's window sums his two admitted
+  days: 1.00 + 0.75 = 1.75. The timeseries views pin which days survived rather
+  than only the totals.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/alice
+    - $ref: ../templates/people.yaml#/templates/bob
+
+  bronze_claude_team.claude_team_code_metrics_org:
+    # Nov 15's read: 2 people. sync_id 15 ties it to that read's user rows.
+    - { $ref: ../templates/claude_team_metrics_org.yaml#/templates/claude_team_metrics_org,
+        metric_date: "2026-11-15", unique_key: org-20261115-r15, total_users: 2,
+        _airbyte_extracted_at: "2026-11-15T23:50:00Z", _airbyte_meta: '{"sync_id":15,"changes":[]}' }
+    # Nov 16's read: also 2 people — but only one of them arrived.
+    - { $ref: ../templates/claude_team_metrics_org.yaml#/templates/claude_team_metrics_org,
+        metric_date: "2026-11-16", unique_key: org-20261116-r16, total_users: 2,
+        _airbyte_extracted_at: "2026-11-16T23:50:00Z", _airbyte_meta: '{"sync_id":16,"changes":[]}' }
+    # Nov 18 read twice, and BOTH envelopes survive because unique_key names the
+    # read. The counts differ because the day was still filling up.
+    - { $ref: ../templates/claude_team_metrics_org.yaml#/templates/claude_team_metrics_org,
+        metric_date: "2026-11-18", unique_key: org-20261118-r18, total_users: 1,
+        _airbyte_extracted_at: "2026-11-18T20:00:00Z", _airbyte_meta: '{"sync_id":18,"changes":[]}' }
+    - { $ref: ../templates/claude_team_metrics_org.yaml#/templates/claude_team_metrics_org,
+        metric_date: "2026-11-18", unique_key: org-20261118-r19, total_users: 2,
+        _airbyte_extracted_at: "2026-11-18T23:50:00Z", _airbyte_meta: '{"sync_id":19,"changes":[]}' }
+    # Nov 20 counted 2 people and no per-user row for it was ever stored.
+    - { $ref: ../templates/claude_team_metrics_org.yaml#/templates/claude_team_metrics_org,
+        metric_date: "2026-11-20", unique_key: org-20261120-r20, total_users: 2,
+        _airbyte_extracted_at: "2026-11-20T23:50:00Z", _airbyte_meta: '{"sync_id":20,"changes":[]}' }
+    # Nov 21 counted nobody, and nobody arrived. Healthy.
+    - { $ref: ../templates/claude_team_metrics_org.yaml#/templates/claude_team_metrics_org,
+        metric_date: "2026-11-21", unique_key: org-20261121-r21, total_users: 0,
+        _airbyte_extracted_at: "2026-11-21T23:50:00Z", _airbyte_meta: '{"sync_id":21,"changes":[]}' }
+
+  bronze_claude_team.claude_team_code_metrics:
+    # ── Nov 10 · legacy: extracted before the first envelope above ────────────
+    - { $ref: ../templates/claude_team_usage.yaml#/templates/alice, metric_date: "2026-11-10",
+        unique_key: cc-alice-20261110, total_cost: "0.50", total_sessions: 1,
+        _airbyte_extracted_at: "2026-11-10T23:50:00Z", _airbyte_meta: '{"sync_id":10,"changes":[]}' }
+
+    # ── Nov 15 · complete: both people, matching the envelope's 2 ─────────────
+    - { $ref: ../templates/claude_team_usage.yaml#/templates/alice, metric_date: "2026-11-15",
+        unique_key: cc-alice-20261115, total_cost: "1.00", total_sessions: 1,
+        _airbyte_extracted_at: "2026-11-15T23:50:00Z", _airbyte_meta: '{"sync_id":15,"changes":[]}' }
+    - { $ref: ../templates/claude_team_usage.yaml#/templates/bob, metric_date: "2026-11-15",
+        unique_key: cc-bob-20261115, total_cost: "1.00", total_sessions: 1,
+        _airbyte_extracted_at: "2026-11-15T23:50:00Z", _airbyte_meta: '{"sync_id":15,"changes":[]}' }
+
+    # ── Nov 16 · short: envelope says 2, bob never arrived ────────────────────
+    - { $ref: ../templates/claude_team_usage.yaml#/templates/alice, metric_date: "2026-11-16",
+        unique_key: cc-alice-20261116, total_cost: "2.00", total_sessions: 1,
+        _airbyte_extracted_at: "2026-11-16T23:50:00Z", _airbyte_meta: '{"sync_id":16,"changes":[]}' }
+
+    # ── Nov 17 · unreferenced: after the first envelope, carries none ─────────
+    - { $ref: ../templates/claude_team_usage.yaml#/templates/alice, metric_date: "2026-11-17",
+        unique_key: cc-alice-20261117, total_cost: "4.00", total_sessions: 1,
+        _airbyte_extracted_at: "2026-11-17T23:50:00Z", _airbyte_meta: '{"sync_id":17,"changes":[]}' }
+
+    # ── Nov 18 · two reads of one day, judged against their own envelopes ─────
+    # Read 18 matched its own count of 1 → bob's row is admitted.
+    - { $ref: ../templates/claude_team_usage.yaml#/templates/bob, metric_date: "2026-11-18",
+        unique_key: cc-bob-20261118, total_cost: "0.75", total_sessions: 1,
+        _airbyte_extracted_at: "2026-11-18T20:00:00Z", _airbyte_meta: '{"sync_id":18,"changes":[]}' }
+    # Read 19 returned one of the two its own envelope counted → rejected. A
+    # different person, so the two reads do not share a Bronze key and neither
+    # can mask the other.
+    - { $ref: ../templates/claude_team_usage.yaml#/templates/alice, metric_date: "2026-11-18",
+        unique_key: cc-alice-20261118, total_cost: "8.00", total_sessions: 1,
+        _airbyte_extracted_at: "2026-11-18T23:50:00Z", _airbyte_meta: '{"sync_id":19,"changes":[]}' }
+
+    # ── Nov 19 · bootstrap: read 15 again, but no envelope for THIS day, and
+    #    extracted a minute before the envelope that made read 15 the first
+    #    reference. Under a timestamp boundary this looks legacy; under the read
+    #    boundary it is not, and it is rejected. ─────────────────────────────
+    - { $ref: ../templates/claude_team_usage.yaml#/templates/alice, metric_date: "2026-11-19",
+        unique_key: cc-alice-20261119, total_cost: "16.00", total_sessions: 1,
+        _airbyte_extracted_at: "2026-11-15T23:49:00Z", _airbyte_meta: '{"sync_id":15,"changes":[]}' }

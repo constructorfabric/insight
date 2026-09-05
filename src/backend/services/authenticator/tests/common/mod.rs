@@ -6,7 +6,7 @@
 //! recording is off and the client is a plain passthrough). Its schema matches
 //! the bronze-to-api rig's `observed_endpoints.json` — a JSON list of
 //! `{method, path, statuses}` rows — so the same gate script consumes it:
-//! `src/ingestion/tests/e2e/lib/api_coverage.py --suite authenticator`.
+//! `scripts/ci/api_coverage.py --suite authenticator`.
 //!
 //! Only requests whose origin matches `$AUTH_BASE` / `$AUTH_BASE_DISABLED`
 //! (the two authenticator instances) are recorded: the same client also talks

@@ -513,7 +513,7 @@ services:
     # moved with it — the issuer is baked into the tokens.
     ports: ["${KEYCLOAK_PORT:-8085}:8085"]
     volumes:
-      - ./deploy/compose/keycloak/realm-insight.generated.json:/opt/keycloak/data/import/realm-insight.json:ro
+      - ${KEYCLOAK_REALM_FILE:-./deploy/compose/keycloak/realm-insight.generated.json}:/opt/keycloak/data/import/realm-insight.json:ro
     # `insight`, not `default` — every other service in this stack (see
     # x-backend-common / front-* blocks) attaches to the named `insight`
     # network; a bare `default` network would leave keycloak unreachable
@@ -803,6 +803,11 @@ services:
       # persists it after cmd_up so the manifest
       # records the real IdP instead of assuming the default.
       AUTHENTICATOR_OIDC_ISSUER: "${AUTHENTICATOR_OIDC_ISSUER:-}"
+      # Where this run writes its manifest, as a path INSIDE the container.
+      # Empty keeps the seeder's own default (its working directory), which is
+      # the bind-mounted tools/seed. An isolated instance points it at a file
+      # of its own so two stands do not overwrite each other's description.
+      SEED_MANIFEST_PATH: "${SEED_MANIFEST_PATH:-}"
     volumes:
       # One mount, writable, over the tree the image already carries: seeder
       # edits and script edits both take effect without a rebuild (the package

@@ -37,6 +37,8 @@ MALFORMED_ID_ADMIN_ROUTES: tuple[tuple[str, str], ...] = (
     ("DELETE", f"/v1/visibility/{scratch.NON_UUID}"),
     ("GET", f"/v1/persons-seed/{scratch.NON_UUID}"),
     ("GET", f"/v1/persons-sync/{scratch.NON_UUID}"),
+    ("GET", f"/v1/resolution/persons/{scratch.NON_UUID}/accounts"),
+    ("GET", f"/v1/resolution/accounts/github/{scratch.NON_UUID}/{SOME_ACCOUNT_ID}"),
 )
 
 #: Query values that cannot be the type their parameter declares. `limit=abc`

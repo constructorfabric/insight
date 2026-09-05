@@ -3,8 +3,8 @@
 Insight is tested **shift-left**: contributors run the majority of checks locally before opening a PR. The strategy has
 two axes — **levels** (what a test proves) and **environments** (where it runs). Several tests can share a level.
 
-Entry points: `src/ingestion/tests/e2e/e2e.sh` (data-path suite), `scripts/ci/*` (coverage + spec gates), and the
-standard per-language tools (`cargo`, `pytest`).
+Entry points: `./dev-compose.sh test-stand` (raises a compose stand and runs the suites under `tests/`),
+`scripts/ci/*` (coverage + spec gates), and the standard per-language tools (`cargo`, `pytest`).
 
 ---
 
@@ -23,7 +23,8 @@ lower ones can't cover.
 ```sh
 # fast local loop
 cd src/backend && cargo test                        # Rust unit + integration (all services, incl. identity-resolution)
-cd src/ingestion/tests/e2e && ./e2e.sh build && ./e2e.sh test   # API & metric suite
+./dev-compose.sh test-stand minimal --instance=datapath          # an instance of your own, identity seeded
+./dev-compose.sh test-stand test --tree=tests/datapath/metrics/ai --instance=datapath -q   # one metric class
 ```
 
 ---
@@ -82,24 +83,26 @@ cargo fmt --check && cargo clippy --all-targets              # lint
 Components against a real store, and the API contract:
 
 - **Testcontainers** — identity-resolution (Rust) against a real MariaDB.
-- **Identity contract suite** — the e2e identity contract tests run against the identity-resolution service,
-  which the harness boots itself.
+- **Identity data path** — `tests/datapath/identity`: a connector's bronze reaching persons-seed, and an
+  operator's correction surviving the seed run after it, read back as stand personas.
 - **dbt data tests** — bronze → silver → gold model assertions.
 - **Contract** — OpenAPI-drift + metric-coverage gates (every served `metric_key` is value-asserted or skip-listed).
-- **API & metric tests** — the `bronze-to-api` rig: seed bronze → dbt → CH gold-view → analytics-api HTTP == expected value.
+- **Metric specs** — `tests/datapath/metrics`: seed bronze → dbt → ClickHouse gold → the analytics HTTP answer,
+  read as a seeded persona of a compose stand the suite raised for itself (`test-stand minimal`).
 
-> The `bronze-to-api` rig is **Integration, not E2E** — it seeds bronze directly (no orchestrators) and asserts at the
-> API (no UI). The workflow file `e2e-bronze-to-api.yml` is a legacy misnomer.
+> The data-path suite is **Integration, not E2E** — it seeds bronze directly (no orchestrators) and asserts at the
+> API (no UI). The workflow file `e2e-bronze-to-api.yml` keeps its name because a required check is named after it.
 
 ```sh
-cd src/ingestion/tests/e2e
-./e2e.sh test      # runs the rig + dbt
-./e2e.sh gates     # metric-coverage + openapi-drift
+./dev-compose.sh test-stand minimal --instance=datapath
+./dev-compose.sh test-stand test --tree=tests/datapath/metrics/tasks --instance=datapath -q
+./dev-compose.sh test-stand down --instance=datapath   # full reset: volumes go too
 ```
 
-**CI:** `e2e-bronze-to-api.yml` — blocking metric-coverage + openapi-drift gates. Its `api` and
-`identity` HTTP contract lanes retired once those contracts moved to the compose stand
-(`e2e-stand.yml`); the endpoint gate moved with them.
+**CI:** `e2e-bronze-to-api.yml` — one shard per metric class plus one for identity, each on a minimal stand of
+its own, and a blocking metric-coverage gate (`tests/lib/insight_datapath/metric_coverage.py`: every builtin
+metric the catalogue serves is asserted by some spec). OpenAPI drift is a separate workflow (`openapi-specs.yml`);
+the HTTP contract lanes live on the deployed stand (`e2e-stand.yml`) with the endpoint coverage gate.
 
 ---
 
@@ -113,8 +116,8 @@ cd src/ingestion/tests/e2e
 - A separate **compose-stand suite** (`tests/stand`, documented in `tests/stand/README.md`) drives a real Keycloak
   login and a set of browser journeys against the SPA, plus an API-contract suite — all against a local
   `docker-compose` stand seeded deterministically for tests (`src/ingestion/tools/seed`). Run it with
-  `./dev-compose.sh test-stand up|test|down`. It asserts no metric VALUE against a declared expectation: the seed's
-  `golden_metrics` is empty by design, and a harness for it is being migrated separately. It does reconcile every
+  `./dev-compose.sh test-stand up|test|down`. It asserts no metric VALUE against a declared expectation: the seed
+  publishes none, and the suite that does assert values is the data-path rig in §5. It does reconcile every
   metric's drilldown evidence against that metric's own served value, which needs no declared expectation.
 
 **CI:** `functional-k3s.yml` — ephemeral k3d install, post-merge on pushes to `main` that touch the deploy surface.
@@ -140,7 +143,7 @@ Neither blocks merge — both stand up a full stack against a live IdP and their
 
 - [ ] `cargo test` / `pytest` green for touched components; `cd src/frontend && pnpm test:coverage:ci` for the frontend
 - [ ] `cargo fmt --check` + `cargo clippy --all-targets` clean
-- [ ] `./e2e.sh test` green if you touched a metric, gold-view, or the API
+- [ ] the affected `tests/datapath` shard green if you touched a metric, a gold view, identity resolution or the API
 - [ ] new / changed code stays **≥ 80 %** covered
 - [ ] a new `metric_key` is value-tested or skip-listed (metric-coverage gate)
 - [ ] committed OpenAPI regenerated if the router changed (`python3 scripts/ci/openapi_spec.py update`)
@@ -149,5 +152,5 @@ Neither blocks merge — both stand up a full stack against a live IdP and their
 
 ## 9. Related
 
-- `src/ingestion/tests/e2e/README.md` — the API & metric rig
+- `tests/datapath/` — the data-path suite (metric specs, identity lane) and `tests/lib/insight_datapath/`
 - `tests/stand/README.md` — the compose-stand suite (API contract, UI journeys, metrics)

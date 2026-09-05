@@ -1,0 +1,33 @@
+spec_version: 1
+description: >
+  Metric: ai.dev_conversations.
+  How it's computed (bronze → silver → gold):
+    • bronze: Codex daily per-user leaderboard (thread count ≈ coding sessions)
+    • silver: deduped to one row per user/day carrying the session count
+    • gold:   metric = sum of Codex coding sessions over the window
+
+  Team (median/range = the person's department):
+    alice 12 · bob 6 · carol 3 → median 6, range [3, 12].
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/alice
+    - $ref: ../templates/people.yaml#/templates/bob
+    - $ref: ../templates/people.yaml#/templates/carol
+  bronze_chatgpt_team.chatgpt_team_codex_user_daily:
+    - $ref: ../templates/chatgpt_team_codex.yaml#/templates/alice
+      unique_key: codex-alice-20260105
+      date: "2026-01-05"
+      n_threads: 12
+    - $ref: ../templates/chatgpt_team_codex.yaml#/templates/alice   # re-sync dup → must NOT double
+      unique_key: codex-alice-20260105
+      date: "2026-01-05"
+      n_threads: 12
+    - $ref: ../templates/chatgpt_team_codex.yaml#/templates/bob
+      unique_key: codex-bob-20260105
+      date: "2026-01-05"
+      n_threads: 6
+    - $ref: ../templates/chatgpt_team_codex.yaml#/templates/carol
+      unique_key: codex-carol-20260105
+      date: "2026-01-05"
+      n_threads: 3
