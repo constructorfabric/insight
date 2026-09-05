@@ -227,10 +227,10 @@ export function MembersGrid({
 }: MembersGridProps) {
   const { focusMode } = useSettings();
   const hasIssuesFacet = showIssues ?? countsByMember != null;
-  const [sort, setSort] = useState<SortState>({
-    key: "issues",
+  const [sort, setSort] = useState<SortState>(() => ({
+    key: hasIssuesFacet ? "issues" : "name",
     reversed: false,
-  });
+  }));
 
   const toggleSort = (key: SortKey) => {
     setSort((current) =>

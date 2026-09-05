@@ -166,6 +166,24 @@ describe("TeamStateView", () => {
     expect(screen.getAllByText("boss")).toHaveLength(2);
   });
 
+  it("lists the roster by name, like the org tree beside it", () => {
+    // d and boss trail both metrics, so a standing order would float them up.
+    mocks.grid.byKey = new Map([
+      ["git.commits", metric("git.commits", [[pid("boss"), 20], [pid("a"), 50], [pid("b"), 40], [pid("c"), 30], [pid("d"), 10]], { label: "Commits" })],
+      ["collab.focus_time_pct", metric("collab.focus_time_pct", [[pid("boss"), 50], [pid("a"), 80], [pid("b"), 70], [pid("c"), 60], [pid("d"), 40]], {
+        computation: "avg",
+        label: "Focus Time",
+        format: "percent",
+      } as never)],
+    ]);
+
+    render(<TeamStateView />);
+
+    expect(
+      screen.getAllByRole("rowheader").map((th) => th.textContent),
+    ).toEqual(["a", "b", "boss", "c", "d"]);
+  });
+
   it("shows a manager with no reports as a one-person scope", () => {
     mocks.tree = person("boss");
     mocks.roster = peopleFromIdentityTree(mocks.tree);

@@ -287,10 +287,10 @@ describe("MembersGrid", () => {
     expect(rowHeaders[2]).toHaveTextContent("near the median");
   });
 
-  it("defaults to most-trailing-first from its own cells when no facet is given", () => {
+  it("defaults to name order when no facet explains a standing order", () => {
     render(
       <MembersGrid
-        members={MEMBERS}
+        members={[MEMBERS[2]!, MEMBERS[0]!, MEMBERS[1]!]}
         metricKeys={["ai.active_days"]}
         byKey={byKeyFor(
           metric("ai.active_days", [
@@ -305,7 +305,7 @@ describe("MembersGrid", () => {
     const names = screen
       .getAllByRole("rowheader")
       .map((th) => th.textContent);
-    expect(names).toEqual(["Cy", "Ann", "Bo"]);
+    expect(names).toEqual(["Ann", "Bo", "Cy"]);
   });
 
   it("shows a trend arrow against the previous period", () => {
