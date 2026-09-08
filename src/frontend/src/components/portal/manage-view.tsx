@@ -52,6 +52,12 @@ const QueryConsoleBody = lazy(() =>
   import("@/screens/query-console").then((m) => ({ default: m.QueryConsoleBody }))
 );
 
+const DashboardConstructorBody = lazy(() =>
+  import("@/screens/dashboard-constructor").then((m) => ({
+    default: m.DashboardConstructorBody,
+  }))
+);
+
 function Deferred({ children }: { children: ReactNode }) {
   return <Suspense fallback={<CenteredSpinner />}>{children}</Suspense>;
 }
@@ -60,6 +66,14 @@ export function ManageView({ item }: { item: string | null }) {
   if (item === "metric-catalog") return <MetricCatalogTable />;
   if (item === "custom-metrics") return <Deferred><MetricsConsoleBody /></Deferred>;
   if (item === "query-console") return <Deferred><QueryConsoleBody /></Deferred>;
+  if (item === "dashboard-constructor")
+    return (
+      <AdminGate>
+        <Deferred>
+          <DashboardConstructorBody />
+        </Deferred>
+      </AdminGate>
+    );
   if (item === "connector-health")
     return (
       <AdminGate>
