@@ -23,7 +23,25 @@ name: bitbucket-cloud
 #   scoped `dbt --full-refresh` a major bump dispatches re-materializes them.
 #   Safe: both dates have been in Bronze all along, and the author date falls
 #   back to the committer date where a source left it empty. #3153
-version: "6.4.0"
+# 7.0.0: the class-contract column `closed_on` now has a fallback for a
+#   merge the vendor recorded without a terminal activity entry. The merge
+#   commit the request names is what corroborates such a merge — without one
+#   collected the request still keeps no close time — and the time is then the
+#   request's own last update where nothing in its activity accounts for that
+#   update, the commit's own timestamp where something does, and nothing at
+#   all where neither candidate is at or after the creation. Bitbucket reports
+#   no close time of its own, and a merge reached by pushing a commit that
+#   carries the request's head produces no merge action to read one from — so
+#   those requests carried no close time and were dropped by every measure
+#   that dates by the close, while the rate measures, which read the state
+#   alone, kept counting them. MAJOR for the same reason as 6.0.0: staging is
+#   incremental on _airbyte_extracted_at and never re-reads Bronze, so
+#   already-materialized requests keep their empty close time forever and the
+#   install would run in two regimes. Only the one-shot scoped full refresh a
+#   major bump dispatches re-materializes them. Safe: the merge hash and the
+#   commits have been in Bronze all along, and a request the activity does
+#   date is untouched. #3051
+version: "7.0.0"
 # Every four hours, off the hours other connectors use: replication pods sharing
 # a slot with other connector syncs can be starved of workers, which surfaces as
 # startup and activity timeouts rather than as a connector error.

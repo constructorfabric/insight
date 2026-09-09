@@ -74,10 +74,20 @@ dbt run --select tag:silver
 
 ## Caveats
 
-- `cycle_time_h` for Bitbucket Cloud uses `pr.closed_on` which is a
-  staging-level heuristic (set to `updated_on` on terminal states). Accurate
-  to within sync cadence for typical PRs; improves when the Bitbucket Cloud
-  `pr_activity` stream lands.
+- Bitbucket Cloud reports no close time on a pull request, so `closed_on` is
+  derived in staging. The terminal entry in the request's activity supplies it
+  whenever there is one. A merge reached by pushing a commit that carries the
+  request's head produces no merge action and so no such entry, and for those
+  the merge commit the request names is what corroborates that the merge
+  happened: with no such commit collected — or a reported prefix that names two
+  commits in the repository — the request keeps NO close time and reaches no
+  close-dated measure. With one, the time is the request's own last update when
+  nothing in its activity accounts for that update (an unexplained update IS
+  the silent state change), and the merge commit's own timestamp when a comment
+  does account for it. Whichever is chosen is never earlier than the creation,
+  and nothing is invented: if neither candidate qualifies there is no close
+  time. All of this is MERGED-only — a declined or superseded request without a
+  terminal entry keeps no close time whatever hash it carries.
 - `mtr_git_person_weekly` buckets every metric by **commit-date week**,
   including `prs_merged` (week is the PR's merge-commit week when
   `merge_commit_hash` resolves, else `closed_on` week). All CTEs share the
