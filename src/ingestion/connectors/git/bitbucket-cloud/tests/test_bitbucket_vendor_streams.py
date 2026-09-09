@@ -27,6 +27,7 @@ from airbyte_cdk.models import (
     AirbyteStateMessage,
     AirbyteStateType,
     AirbyteStreamState,
+    FailureType,
     StreamDescriptor,
     SyncMode,
 )
@@ -167,6 +168,96 @@ def test_a_403_repository_is_skipped_not_fatal(http_mocker: HttpMocker) -> None:
 
     assert not output.errors
     assert len(output.records) == 0
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_a_date_filtered_listing_with_no_matches_is_not_an_error(
+    http_mocker: HttpMocker,
+) -> None:
+    """Every discovery listing carries `updated_on >= bitbucket_start_date`, so
+    an empty page there means nothing changed in the window — the same body a
+    token with no access gets. Discovery must not treat it as a failure."""
+    config = BitbucketCloudConfigBuilder().build()
+    http_mocker.get(
+        HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps({"values": []}), status_code=200),
+    )
+
+    output = read_stream(_CONNECTOR, "pull_requests", config)
+
+    assert not output.errors
+    assert len(output.records) == 0
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_a_visibility_probe_that_reaches_no_repository_fails_the_sync(
+    http_mocker: HttpMocker,
+) -> None:
+    """The probe asks without a date filter, so its empty page has one meaning:
+    the token reaches nothing. Left unguarded the sync collects nothing and
+    still reports success."""
+    config = BitbucketCloudConfigBuilder().build()
+    http_mocker.get(
+        HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps({"values": []}), status_code=200),
+    )
+
+    output = read_stream(_CONNECTOR, "repository_visibility", config)
+
+    assert output.errors
+    message = output.errors[0].trace.error.message
+    assert "visible to the token" in message, message
+    assert output.errors[0].trace.error.failure_type == FailureType.config_error
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_a_reachable_workspace_passes_the_visibility_probe(
+    http_mocker: HttpMocker,
+) -> None:
+    """One repository is enough; the probe asks for a single one."""
+    config = BitbucketCloudConfigBuilder().build()
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+
+    output = read_stream(_CONNECTOR, "repository_visibility", config)
+
+    assert not output.errors
+    assert len(output.records) == 1
+    assert output.records[0].record.data["workspace"] == "acme"
+
+
+@freezegun.freeze_time(_FROZEN)
+@pytest.mark.parametrize(
+    ("username", "rest_scheme", "clone_username"),
+    [
+        pytest.param("bot@example.com", "Basic ", "x-bitbucket-api-token-auth", id="api-token"),
+        pytest.param("", "Bearer ", "x-token-auth", id="access-token"),
+    ],
+)
+def test_credential_family_drives_both_the_rest_scheme_and_the_clone_username(
+    http_mocker: HttpMocker, username: str, rest_scheme: str, clone_username: str
+) -> None:
+    """Bitbucket takes an API token as Basic with the account address and an
+    access token as Bearer, and the two use different static clone usernames.
+    `bitbucket_username` is the only field that tells them apart, so the REST
+    header and the username the proxy presents must move together with it."""
+    config = BitbucketCloudConfigBuilder().with_field("bitbucket_username", username).build()
+    http_mocker.get(
+        HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps({"values": [_repo_with_clone()]}), status_code=200),
+    )
+    http_mocker.get(
+        HttpRequest(f"{PROXY_URL}/v1/authors", query_params=ANY_QUERY_PARAMS),
+        _authors_page(),
+    )
+
+    output = read_stream(_CONNECTOR, "commit_authors", config)
+
+    assert not output.errors
+    by_host = {r.url: r.headers for r in http_mocker._mocker.request_history}
+    rest = next(h for u, h in by_host.items() if u.startswith(BB_URL))
+    proxy = next(h for u, h in by_host.items() if u.startswith(PROXY_URL))
+    assert rest["Authorization"].startswith(rest_scheme), rest["Authorization"][:16]
+    assert proxy["X-Git-Username"] == clone_username
 
 
 @freezegun.freeze_time(_FROZEN)

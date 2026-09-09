@@ -187,7 +187,15 @@ def test_every_repository_listing_projects_the_field_the_exclusion_reads() -> No
     """
     listings = _repository_listings(_streams())
     assert listings, "no repository listing found — the audit is not looking at anything"
-    missing = sorted(owner for owner, fields in listings if "values.slug" not in fields)
+    # repository_visibility answers "does the token reach anything at all". It
+    # generates no partitions and clones nothing, and an excluded repository is
+    # an operator's choice rather than an access failure, so it deliberately
+    # reads the workspace unfiltered.
+    missing = sorted(
+        owner
+        for owner, fields in listings
+        if "values.slug" not in fields and owner != "repository_visibility"
+    )
     assert not missing, (
         "these repository listings do not project values.slug, so the exclusion "
         f"filter cannot see it: {missing}"
@@ -391,7 +399,7 @@ def test_the_pull_request_children_read_the_pull_requests_stream_itself() -> Non
 
     for child in children:
         config, parent = _direct_parent(manifest, child)
-        assert config["stream"] == {"$ref": "#/streams/4"}, child["name"]
+        assert config["stream"] == {"$ref": "#/streams/5"}, child["name"]
         assert parent is by_name["pull_requests"]
         assert config.get("incremental_dependency") is True, child["name"]
 

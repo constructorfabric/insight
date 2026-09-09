@@ -211,12 +211,49 @@ definitions:
         failure_type: config_error
         error_message: >-
           Bitbucket rejected the credentials. Personal API tokens need
-          bitbucket_username set (Basic auth); workspace access tokens must
+          bitbucket_username set (Basic auth); workspace, project and repository access tokens must
           NOT set it (Bearer). Mixing the two is the most common cause.
       - type: HttpResponseFilter
         http_codes: [500, 502, 503, 504]
         action: RETRY
         error_message: Transient Bitbucket error
+
+  # The `repository_visibility` probe, which asks for repositories without a
+  # date filter. Only there does an empty page mean the token reaches nothing:
+  # on the date-filtered discovery above the same body also means "nothing
+  # changed since bitbucket_start_date", which is not an error.
+  visibility_error_handler: &visibility_error_handler
+    type: DefaultErrorHandler
+    max_retries: 5
+    backoff_strategies: *vendor_backoff
+    response_filters:
+      - type: HttpResponseFilter
+        http_codes: [429]
+        action: RATE_LIMITED
+        error_message: Bitbucket hourly rate budget exhausted
+      - type: HttpResponseFilter
+        http_codes: [401]
+        action: FAIL
+        failure_type: config_error
+        error_message: >-
+          Bitbucket rejected the credentials. Personal API tokens need
+          bitbucket_username set (Basic auth); workspace, project and repository access tokens must
+          NOT set it (Bearer). Mixing the two is the most common cause.
+      - type: HttpResponseFilter
+        http_codes: [500, 502, 503, 504]
+        action: RETRY
+        error_message: Transient Bitbucket error
+      # A token that reaches no repository is answered 200 with an empty page,
+      # not an error code, so only the body shape catches it. An error body
+      # carries no `values` key and cannot match.
+      - type: HttpResponseFilter
+        predicate: "{{ response.get('values') is not none and response.get('values') | length == 0 }}"
+        action: FAIL
+        failure_type: config_error
+        error_message: >-
+          No repository in this workspace is visible to the token. Check that
+          bitbucket_workspaces names the right workspace and that the token
+          still carries repository read on it.
 
   # Per-repository pull-request listings, standalone stream and the fan-out
   # parents inside every PR child stream alike. Unlike workspace discovery,
@@ -244,7 +281,7 @@ definitions:
         failure_type: config_error
         error_message: >-
           Bitbucket rejected the credentials. Personal API tokens need
-          bitbucket_username set (Basic auth); workspace access tokens must
+          bitbucket_username set (Basic auth); workspace, project and repository access tokens must
           NOT set it (Bearer). Mixing the two is the most common cause.
       - type: HttpResponseFilter
         http_codes: [500, 502, 503, 504]
@@ -329,8 +366,8 @@ streams:
             type: RequestOption
             inject_into: header
             field_name: Authorization
-          # Personal API tokens are Basic username:token; workspace access
-          # tokens are Bearer and must leave bitbucket_username empty.
+          # Personal API tokens are Basic username:token; workspace, project
+          # and repository access tokens are Bearer and leave it empty.
           api_token: >-
             {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
         path: "/repositories/{{ stream_partition.workspace }}"
@@ -461,6 +498,97 @@ streams:
           - [owner]
           - [links]
 
+  # ── Repository visibility probe (Bitbucket API) ─────────────────────────
+  # One unfiltered repository per workspace, purely so an empty answer has a
+  # single meaning. Every other repository listing carries
+  # `updated_on >= bitbucket_start_date`, where an empty page is ordinary; here
+  # there is no date filter, so an empty page means the token reaches nothing
+  # and `visibility_error_handler` fails the sync on it.
+  #
+  # pagelen=1 and no paginator: one request per workspace per sync. The record
+  # is kept rather than dropped so the answer is auditable in bronze.
+  - type: DeclarativeStream
+    name: repository_visibility
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          workspace: {type: [string, "null"]}
+          repository_uuid: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
+        authenticator:
+          type: ApiKeyAuthenticator
+          inject_into:
+            type: RequestOption
+            inject_into: header
+            field_name: Authorization
+          # Personal API tokens are Basic username:token; workspace, project
+          # and repository access tokens are Bearer and leave it empty.
+          api_token: >-
+            {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
+        path: "/repositories/{{ stream_partition.workspace }}"
+        http_method: GET
+        request_parameters:
+          pagelen: "1"
+          fields: "next,values.uuid"
+        error_handler: *visibility_error_handler
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [values]
+      partition_router:
+        type: ListPartitionRouter
+        values: "{{ config['bitbucket_workspaces'] }}"
+        cursor_field: workspace
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [data_source]
+            value: insight_bitbucket_cloud
+          - type: AddedFieldDefinition
+            path: [collected_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+          - type: AddedFieldDefinition
+            path: [workspace]
+            value: "{{ stream_partition.workspace }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [repository_uuid]
+            value: "{{ record.get('uuid') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.workspace | replace(':', '%3A') }}
+      - type: RemoveFields
+        # Hoisted above; the nested original stays out of bronze.
+        field_pointers:
+          - [uuid]
+
   # ── Commits (git-cli-proxy) ─────────────────────────────────────────────
   - type: DeclarativeStream
     name: commits
@@ -560,8 +688,8 @@ streams:
                       type: RequestOption
                       inject_into: header
                       field_name: Authorization
-                    # Personal API tokens are Basic username:token; workspace access
-                    # tokens are Bearer and must leave bitbucket_username empty.
+                    # Personal API tokens are Basic username:token; workspace, project
+                    # and repository access tokens are Bearer and leave it empty.
                     api_token: >-
                       {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
                   path: "/repositories/{{ stream_partition.workspace }}"
@@ -754,8 +882,8 @@ streams:
                       type: RequestOption
                       inject_into: header
                       field_name: Authorization
-                    # Personal API tokens are Basic username:token; workspace access
-                    # tokens are Bearer and must leave bitbucket_username empty.
+                    # Personal API tokens are Basic username:token; workspace, project
+                    # and repository access tokens are Bearer and leave it empty.
                     api_token: >-
                       {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
                   path: "/repositories/{{ stream_partition.workspace }}"
@@ -929,8 +1057,8 @@ streams:
                       type: RequestOption
                       inject_into: header
                       field_name: Authorization
-                    # Personal API tokens are Basic username:token; workspace access
-                    # tokens are Bearer and must leave bitbucket_username empty.
+                    # Personal API tokens are Basic username:token; workspace, project
+                    # and repository access tokens are Bearer and leave it empty.
                     api_token: >-
                       {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
                   path: "/repositories/{{ stream_partition.workspace }}"
@@ -1042,8 +1170,8 @@ streams:
             type: RequestOption
             inject_into: header
             field_name: Authorization
-          # Personal API tokens are Basic username:token; workspace access
-          # tokens are Bearer and must leave bitbucket_username empty.
+          # Personal API tokens are Basic username:token; workspace, project
+          # and repository access tokens are Bearer and leave it empty.
           api_token: >-
             {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
         path: "/repositories/{{ stream_partition.repo_full_name }}/pullrequests?state=OPEN&state=MERGED&state=DECLINED&state=SUPERSEDED"
@@ -1243,8 +1371,8 @@ streams:
             type: RequestOption
             inject_into: header
             field_name: Authorization
-          # Personal API tokens are Basic username:token; workspace access
-          # tokens are Bearer and must leave bitbucket_username empty.
+          # Personal API tokens are Basic username:token; workspace, project
+          # and repository access tokens are Bearer and leave it empty.
           api_token: >-
             {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
         path: "/repositories/{{ stream_slice.extra_fields['repo_full_name'] }}/pullrequests/{{ stream_partition.pr_id }}/comments"
@@ -1273,7 +1401,7 @@ streams:
               failure_type: config_error
               error_message: >-
                 Bitbucket rejected the credentials. Personal API tokens need
-                bitbucket_username set (Basic auth); workspace access tokens must
+                bitbucket_username set (Basic auth); workspace, project and repository access tokens must
                 NOT set it (Bearer). Mixing the two is the most common cause.
             - type: HttpResponseFilter
               http_codes: [500, 502, 503, 504]
@@ -1308,7 +1436,7 @@ streams:
               - [repo_full_name]
               - [updated_on]
             stream:
-              $ref: "#/streams/4"
+              $ref: "#/streams/5"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: updated_on
@@ -1441,8 +1569,8 @@ streams:
             type: RequestOption
             inject_into: header
             field_name: Authorization
-          # Personal API tokens are Basic username:token; workspace access
-          # tokens are Bearer and must leave bitbucket_username empty.
+          # Personal API tokens are Basic username:token; workspace, project
+          # and repository access tokens are Bearer and leave it empty.
           api_token: >-
             {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
         path: "/repositories/{{ stream_slice.extra_fields['repo_full_name'] }}/pullrequests/{{ stream_partition.pr_id }}/commits"
@@ -1469,7 +1597,7 @@ streams:
               failure_type: config_error
               error_message: >-
                 Bitbucket rejected the credentials. Personal API tokens need
-                bitbucket_username set (Basic auth); workspace access tokens must
+                bitbucket_username set (Basic auth); workspace, project and repository access tokens must
                 NOT set it (Bearer). Mixing the two is the most common cause.
             - type: HttpResponseFilter
               http_codes: [500, 502, 503, 504]
@@ -1504,7 +1632,7 @@ streams:
               - [repo_full_name]
               - [updated_on]
             stream:
-              $ref: "#/streams/4"
+              $ref: "#/streams/5"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: pr_updated_on
@@ -1665,8 +1793,8 @@ streams:
             type: RequestOption
             inject_into: header
             field_name: Authorization
-          # Personal API tokens are Basic username:token; workspace access
-          # tokens are Bearer and must leave bitbucket_username empty.
+          # Personal API tokens are Basic username:token; workspace, project
+          # and repository access tokens are Bearer and leave it empty.
           api_token: >-
             {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
         path: "/repositories/{{ stream_slice.extra_fields['repo_full_name'] }}/pullrequests/{{ stream_partition.pr_id }}/diffstat"
@@ -1702,7 +1830,7 @@ streams:
               failure_type: config_error
               error_message: >-
                 Bitbucket rejected the credentials. Personal API tokens need
-                bitbucket_username set (Basic auth); workspace access tokens must
+                bitbucket_username set (Basic auth); workspace, project and repository access tokens must
                 NOT set it (Bearer). Mixing the two is the most common cause.
             - type: HttpResponseFilter
               http_codes: [500, 502, 503, 504]
@@ -1737,7 +1865,7 @@ streams:
               - [repo_full_name]
               - [updated_on]
             stream:
-              $ref: "#/streams/4"
+              $ref: "#/streams/5"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: pr_updated_on
@@ -1853,8 +1981,8 @@ streams:
             type: RequestOption
             inject_into: header
             field_name: Authorization
-          # Personal API tokens are Basic username:token; workspace access
-          # tokens are Bearer and must leave bitbucket_username empty.
+          # Personal API tokens are Basic username:token; workspace, project
+          # and repository access tokens are Bearer and leave it empty.
           api_token: >-
             {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
         path: "/repositories/{{ stream_slice.extra_fields['repo_full_name'] }}/pullrequests/{{ stream_partition.pr_id }}/activity"
@@ -1882,7 +2010,7 @@ streams:
               failure_type: config_error
               error_message: >-
                 Bitbucket rejected the credentials. Personal API tokens need
-                bitbucket_username set (Basic auth); workspace access tokens must
+                bitbucket_username set (Basic auth); workspace, project and repository access tokens must
                 NOT set it (Bearer). Mixing the two is the most common cause.
             - type: HttpResponseFilter
               http_codes: [500, 502, 503, 504]
@@ -1917,7 +2045,7 @@ streams:
               - [repo_full_name]
               - [updated_on]
             stream:
-              $ref: "#/streams/4"
+              $ref: "#/streams/5"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: event_date
@@ -2066,8 +2194,8 @@ streams:
             type: RequestOption
             inject_into: header
             field_name: Authorization
-          # Personal API tokens are Basic username:token; workspace access
-          # tokens are Bearer and must leave bitbucket_username empty.
+          # Personal API tokens are Basic username:token; workspace, project
+          # and repository access tokens are Bearer and leave it empty.
           api_token: >-
             {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
         path: "/workspaces/{{ stream_partition.workspace }}/members"
@@ -2096,7 +2224,7 @@ streams:
               failure_type: config_error
               error_message: >-
                 Bitbucket rejected the credentials. Personal API tokens need
-                bitbucket_username set (Basic auth); workspace access tokens must
+                bitbucket_username set (Basic auth); workspace, project and repository access tokens must
                 NOT set it (Bearer). Mixing the two is the most common cause.
             - type: HttpResponseFilter
               http_codes: [500, 502, 503, 504]
@@ -2209,8 +2337,8 @@ streams:
             type: RequestOption
             inject_into: header
             field_name: Authorization
-          # Personal API tokens are Basic username:token; workspace access
-          # tokens are Bearer and must leave bitbucket_username empty.
+          # Personal API tokens are Basic username:token; workspace, project
+          # and repository access tokens are Bearer and leave it empty.
           api_token: >-
             {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
         # Trailing slash is load-bearing: without it this endpoint 404s.
@@ -2242,7 +2370,7 @@ streams:
               failure_type: config_error
               error_message: >-
                 Bitbucket rejected the credentials. Personal API tokens need
-                bitbucket_username set (Basic auth); workspace access tokens must
+                bitbucket_username set (Basic auth); workspace, project and repository access tokens must
                 NOT set it (Bearer). Mixing the two is the most common cause.
             - type: HttpResponseFilter
               http_codes: [500, 502, 503, 504]
@@ -2293,8 +2421,8 @@ streams:
                       type: RequestOption
                       inject_into: header
                       field_name: Authorization
-                    # Personal API tokens are Basic username:token; workspace access
-                    # tokens are Bearer and must leave bitbucket_username empty.
+                    # Personal API tokens are Basic username:token; workspace, project
+                    # and repository access tokens are Bearer and leave it empty.
                     api_token: >-
                       {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
                   path: "/repositories/{{ stream_partition.workspace }}"
@@ -2442,8 +2570,8 @@ streams:
             type: RequestOption
             inject_into: header
             field_name: Authorization
-          # Personal API tokens are Basic username:token; workspace access
-          # tokens are Bearer and must leave bitbucket_username empty.
+          # Personal API tokens are Basic username:token; workspace, project
+          # and repository access tokens are Bearer and leave it empty.
           api_token: >-
             {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
         # Trailing slash is load-bearing: without it this endpoint 404s.
@@ -2480,7 +2608,7 @@ streams:
               failure_type: config_error
               error_message: >-
                 Bitbucket rejected the credentials. Personal API tokens need
-                bitbucket_username set (Basic auth); workspace access tokens must
+                bitbucket_username set (Basic auth); workspace, project and repository access tokens must
                 NOT set it (Bearer). Mixing the two is the most common cause.
             - type: HttpResponseFilter
               http_codes: [500, 502, 503, 504]
@@ -2534,8 +2662,8 @@ streams:
                       type: RequestOption
                       inject_into: header
                       field_name: Authorization
-                    # Personal API tokens are Basic username:token; workspace access
-                    # tokens are Bearer and must leave bitbucket_username empty.
+                    # Personal API tokens are Basic username:token; workspace, project
+                    # and repository access tokens are Bearer and leave it empty.
                     api_token: >-
                       {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
                   path: "/repositories/{{ stream_partition.workspace }}"
@@ -2696,7 +2824,7 @@ streams:
               failure_type: config_error
               error_message: >-
                 Bitbucket rejected the credentials. Personal API tokens need
-                bitbucket_username set (Basic auth); workspace access tokens must
+                bitbucket_username set (Basic auth); workspace, project and repository access tokens must
                 NOT set it (Bearer). Mixing the two is the most common cause.
             - type: HttpResponseFilter
               http_codes: [500, 502, 503, 504]
@@ -3016,15 +3144,15 @@ stream_groups:
     action:
       type: BlockSimultaneousSyncsAction
     streams:
-      - $ref: "#/streams/4"
+      - $ref: "#/streams/5"
   pull_request_children:
     action:
       type: BlockSimultaneousSyncsAction
     streams:
-      - $ref: "#/streams/5"
       - $ref: "#/streams/6"
       - $ref: "#/streams/7"
       - $ref: "#/streams/8"
+      - $ref: "#/streams/9"
 
 concurrency_level:
   type: ConcurrencyLevel
@@ -3063,15 +3191,20 @@ spec:
         description: >-
           Atlassian account email/username. Set it for personal API tokens
           (HTTP Basic username:token, both against the API and the clone the
-          proxy performs). Leave empty for workspace/repository access tokens,
-          which authenticate as Bearer.
+          proxy performs). Leave empty for workspace, project and repository
+          access tokens, which authenticate as Bearer.
         title: Username / Email (personal API tokens only)
         order: 2
       bitbucket_token:
         type: string
         description: >-
-          Bitbucket API token with `repository:read`. Forwarded to the proxy per request for the clone and never stored there.
-        title: API Token
+          An Atlassian API token (`read:repository:bitbucket` and
+          `read:pullrequest:bitbucket`) or a workspace / project / repository
+          access token (`repository` and `pullrequest`). Neither read implies
+          the other: granted only the repository one, the connector lists
+          repositories while every pull-request call is refused and skipped.
+          Forwarded to the proxy per request for the clone and never stored there.
+        title: API Token or Access Token
         airbyte_secret: true
         order: 4
       bitbucket_workspaces:
