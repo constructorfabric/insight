@@ -180,10 +180,10 @@
     A SUBTASK element is the referenced issue itself, with the key at the top
     level, so the same rule applies one level shallower.
 
-    Direction is not part of the identity. An issue holds each link once, and
-    which side of it the issue is on is a property of the link, not of the
-    element — the changelog's rendered text carries it ("blocks", "is caused
-    by"), which is why the display keeps that text where it has it. -#}
+    Direction is not part of the identity: which side of a link the issue is on
+    is a property of the link, not of the element — the changelog's rendered
+    text carries it ("blocks", "is caused by"), which is why the display keeps
+    that text where it has it. -#}
 {% macro jira_json_link_key(v) %}
     coalesce(
         nullIf(JSONExtractString({{ v }}, 'outwardIssue', 'key'), ''),
@@ -202,13 +202,21 @@
 
 
 {#- kind = link_array: the linked issue key as both value and identifier, which
-    is what makes the two sides reconcile at all. -#}
+    is what makes the two sides reconcile at all.
+
+    The keys are deduplicated because two link objects can name the same issue —
+    one issue related to another by two link types is two elements of
+    `issuelinks` and one element here. The changelog cannot express the
+    difference either: it names the linked issue, so a second link to an issue
+    already linked reconciles against the element that is already present.
+    Leaving the repeat in makes the snapshot longer than any history that could
+    reproduce it, and the round trip reports the field forever. -#}
 {% macro jira_norm_link_array(v) %}
     (
-        CAST(arrayMap(x -> {{ jira_json_link_key('x') }},
-             JSONExtractArrayRaw(if({{ v }} IN ('', 'null'), '[]', {{ v }}))) AS Array(String)),
-        CAST(arrayMap(x -> {{ jira_json_link_key('x') }},
-             JSONExtractArrayRaw(if({{ v }} IN ('', 'null'), '[]', {{ v }}))) AS Array(String))
+        CAST(arrayDistinct(arrayMap(x -> {{ jira_json_link_key('x') }},
+             JSONExtractArrayRaw(if({{ v }} IN ('', 'null'), '[]', {{ v }})))) AS Array(String)),
+        CAST(arrayDistinct(arrayMap(x -> {{ jira_json_link_key('x') }},
+             JSONExtractArrayRaw(if({{ v }} IN ('', 'null'), '[]', {{ v }})))) AS Array(String))
     )
 {% endmacro %}
 

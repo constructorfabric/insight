@@ -55,6 +55,12 @@ WITH fixtures AS (
             -- level, and there is no link object around it
             ('subtask element',   'link_array',   '[{"id":"1364577","key":"PROJ-4","fields":{"summary":"child"}}]',
                                                                               ['PROJ-4'],            ['PROJ-4']),
+            -- two link types to the SAME issue are two link objects and one
+            -- element: the changelog names only the linked issue, so a repeat
+            -- has no history that could reproduce it
+            ('link repeated key', 'link_array',
+             '[{"id":"1","outwardIssue":{"key":"PROJ-5"},"type":{"name":"Blocks"}},{"id":"2","inwardIssue":{"key":"PROJ-5"},"type":{"name":"Relates"}}]',
+                                                                              ['PROJ-5'],            ['PROJ-5']),
             ('link empty',        'link_array',   '[]',                       CAST([] AS Array(String)), CAST([] AS Array(String))),
 
             -- single objects
