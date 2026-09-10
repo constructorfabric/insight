@@ -15,8 +15,11 @@ description: >
   project TST on 2026-12-25; the census observes all 15. On top: erin closed DELX-1 (TST)
   which is MISSING from the census while TST is visible -> deleted -> excluded (erin stays 5,
   not 6); carol closed LSTC-1 in project LOST which is absent from the roster entirely ->
-  access_lost -> still counted (carol 3+1=4). Per-person sums {1,2,4,4,5} -> median 4, p25 2,
-  p75 4. Cases: erin IC (deleted excluded), carol IC (access_lost counted), peer stats.
+  access_lost -> still counted (carol 3+1=4); dave closed two Bugs, BUGD-1 observed alive by
+  the census and BUGX-1 missing from it while TST is visible -> deleted -> so bugs_fixed is 1,
+  not 2 (and dave's tasks.closed is 4+1=5, not 6). Per-person sums {1,2,4,5,5} -> median 4,
+  p25 2, p75 5. Cases: erin IC (deleted excluded), carol IC (access_lost counted), dave IC
+  (deleted bug leaves bugs_fixed), peer stats.
 bronze:
   bronze_bamboohr.employees:
     - $ref: ../templates/people.yaml#/templates/alice
@@ -39,6 +42,7 @@ bronze:
 
   bronze_jira.jira_issuetypes:
     - $ref: ../templates/jira_task.yaml#/templates/issuetype_task
+    - $ref: ../templates/jira_task.yaml#/templates/issuetype_bug
 
   bronze_jira.jira_fields:
     - $ref: ../templates/jira_task.yaml#/templates/field_status
@@ -70,6 +74,11 @@ bronze:
     # Lost access: closed by carol in project LOST, which is absent from the
     # visibility roster entirely -> availability=access_lost -> still counted.
     - {$ref: ../templates/jira_task.yaml#/templates/jira_issue, tenant_id: "{{ tenant }}", id: LSTC-1, jira_id: LSTC-1, unique_key: jira-test-LSTC-1, id_readable: LOST1, project_key: LOST, created: "2026-12-20T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}',}
+    # Dave's bug pair: BUGD-1 is observed alive by the census and counts in
+    # bugs_fixed; BUGX-1 is absent from the census while TST stays visible ->
+    # deleted -> excluded, so dave's bugs_fixed is 1 and tasks.closed 5, not 6.
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_issue, tenant_id: "{{ tenant }}", id: BUGD-1, jira_id: BUGD-1, unique_key: jira-test-BUGD-1, id_readable: TSTD5, created: "2026-12-20T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10000","name":"Bug"},"assignee":{"accountId":"dave-jira-acct","displayName":"Dave Delta"}}'}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_issue, tenant_id: "{{ tenant }}", id: BUGX-1, jira_id: BUGX-1, unique_key: jira-test-BUGX-1, id_readable: TSTX2, created: "2026-12-20T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10000","name":"Bug"},"assignee":{"accountId":"dave-jira-acct","displayName":"Dave Delta"}}',}
 
   bronze_jira.jira_issue_history:
     - {$ref: ../templates/jira_task.yaml#/templates/jira_history, id_readable: TSTA1, changelog_id: "57001", unique_key: jira-test-TSTA1-57001, created_at: "2026-12-25T14:00:00.000+0000", author_account_id: alice-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'}
@@ -90,10 +99,12 @@ bronze:
     # Close events for the deleted and the access-lost issues: both were
     # legitimately closed in the window — availability decides the counting.
     - {$ref: ../templates/jira_task.yaml#/templates/jira_history, id_readable: TSTX1, changelog_id: "57016", unique_key: jira-test-TSTX1-57016, created_at: "2026-12-25T14:00:00.000+0000", author_account_id: erin-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'}
-    - {$ref: ../templates/jira_task.yaml#/templates/jira_history, id_readable: LOST1, changelog_id: "57017", unique_key: jira-test-LOST1-57017, created_at: "2026-12-25T14:00:00.000+0000", author_account_id: carol-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]',}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_history, id_readable: LOST1, changelog_id: "57017", unique_key: jira-test-LOST1-57017, created_at: "2026-12-25T14:00:00.000+0000", author_account_id: carol-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_history, id_readable: TSTD5, changelog_id: "57018", unique_key: jira-test-TSTD5-57018, created_at: "2026-12-25T14:00:00.000+0000", author_account_id: dave-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_history, id_readable: TSTX2, changelog_id: "57019", unique_key: jira-test-TSTX2-57019, created_at: "2026-12-25T14:00:00.000+0000", author_account_id: dave-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]',}
 
-  # The census: the 15 rank issues observed alive. DELX-1 (deleted) and LSTC-1
-  # (its whole project lost) are NOT here.
+  # The census: the 15 rank issues plus dave's BUGD-1 observed alive. DELX-1
+  # and BUGX-1 (deleted) and LSTC-1 (its whole project lost) are NOT here.
   bronze_jira.jira_issue_census:
     - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: DELA-1, unique_key: "{{ tenant }}-jira-test-DELA-1"}
     - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: DELB-1, unique_key: "{{ tenant }}-jira-test-DELB-1"}
@@ -109,7 +120,8 @@ bronze:
     - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: DELE-2, unique_key: "{{ tenant }}-jira-test-DELE-2"}
     - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: DELE-3, unique_key: "{{ tenant }}-jira-test-DELE-3"}
     - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: DELE-4, unique_key: "{{ tenant }}-jira-test-DELE-4"}
-    - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: DELE-5, unique_key: "{{ tenant }}-jira-test-DELE-5",}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: DELE-5, unique_key: "{{ tenant }}-jira-test-DELE-5"}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: BUGD-1, unique_key: "{{ tenant }}-jira-test-BUGD-1",}
 
   # The roster: TST is visible and live; project LOST is absent entirely.
   bronze_jira.jira_project_visibility:

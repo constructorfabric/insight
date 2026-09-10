@@ -2,18 +2,26 @@ spec_version: 1
 description: >
   Unified tasks.closed coverage for re-synced issue snapshots. The latest
   extraction wins regardless of insertion order, identical snapshots count once,
-  and a reopened issue is not counted as closed.
+  and a reopened issue is not counted as closed. Bob's DDP-5 extends the same
+  rule to the bug subset: a Bug whose snapshot AND close event each arrive twice
+  under fresh extraction stamps still scores bugs_fixed exactly once.
 bronze:
   bronze_bamboohr.employees:
     - $ref: ../templates/people.yaml#/templates/alice
+    - $ref: ../templates/people.yaml#/templates/bob
 
   bronze_jira.jira_user:
     - $ref: ../templates/jira_task.yaml#/templates/alice_user
+    - $ref: ../templates/jira_task.yaml#/templates/bob_user
 
   bronze_jira.jira_statuses:
     - $ref: ../templates/jira_task.yaml#/templates/status_open
     - $ref: ../templates/jira_task.yaml#/templates/status_in_progress
     - $ref: ../templates/jira_task.yaml#/templates/status_closed
+
+  bronze_jira.jira_issuetypes:
+    - $ref: ../templates/jira_task.yaml#/templates/issuetype_task
+    - $ref: ../templates/jira_task.yaml#/templates/issuetype_bug
 
   bronze_jira.jira_fields:
     - $ref: ../templates/jira_task.yaml#/templates/field_status
@@ -97,4 +105,44 @@ bronze:
       _airbyte_extracted_at: "2026-12-27T00:00:00"
       custom_fields_json: '{"status":{"id":"3","name":"In Progress"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
 
-  bronze_jira.jira_issue_history: []
+    # ── DDP-5: bob's Bug re-synced whole — the snapshot arrives twice with
+    #    fresh raw ids and extraction stamps → bugs_fixed must count it once ──
+    - $ref: ../templates/jira_task.yaml#/templates/jira_issue
+      id: DDP-5
+      jira_id: DDP-5
+      unique_key: jira-test-DDP-5
+      id_readable: DDP5
+      created: "2026-12-25T09:00:00"
+      _airbyte_raw_id: "00000000-0000-0000-0000-000000000501"
+      _airbyte_extracted_at: "2026-12-27T00:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10000","name":"Bug"},"assignee":{"accountId":"bob-jira-acct","displayName":"Bob Beta"}}'
+    - $ref: ../templates/jira_task.yaml#/templates/jira_issue
+      id: DDP-5
+      jira_id: DDP-5
+      unique_key: jira-test-DDP-5
+      id_readable: DDP5
+      created: "2026-12-25T09:00:00"
+      _airbyte_raw_id: "00000000-0000-0000-0000-000000000502"
+      _airbyte_extracted_at: "2026-12-28T00:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10000","name":"Bug"},"assignee":{"accountId":"bob-jira-acct","displayName":"Bob Beta"}}'
+
+  bronze_jira.jira_issue_history:
+    # ── DDP-5's close event, re-synced the same way as its snapshot ──
+    - $ref: ../templates/jira_task.yaml#/templates/jira_history
+      id_readable: DDP5
+      changelog_id: "58001"
+      unique_key: jira-test-DDP5-58001
+      created_at: "2026-12-26T14:00:00.000+0000"
+      author_account_id: bob-jira-acct
+      _airbyte_raw_id: "00000000-0000-0000-0000-000000000503"
+      _airbyte_extracted_at: "2026-12-27T00:00:00"
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+    - $ref: ../templates/jira_task.yaml#/templates/jira_history
+      id_readable: DDP5
+      changelog_id: "58001"
+      unique_key: jira-test-DDP5-58001
+      created_at: "2026-12-26T14:00:00.000+0000"
+      author_account_id: bob-jira-acct
+      _airbyte_raw_id: "00000000-0000-0000-0000-000000000504"
+      _airbyte_extracted_at: "2026-12-28T00:00:00"
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'

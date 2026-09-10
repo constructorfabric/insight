@@ -172,7 +172,7 @@ def run_spec(
         source_ids = enrich_runner.discover_source_ids(step, spec.touched_tables)
         if not source_ids:
             continue
-        clear(ch_seeder.cfg, dbt_runner.enrich_output_tables(step.name))
+        ch_seeder.clear_and_record(dbt_runner.enrich_output_tables(step.name))
         enrich_runner.run(step, source_ids)
         ran_enrich_steps.append(step)
 

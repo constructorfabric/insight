@@ -80,14 +80,13 @@ def test_a_month_survives_the_next_month_snapshot(
     # `_version > max(_version)`, so a row left by an earlier session with a
     # later read time would filter November's insert out and the first sync
     # would land nothing.
-    touched = (
-        (BRONZE_SCHEMA, BRONZE_TABLE),
-        ("staging", "claude_team__ai_overage"),
-        ("silver", "class_ai_overage"),
+    ch_seeder.clear_and_record(
+        (
+            (BRONZE_SCHEMA, BRONZE_TABLE),
+            ("staging", "claude_team__ai_overage"),
+            ("silver", "class_ai_overage"),
+        )
     )
-    clear(ch_seeder.cfg, touched)
-    for schema, table in touched:
-        ch_seeder.ledger.record(schema, table)
 
     _sync(ch_seeder, dbt_runner, _snapshot(tenant, "2026-11-15T00:00:00Z", 500))
     _sync(ch_seeder, dbt_runner, _snapshot(tenant, "2026-12-10T00:00:00Z", 250))

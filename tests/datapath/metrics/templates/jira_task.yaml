@@ -203,6 +203,30 @@ templates:
     email: carol@example.com
     display_name: Carol Gamma
 
+  # unique_key avoids the `-jira-acct` suffix: at 24 characters the short form
+  # is exactly token-shaped and trips secret scanners near "jira" — and heidi's
+  # key also avoids any hyphen-aligned 24-character substring.
+  dave_user:
+    $ref: "#/templates/jira_user"
+    unique_key: jira-test-dave-jira-account
+    account_id: dave-jira-acct
+    email: dave@example.com
+    display_name: Dave Delta
+
+  erin_user:
+    $ref: "#/templates/jira_user"
+    unique_key: jira-test-erin-jira-account
+    account_id: erin-jira-acct
+    email: erin@example.com
+    display_name: Erin Epsilon
+
+  heidi_user:
+    $ref: "#/templates/jira_user"
+    unique_key: jira-test-heidi-account
+    account_id: heidi-jira-acct
+    email: heidi@example.com
+    display_name: Heidi Eta
+
   closed_task_alice:
     $ref: "#/templates/jira_issue"
     created: "2026-01-15T09:00:00"

@@ -16,8 +16,10 @@ description: >
 
   Department: 5 Engineering members alice..erin of rank r in 1..5. Each closes
   EXACTLY 4 issues on the same close date (2026-06-25): (r-1) Bugs + (5-r) Tasks
-  -> per-person bug share = 100*(r-1)/4 = {0,25,50,75,100}. alice(r=1)=0% (0 bugs /
-  4 closed, denominator 4>0 so NOT dropped); erin(r=5)=100%. The two subsets are
+  -> per-person bug share = 100*(r-1)/4 = {0,25,50,75,100}. alice(r=1) closes 0
+  bugs: sumIfOrNull computes NULL over her zero bug rows for bugs_fixed AND for
+  the ratio's numerator, so she carries no observation and drops out of BOTH
+  peer pools - that is why peer n=4. erin(r=5)=100%. The two subsets are
   complements here (no unclassified types seeded): alice closes 4 non-bug and 0
   bug, erin 4 bug and 0 non-bug. value = the requested member's OWN number;
   median/p25/p75/range = the department distribution. Empty window 2026-06 -> no

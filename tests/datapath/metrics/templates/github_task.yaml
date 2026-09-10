@@ -132,6 +132,14 @@ templates:
     description: An unexpected problem
     _airbyte_raw_id: gh-type-bug
 
+  issue_type_defect:
+    $ref: "#/templates/issue_type_task"
+    unique_key: gh-type-defect
+    issue_type_id: IT_defect
+    issue_type_name: Defect
+    description: A confirmed fault
+    _airbyte_raw_id: gh-type-defect
+
   # ── the identity bridge ────────────────────────────────────────────────
   # Gold joins an issue's assignee to a person through an e-mail, so a GitHub
   # fixture that seeds only issues attributes nothing: `github__task_users` is
