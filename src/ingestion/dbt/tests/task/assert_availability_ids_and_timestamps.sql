@@ -1,3 +1,15 @@
+{{ config(
+    tags=['connector_quality', 'jira'],
+    store_failures=true,
+    meta={
+        'title': 'Availability rows carry their ids and timestamps',
+        'domain': 'task-tracking',
+        'category': 'completeness',
+        'tier': 'error',
+        'remediation': 'The census emitted a record without the id, state or last-seen timestamp that deletion classification reads, so the issue it describes cannot be told present from gone. Check the census stream\'s AddFields transformations and the availability staging model that folds them.'
+    }
+) }}
+
 -- API-to-Bronze completeness (#2419): every availability row must carry the
 -- identifiers and timestamps downstream classification depends on. A NULL/empty
 -- jira_id or a missing last_seen_at for a PRESENT issue means the census
