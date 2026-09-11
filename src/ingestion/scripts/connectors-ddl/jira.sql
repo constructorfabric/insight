@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_comments
     `unique_key` Nullable(String),
     `comment_id` Nullable(Decimal(38, 9)),
     `id_readable` Nullable(String),
+    `jira_id` Nullable(String),
     `author_account_id` Nullable(String),
     `collected_at` Nullable(String)
 )
@@ -179,6 +180,7 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_issue_history
     `source_id` Nullable(String),
     `unique_key` Nullable(String),
     `id_readable` Nullable(String),
+    `jira_id` Nullable(String),
     `author_account_id` Nullable(String),
     `changelog_id` Nullable(Decimal(38, 9)),
     `created_at` Nullable(String),
@@ -481,6 +483,7 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_worklogs
     `unique_key` Nullable(String),
     `worklog_id` Nullable(Decimal(38, 9)),
     `id_readable` Nullable(String),
+    `jira_id` Nullable(String),
     `author_account_id` Nullable(String),
     `time_spent_seconds` Nullable(Decimal(38, 9)),
     `comment` Nullable(String),

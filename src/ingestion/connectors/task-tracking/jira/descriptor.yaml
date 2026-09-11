@@ -41,18 +41,27 @@ name: jira
 # one stayed behind with a stale payload, leaving the issue present twice
 # downstream, once with its real history and once as a ghost.
 #
-# Rows written before this keep their old key: `unique_key` is the table's sort
-# key and ClickHouse refuses to UPDATE one, so there is no migration to rewrite
-# them in place, and rebuilding a table this size to change a column nothing
-# reads afterwards would not earn its cost. The readers stop depending on it
-# instead — every dedup over jira_issue now picks its winner by
-# (source_id, jira_id) — so the stale row is simply never chosen.
+# Rows written before this are rebuilt by `heal_jira_issue_key` in
+# apply-ch-migrations.sh: `unique_key` is the sort key and cannot be updated in
+# place, so the table is copied with the new key, one row per issue, and
+# swapped in atomically. Readers dedup by (source_id, jira_id) regardless — the
+# issue's stable key within a source, which is what joins use; `unique_key`
+# exists for ReplacingMergeTree alone. `id_readable` keeps the mutable key as
+# an attribute — the rename is a fact about the issue.
 #
 # MAJOR because the key an existing row is stored under changes, which is what
 # a major means here; the full refresh it dispatches also clears anything
-# derived while the two copies were both visible. `id_readable` keeps the
-# mutable key — the rename is a fact about the issue.
-version: "6.0.0"
+# derived while the two copies were both visible.
+# 6.1.0 (minor): jira_issue_history, jira_comments and jira_worklogs carry
+# `jira_id`, the parent issue's immutable numeric id, taken from the parent
+# slice. Each of these substreams is partitioned by the issue KEY and stamped
+# only `id_readable`, the key at fetch time — so after an issue moved between
+# projects nothing in its changelog, comments or worklogs named the issue by
+# anything stable, and every reader had to recover the id by joining on a key
+# that no longer matched. MINOR: a new column, nothing re-derived; rows written
+# before this are filled by `heal_jira_substream_issue_id` from the two issue
+# streams.
+version: "6.1.0"
 schedule: "0 3 * * *"
 workflow: sync
 # CI build metadata + runtime image refs (ADR-0016). The `images:` block is

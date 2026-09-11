@@ -122,6 +122,161 @@ SQL
 heal_github_project_day_keys project_fields
 heal_github_project_day_keys project_items
 
+echo "=== Healing Jira bronze issue identity ==="
+# Two heals, in this order, both guarded on the rows they would change so a
+# converged warehouse pays one SELECT per table and nothing else.
+#
+# 1. jira_issue_history / jira_comments / jira_worklogs carry `jira_id` since
+#    connector 6.1.0; rows written before it name their issue only by
+#    `id_readable`, the key at fetch time. The id is recovered from the two
+#    issue streams, read WITHOUT FINAL and before the rebuild below: a moved
+#    issue holds one bronze row per key it ever had, and those old-key rows
+#    are the only thing that maps a pre-move key to its id. A mutation cannot
+#    join a subquery, so the pairs go through a Join-engine table and joinGet,
+#    keyed by (tenant_id, source_id, id_readable) because one bronze holds
+#    every connector instance. Worklogs prefer Jira's own `issueId`.
+#
+# 2. jira_issue / jira_issue_keys were keyed by the issue KEY before descriptor
+#    6.0.0, so a moved issue exists once per key and ReplacingMergeTree can
+#    collapse neither. The table is rebuilt with `unique_key` on the immutable
+#    id — one row per issue, the latest extraction — and swapped in atomically.
+#    INVARIANT: nothing may write to the table between the copy and the
+#    EXCHANGE; only the Argo pipeline writes bronze, so a deploy carrying this
+#    heal must not overlap a Jira sync.
+_jira_issue_id_lookup='staging._jira_issue_id_by_key'
+
+# Counts only the rows the lookup can actually fill: a key no issue stream ever
+# delivered stays NULL forever, and counting it would re-run the mutation on
+# every deploy. Worklogs carry Jira's own issueId and count whenever it is set.
+_jira_rows_needing_issue_id() {
+  local table="$1" own=""
+  [[ "${table}" == "jira_worklogs" ]] && own="OR issueId IS NOT NULL"
+  printf "SELECT count() FROM bronze_jira.%s
+          WHERE jira_id IS NULL AND id_readable IS NOT NULL AND tenant_id IS NOT NULL AND source_id IS NOT NULL
+            AND ((assumeNotNull(tenant_id), assumeNotNull(source_id), assumeNotNull(id_readable)) IN (
+                   SELECT assumeNotNull(tenant_id), assumeNotNull(source_id), assumeNotNull(id_readable)
+                   FROM bronze_jira.jira_issue
+                   WHERE tenant_id IS NOT NULL AND source_id IS NOT NULL AND id_readable IS NOT NULL AND jira_id IS NOT NULL
+                   UNION ALL
+                   SELECT assumeNotNull(tenant_id), assumeNotNull(source_id), assumeNotNull(id_readable)
+                   FROM bronze_jira.jira_issue_keys
+                   WHERE tenant_id IS NOT NULL AND source_id IS NOT NULL AND id_readable IS NOT NULL AND jira_id IS NOT NULL)
+                 %s)" "${table}" "${own}" |
+    _ch_http_query | tr -d '[:space:]'
+}
+
+_jira_rows_keyed_by_issue_key() {
+  local table="$1"
+  printf "SELECT count() FROM bronze_jira.%s WHERE coalesce(unique_key, '') != concat(coalesce(tenant_id, ''), '-', coalesce(source_id, ''), '-', coalesce(jira_id, ''))" "${table}" |
+    _ch_http_query | tr -d '[:space:]'
+}
+
+heal_jira_substream_issue_id() {
+  local pending=() table n
+  for table in jira_issue_history jira_comments jira_worklogs; do
+    ch_table_exists bronze_jira "${table}" || continue
+    n="$(_jira_rows_needing_issue_id "${table}")"
+    [[ "${n}" =~ ^[0-9]+$ && "${n}" -gt 0 ]] || continue
+    echo "  bronze_jira.${table}: ${n} row(s) without jira_id — filling from the issue streams"
+    pending+=("${table}")
+  done
+  [[ "${#pending[@]}" -gt 0 ]] || return 0
+
+  run_ch <<SQL
+DROP TABLE IF EXISTS ${_jira_issue_id_lookup};
+CREATE TABLE ${_jira_issue_id_lookup}
+(
+    tenant_id String,
+    source_id String,
+    id_readable String,
+    jira_id String
+)
+ENGINE = Join(ANY, LEFT, tenant_id, source_id, id_readable);
+INSERT INTO ${_jira_issue_id_lookup}
+SELECT tenant_id, source_id, id_readable, jira_id
+FROM
+(
+    SELECT assumeNotNull(tenant_id) AS tenant_id, assumeNotNull(source_id) AS source_id,
+           assumeNotNull(id_readable) AS id_readable, assumeNotNull(jira_id) AS jira_id
+    FROM bronze_jira.jira_issue
+    WHERE tenant_id IS NOT NULL AND source_id IS NOT NULL AND id_readable IS NOT NULL AND jira_id IS NOT NULL
+    UNION ALL
+    SELECT assumeNotNull(tenant_id) AS tenant_id, assumeNotNull(source_id) AS source_id,
+           assumeNotNull(id_readable) AS id_readable, assumeNotNull(jira_id) AS jira_id
+    FROM bronze_jira.jira_issue_keys
+    WHERE tenant_id IS NOT NULL AND source_id IS NOT NULL AND id_readable IS NOT NULL AND jira_id IS NOT NULL
+)
+GROUP BY tenant_id, source_id, id_readable, jira_id;
+SQL
+
+  local lookup="nullIf(joinGet('${_jira_issue_id_lookup}', 'jira_id', assumeNotNull(tenant_id), assumeNotNull(source_id), assumeNotNull(id_readable)), '')"
+  for table in "${pending[@]}"; do
+    local value="${lookup}"
+    [[ "${table}" == "jira_worklogs" ]] && value="COALESCE(issueId, ${lookup})"
+    run_ch <<SQL
+ALTER TABLE bronze_jira.${table}
+    UPDATE jira_id = ${value}
+    WHERE jira_id IS NULL AND id_readable IS NOT NULL AND tenant_id IS NOT NULL AND source_id IS NOT NULL
+    SETTINGS mutations_sync = 1;
+SQL
+  done
+
+  run_ch <<SQL
+DROP TABLE IF EXISTS ${_jira_issue_id_lookup};
+SQL
+}
+
+_jira_rows_without_identity() {
+  local table="$1"
+  printf "SELECT count() FROM bronze_jira.%s WHERE tenant_id IS NULL OR source_id IS NULL OR jira_id IS NULL" "${table}" |
+    _ch_http_query | tr -d '[:space:]'
+}
+
+heal_jira_issue_key() {
+  local table="$1" n orphans copy_start_ms
+  ch_table_exists bronze_jira "${table}" || return 0
+  n="$(_jira_rows_keyed_by_issue_key "${table}")"
+  [[ "${n}" =~ ^[0-9]+$ && "${n}" -gt 0 ]] || return 0
+
+  # A row without tenant, source or issue id has no key under the new formula.
+  # None can exist — the connector stamps all three on every record — so one
+  # is a corrupted table, and the deploy stops here rather than dropping it.
+  orphans="$(_jira_rows_without_identity "${table}")"
+  if [[ ! "${orphans}" =~ ^[0-9]+$ || "${orphans}" -gt 0 ]]; then
+    echo "  bronze_jira.${table}: ${orphans:-?} row(s) without tenant_id, source_id or jira_id — refusing to rebuild" >&2
+    return 1
+  fi
+
+  echo "  bronze_jira.${table}: ${n} row(s) keyed by the issue key — rebuilding on the issue id"
+  copy_start_ms="$(printf "SELECT toUnixTimestamp64Milli(now64(3))" | _ch_http_query | tr -d '[:space:]')"
+  [[ "${copy_start_ms}" =~ ^[0-9]+$ ]] || { echo "  bronze_jira.${table}: could not read the server clock — refusing to rebuild" >&2; return 1; }
+  run_ch <<SQL
+DROP TABLE IF EXISTS bronze_jira.${table}__rekey;
+CREATE TABLE bronze_jira.${table}__rekey AS bronze_jira.${table};
+INSERT INTO bronze_jira.${table}__rekey
+SELECT * REPLACE (concat(tenant_id, '-', source_id, '-', jira_id) AS unique_key)
+FROM bronze_jira.${table}
+ORDER BY _airbyte_extracted_at DESC
+LIMIT 1 BY tenant_id, source_id, jira_id;
+EXCHANGE TABLES bronze_jira.${table} AND bronze_jira.${table}__rekey;
+SQL
+  # From the EXCHANGE on, writers land in the rebuilt table by name. Rows a sync
+  # committed into the old table while the copy ran are carried over before it
+  # is dropped; the hour of slack covers an extraction stamp older than the
+  # write, and a row copied twice collapses on its key.
+  run_ch <<SQL
+INSERT INTO bronze_jira.${table}
+SELECT * REPLACE (concat(tenant_id, '-', source_id, '-', jira_id) AS unique_key)
+FROM bronze_jira.${table}__rekey
+WHERE _airbyte_extracted_at >= fromUnixTimestamp64Milli(${copy_start_ms}) - INTERVAL 1 HOUR;
+DROP TABLE IF EXISTS bronze_jira.${table}__rekey;
+SQL
+}
+
+heal_jira_substream_issue_id || exit 1
+heal_jira_issue_key jira_issue || exit 1
+heal_jira_issue_key jira_issue_keys || exit 1
+
 echo "=== Healing AI staging contract schemas ==="
 # Physical column order must equal the model's SELECT order (positional
 # incremental inserts, positional union). Labels left the contract (they

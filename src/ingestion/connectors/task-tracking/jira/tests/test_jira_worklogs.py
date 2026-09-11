@@ -94,6 +94,9 @@ def test_tenant_source_stamping(http_mocker: HttpMocker) -> None:
     assert rec["source_id"] == config["insight_source_id"]
     assert rec["unique_key"] == (f"{config['insight_tenant_id']}-{config['insight_source_id']}-801")
     assert rec["id_readable"] == "PROJ1-1"
+    # The parent issue's immutable id, carried by the slice alongside the key;
+    # an int here for the same reason as in test_jira_issue_keys.
+    assert rec["jira_id"] == 20000
     assert rec["author_account_id"] == "acc-1"
     assert rec["started"] == "2026-06-15T09:00:00.000+0000"
     assert rec["time_spent_seconds"] == 3600
