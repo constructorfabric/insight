@@ -13,7 +13,7 @@
 -- by the Rust `jira-enrich` binary; its DDL is managed by the
 -- `create_task_field_history_staging` macro (see `on-run-start` in
 -- `dbt_project.yml`). Rust populates `unique_key` per the convention
--- `{insight_source_id}-{data_source}-{id_readable}-{field_id}-{event_id}`
+-- `{insight_source_id}-{data_source}-{issue_id}-{field_id}-{event_id}`
 -- — see src/ingestion/connectors/task-tracking/jira/enrich/src/io/writer.rs.
 --
 -- event_kind is recast to the class contract's superset enum: the Rust table

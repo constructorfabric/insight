@@ -18,7 +18,12 @@
 -- rows share `event_id` (`initial:<issue_id>`) across fields of one issue, and
 -- real-change rows share `event_id = changelog_id` across fields of one changelog
 -- — both are disambiguated by `field_id`. The dedup grain is therefore
--- (insight_source_id, data_source, id_readable, field_id, event_id).
+-- (insight_source_id, data_source, issue_id, field_id, event_id). The issue is
+-- named by `issue_id`, which the tracker never reissues; `id_readable` changes
+-- when a repository is renamed or an issue moves between projects, and a key
+-- built from it stored that issue's whole history twice with nothing for
+-- ReplacingMergeTree to collapse (#2741). It rides along as an attribute and is
+-- resolved per issue by the latest event.
 -- Per the project-wide convention this composite is encoded into `unique_key` by
 -- the staging view (`jira__task_field_history.sql`), and that single column is the
 -- ORDER BY here.

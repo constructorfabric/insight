@@ -48,6 +48,7 @@ exploded AS (
         COALESCE(h.source_id, '')                                AS insight_source_id,
         COALESCE(h.tenant_id, '')                                AS tenant_id,
         COALESCE(h.id_readable, '')                              AS id_readable,
+        h.jira_id                                                AS jira_id,
         COALESCE(toString(h.changelog_id), '')                   AS changelog_id,
         COALESCE(parseDateTime64BestEffortOrNull(h.created_at, 3), toDateTime64(0, 3)) AS created_at,
         h.author_account_id                                      AS author_account_id,
@@ -61,6 +62,7 @@ parsed AS (
         insight_source_id,
         tenant_id,
         id_readable,
+        jira_id,
         changelog_id,
         created_at,
         author_account_id,
@@ -93,6 +95,9 @@ SELECT
     insight_source_id,
     any(tenant_id)          AS tenant_id,
     id_readable,
+    -- The issue's immutable id where the row carries one (connector 6.1.0 and the
+    -- backfill); NULL on a row neither reached. Readers resolve the key from it.
+    any(jira_id)            AS jira_id,
     changelog_id,
     any(created_at)         AS created_at,
     any(author_account_id)  AS author_account_id,

@@ -37,6 +37,20 @@ WITH transitions AS (
     FROM {{ ref('jira__worklog_lifecycle_history') }}
 ),
 
+-- The issue each worklog belongs to, by its immutable id (connector 6.1.0,
+-- filled on older rows by the deploy heal). A worklog whose row carries no id
+-- names an issue the issue stream never delivered and is not an event of any
+-- issue; `assert_jira_substream_rows_without_issue_id` reports those.
+worklog_issue AS (
+    SELECT
+        source_id,
+        toString(worklog_id)                                    AS worklog_id,
+        any(COALESCE(jira_id, issueId))                         AS jira_id
+    FROM {{ source('bronze_jira', 'jira_worklogs') }}
+    WHERE worklog_id IS NOT NULL
+    GROUP BY source_id, worklog_id
+),
+
 -- The identity timestamp is event_at, not detection time: detection time comes
 -- from the snapshot's _tracked_at, which is second-resolution, so two
 -- transitions of one worklog inside the same second would share unique_key and
@@ -48,9 +62,11 @@ resolved AS (
         t.worklog_id                                            AS worklog_id,
         t.action                                                AS action,
         t.detected_at                                           AS detected_at,
-        st.id_readable                                          AS id_readable,
+        -- The issue's CURRENT key, from the issue row; the state row keeps the key
+        -- the entity was fetched under, which a move between projects outdates.
+        av.id_readable                                          AS id_readable,
         st.author_id                                            AS author_id,
-        av.jira_id                                              AS jira_id,
+        own.jira_id                                             AS jira_id,
         multiIf(
             t.action = 'remove' AND st.deleted_at_ms IS NOT NULL,
                 fromUnixTimestamp64Milli(assumeNotNull(st.deleted_at_ms)),
@@ -64,17 +80,22 @@ resolved AS (
         ON st.tenant_id = t.tenant_id
         AND st.source_id = t.source_id
         AND st.worklog_id = t.worklog_id
+    LEFT JOIN worklog_issue AS own
+        ON own.source_id = t.source_id
+        AND own.worklog_id = t.worklog_id
     LEFT JOIN {{ ref('jira__issue_availability_state') }} AS av FINAL
         ON av.tenant_id = t.tenant_id
         AND av.source_id = t.source_id
-        AND av.id_readable = st.id_readable
+        AND av.jira_id = own.jira_id
     WHERE t.action != ''
+      AND own.jira_id IS NOT NULL
 )
 
 SELECT
-    concat(COALESCE(t.source_id, ''), '-jira-worklog-', COALESCE(t.worklog_id, ''),
-           '-', t.action, '-',
-           toString(toUnixTimestamp64Milli(t.event_at)))         AS unique_key,
+    -- The class's one key formula: the issue by its immutable id, the event
+    -- by the worklog's own id, action and instant.
+    {{ jira_history_key("COALESCE(t.source_id, '')", "COALESCE(t.jira_id, '')", "'worklog'",
+                         "concat('worklog:', COALESCE(t.worklog_id, ''), ':', t.action, ':', toString(toUnixTimestamp64Milli(t.event_at)))") }} AS unique_key,
     COALESCE(t.source_id, '')                                   AS insight_source_id,
     CAST('jira' AS String)                                      AS data_source,
     COALESCE(t.jira_id, '')                                     AS issue_id,

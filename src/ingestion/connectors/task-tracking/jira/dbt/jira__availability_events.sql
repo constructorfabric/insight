@@ -49,10 +49,9 @@ SELECT
     -- UInt64 like the Rust-written staging table; the union arms must agree.
     toUInt64(toUnixTimestamp64Milli(now64(3)))                  AS _version
 FROM (
-    -- event_id carries the issue id: the ADR-005 audit grain is
-    -- (insight_source_id, data_source, id_readable, field_id, event_id), and
-    -- census-only issues have an empty id_readable — without the issue id in
-    -- event_id, every detection of one run would collapse into one grain.
+    -- event_id carries the issue id so that a detection is one grain per issue
+    -- even where two issues share a detection instant (ADR-005 audit grain:
+    -- insight_source_id, data_source, issue_id, field_id, event_id).
     SELECT
         *,
         concat('availability:', COALESCE(entity_id, ''), ':',

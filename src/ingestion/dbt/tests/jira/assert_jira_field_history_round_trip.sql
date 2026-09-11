@@ -55,7 +55,7 @@
 WITH latest_state AS (
     SELECT
         insight_source_id,
-        id_readable,
+        issue_id,
         field_id,
         -- Ordering key, and none of its three parts is optional.
         --
@@ -100,7 +100,7 @@ WITH latest_state AS (
           SELECT field_id FROM {{ ref('jira__task_field_kind') }}
           WHERE field_kind = 'long_text'
       )
-    GROUP BY insight_source_id, id_readable, field_id
+    GROUP BY insight_source_id, issue_id, field_id
 ),
 
 -- How fresh the issue side is. A pair whose history has moved past this point
@@ -108,16 +108,16 @@ WITH latest_state AS (
 issue_freshness AS (
     SELECT
         COALESCE(source_id, '')                     AS insight_source_id,
-        COALESCE(toString(id_readable), '')         AS id_readable,
+        COALESCE(toString(jira_id), '')             AS issue_id,
         max(_airbyte_extracted_at)                  AS issue_seen_at
     FROM {{ source('bronze_jira', 'jira_issue') }}
-    GROUP BY insight_source_id, id_readable
+    GROUP BY insight_source_id, issue_id
 ),
 
 snapshot AS (
     SELECT
         insight_source_id,
-        id_readable,
+        issue_id,
         field_id,
         value_ids,
         value_displays
@@ -126,7 +126,7 @@ snapshot AS (
 
 SELECT
     h.insight_source_id,
-    h.id_readable,
+    h.issue_id,
     h.field_id,
     arraySort(h.value_ids)      AS history_ids,
     arraySort(s.value_ids)      AS snapshot_ids,
@@ -136,10 +136,10 @@ SELECT
 FROM latest_state AS h
 INNER JOIN issue_freshness AS f
     ON f.insight_source_id = h.insight_source_id
-   AND f.id_readable = h.id_readable
+   AND f.issue_id = h.issue_id
 LEFT JOIN snapshot AS s
     ON s.insight_source_id = h.insight_source_id
-   AND s.id_readable = h.id_readable
+   AND s.issue_id = h.issue_id
    AND s.field_id = h.field_id
 WHERE h.latest_event_at <= f.issue_seen_at
   AND arraySort(h.value_ids) != arraySort(s.value_ids)

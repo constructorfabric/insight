@@ -9,7 +9,7 @@ SELECT
 FROM silver.class_task_field_history fh FINAL
 LEFT JOIN {{ source('bronze_jira', 'jira_issue') }} i
     ON fh.insight_source_id = i.source_id
-   AND fh.id_readable       = i.id_readable
+   AND fh.issue_id          = toString(i.jira_id)
 WHERE fh.data_source = 'jira'
   AND fh.event_kind  = 'synthetic_initial'
   AND i.source_id IS NULL

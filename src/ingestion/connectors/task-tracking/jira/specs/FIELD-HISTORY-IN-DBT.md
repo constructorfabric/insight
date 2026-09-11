@@ -727,14 +727,27 @@ from the comparison — the issue stream and the history stream are read at
 different points within a sync, so an event newer than the snapshot is expected
 and self-heals on the next run.
 
-Idempotence relies on `unique_key` being a pure function of content. The
-existing convention already satisfies this:
+Idempotence relies on `unique_key` being a pure function of content:
 
-    unique_key = {insight_source_id}-{data_source}-{id_readable}-{field_id}-{event_id}
+    unique_key = {insight_source_id}-{data_source}-{issue_id}-{field_id}-{event_id}
 
 where `event_id` is the bronze `changelog_id` for changelog rows and
 `initial:{issue_id}` for synthetic rows. Two runs over the same bronze data
 therefore produce byte-identical keys, and ReplacingMergeTree collapses them.
+
+The issue is named by its immutable id, not by `id_readable`. Jira changes the
+readable key when an issue moves between projects; a key built from it stored
+the issue's whole history a second time under the new key, and ReplacingMergeTree
+could collapse neither copy. The changelog stream stamps the key the issue had
+when the entry was fetched, so the key alone cannot attribute an entry — every
+changelog row carries `jira_id` (connector 6.1.0; the deploy heal fills older
+rows from the issue streams), and the derivation attributes, joins and groups by
+that id only. `id_readable` is carried as an attribute of the issue row and is
+never a join key. An entry whose row has no id names an issue the issue stream
+never delivered; it is left out of the journal and counted by
+`assert_jira_substream_rows_without_issue_id`. `jira_history_key` is the one
+place the formula lives, and `assert_jira_field_history_key_is_issue_keyed`
+recomputes it over every row.
 
 ## 8. Long text in a side table
 

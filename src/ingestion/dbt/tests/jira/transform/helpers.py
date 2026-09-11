@@ -75,21 +75,26 @@ def issue(
     created: str = CREATED_AT,
     reporter_id: str = "reporter-acct",
     extracted_at: str = OBSERVED_AT,
+    jira_id: str | None = None,
 ) -> dict[str, Any]:
     """The issue's current state. `fields` becomes `custom_fields_json`.
 
     A key ABSENT from `fields` and a key present with `None` are different
     states and must stay so — the first says the field is not in this issue's
     context, the second that it applies and is unset.
+
+    `jira_id` defaults to the key. Pass it explicitly to seed the same issue
+    under two keys — the shape a move between projects leaves in bronze, whose
+    rows are keyed by whatever key the connector saw at the time.
     """
     return {
         **_airbyte(extracted_at),
-        "id": key,
+        "id": jira_id or key,
         "key": key,
         "tenant_id": TENANT_ID,
         "source_id": SOURCE_ID,
         "unique_key": f"{SOURCE_ID}-{key}",
-        "jira_id": key,
+        "jira_id": jira_id or key,
         "id_readable": key,
         "project_key": key.split("-")[0],
         "reporter_id": reporter_id,
@@ -125,8 +130,14 @@ def event(
     *,
     author: str = "author-acct",
     extracted_at: str = OBSERVED_AT,
+    jira_id: str | None = "",
 ) -> dict[str, Any]:
-    """One changelog entry for an issue, carrying one or more items."""
+    """One changelog entry for an issue, carrying one or more items.
+
+    `jira_id` defaults to the key, as the connector stamps it. `None` seeds a
+    row without one — the shape of an entry written before the column existed
+    and never reached by the backfill.
+    """
     return {
         **_airbyte(extracted_at),
         "id": str(changelog_id),
@@ -134,6 +145,7 @@ def event(
         "source_id": SOURCE_ID,
         "unique_key": f"{SOURCE_ID}-{changelog_id}",
         "id_readable": key,
+        "jira_id": key if jira_id == "" else jira_id,
         "author_account_id": author,
         "changelog_id": changelog_id,
         "created_at": at,

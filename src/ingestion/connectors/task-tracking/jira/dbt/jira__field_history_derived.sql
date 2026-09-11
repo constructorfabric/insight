@@ -59,12 +59,9 @@ WITH kinds AS (
 -- One row per issue: identity, creation time, reporter. Same two-pass dedup as
 -- the snapshot model — the aggregation carries only a raw id, never the JSON.
 issue_winner AS (
-    -- Keyed on the issue's immutable id, NOT on `unique_key`. Bronze rows
-    -- written before descriptor 6.0.0 carry a `unique_key` built from the
-    -- issue KEY, which Jira changes when an issue moves between projects — so
-    -- such an issue has two bronze rows that RMT will never collapse, and
-    -- grouping by that column yields the issue twice: once with its current
-    -- payload, once as a ghost holding whatever the old key last saw.
+    -- Read-time dedup of the ReplacingMergeTree by the issue's stable key
+    -- within a source, (source_id, jira_id): unmerged parts hold several rows
+    -- per issue, and `unique_key` exists for the merge alone.
     SELECT source_id, jira_id, argMax(_airbyte_raw_id, _airbyte_extracted_at) AS raw_id
     FROM {{ source('bronze_jira', 'jira_issue') }}
     WHERE jira_id IS NOT NULL
@@ -89,11 +86,26 @@ issues AS (
 issue_json AS (
     SELECT
         COALESCE(i.source_id, '')                         AS insight_source_id,
-        COALESCE(toString(i.id_readable), '')             AS id_readable,
+        COALESCE(toString(i.jira_id), '')                 AS issue_id,
         COALESCE(i.custom_fields_json, '{}')              AS custom_fields_json,
         toDateTime64(i._airbyte_extracted_at, 3)          AS observed_at
     FROM {{ source('bronze_jira', 'jira_issue') }} AS i
     INNER JOIN issue_winner AS w ON i._airbyte_raw_id = w.raw_id
+),
+
+-- Every changelog item, attributed to its issue by the issue's immutable id.
+-- The changelog stream stamps `id_readable` as the key at fetch time, which a
+-- move between projects invalidates; `jira_id` (connector 6.1.0, filled on
+-- older rows by the deploy heal) is the only identity used here. An item
+-- without one names an issue the issue stream never delivered — nothing to
+-- attribute it to, so it is not in the journal;
+-- `assert_jira_substream_rows_without_issue_id` reports how many there are.
+changelog_items AS (
+    SELECT
+        ci.* EXCEPT (id_readable, jira_id),
+        assumeNotNull(ci.jira_id)                         AS issue_id
+    FROM {{ ref('jira__changelog_items') }} AS ci
+    WHERE ci.jira_id IS NOT NULL
 ),
 
 -- Every changelog item that belongs to a field we model, with its delta already
@@ -101,7 +113,7 @@ issue_json AS (
 events AS (
     SELECT
         ci.insight_source_id                              AS insight_source_id,
-        ci.id_readable                                    AS id_readable,
+        ci.issue_id                                       AS issue_id,
         ci.changelog_id                                   AS changelog_id,
         -- Jira's changelog id is monotonic, and it is what breaks a tie between
         -- two events of the same millisecond. It must be compared as a NUMBER:
@@ -130,7 +142,7 @@ events AS (
         COALESCE(ci.value_from, '') = COALESCE(ci.value_to, '')
             AND COALESCE(ci.value_from_string, '') = COALESCE(ci.value_to_string, '')
                                                                        AS sides_unchanged
-    FROM {{ ref('jira__changelog_items') }} AS ci
+    FROM changelog_items AS ci
     INNER JOIN kinds AS k
         ON k.insight_source_id = ci.insight_source_id
        AND k.field_id = ci.field_id
@@ -177,7 +189,7 @@ live_events AS (
 unclassified_events AS (
     SELECT
         ci.insight_source_id                              AS insight_source_id,
-        ci.id_readable                                    AS id_readable,
+        ci.issue_id                                       AS issue_id,
         ci.field_id                                       AS field_id,
         {%- set newest = "(ci.created_at, toUInt64OrZero(ci.changelog_id))" %}
         -- The item's own display name: present even when the catalogue row is not.
@@ -186,13 +198,13 @@ unclassified_events AS (
         argMax(COALESCE(ci.value_to, ci.value_to_string, ''), {{ newest }})        AS last_id,
         argMax(COALESCE(ci.value_to_string, ci.value_to, ''), {{ newest }})        AS last_display,
         argMax(ci.author_account_id, {{ newest }})         AS author_id
-    FROM {{ ref('jira__changelog_items') }} AS ci
+    FROM changelog_items AS ci
     -- Against the WHOLE catalogue, not the modelled subset: a field that is
     -- `ignored` or `UNKNOWN` has been classified and must not land here.
     LEFT ANTI JOIN {{ ref('jira__task_field_kind') }} AS k
         ON k.insight_source_id = ci.insight_source_id
        AND k.field_id = ci.field_id
-    GROUP BY ci.insight_source_id, ci.id_readable, ci.field_id
+    GROUP BY ci.insight_source_id, ci.issue_id, ci.field_id
 ),
 
 -- Current value per (issue, field), the seed for the backward reconstruction.
@@ -204,7 +216,7 @@ unclassified_events AS (
 snapshot_element_wise AS (
     SELECT
         s.insight_source_id                               AS insight_source_id,
-        s.id_readable                                     AS id_readable,
+        s.issue_id                                        AS issue_id,
         s.field_id                                        AS field_id,
         s.value_ids                                       AS value_ids,
         s.value_displays                                  AS value_displays
@@ -218,7 +230,7 @@ snapshot_element_wise AS (
 snapshot AS (
     SELECT
         s.insight_source_id                               AS insight_source_id,
-        s.id_readable                                     AS id_readable,
+        s.issue_id                                        AS issue_id,
         s.field_id                                        AS field_id,
         s.value_ids                                       AS value_ids,
         s.value_displays                                  AS value_displays
@@ -246,17 +258,17 @@ snapshot AS (
 retired_candidates AS (
     SELECT
         p.insight_source_id                               AS insight_source_id,
-        p.id_readable                                     AS id_readable,
+        p.issue_id                                        AS issue_id,
         groupArray(p.field_id)                            AS field_ids
     FROM (
-        SELECT DISTINCT insight_source_id, id_readable, field_id
+        SELECT DISTINCT insight_source_id, issue_id, field_id
         FROM live_events
     ) AS p
     LEFT ANTI JOIN snapshot AS s
         ON s.insight_source_id = p.insight_source_id
-       AND s.id_readable = p.id_readable
+       AND s.issue_id = p.issue_id
        AND s.field_id = p.field_id
-    GROUP BY p.insight_source_id, p.id_readable
+    GROUP BY p.insight_source_id, p.issue_id
 ),
 
 -- MEMORY (§13): the candidate list is the build side and the issue JSON
@@ -266,14 +278,14 @@ retired_candidates AS (
 retired_pairs AS (
     SELECT
         j.insight_source_id                               AS insight_source_id,
-        j.id_readable                                     AS id_readable,
+        j.issue_id                                        AS issue_id,
         arrayJoin(arrayFilter(f -> NOT JSONHas(j.custom_fields_json, f),
                               c.field_ids))               AS field_id,
         j.observed_at                                     AS event_at
     FROM issue_json AS j
     INNER JOIN retired_candidates AS c
         ON c.insight_source_id = j.insight_source_id
-       AND c.id_readable = j.id_readable
+       AND c.issue_id = j.issue_id
 ),
 
 -- ── the element-wise kinds, whose state accumulates ────────────────────────
@@ -307,7 +319,7 @@ retired_pairs AS (
 element_wise_items AS (
     SELECT
         e.insight_source_id                               AS insight_source_id,
-        e.id_readable                                     AS id_readable,
+        e.issue_id                                        AS issue_id,
         e.field_id                                        AS field_id,
         e.field_name                                      AS field_name,
         e.field_kind                                      AS field_kind,
@@ -322,7 +334,7 @@ element_wise_items AS (
         -- the numbering is reproducible where the window's order among them was
         -- arbitrary. Items of one entry name distinct elements, so no element's
         -- own order depends on the tiebreak.
-        row_number() OVER (PARTITION BY e.insight_source_id, e.id_readable, e.field_id
+        row_number() OVER (PARTITION BY e.insight_source_id, e.issue_id, e.field_id
                            ORDER BY e.event_at, e.event_ord, e.element.1) AS seq
     FROM live_events AS e
     WHERE e.field_kind IN {{ jira_element_wise_kinds() }}
@@ -331,18 +343,18 @@ element_wise_items AS (
 element_wise_extent AS (
     SELECT
         insight_source_id                                 AS insight_source_id,
-        id_readable                                       AS id_readable,
+        issue_id                                          AS issue_id,
         field_id                                          AS field_id,
         max(seq)                                          AS last_seq
     FROM element_wise_items
-    GROUP BY insight_source_id, id_readable, field_id
+    GROUP BY insight_source_id, issue_id, field_id
 ),
 
 -- One row per (issue, field, element), carrying that element's own operations.
 element_wise_element AS (
     SELECT
         i.insight_source_id                               AS insight_source_id,
-        i.id_readable                                     AS id_readable,
+        i.issue_id                                        AS issue_id,
         i.field_id                                        AS field_id,
         i.element_id                                      AS element_id,
         argMin(i.pair, i.seq)                             AS first_pair,
@@ -351,21 +363,21 @@ element_wise_element AS (
         arraySort(x -> x.1,
                   groupArray((i.seq, i.delta_action, i.pair)))  AS ops
     FROM element_wise_items AS i
-    GROUP BY i.insight_source_id, i.id_readable, i.field_id, i.element_id
+    GROUP BY i.insight_source_id, i.issue_id, i.field_id, i.element_id
 ),
 
 -- The snapshot's elements, deduplicated by id exactly as the pairs were.
 element_wise_snapshot_pairs AS (
     SELECT
         s.insight_source_id                               AS insight_source_id,
-        s.id_readable                                     AS id_readable,
+        s.issue_id                                        AS issue_id,
         s.field_id                                        AS field_id,
         splitByChar('\x1f', s.pair)[1]                    AS element_id,
         s.pair                                            AS pair
     FROM (
         SELECT
             insight_source_id,
-            id_readable,
+            issue_id,
             field_id,
             arrayJoin({{ jira_distinct_pairs_by_id("arrayMap(j -> concat(value_ids[j], '\x1f', value_displays[j]), range(1, length(value_ids) + 1))") }}) AS pair
         FROM snapshot_element_wise
@@ -377,13 +389,13 @@ element_wise_snapshot_pairs AS (
 element_wise_untouched AS (
     SELECT
         p.insight_source_id                               AS insight_source_id,
-        p.id_readable                                     AS id_readable,
+        p.issue_id                                        AS issue_id,
         p.field_id                                        AS field_id,
         p.pair                                            AS pair
     FROM element_wise_snapshot_pairs AS p
     LEFT ANTI JOIN element_wise_element AS e
         ON e.insight_source_id = p.insight_source_id
-       AND e.id_readable = p.id_readable
+       AND e.issue_id = p.issue_id
        AND e.field_id = p.field_id
        AND e.element_id = p.element_id
 ),
@@ -394,7 +406,7 @@ element_wise_untouched AS (
 element_wise_spans AS (
     SELECT
         e.insight_source_id                               AS insight_source_id,
-        e.id_readable                                     AS id_readable,
+        e.issue_id                                        AS issue_id,
         e.field_id                                        AS field_id,
         arrayJoin(arrayConcat(
             if(e.first_action = 'remove' AND e.first_seq > 1,
@@ -408,14 +420,14 @@ element_wise_spans AS (
     FROM element_wise_element AS e
     INNER JOIN element_wise_extent AS x
         ON x.insight_source_id = e.insight_source_id
-       AND x.id_readable = e.id_readable
+       AND x.issue_id = e.issue_id
        AND x.field_id = e.field_id
 
     UNION ALL
 
     SELECT
         u.insight_source_id                               AS insight_source_id,
-        u.id_readable                                     AS id_readable,
+        u.issue_id                                        AS issue_id,
         u.field_id                                        AS field_id,
         -- 0, not 1: an element the log never touched was in the list before any
         -- event, so it orders ahead of one added by the first event.
@@ -423,7 +435,7 @@ element_wise_spans AS (
     FROM element_wise_untouched AS u
     INNER JOIN element_wise_extent AS x
         ON x.insight_source_id = u.insight_source_id
-       AND x.id_readable = u.id_readable
+       AND x.issue_id = u.issue_id
        AND x.field_id = u.field_id
 ),
 
@@ -441,7 +453,7 @@ element_wise_spans AS (
 element_wise_states AS (
     SELECT
         insight_source_id                                 AS insight_source_id,
-        id_readable                                       AS id_readable,
+        issue_id                                          AS issue_id,
         field_id                                          AS field_id,
         seq                                               AS seq,
         arrayMap(x -> x.2,
@@ -450,7 +462,7 @@ element_wise_states AS (
     FROM (
         SELECT
             insight_source_id,
-            id_readable,
+            issue_id,
             field_id,
             arrayJoin(range(greatest(span.1, toUInt64(1)),
                             toUInt64(span.2 + 1)))        AS seq,
@@ -458,13 +470,13 @@ element_wise_states AS (
             span.3                                        AS pair
         FROM element_wise_spans
     )
-    GROUP BY insight_source_id, id_readable, field_id, seq
+    GROUP BY insight_source_id, issue_id, field_id, seq
 ),
 
 element_wise_initial AS (
     SELECT
         insight_source_id                                 AS insight_source_id,
-        id_readable                                       AS id_readable,
+        issue_id                                          AS issue_id,
         field_id                                          AS field_id,
         arrayMap(x -> x.2,
                  arraySort(x -> (x.1, x.2),
@@ -474,7 +486,7 @@ element_wise_initial AS (
         -- event, an element whose first operation removed it was there too but
         -- is named by that operation.
         SELECT
-            insight_source_id, id_readable, field_id,
+            insight_source_id, issue_id, field_id,
             toUInt8(1)                                    AS entered,
             first_pair                                    AS pair
         FROM element_wise_element
@@ -482,10 +494,10 @@ element_wise_initial AS (
 
         UNION ALL
 
-        SELECT insight_source_id, id_readable, field_id, toUInt8(0) AS entered, pair
+        SELECT insight_source_id, issue_id, field_id, toUInt8(0) AS entered, pair
         FROM element_wise_untouched
     )
-    GROUP BY insight_source_id, id_readable, field_id
+    GROUP BY insight_source_id, issue_id, field_id
 ),
 
 -- One row per operation again, with the state that operation produced.
@@ -494,7 +506,7 @@ element_wise_initial AS (
 element_wise_state AS (
     SELECT
         i.insight_source_id                               AS insight_source_id,
-        i.id_readable                                     AS id_readable,
+        i.issue_id                                        AS issue_id,
         i.field_id                                        AS field_id,
         i.field_name                                      AS field_name,
         i.field_kind                                      AS field_kind,
@@ -508,12 +520,12 @@ element_wise_state AS (
     FROM element_wise_items AS i
     LEFT JOIN element_wise_states AS st
         ON st.insight_source_id = i.insight_source_id
-       AND st.id_readable = i.id_readable
+       AND st.issue_id = i.issue_id
        AND st.field_id = i.field_id
        AND st.seq = i.seq
     LEFT JOIN element_wise_initial AS ini
         ON ini.insight_source_id = i.insight_source_id
-       AND ini.id_readable = i.id_readable
+       AND ini.issue_id = i.issue_id
        AND ini.field_id = i.field_id
 ),
 
@@ -524,13 +536,13 @@ element_wise_state AS (
 newest_from_events AS (
     SELECT
         src                                               AS insight_source_id,
-        iss                                               AS id_readable,
+        iss                                               AS issue_id,
         fid                                               AS field_id,
         argMax(ids, ord)                                  AS value_ids
     FROM (
         SELECT
             e.insight_source_id                           AS src,
-            e.id_readable                                 AS iss,
+            e.issue_id                                 AS iss,
             e.field_id                                    AS fid,
             (e.event_at, e.event_ord)                     AS ord,
             e.sides.3                                     AS ids
@@ -541,7 +553,7 @@ newest_from_events AS (
 
         SELECT
             a.insight_source_id,
-            a.id_readable,
+            a.issue_id,
             a.field_id,
             (a.event_at, a.ops_seq),
             arrayMap(x -> splitByChar('\x1f', x)[1], a.state_pairs)
@@ -563,16 +575,16 @@ newest_from_events AS (
 cleared_pairs AS (
     SELECT
         n.insight_source_id                               AS insight_source_id,
-        n.id_readable                                     AS id_readable,
+        n.issue_id                                        AS issue_id,
         n.field_id                                        AS field_id,
         j.observed_at                                     AS event_at
     FROM newest_from_events AS n
     INNER JOIN issue_json AS j
         ON j.insight_source_id = n.insight_source_id
-       AND j.id_readable = n.id_readable
+       AND j.issue_id = n.issue_id
     LEFT ANTI JOIN snapshot AS s
         ON s.insight_source_id = n.insight_source_id
-       AND s.id_readable = n.id_readable
+       AND s.issue_id = n.issue_id
        AND s.field_id = n.field_id
     WHERE length(n.value_ids) > 0
       AND JSONHas(j.custom_fields_json, n.field_id)
@@ -585,13 +597,13 @@ cleared_pairs AS (
 -- is why a field set at creation and never touched has no history at all.
 initial_state AS (
     SELECT
-        insight_source_id, id_readable, field_id, field_name, field_kind,
+        insight_source_id, issue_id, field_id, field_name, field_kind,
         value_ids, value_displays
     FROM (
         -- fields with at least one event: the earliest event's `before` side
         SELECT
             e.insight_source_id                            AS insight_source_id,
-            e.id_readable                                  AS id_readable,
+            e.issue_id                                  AS issue_id,
             e.field_id                                     AS field_id,
             argMin(e.field_name, (e.event_at, e.event_ord))  AS field_name,
             argMin(e.field_kind, (e.event_at, e.event_ord))  AS field_kind,
@@ -599,14 +611,14 @@ initial_state AS (
             argMin(e.sides.2, (e.event_at, e.event_ord))     AS value_displays
         FROM live_events AS e
         WHERE e.field_kind NOT IN {{ jira_element_wise_kinds() }}
-        GROUP BY e.insight_source_id, e.id_readable, e.field_id
+        GROUP BY e.insight_source_id, e.issue_id, e.field_id
 
         UNION ALL
 
         -- element-wise with events: the reconstructed initial set
         SELECT
             a.insight_source_id,
-            a.id_readable,
+            a.issue_id,
             a.field_id,
             any(a.field_name)                              AS field_name,
             any(a.field_kind)                              AS field_kind,
@@ -615,14 +627,14 @@ initial_state AS (
             arrayMap(x -> splitByChar('\x1f', x)[2],
                      any(a.initial_pairs))                 AS value_displays
         FROM element_wise_state AS a
-        GROUP BY a.insight_source_id, a.id_readable, a.field_id
+        GROUP BY a.insight_source_id, a.issue_id, a.field_id
 
         UNION ALL
 
         -- fields with NO event at all: the snapshot value is the initial value
         SELECT
             s.insight_source_id,
-            s.id_readable,
+            s.issue_id,
             s.field_id,
             k.field_name                                   AS field_name,
             k.field_kind                                   AS field_kind,
@@ -633,10 +645,10 @@ initial_state AS (
             ON k.insight_source_id = s.insight_source_id
            AND k.field_id = s.field_id
         LEFT ANTI JOIN (
-            SELECT DISTINCT insight_source_id, id_readable, field_id FROM live_events
+            SELECT DISTINCT insight_source_id, issue_id, field_id FROM live_events
         ) AS ev
             ON ev.insight_source_id = s.insight_source_id
-           AND ev.id_readable = s.id_readable
+           AND ev.issue_id = s.issue_id
            AND ev.field_id = s.field_id
     )
 ),
@@ -646,14 +658,14 @@ initial_state AS (
 initial_seq AS (
     SELECT
         *,
-        toUInt32(row_number() OVER (PARTITION BY insight_source_id, id_readable
+        toUInt32(row_number() OVER (PARTITION BY insight_source_id, issue_id
                                     ORDER BY field_id)) AS seq
     FROM initial_state
 )
 
 -- ── row 1: the creation marker ──────────────────────────────────────────────
 SELECT
-    CAST(concat(insight_source_id, '-jira-', id_readable, '-created-initial:', issue_id) AS String) AS unique_key,
+    CAST({{ jira_history_key('insight_source_id', 'issue_id', "'created'", "concat('initial:', issue_id)") }} AS String) AS unique_key,
     insight_source_id,
     CAST('jira' AS String)                                AS data_source,
     issue_id,
@@ -679,11 +691,11 @@ UNION ALL
 -- ── row 2: changelog rows for the self-describing kinds ─────────────────────
 -- The state after the event is the item's own `to` side; nothing accumulates.
 SELECT
-    CAST(concat(e.insight_source_id, '-jira-', e.id_readable, '-', e.field_id, '-', e.changelog_id) AS String) AS unique_key,
+    CAST({{ jira_history_key('e.insight_source_id', 'e.issue_id', 'e.field_id', 'e.changelog_id') }} AS String) AS unique_key,
     e.insight_source_id,
     CAST('jira' AS String)                                AS data_source,
-    COALESCE(i.issue_id, '')                              AS issue_id,
-    e.id_readable,
+    e.issue_id                                            AS issue_id,
+    COALESCE(i.id_readable, '')                           AS id_readable,
     e.changelog_id                                        AS event_id,
     e.event_at,
     CAST('changelog' AS String)                           AS event_kind,
@@ -703,7 +715,7 @@ SELECT
 FROM live_events AS e
 LEFT JOIN issues AS i
     ON i.insight_source_id = e.insight_source_id
-   AND i.id_readable = e.id_readable
+   AND i.issue_id = e.issue_id
 WHERE e.field_kind NOT IN {{ jira_element_wise_kinds() }}
 
 UNION ALL
@@ -717,11 +729,11 @@ UNION ALL
 -- the state after the entry is the fold that has consumed every item, in
 -- whichever order the window visited them.
 SELECT
-    CAST(concat(a.insight_source_id, '-jira-', a.id_readable, '-', a.field_id, '-', a.changelog_id) AS String) AS unique_key,
+    CAST({{ jira_history_key('a.insight_source_id', 'a.issue_id', 'a.field_id', 'a.changelog_id') }} AS String) AS unique_key,
     a.insight_source_id,
     CAST('jira' AS String)                                AS data_source,
     COALESCE(any(i.issue_id), '')                         AS issue_id,
-    a.id_readable,
+    COALESCE(any(i.id_readable), '')                      AS id_readable,
     a.changelog_id                                        AS event_id,
     any(a.event_at)                                       AS event_at,
     CAST('changelog' AS String)                           AS event_kind,
@@ -744,21 +756,21 @@ SELECT
 FROM element_wise_state AS a
 LEFT JOIN issues AS i
     ON i.insight_source_id = a.insight_source_id
-   AND i.id_readable = a.id_readable
-GROUP BY a.insight_source_id, a.id_readable, a.field_id, a.changelog_id
+   AND i.issue_id = a.issue_id
+GROUP BY a.insight_source_id, a.issue_id, a.field_id, a.changelog_id
 
 
 UNION ALL
 
 -- ── row 4: one synthetic_initial per (issue, field) ─────────────────────────
 SELECT
-    CAST(concat(s.insight_source_id, '-jira-', s.id_readable, '-', s.field_id,
-                '-initial:', COALESCE(i.issue_id, '')) AS String)  AS unique_key,
+    CAST({{ jira_history_key('s.insight_source_id', 's.issue_id', 's.field_id',
+                             "concat('initial:', s.issue_id)") }} AS String)  AS unique_key,
     s.insight_source_id,
     CAST('jira' AS String)                                AS data_source,
-    COALESCE(i.issue_id, '')                              AS issue_id,
-    s.id_readable,
-    CAST(concat('initial:', COALESCE(i.issue_id, '')) AS String) AS event_id,
+    s.issue_id                                             AS issue_id,
+    COALESCE(i.id_readable, '')                           AS id_readable,
+    CAST(concat('initial:', s.issue_id) AS String)             AS event_id,
     COALESCE(i.created_at, toDateTime64(0, 3))            AS event_at,
     CAST('synthetic_initial' AS String)                   AS event_kind,
     s.seq                                                 AS _seq,
@@ -775,7 +787,7 @@ SELECT
 FROM initial_seq AS s
 INNER JOIN issues AS i
     ON i.insight_source_id = s.insight_source_id
-   AND i.id_readable = s.id_readable
+   AND i.issue_id = s.issue_id
 
 UNION ALL
 
@@ -784,13 +796,13 @@ UNION ALL
 -- round-trip invariant uses as the issue's own freshness — so the event is
 -- never newer than the state it is compared against.
 SELECT
-    CAST(concat(r.insight_source_id, '-jira-', r.id_readable, '-', r.field_id,
-                '-retired:', COALESCE(i.issue_id, '')) AS String)  AS unique_key,
+    CAST({{ jira_history_key('r.insight_source_id', 'r.issue_id', 'r.field_id',
+                             "concat('retired:', r.issue_id)") }} AS String)  AS unique_key,
     r.insight_source_id,
     CAST('jira' AS String)                                AS data_source,
-    COALESCE(i.issue_id, '')                              AS issue_id,
-    r.id_readable,
-    CAST(concat('retired:', COALESCE(i.issue_id, '')) AS String) AS event_id,
+    r.issue_id                                             AS issue_id,
+    COALESCE(i.id_readable, '')                           AS id_readable,
+    CAST(concat('retired:', r.issue_id) AS String)             AS event_id,
     r.event_at,
     CAST('retired_field' AS String)                       AS event_kind,
     toUInt32(0)                                           AS _seq,
@@ -818,7 +830,7 @@ INNER JOIN kinds AS k
    AND k.field_id = r.field_id
 LEFT JOIN issues AS i
     ON i.insight_source_id = r.insight_source_id
-   AND i.id_readable = r.id_readable
+   AND i.issue_id = r.issue_id
 
 UNION ALL
 
@@ -832,13 +844,13 @@ UNION ALL
 -- can exclude it, and the share of state recovered by observation rather than
 -- by event stays measurable.
 SELECT
-    CAST(concat(c.insight_source_id, '-jira-', c.id_readable, '-', c.field_id,
-                '-snapshot_diff:', COALESCE(i.issue_id, '')) AS String)  AS unique_key,
+    CAST({{ jira_history_key('c.insight_source_id', 'c.issue_id', 'c.field_id',
+                             "concat('snapshot_diff:', c.issue_id)") }} AS String)  AS unique_key,
     c.insight_source_id,
     CAST('jira' AS String)                                AS data_source,
-    COALESCE(i.issue_id, '')                              AS issue_id,
-    c.id_readable,
-    CAST(concat('snapshot_diff:', COALESCE(i.issue_id, '')) AS String) AS event_id,
+    c.issue_id                                             AS issue_id,
+    COALESCE(i.id_readable, '')                           AS id_readable,
+    CAST(concat('snapshot_diff:', c.issue_id) AS String)       AS event_id,
     c.event_at,
     CAST('snapshot_diff' AS String)                       AS event_kind,
     toUInt32(0)                                           AS _seq,
@@ -860,7 +872,7 @@ INNER JOIN kinds AS k
    AND k.field_id = c.field_id
 LEFT JOIN issues AS i
     ON i.insight_source_id = c.insight_source_id
-   AND i.id_readable = c.id_readable
+   AND i.issue_id = c.issue_id
 
 UNION ALL
 
@@ -869,13 +881,13 @@ UNION ALL
 -- unknowable, so any parsing rule here would be a guess of exactly the kind
 -- this design replaces.
 SELECT
-    CAST(concat(u.insight_source_id, '-jira-', u.id_readable, '-', u.field_id,
-                '-unclassified:', COALESCE(i.issue_id, '')) AS String)  AS unique_key,
+    CAST({{ jira_history_key('u.insight_source_id', 'u.issue_id', 'u.field_id',
+                             "concat('unclassified:', u.issue_id)") }} AS String)  AS unique_key,
     u.insight_source_id,
     CAST('jira' AS String)                                AS data_source,
-    COALESCE(i.issue_id, '')                              AS issue_id,
-    u.id_readable,
-    CAST(concat('unclassified:', COALESCE(i.issue_id, '')) AS String) AS event_id,
+    u.issue_id                                             AS issue_id,
+    COALESCE(i.id_readable, '')                           AS id_readable,
+    CAST(concat('unclassified:', u.issue_id) AS String)        AS event_id,
     u.event_at,
     CAST('unclassified_field' AS String)                  AS event_kind,
     toUInt32(0)                                           AS _seq,
@@ -895,4 +907,4 @@ SELECT
 FROM unclassified_events AS u
 LEFT JOIN issues AS i
     ON i.insight_source_id = u.insight_source_id
-   AND i.id_readable = u.id_readable
+   AND i.issue_id = u.issue_id

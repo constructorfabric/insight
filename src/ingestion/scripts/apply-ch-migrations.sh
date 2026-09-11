@@ -149,19 +149,21 @@ _jira_issue_id_lookup='staging._jira_issue_id_by_key'
 # delivered stays NULL forever, and counting it would re-run the mutation on
 # every deploy. Worklogs carry Jira's own issueId and count whenever it is set.
 _jira_rows_needing_issue_id() {
-  local table="$1" own=""
-  [[ "${table}" == "jira_worklogs" ]] && own="OR issueId IS NOT NULL"
+  local table="$1" own="0"
+  [[ "${table}" == "jira_worklogs" ]] && own="issueId IS NOT NULL"
   printf "SELECT count() FROM bronze_jira.%s
-          WHERE jira_id IS NULL AND id_readable IS NOT NULL AND tenant_id IS NOT NULL AND source_id IS NOT NULL
-            AND ((assumeNotNull(tenant_id), assumeNotNull(source_id), assumeNotNull(id_readable)) IN (
+          WHERE jira_id IS NULL
+            AND (%s
+                 OR (id_readable IS NOT NULL AND tenant_id IS NOT NULL AND source_id IS NOT NULL
+                     AND (assumeNotNull(tenant_id), assumeNotNull(source_id), assumeNotNull(id_readable)) IN (
                    SELECT assumeNotNull(tenant_id), assumeNotNull(source_id), assumeNotNull(id_readable)
                    FROM bronze_jira.jira_issue
                    WHERE tenant_id IS NOT NULL AND source_id IS NOT NULL AND id_readable IS NOT NULL AND jira_id IS NOT NULL
                    UNION ALL
                    SELECT assumeNotNull(tenant_id), assumeNotNull(source_id), assumeNotNull(id_readable)
                    FROM bronze_jira.jira_issue_keys
-                   WHERE tenant_id IS NOT NULL AND source_id IS NOT NULL AND id_readable IS NOT NULL AND jira_id IS NOT NULL)
-                 %s)" "${table}" "${own}" |
+                   WHERE tenant_id IS NOT NULL AND source_id IS NOT NULL AND id_readable IS NOT NULL AND jira_id IS NOT NULL)))" \
+    "${table}" "${own}" |
     _ch_http_query | tr -d '[:space:]'
 }
 
@@ -210,13 +212,20 @@ GROUP BY tenant_id, source_id, id_readable, jira_id;
 SQL
 
   local lookup="nullIf(joinGet('${_jira_issue_id_lookup}', 'jira_id', assumeNotNull(tenant_id), assumeNotNull(source_id), assumeNotNull(id_readable)), '')"
+  # A worklog names its issue itself (Jira's `issueId`) and needs no key; the
+  # other two, and a worklog without one, resolve through the lookup and so
+  # need the full (tenant, source, key) identity.
   for table in "${pending[@]}"; do
-    local value="${lookup}"
-    [[ "${table}" == "jira_worklogs" ]] && value="COALESCE(issueId, ${lookup})"
+    local value="${lookup}" own="0"
+    if [[ "${table}" == "jira_worklogs" ]]; then
+      value="COALESCE(issueId, ${lookup})"
+      own="issueId IS NOT NULL"
+    fi
     run_ch <<SQL
 ALTER TABLE bronze_jira.${table}
     UPDATE jira_id = ${value}
-    WHERE jira_id IS NULL AND id_readable IS NOT NULL AND tenant_id IS NOT NULL AND source_id IS NOT NULL
+    WHERE jira_id IS NULL
+      AND (${own} OR (id_readable IS NOT NULL AND tenant_id IS NOT NULL AND source_id IS NOT NULL))
     SETTINGS mutations_sync = 1;
 SQL
   done

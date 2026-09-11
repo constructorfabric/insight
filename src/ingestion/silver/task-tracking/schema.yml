@@ -32,7 +32,7 @@ models:
           the source does not report one. Gold surfaces it as `details.title` in
           task evidence; the record label is `id_readable`.
       - name: event_id
-        description: "Natural identifier of the event. For `event_kind='changelog'` this is `jira_issue_history.changelog_id` (shared across all fields changed in one changelog). For `event_kind='synthetic_initial'` it is `'initial:<issue_id>'` (shared across all initial fields of one issue). For `event_kind='availability'` it is `'availability:<issue_id>:<detection epoch ms>'` (issue id included because census-only issues have an empty `id_readable`, and the audit grain needs event_id to disambiguate them). Per ADR-005, operator audit JOIN key is (insight_source_id, id_readable, event_id, field_id)."
+        description: "Natural identifier of the event. For `event_kind='changelog'` this is `jira_issue_history.changelog_id` (shared across all fields changed in one changelog). For `event_kind='synthetic_initial'` it is `'initial:<issue_id>'` (shared across all initial fields of one issue). For `event_kind='availability'` it is `'availability:<issue_id>:<detection epoch ms>'` (issue id included because census-only issues have an empty `id_readable`, and the audit grain needs event_id to disambiguate them). Per ADR-005, operator audit JOIN key is (insight_source_id, issue_id, event_id, field_id)."
         tests:
           - not_null
       - name: event_kind
@@ -42,7 +42,7 @@ models:
           - accepted_values:
               values: ['changelog', 'synthetic_initial', 'availability', 'lifecycle']
       - name: field_id
-        description: "Field identifier (e.g. 'status', 'assignee', 'customfield_10020'). Part of the ReplacingMergeTree ORDER BY together with (insight_source_id, data_source, id_readable, event_id) — see ADR-005."
+        description: "Field identifier (e.g. 'status', 'assignee', 'customfield_10020'). Part of the ReplacingMergeTree ORDER BY together with (insight_source_id, data_source, issue_id, event_id) — see ADR-005."
         tests:
           - not_null
 

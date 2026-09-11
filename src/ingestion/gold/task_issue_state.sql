@@ -105,9 +105,9 @@ issue_pivot AS (
         minIf(event_at, event_kind = 'synthetic_initial')                    AS created_at,
         -- The key the tracker itself shows a human ('owner/repo#12', 'PROJ-7');
         -- the only field an issue's own page can be addressed from.
-        -- INVARIANT: argMax, never any() — `id_readable` is part of `unique_key`,
-        -- so a renamed repository or an issue moved between projects leaves rows
-        -- under BOTH keys and FINAL collapses neither. The latest event wins.
+        -- INVARIANT: argMax, never any() — a renamed repository or an issue moved
+        -- between projects carries the OLD key on its older rows, and rows written
+        -- before the key moved to `issue_id` exist under both. The latest event wins.
         argMax(id_readable, (event_at, {{ task_event_rank('event_kind') }}, _seq, toUInt64OrZero(event_id)))                            AS id_readable,
         -- The role first, the denormalized column as the fallback.
         --

@@ -37,20 +37,21 @@ issue_fetch AS (
     SELECT
         tenant_id,
         source_id,
-        id_readable,
+        jira_id,
         max(_airbyte_extracted_at)                      AS last_fetched_at
     FROM {{ source('bronze_jira', 'jira_issue_keys') }} FINAL
-    GROUP BY tenant_id, source_id, id_readable
+    WHERE jira_id IS NOT NULL
+    GROUP BY tenant_id, source_id, jira_id
 ),
 
 unavailable_issues AS (
     SELECT
         tenant_id,
         source_id,
-        id_readable
+        jira_id
     FROM {{ ref('jira__issue_availability_state') }} FINAL
     WHERE availability IN ('deleted', 'trashed')
-      AND id_readable IS NOT NULL
+      AND jira_id IS NOT NULL
 )
 
 SELECT
@@ -71,7 +72,7 @@ SELECT
         OR (f.last_fetched_at IS NOT NULL
             AND w._airbyte_extracted_at < f.last_fetched_at
                 - INTERVAL {{ var('jira_comment_refetch_tolerance_hours', 6) }} HOUR)
-        OR ui.id_readable IS NOT NULL
+        OR ui.jira_id IS NOT NULL
     )                                                   AS is_deleted,
     -- Real deletion time when the tombstone carries it; NULL otherwise
     -- (generation-diff / parent-issue deletions are dated at detection).
@@ -84,8 +85,8 @@ LEFT JOIN tombstones AS ts
 LEFT JOIN issue_fetch AS f
     ON f.tenant_id = w.tenant_id
     AND f.source_id = w.source_id
-    AND f.id_readable = w.id_readable
+    AND f.jira_id = w.jira_id
 LEFT JOIN unavailable_issues AS ui
     ON ui.tenant_id = w.tenant_id
     AND ui.source_id = w.source_id
-    AND ui.id_readable = w.id_readable
+    AND ui.jira_id = w.jira_id

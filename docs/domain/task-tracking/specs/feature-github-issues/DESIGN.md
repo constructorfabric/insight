@@ -256,9 +256,10 @@ because `state` is trivially `open` at creation.
 3. One `changelog` row per timeline event, `_seq=0`, ordered by `event_at`.
 
 `unique_key` follows the project convention
-`{insight_source_id}-{data_source}-{id_readable}-{field_id}-{event_id}`, with
-`event_id = initial:{issue_id}` for synthetic rows per ADR-005. `id_readable` is
-`owner/repo#number`.
+`{insight_source_id}-{data_source}-{issue_id}-{field_id}-{event_id}`, with
+`event_id = initial:{issue_id}` for synthetic rows per ADR-005. The issue is
+keyed by `issue_id`, never by `id_readable` (`owner/repo#number`), which changes
+when a repository is renamed and would duplicate that issue's whole history.
 
 Build the history model as a full table first. Initial rows depend on an issue's
 whole event set, so an incremental model must reprocess entire issues rather
