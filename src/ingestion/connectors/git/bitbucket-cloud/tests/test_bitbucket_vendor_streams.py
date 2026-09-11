@@ -258,6 +258,7 @@ def test_credential_family_drives_both_the_rest_scheme_and_the_clone_username(
     proxy = next(h for u, h in by_host.items() if u.startswith(PROXY_URL))
     assert rest["Authorization"].startswith(rest_scheme), rest["Authorization"][:16]
     assert proxy["X-Git-Username"] == clone_username
+    assert proxy["X-Repo-Size-Hint"] == "734003200", "the proxy reserves cache from the reported size"
 
 
 @freezegun.freeze_time(_FROZEN)
@@ -669,6 +670,25 @@ def _author_row(email: str, sha: str, committed: str = "2026-06-15T10:00:00+00:0
         "last_committed_date": committed,
         "commit_count": 4,
     }
+
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_a_proxy_401_is_the_proxy_token_and_fails_as_a_config_error(http_mocker: HttpMocker) -> None:
+    config = BitbucketCloudConfigBuilder().build()
+    http_mocker.get(
+        HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps({"values": [_repo_with_clone()]}), status_code=200),
+    )
+    http_mocker.get(
+        HttpRequest(f"{PROXY_URL}/v1/branches", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body="", status_code=401),
+    )
+
+    output = read_stream(_CONNECTOR, "branches", config, expecting_exception=True)
+
+    assert output.errors
+    assert output.errors[-1].trace.error.failure_type == FailureType.config_error
 
 
 def _repo_with_clone() -> dict[str, Any]:

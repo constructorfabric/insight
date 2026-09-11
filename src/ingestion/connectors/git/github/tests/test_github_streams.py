@@ -21,7 +21,7 @@ from urllib.parse import parse_qs, urlparse
 
 import freezegun
 import pytest
-from airbyte_cdk.models import SyncMode
+from airbyte_cdk.models import FailureType, SyncMode
 from config import GH_URL, PROXY_URL, GithubConfigBuilder
 from connector_tests import ANY_QUERY_PARAMS, HttpMocker, HttpRequest, HttpResponse, assert_records_conform, read_stream
 from connector_tests.source import load_manifest
@@ -66,6 +66,7 @@ def _repo() -> dict:
         "private": True,
         "clone_url": "https://github.com/acme/app.git",
         "pushed_at": "2026-06-20T10:00:00Z",
+        "size": 716800,
         "created_at": "2020-01-01T00:00:00Z",
         "updated_at": "2026-06-20T10:00:00Z",
     }
@@ -154,6 +155,10 @@ def test_proxy_429_then_success(http_mocker: HttpMocker) -> None:
     output = read_stream(_CONNECTOR, "commits", config)
 
     assert not output.errors
+    hints = {r.headers.get("X-Repo-Size-Hint") for r in http_mocker._mocker.request_history if "/v1/commits" in r.url}
+    assert hints == {"734003200"}, (
+        f"every proxy call carries the repository's size in bytes (GitHub reports KiB): {hints}"
+    )
     assert len(output.records) == 1
     _no_literal_none(output.records)
 
@@ -2151,6 +2156,35 @@ _PROXY_RESET_ACTIONS = {
     "/v1/branches": "RESET",
     "/v1/authors": "RESET",
 }
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_a_proxy_401_is_the_proxy_token_and_fails_as_a_config_error(http_mocker: HttpMocker) -> None:
+    config = GithubConfigBuilder().build()
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(f"{PROXY_URL}/v1/branches", query_params=ANY_QUERY_PARAMS), HttpResponse(body="", status_code=401)
+    )
+
+    output = read_stream(_CONNECTOR, "branches", config, expecting_exception=True)
+
+    assert output.errors
+    assert output.errors[-1].trace.error.failure_type == FailureType.config_error
+
+
+def test_every_proxy_request_carries_the_repository_size_hint() -> None:
+    """The proxy reserves cache headroom from the hint instead of its per-repository
+    cap; a proxy requester without it, or a proxy parent that does not pass the size
+    along, silently falls back to the cap."""
+    retrievers = _proxy_retrievers(load_manifest(_CONNECTOR)["streams"])
+    assert retrievers
+    for retriever in retrievers:
+        hint = (retriever["requester"].get("request_headers") or {}).get("X-Repo-Size-Hint", "")
+        assert "extra_fields.get('size')" in hint, retriever["requester"]["path"]
+        parents = retriever["partition_router"]["parent_stream_configs"]
+        for parent in parents:
+            if parent.get("partition_field") == "repo_clone_url":
+                assert ["size"] in (parent.get("extra_fields") or []), retriever["requester"]["path"]
 
 
 def _proxy_retrievers(node, out=None):
