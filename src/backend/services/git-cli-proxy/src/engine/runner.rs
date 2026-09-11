@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
+use rustix::process::{Pid, Signal, kill_process_group};
 use sha2::{Digest, Sha256};
 
 /// Git credentials for one invocation. They exist only in the child process
@@ -113,6 +114,7 @@ pub struct GitRunner {
     /// PEM bundle for origins whose TLS chain is not in the system store
     /// (a self-hosted vendor behind a private CA). Empty = system store only.
     ca_cert_path: Option<String>,
+    git_binary: std::path::PathBuf,
 }
 
 const STDERR_TAIL_BYTES: usize = 4096;
@@ -139,6 +141,10 @@ const HEAVY_OP_TIMEOUT: Duration = Duration::from_mins(30);
 /// overshot by one interval's worth of download; the post-hoc check is what
 /// catches that remainder.
 const CAP_POLL_INTERVAL: Duration = Duration::from_secs(5);
+/// How long a killed git child may take to be reaped before the runner gives
+/// up waiting for it. SIGKILL is not refusable, so this only ever elapses for
+/// a process stuck in the kernel.
+const KILL_GRACE: Duration = Duration::from_secs(5);
 
 impl Default for GitRunner {
     fn default() -> Self {
@@ -146,6 +152,7 @@ impl Default for GitRunner {
             timeouts: Timeouts::default(),
             cap_poll: CAP_POLL_INTERVAL,
             ca_cert_path: None,
+            git_binary: std::path::PathBuf::from("git"),
         }
     }
 }
@@ -165,6 +172,12 @@ impl GitRunner {
     #[cfg(test)]
     fn with_cap_poll(mut self, interval: Duration) -> Self {
         self.cap_poll = interval;
+        self
+    }
+
+    #[cfg(test)]
+    fn with_git_binary(mut self, binary: std::path::PathBuf) -> Self {
+        self.git_binary = binary;
         self
     }
 
@@ -237,11 +250,12 @@ impl GitRunner {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
 
-        let waited = tokio::time::timeout(budget, command.output()).await;
-        let output = match waited {
-            Ok(result) => result?,
-            Err(_elapsed) => return Err(GitError::TimedOut(budget)),
-        };
+        let child = command.spawn()?;
+        let groups = [process_group_of(&child)];
+        let output = within_budget(budget, &groups, async {
+            child.wait_with_output().await.map_err(GitError::Io)
+        })
+        .await?;
 
         if output.status.success() {
             return Ok(output);
@@ -316,11 +330,12 @@ impl GitRunner {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            // INVARIANT: this is what enforces the cap. Returning early drops
-            // the wait future, which owns the child, which kills it.
+            // SAFETY: a backstop for a caller that drops this future mid-run;
+            // the cap and the budget kill the whole group themselves.
             .kill_on_drop(true);
 
         let child = command.spawn()?;
+        let groups = [process_group_of(&child)];
         let watch = watch.to_path_buf();
         let cap_poll = self.cap_poll;
 
@@ -342,6 +357,7 @@ impl GitRunner {
                                 .unwrap_or(0)
                         };
                         if measured > cap_bytes {
+                            kill_and_reap(&groups, &mut wait).await;
                             return Err(GitError::TooLarge { cap_bytes });
                         }
                     }
@@ -349,10 +365,7 @@ impl GitRunner {
             }
         };
 
-        let output = match tokio::time::timeout(budget, capped).await {
-            Ok(result) => result?,
-            Err(_elapsed) => return Err(GitError::TimedOut(budget)),
-        };
+        let output = within_budget(budget, &groups, capped).await?;
 
         if output.status.success() {
             return Ok(output);
@@ -400,6 +413,10 @@ impl GitRunner {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
         let right_child = right.spawn()?;
+        let groups = [
+            process_group_of(&left_child),
+            process_group_of(&right_child),
+        ];
 
         // INVARIANT: both sides are drained concurrently. Awaiting the consumer
         // to completion first would deadlock the producer once it writes past
@@ -409,13 +426,11 @@ impl GitRunner {
                 right_child.wait_with_output(),
                 left_child.wait_with_output()
             )
+            .map_err(GitError::Io)
         };
 
         let budget = self.timeouts.read;
-        let (right_output, left_output) = match tokio::time::timeout(budget, joined).await {
-            Ok(result) => result?,
-            Err(_elapsed) => return Err(GitError::TimedOut(budget)),
-        };
+        let (right_output, left_output) = within_budget(budget, &groups, joined).await?;
 
         if !left_output.status.success() {
             return Err(classify_failure(&left_output));
@@ -427,7 +442,11 @@ impl GitRunner {
     }
 
     fn base_command(&self, creds: Option<&GitCredentials>) -> tokio::process::Command {
-        let mut command = tokio::process::Command::new("git");
+        let mut command = tokio::process::Command::new(&self.git_binary);
+        // Its own group, so a budget overrun can take git's own children (a
+        // repack's pack-objects) down with it instead of killing the parent
+        // alone and leaving them writing into the entry.
+        command.process_group(0);
         command.env_clear();
         if let Some(path) = std::env::var_os("PATH") {
             command.env("PATH", path);
@@ -549,10 +568,51 @@ fn classify_failure(output: &Output) -> GitError {
     GitError::Failed(stderr[cut..].trim().to_owned())
 }
 
+/// The process group a child was spawned into, which is its own pid because
+/// `base_command` sets `process_group(0)`. `None` once the child has already
+/// been reaped.
+fn process_group_of(child: &tokio::process::Child) -> Option<Pid> {
+    child
+        .id()
+        .and_then(|id| i32::try_from(id).ok())
+        .and_then(Pid::from_raw)
+}
+
+/// Drive `work` to completion within `budget`. On expiry every listed process
+/// group is killed and `work` is awaited to reap what it owns, so a caller that
+/// sees `TimedOut` knows no git from this launch is still writing.
+async fn within_budget<T>(
+    budget: Duration,
+    groups: &[Option<Pid>],
+    work: impl Future<Output = Result<T, GitError>>,
+) -> Result<T, GitError> {
+    tokio::pin!(work);
+    tokio::select! {
+        finished = &mut work => finished,
+        () = tokio::time::sleep(budget) => {
+            kill_and_reap(groups, &mut work).await;
+            Err(GitError::TimedOut(budget))
+        }
+    }
+}
+
+/// Kill every listed process group and await `work`, which owns the children,
+/// so nothing from the launch is still writing when the caller returns.
+async fn kill_and_reap(groups: &[Option<Pid>], work: impl Future) {
+    for group in groups.iter().flatten() {
+        let _ = kill_process_group(*group, Signal::KILL);
+    }
+    if tokio::time::timeout(KILL_GRACE, work).await.is_err() {
+        tracing::warn!("a killed git child did not exit after SIGKILL");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::os::unix::process::ExitStatusExt;
+    use std::path::PathBuf;
     use std::process::ExitStatus;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::*;
 
@@ -981,6 +1041,131 @@ mod tests {
         }
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A fake `git`: a shell script that backgrounds a child appending to a
+    /// heartbeat file, runs `body` once the first beat has landed, then
+    /// blocks. Whatever ends the launch must take the whole process group
+    /// with it, and a heartbeat that stops is the proof.
+    struct FakeGit {
+        dir: PathBuf,
+        script: PathBuf,
+        heartbeat: PathBuf,
+    }
+
+    const HEARTBEAT_QUIET: Duration = Duration::from_millis(200);
+
+    static FAKE_GIT_SEQ: AtomicU64 = AtomicU64::new(0);
+
+    impl FakeGit {
+        fn new(body: impl FnOnce(&Path) -> String) -> Self {
+            // nosemgrep: rust.lang.security.temp-dir.temp-dir -- test fixture; the name carries pid and a per-process counter and holds no secrets
+            let dir = std::env::temp_dir().join(format!(
+                "git-cli-proxy-fake-git-{}-{}",
+                std::process::id(),
+                FAKE_GIT_SEQ.fetch_add(1, Ordering::Relaxed)
+            ));
+            if let Err(e) = std::fs::create_dir_all(&dir) {
+                panic!("fake git dir: {e}");
+            }
+            let heartbeat = dir.join("heartbeat");
+            let script = dir.join("git");
+            let body = body(&dir);
+            let source = format!(
+                "#!/bin/sh\n\
+                 (while :; do echo beat >> {beat}; sleep 0.01; done) &\n\
+                 until [ -s {beat} ]; do sleep 0.01; done\n\
+                 {body}\n\
+                 exec sleep 30\n",
+                beat = heartbeat.display()
+            );
+            if let Err(e) = std::fs::write(&script, source) {
+                panic!("write fake git: {e}");
+            }
+            let executable = std::os::unix::fs::PermissionsExt::from_mode(0o755);
+            if let Err(e) = std::fs::set_permissions(&script, executable) {
+                panic!("chmod fake git: {e}");
+            }
+            Self {
+                dir,
+                script,
+                heartbeat,
+            }
+        }
+
+        fn heartbeat_bytes(&self) -> u64 {
+            std::fs::metadata(&self.heartbeat).map_or(0, |m| m.len())
+        }
+
+        /// The backgrounded child was beating before the launch ended; a
+        /// zombie still answers `kill(-pgid, 0)` until PID 1 reaps it, so
+        /// the oracle is that the beating has stopped, not the process table.
+        async fn assert_nothing_still_writing(&self, ended_by: &str) {
+            let before = self.heartbeat_bytes();
+            assert!(
+                before > 0,
+                "the fake git must have started beating before {ended_by}"
+            );
+
+            tokio::time::sleep(HEARTBEAT_QUIET).await;
+            let after = self.heartbeat_bytes();
+            assert_eq!(
+                before, after,
+                "every process of a launch ended by {ended_by} must be dead; the heartbeat is still growing"
+            );
+        }
+    }
+
+    impl Drop for FakeGit {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_timed_out_launch_leaves_no_process_behind() {
+        let fake = FakeGit::new(|_| String::new());
+        let runner = GitRunner::new()
+            .with_git_binary(fake.script.clone())
+            .with_timeouts(Timeouts {
+                read: Duration::from_millis(300),
+                ..Timeouts::default()
+            });
+        match runner.run(None, &["anything"], None).await {
+            Err(GitError::TimedOut(_)) => {}
+            other => panic!("expected the budget to expire, got {other:?}"),
+        }
+
+        fake.assert_nothing_still_writing("the budget").await;
+    }
+
+    #[tokio::test]
+    async fn a_launch_killed_by_the_cap_leaves_no_process_behind() {
+        // The watched tree is empty until the script drops a file into it,
+        // so the heartbeat is running before the cap can fire.
+        let fake = FakeGit::new(|dir| {
+            format!(
+                "echo grown > {}",
+                dir.join("watched").join("blob").display()
+            )
+        });
+        let watch = fake.dir.join("watched");
+        if let Err(e) = std::fs::create_dir_all(&watch) {
+            panic!("watched dir: {e}");
+        }
+
+        let runner = GitRunner::new()
+            .with_git_binary(fake.script.clone())
+            .with_cap_poll(Duration::from_millis(1));
+        match runner
+            .run_capped(None, &["anything"], None, &watch, 0)
+            .await
+        {
+            Err(GitError::TooLarge { cap_bytes }) => assert_eq!(cap_bytes, 0),
+            other => panic!("expected the cap to fire, got {other:?}"),
+        }
+
+        fake.assert_nothing_still_writing("the cap").await;
     }
 
     #[tokio::test]

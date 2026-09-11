@@ -74,9 +74,11 @@ cache:
   # steady-state run length so no walk refetches (and 409s) mid-flight.
   defaultMaxStalenessSeconds: 43200
   # Concurrency cap for clone/fetch/repack.
-  # Two, not more: admission reserves cache.maxRepoBytes per slot, and a
-  # fetch holds its entry's write lock while queued here — one slow clone
-  # must not convoy every other repository's refresh behind it.
+  # Two, not more: a fetch holds its entry's write lock while queued here —
+  # one slow clone must not convoy every other repository's refresh behind
+  # it. A slot is taken before cache headroom is reserved (up to
+  # cache.maxRepoBytes, less when the caller sends X-Repo-Size-Hint), so
+  # requests queued for a slot hold no headroom and are not refused for it.
   heavyOpsConcurrency: 2
   # Concurrent page serves. Each serve runs git children whose memory scales
   # with the window's blob bytes, so the pod's peak is roughly this cap times

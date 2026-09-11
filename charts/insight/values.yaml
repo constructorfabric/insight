@@ -690,7 +690,9 @@ gitCliProxy:
     # steady-state run length so no walk refetches mid-flight.
     defaultMaxStalenessSeconds: 43200
     # A fetch holds its entry's write lock while queued for a slot, so one
-    # slow clone must not convoy every other repository's refresh.
+    # slow clone must not convoy every other repository's refresh. Cache
+    # headroom is reserved only once a slot is held, so queued requests wait
+    # in-connection rather than being refused.
     heavyOpsConcurrency: 2
     # Concurrent page serves; the pod's peak memory is roughly this times the
     # heaviest window's blob bytes, so this is the cap that bounds proxy
