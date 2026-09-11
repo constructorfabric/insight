@@ -4,7 +4,9 @@ person over a custom window with the department-of-5 distribution.
 Bronze: closed issues, the Status -> Closed history event that dates the close, the
 users and the issue types. Gold counts every closed issue regardless of type and
 carries the type as a breakdown dimension; a type neither configured list covers
-stays its own group. An empty window serves null.
+stays its own group, and an issue reporting no type at all — so the issue-type
+dimension lookup misses — still counts as closed without joining either
+configured-list metric. An empty window serves null.
 """
 
 from __future__ import annotations
@@ -21,8 +23,9 @@ ERIN = "erin@example.com"
 
 
 def test_tasks_closed(spec: SpecRun) -> None:
-    """Dec 20 .. Dec 31 takes all five ranks; erin's 5 closed split 3 Task + 1 Bug +
-    1 Incident, and only the Bug and the Tasks land in the configured-list metrics."""
+    """Dec 20 .. Dec 31 takes all five people; erin's 6 closed split 3 Task + 1 Bug +
+    1 Incident + 1 issue with no type at all (the dimension lookup misses), and only
+    the Bug and the Tasks land in the configured-list metrics."""
     r = spec.call(
         {
             "url": "/v1/metric-results",
@@ -48,12 +51,12 @@ def test_tasks_closed(spec: SpecRun) -> None:
     )
     assert r.status == 200
 
-    r.row("tasks.closed", "period", entity_id=ERIN).equals(value=5)
+    r.row("tasks.closed", "period", entity_id=ERIN).equals(value=6)
     r.row("tasks.closed", "peer", entity_id=ERIN).equals(
-        target_value=5, p25=2, median=3, p75=4, min=1, max=5, n=5
+        target_value=6, p25=2, median=3, p75=4, min=1, max=6, n=5
     )
     closed = one(r.series("tasks.closed"), entity_id=ERIN)["points"]
-    assert float(one(closed, bucket_start="2026-12-25")["value"]) == approx(5.0)
+    assert float(one(closed, bucket_start="2026-12-25")["value"]) == approx(6.0)
     by_type = r.breakdown("tasks.closed")
     assert (
         float(one(by_type, entity_id=ERIN, dimensions={"key": "type", "value": "Task"})["value"])
@@ -69,7 +72,15 @@ def test_tasks_closed(spec: SpecRun) -> None:
         )
         == 1.0
     )
-    assert len(some(by_type, entity_id=ERIN)) == 3
+    assert (
+        float(
+            one(by_type, entity_id=ERIN, dimensions={"key": "type", "value": "__unknown__"})[
+                "value"
+            ]
+        )
+        == 1.0
+    )
+    assert len(some(by_type, entity_id=ERIN)) == 4
 
     r.row("tasks.bugs_fixed", "period", entity_id=ERIN).equals(value=1)
     r.row("tasks.closed_non_bug", "period", entity_id=ERIN).equals(value=3)

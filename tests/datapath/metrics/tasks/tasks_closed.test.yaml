@@ -11,14 +11,19 @@ description: >
   (value = the requested member's OWN sum; median/p25/p75/range = the department
   (org_unit_id) distribution).
 
-  Department: 5 Engineering members alice..erin of rank r in 1..5, each closing r
-  issues on the same close date (2026-12-25). The custom window 2026-12-20..12-31
-  captures them all -> per-person sums {1,2,3,4,5}; the IC case requests erin (5).
-  Erin's five are 3 Task + 1 Bug + 1 Incident, so her total splits into three
-  type groups that add back up to 5 — and Incident, a name neither configured
-  list covers, stays its own group instead of joining the non-bug work: 1 bug +
-  3 non-bug is one short of the 5 closed, and the missing one is the Incident.
-  Empty window 2026-06 -> no items.
+  Department: 5 Engineering members alice..erin, alice..dave closing rank r
+  issues each and erin 6, on the same close date (2026-12-25). The custom window
+  2026-12-20..12-31 captures them all -> per-person sums {1,2,3,4,6}; the IC
+  case requests erin (6). Erin's six are 3 Task + 1 Bug + 1 Incident + 1 issue
+  with no issuetype field at all, so her total splits into four type groups
+  that add back up to 6 — Incident, a catalogued name neither configured list
+  covers, stays its own group instead of joining the non-bug work, and the
+  type-less issue reports no type id, so the issue-type dimension lookup
+  misses entirely: it counts as closed under the unknown kind, in neither
+  bugs_fixed nor closed_non_bug, and falls in the reserved unknown-type
+  breakdown group. 1 bug + 3 non-bug is two short of the 6 closed; the missing
+  two are the Incident and the type-less issue. Empty window 2026-06 -> no
+  items.
 
 bronze:
   bronze_bamboohr.employees:
@@ -162,6 +167,15 @@ bronze:
       id_readable: TEW5
       created: "2026-01-05T09:00:00"
       custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10099","name":"Incident"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}'
+    # No issuetype field at all: the history pivot yields no type id, so the
+    # issue-type dimension lookup misses instead of resolving a kind.
+    - $ref: ../templates/jira_task.yaml#/templates/jira_issue
+      id: TEW-6
+      jira_id: TEW-6
+      unique_key: jira-test-TEW-6
+      id_readable: TEW6
+      created: "2026-01-05T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}'
 
   bronze_jira.jira_issue_history:
     # ── Alice Alpha (rank 1) ──
@@ -271,6 +285,13 @@ bronze:
       id_readable: TEW5
       changelog_id: "50014"
       unique_key: jira-test-TEW5-50014
+      created_at: "2026-12-25T14:00:00.000+0000"
+      author_account_id: erin-jira-acct
+      items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
+    - $ref: ../templates/jira_task.yaml#/templates/jira_history
+      id_readable: TEW6
+      changelog_id: "50015"
+      unique_key: jira-test-TEW6-50015
       created_at: "2026-12-25T14:00:00.000+0000"
       author_account_id: erin-jira-acct
       items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'

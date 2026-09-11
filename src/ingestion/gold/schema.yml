@@ -901,6 +901,16 @@ models:
         description: "Source issue identifier; unique per insight_source_id"
         tests:
           - not_null
+      - name: issue_kind
+        description: >
+          Reconciled issue kind from the issue-type dimension. An issue whose
+          type id has no dimension row is 'unknown' — never an empty string,
+          whichever join_use_nulls regime built the table.
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['bug', 'other', 'unknown']
 
   - name: task_status_spans
     description: >

@@ -161,9 +161,13 @@ SELECT
     p.title                                                                  AS title,
     cur.status_category                                                      AS status_category,
     p.issue_type                                                             AS issue_type,
-    ifNull(it.issue_kind, 'unknown')                                         AS issue_kind,
-    coalesce(it.untranslated_name, it.issue_type_name, nullIf(p.issue_type, '')) AS issue_type_key,
-    coalesce(it.issue_type_name, nullIf(p.issue_type, ''))                   AS issue_type_name,
+    -- A missing dimension row reads as '' under join_use_nulls=0 (the
+    -- non-Nullable String default) and NULL under =1 — nullIf folds both
+    -- into the fallback, matching the null-proofing of `role` above.
+    coalesce(nullIf(it.issue_kind, ''), 'unknown')                           AS issue_kind,
+    coalesce(it.untranslated_name, nullIf(it.issue_type_name, ''),
+             nullIf(p.issue_type, ''))                                       AS issue_type_key,
+    coalesce(nullIf(it.issue_type_name, ''), nullIf(p.issue_type, ''))       AS issue_type_name,
     if(p.due_date_str IS NOT NULL AND p.due_date_str != '',
        toDate(parseDateTimeBestEffortOrNull(p.due_date_str)),
        CAST(NULL AS Nullable(Date)))                                         AS due_date,
