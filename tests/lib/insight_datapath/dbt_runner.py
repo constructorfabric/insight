@@ -164,7 +164,12 @@ class DbtRunner:
         }
         existing_tables = set(
             ch.query(
-                self.cfg, "SELECT database, name FROM system.tables WHERE database LIKE 'bronze_%'"
+                # config tables are created by dbt's own on-run-start hook, so a
+                # staging model reading one must stay selected even when the spec
+                # seeds no config rows.
+                self.cfg,
+                "SELECT database, name FROM system.tables"
+                " WHERE database LIKE 'bronze_%' OR database = 'config'",
             )
         )
         available_sources = {

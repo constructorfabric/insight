@@ -9,6 +9,12 @@
   a vendor's literal. `task_value_map` binds a vendor value identifier to the
   canonical value a class dimension carries — a status category, an issue kind.
 
+  What `value_id` is depends on how the vendor keys values. GitHub issue types
+  are org-scoped, so it is the type id. Jira mints a distinct type id per
+  project while the name is what recurs, so for Jira `field_id='type'` rows it
+  is the normalized name: lower(trimBoth(coalesce(nullIf(untranslatedName, ''), name))) —
+  the form `jira__task_issuetypes` joins on.
+
   Bitemporal by design. `valid_from` says which events a mapping applies to: the
   process genuinely changed on a date. `recorded_at` says when the decision was
   made: the mapping was wrong and history is being corrected. One axis cannot
