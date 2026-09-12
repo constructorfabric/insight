@@ -25,7 +25,7 @@ from typing import Any
 
 import pytest
 
-from insight_seed import config, manifest
+from insight_seed import config, golden_metrics, manifest
 
 _EMAIL = "dev@company.nonpresent"
 _TENANT = "00000000-df51-5b42-9538-d2b56b7ee953"
@@ -100,6 +100,7 @@ def test_the_declared_model_is_the_document_that_is_built() -> None:
     assert set(doc["capabilities"]) == set(manifest.Capabilities.__annotations__)
     assert set(doc["realm"]) == set(manifest.RealmRef.__annotations__)
     assert set(doc["tenants"]) == set(manifest.TenantRefs.__annotations__)
+    assert set(doc["golden_metrics"]) == set(golden_metrics.GoldenMetricsDoc.__annotations__)
 
 
 @pytest.mark.parametrize("headcount", [None, "250"])
@@ -113,6 +114,14 @@ def test_the_stand_suite_parses_what_this_package_produces(headcount: str | None
     assert parsed.manifest_version == manifest.MANIFEST_VERSION
     assert len(parsed.personas) == len(doc["personas"])
     assert parsed.fixtures.keys() == doc["fixtures"].keys()
+    assert parsed.golden_metrics is not None
+    assert parsed.golden_metrics.tasks is not None, (
+        "the reader treats this package's golden_metrics version as unknown — "
+        "bump SUPPORTED_GOLDEN_METRICS_VERSION with GOLDEN_METRICS_VERSION"
+    )
+    assert parsed.golden_metrics.tasks.per_person.keys() == (
+        doc["golden_metrics"]["tasks"]["per_person"].keys()
+    )
 
 
 def test_both_sides_agree_on_the_supported_version() -> None:
@@ -121,9 +130,11 @@ def test_both_sides_agree_on_the_supported_version() -> None:
     assert manifest.MANIFEST_VERSION == reader.SUPPORTED_MANIFEST_VERSION
 
 
-#: The published field set. A change here is a wire change: bump
-#: MANIFEST_VERSION and SUPPORTED_MANIFEST_VERSION together, or readers built
-#: against the old set parse a document that no longer matches it.
+#: The published field set. Changing or retyping an existing field is a wire
+#: change: bump MANIFEST_VERSION and SUPPORTED_MANIFEST_VERSION together, or
+#: readers built against the old set parse a document that no longer matches
+#: it. A purely ADDITIVE field the reader treats as optional (`golden_metrics`)
+#: keeps the version — bumping it would refuse every manifest already written.
 _PUBLISHED_FIELDS = (
     "manifest_version",
     "tenant",
@@ -136,6 +147,7 @@ _PUBLISHED_FIELDS = (
     "seed_revision",
     "data_window",
     "anchor_date",
+    "golden_metrics",
     "seeded",
 )
 

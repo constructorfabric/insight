@@ -1706,6 +1706,11 @@ test_stand_pull_backends() {
       echo "       --build to build from source deliberately." >&2
       return 1; }
     update_env_var "$TEST_STAND_ENV_FILE" "$var" "$image"
+    # WORKAROUND: compose lets the process environment override --env-file,
+    # and a set-but-empty var counts as set — CI exports these as '' outside
+    # the prebuilt path, dropping every service to its :dev fallback. Export
+    # the pin so compose resolves the image the env file records.
+    export "$var=$image"
   done
 }
 

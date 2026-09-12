@@ -203,7 +203,10 @@ def run_spec(
     bindings.apply(spec.identity_accounts, spec.identity_aliases, person_ids)
 
     dbt_runner.run("tag:identity:map")
-    dbt_runner.run("tag:gold")
+    # `build`, not `run`: gold carries ~30 singular build-integrity tests plus
+    # the schema generics, and no other pre-merge suite executes them — the
+    # datapath specs are the only place gold is built over real data.
+    dbt_runner.build("tag:gold")
 
     return SpecRun(
         spec=spec,

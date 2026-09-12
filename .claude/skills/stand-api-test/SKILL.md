@@ -213,9 +213,11 @@ diagnosed as flakiness.
 
 ## What this suite must not assert
 
-- **No metric values.** The seed publishes no expected values. Assert that a
-  value is non-null, that entity ids match, that a union resolved — never a
-  number.
+- **No hand-authored metric values.** Assert exact numbers only against the
+  manifest's `golden_metrics` (seed-derived expected values; see
+  test_golden_metrics.py). Everything else asserts that a value is non-null,
+  that entity ids match, that a union resolved — never a number you computed
+  yourself.
 - **No minted tokens.** Sessions are won by driving the deployed OIDC chain.
   Minting a token would mean never exercising the login.
 - **Never import `insight_datapath` or reach into `tests/datapath/**`.** The

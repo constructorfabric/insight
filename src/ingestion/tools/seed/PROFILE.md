@@ -17,7 +17,7 @@ builder that writes `manifest.json`, so the two cannot disagree.
 | realm | `insight` |
 | anchor_date | `2026-06-30` |
 | data_window | `2026-05-02..2026-06-30` |
-| seed_revision | `11cb2c2fb83498bc` |
+| seed_revision | `6ca645842a3e7663` |
 | manifest_version | 2 |
 
 `anchor_date` is the last day carrying seeded activity. It is resolved

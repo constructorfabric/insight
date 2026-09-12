@@ -87,10 +87,7 @@ class DbtRunner:
             ]
         )
         if not res.success:
-            failed = self._extract_failed_model_summary()
-            raise DbtError(
-                f"closure build failed\nfailed models: {failed}\nexception: {res.exception!r}"
-            )
+            raise DbtError(self._failure_message("closure build failed", res.exception))
 
     def build(self, selector: str) -> None:
         """Build the selected models via the in-process runner.
@@ -117,9 +114,8 @@ class DbtRunner:
             ]
         )
         if not res.success:
-            failed = self._extract_failed_model_summary()
             raise DbtError(
-                f"dbt build failed for selector {selector!r}\nfailed models: {failed}\nexception: {res.exception!r}"
+                self._failure_message(f"dbt build failed for selector {selector!r}", res.exception)
             )
 
     def run(self, selector: str, *, full_refresh: bool = False) -> None:
@@ -140,9 +136,8 @@ class DbtRunner:
             ]
         )
         if not res.success:
-            failed = self._extract_failed_model_summary()
             raise DbtError(
-                f"dbt run failed for selector {selector!r}\nfailed models: {failed}\nexception: {res.exception!r}"
+                self._failure_message(f"dbt run failed for selector {selector!r}", res.exception)
             )
 
     def derive_selectors(self, tables: set[tuple[str, str]]) -> tuple[list[str], list[str]]:
@@ -411,21 +406,34 @@ class DbtRunner:
         if not manifest.exists():
             raise DbtError(f"dbt parse did not produce {manifest}")
 
-    def _extract_failed_model_summary(self) -> str:
-        """Read target/run_results.json and return a one-liner per failed model."""
+    def _failure_message(self, prefix: str, exception: object) -> str:
+        """Compose a DbtError message from run_results.json.
+
+        Every failed node id (models AND tests) goes on the FIRST line —
+        pytest's short summary keeps only that line, so a multi-line list
+        below the fold reads as an empty failure.
+        """
+        failed = self._extract_failed_nodes()
+        if not failed:
+            return f"{prefix}: no failed nodes in run_results.json; exception: {exception!r}"
+        names = ", ".join(node for node, _ in failed)
+        details = "\n".join(f"  - {node}: {message}" for node, message in failed)
+        return f"{prefix}: {names}\n{details}\nexception: {exception!r}"
+
+    def _extract_failed_nodes(self) -> list[tuple[str, str]]:
+        """(unique_id, message) for every non-passing node in run_results.json."""
         run_results = self.target_dir / "run_results.json"
         if not run_results.exists():
-            return "(no run_results.json)"
+            return [("(no run_results.json)", "")]
         try:
             data = json.loads(run_results.read_text(encoding="utf-8"))
         except Exception as e:
-            return f"(failed to parse run_results.json: {e})"
-        failed = [
-            f"  - {r.get('unique_id', '?')}: {r.get('message') or r.get('status')}"
+            return [("(unparsable run_results.json)", str(e))]
+        return [
+            (r.get("unique_id", "?"), str(r.get("message") or r.get("status")))
             for r in data.get("results", [])
             if r.get("status") not in (None, "success", "pass")
         ]
-        return "\n" + "\n".join(failed) if failed else "(none)"
 
     def cleanup(self) -> None:
         """Remove generated profiles + target. Called by session teardown."""

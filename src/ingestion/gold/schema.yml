@@ -881,6 +881,37 @@ models:
           add back up to it. An issue whose type is not reported at all falls in
           `__unknown__`. Empty for the day-grain and duration measures.
 
+  - name: task_field_roles_current
+    description: >
+      Which vendor field plays which metric role, resolved to one row per
+      (source, field): operator-authored bindings from config.task_field_roles
+      merged over the built-in vendor defaults, with an authored row always
+      winning. Rows whose role is 'ignored' are filtered out. Ephemeral —
+      inlined wherever it is joined, so its tests compile it as a CTE.
+    columns:
+      - name: insight_source_id
+        description: "Source instance identifier"
+        tests:
+          - not_null
+      - name: data_source
+        description: "Source system discriminator (e.g. 'jira')"
+        tests:
+          - not_null
+      - name: field_id
+        description: "Vendor field identifier the role is bound to"
+        tests:
+          - not_null
+      - name: role
+        description: "Metric role the field plays (status, assignee, issuetype, estimate, ...)"
+        tests:
+          - not_null
+      - name: precedence
+        description: "Authored tie-break between fields bound to the same role; 0 for a vendor default"
+      - name: value_unit
+        description: "Unit the field's value is stated in; 'none' when it is not a quantity"
+      - name: unit_multiplier
+        description: "Factor converting the stated unit to the canonical one; 1 for a vendor default"
+
   - name: task_issue_state
     description: >
       Per-issue lifecycle state for the task-delivery observation pipeline:
@@ -927,6 +958,31 @@ models:
         description: "Span start (status event time)"
         tests:
           - not_null
+
+  - name: task_worklog_flow
+    description: >
+      Per-person per-day time flow for the task-delivery observation pipeline:
+      in-progress seconds split from the status spans by calendar day, full
+      outer joined with the worklog seconds logged per author. One row per
+      (tenant, entity, date); either figure is 0 on a day the other side has
+      no rows for.
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: entity_id
+        description: "Lowercased email of the assignee or worklog author"
+        tests:
+          - not_null
+      - name: metric_date
+        description: "Calendar day the seconds fall on"
+        tests:
+          - not_null
+      - name: in_progress_seconds
+        description: "Seconds of the day the person's issues sat in an in-progress status"
+      - name: worklog_seconds
+        description: "Seconds of work the person logged on the day (deleted worklogs excluded)"
 
   - name: ci_metric_observations
     description: >
