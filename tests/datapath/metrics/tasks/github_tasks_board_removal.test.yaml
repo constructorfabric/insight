@@ -1,27 +1,29 @@
 spec_version: 1
 description: >
-  Task Delivery - dev_time for GITHUB when a card is taken off its board.
+  Task Delivery - stale_in_progress for GITHUB when a card is taken off its
+  board.
 
   A board column is the only place GitHub says work is in progress, so a card
   that leaves the board takes that statement with it. The vendor announces the
   departure as `RemovedFromProjectV2Event` and names no new column.
 
-  What makes this measurable rather than cosmetic is how a status span ends: a
-  span runs until the NEXT status event, and the last one runs until `now()`.
-  An issue whose final word is "In progress" therefore accrues development time
-  every day, forever - on a board it no longer sits on - and the number a
-  reader sees depends on the day they ask.
+  `stale_in_progress` counts issues that are not done and whose last status
+  change is older than fourteen days, and it is stamped on the DATE OF THAT
+  LAST CHANGE - not on today. That is what makes the removal observable: the
+  removal is itself a status event, so with it the count lands on the 9th, and
+  without it the last thing that ever happened to this issue is the move into
+  In progress on the 6th and the count lands there instead.
 
-  The issue is created on the 1st, lands on the board as Todo on the 2nd,
-  enters In progress on the 6th, and its card is removed on the 9th. The
-  removal is a status event of its own naming no column, so the In progress
-  span closes there: three days, 72 hours, and it stays 72 whenever this runs.
-  Without that closing row the same fixture reports the hours between the 6th
-  and today.
+  The window below therefore starts on the 7th. It holds the 9th and excludes
+  the 6th, so it reads 1 only if the removal reached the journal; a run without
+  the closing row finds nothing in it at all. The issue is left OPEN and its own
+  `state` is bound to `ignored`, so the board is the only thing that can speak
+  for its status.
 
-  The issue is deliberately left OPEN and its own `state` is bound to
-  `ignored`: closing it would end the span through `final_close_at` and hide
-  the very thing under test.
+  `dev_time` cannot be used here, and the reason is worth stating: it is a
+  closed-issue measure, stamped `toDate(final_close_at)` and summing only spans
+  that start before the close. An issue that never closes has no such date and
+  no such measure, whatever its spans look like.
 
 bronze:
   bronze_bamboohr.employees:
