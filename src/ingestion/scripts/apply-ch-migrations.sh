@@ -257,6 +257,11 @@ heal_jira_issue_key() {
   fi
 
   echo "  bronze_jira.${table}: ${n} row(s) keyed by the issue key — rebuilding on the issue id"
+  # MEMORY: the winner per issue is chosen in an aggregation that carries only
+  # the raw id, and the rows are then copied by that id list. `ORDER BY … LIMIT
+  # 1 BY` would sort the whole table, JSON payload included, and on a real-size
+  # jira_issue that sort alone exceeds a server's memory budget — inside a Helm
+  # hook, which fails the upgrade. Same two-pass shape as the snapshot model.
   copy_start_ms="$(printf "SELECT toUnixTimestamp64Milli(now64(3))" | _ch_http_query | tr -d '[:space:]')"
   [[ "${copy_start_ms}" =~ ^[0-9]+$ ]] || { echo "  bronze_jira.${table}: could not read the server clock — refusing to rebuild" >&2; return 1; }
   run_ch <<SQL
@@ -265,8 +270,11 @@ CREATE TABLE bronze_jira.${table}__rekey AS bronze_jira.${table};
 INSERT INTO bronze_jira.${table}__rekey
 SELECT * REPLACE (concat(tenant_id, '-', source_id, '-', jira_id) AS unique_key)
 FROM bronze_jira.${table}
-ORDER BY _airbyte_extracted_at DESC
-LIMIT 1 BY tenant_id, source_id, jira_id;
+WHERE _airbyte_raw_id IN (
+    SELECT argMax(_airbyte_raw_id, _airbyte_extracted_at)
+    FROM bronze_jira.${table}
+    GROUP BY tenant_id, source_id, jira_id
+);
 EXCHANGE TABLES bronze_jira.${table} AND bronze_jira.${table}__rekey;
 SQL
   # From the EXCHANGE on, writers land in the rebuilt table by name. Rows a sync
