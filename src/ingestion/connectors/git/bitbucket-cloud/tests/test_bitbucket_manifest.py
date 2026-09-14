@@ -226,6 +226,50 @@ def test_every_requester_declares_an_error_handler() -> None:
     assert not bare, f"requesters relying on the CDK default error handler: {bare}"
 
 
+def _parent_configs(node, out=None):
+    """Every ParentStreamConfig mapping anywhere in the manifest tree."""
+    if out is None:
+        out = []
+    if isinstance(node, dict):
+        if node.get("type") == "ParentStreamConfig":
+            out.append(node)
+        for value in node.values():
+            _parent_configs(value, out)
+    elif isinstance(node, list):
+        for item in node:
+            _parent_configs(item, out)
+    return out
+
+
+_CURSOR_BOUNDED_PARENTS = {"repositories_for_commits", "repositories_for_files"}
+
+
+def test_a_parent_that_carries_state_lists_repositories_from_its_cursor() -> None:
+    """A repository listing bounded by the start date returns every repository
+    on every run, and each one becomes a proxy walk. A parent whose state the
+    child persists bounds the listing by its own cursor instead, one lookback
+    window back, so only repositories pushed to since the last sync are walked.
+    The vendor moves a repository's updated_on on commit activity only, so the
+    bound is exact for commits and file changes and for nothing else."""
+    manifest = yaml.safe_load((connector_dir(_CONNECTOR) / "connector.yaml").read_text())
+    seen = set()
+    for parent_config in _parent_configs(manifest["streams"]):
+        parent = parent_config["stream"]
+        name = parent["name"]
+        bound = (parent["retriever"]["requester"].get("request_parameters") or {}).get("q", "")
+        if name not in _CURSOR_BOUNDED_PARENTS:
+            if name.startswith("repositories_for"):
+                assert "stream_interval" not in bound, f"{name}: updated_on does not track this stream's activity"
+            continue
+        seen.add(name)
+        assert parent_config.get("incremental_dependency") is True, f"{name}: state must persist"
+        assert "stream_interval.start_time" in bound, f"{name}: {bound}"
+        cursor = parent["incremental_sync"]
+        assert cursor["cursor_field"] == "updated_on", name
+        assert cursor.get("lookback_window") == "P1D", f"{name}: a push lands after its commit"
+    assert seen == _CURSOR_BOUNDED_PARENTS
+
+
 _PROXY_RESET_ACTIONS = {
     "/v1/commits": "SPLIT_USING_CURSOR",
     "/v1/file-changes": "SPLIT_USING_CURSOR",

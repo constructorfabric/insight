@@ -48,6 +48,15 @@ definitions:
     q: >-
       updated_on >= "{{ config['bitbucket_start_date'] }}"
 
+  # The same listing bounded by the stream's own cursor instead of the start
+  # date: a parent that carries state visits only the repositories touched
+  # since the last sync (one lookback window earlier, see the parent).
+  repos_since_cursor: &repos_since_cursor
+    pagelen: "100"
+    sort: updated_on
+    q: >-
+      updated_on >= "{{ stream_interval.start_time }}"
+
   # Repository listings are also where an operator's exclusions apply. The
   # vendor's `q` cannot express a pattern — only case-insensitive substring —
   # so the match is made here, on the record. The listing still pages, but a
@@ -520,7 +529,7 @@ streams:
                   path: "/repositories/{{ stream_partition.workspace }}"
                   http_method: GET
                   request_parameters:
-                    <<: *repos_since_start
+                    <<: *repos_since_cursor
                     fields: >-
                       next,values.uuid,values.slug,values.updated_on,values.links.clone
                   error_handler: *discovery_error_handler
@@ -543,10 +552,13 @@ streams:
               incremental_sync:
                 type: DatetimeBasedCursor
                 cursor_field: updated_on
-                datetime_format: "%Y-%m-%dT%H:%M:%S.%f%z"
+                datetime_format: "%Y-%m-%dT%H:%M:%SZ"
                 cursor_datetime_formats:
                   - "%Y-%m-%dT%H:%M:%S.%f%z"
                   - "%Y-%m-%dT%H:%M:%S%z"
+                # A push lands on the vendor a little after the commit it
+                # carries, and the listing is bounded by the vendor's clock.
+                lookback_window: P1D
                 start_datetime:
                   type: MinMaxDatetime
                   datetime: "{{ config['bitbucket_start_date'] }}"
@@ -718,7 +730,7 @@ streams:
                   path: "/repositories/{{ stream_partition.workspace }}"
                   http_method: GET
                   request_parameters:
-                    <<: *repos_since_start
+                    <<: *repos_since_cursor
                     fields: >-
                       next,values.uuid,values.slug,values.updated_on,values.links.clone
                   error_handler: *discovery_error_handler
@@ -741,10 +753,13 @@ streams:
               incremental_sync:
                 type: DatetimeBasedCursor
                 cursor_field: updated_on
-                datetime_format: "%Y-%m-%dT%H:%M:%S.%f%z"
+                datetime_format: "%Y-%m-%dT%H:%M:%SZ"
                 cursor_datetime_formats:
                   - "%Y-%m-%dT%H:%M:%S.%f%z"
                   - "%Y-%m-%dT%H:%M:%S%z"
+                # A push lands on the vendor a little after the commit it
+                # carries, and the listing is bounded by the vendor's clock.
+                lookback_window: P1D
                 start_datetime:
                   type: MinMaxDatetime
                   datetime: "{{ config['bitbucket_start_date'] }}"
@@ -2874,6 +2889,13 @@ streams:
     transformations:
       - type: AddFields
         fields:
+          # WORKAROUND: the vendor stamps created_on with nine fractional
+          # digits; the CDK parses six, so the raw value never becomes the
+          # cursor and every sync re-reads the history. Truncate first.
+          - type: AddedFieldDefinition
+            path: [created_on]
+            value: "{{ format_datetime(record['created_on'], '%Y-%m-%dT%H:%M:%S.%fZ') if record.get('created_on') else '' }}"
+            value_type: string
           - type: AddedFieldDefinition
             path: [tenant_id]
             value: "{{ config['insight_tenant_id'] }}"
@@ -3026,6 +3048,9 @@ streams:
         extractor:
           type: DpathExtractor
           field_path: [values]
+        # The client-side bound reads created_on; it must see the truncated
+        # value the transformation writes, not the raw one.
+        transform_before_filtering: true
       paginator:
         type: DefaultPaginator
         pagination_strategy:
@@ -3146,7 +3171,11 @@ streams:
             value_type: string
           - type: AddedFieldDefinition
             path: [created_on]
-            value: "{{ record.get('created_on') or (record.get('deployable') or {}).get('created_on') or '' }}"
+            # WORKAROUND: nine fractional digits from the vendor, six parsed
+            # by the CDK — truncate or the cursor never advances.
+            value: >-
+              {%- set created = record.get('created_on') or (record.get('deployable') or {}).get('created_on') or '' -%}
+              {{ format_datetime(created, '%Y-%m-%dT%H:%M:%S.%fZ') if created else '' }}
             value_type: string
           - type: AddedFieldDefinition
             path: [unique_key]
