@@ -8,9 +8,9 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::anchor::Anchor;
 use crate::catalog::TableEngine;
 use crate::time_window::{Bounds, Grain, MaximumRange, Window, WindowError};
+use crate::undated::UndatedCount;
 
 const MAX_IDENTIFIER_CHARS: usize = 128;
 const DEFAULT_LIMIT: u32 = 1000;
@@ -509,7 +509,7 @@ struct Selection<'a> {
 
 /// The one read that resolves a relative window before the metric runs.
 #[derive(Debug)]
-pub(crate) struct AnchorQuery {
+pub(crate) struct UndatedQuery {
     pub(crate) sql: String,
     pub(crate) binds: Vec<FilterBind>,
 }
@@ -910,10 +910,10 @@ impl MetricQuery {
 
     /// How many of the rows a metric reads carry no clock — one read of the
     /// same rows. A metric with no clock has none, and answers `None`.
-    pub(crate) fn anchor_query(
+    pub(crate) fn undated_query(
         &self,
         engine: TableEngine,
-    ) -> Result<Option<AnchorQuery>, MetricQueryError> {
+    ) -> Result<Option<UndatedQuery>, MetricQueryError> {
         let (_, table) = self.split();
         self.validate_shape(table)?;
 
@@ -935,7 +935,7 @@ impl MetricQuery {
             sql.push_str(&where_parts.join(" AND "));
         }
 
-        Ok(Some(AnchorQuery { sql, binds }))
+        Ok(Some(UndatedQuery { sql, binds }))
     }
 
     fn validate_shape(&self, table: &str) -> Result<(), MetricQueryError> {
@@ -1069,10 +1069,13 @@ impl MetricRunner {
         &self.people
     }
 
-    pub(crate) async fn anchor(&self, query: &AnchorQuery) -> Result<Anchor, MetricRunError> {
+    pub(crate) async fn undated(
+        &self,
+        query: &UndatedQuery,
+    ) -> Result<UndatedCount, MetricRunError> {
         let bytes = self.fetch(&query.sql, &query.binds).await?;
 
-        Ok(Anchor::parse(&bytes)?)
+        Ok(UndatedCount::parse(&bytes)?)
     }
 
     pub(crate) async fn run(&self, compiled: &CompiledQuery) -> Result<RunResult, MetricRunError> {
@@ -1439,22 +1442,22 @@ mod tests {
     }
 
     #[test]
-    fn an_anchor_query_reads_the_newest_clock_and_the_rows_without_one() {
+    fn an_undated_query_counts_the_rows_without_a_clock() {
         let metric = timed_metric(&json!({ "column": "occurred_at" }));
 
-        let anchor = metric
-            .anchor_query(TableEngine::MergeTree)
-            .unwrap_or_else(|error| panic!("the anchor compiles: {error}"))
-            .unwrap_or_else(|| panic!("a clocked metric has an anchor"));
+        let undated = metric
+            .undated_query(TableEngine::MergeTree)
+            .unwrap_or_else(|error| panic!("the undated count compiles: {error}"))
+            .unwrap_or_else(|| panic!("a clocked metric has an undated count"));
 
         assert_eq!(
-            anchor.sql,
+            undated.sql,
             "SELECT countIf(isNull(`occurred_at`)) AS undated FROM `events`"
         );
     }
 
     #[test]
-    fn an_anchor_query_reads_the_same_rows_the_metric_does() {
+    fn an_undated_query_reads_the_same_rows_the_metric_does() {
         let metric = query(json!({
             "table": "events",
             "time": { "column": "occurred_at" },
@@ -1462,28 +1465,28 @@ mod tests {
             "filters": [{ "column": "repo", "type": "string", "op": "eq", "value": "one" }]
         }));
 
-        let anchor = metric
-            .anchor_query(TableEngine::ReplacingMergeTree)
-            .unwrap_or_else(|error| panic!("the anchor compiles: {error}"))
-            .unwrap_or_else(|| panic!("a clocked metric has an anchor"));
+        let undated = metric
+            .undated_query(TableEngine::ReplacingMergeTree)
+            .unwrap_or_else(|error| panic!("the undated count compiles: {error}"))
+            .unwrap_or_else(|| panic!("a clocked metric has an undated count"));
 
         assert!(
-            anchor.sql.contains("FROM `events` FINAL WHERE `repo` = ?"),
+            undated.sql.contains("FROM `events` FINAL WHERE `repo` = ?"),
             "{}",
-            anchor.sql
+            undated.sql
         );
-        assert_eq!(anchor.binds.len(), 1);
+        assert_eq!(undated.binds.len(), 1);
     }
 
     #[test]
-    fn a_clockless_metric_has_nothing_to_anchor_to() {
+    fn a_clockless_metric_has_no_undated_count_to_read() {
         let metric = timed_metric(&serde_json::Value::Null);
 
-        let anchor = metric
-            .anchor_query(TableEngine::MergeTree)
+        let undated = metric
+            .undated_query(TableEngine::MergeTree)
             .unwrap_or_else(|error| panic!("a clockless metric is not an error: {error}"));
 
-        assert!(anchor.is_none());
+        assert!(undated.is_none());
     }
 
     #[test]

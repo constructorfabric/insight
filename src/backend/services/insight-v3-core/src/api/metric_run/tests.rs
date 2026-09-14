@@ -125,10 +125,10 @@ async fn recording_upstream() -> (String, tokio::task::JoinHandle<()>, Seen) {
         post(move |sql: String| {
             let recorded = recorded.clone();
             async move {
-                if sql.contains("undated") {
+                if sql.contains("countIf(isNull(") {
                     return Json(json!({
                         "meta": [],
-                        "data": [{"undated": "4"}]
+                        "data": [{"newest": "1757516400000", "undated": "4"}]
                     }));
                 }
 
@@ -162,6 +162,20 @@ fn only_read(seen: &Seen) -> String {
     };
 
     sql.clone()
+}
+
+fn midnights(day: chrono::NaiveDate) -> [i64; 2] {
+    let midnight = |date: chrono::NaiveDate| {
+        date.and_hms_opt(0, 0, 0)
+            .unwrap_or_else(|| panic!("midnight exists on {date}"))
+            .and_utc()
+            .timestamp_millis()
+    };
+    let yesterday = day
+        .pred_opt()
+        .unwrap_or_else(|| panic!("{day} has a day before it"));
+
+    [midnight(yesterday), midnight(day)]
 }
 
 fn clocked_metric() -> serde_json::Value {
@@ -387,14 +401,12 @@ async fn a_range_asked_of_a_metric_with_no_clock_is_a_bad_request() -> R {
     Ok(())
 }
 
-/// The upstream here reports a newest row in September 2025. A previous-day
-/// run must still read yesterday: a window counted back from the data drew
-/// whatever day the source happened to stop on and labelled it "Yesterday".
 #[tokio::test]
 async fn yesterday_is_the_day_before_now_however_old_the_newest_row_is() -> R {
     let (address, server, seen) = recording_upstream().await;
     let harness = TestHarness::new(&address).await;
 
+    let before = chrono::Utc::now().date_naive();
     let response = harness
         .ask(
             "opened",
@@ -402,24 +414,19 @@ async fn yesterday_is_the_day_before_now_however_old_the_newest_row_is() -> R {
             Some(json!({"range": "PDC"})),
         )
         .await;
+    let after = chrono::Utc::now().date_naive();
     assert_eq!(response.status(), StatusCode::OK);
 
-    let today = chrono::Utc::now().date_naive();
-    let yesterday = today
-        .pred_opt()
-        .unwrap_or_else(|| panic!("{today} has a day before it"));
     let sql = only_read(&seen);
-    for edge in [yesterday, today] {
-        let millis = edge
-            .and_hms_opt(0, 0, 0)
-            .unwrap_or_else(|| panic!("midnight exists on {edge}"))
-            .and_utc()
-            .timestamp_millis();
-        assert!(sql.contains(&millis.to_string()), "{millis} missing: {sql}");
-    }
+    assert!(
+        [before, after].iter().any(|day| midnights(*day)
+            .iter()
+            .all(|edge| sql.contains(&edge.to_string()))),
+        "neither {before} nor {after} bounds the window: {sql}"
+    );
     assert!(
         !sql.contains("1757462400000"),
-        "the newest row's day must not bound the window: {sql}"
+        "the upstream's newest row is 2025-09-10; its day must not bound the window: {sql}"
     );
 
     server.abort();

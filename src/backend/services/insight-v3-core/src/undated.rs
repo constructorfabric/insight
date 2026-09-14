@@ -2,12 +2,6 @@
 
 use serde::Deserialize;
 
-/// How many of a metric's rows carry no clock.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct Anchor {
-    undated: u64,
-}
-
 /// `ClickHouse`'s `JSON` format writes 64-bit integers as strings, so the
 /// count arrives either way round.
 #[derive(Debug, Deserialize)]
@@ -27,24 +21,30 @@ impl Number {
 }
 
 #[derive(Debug, Deserialize)]
-struct AnchorRow {
+struct UndatedRow {
     undated: Option<Number>,
 }
 
 #[derive(Debug, Deserialize)]
-struct AnchorAnswer {
-    data: Vec<AnchorRow>,
+struct UndatedAnswer {
+    data: Vec<UndatedRow>,
 }
 
-impl Anchor {
+/// How many of a metric's rows carry no clock.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct UndatedCount {
+    count: u64,
+}
+
+impl UndatedCount {
     pub(crate) fn parse(body: &[u8]) -> Result<Self, serde_json::Error> {
-        let answer: AnchorAnswer = serde_json::from_slice(body)?;
+        let answer: UndatedAnswer = serde_json::from_slice(body)?;
         let Some(row) = answer.data.first() else {
             return Ok(Self::default());
         };
 
         Ok(Self {
-            undated: row
+            count: row
                 .undated
                 .as_ref()
                 .and_then(Number::value)
@@ -53,11 +53,11 @@ impl Anchor {
         })
     }
 
-    pub(crate) fn undated(self) -> u64 {
-        self.undated
+    pub(crate) fn count(self) -> u64 {
+        self.count
     }
 }
 
 #[cfg(test)]
-#[path = "anchor/tests.rs"]
+#[path = "undated/tests.rs"]
 mod tests;

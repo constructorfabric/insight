@@ -49,9 +49,6 @@ fn supported_tokens_choose_their_distinct_window_and_grain() {
     }
 }
 
-/// A window counted back from the newest row drew a day that was not
-/// yesterday: on a stand whose last rows were three days old, `PDC` showed a
-/// full day of results under a label reading "Yesterday".
 #[test]
 fn a_previous_day_window_is_yesterday_by_the_clock_not_by_the_newest_row() {
     let resolved = resolve("PDC", utc(2026, 9, 14, 9));
@@ -65,9 +62,6 @@ fn a_previous_day_window_is_yesterday_by_the_clock_not_by_the_newest_row() {
     );
 }
 
-/// The same reference point decides where a rolling window ends. Ending it at
-/// the newest row let two metrics on one dashboard cover different weeks,
-/// because each carried its own newest row.
 #[test]
 fn a_rolling_window_ends_now_rather_than_at_the_newest_row() {
     let now = utc(2026, 9, 14, 9);
@@ -83,8 +77,6 @@ fn a_rolling_window_ends_now_rather_than_at_the_newest_row() {
     );
 }
 
-/// A stand with nothing recent answers a window that holds no rows, rather
-/// than sliding back to the last day that did.
 #[test]
 fn a_window_past_the_end_of_the_data_stays_empty_rather_than_sliding_back() {
     let newest_row = utc(2026, 9, 11, 5);

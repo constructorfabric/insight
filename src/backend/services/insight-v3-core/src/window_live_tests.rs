@@ -15,10 +15,10 @@ use chrono::Utc;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use crate::anchor::Anchor;
 use crate::catalog::TableEngine;
 use crate::metric_query::{MetricQuery, MetricRunner, People, RunResult};
 use crate::time_window::WindowRequest;
+use crate::undated::UndatedCount;
 
 const URL_VAR: &str = "INTEGRATION_TESTS_CLICKHOUSE_URL";
 
@@ -91,23 +91,22 @@ impl Stand {
             .unwrap_or_else(|error| panic!("the fixture metric parses: {error}"))
     }
 
-    /// The whole run: anchor, window, compiled SQL, rows.
     async fn answer(
         &self,
         metric: &MetricQuery,
         request: &WindowRequest,
         engine: TableEngine,
-    ) -> (RunResult, Anchor) {
-        let anchor = match metric
-            .anchor_query(engine)
-            .unwrap_or_else(|error| panic!("the anchor compiles: {error}"))
+    ) -> (RunResult, UndatedCount) {
+        let undated = match metric
+            .undated_query(engine)
+            .unwrap_or_else(|error| panic!("the undated count compiles: {error}"))
         {
             Some(query) => self
                 .runner
-                .anchor(&query)
+                .undated(&query)
                 .await
-                .unwrap_or_else(|error| panic!("the anchor reads: {error}")),
-            None => Anchor::default(),
+                .unwrap_or_else(|error| panic!("the undated count reads: {error}")),
+            None => UndatedCount::default(),
         };
 
         let window = request
@@ -122,7 +121,7 @@ impl Stand {
             .await
             .unwrap_or_else(|error| panic!("the metric runs: {error}"));
 
-        (result, anchor)
+        (result, undated)
     }
 
     async fn drop_table(&self) {
@@ -281,7 +280,7 @@ async fn rows_carrying_no_clock_are_left_out_of_the_window_and_counted() {
         .await;
 
     let metric = stand.metric(&counted(&json!({ "time": { "column": "occurred_at" } })));
-    let (result, anchor) = stand
+    let (result, undated) = stand
         .answer(
             &metric,
             &request("inf", Some(false)),
@@ -290,13 +289,13 @@ async fn rows_carrying_no_clock_are_left_out_of_the_window_and_counted() {
         .await;
 
     assert_eq!(totals(&result), vec!["2".to_owned()]);
-    assert_eq!(anchor.undated(), 2);
+    assert_eq!(undated.count(), 2);
 
     stand.drop_table().await;
 }
 
 #[tokio::test]
-async fn an_empty_source_answers_no_rows_rather_than_a_window_at_the_epoch() {
+async fn an_empty_source_answers_no_rows() {
     let Some(stand) =
         stand_or_skip("(occurred_at DateTime) ENGINE = MergeTree ORDER BY occurred_at").await
     else {
@@ -414,7 +413,7 @@ async fn a_clock_inside_an_ingested_payload_windows_the_same_way() {
         .await;
 
     let metric = stand.metric(&counted(&json!({ "time": { "json": "committed_at" } })));
-    let (result, anchor) = stand
+    let (result, undated) = stand
         .answer(
             &metric,
             &request("2026-09-01/2026-09-02", Some(false)),
@@ -423,7 +422,7 @@ async fn a_clock_inside_an_ingested_payload_windows_the_same_way() {
         .await;
 
     assert_eq!(totals(&result), vec!["1".to_owned()]);
-    assert_eq!(anchor.undated(), 1);
+    assert_eq!(undated.count(), 1);
 
     stand.drop_table().await;
 }
@@ -451,9 +450,64 @@ async fn a_rolling_window_holds_what_happened_since_and_drops_what_did_not() {
         )
         .await;
 
-    // The window ends at the clock, so a row written an hour ago is inside it
-    // and one from three weeks back is not.
     assert_eq!(totals(&result), vec!["1".to_owned()]);
+
+    stand.drop_table().await;
+}
+
+#[tokio::test]
+async fn a_row_dated_ahead_of_the_clock_is_outside_a_rolling_window() {
+    let Some(stand) =
+        stand_or_skip("(occurred_at DateTime) ENGINE = MergeTree ORDER BY occurred_at").await
+    else {
+        return;
+    };
+    let now = Utc::now();
+    let past = stamp(now - chrono::TimeDelta::hours(1));
+    let ahead = stamp(now + chrono::TimeDelta::days(3));
+    stand
+        .insert("occurred_at", &[past.as_str(), ahead.as_str()])
+        .await;
+
+    let metric = stand.metric(&counted(&json!({ "time": { "column": "occurred_at" } })));
+    let (result, _) = stand
+        .answer(
+            &metric,
+            &request("P7D", Some(false)),
+            TableEngine::MergeTree,
+        )
+        .await;
+
+    assert_eq!(totals(&result), vec!["1".to_owned()]);
+
+    stand.drop_table().await;
+}
+
+#[tokio::test]
+async fn an_undated_count_sees_only_the_rows_the_filters_keep() {
+    let Some(stand) = stand_or_skip(
+        "(repo String, occurred_at Nullable(DateTime)) ENGINE = MergeTree ORDER BY repo",
+    )
+    .await
+    else {
+        return;
+    };
+    stand
+        .insert(
+            "repo, occurred_at",
+            &["('one', NULL)", "('two', NULL)", "('two', NULL)"],
+        )
+        .await;
+
+    let metric = stand.metric(&counted(&json!({
+        "time": { "column": "occurred_at" },
+        "filters": [{ "column": "repo", "type": "string", "op": "eq", "value": "one" }]
+    })));
+    let (_, undated) = stand
+        .answer(&metric, &request("P7D", None), TableEngine::MergeTree)
+        .await;
+
+    assert_eq!(undated.count(), 1);
 
     stand.drop_table().await;
 }
