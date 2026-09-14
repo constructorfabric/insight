@@ -27,6 +27,7 @@ pub mod person_listing;
 pub mod person_roles_repo;
 pub mod persons_log_repo;
 pub mod persons_repo;
+pub(crate) mod reporting_repo;
 pub mod resolution_repo;
 pub mod roles_repo;
 pub mod seed_repo;

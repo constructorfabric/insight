@@ -477,6 +477,7 @@
       "merge": "Merged",
       "detach": "Detached",
       "exclude": "Excluded",
+      "profile_source": "Profile source selected",
       "linked": "Linked",
       "auto_seed_link": "Linked by address",
       "to": "to",
@@ -569,6 +570,11 @@
       "load_failed": "Unable to load this person’s accounts"
     },
     "person_window": {
+      "profile_source": "Profile source",
+      "use_for_profile": "Use for profile",
+      "use_account_for_profile": "Use {{account}} from {{source}} for profile",
+      "profile_source_title": "Change profile source?",
+      "profile_source_description": "This replaces the person's complete roster profile and reporting relationship with this account's data. Other accounts remain linked for activity attribution.",
       "bind_section": "Bind an account to this person",
       "find_account": "Find an account by source, address, handle, id or observed name…",
       "detach": "Detach",

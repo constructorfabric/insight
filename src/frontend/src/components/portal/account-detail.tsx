@@ -44,6 +44,7 @@ const VERB_KEYS: Record<string, string> = {
   "operator-merge": "identities.history.merge",
   "operator-detach": "identities.history.detach",
   "operator-exclude": "identities.history.exclude",
+  "operator-profile-source": "identities.history.profile_source",
   "login-bootstrap": "identities.history.login_bootstrap",
   "roster-mint": "identities.history.roster_mint",
   "auto-seed-link": "identities.history.auto_seed_link",

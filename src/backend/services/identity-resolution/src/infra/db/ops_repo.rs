@@ -78,8 +78,8 @@ const COLUMNS: &str = "operation_id, operation_type, status, insight_tenant_id, 
 /// # Errors
 ///
 /// Returns an error if the insert fails.
-pub async fn enqueue(
-    db: &DatabaseConnection,
+pub async fn enqueue<C: ConnectionTrait>(
+    db: &C,
     operation_id: Uuid,
     operation_type: &str,
     tenant_id: Uuid,
@@ -113,7 +113,7 @@ pub async fn enqueue(
 /// # Errors
 ///
 /// Returns an error if the update fails.
-pub async fn try_start(db: &DatabaseConnection, operation_id: Uuid) -> anyhow::Result<bool> {
+pub async fn try_start<C: ConnectionTrait>(db: &C, operation_id: Uuid) -> anyhow::Result<bool> {
     const SQL: &str =
         "UPDATE operations SET status = 'running' WHERE operation_id = ? AND status = 'queued'";
     let res = db
@@ -131,8 +131,8 @@ pub async fn try_start(db: &DatabaseConnection, operation_id: Uuid) -> anyhow::R
 /// # Errors
 ///
 /// Returns an error if the update fails.
-pub async fn complete(
-    db: &DatabaseConnection,
+pub async fn complete<C: ConnectionTrait>(
+    db: &C,
     operation_id: Uuid,
     summary_json: &str,
 ) -> anyhow::Result<()> {

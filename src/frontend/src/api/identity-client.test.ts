@@ -16,6 +16,7 @@ import {
   listPeople,
   mergePersons,
   searchPersons,
+  selectProfileSource,
 } from "./identity-client";
 
 const mockFetch = fetchWithAuth as unknown as ReturnType<typeof vi.fn>;
@@ -33,6 +34,49 @@ function response(
 
 beforeEach(() => {
   mockFetch.mockReset();
+});
+
+describe("selectProfileSource", () => {
+  const args = {
+    person_id: "01900000-0000-7000-8000-000000000001",
+    account: {
+      source: "directory",
+      source_id: "01900000-0000-7000-8000-000000000002",
+      id: "account-1",
+    },
+  };
+
+  it("sends the selected account to the person's profile-source endpoint", async () => {
+    mockFetch.mockResolvedValueOnce(response({}));
+
+    await selectProfileSource(args);
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      `/api/identity/v1/resolution/persons/${args.person_id}/profile-source`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(args.account),
+      }
+    );
+  });
+
+  it.each([403, 409, 500])("preserves an API refusal with status %s", async (status) => {
+    const body = { error: "selection_refused" };
+    mockFetch.mockResolvedValueOnce(response(body, { ok: false, status }));
+
+    await expect(selectProfileSource(args)).rejects.toMatchObject({ status, body });
+  });
+
+  it("preserves the error status when the refusal body is not JSON", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 502,
+      json: async () => { throw new SyntaxError("Invalid JSON"); },
+    });
+
+    await expect(selectProfileSource(args)).rejects.toMatchObject({ status: 502, body: null });
+  });
 });
 
 describe("listPeople", () => {

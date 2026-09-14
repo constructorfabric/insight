@@ -15,6 +15,7 @@ use super::seed::{KnownBinding, SourceAccountKey};
 /// served by the read API, hidden from the review queue). Unmintable: UUIDv7
 /// never produces an all-ones value.
 pub const EXCLUDED_PERSON: Uuid = Uuid::from_u128(u128::MAX);
+pub(crate) const OPERATION_TYPE: &str = "identity-correction";
 
 /// Which verb produced a correction — stamped into `persons.reason` so the
 /// journal explains itself without joining the operations log.
@@ -24,6 +25,7 @@ pub enum Verb {
     Merge,
     Detach,
     Exclude,
+    ProfileSource,
 }
 
 impl Verb {
@@ -34,6 +36,7 @@ impl Verb {
             Self::Merge => "operator-merge",
             Self::Detach => "operator-detach",
             Self::Exclude => "operator-exclude",
+            Self::ProfileSource => "operator-profile-source",
         }
     }
 }

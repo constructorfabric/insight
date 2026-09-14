@@ -52,6 +52,7 @@ import {
   useDetachAccount,
   useExcludeAccount,
   usePersonAccounts,
+  useSelectProfileSource,
 } from "@/queries/identity-resolution";
 import { cn } from "@/lib/utils";
 
@@ -59,6 +60,7 @@ type PendingAction =
   | { kind: "closed" }
   | { kind: "bind"; account: AccountMatch }
   | { kind: "detach"; account: PersonAccountEntry }
+  | { kind: "profile-source"; account: PersonAccountEntry }
   | { kind: "exclude"; account: PersonAccountEntry };
 
 function wireRef(account: {
@@ -149,7 +151,7 @@ export function PersonDialog({
                 // A ternary, not `named || ...`: `named` is the NAME, and an
                 // `||` fallback puts it in the class list — a display name
                 // carrying a utility word would then restyle or hide itself.
-                named ? undefined : "text-muted-foreground italic",
+                named ? undefined : "text-muted-foreground italic"
               )}
             >
               {named ?? t("identities.person.unnamed")}
@@ -205,6 +207,7 @@ function PersonBody({
   const bind = useBindAccount();
   const detach = useDetachAccount();
   const exclude = useExcludeAccount();
+  const profileSource = useSelectProfileSource();
 
   const close = () => {
     setAction({ kind: "closed" });
@@ -213,6 +216,7 @@ function PersonBody({
     bind.reset();
     detach.reset();
     exclude.reset();
+    profileSource.reset();
   };
   const done = (result: CorrectionResponse) => {
     close();
@@ -243,7 +247,11 @@ function PersonBody({
   // ONLY account does that and nothing else: the account still has one holder,
   // and the person it left keeps their name with nothing to attach it to.
   const detachable = entries.length > 1;
-  const busy = bind.isPending || detach.isPending || exclude.isPending;
+  const busy =
+    bind.isPending ||
+    detach.isPending ||
+    exclude.isPending ||
+    profileSource.isPending;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
@@ -282,13 +290,45 @@ function PersonBody({
                   detachable={detachable}
                   busy={busy}
                   onDetach={() => setAction({ kind: "detach", account: entry })}
-                  onExclude={() => setAction({ kind: "exclude", account: entry })}
+                  onExclude={() =>
+                    setAction({ kind: "exclude", account: entry })
+                  }
+                  onProfileSource={() =>
+                    setAction({ kind: "profile-source", account: entry })
+                  }
                 />
               </li>
             ))}
           </ul>
         )}
       </section>
+
+      {action.kind === "profile-source" ? (
+        <ConfirmDialog
+          open
+          onOpenChange={(open) => !open && close()}
+          title={t("identities.person_window.profile_source_title")}
+          description={t("identities.person_window.profile_source_description")}
+          confirmLabel={t("identities.person_window.use_for_profile")}
+          isPending={profileSource.isPending}
+          error={
+            profileSource.isError
+              ? apiErrorReason(
+                  profileSource.error,
+                  t("identities.dialogs.failed")
+                )
+              : null
+          }
+          onConfirm={() =>
+            profileSource.mutate(
+              { person_id: person.person_id, account: wireRef(action.account) },
+              { onSuccess: close }
+            )
+          }
+        >
+          <AccountLine account={action.account} />
+        </ConfirmDialog>
+      ) : null}
 
       {action.kind === "bind" ? (
         <ConfirmDialog
@@ -317,7 +357,7 @@ function PersonBody({
                 account: wireRef(action.account),
                 person_id: person.person_id,
               },
-              { onSuccess: done },
+              { onSuccess: done }
             )
           }
         >
@@ -382,7 +422,12 @@ function PersonBody({
 function AccountLine({
   account,
 }: {
-  account: { source: string; account_id: string; email?: string | null; username?: string | null };
+  account: {
+    source: string;
+    account_id: string;
+    email?: string | null;
+    username?: string | null;
+  };
 }) {
   const label = account.email?.trim() || account.username?.trim() || account.account_id;
   return (
@@ -408,12 +453,14 @@ function AccountRow({
   busy,
   onDetach,
   onExclude,
+  onProfileSource,
 }: {
   entry: PersonAccountEntry;
   detachable: boolean;
   busy: boolean;
   onDetach: () => void;
   onExclude: () => void;
+  onProfileSource: () => void;
 }) {
   const { t } = useTranslation();
   const label = entry.email?.trim() || entry.username?.trim() || entry.account_id;
@@ -441,6 +488,26 @@ function AccountRow({
           : t("identities.person_accounts.by_automation")}
       </Badge>
       <div className="flex shrink-0 flex-wrap gap-2">
+        {entry.profile_source === "selected" ? (
+          <Badge variant="secondary">
+            {t("identities.person_window.profile_source")}
+          </Badge>
+        ) : null}
+        {entry.profile_source === "eligible" ? (
+          <Button
+            type="button"
+            size="xs"
+            variant="outline"
+            disabled={busy}
+            onClick={onProfileSource}
+            aria-label={t(
+              "identities.person_window.use_account_for_profile",
+              names
+            )}
+          >
+            {t("identities.person_window.use_for_profile")}
+          </Button>
+        ) : null}
         {detachable ? (
           <Button
             type="button"

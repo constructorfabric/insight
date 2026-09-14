@@ -734,6 +734,9 @@
               "null"
             ]
           },
+          "profile_source": {
+            "$ref": "#/components/schemas/ProfileSourceStatus"
+          },
           "source": {
             "type": "string"
           },
@@ -752,7 +755,8 @@
           "source",
           "source_id",
           "account_id",
-          "bound_by_operator"
+          "bound_by_operator",
+          "profile_source"
         ],
         "type": "object"
       },
@@ -1348,6 +1352,30 @@
           "ids"
         ],
         "type": "object"
+      },
+      "ProfileSourceResponse": {
+        "properties": {
+          "account": {
+            "$ref": "#/components/schemas/AccountRef"
+          },
+          "person_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "person_id",
+          "account"
+        ],
+        "type": "object"
+      },
+      "ProfileSourceStatus": {
+        "enum": [
+          "selected",
+          "eligible",
+          "ineligible"
+        ],
+        "type": "string"
       },
       "QueueItemResponse": {
         "properties": {
@@ -4075,6 +4103,121 @@
           }
         ],
         "summary": "Every account bound to a person, with the values behind each link"
+      }
+    },
+    "/v1/resolution/persons/{person_id}/profile-source": {
+      "put": {
+        "operationId": "identity_resolution.resolution.select_profile_source",
+        "parameters": [
+          {
+            "description": "Person id",
+            "in": "path",
+            "name": "person_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountRef"
+              }
+            }
+          },
+          "description": "An active roster account already bound to this person",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileSourceResponse"
+                }
+              }
+            },
+            "description": "Selected profile source"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Select the account supplying a person's complete roster profile (admin)"
       }
     },
     "/v1/roles": {

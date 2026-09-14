@@ -18,6 +18,46 @@ account under it) and `GET /internal/persons/by-email-override` (any source, any
 tenant — the admin `__override` view-as feature only). (The deprecated legacy
 `GET /v1/persons/{email}` is intentionally not carried.)
 
+## Roster profiles and identity corrections
+
+An account binding determines activity attribution. A person's selected roster
+account determines their complete profile; attaching another account does not
+replace or enrich it. The selected account's reference is stored with each
+temporal `people` revision, not used as the person's identity key.
+
+Corrections reconcile bindings, roster rows, and account-backed reporting lines
+in one MariaDB transaction, coordinated with the seed lock. A failed evidence
+read or an ambiguous profile source aborts the correction. Reporting changes
+close and open intervals in `org_chart`; historical relationships are retained.
+The hierarchy remains an authorization input, and a missing manager never
+enables flat visibility.
+
+Corrected person-based manager references retain the original source reference
+and its destination, so unchanged source evidence cannot undo a merge. A changed
+source reference or explicit clear replaces that correction. Account-based
+manager references remain resolvable after exclusion and rebinding. Corrections
+read source observations only for affected accounts and reporting dependencies;
+bounded tenant binding and hierarchy snapshots remain available for resolution
+and cycle checks.
+
+The account listing reports `profile_source` as `selected`, `eligible`, or
+`ineligible`. An administrator can use
+`PUT /v1/resolution/persons/{person_id}/profile-source` with an `AccountRef` to
+select an active roster account already held by the person. This explicitly
+replaces the whole profile and its source reporting relationship. Move a selected
+account only after choosing a replacement when another roster account remains.
+
+Seeding uses the same selected account. New observations from it can update the
+profile; explicit field clears remove values, while missing evidence retains
+them. Existing ambiguous profiles are retained until their source is established
+or explicitly selected. Source selection does not change metric computation or
+transfer role and visibility grants between people.
+
+Apply the normal service migrations and update both the identity service and
+the toolbox that runs seeding. No connector configuration or resync is required.
+The migration is additive, but older seed writers do not preserve the new
+provenance: do not run old seed writers alongside the updated writers.
+
 ## Run locally against the dev cluster DB
 
 The service reads MariaDB (the `persons` journal in the `identity`

@@ -19,8 +19,13 @@ use uuid::Uuid;
 /// A full input scan can outrun the client's 30s default; the seed run as a
 /// whole is bounded by `SEED_TIMEOUT`, so give the read generous headroom.
 const READ_TIMEOUT: Duration = Duration::from_mins(5);
+const ACCOUNT_READ_TIMEOUT: Duration = Duration::from_secs(30);
+pub(crate) const MAX_CORRECTION_ACCOUNTS: usize = 10_000;
+const MAX_CORRECTION_OBSERVATIONS: usize = 100_000;
+const ACCOUNT_READ_CHUNK: usize = 200;
 
-use crate::domain::seed::IdentityInputRow;
+use crate::domain::reporting::SourceEmail;
+use crate::domain::seed::{IdentityInputRow, SourceAccountKey};
 use crate::domain::seed_service::IdentityInputsReader;
 
 /// Verbatim shape from `ClickHouseIdentityInputsReader`: rows ordered so the
@@ -98,12 +103,117 @@ struct InputRow {
     op_type: String,
 }
 
+#[derive(Debug, Row, Deserialize)]
+struct AccountRow {
+    source_type: String,
+    source_id: String,
+    account_id: Option<String>,
+}
+
 /// Reads `identity_inputs` from ClickHouse via the shared client.
 pub struct ClickHouseIdentityInputsReader {
     client: Client,
 }
 
 impl ClickHouseIdentityInputsReader {
+    pub(crate) async fn email_accounts(
+        &self,
+        emails: &[SourceEmail],
+    ) -> anyhow::Result<Vec<SourceAccountKey>> {
+        tokio::time::timeout(ACCOUNT_READ_TIMEOUT, self.read_email_accounts(emails)).await?
+    }
+
+    async fn read_email_accounts(
+        &self,
+        emails: &[SourceEmail],
+    ) -> anyhow::Result<Vec<SourceAccountKey>> {
+        anyhow::ensure!(
+            emails.len() <= MAX_CORRECTION_ACCOUNTS,
+            "correction exceeds the email evidence limit"
+        );
+        let mut result = std::collections::HashSet::new();
+        for chunk in emails.chunks(ACCOUNT_READ_CHUNK) {
+            let sources =
+                vec!["(insight_source_type = ? AND insight_source_id = toUUID(?))"; chunk.len()]
+                    .join(" OR ");
+            let matches = vec!["(source_type = ? AND source_id = ? AND lowerUTF8(trimBoth(ifNull(latest.1, ''))) = ?)"; chunk.len()].join(" OR ");
+            let sql = format!(
+                "WITH latest_emails AS (SELECT insight_source_type AS source_type, toString(insight_source_id) AS source_id, source_account_id AS account_id, argMax(tuple(value, operation_type), tuple(_synced_at, _version)) AS latest FROM identity.identity_inputs WHERE value_type = 'email' AND ({sources}) GROUP BY insight_source_type, insight_source_id, source_account_id) SELECT source_type, source_id, account_id FROM latest_emails WHERE latest.2 != 'DELETE' AND ({matches}) LIMIT 10001"
+            );
+            let mut query = self.client.query(&sql);
+            for email in chunk {
+                query = query
+                    .bind(&email.source_type)
+                    .bind(email.source_id.to_string());
+            }
+            for email in chunk {
+                query = query
+                    .bind(&email.source_type)
+                    .bind(email.source_id.to_string())
+                    .bind(&email.email);
+            }
+            let rows: Vec<AccountRow> = query.fetch_all().await?;
+            anyhow::ensure!(
+                rows.len() <= MAX_CORRECTION_ACCOUNTS,
+                "correction exceeds the email account limit"
+            );
+            for row in rows {
+                result.insert(SourceAccountKey {
+                    source_type: row.source_type,
+                    source_id: Uuid::parse_str(&row.source_id)?,
+                    account_id: row
+                        .account_id
+                        .ok_or_else(|| anyhow::anyhow!("email evidence has no account id"))?,
+                });
+            }
+            anyhow::ensure!(
+                result.len() <= MAX_CORRECTION_ACCOUNTS,
+                "correction exceeds the email account limit"
+            );
+        }
+        Ok(result.into_iter().collect())
+    }
+
+    pub(crate) async fn accounts(
+        &self,
+        accounts: &[SourceAccountKey],
+    ) -> anyhow::Result<Vec<IdentityInputRow>> {
+        tokio::time::timeout(ACCOUNT_READ_TIMEOUT, self.read_accounts(accounts)).await?
+    }
+
+    async fn read_accounts(
+        &self,
+        accounts: &[SourceAccountKey],
+    ) -> anyhow::Result<Vec<IdentityInputRow>> {
+        anyhow::ensure!(
+            accounts.len() <= MAX_CORRECTION_ACCOUNTS,
+            "correction exceeds the account evidence limit"
+        );
+        let mut result = Vec::new();
+        for chunk in accounts.chunks(ACCOUNT_READ_CHUNK) {
+            let predicate = vec!["(insight_source_type = ? AND insight_source_id = toUUID(?) AND source_account_id = ?)"; chunk.len()].join(" OR ");
+            let sql = format!(
+                "SELECT ifNull(insight_source_type, '') AS source_type, ifNull(toString(insight_source_id), '') AS source_id, source_account_id AS account_id, ifNull(value_type, '') AS val_type, ifNull(value, '') AS val, toString(_synced_at) AS synced_at, ifNull(operation_type, '') AS op_type FROM identity.identity_inputs WHERE ({predicate}) ORDER BY _synced_at DESC, _version DESC, value_type, value LIMIT 1 BY insight_source_type, insight_source_id, source_account_id, value_type LIMIT 100001"
+            );
+            let mut query = self.client.query(&sql);
+            for account in chunk {
+                query = query
+                    .bind(&account.source_type)
+                    .bind(account.source_id.to_string())
+                    .bind(&account.account_id);
+            }
+            let rows: Vec<InputRow> = query.fetch_all().await?;
+            anyhow::ensure!(
+                result.len() + rows.len() <= MAX_CORRECTION_OBSERVATIONS,
+                "correction exceeds the observation limit"
+            );
+            for row in rows {
+                result.push(map_row(row)?);
+            }
+        }
+        Ok(result)
+    }
+
     #[must_use]
     pub fn new(client: Client) -> Self {
         Self { client }
@@ -162,59 +272,4 @@ fn parse_ch_datetime(s: &str) -> anyhow::Result<DateTime> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn stream_sql_keeps_empty_value_delete_rows() {
-        assert!(
-            STREAM_SQL.contains("OR operation_type = 'DELETE'"),
-            "DELETE closure signals carry an empty value and must not be value-filtered"
-        );
-        assert!(
-            STREAM_SQL.contains("operation_type = 'UPSERT' AND value IS NOT NULL"),
-            "the non-empty filter applies to UPSERT rows only"
-        );
-    }
-
-    #[test]
-    fn parses_clickhouse_datetime_with_and_without_fraction() -> anyhow::Result<()> {
-        let with_frac = parse_ch_datetime("2026-07-16 12:34:56.123456")?;
-        let no_frac = parse_ch_datetime("2026-07-16 12:34:56")?;
-        assert_eq!(
-            with_frac.format("%Y-%m-%d %H:%M:%S").to_string(),
-            "2026-07-16 12:34:56"
-        );
-        assert_eq!(
-            no_frac.format("%Y-%m-%d %H:%M:%S").to_string(),
-            "2026-07-16 12:34:56"
-        );
-        assert!(parse_ch_datetime("not-a-date").is_err());
-        Ok(())
-    }
-
-    #[test]
-    fn a_null_account_id_fails_the_read_rather_than_minting_a_pseudo_account() -> anyhow::Result<()>
-    {
-        let row = InputRow {
-            source_type: "bamboohr".to_owned(),
-            source_id: Uuid::now_v7().to_string(),
-            account_id: None,
-            val_type: "email".to_owned(),
-            val: "person@inputs.test".to_owned(),
-            synced_at: "2026-01-02 03:04:05.678".to_owned(),
-            op_type: "UPSERT".to_owned(),
-        };
-
-        let refused = map_row(row)
-            .err()
-            .map(|e| e.to_string())
-            .unwrap_or_default();
-
-        anyhow::ensure!(
-            refused.contains("NULL source_account_id"),
-            "an accountless row must name itself in the failure, not fold into '': {refused:?}"
-        );
-        Ok(())
-    }
-}
+pub(crate) mod tests;

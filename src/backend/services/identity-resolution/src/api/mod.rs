@@ -12,6 +12,7 @@ pub mod me;
 pub mod people;
 pub mod person_roles;
 pub mod persons;
+mod profile_source;
 pub mod resolution;
 pub mod roles;
 pub mod seed;
@@ -410,6 +411,25 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         )
         .standard_errors(openapi)
         .handler(resolution::account_binding)
+        .register(router, openapi);
+
+    let router = OperationBuilder::put("/v1/resolution/persons/{person_id}/profile-source")
+        .operation_id("identity_resolution.resolution.select_profile_source")
+        .summary("Select the account supplying a person's complete roster profile (admin)")
+        .authenticated()
+        .path_param("person_id", "Person id")
+        .json_request::<resolution::AccountRef>(
+            openapi,
+            "An active roster account already bound to this person",
+        )
+        .no_license_required()
+        .json_response_with_schema::<profile_source::ProfileSourceResponse>(
+            openapi,
+            StatusCode::OK,
+            "Selected profile source",
+        )
+        .standard_errors(openapi)
+        .handler(profile_source::select)
         .register(router, openapi);
 
     let router = OperationBuilder::get("/v1/resolution/persons/{person_id}/accounts")

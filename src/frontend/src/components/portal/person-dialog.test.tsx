@@ -31,8 +31,7 @@ const hooks = vi.hoisted(() => {
     toast: { success: vi.fn(), error: vi.fn() },
     accounts: {
       data: undefined as
-        | { person_id: string; accounts: PersonAccountEntry[] }
-        | undefined,
+        { person_id: string; accounts: PersonAccountEntry[] } | undefined,
       isLoading: false,
       isError: false,
       refetch: vi.fn(),
@@ -49,6 +48,7 @@ const hooks = vi.hoisted(() => {
     bind: verb(),
     detach: verb(),
     exclude: verb(),
+    profileSource: verb(),
   };
 });
 // The picker debounces its field; identity here keeps the suite about the
@@ -64,6 +64,7 @@ vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
   useBindAccount: () => hooks.bind,
   useDetachAccount: () => hooks.detach,
   useExcludeAccount: () => hooks.exclude,
+  useSelectProfileSource: () => hooks.profileSource,
 }));
 
 import { PersonDialog } from "./person-dialog";
@@ -97,10 +98,10 @@ function match(over: Partial<AccountMatch> = {}): AccountMatch {
   };
 }
 
-function open(card: { person_id: string; display_name?: string } | null = null) {
-  return render(
-    <PersonDialog personId={ANN} card={card} onClose={vi.fn()} />,
-  );
+function open(
+  card: { person_id: string; display_name?: string } | null = null
+) {
+  return render(<PersonDialog personId={ANN} card={card} onClose={vi.fn()} />);
 }
 
 /**
@@ -114,13 +115,13 @@ function open(card: { person_id: string; display_name?: string } | null = null) 
 function confirmation() {
   const asked = screen.getAllByRole("dialog").at(-1) as HTMLElement;
   expect(
-    within(asked).getByRole("button", { name: "Cancel" }),
+    within(asked).getByRole("button", { name: "Cancel" })
   ).toBeInTheDocument();
   return asked;
 }
 
 beforeEach(() => {
-  for (const verb of [hooks.bind, hooks.detach, hooks.exclude]) {
+  for (const verb of [hooks.bind, hooks.detach, hooks.exclude, hooks.profileSource]) {
     // Reset, not clear: `mockClear` keeps an implementation a case installed,
     // and a refusal wired for one verb would then fire in every case after it.
     verb.mutate.mockReset();
@@ -145,6 +146,33 @@ beforeEach(() => {
 });
 
 describe("PersonDialog", () => {
+  it("changes profile source only after confirming the whole-profile impact", async () => {
+    hooks.accounts.data = { person_id: ANN, accounts: [entry({ profile_source: "eligible" })] };
+    open();
+    await userEvent.click(screen.getByRole("button", { name: /^use ann@example\.com.*for profile/i }));
+    expect(screen.getByText(/replaces the person's complete roster profile and reporting relationship/i)).toBeInTheDocument();
+    expect(hooks.profileSource.mutate).not.toHaveBeenCalled();
+    await userEvent.click(within(confirmation()).getByRole("button", { name: "Use for profile" }));
+    expect(hooks.profileSource.mutate).toHaveBeenCalledWith({ person_id: ANN, account: { source: "github", source_id: entry().source_id, id: "gh-main" } }, expect.objectContaining({ onSuccess: expect.any(Function) }));
+  });
+
+  it("marks the selected profile account without offering it again", () => {
+    hooks.accounts.data = { person_id: ANN, accounts: [entry({ profile_source: "selected" })] };
+    open();
+    expect(screen.getByText("Profile source")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /for profile/i })).not.toBeInTheDocument();
+  });
+
+  it("cancels profile-source selection without changing the account", async () => {
+    hooks.accounts.data = { person_id: ANN, accounts: [entry({ profile_source: "eligible" })] };
+    open();
+    await userEvent.click(screen.getByRole("button", { name: /^use ann@example\.com.*for profile/i }));
+
+    await userEvent.click(within(confirmation()).getByRole("button", { name: "Cancel" }));
+
+    expect(hooks.profileSource.mutate).not.toHaveBeenCalled();
+    expect(screen.queryByText(/replaces the person's complete roster profile/i)).not.toBeInTheDocument();
+  });
   it("names the person it is about, and their id", () => {
     hooks.accounts.data = { person_id: ANN, accounts: [entry()] };
     open({ person_id: ANN, display_name: "Ann Lee" });
@@ -173,7 +201,7 @@ describe("PersonDialog", () => {
         personId={ANN}
         card={{ person_id: ANN, display_name: "Ann Lee", status: "terminated" }}
         onClose={vi.fn()}
-      />,
+      />
     );
 
     expect(screen.getByText(/terminated/i)).toBeInTheDocument();
@@ -189,7 +217,7 @@ describe("PersonDialog", () => {
         personId={ANN}
         card={{ person_id: ANN, display_name: "hidden Lee" }}
         onClose={vi.fn()}
-      />,
+      />
     );
 
     const heading = screen.getByText("hidden Lee");
@@ -225,7 +253,10 @@ describe("PersonDialog", () => {
   it("opens nothing from the accounts it lists", async () => {
     hooks.accounts.data = {
       person_id: ANN,
-      accounts: [entry(), entry({ account_id: "gh-alt", email: "alt@example.com" })],
+      accounts: [
+        entry(),
+        entry({ account_id: "gh-alt", email: "alt@example.com" }),
+      ],
     };
     open();
 
@@ -238,9 +269,11 @@ describe("PersonDialog", () => {
     // something opened. (Counting dialogs would not catch it — an open
     // confirmation hides the window behind it from role queries, so the count
     // stays at one either way.)
-    expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /^detach ann@example\.com/i }),
+      screen.queryByRole("button", { name: "Cancel" })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^detach ann@example\.com/i })
     ).toBeInTheDocument();
     for (const verb of [hooks.bind, hooks.detach, hooks.exclude]) {
       expect(verb.mutate).not.toHaveBeenCalled();
@@ -252,7 +285,7 @@ describe("PersonDialog", () => {
     open();
 
     expect(
-      screen.getByText(/no account is bound to this person/i),
+      screen.getByText(/no account is bound to this person/i)
     ).toBeInTheDocument();
   });
 
@@ -274,7 +307,7 @@ describe("PersonDialog", () => {
     expect(screen.queryByRole("button", { name: /^detach /i })).not.toBeInTheDocument();
     // The row is there, so the verb is withheld rather than the list empty.
     expect(
-      screen.getByRole("button", { name: /^exclude ann@example\.com/i }),
+      screen.getByRole("button", { name: /^exclude ann@example\.com/i })
     ).toBeInTheDocument();
   });
 
@@ -292,12 +325,18 @@ describe("PersonDialog", () => {
     expect(asked.getByText(/take this account off this person/i)).toBeInTheDocument();
     expect(asked.getByText(/keeps their other accounts/i)).toBeInTheDocument();
     await userEvent.click(
-      within(confirmation()).getByRole("button", { name: /^detach$/i }),
+      within(confirmation()).getByRole("button", { name: /^detach$/i })
     );
 
     expect(hooks.detach.mutate).toHaveBeenCalledWith(
-      { account: { source: "github", source_id: entry().source_id, id: "gh-main" } },
-      expect.anything(),
+      {
+        account: {
+          source: "github",
+          source_id: entry().source_id,
+          id: "gh-main",
+        },
+      },
+      expect.anything()
     );
   });
 
@@ -309,7 +348,10 @@ describe("PersonDialog", () => {
     async (verb) => {
       hooks.accounts.data = {
         person_id: ANN,
-        accounts: [entry(), entry({ account_id: "gh-alt", email: "alt@example.com" })],
+        accounts: [
+          entry(),
+          entry({ account_id: "gh-alt", email: "alt@example.com" }),
+        ],
       };
       open();
 
@@ -319,21 +361,29 @@ describe("PersonDialog", () => {
       expect(asked.getByText("ann@example.com")).toBeInTheDocument();
       expect(asked.getByText(/github · gh-main/)).toBeInTheDocument();
       expect(asked.queryByText("alt@example.com")).not.toBeInTheDocument();
-    },
+    }
   );
 
   it("excludes an account behind a confirmation", async () => {
     hooks.accounts.data = { person_id: ANN, accounts: [entry()] };
     open();
 
-    await userEvent.click(screen.getByRole("button", { name: /^exclude ann@example\.com/i }));
     await userEvent.click(
-      within(confirmation()).getByRole("button", { name: /^exclude$/i }),
+      screen.getByRole("button", { name: /^exclude ann@example\.com/i })
+    );
+    await userEvent.click(
+      within(confirmation()).getByRole("button", { name: /^exclude$/i })
     );
 
     expect(hooks.exclude.mutate).toHaveBeenCalledWith(
-      { account: { source: "github", source_id: entry().source_id, id: "gh-main" } },
-      expect.anything(),
+      {
+        account: {
+          source: "github",
+          source_id: entry().source_id,
+          id: "gh-main",
+        },
+      },
+      expect.anything()
     );
   });
 
@@ -346,7 +396,7 @@ describe("PersonDialog", () => {
 
     await userEvent.type(
       screen.getByRole("searchbox", { name: /find an account/i }),
-      "annlee",
+      "annlee"
     );
     await userEvent.click(screen.getByRole("button", { name: /^annlee,/ }));
     expect(hooks.bind.mutate).not.toHaveBeenCalled();
@@ -355,7 +405,7 @@ describe("PersonDialog", () => {
     expect(within(confirmation()).getByText("Ann Lee")).toBeInTheDocument();
 
     await userEvent.click(
-      within(confirmation()).getByRole("button", { name: /^bind$/i }),
+      within(confirmation()).getByRole("button", { name: /^bind$/i })
     );
 
     expect(hooks.bind.mutate).toHaveBeenCalledWith(
@@ -363,7 +413,7 @@ describe("PersonDialog", () => {
         account: { source: "zoom", source_id: match().source_id, id: "zm-9" },
         person_id: ANN,
       },
-      expect.anything(),
+      expect.anything()
     );
   });
 
@@ -373,19 +423,23 @@ describe("PersonDialog", () => {
     hooks.accounts.data = { person_id: ANN, accounts: [entry()] };
     hooks.search.data = {
       pages: [
-        { items: [match({ person: { person_id: BOB, display_name: "Bob Park" } })] },
+        {
+          items: [
+            match({ person: { person_id: BOB, display_name: "Bob Park" } }),
+          ],
+        },
       ],
     };
     open();
 
     await userEvent.type(
       screen.getByRole("searchbox", { name: /find an account/i }),
-      "annlee",
+      "annlee"
     );
     await userEvent.click(screen.getByRole("button", { name: /^annlee,/ }));
 
     expect(
-      within(confirmation()).getByText(/taken from Bob Park/i),
+      within(confirmation()).getByText(/taken from Bob Park/i)
     ).toBeInTheDocument();
   });
 
@@ -400,7 +454,7 @@ describe("PersonDialog", () => {
 
     await userEvent.type(
       screen.getByRole("searchbox", { name: /find an account/i }),
-      "ann",
+      "ann"
     );
 
     expect(screen.getByRole("button", { name: /^annlee,/ })).toBeInTheDocument();
@@ -424,7 +478,10 @@ describe("PersonDialog", () => {
   it("locks the verbs while one is in flight", async () => {
     hooks.accounts.data = {
       person_id: ANN,
-      accounts: [entry(), entry({ account_id: "gh-alt", email: "alt@example.com" })],
+      accounts: [
+        entry(),
+        entry({ account_id: "gh-alt", email: "alt@example.com" }),
+      ],
     };
     hooks.exclude.isPending = true;
     open();
@@ -448,13 +505,13 @@ describe("PersonDialog", () => {
     // Opened before the flag is set: the row verb that reaches this dialog is
     // itself disabled while a write is in flight.
     await userEvent.click(
-      screen.getByRole("button", { name: /^exclude ann@example\.com/i }),
+      screen.getByRole("button", { name: /^exclude ann@example\.com/i })
     );
     hooks.exclude.isPending = true;
     rerender(<PersonDialog personId={ANN} card={null} onClose={vi.fn()} />);
 
     expect(
-      within(confirmation()).getByRole("button", { name: /^exclude$/i }),
+      within(confirmation()).getByRole("button", { name: /^exclude$/i })
     ).toBeDisabled();
   });
 
@@ -466,11 +523,11 @@ describe("PersonDialog", () => {
     open();
 
     await userEvent.click(
-      screen.getByRole("button", { name: /^exclude ann@example\.com/i }),
+      screen.getByRole("button", { name: /^exclude ann@example\.com/i })
     );
 
     expect(
-      within(confirmation()).getByText(/was not applied/i),
+      within(confirmation()).getByText(/was not applied/i)
     ).toBeInTheDocument();
   });
 
@@ -481,10 +538,10 @@ describe("PersonDialog", () => {
     open();
 
     await userEvent.click(
-      screen.getByRole("button", { name: /^exclude ann@example\.com/i }),
+      screen.getByRole("button", { name: /^exclude ann@example\.com/i })
     );
     await userEvent.click(
-      within(confirmation()).getByRole("button", { name: "Cancel" }),
+      within(confirmation()).getByRole("button", { name: "Cancel" })
     );
 
     for (const verb of [hooks.bind, hooks.detach, hooks.exclude]) {
@@ -501,16 +558,16 @@ describe("PersonDialog", () => {
           applied: 1,
           already_decided: 0,
           items: [{ ...entry(), outcome: "applied" }],
-        }),
+        })
     );
     hooks.accounts.data = { person_id: ANN, accounts: [entry()] };
     open();
 
     await userEvent.click(
-      screen.getByRole("button", { name: /^exclude ann@example\.com/i }),
+      screen.getByRole("button", { name: /^exclude ann@example\.com/i })
     );
     await userEvent.click(
-      within(confirmation()).getByRole("button", { name: /^exclude$/i }),
+      within(confirmation()).getByRole("button", { name: /^exclude$/i })
     );
 
     expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
@@ -531,19 +588,22 @@ describe("PersonDialog", () => {
           already_decided: 0,
           items: [{ ...entry(), outcome: "applied" }],
           new_person_id: minted,
-        }),
+        })
     );
     hooks.accounts.data = {
       person_id: ANN,
-      accounts: [entry(), entry({ account_id: "gh-alt", email: "alt@example.com" })],
+      accounts: [
+        entry(),
+        entry({ account_id: "gh-alt", email: "alt@example.com" }),
+      ],
     };
     open();
 
     await userEvent.click(
-      screen.getByRole("button", { name: /^detach ann@example\.com/i }),
+      screen.getByRole("button", { name: /^detach ann@example\.com/i })
     );
     await userEvent.click(
-      within(confirmation()).getByRole("button", { name: /^detach$/i }),
+      within(confirmation()).getByRole("button", { name: /^detach$/i })
     );
 
     expect(hooks.toast.success).toHaveBeenCalledWith(
@@ -551,7 +611,7 @@ describe("PersonDialog", () => {
       expect.objectContaining({
         description: expect.stringContaining(minted),
         duration: expect.any(Number),
-      }),
+      })
     );
   });
 
@@ -564,16 +624,16 @@ describe("PersonDialog", () => {
           applied: 0,
           already_decided: 1,
           items: [{ ...entry(), outcome: "already_decided" }],
-        }),
+        })
     );
     hooks.accounts.data = { person_id: ANN, accounts: [entry()] };
     open();
 
     await userEvent.click(
-      screen.getByRole("button", { name: /^exclude ann@example\.com/i }),
+      screen.getByRole("button", { name: /^exclude ann@example\.com/i })
     );
     await userEvent.click(
-      within(confirmation()).getByRole("button", { name: /^exclude$/i }),
+      within(confirmation()).getByRole("button", { name: /^exclude$/i })
     );
 
     expect(hooks.toast.success).toHaveBeenCalled();
@@ -596,7 +656,7 @@ describe("PersonDialog", () => {
         personId={ANN}
         card={{ person_id: BOB, display_name: "Bob Park" }}
         onClose={vi.fn()}
-      />,
+      />
     );
 
     expect(screen.queryByText("Bob Park")).not.toBeInTheDocument();
@@ -612,7 +672,7 @@ describe("PersonDialog", () => {
         personId={ANN}
         card={{ person_id: ANN, display_name: "Ann Lee", provisional: true }}
         onClose={vi.fn()}
-      />,
+      />
     );
 
     expect(screen.getByText(/provisional/i)).toBeInTheDocument();
@@ -627,15 +687,19 @@ describe("PersonDialog", () => {
       items: [{ ...entry(), outcome: "refused" }],
     };
     hooks.exclude.mutate.mockImplementation(
-      (_args: unknown, opts?: { onSuccess?: (r: CorrectionResponse) => void }) =>
-        opts?.onSuccess?.(refusal),
+      (
+        _args: unknown,
+        opts?: { onSuccess?: (r: CorrectionResponse) => void }
+      ) => opts?.onSuccess?.(refusal)
     );
     hooks.accounts.data = { person_id: ANN, accounts: [entry()] };
     open();
 
-    await userEvent.click(screen.getByRole("button", { name: /^exclude ann@example\.com/i }));
     await userEvent.click(
-      within(confirmation()).getByRole("button", { name: /^exclude$/i }),
+      screen.getByRole("button", { name: /^exclude ann@example\.com/i })
+    );
+    await userEvent.click(
+      within(confirmation()).getByRole("button", { name: /^exclude$/i })
     );
 
     expect(screen.getByText(/1 refused/i)).toBeInTheDocument();

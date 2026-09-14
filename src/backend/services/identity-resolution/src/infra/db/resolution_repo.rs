@@ -123,8 +123,8 @@ fn current_bindings_sql(scope: Scope) -> String {
 /// # Errors
 ///
 /// Returns an error if the query fails or a stored id column is not 16 bytes.
-pub async fn current_bindings(
-    db: &DatabaseConnection,
+pub async fn current_bindings<C: ConnectionTrait>(
+    db: &C,
     tenant_id: Uuid,
     accounts: &[SourceAccountKey],
 ) -> anyhow::Result<HashMap<SourceAccountKey, KnownBinding>> {
@@ -175,8 +175,8 @@ pub struct BindingSnapshot {
 /// # Errors
 ///
 /// Returns an error if the query fails or a stored id column is not 16 bytes.
-pub async fn current_bindings_in_tenant(
-    db: &DatabaseConnection,
+pub async fn current_bindings_in_tenant<C: ConnectionTrait>(
+    db: &C,
     tenant_id: Uuid,
     ceiling: Ceiling,
 ) -> anyhow::Result<BindingSnapshot> {
@@ -459,8 +459,8 @@ fn is_lock_conflict(error: &sea_orm::DbErr) -> bool {
         || message.contains("Lock wait timeout exceeded")
 }
 
-pub async fn append_bindings(
-    db: &DatabaseConnection,
+pub(crate) async fn append_bindings_in<C: ConnectionTrait>(
+    db: &C,
     tenant_id: Uuid,
     rows: &[BindingRow],
 ) -> anyhow::Result<u64> {
@@ -470,8 +470,6 @@ pub async fn append_bindings(
          created_at) VALUES ";
     const ROW_TUPLE: &str = "(?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?)";
     const INSERT_CHUNK: usize = 500;
-
-    let txn = db.begin().await?;
 
     let mut appended = 0u64;
     for chunk in rows.chunks(INSERT_CHUNK) {
@@ -491,7 +489,7 @@ pub async fn append_bindings(
             params.push(row.created_at.into());
         }
 
-        let res = txn
+        let res = db
             .execute_raw(Statement::from_sql_and_values(
                 DbBackend::MySql,
                 &sql,
@@ -500,8 +498,6 @@ pub async fn append_bindings(
             .await?;
         appended += res.rows_affected();
     }
-
-    txn.commit().await?;
 
     tracing::info!(appended, "identity correction: bindings appended");
     Ok(appended)
@@ -575,8 +571,8 @@ pub async fn binding_history(
 /// # Errors
 ///
 /// Returns an error if the query fails.
-pub async fn present_rows(
-    db: &DatabaseConnection,
+pub async fn present_rows<C: ConnectionTrait>(
+    db: &C,
     tenant_id: Uuid,
     rows: &[BindingRow],
 ) -> anyhow::Result<Vec<bool>> {

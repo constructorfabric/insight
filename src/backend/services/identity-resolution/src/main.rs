@@ -10,6 +10,7 @@
 
 mod api;
 mod config;
+mod correction_runner;
 mod domain;
 mod gear;
 mod infra;

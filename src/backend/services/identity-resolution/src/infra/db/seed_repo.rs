@@ -20,7 +20,9 @@ use sea_orm::{
 use uuid::Uuid;
 
 use crate::domain::people::PersonChange;
-use crate::domain::seed::{KnownBinding, SeedObservationRow, SourceAccountKey, normalize_email};
+use crate::domain::seed::{
+    KnownBinding, PersonAssignment, SeedObservationRow, SourceAccountKey, normalize_email,
+};
 use crate::domain::seed_service::{ApplyCounts, SeedStore};
 use crate::infra::db::{people_repo, resolution_repo};
 use crate::infra::metrics::{self, DbQuery};
@@ -40,6 +42,18 @@ impl<'a> MariaDbSeedStore<'a> {
 
 #[async_trait]
 impl SeedStore for MariaDbSeedStore<'_> {
+    async fn current_reporting(
+        &self,
+        tenant_id: Uuid,
+    ) -> anyhow::Result<Vec<crate::domain::reporting::ReportingLine>> {
+        super::reporting_repo::current(self.db, tenant_id).await
+    }
+    async fn current_people(
+        &self,
+        tenant_id: Uuid,
+    ) -> anyhow::Result<HashMap<Uuid, crate::domain::people::PersonProjection>> {
+        Ok(people_repo::current_projections(self.db, tenant_id).await?)
+    }
     async fn known_account_bindings(
         &self,
         tenant_id: Uuid,
@@ -67,6 +81,7 @@ impl SeedStore for MariaDbSeedStore<'_> {
         rows: &[SeedObservationRow],
         people: &[PersonChange],
         retained_people: Option<&std::collections::HashSet<Uuid>>,
+        assignments: &[PersonAssignment],
     ) -> anyhow::Result<ApplyCounts> {
         let started = std::time::Instant::now();
         let result = apply(
@@ -76,6 +91,7 @@ impl SeedStore for MariaDbSeedStore<'_> {
             rows,
             people,
             retained_people,
+            assignments,
         )
         .await;
         metrics::record_db_query(DbQuery::Apply, started.elapsed());
@@ -244,7 +260,23 @@ async fn rebuild_org_chart(
     tenant_id: Uuid,
     author_person_id: Uuid,
 ) -> anyhow::Result<u64> {
-    const DELETE_ORG_CHART: &str = "DELETE FROM org_chart WHERE insight_tenant_id = ?";
+    const DELETE_ORG_CHART: &str = "
+        DELETE FROM org_chart
+        WHERE insight_tenant_id = ?
+          AND NOT EXISTS (
+              SELECT 1 FROM people p
+              WHERE p.insight_tenant_id = org_chart.insight_tenant_id
+                AND p.person_id = org_chart.child_person_id
+                AND p.profile_source_type = org_chart.insight_source_type
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM org_chart protected
+              WHERE protected.insight_tenant_id = org_chart.insight_tenant_id
+                AND protected.child_person_id = org_chart.child_person_id
+                AND protected.insight_source_type = org_chart.insight_source_type
+                AND protected.insight_source_id = org_chart.insight_source_id
+                AND protected.parent_reference IS NOT NULL
+          )";
     // The `?` markers bind, in order: `insight_tenant_id` SIX times (state_log,
     // default_active, pe_periods, email_to_person, existing_edges,
     // source_member_latest_active), then `author_person_id` once (the Path-B
@@ -437,6 +469,7 @@ async fn rebuild_org_chart(
                OR latest.person_id IS NOT NULL
         )
 
+        , legacy_edges AS (
         SELECT * FROM existing_edges
 
         UNION ALL
@@ -457,6 +490,18 @@ async fn rebuild_org_chart(
                 AND e.insight_source_id   = sm.insight_source_id
                 AND e.child_person_id     = sm.person_id
           )
+        )
+        SELECT insight_tenant_id, insight_source_type, insight_source_id,
+               child_person_id, parent_person_id, author_person_id, reason, valid_from, valid_to
+        FROM legacy_edges e
+        WHERE NOT EXISTS (SELECT 1 FROM people p WHERE p.insight_tenant_id = e.insight_tenant_id
+                          AND p.person_id = e.child_person_id AND p.profile_source_type = e.insight_source_type)
+          AND NOT EXISTS (SELECT 1 FROM org_chart protected
+                          WHERE protected.insight_tenant_id = e.insight_tenant_id
+                            AND protected.child_person_id = e.child_person_id
+                            AND protected.insight_source_type = e.insight_source_type
+                            AND protected.insight_source_id = e.insight_source_id
+                            AND protected.parent_reference IS NOT NULL)
     ";
 
     let tenant_bytes = tenant_id.as_bytes().to_vec();
@@ -510,6 +555,7 @@ pub async fn apply(
     rows: &[SeedObservationRow],
     people: &[PersonChange],
     retained_people: Option<&std::collections::HashSet<Uuid>>,
+    assignments: &[PersonAssignment],
 ) -> anyhow::Result<ApplyCounts> {
     // Idempotent insert — uq_person_observation dedups a re-emitted identical
     // observation; INSERT IGNORE swallows the duplicate-key error. Batched
@@ -555,6 +601,7 @@ pub async fn apply(
     tracing::info!(inserted, "persons-seed apply: observations inserted");
 
     let people_counts = people_repo::reconcile(&txn, tenant_id, people, retained_people).await?;
+    super::reporting_repo::reconcile_seed(&txn, tenant_id, author_person_id, assignments).await?;
     let org_chart_rows_rebuilt = rebuild_org_chart(&txn, tenant_id, author_person_id).await?;
 
     txn.commit().await?;

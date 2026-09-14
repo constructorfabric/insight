@@ -30,6 +30,15 @@ pub trait IdentityInputsReader {
 /// apply. Implemented over MariaDB by `infra::db::seed_repo`.
 #[async_trait]
 pub trait SeedStore {
+    async fn current_reporting(
+        &self,
+        tenant_id: Uuid,
+    ) -> anyhow::Result<Vec<super::reporting::ReportingLine>>;
+    async fn current_people(
+        &self,
+        tenant_id: Uuid,
+    ) -> anyhow::Result<HashMap<Uuid, people::PersonProjection>>;
+
     async fn known_account_bindings(
         &self,
         tenant_id: Uuid,
@@ -47,6 +56,7 @@ pub trait SeedStore {
         rows: &[SeedObservationRow],
         people: &[PersonChange],
         retained_people: Option<&HashSet<Uuid>>,
+        assignments: &[PersonAssignment],
     ) -> anyhow::Result<ApplyCounts>;
 }
 
@@ -145,7 +155,24 @@ where
 
     // 3. Materialize the resolved observations and apply them.
     let observation_rows = assignments_to_rows(&outcome.assignments, author_person_id, &known);
-    let people_changes = people::changes(&outcome.assignments, roster);
+    let current_people = store.current_people(tenant_id).await?;
+    let current_reporting = store.current_reporting(tenant_id).await?;
+    let profile_evidence = outcome
+        .assignments
+        .iter()
+        .flat_map(|assignment| &assignment.profiles)
+        .map(|profile| (profile.account.clone(), profile.clone()))
+        .collect();
+    let current_people =
+        super::roster_correction::infer_profile_sources(&super::roster_correction::Snapshot {
+            people: &current_people,
+            bindings: &known,
+            profiles: &profile_evidence,
+            reporting: &current_reporting,
+            roster,
+        });
+    let people_changes =
+        people::changes_preserving_profiles(&outcome.assignments, roster, &current_people);
     let retained_people = retained_roster_people(&known, &outcome.assignments, roster);
     tracing::info!(
         observation_rows = observation_rows.len(),
@@ -158,6 +185,7 @@ where
             &observation_rows,
             &people_changes,
             retained_people.as_ref(),
+            &outcome.assignments,
         )
         .await?;
     tracing::info!(
@@ -282,6 +310,18 @@ mod tests {
     }
     #[async_trait]
     impl SeedStore for FakeStore {
+        async fn current_reporting(
+            &self,
+            _tenant: Uuid,
+        ) -> anyhow::Result<Vec<super::super::reporting::ReportingLine>> {
+            Ok(Vec::new())
+        }
+        async fn current_people(
+            &self,
+            _tenant: Uuid,
+        ) -> anyhow::Result<HashMap<Uuid, people::PersonProjection>> {
+            Ok(HashMap::new())
+        }
         async fn known_account_bindings(
             &self,
             _tenant: Uuid,
@@ -301,6 +341,7 @@ mod tests {
             rows: &[SeedObservationRow],
             people: &[PersonChange],
             _retained_people: Option<&HashSet<Uuid>>,
+            _assignments: &[PersonAssignment],
         ) -> anyhow::Result<ApplyCounts> {
             // Net-inserted (no dedup in the fake); org_chart rebuild is DB-only.
             Ok(ApplyCounts {

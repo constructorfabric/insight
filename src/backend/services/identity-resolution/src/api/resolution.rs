@@ -55,7 +55,7 @@ const MAX_COMMENT_LEN: usize = 500;
 /// resolving to zero or several active accounts is reported per item and never
 /// guessed. The response already carries per-item outcomes, so adding it does
 /// not change the shape of this contract.
-#[derive(Debug, Clone, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct AccountRef {
     /// Connector type, e.g. `github`.
     pub source: String,
@@ -179,6 +179,10 @@ pub async fn bind(
         });
     }
 
+    let _guard = crate::correction_runner::lock(&state.config, tenant)
+        .await
+        .map_err(correction_error)?;
+
     let response = apply_correction(
         &state,
         tenant,
@@ -217,6 +221,10 @@ pub async fn merge(
     reject_excluded_person(req.target_person_id, "target_person_id")?;
     require_known_person(&state.db, tenant, req.source_person_id).await?;
     require_known_person(&state.db, tenant, req.target_person_id).await?;
+
+    let _guard = crate::correction_runner::lock(&state.config, tenant)
+        .await
+        .map_err(correction_error)?;
 
     let accounts = resolution_repo::accounts_of_person(&state.db, tenant, req.source_person_id)
         .await
@@ -265,6 +273,10 @@ pub async fn detach(
         person_id: new_person_id,
     }];
 
+    let _guard = crate::correction_runner::lock(&state.config, tenant)
+        .await
+        .map_err(correction_error)?;
+
     let mut outcome = apply_correction(
         &state,
         tenant,
@@ -306,6 +318,10 @@ pub async fn exclude(
         account,
         person_id: EXCLUDED_PERSON,
     }];
+
+    let _guard = crate::correction_runner::lock(&state.config, tenant)
+        .await
+        .map_err(correction_error)?;
 
     let outcome = apply_correction(
         &state,
@@ -375,7 +391,9 @@ async fn apply_correction(
         })
         .map(|(index, _)| index)
         .collect();
-    let landed = write_rows(state, tenant, rows).await?;
+    let landed = crate::correction_runner::apply(&state.db, &state.config, tenant, rows)
+        .await
+        .map_err(correction_error)?;
 
     let mut outcomes = vec![OUTCOME_ALREADY_DECIDED; targets.len()];
     for (slot, index) in written.iter().enumerate() {
@@ -450,73 +468,24 @@ fn count_items(items: &[ItemResult], wanted: &str) -> usize {
     items.iter().filter(|i| i.outcome == wanted).count()
 }
 
-/// Append the rows, then recover only those the database refused.
-///
-/// The natural key has no account discriminator, so a concurrent operation can
-/// have claimed the same microsecond and `INSERT IGNORE` silently drops the
-/// loser. A short write is diagnosed by asking which of these exact rows the
-/// journal now holds — author and instant included, because a confirmation
-/// writes an operator row over an automatic binding to the same person and
-/// "the account points at this person" cannot tell those two apart. Only the
-/// rows that are missing are re-stamped and retried; the ones that landed must
-/// not be sent again or the history gains duplicates.
-///
-/// Returns, per input row, whether its observation is in the journal.
-async fn write_rows(
-    state: &AppState,
-    tenant: Uuid,
-    rows: Vec<resolution::BindingRow>,
-) -> Result<Vec<bool>, CanonicalError> {
-    if rows.is_empty() {
-        return Ok(Vec::new());
+pub(super) fn correction_error(
+    error: crate::correction_runner::CorrectionRunError,
+) -> CanonicalError {
+    match error {
+        crate::correction_runner::CorrectionRunError::Busy => {
+            CorrectionError::aborted("another identity operation is running; retry the correction")
+                .with_reason("IDENTITY_BUSY")
+                .create()
+        }
+        crate::correction_runner::CorrectionRunError::Projection(error) => {
+            CorrectionError::aborted(error.to_string())
+                .with_reason("ROSTER_CORRECTION_REQUIRED")
+                .create()
+        }
+        crate::correction_runner::CorrectionRunError::Failed(error) => {
+            internal(&error, "failed to apply the identity correction")
+        }
     }
-
-    let appended = append(state, tenant, &rows).await?;
-    if appended == rows.len() as u64 {
-        return Ok(vec![true; rows.len()]);
-    }
-
-    let mut present = present_rows(state, tenant, &rows).await?;
-
-    let missing = resolution::missing(&rows, &present);
-    if missing.is_empty() {
-        return Ok(present);
-    }
-
-    let retry = resolution::restamp(&missing, chrono::Utc::now().naive_utc());
-    append(state, tenant, &retry).await?;
-
-    let recovered = present_rows(state, tenant, &retry).await?;
-    resolution::apply_recovery(&mut present, &recovered);
-
-    let refused = present.iter().filter(|landed| !**landed).count();
-    if refused > 0 {
-        tracing::warn!(
-            refused,
-            "identity correction: rows the database refused twice"
-        );
-    }
-    Ok(present)
-}
-
-async fn append(
-    state: &AppState,
-    tenant: Uuid,
-    rows: &[resolution::BindingRow],
-) -> Result<u64, CanonicalError> {
-    resolution_repo::append_bindings(&state.db, tenant, rows)
-        .await
-        .map_err(|e| internal(&e, "failed to append the correction"))
-}
-
-async fn present_rows(
-    state: &AppState,
-    tenant: Uuid,
-    rows: &[resolution::BindingRow],
-) -> Result<Vec<bool>, CanonicalError> {
-    resolution_repo::present_rows(&state.db, tenant, rows)
-        .await
-        .map_err(|e| internal(&e, "failed to verify the correction"))
 }
 
 /// Record the call in the operations journal. Journalling must never fail the
@@ -569,7 +538,7 @@ async fn journal(
 }
 
 /// `operations.operation_type` for operator corrections.
-pub const RESOLUTION_OP: &str = "identity-correction";
+pub(crate) use crate::domain::resolution::OPERATION_TYPE as RESOLUTION_OP;
 
 /// Per-item outcome vocabulary.
 const OUTCOME_APPLIED: &str = "applied";
@@ -689,7 +658,7 @@ fn invalid(field: &str, message: &str) -> CanonicalError {
         .create()
 }
 
-fn internal(error: &anyhow::Error, message: &str) -> CanonicalError {
+fn internal(error: &impl std::fmt::Display, message: &str) -> CanonicalError {
     tracing::error!(error = %error, "{message}");
     CanonicalError::internal(message).create()
 }
@@ -1285,6 +1254,15 @@ pub struct PersonAccountEntry {
     pub username: Option<String>,
     /// `true` when the account's current binding was made by a person.
     pub bound_by_operator: bool,
+    pub profile_source: ProfileSourceStatus,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfileSourceStatus {
+    Selected,
+    Eligible,
+    Ineligible,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -1310,23 +1288,57 @@ pub async fn person_accounts(
     let bindings = resolution_repo::current_bindings(&state.db, tenant, &accounts)
         .await
         .map_err(|e| internal(&e, "failed to read current bindings"))?;
-    let evidence = read_evidence(&state).await?;
-    let by_account: HashMap<&SourceAccountKey, &AccountEvidence> =
-        evidence.accounts.iter().map(|e| (&e.account, e)).collect();
+    let reader = crate::infra::identity_inputs::ClickHouseIdentityInputsReader::connect(
+        &state.config.clickhouse_url,
+        &state.config.clickhouse_database,
+        &state.config.clickhouse_user,
+        &state.config.clickhouse_password,
+    );
+    let rows = reader
+        .accounts(&accounts)
+        .await
+        .map_err(|error| internal(&error, "failed to read account profiles"))?;
+    let profiles: HashMap<_, _> = crate::domain::seed::build_profiles(rows)
+        .into_iter()
+        .map(|profile| (profile.account.clone(), profile))
+        .collect();
+    let person = crate::infra::db::people_repo::current_projection(&state.db, tenant, person_id)
+        .await
+        .map_err(|error| internal(&error, "failed to read profile source"))?;
+    let selected = person
+        .as_ref()
+        .and_then(|person| person.profile_account.as_deref());
 
     let entries = accounts
         .iter()
         .map(|account| {
-            let observed = by_account.get(account).copied();
+            let observed = profiles.get(account);
             PersonAccountEntry {
                 source: account.source_type.clone(),
                 source_id: account.source_id,
                 account_id: account.account_id.clone(),
-                email: observed.and_then(|e| e.email.clone()),
-                username: observed.and_then(|e| e.username.clone()),
+                email: observed.and_then(|e| e.latest_email.clone()),
+                username: observed.and_then(|e| {
+                    e.observations
+                        .iter()
+                        .find(|row| row.value_type == "username" && !row.is_delete)
+                        .map(|row| row.value.clone())
+                }),
                 bound_by_operator: bindings
                     .get(account)
                     .is_some_and(crate::domain::seed::KnownBinding::is_operator_authored),
+                profile_source: if selected == Some(account) {
+                    ProfileSourceStatus::Selected
+                } else if observed.is_some_and(|profile| {
+                    profile.account.source_type == state.config.roster_source_type.trim()
+                        && profile
+                            .roster_membership
+                            .is_some_and(|membership| membership.active)
+                }) {
+                    ProfileSourceStatus::Eligible
+                } else {
+                    ProfileSourceStatus::Ineligible
+                },
             }
         })
         .collect();

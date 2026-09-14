@@ -13,6 +13,7 @@ import {
   useQuery,
   useQueryClient,
   type InfiniteData,
+  type QueryClient,
   type UseInfiniteQueryResult,
   type UseMutationResult,
   type UseQueryResult,
@@ -31,6 +32,7 @@ import {
   QUEUE_FIRST_PAGE,
   searchAccounts,
   searchPersons,
+  selectProfileSource,
   type AccountBinding,
   type AccountSearchResponse,
   type AttentionResponse,
@@ -54,7 +56,7 @@ const ATTENTION_STALE_TIME = 60 * 1000;
  * from, and a bigger ask returns a longer prefix of the same order.
  */
 export function useAttention(
-  limit: number = QUEUE_FIRST_PAGE,
+  limit: number = QUEUE_FIRST_PAGE
 ): UseQueryResult<AttentionResponse> {
   const { session } = useAuth();
   const sessionScope = sessionAuthorizationScope(session);
@@ -70,7 +72,7 @@ export function useAttention(
 }
 
 export function useAccountBinding(
-  ref: AccountRef | null,
+  ref: AccountRef | null
 ): UseQueryResult<AccountBinding> {
   const { session } = useAuth();
   const sessionScope = sessionAuthorizationScope(session);
@@ -103,10 +105,16 @@ const RESOLUTION_KEY = ["identity", "resolution"] as const;
 const PERSON_SEARCH_KEY = ["identity", "persons", "search"] as const;
 const PEOPLE_SEARCH_KEY = ["identity", "people", "search"] as const;
 
+function invalidateIdentityViews(client: QueryClient) {
+  for (const queryKey of [RESOLUTION_KEY, PERSON_SEARCH_KEY, PEOPLE_SEARCH_KEY, ["identity", "person"], ["identity", "visible-roster"]]) {
+    void client.invalidateQueries({ queryKey });
+  }
+}
+
 type Verb<TArgs> = UseMutationResult<CorrectionResponse, unknown, TArgs>;
 
 function useCorrection<TArgs>(
-  run: (args: TArgs) => Promise<CorrectionResponse>,
+  run: (args: TArgs) => Promise<CorrectionResponse>
 ): Verb<TArgs> {
   const client = useQueryClient();
   return useMutation({
@@ -123,11 +131,9 @@ function useCorrection<TArgs>(
         (previous) =>
           previous
             ? { ...previous, items: dropDecided(previous.items, result.items) }
-            : previous,
+            : previous
       );
-      void client.invalidateQueries({ queryKey: RESOLUTION_KEY });
-      void client.invalidateQueries({ queryKey: PERSON_SEARCH_KEY });
-      void client.invalidateQueries({ queryKey: PEOPLE_SEARCH_KEY });
+      invalidateIdentityViews(client);
     },
   });
 }
@@ -137,6 +143,16 @@ export const useBindAccounts = () => useCorrection(bindAccounts);
 export const useMergePersons = () => useCorrection(mergePersons);
 export const useDetachAccount = () => useCorrection(detachAccount);
 export const useExcludeAccount = () => useCorrection(excludeAccount);
+
+export function useSelectProfileSource() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: selectProfileSource,
+    onSuccess: () => {
+      invalidateIdentityViews(client);
+    },
+  });
+}
 
 /** Rows per page. Enough to fill the panel, small enough to stay one screen. */
 const PAGE_SIZE = 50;
@@ -274,7 +290,7 @@ export function usePersonList(
    *  stops a request and not a cache read, so one shared key would render the
    *  roster that browse mode cached inside the dialog. */
   intent: PersonListIntent = "browse",
-  source: PersonListSource = "identities",
+  source: PersonListSource = "identities"
 ): UseInfiniteQueryResult<InfiniteData<PersonSearchResponse>> {
   const { session } = useAuth();
   const sessionScope = sessionAuthorizationScope(session);
@@ -292,7 +308,7 @@ export function usePersonList(
         return searchPersons(
           trimmed,
           { cursor: pageParam, limit: PAGE_SIZE },
-          signal,
+          signal
         );
       }
 
@@ -303,7 +319,7 @@ export function usePersonList(
           cursor: pageParam,
           limit: PAGE_SIZE,
         },
-        signal,
+        signal
       );
       return {
         items: page.items.map((person) => ({
@@ -331,7 +347,7 @@ export function usePersonList(
 export function useAccountList(
   q: string,
   /** `browse` lists every open account on a blank query; `match` lists none. */
-  intent: AccountListIntent = "browse",
+  intent: AccountListIntent = "browse"
 ): UseInfiniteQueryResult<InfiniteData<AccountSearchResponse>> {
   const { session } = useAuth();
   const sessionScope = sessionAuthorizationScope(session);
@@ -341,7 +357,13 @@ export function useAccountList(
     // listing: `enabled: false` stops a request and NOT a cache read, so a
     // shared key would let the in-person field render the whole fold the
     // accounts mode had just browsed.
-    queryKey: [...RESOLUTION_KEY, "account-search", sessionScope, intent, trimmed],
+    queryKey: [
+      ...RESOLUTION_KEY,
+      "account-search",
+      sessionScope,
+      intent,
+      trimmed,
+    ],
     queryFn: ({ pageParam, signal }) =>
       searchAccounts(trimmed, { cursor: pageParam, limit: PAGE_SIZE }, signal),
     initialPageParam: undefined as string | undefined,
@@ -355,7 +377,7 @@ export function useAccountList(
 /** Every account one person holds: the person window's list, and what a merge
  *  preview says would move. */
 export function usePersonAccounts(
-  personId: string | null,
+  personId: string | null
 ): UseQueryResult<{ person_id: string; accounts: PersonAccountEntry[] }> {
   const { session } = useAuth();
   const sessionScope = sessionAuthorizationScope(session);

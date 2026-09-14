@@ -16,7 +16,7 @@ use super::roster::RosterSource;
 
 /// Identifies one source-native account: the source instance (`source_type` +
 /// `source_id`) plus the account's native id within it.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct SourceAccountKey {
     pub source_type: String,
     pub source_id: Uuid,
@@ -579,7 +579,10 @@ pub fn build_profiles(rows: Vec<IdentityInputRow>) -> Vec<SeedProfile> {
                 observed_at: row.synced_at,
             });
         }
-        if !row.is_delete {
+        if !row.is_delete
+            || row.value_type.starts_with("person_")
+            || row.value_type.starts_with("parent_")
+        {
             acc.upserts.push(row);
         }
     }
@@ -621,6 +624,9 @@ pub fn assignments_to_rows(
         for profile in &assignment.profiles {
             let reason = reason_for(assignment, profile, known);
             for obs in &profile.observations {
+                if obs.is_delete {
+                    continue;
+                }
                 let (value_id, value_full_text, value) = route_value(&obs.value_type, &obs.value);
                 if value_id.is_none() && value_full_text.is_none() && value.is_none() {
                     continue; // oversized — dropped per the routing rule
@@ -1169,7 +1175,9 @@ mod tests {
             profiles[0]
                 .observations
                 .iter()
-                .all(|row| row.value_type != "person_display_name")
+                .any(|row| row.value_type == "person_display_name"
+                    && row.is_delete
+                    && row.value.is_empty())
         );
         Ok(())
     }

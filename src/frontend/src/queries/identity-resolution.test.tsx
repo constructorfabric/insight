@@ -31,6 +31,7 @@ import {
   useAccountList,
   useBindAccount,
   usePersonList,
+  useSelectProfileSource,
 } from "./identity-resolution";
 
 const searchPersons = vi.mocked(identityClient.searchPersons);
@@ -87,6 +88,43 @@ function harness() {
 beforeEach(() => {
   vi.resetAllMocks();
   session.value = { scope: "tenant-a" };
+});
+
+describe("useSelectProfileSource", () => {
+  it.each([true, false])("invalidates profile and roster reads only after success: %s", async (succeeds) => {
+    const { queryClient, wrapper } = harness();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const select = vi.mocked(identityClient.selectProfileSource);
+    const failure = new Error("Selection refused");
+    if (succeeds) {
+      select.mockResolvedValueOnce(undefined);
+    } else {
+      select.mockRejectedValueOnce(failure);
+    }
+    const args = {
+      person_id: "01900000-0000-7000-8000-0000000000b0",
+      account: { source: REF.source, source_id: REF.source_id, id: REF.account_id },
+    };
+    const { result } = renderHook(() => useSelectProfileSource(), { wrapper });
+
+    result.current.mutate(args);
+
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+    await waitFor(() => expect(succeeds ? result.current.isSuccess : result.current.isError).toBe(true));
+    expect(select).toHaveBeenCalledWith(args, expect.anything());
+    if (!succeeds) {
+      expect(result.current.error).toBe(failure);
+      expect(invalidate).not.toHaveBeenCalled();
+      return;
+    }
+    expect(invalidate.mock.calls.map(([filters]) => filters?.queryKey)).toEqual([
+      ["identity", "resolution"],
+      ["identity", "persons", "search"],
+      ["identity", "people", "search"],
+      ["identity", "person"],
+      ["identity", "visible-roster"],
+    ]);
+  });
 });
 
 describe("useBindAccount cache behavior", () => {
@@ -151,6 +189,8 @@ describe("useBindAccount cache behavior", () => {
     expect(keys).toContainEqual(["identity", "resolution"]);
     expect(keys).toContainEqual(["identity", "persons", "search"]);
     expect(keys).toContainEqual(["identity", "people", "search"]);
+    expect(keys).toContainEqual(["identity", "person"]);
+    expect(keys).toContainEqual(["identity", "visible-roster"]);
   });
 });
 

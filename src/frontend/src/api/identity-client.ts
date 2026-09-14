@@ -585,6 +585,27 @@ export interface PersonAccountEntry {
   email?: string | null;
   username?: string | null;
   bound_by_operator: boolean;
+  profile_source?: "selected" | "eligible" | "ineligible";
+}
+
+export async function selectProfileSource({
+  person_id,
+  account,
+}: {
+  person_id: string;
+  account: WireAccountRef;
+}): Promise<void> {
+  const res = await fetchWithAuth(
+    `${BASE}/resolution/persons/${encodeURIComponent(person_id)}/profile-source`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(account),
+    }
+  );
+  if (!res.ok) {
+    throw new IdentityApiError(res.status, await res.json().catch(() => null));
+  }
 }
 
 /** Every account currently bound to a person — the merge preview's substance. */

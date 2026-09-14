@@ -49,6 +49,7 @@ const hooks = vi.hoisted(() => {
   bind: verb(),
   detach: verb(),
   exclude: verb(),
+  profileSource: verb(),
   accountSearch: {
     data: undefined as { pages: { items: unknown[] }[] } | undefined,
     isFetching: false,
@@ -77,6 +78,7 @@ vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
   useBindAccount: () => hooks.bind,
   useDetachAccount: () => hooks.detach,
   useExcludeAccount: () => hooks.exclude,
+  useSelectProfileSource: () => hooks.profileSource,
 }));
 
 import { portalRouter } from "@/test/portal-router";
@@ -128,7 +130,7 @@ beforeEach(() => {
   hooks.accountSearch.hasNextPage = false;
   hooks.accountSearch.isPlaceholderData = false;
   hooks.accountSearch.fetchNextPage.mockClear();
-  for (const verb of [hooks.bind, hooks.detach, hooks.exclude]) {
+  for (const verb of [hooks.bind, hooks.detach, hooks.exclude, hooks.profileSource]) {
     verb.mutate.mockReset();
     verb.reset.mockReset();
     verb.isPending = false;

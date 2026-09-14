@@ -70,7 +70,8 @@ fn app_with(f: &Fixture, caller: Uuid, config: GearConfig) -> Router {
     )
 }
 
-fn app_for(f: &Fixture, caller: Caller, config: GearConfig) -> Router {
+fn app_for(f: &Fixture, caller: Caller, mut config: GearConfig) -> Router {
+    config.database_url = std::env::var("INTEGRATION_TESTS_MARIADB_URL").unwrap_or_default();
     let openapi = OpenApiRegistryImpl::new();
     let state = Arc::new(AppState {
         db: f.db.clone(),

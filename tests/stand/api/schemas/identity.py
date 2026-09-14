@@ -182,26 +182,6 @@ class PeopleListResponse(BaseModel):
     next_cursor: str | None = None
 
 
-class PersonAccountEntry(BaseModel):
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    account_id: str
-    bound_by_operator: bool = Field(..., description="`true` when the account's current binding was made by a person.")
-    email: str | None = None
-    source: str
-    source_id: UUID
-    username: str | None = None
-
-
-class PersonAccountsResponse(BaseModel):
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    accounts: list[PersonAccountEntry]
-    person_id: UUID
-
-
 class PersonResponse(BaseModel):
     """
     A person node in the org tree (subordinate of a profile). Carries
@@ -369,6 +349,20 @@ class ProfileResponse(BaseModel):
     supervisor_email: str | None = None
     supervisor_name: str | None = None
     username: str | None = None
+
+
+class ProfileSourceResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    account: AccountRef
+    person_id: UUID
+
+
+class ProfileSourceStatus(StrEnum):
+    selected = 'selected'
+    eligible = 'eligible'
+    ineligible = 'ineligible'
 
 
 class QueueItemResponse(BaseModel):
@@ -643,6 +637,27 @@ class MeResponse(BaseModel):
     person_id: UUID
     roles: list[MeRoleResponse]
     visibility_policy: VisibilityPolicy
+
+
+class PersonAccountEntry(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    account_id: str
+    bound_by_operator: bool = Field(..., description="`true` when the account's current binding was made by a person.")
+    email: str | None = None
+    profile_source: ProfileSourceStatus
+    source: str
+    source_id: UUID
+    username: str | None = None
+
+
+class PersonAccountsResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    accounts: list[PersonAccountEntry]
+    person_id: UUID
 
 
 class PersonListResponse(BaseModel):
