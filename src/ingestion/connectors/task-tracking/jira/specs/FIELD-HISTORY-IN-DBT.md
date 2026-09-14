@@ -969,6 +969,16 @@ survives to the next stage; a sort or a buffer that carries whole JSON payloads
 exhausts the server. Concretely, the key/value unpivot of the issue JSON must
 sit **after** the argMax dedup, never before it.
 
+The same column must never be the build side of a join. ClickHouse hashes the
+RIGHT table of a join in memory, so `… INNER JOIN issue_json` holds every
+issue's payload at once, and that hash table alone can exceed a server's memory
+budget. A question about the JSON ("does this issue still carry this key?") is
+answered by streaming the keys out of the column (`ARRAY JOIN JSONExtractKeys`)
+on the LEFT and hashing the small set of pairs being asked about on the RIGHT,
+after every other filter has already shrunk that set. `cleared_pairs` is built
+this way; probed over a full-size dataset, the streaming form peaks well below
+the hashing one.
+
 ## 14. Tests
 
 Three layers.
