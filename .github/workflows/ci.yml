@@ -20,10 +20,20 @@ on:
       - "src/ingestion/connectors/**"
       - "scripts/ci/**"
       - ".github/workflows/ci.yml"
-      # Inputs to the connector wiring guard beyond the connector tree itself: the
-      # bootstrap connector registry and the shared class_people union.
-      - "src/ingestion/scripts/bootstrap-db/connectors-config.yaml"
+      # The rust matrix boots live_ch entries' ClickHouse through this script.
+      - ".github/workflows/scripts/start-clickhouse.sh"
+      # The ingestion-scripts component root; also holds connectors-config.yaml
+      # and pins.env, inputs to the connector wiring guard and the live ClickHouse.
+      - "src/ingestion/scripts/**"
+      # The other input to the connector wiring guard beyond the connector tree
+      # itself: the shared class_people union.
       - "src/ingestion/silver/_shared/**"
+      # connector-tests-harness / connector-mock-tests component root.
+      - "src/ingestion/tests/connectors/**"
+      # insight-seed component root.
+      - "src/ingestion/tools/seed/**"
+      # The guards job runs the reconcile renderer's contract tests.
+      - "src/ingestion/reconcile-connectors/**"
   push:
     branches: [main]
     paths:
@@ -34,8 +44,12 @@ on:
       - "src/ingestion/connectors/**"
       - "scripts/ci/**"
       - ".github/workflows/ci.yml"
-      - "src/ingestion/scripts/bootstrap-db/connectors-config.yaml"
+      - ".github/workflows/scripts/start-clickhouse.sh"
+      - "src/ingestion/scripts/**"
       - "src/ingestion/silver/_shared/**"
+      - "src/ingestion/tests/connectors/**"
+      - "src/ingestion/tools/seed/**"
+      - "src/ingestion/reconcile-connectors/**"
   workflow_dispatch:
     inputs:
       full:
@@ -405,13 +419,18 @@ jobs:
             echo "::notice::[dev] extra unavailable — installing base deps + pytest"
             uv pip install --python "$PY" -e . pytest pytest-cov
           fi
+          # collect=false components run plain pytest: their report would bucket
+          # to themselves and gate below the overall minimum (insight-seed).
+          cov_args=()
+          if [ "${{ matrix.entry.collect }}" = "true" ]; then
+            cov_args=(--cov="${{ matrix.entry.cov_package }}"
+              --cov-report "xml:$GITHUB_WORKSPACE/coverage/python-${{ matrix.entry.name }}.cobertura.xml")
+          fi
           # pytest exit 5 = "no tests collected" — legitimate for a connector
           # without tests; treat as success. Capture rc via `|| rc=$?` so the
           # runner's default `set -e` shell can't abort before we inspect it.
           rc=0
-          "$PY" -m pytest ${{ matrix.entry.pytest_args }} \
-            --cov="${{ matrix.entry.cov_package }}" \
-            --cov-report "xml:$GITHUB_WORKSPACE/coverage/python-${{ matrix.entry.name }}.cobertura.xml" || rc=$?
+          "$PY" -m pytest ${{ matrix.entry.pytest_args }} "${cov_args[@]}" || rc=$?
           if [ "$rc" -eq 5 ]; then
             echo "::notice::no tests collected for ${{ matrix.entry.name }} — component stays at 0"
             exit 0
@@ -419,6 +438,7 @@ jobs:
           exit "$rc"
 
       - name: Upload Cobertura
+        if: ${{ matrix.entry.collect }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: cobertura-python-${{ matrix.entry.name }}

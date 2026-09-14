@@ -1593,9 +1593,9 @@ jobs:
         # PATH, and `dbt --version` proves the silver step's subprocess
         # environment exists.
         #
-        # The package's own tests run here rather than in ci.yml's Python
-        # matrix: they touch no database, so the shipped image can run them
-        # against exactly what is published. They are pytest-style, and pytest
+        # The package's own tests also run in ci.yml's Python matrix (the
+        # insight-seed component) as the PR gate; this run repeats them against
+        # exactly what is published. They are pytest-style, and pytest
         # deliberately stays out of the image — it is installed into this
         # throwaway container only, so the runner is added on top while the
         # package under test remains the published one.
