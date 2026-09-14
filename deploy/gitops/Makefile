@@ -62,6 +62,9 @@ RELEASE          ?= $(shell yq -r '.release             // "insight"'        $(I
 # override per invocation (env var / CLI) if the stack lives elsewhere.
 NS_MONITORING    ?= $(NS_INFRA)
 
+# A dashboard label selector, never a hostname: may be a `|` alternation.
+NS_DATASTORES    ?= $(NS_INFRA)
+
 # Back-compat alias for older targets still referencing NAMESPACE.
 NAMESPACE        ?= $(NS_APP)
 CHART            ?= oci://ghcr.io/constructorfabric/charts/insight
@@ -678,7 +681,7 @@ endef
 # any other `$` syntax pass through untouched) into
 # $(RENDER_DIR)/system-values/ and helm reads the rendered copies.
 # Usage: $(call _system_values_args,<svc>)
-_system_ns_env = NS_INFRA=$(NS_INFRA) NS_MONITORING=$(NS_MONITORING) NS_APP=$(NS_APP)
+_system_ns_env = NS_INFRA=$(NS_INFRA) NS_MONITORING=$(NS_MONITORING) NS_APP=$(NS_APP) NS_DATASTORES='$(NS_DATASTORES)'
 _system_values_args = $(or $(shell $(_system_ns_env) bash scripts/render-system-values.sh $(1) $(ENV) $(RENDER_DIR)/system-values),$(error render-system-values.sh failed for '$(1)' — see the message above))
 
 # Helper: require a sealed-secret named `<svc>-creds` to be present in

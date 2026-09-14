@@ -1635,7 +1635,7 @@ dashboards:
               },
               "targets": [
                 {
-                  "expr": "sum by (code, kind) (count_over_time({namespace=\"${NS_INFRA}\", container=\"clickhouse\"} |~ `<Error>` | regexp `Code: (?P<code>\\d+)\\..*\\((?P<kind>[A-Z_]+)\\)` [$__auto]))",
+                  "expr": "sum by (code, kind) (count_over_time({namespace=~\"${NS_DATASTORES}\", container=\"clickhouse\"} |~ `<Error>` | regexp `Code: (?P<code>\\d+)\\..*\\((?P<kind>[A-Z_]+)\\)` [$__auto]))",
                   "legendFormat": "Code {{code}} · {{kind}}",
                   "refId": "A"
                 }
@@ -1662,7 +1662,7 @@ dashboards:
               },
               "targets": [
                 {
-                  "expr": "{namespace=\"${NS_INFRA}\", container=\"clickhouse\"} |~ `<Error>`",
+                  "expr": "{namespace=~\"${NS_DATASTORES}\", container=\"clickhouse\"} |~ `<Error>`",
                   "refId": "A"
                 }
               ],
@@ -7129,7 +7129,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "sum by (container) (rate(container_cpu_usage_seconds_total{namespace=\"${NS_INFRA}\", container!=\"\"}[5m]))",
+                  "expr": "sum by (container) (rate(container_cpu_usage_seconds_total{namespace=~\"${NS_DATASTORES}\", container!=\"\"}[5m]))",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -7140,7 +7140,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "quantile_over_time(0.95, (sum by (container) (rate(container_cpu_usage_seconds_total{namespace=\"${NS_INFRA}\", container!=\"\"}[5m])))[$__range:5m])",
+                  "expr": "quantile_over_time(0.95, (sum by (container) (rate(container_cpu_usage_seconds_total{namespace=~\"${NS_DATASTORES}\", container!=\"\"}[5m])))[$__range:5m])",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -7151,7 +7151,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "sum by (container) (kube_pod_container_resource_requests{namespace=\"${NS_INFRA}\", container!=\"\", resource=\"cpu\"})",
+                  "expr": "sum by (container) (kube_pod_container_resource_requests{namespace=~\"${NS_DATASTORES}\", container!=\"\", resource=\"cpu\"})",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -7162,7 +7162,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "sum by (container) (container_memory_working_set_bytes{namespace=\"${NS_INFRA}\", container!=\"\"})",
+                  "expr": "sum by (container) (container_memory_working_set_bytes{namespace=~\"${NS_DATASTORES}\", container!=\"\"})",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -7173,7 +7173,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "quantile_over_time(0.95, (sum by (container) (container_memory_working_set_bytes{namespace=\"${NS_INFRA}\", container!=\"\"}))[$__range:5m])",
+                  "expr": "quantile_over_time(0.95, (sum by (container) (container_memory_working_set_bytes{namespace=~\"${NS_DATASTORES}\", container!=\"\"}))[$__range:5m])",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -7184,7 +7184,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "sum by (container) (kube_pod_container_resource_limits{namespace=\"${NS_INFRA}\", container!=\"\", resource=\"memory\"})",
+                  "expr": "sum by (container) (kube_pod_container_resource_limits{namespace=~\"${NS_DATASTORES}\", container!=\"\", resource=\"memory\"})",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -7258,7 +7258,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "sum by (container) (rate(container_cpu_usage_seconds_total{namespace=\"${NS_INFRA}\", container!=\"\"}[5m]))",
+                  "expr": "sum by (container) (rate(container_cpu_usage_seconds_total{namespace=~\"${NS_DATASTORES}\", container!=\"\"}[5m]))",
                   "instant": false,
                   "legendFormat": "{{container}}",
                   "range": true,
@@ -7314,7 +7314,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "sum by (container) (container_memory_working_set_bytes{namespace=\"${NS_INFRA}\", container!=\"\"})",
+                  "expr": "sum by (container) (container_memory_working_set_bytes{namespace=~\"${NS_DATASTORES}\", container!=\"\"})",
                   "instant": false,
                   "legendFormat": "{{container}}",
                   "range": true,
@@ -7407,7 +7407,7 @@ dashboards:
               },
               "targets": [
                 {
-                  "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container!=\"\"}[$__rate_interval]))",
+                  "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container!=\"\"}[$__rate_interval]))",
                   "legendFormat": "{{pod}}",
                   "refId": "A"
                 }
@@ -7449,7 +7449,7 @@ dashboards:
               },
               "targets": [
                 {
-                  "expr": "sum by (pod) (container_memory_working_set_bytes{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container!=\"\"})",
+                  "expr": "sum by (pod) (container_memory_working_set_bytes{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container!=\"\"})",
                   "legendFormat": "{{pod}}",
                   "refId": "A"
                 }
@@ -7506,7 +7506,7 @@ dashboards:
               },
               "targets": [
                 {
-                  "expr": "100 * max by (pod) ( max by (pod, container) (container_memory_working_set_bytes{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0\", container!=\"\"}) / on (pod, container) max by (pod, container) (kube_pod_container_resource_limits{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0\", resource=\"memory\"}) )",
+                  "expr": "100 * max by (pod) ( max by (pod, container) (container_memory_working_set_bytes{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0\", container!=\"\"}) / on (pod, container) max by (pod, container) (kube_pod_container_resource_limits{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0\", resource=\"memory\"}) )",
                   "legendFormat": "{{pod}}",
                   "refId": "A"
                 }
@@ -7559,7 +7559,7 @@ dashboards:
               },
               "targets": [
                 {
-                  "expr": "sum by (pod, container) (kube_pod_container_status_restarts_total{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\"})",
+                  "expr": "sum by (pod, container) (kube_pod_container_status_restarts_total{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\"})",
                   "format": "table",
                   "instant": true,
                   "refId": "A"
@@ -7611,12 +7611,12 @@ dashboards:
               },
               "targets": [
                 {
-                  "expr": "sum by (pod) (rate(container_fs_reads_bytes_total{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container!=\"\"}[$__rate_interval])) > 0",
+                  "expr": "sum by (pod) (rate(container_fs_reads_bytes_total{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container!=\"\"}[$__rate_interval])) > 0",
                   "legendFormat": "{{pod}} read",
                   "refId": "A"
                 },
                 {
-                  "expr": "sum by (pod) (rate(container_fs_writes_bytes_total{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container!=\"\"}[$__rate_interval])) > 0",
+                  "expr": "sum by (pod) (rate(container_fs_writes_bytes_total{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container!=\"\"}[$__rate_interval])) > 0",
                   "legendFormat": "{{pod}} write",
                   "refId": "B"
                 }
@@ -8080,7 +8080,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "sum by (container) (kube_pod_container_resource_requests{namespace=\"${NS_INFRA}\", container=~\"clickhouse|mariadb|redis|redpanda|loki\", resource=\"cpu\"})",
+                  "expr": "sum by (container) (kube_pod_container_resource_requests{namespace=~\"${NS_DATASTORES}\", container=~\"clickhouse|mariadb|redis|redpanda|loki\", resource=\"cpu\"})",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -8091,7 +8091,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "sum by (container) (kube_pod_container_resource_limits{namespace=\"${NS_INFRA}\", container=~\"clickhouse|mariadb|redis|redpanda|loki\", resource=\"cpu\"})",
+                  "expr": "sum by (container) (kube_pod_container_resource_limits{namespace=~\"${NS_DATASTORES}\", container=~\"clickhouse|mariadb|redis|redpanda|loki\", resource=\"cpu\"})",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -8102,7 +8102,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "quantile_over_time(0.95, (sum by (container) (rate(container_cpu_usage_seconds_total{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container=~\"clickhouse|mariadb|redis|redpanda|loki\"}[5m])))[$__range:5m])",
+                  "expr": "quantile_over_time(0.95, (sum by (container) (rate(container_cpu_usage_seconds_total{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container=~\"clickhouse|mariadb|redis|redpanda|loki\"}[5m])))[$__range:5m])",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -8113,7 +8113,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "max_over_time((sum by (container) (rate(container_cpu_usage_seconds_total{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container=~\"clickhouse|mariadb|redis|redpanda|loki\"}[5m])))[$__range:5m])",
+                  "expr": "max_over_time((sum by (container) (rate(container_cpu_usage_seconds_total{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container=~\"clickhouse|mariadb|redis|redpanda|loki\"}[5m])))[$__range:5m])",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -8124,7 +8124,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "100 * quantile_over_time(0.95, (sum by (container) (rate(container_cpu_usage_seconds_total{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container=~\"clickhouse|mariadb|redis|redpanda|loki\"}[5m])))[$__range:5m]) / sum by (container) (kube_pod_container_resource_requests{namespace=\"${NS_INFRA}\", container=~\"clickhouse|mariadb|redis|redpanda|loki\", resource=\"cpu\"})",
+                  "expr": "100 * quantile_over_time(0.95, (sum by (container) (rate(container_cpu_usage_seconds_total{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container=~\"clickhouse|mariadb|redis|redpanda|loki\"}[5m])))[$__range:5m]) / sum by (container) (kube_pod_container_resource_requests{namespace=~\"${NS_DATASTORES}\", container=~\"clickhouse|mariadb|redis|redpanda|loki\", resource=\"cpu\"})",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -8135,7 +8135,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "100 * max_over_time((sum by (container) (rate(container_cpu_usage_seconds_total{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container=~\"clickhouse|mariadb|redis|redpanda|loki\"}[5m])))[$__range:5m]) / sum by (container) (kube_pod_container_resource_limits{namespace=\"${NS_INFRA}\", container=~\"clickhouse|mariadb|redis|redpanda|loki\", resource=\"cpu\"})",
+                  "expr": "100 * max_over_time((sum by (container) (rate(container_cpu_usage_seconds_total{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container=~\"clickhouse|mariadb|redis|redpanda|loki\"}[5m])))[$__range:5m]) / sum by (container) (kube_pod_container_resource_limits{namespace=~\"${NS_DATASTORES}\", container=~\"clickhouse|mariadb|redis|redpanda|loki\", resource=\"cpu\"})",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -8395,7 +8395,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "sum by (container) (kube_pod_container_resource_requests{namespace=\"${NS_INFRA}\", container=~\"clickhouse|mariadb|redis|redpanda|loki\", resource=\"memory\"})",
+                  "expr": "sum by (container) (kube_pod_container_resource_requests{namespace=~\"${NS_DATASTORES}\", container=~\"clickhouse|mariadb|redis|redpanda|loki\", resource=\"memory\"})",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -8406,7 +8406,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "sum by (container) (kube_pod_container_resource_limits{namespace=\"${NS_INFRA}\", container=~\"clickhouse|mariadb|redis|redpanda|loki\", resource=\"memory\"})",
+                  "expr": "sum by (container) (kube_pod_container_resource_limits{namespace=~\"${NS_DATASTORES}\", container=~\"clickhouse|mariadb|redis|redpanda|loki\", resource=\"memory\"})",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -8417,7 +8417,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "quantile_over_time(0.95, (sum by (container) (container_memory_working_set_bytes{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container=~\"clickhouse|mariadb|redis|redpanda|loki\"}))[$__range:5m])",
+                  "expr": "quantile_over_time(0.95, (sum by (container) (container_memory_working_set_bytes{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container=~\"clickhouse|mariadb|redis|redpanda|loki\"}))[$__range:5m])",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -8428,7 +8428,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "max_over_time((sum by (container) (container_memory_working_set_bytes{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container=~\"clickhouse|mariadb|redis|redpanda|loki\"}))[$__range:5m])",
+                  "expr": "max_over_time((sum by (container) (container_memory_working_set_bytes{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container=~\"clickhouse|mariadb|redis|redpanda|loki\"}))[$__range:5m])",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -8439,7 +8439,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "100 * quantile_over_time(0.95, (sum by (container) (container_memory_working_set_bytes{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container=~\"clickhouse|mariadb|redis|redpanda|loki\"}))[$__range:5m]) / sum by (container) (kube_pod_container_resource_requests{namespace=\"${NS_INFRA}\", container=~\"clickhouse|mariadb|redis|redpanda|loki\", resource=\"memory\"})",
+                  "expr": "100 * quantile_over_time(0.95, (sum by (container) (container_memory_working_set_bytes{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container=~\"clickhouse|mariadb|redis|redpanda|loki\"}))[$__range:5m]) / sum by (container) (kube_pod_container_resource_requests{namespace=~\"${NS_DATASTORES}\", container=~\"clickhouse|mariadb|redis|redpanda|loki\", resource=\"memory\"})",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -8450,7 +8450,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "100 * max_over_time((sum by (container) (container_memory_working_set_bytes{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container=~\"clickhouse|mariadb|redis|redpanda|loki\"}))[$__range:5m]) / sum by (container) (kube_pod_container_resource_limits{namespace=\"${NS_INFRA}\", container=~\"clickhouse|mariadb|redis|redpanda|loki\", resource=\"memory\"})",
+                  "expr": "100 * max_over_time((sum by (container) (container_memory_working_set_bytes{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container=~\"clickhouse|mariadb|redis|redpanda|loki\"}))[$__range:5m]) / sum by (container) (kube_pod_container_resource_limits{namespace=~\"${NS_DATASTORES}\", container=~\"clickhouse|mariadb|redis|redpanda|loki\", resource=\"memory\"})",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -8533,7 +8533,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "100 * sum by (pod, container) (rate(container_cpu_cfs_throttled_periods_total{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container!=\"\"}[$__rate_interval])) / sum by (pod, container) (rate(container_cpu_cfs_periods_total{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container!=\"\"}[$__rate_interval]))",
+                  "expr": "100 * sum by (pod, container) (rate(container_cpu_cfs_throttled_periods_total{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container!=\"\"}[$__rate_interval])) / sum by (pod, container) (rate(container_cpu_cfs_periods_total{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container!=\"\"}[$__rate_interval]))",
                   "legendFormat": "{{pod}} · {{container}}",
                   "refId": "A"
                 }
@@ -8597,7 +8597,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "100 * sum by (container) (rate(container_cpu_usage_seconds_total{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container=~\"clickhouse|mariadb|redis|redpanda|loki\"}[$__rate_interval])) / sum by (container) (kube_pod_container_resource_limits{namespace=\"${NS_INFRA}\", container=~\"clickhouse|mariadb|redis|redpanda|loki\", resource=\"cpu\"})",
+                  "expr": "100 * sum by (container) (rate(container_cpu_usage_seconds_total{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container=~\"clickhouse|mariadb|redis|redpanda|loki\"}[$__rate_interval])) / sum by (container) (kube_pod_container_resource_limits{namespace=~\"${NS_DATASTORES}\", container=~\"clickhouse|mariadb|redis|redpanda|loki\", resource=\"cpu\"})",
                   "legendFormat": "{{container}}",
                   "refId": "A"
                 }
@@ -8651,7 +8651,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "sum(increase(container_oom_events_total{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container!=\"\"}[$__range]))",
+                  "expr": "sum(increase(container_oom_events_total{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container!=\"\"}[$__range]))",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -8711,7 +8711,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "sum(increase(kube_pod_container_status_restarts_total{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\"}[$__range]))",
+                  "expr": "sum(increase(kube_pod_container_status_restarts_total{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\"}[$__range]))",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -9005,7 +9005,7 @@ dashboards:
                 {
                   "refId": "A",
                   "legendFormat": "slow queries",
-                  "expr": "sum(count_over_time({namespace=\"${NS_INFRA}\", pod=~\"mariadb-.*\", container=\"slow-log\"} |= \"# Query_time\" [$__auto]))"
+                  "expr": "sum(count_over_time({namespace=~\"${NS_DATASTORES}\", pod=~\"mariadb-.*\", container=\"slow-log\"} |= \"# Query_time\" [$__auto]))"
                 }
               ]
             },
@@ -9031,7 +9031,7 @@ dashboards:
               "targets": [
                 {
                   "refId": "A",
-                  "expr": "{namespace=\"${NS_INFRA}\", pod=~\"mariadb-.*\", container=\"slow-log\"}"
+                  "expr": "{namespace=~\"${NS_DATASTORES}\", pod=~\"mariadb-.*\", container=\"slow-log\"}"
                 }
               ]
             }

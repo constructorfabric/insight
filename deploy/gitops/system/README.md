@@ -130,16 +130,27 @@ neither file reaches helm verbatim: `scripts/render-system-values.sh`
 first resolves the `${NS_*}` placeholders that cross-service references
 use (`http://loki.${NS_LOKI}.svc.cluster.local:3100`, …), writing the
 rendered copies to `.deploy/system-values/` — inspect them there after a
-run. Two variables cover every cross-service reference:
+run. Four variables are substituted:
 
 | Variable | Locates | Consumers |
 |----------|---------|-----------|
 | `NS_INFRA` | the data stores (`clickhouse`, `redpanda`) | alloy-metrics, grafana, redpanda-console |
 | `NS_MONITORING` | the observability unit (`loki`, `tempo`, `victoriametrics`, `kube-state-metrics`) | alloy, alloy-metrics, grafana |
+| `NS_APP` | the application workloads | alloy-metrics, grafana |
+| `NS_DATASTORES` | the data stores, as a dashboard label SELECTOR | grafana |
 
 `NS_MONITORING` defaults to `NS_INFRA` — the layout every environment
 here uses — and exists because the observability stack is the one unit
 an environment plausibly hosts apart from the data stores.
+
+`NS_DATASTORES` defaults to `NS_INFRA` too, and is the one variable that
+is never interpolated into an FQDN: it reaches only the namespace label
+matchers in the shipped dashboards. That is why it alone accepts a `|`
+alternation — a cluster that gives each data store its own namespace
+sets `NS_DATASTORES=clickhouse|mariadb|redis|redpanda` and keeps the
+shipped dashboards instead of forking them. The other three must each be
+a single DNS-1123 label; the render script enforces the difference and
+fails loudly on a value of the wrong shape.
 
 Service *names* stay literal on purpose — `fullnameOverride` in each
 producer's values pins them, so the name is the contract and only the
