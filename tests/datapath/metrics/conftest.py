@@ -15,7 +15,6 @@ from insight_datapath.bindings import Bindings
 from insight_datapath.caller import StandCaller
 from insight_datapath.ch_seeder import CHSeeder
 from insight_datapath.dbt_runner import DbtRunner
-from insight_datapath.enrich import EnrichRunner
 from insight_datapath.fixture_loader import load
 from insight_datapath.instance import InstanceConfig
 from insight_datapath.metric_definitions import collect
@@ -46,7 +45,6 @@ def spec(
     request: pytest.FixtureRequest,
     ch_seeder: CHSeeder,
     dbt_runner: DbtRunner,
-    enrich_runner: EnrichRunner,
     subjects: Subjects,
     caller: StandCaller,
     caller_session: PersonaSession,
@@ -72,7 +70,6 @@ def spec(
         loaded,
         ch_seeder=ch_seeder,
         dbt_runner=dbt_runner,
-        enrich_runner=enrich_runner,
         subjects=subjects,
         caller=caller,
         caller_email=caller_session.email,

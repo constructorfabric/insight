@@ -6,8 +6,7 @@
     engine='ReplacingMergeTree(_version)',
     order_by=['unique_key'],
     settings={'allow_nullable_key': 1},
-    tags=['staging', 'jira'],
-    pre_hook="{{ reset_task_field_history_on_full_refresh() }}"
+    tags=['staging', 'jira']
 ) }}
 
 -- Materialized as `table` (not `incremental`) so every dbt run rewrites staging from scratch.
@@ -16,7 +15,7 @@
 -- staging row regardless.
 
 -- Explode `bronze_jira.jira_issue_history.items` JSON array into one row per field change.
--- Consumed by `jira-enrich` Rust binary (reads from staging.jira_changelog_items).
+-- Read by `jira__field_history_derived`.
 --
 -- Each history row has `changelog_id` and a JSON array `items` with elements shaped like:
 --   { "field": "...", "fieldId": "...", "from": "...", "fromString": "...",
@@ -74,9 +73,7 @@ parsed AS (
         nullIf(JSONExtractString(item_raw, 'toString'), '')    AS value_to_string
     FROM exploded
     -- Jira sometimes emits phantom changelog items with `fieldId=""` (typically system-level
-    -- events like "WorklogId"/"RemoteIssueLink" that don't have a proper field mapping). The
-    -- enrich binary drops them at runtime with a WARN; filter them here to keep the warning
-    -- log quiet and save a wire round-trip.
+    -- events like "WorklogId"/"RemoteIssueLink" that don't have a proper field mapping).
     WHERE JSONExtractString(item_raw, 'fieldId') != ''
 )
 -- Dedup duplicates within a single changelog: Jira sometimes emits the same (fieldId, from/to)

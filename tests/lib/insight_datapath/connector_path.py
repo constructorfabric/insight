@@ -3,8 +3,8 @@
 The identity lane's question is what a connector tells identity about an account,
 so its tests seed a connector's bronze and read `identity.identity_inputs` after the
 connector's dbt models and the shared union ran over it. This is the front half of
-what `spec_runner.run_spec` does for a metric spec, without the silver classes, the
-enrich step or the gold build a metric needs and an identity input does not.
+what `spec_runner.run_spec` does for a metric spec, without the silver classes or the
+gold build a metric needs and an identity input does not.
 """
 
 from __future__ import annotations

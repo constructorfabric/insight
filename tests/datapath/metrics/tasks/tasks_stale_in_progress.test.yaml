@@ -8,7 +8,7 @@ description: >
   is a POINT-IN-TIME snapshot: it counts issues whose current status is In Progress
   and whose last status change is older than 14 days. It is stamped metric_date =
   today(), NOT a close date, so the custom window must INCLUDE today. With no
-  changelog rows, jira-enrich's synthetic_initial status event sits at `created`
+  changelog rows, the synthetic_initial status event sits at `created`
   (2026-01-01), far older than 14 days -> every open issue is stale. range_max here
   = plain cohort max (not a P95 metric).
 

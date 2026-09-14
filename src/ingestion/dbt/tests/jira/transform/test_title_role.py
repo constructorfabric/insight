@@ -1,22 +1,16 @@
-"""The issue title reaches gold through the `title` role.
+"""The issue title reaches gold through the `title` role, and through nothing else.
 
-This is the one part of the change whose consumer is gold rather than the
-journal, and it has a transitional shape that only a test can hold in place:
+The title is an ordinary field: Jira's producer emits `summary` for every issue
+(a `synthetic_initial` row from the issue JSON plus its changelog events), GitHub
+emits `title`, and both bind to the `title` role. Gold reads the role's newest
+value; the denormalized `title` column the class once carried is gone.
 
-  * GitHub emits the title as a FIELD, so the role answers for it today;
-  * Jira's producer is still the Rust binary, which fills the denormalized
-    `title` COLUMN on every row but emits a `summary` field row only for an
-    issue whose summary actually changed — the snapshot model it reads does not
-    list `summary`. So a never-renamed Jira issue is named by the column alone;
-  * gold therefore reads the role first and falls back to the column, and both
-    the column and the fallback go with the binary at cutover.
-
-Get the precedence backwards and nothing fails loudly: titles quietly become
-empty for most Jira issues, or a rename stops showing. Hence the test.
+Get the ordering wrong and nothing fails loudly: a rename stops showing, or an
+issue reads as its original name. Hence the test.
 
 Seeds `silver.class_task_field_history` directly rather than going through
-bronze: the subject is what GOLD does with the two channels, and building the
-whole Jira chain to arrange one row would test the chain instead.
+bronze: the subject is what GOLD does with the journal, and building the whole
+Jira chain to arrange one row would test the chain instead.
 """
 
 from __future__ import annotations
@@ -37,24 +31,21 @@ def row(
     issue: str,
     field_id: str,
     *,
-    column_title: str | None,
     field_value: str | None,
     seq: int = 1,
     kind: str = "synthetic_initial",
+    event_id: str | None = None,
     at: str = "2026-01-05 09:00:00",
-    data_source: str = "jira",
 ) -> dict[str, Any]:
-    """One journal row: `column_title` is the denormalized column, `field_value`
-    the value the field itself carries."""
+    """One journal row carrying `field_value` as the field's value."""
     values = [] if field_value is None else [field_value]
     return {
-        "unique_key": f"{issue}-{field_id}-{seq}",
+        "unique_key": f"{issue}-{field_id}-{seq}-{event_id or 'initial'}",
         "insight_source_id": SOURCE,
-        "data_source": data_source,
+        "data_source": "jira",
         "issue_id": issue,
         "id_readable": issue,
-        "title": column_title,
-        "event_id": f"initial:{issue}",
+        "event_id": event_id or f"initial:{issue}",
         "event_at": at,
         "event_kind": kind,
         "_seq": seq,
@@ -71,12 +62,12 @@ def row(
     }
 
 
-def assignee_row(issue: str, *, column_title: str | None, data_source: str = "jira") -> dict[str, Any]:
+def assignee_row(issue: str) -> dict[str, Any]:
     """Gold reaches a person through the assignee role — `task_issue_state`
     inner-joins `class_task_users` on it. Without this row the issue never
     reaches the serving table, and a test would fail for a reason that has
     nothing to do with titles."""
-    return row(issue, "assignee", column_title=column_title, field_value="actor", seq=9, data_source=data_source)
+    return row(issue, "assignee", field_value="actor", seq=9)
 
 
 @pytest.fixture
@@ -119,71 +110,59 @@ def seed_and_build(warehouse, rows: list[dict[str, Any]]) -> dict[str, str]:
     }
 
 
-def test_the_role_wins_over_the_column(gold: Warehouse) -> None:
-    """When both channels answer, the role is the one that counts.
+def test_the_newest_summary_names_the_issue(gold: Warehouse) -> None:
+    """A renamed issue is named by its latest summary, not its first.
 
-    The column is a snapshot of the issue's summary as the binary last saw it;
-    the role is the journal's own latest value. Reading the column first would
-    make a rename invisible for as long as the binary keeps writing.
+    The initial row states the name at creation; the changelog row states the
+    rename. Reading the wrong one would freeze every issue at its original name.
     """
     titles = seed_and_build(
         gold,
         [
-            row("ROLE-1", "created", column_title="stale from the column", field_value=None, seq=0),
-            row("ROLE-1", "summary", column_title="stale from the column", field_value="renamed, from the role", seq=1),
-            assignee_row("ROLE-1", column_title="stale from the column"),
+            row("ROLE-1", "created", field_value=None, seq=0),
+            row("ROLE-1", "summary", field_value="the original name", seq=1),
+            row(
+                "ROLE-1",
+                "summary",
+                field_value="renamed later",
+                seq=0,
+                kind="changelog",
+                event_id="101",
+                at="2026-01-06 09:00:00",
+            ),
+            assignee_row("ROLE-1"),
         ],
     )
-    assert titles["ROLE-1"] == "renamed, from the role"
+    assert titles["ROLE-1"] == "renamed later"
 
 
-def test_the_column_carries_an_issue_the_role_cannot_name(gold: Warehouse) -> None:
-    """A Jira issue never renamed: the binary emits no `summary` value, so the
-    role has nothing to offer and the column is the only title there is.
+def test_a_never_renamed_issue_is_named_by_its_initial_summary(gold: Warehouse) -> None:
+    """The ordinary case: one `summary` row, from the issue JSON at creation.
 
-    This is the case that made dropping the column a regression — it is the
-    ordinary case, not the exception.
+    This is the row the derived model emits for every issue — the reason the
+    denormalized column could go without leaving never-renamed issues unnamed.
     """
     titles = seed_and_build(
         gold,
         [
-            row("ROLE-2", "created", column_title="named by the column only", field_value=None, seq=0),
-            row("ROLE-2", "summary", column_title="named by the column only", field_value=None, seq=1),
-            assignee_row("ROLE-2", column_title="named by the column only"),
+            row("ROLE-2", "created", field_value=None, seq=0),
+            row("ROLE-2", "summary", field_value="named once", seq=1),
+            assignee_row("ROLE-2"),
         ],
     )
-    assert titles["ROLE-2"] == "named by the column only"
+    assert titles["ROLE-2"] == "named once"
 
 
-def test_a_source_with_no_column_is_named_by_the_role(gold: Warehouse) -> None:
-    """The shape after cutover: no column value at all, and the role answers.
-
-    Modelled on Jira rather than GitHub because gold reaches a person through
-    the assignee role, and GitHub's assignee binding is per-installation
-    configuration rather than a vendor default — seeding one here would test
-    the configuration, not the title.
-    """
+def test_an_issue_without_a_summary_reads_as_null(gold: Warehouse) -> None:
+    """No `summary` row: NULL, not an empty string. `argMaxIf` returns the type
+    default when nothing matches, and this is a serving column the backend
+    reads — its nullability is part of the contract."""
     titles = seed_and_build(
         gold,
         [
-            row("ROLE-3", "created", column_title=None, field_value=None, seq=0),
-            row("ROLE-3", "summary", column_title=None, field_value="named by the role", seq=1),
-            assignee_row("ROLE-3", column_title=None),
-        ],
-    )
-    assert titles["ROLE-3"] == "named by the role"
-
-
-def test_an_issue_with_neither_reads_as_null(gold: Warehouse) -> None:
-    """Neither channel answers: NULL, not an empty string. `argMaxIf` returns
-    the type default when nothing matches, and this is a serving column the
-    backend reads — its nullability is part of the contract."""
-    titles = seed_and_build(
-        gold,
-        [
-            row("ROLE-4", "created", column_title=None, field_value=None, seq=0),
-            row("ROLE-4", "status", column_title=None, field_value="6", seq=1),
-            assignee_row("ROLE-4", column_title=None),
+            row("ROLE-4", "created", field_value=None, seq=0),
+            row("ROLE-4", "status", field_value="6", seq=1),
+            assignee_row("ROLE-4"),
         ],
     )
     assert titles["ROLE-4"] is None
