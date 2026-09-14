@@ -125,6 +125,7 @@ Key groups:
 - `authenticator.oidc.*` — OIDC upstream and login-resolution mode (`resolveBy: external_id | email`)
 - `identityResolution.*` — identity-resolution service (must stay deployed; `rosterSourceType` for email-mode logins)
 - `keycloak.deploy` + `keycloakConfig.*` — the in-stack identity broker and its realms-as-code hook
+- `clickhouse.fieldValueMap.*` — insert-only seed of operator-authored `config.field_value_map` / `config.field_value_defaults` rows from a TSV ConfigMap (post-upgrade hook, weight 300)
 - `previews.*`, `gitCliProxy.*`, `frontend.*` — optional services, on by default
 - `ingestion.templates.enabled` — whether to ship Argo WorkflowTemplates; requires Argo CRDs to be present in the cluster
 
