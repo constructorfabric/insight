@@ -556,6 +556,40 @@ for _git_source in github gitlab bitbucket_cloud; do
   heal_git_pr_author_account "${_git_source}__pull_requests"
 done
 
+echo "=== Healing git pull-request reported close-time column ==="
+# Same positional invariant: every projection feeding class_git_pull_requests
+# gained closed_on_reported after closed_on — the close time as the source
+# stated it, which the duration measures read so a recovered one cannot pose as
+# a measurement (#3362). The silver side heals in migrations/*.sql; staging
+# heals here because these tables exist only after a connector has run.
+# Idempotent.
+#
+# GitHub and GitLab report the close time themselves, so an existing row's
+# `closed_on` IS the source's own instant and is copied across — without it every
+# duration measure reads empty between this deploy and the next sync. Bitbucket
+# is excluded by design: its `closed_on` may be a RECOVERED time, and promoting
+# one to a reported one is the error this column exists to prevent.
+heal_git_pr_close_time_reported() {
+  local table="$1" close_time_is_reported="$2"
+  ch_table_is_real staging "${table}" || return 0
+  echo "  staging.${table}"
+  run_ch <<SQL
+ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS closed_on_reported Nullable(DateTime) AFTER closed_on;
+ALTER TABLE staging.${table} MODIFY COLUMN closed_on_reported Nullable(DateTime) AFTER closed_on;
+SQL
+  [[ "${close_time_is_reported}" == "1" ]] || return 0
+  run_ch <<SQL
+ALTER TABLE staging.${table}
+    UPDATE closed_on_reported = closed_on
+    WHERE closed_on_reported IS NULL AND closed_on IS NOT NULL
+    SETTINGS mutations_sync = 1;
+SQL
+}
+
+heal_git_pr_close_time_reported github__pull_requests 1
+heal_git_pr_close_time_reported gitlab__pull_requests 1
+heal_git_pr_close_time_reported bitbucket_cloud__pull_requests 0
+
 echo "=== Healing git repository default-branch column ==="
 # class_git_repositories gained `default_branch` at the projection tail; the
 # silver side heals in migrations/*.sql, the staging members heal here because

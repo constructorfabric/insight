@@ -302,6 +302,25 @@ models:
           lowercased). '' when the source exposes none — a deleted or suspended
           author, or a connector without identity inputs — in which case person
           attribution falls back to author_email.
+      - name: closed_on_reported
+        description: >
+          The close time as the source stated it, and nothing derived. NULL when
+          the source stated none: Bitbucket recovers such a merge into
+          `closed_on` so a count still keeps it, and every duration measure
+          reads this column instead, so a recovered time cannot pose as a
+          measured interval.
+      - name: files_changed
+        description: >
+          NULL when the diff summary has not been collected or the source has
+          not computed it yet, 0 when it was collected and touched no file.
+      - name: lines_added
+        description: >
+          NULL when the diff summary has not been collected or the source has
+          not computed it yet, 0 when it was collected and added no line.
+      - name: lines_removed
+        description: >
+          NULL when the diff summary has not been collected or the source has
+          not computed it yet, 0 when it was collected and removed no line.
 
   - name: class_git_pull_requests_reviewers
     description: "Unified git pull request reviewers from all sources (GitHub, Bitbucket, GitLab)"
