@@ -470,7 +470,13 @@
       "unnamed": "Unnamed person",
       "copy_id": "Copy the person id",
       "provisional": "provisional",
-      "provisional_hint": "Created by automation, not confirmed"
+      "provisional_hint": "Created by automation, not confirmed",
+      "admin_badge": "Admin",
+      "admin_grant": "Make admin",
+      "admin_revoke": "Remove admin",
+      "admin_unknown": "Admin status could not be read.",
+      "admin_last": "This is the last admin in the tenant — grant another before removing this one.",
+      "admin_failed": "The role could not be changed."
     },
     "history": {
       "bind": "Bound",

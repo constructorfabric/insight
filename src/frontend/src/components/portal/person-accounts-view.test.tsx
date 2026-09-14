@@ -78,6 +78,26 @@ vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
   useDetachAccount: () => hooks.detach,
   useExcludeAccount: () => hooks.exclude,
 }));
+// Stubbed for the same reason the verbs above are: no query client here.
+vi.mock("@/queries/identity-me", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/queries/identity-me")>()),
+  useIsAdmin: () => ({
+    isAdmin: false,
+    isPending: false,
+    isError: false,
+    retry: vi.fn(),
+  }),
+}));
+vi.mock("@/queries/person-roles", () => ({
+  usePersonAdminRole: () => ({
+    isAdmin: false,
+    personRoleId: null,
+    isPending: false,
+    isUnknown: false,
+  }),
+  useGrantAdmin: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
+  useRevokeAdmin: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
+}));
 
 import { portalRouter } from "@/test/portal-router";
 

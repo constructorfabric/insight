@@ -46,6 +46,15 @@ const hooks = vi.hoisted(() => {
       hasNextPage: false,
       fetchNextPage: vi.fn(),
     },
+    me: { isAdmin: true, isPending: false, isError: false, retry: vi.fn() },
+    adminRole: {
+      isAdmin: false,
+      personRoleId: null as string | null,
+      isPending: false,
+      isUnknown: false,
+    },
+    grantAdmin: verb(),
+    revokeAdmin: verb(),
     bind: verb(),
     detach: verb(),
     exclude: verb(),
@@ -64,6 +73,15 @@ vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
   useBindAccount: () => hooks.bind,
   useDetachAccount: () => hooks.detach,
   useExcludeAccount: () => hooks.exclude,
+}));
+vi.mock("@/queries/identity-me", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/queries/identity-me")>()),
+  useIsAdmin: () => hooks.me,
+}));
+vi.mock("@/queries/person-roles", () => ({
+  usePersonAdminRole: () => hooks.adminRole,
+  useGrantAdmin: () => hooks.grantAdmin,
+  useRevokeAdmin: () => hooks.revokeAdmin,
 }));
 
 import { PersonDialog } from "./person-dialog";
@@ -120,7 +138,20 @@ function confirmation() {
 }
 
 beforeEach(() => {
-  for (const verb of [hooks.bind, hooks.detach, hooks.exclude]) {
+  hooks.me.isAdmin = true;
+  hooks.me.isPending = false;
+  hooks.me.isError = false;
+  hooks.adminRole.isAdmin = false;
+  hooks.adminRole.personRoleId = null;
+  hooks.adminRole.isPending = false;
+  hooks.adminRole.isUnknown = false;
+  for (const verb of [
+    hooks.bind,
+    hooks.detach,
+    hooks.exclude,
+    hooks.grantAdmin,
+    hooks.revokeAdmin,
+  ]) {
     // Reset, not clear: `mockClear` keeps an implementation a case installed,
     // and a refusal wired for one verb would then fire in every case after it.
     verb.mutate.mockReset();
@@ -640,5 +671,80 @@ describe("PersonDialog", () => {
 
     expect(screen.getByText(/1 refused/i)).toBeInTheDocument();
     expect(hooks.toast.error).toHaveBeenCalled();
+  });
+});
+
+describe("the admin role control", () => {
+  it("marks a subject who holds the admin role", () => {
+    hooks.adminRole.isAdmin = true;
+    hooks.adminRole.personRoleId = "pr-1";
+
+    open();
+
+    expect(screen.getByText("Admin")).toBeInTheDocument();
+  });
+
+  it("offers the grant to a subject who does not hold it", async () => {
+    const user = userEvent.setup();
+    open();
+
+    await user.click(screen.getByRole("button", { name: "Make admin" }));
+
+    expect(hooks.grantAdmin.mutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("revokes by the assignment's own id, not the person's", async () => {
+    hooks.adminRole.isAdmin = true;
+    hooks.adminRole.personRoleId = "pr-1";
+    const user = userEvent.setup();
+    open();
+
+    await user.click(screen.getByRole("button", { name: "Remove admin" }));
+
+    expect(hooks.revokeAdmin.mutate).toHaveBeenCalledWith("pr-1");
+  });
+
+  it("offers nothing to a viewer who is not an admin", () => {
+    hooks.me.isAdmin = false;
+
+    open();
+
+    expect(
+      screen.queryByRole("button", { name: "Make admin" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Remove admin" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("says the roles were not read rather than offering a verb against them", () => {
+    hooks.adminRole.isUnknown = true;
+
+    open();
+
+    expect(
+      screen.getByText("Admin status could not be read."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Make admin" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("names the last-admin refusal instead of a generic failure", () => {
+    hooks.adminRole.isAdmin = true;
+    hooks.adminRole.personRoleId = "pr-1";
+    hooks.revokeAdmin.isError = true;
+    hooks.revokeAdmin.error = {
+      status: 409,
+      body: { context: { reason: "last_admin_protected" } },
+    };
+
+    open();
+
+    expect(
+      screen.getByText(
+        "This is the last admin in the tenant — grant another before removing this one.",
+      ),
+    ).toBeInTheDocument();
   });
 });
