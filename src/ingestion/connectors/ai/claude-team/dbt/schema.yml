@@ -243,3 +243,40 @@ models:
         description: "ReplacingMergeTree version — toUnixTimestamp64Milli(_airbyte_extracted_at)"
         tests:
           - not_null
+
+  - name: claude_team__members_latest
+    description: >
+      Members stream flattened to one row per account, with the serialized
+      `account` object projected into `account_uuid`, `email_address` and
+      `full_name`. Rows carrying no `account_uuid` are dropped; rows carrying no
+      email are kept, since the account remains bindable by hand.
+      ReplacingMergeTree so the SCD2 snapshot can read it with FINAL.
+    columns:
+      - name: unique_key
+        tests:
+          - not_null
+      - name: account_uuid
+        description: "Claude account uuid — the entity the identity chain binds"
+        tests:
+          - not_null
+
+  - name: claude_team__members_snapshot
+    description: >
+      SCD2 snapshot of the member roster. Appends a new row when
+      `email_address` or `full_name` changes for a given account.
+    columns:
+      - name: unique_key
+        tests:
+          - not_null
+
+  - name: claude_team__members_fields_history
+    description: >
+      Field-level change log derived from the members snapshot. One row per
+      changed field per version transition.
+
+  - name: claude_team__identity_inputs
+    description: >
+      Identity Manager input rows emitted from the members fields-history.
+      Contributes `email` and `display_name` value types plus the canonical
+      `id` binding row. Not a roster emitter: the connector observes accounts,
+      it does not assert who exists.
