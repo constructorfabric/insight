@@ -2,9 +2,9 @@
  * The windows a custom dashboard can be read over.
  *
  * The token is what crosses the wire and sits in the URL; the label is only
- * ever shown. The server resolves every token against the newest row in the
- * data, so nothing here computes a date — a custom interval is passed on as
- * the two dates the reader picked.
+ * ever shown. The server resolves every token against the clock, so nothing
+ * here computes a date — a custom interval is passed on as the two dates the
+ * reader picked.
  */
 
 import { parseISOCalendarDate } from "@/api/period-to-date-range";

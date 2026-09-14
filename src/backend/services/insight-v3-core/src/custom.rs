@@ -1,9 +1,9 @@
 //! The metric, widget and dashboard operations, over the stores they need.
 
+use chrono::Utc;
 use serde_json::Value;
 use thiserror::Error;
 
-use crate::anchor::Anchor;
 use crate::catalog::{Catalog, CatalogError, TableEngine, TableSchema};
 use crate::dashboard::Item;
 use crate::definitions::{
@@ -11,6 +11,7 @@ use crate::definitions::{
 };
 use crate::metric_query::{MetricQuery, MetricQueryError, MetricRunError, MetricRunner, RunResult};
 use crate::time_window::{RequestedRange, WindowError, WindowRequest};
+use crate::undated::UndatedCount;
 use crate::widget::{Widget, WidgetError};
 
 #[cfg(test)]
@@ -200,7 +201,8 @@ impl<'a> Surfaces<'a> {
     }
 
     /// Runs a stored metric over the window the caller asked for, resolved
-    /// against the newest clock its own rows carry — which is read first.
+    /// against the wall clock, so a named range means the period it is named
+    /// after whether or not the data reaches that far.
     pub(crate) async fn run_metric(
         &self,
         name: &DefinitionName,
@@ -216,9 +218,9 @@ impl<'a> Surfaces<'a> {
         }
 
         let engine = self.engine_of(&metric).await?;
-        let anchor = self.anchor_of(&metric, request, engine).await?;
+        let undated = self.undated_of(&metric, request, engine).await?;
         let window = request
-            .resolve(anchor.newest())
+            .resolve(Utc::now())
             .map_err(|error| CustomError::Compile(error.into()))?;
 
         let compiled = metric
@@ -231,7 +233,7 @@ impl<'a> Surfaces<'a> {
             .await
             .map_err(CustomError::Run)?;
         if request.is_ranged() {
-            result.undated = Some(anchor.undated());
+            result.undated = Some(undated.count());
         }
 
         Ok(result)
@@ -246,21 +248,21 @@ impl<'a> Surfaces<'a> {
             .map_err(CustomError::Catalog)
     }
 
-    async fn anchor_of(
+    async fn undated_of(
         &self,
         metric: &MetricQuery,
         request: &WindowRequest,
         engine: TableEngine,
-    ) -> Result<Anchor, CustomError> {
+    ) -> Result<UndatedCount, CustomError> {
         if !request.is_ranged() {
-            return Ok(Anchor::default());
+            return Ok(UndatedCount::default());
         }
 
-        let Some(query) = metric.anchor_query(engine).map_err(CustomError::Compile)? else {
-            return Ok(Anchor::default());
+        let Some(query) = metric.undated_query(engine).map_err(CustomError::Compile)? else {
+            return Ok(UndatedCount::default());
         };
 
-        self.metrics.anchor(&query).await.map_err(CustomError::Run)
+        self.metrics.undated(&query).await.map_err(CustomError::Run)
     }
 
     pub(crate) async fn tables(&self) -> Result<Vec<TableSchema>, CustomError> {

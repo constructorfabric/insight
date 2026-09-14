@@ -75,9 +75,10 @@ pub(crate) struct RunRequest {
     /// `P30D`, `PMC` (the last complete calendar month), `PQC` (the last
     /// complete calendar quarter), `P1Y`, `inf` (every dated row), or an
     /// ISO 8601 date interval such as `2026-08-01/2026-09-01`, whose end
-    /// date is excluded. Relative windows count back from the newest row
-    /// the metric can see, not from now. Omit it to read every row, as a
-    /// run with no options always has.
+    /// date is excluded. Relative windows count back from now, so one that
+    /// starts after the newest row answers no rows rather than sliding back
+    /// to the last day that has them. Omit it to read every row, as a run
+    /// with no options always has.
     pub(crate) range: Option<String>,
     /// Whether the answer comes one row per time bucket. `false` answers one
     /// row for the whole window, which is what a total is. `true` by
