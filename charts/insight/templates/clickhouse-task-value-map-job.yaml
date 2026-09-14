@@ -1,0 +1,78 @@
+{{/*
+Seeds operator-authored `config.task_value_map` rows from the per-environment
+ConfigMap (gitops `task-value-map` target, environments/<env>/clickhouse/
+task-value-map/) via src/ingestion/scripts/load_task_value_map.py.
+
+Insert-only: the script anti-joins the file against the live table on the
+business key and writes misses. A stored decision is never overwritten, and an
+empty or absent bundle is a no-op, so the Job is safe on every upgrade.
+
+Hook weight 300 runs it after clickhouse-migrate (200), which is what creates
+`config.task_value_map` (dbt on-run-start). The script skips cleanly if the
+table is still absent.
+*/}}
+{{- if and .Values.clickhouse.taskValueMap.enabled .Values.ingestion.toolboxImage }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "insight.fullname" . }}-clickhouse-task-value-map
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "300"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+  labels:
+    {{- include "insight.labels" . | nindent 4 }}
+    app.kubernetes.io/component: clickhouse-task-value-map
+spec:
+  # A rejected file or a bad mapping is deterministic; retries only delay it.
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "insight.fullname" . }}-clickhouse-task-value-map
+        app.kubernetes.io/component: clickhouse-task-value-map
+    spec:
+      enableServiceLinks: false
+      restartPolicy: OnFailure
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: load-task-value-map
+          image: {{ .Values.ingestion.toolboxImage | quote }}
+          imagePullPolicy: IfNotPresent
+          command: [python3, /ingestion/scripts/load_task_value_map.py]
+          env:
+            - name: CLICKHOUSE_URL
+              value: {{ include "insight.clickhouse.url" . | quote }}
+            - name: CLICKHOUSE_DATABASE
+              value: {{ include "insight.clickhouse.database" . | quote }}
+            - name: CLICKHOUSE_USER
+              value: {{ required "clickhouse.username is required" .Values.clickhouse.username | quote }}
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "clickhouse.passwordSecret.name is required" .Values.clickhouse.passwordSecret.name | quote }}
+                  key:  {{ required "clickhouse.passwordSecret.key is required"  .Values.clickhouse.passwordSecret.key  | quote }}
+            - name: TASK_VALUE_MAP_DIR
+              value: "/config/task-value-map"
+            - name: TASK_VALUE_MAP_RECORDED_BY
+              value: {{ .Values.clickhouse.taskValueMap.recordedBy | quote }}
+          volumeMounts:
+            - name: task-value-map
+              mountPath: /config/task-value-map
+              readOnly: true
+          {{- with .Values.clickhouse.taskValueMap.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: task-value-map
+          configMap:
+            name: {{ default (printf "%s-task-value-map" (include "insight.fullname" .)) .Values.clickhouse.taskValueMap.configMap | quote }}
+            # An environment that enables the feature before its first bundle
+            # lands must not leave the Job unschedulable.
+            optional: true
+{{- end }}

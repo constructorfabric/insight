@@ -334,6 +334,20 @@ clickhouse:
   # CH migrations out-of-band (e.g. a managed-warehouse change process).
   # The Job also no-ops if an overlay explicitly clears ingestion.toolboxImage.
   runMigrations: true
+  # Operator-authored config.task_value_map seed, applied by a post-install/
+  # post-upgrade Hook Job (weight 300, after clickhouse-migrate) from a TSV
+  # ConfigMap the gitops `task-value-map` target builds out of
+  # environments/<env>/clickhouse/task-value-map/. Insert-only: a key that
+  # already carries a decision is never rewritten, and an empty or absent
+  # bundle is a no-op.
+  taskValueMap:
+    enabled: false
+    # Pre-created ConfigMap (empty = <release>-task-value-map).
+    configMap: ""
+    # `recorded_by` stamp on the rows this loader writes, so a seeded decision
+    # is distinguishable from a hand-authored one.
+    recordedBy: "gitops"
+    resources: {}
 # ─── MariaDB ─────────────────────────────────────────────────────────────
 mariadb:
   host: "" # MUST be set (external L2 MariaDB host)
