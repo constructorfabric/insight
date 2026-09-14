@@ -153,6 +153,7 @@ COMPONENTS = [
         "package": "git-cli-proxy",
         "paths": ["src/backend/services/git-cli-proxy", "docs/components/backend/git-cli-proxy/openapi.json"],
         "drift_test": True,
+        "cover_ignore_regex": "src/backend/libs/",
     },
     # routegen is the build-time gateway config compiler (gateway DESIGN
     # DD-GW-02); fmt + clippy + coverage run here. Golden + rejection tests cover
