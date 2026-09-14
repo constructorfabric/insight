@@ -281,8 +281,8 @@ export type MetricResultsScenario =
   | { kind: "pending" }
   /** Always fails — the view's error state. */
   | { kind: "error" }
-  /** Fails `state.failures` times, then serves data — exercises Retry. */
-  | { kind: "recovering"; state: { failures: number } };
+  /** Fails while `state.failing`, then serves data — exercises Retry. */
+  | { kind: "recovering"; state: { failing: boolean } };
 
 const METRIC_RESULTS_URL = "/api/analytics/v1/metric-results";
 
@@ -299,8 +299,7 @@ export function metricResultsHandler(
       case "empty":
         return HttpResponse.json({ metrics: [] });
       case "recovering":
-        if (scenario.state.failures > 0) {
-          scenario.state.failures -= 1;
+        if (scenario.state.failing) {
           return new HttpResponse(null, { status: 503 });
         }
         break;

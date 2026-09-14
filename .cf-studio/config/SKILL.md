@@ -9,9 +9,12 @@ Use the [quality-vector authoring guide](kits/sdlc/guides/quality-vectors.md) wh
 writing or reviewing PRD quality expectations, DESIGN allocation or FEATURE
 verification. It owns the definitions, improvement prompts, inheritance and
 shared-evidence guidance. Vector order is a display convention; product risks
-determine priority. The guide's content-improvement suggestions and the optional
-per-requirement `**Vector**` tag stay advisory and do not add a readiness gate; the
-PRD's Quality Vector Analysis table itself is gated (checklist ARCH-PRD-006).
+determine priority. A vector is generative: a material vector produces a
+non-functional requirement in PRD section 6.2, or the guide's analysis records
+why it produced none; the vector itself is never a requirement. The guide's
+content-improvement suggestions and the optional per-requirement `**Vector**` tag
+stay advisory and do not add a readiness gate; the PRD's Quality Vector Analysis
+table itself is gated (checklist ARCH-PRD-006).
 
 Use `quality-vector-tests` in `.claude/skills/` to author FEATURE section 7 Testing
 and map exact tests back to feature-owned scenarios. It owns that format and the

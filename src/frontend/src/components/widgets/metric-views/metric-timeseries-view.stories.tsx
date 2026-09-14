@@ -60,8 +60,12 @@ interface CapturedDownload {
 
 const downloads: CapturedDownload[] = [];
 
-/** Failure budget for the retry story; reset in that story's `beforeEach`. */
-const retryState = { failures: 1 };
+/**
+ * Whether the retry story's endpoint is currently failing. The story clears it
+ * before clicking Retry, so the test does not depend on how many requests the
+ * view makes to reach its error state.
+ */
+const retryState = { failing: true };
 
 /**
  * Capture what `downloadBlob` hands to the browser. A real anchor click on a
@@ -524,7 +528,7 @@ export const TestErrorAndRetry: Story = {
     },
   },
   beforeEach: () => {
-    retryState.failures = 1;
+    retryState.failing = true;
   },
   play: async ({ canvas }) => {
     await expect(
@@ -532,6 +536,7 @@ export const TestErrorAndRetry: Story = {
     ).toBeInTheDocument();
     await expect(canvas.getByRole("button", { name: "Export" })).toBeDisabled();
 
+    retryState.failing = false;
     await userEvent.click(canvas.getByRole("button", { name: "Retry" }));
 
     await expect(await canvas.findByText("org/repo-a")).toBeInTheDocument();
