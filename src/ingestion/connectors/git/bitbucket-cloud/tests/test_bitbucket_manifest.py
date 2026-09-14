@@ -249,7 +249,7 @@ def _parent_configs(node, out=None):
     return out
 
 
-_CURSOR_BOUNDED_PARENTS = {"repositories_for_commits", "repositories_for_files"}
+_CURSOR_BOUNDED_PARENTS = {"repositories_for_commits", "repositories_for_files", "repositories_for_authors"}
 
 
 def test_a_parent_that_carries_state_lists_repositories_from_its_cursor() -> None:
@@ -258,7 +258,8 @@ def test_a_parent_that_carries_state_lists_repositories_from_its_cursor() -> Non
     child persists bounds the listing by its own cursor instead, one lookback
     window back, so only repositories pushed to since the last sync are walked.
     The vendor moves a repository's updated_on on commit activity only, so the
-    bound is exact for commits and file changes and for nothing else."""
+    bound is exact for commits, file changes and commit authors, and for nothing
+    else."""
     manifest = yaml.safe_load((connector_dir(_CONNECTOR) / "connector.yaml").read_text())
     seen = set()
     for parent_config in _parent_configs(manifest["streams"]):
