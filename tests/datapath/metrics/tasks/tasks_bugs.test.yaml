@@ -206,6 +206,7 @@ bronze:
     # ── Alice Alpha (rank 1) ──
     - $ref: ../templates/jira_task.yaml#/templates/jira_history
       id_readable: BAW1
+      jira_id: BAW-1
       changelog_id: "50000"
       unique_key: jira-test-BAW1-50000
       created_at: "2026-06-25T14:00:00.000+0000"
@@ -213,6 +214,7 @@ bronze:
       items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
     - $ref: ../templates/jira_task.yaml#/templates/jira_history
       id_readable: BAW2
+      jira_id: BAW-2
       changelog_id: "50001"
       unique_key: jira-test-BAW2-50001
       created_at: "2026-06-25T14:00:00.000+0000"
@@ -220,6 +222,7 @@ bronze:
       items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
     - $ref: ../templates/jira_task.yaml#/templates/jira_history
       id_readable: BAW3
+      jira_id: BAW-3
       changelog_id: "50002"
       unique_key: jira-test-BAW3-50002
       created_at: "2026-06-25T14:00:00.000+0000"
@@ -227,6 +230,7 @@ bronze:
       items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
     - $ref: ../templates/jira_task.yaml#/templates/jira_history
       id_readable: BAW4
+      jira_id: BAW-4
       changelog_id: "50003"
       unique_key: jira-test-BAW4-50003
       created_at: "2026-06-25T14:00:00.000+0000"
@@ -235,6 +239,7 @@ bronze:
     # ── Bob Beta (rank 2) ──
     - $ref: ../templates/jira_task.yaml#/templates/jira_history
       id_readable: BBW1
+      jira_id: BBW-1
       changelog_id: "50004"
       unique_key: jira-test-BBW1-50004
       created_at: "2026-06-25T14:00:00.000+0000"
@@ -242,6 +247,7 @@ bronze:
       items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
     - $ref: ../templates/jira_task.yaml#/templates/jira_history
       id_readable: BBW2
+      jira_id: BBW-2
       changelog_id: "50005"
       unique_key: jira-test-BBW2-50005
       created_at: "2026-06-25T14:00:00.000+0000"
@@ -249,6 +255,7 @@ bronze:
       items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
     - $ref: ../templates/jira_task.yaml#/templates/jira_history
       id_readable: BBW3
+      jira_id: BBW-3
       changelog_id: "50006"
       unique_key: jira-test-BBW3-50006
       created_at: "2026-06-25T14:00:00.000+0000"
@@ -256,6 +263,7 @@ bronze:
       items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
     - $ref: ../templates/jira_task.yaml#/templates/jira_history
       id_readable: BBW4
+      jira_id: BBW-4
       changelog_id: "50007"
       unique_key: jira-test-BBW4-50007
       created_at: "2026-06-25T14:00:00.000+0000"
@@ -264,6 +272,7 @@ bronze:
     # ── Carol Gamma (rank 3) ──
     - $ref: ../templates/jira_task.yaml#/templates/jira_history
       id_readable: BCW1
+      jira_id: BCW-1
       changelog_id: "50008"
       unique_key: jira-test-BCW1-50008
       created_at: "2026-06-25T14:00:00.000+0000"
@@ -271,6 +280,7 @@ bronze:
       items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
     - $ref: ../templates/jira_task.yaml#/templates/jira_history
       id_readable: BCW2
+      jira_id: BCW-2
       changelog_id: "50009"
       unique_key: jira-test-BCW2-50009
       created_at: "2026-06-25T14:00:00.000+0000"
@@ -278,6 +288,7 @@ bronze:
       items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
     - $ref: ../templates/jira_task.yaml#/templates/jira_history
       id_readable: BCW3
+      jira_id: BCW-3
       changelog_id: "50010"
       unique_key: jira-test-BCW3-50010
       created_at: "2026-06-25T14:00:00.000+0000"
@@ -285,6 +296,7 @@ bronze:
       items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
     - $ref: ../templates/jira_task.yaml#/templates/jira_history
       id_readable: BCW4
+      jira_id: BCW-4
       changelog_id: "50011"
       unique_key: jira-test-BCW4-50011
       created_at: "2026-06-25T14:00:00.000+0000"
@@ -293,6 +305,7 @@ bronze:
     # ── Dave Delta (rank 4) ──
     - $ref: ../templates/jira_task.yaml#/templates/jira_history
       id_readable: BDW1
+      jira_id: BDW-1
       changelog_id: "50012"
       unique_key: jira-test-BDW1-50012
       created_at: "2026-06-25T14:00:00.000+0000"
@@ -300,6 +313,7 @@ bronze:
       items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
     - $ref: ../templates/jira_task.yaml#/templates/jira_history
       id_readable: BDW2
+      jira_id: BDW-2
       changelog_id: "50013"
       unique_key: jira-test-BDW2-50013
       created_at: "2026-06-25T14:00:00.000+0000"
@@ -307,6 +321,7 @@ bronze:
       items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
     - $ref: ../templates/jira_task.yaml#/templates/jira_history
       id_readable: BDW3
+      jira_id: BDW-3
       changelog_id: "50014"
       unique_key: jira-test-BDW3-50014
       created_at: "2026-06-25T14:00:00.000+0000"
@@ -314,6 +329,7 @@ bronze:
       items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
     - $ref: ../templates/jira_task.yaml#/templates/jira_history
       id_readable: BDW4
+      jira_id: BDW-4
       changelog_id: "50015"
       unique_key: jira-test-BDW4-50015
       created_at: "2026-06-25T14:00:00.000+0000"
@@ -322,6 +338,7 @@ bronze:
     # ── Erin Epsilon (rank 5) ──
     - $ref: ../templates/jira_task.yaml#/templates/jira_history
       id_readable: BEW1
+      jira_id: BEW-1
       changelog_id: "50016"
       unique_key: jira-test-BEW1-50016
       created_at: "2026-06-25T14:00:00.000+0000"
@@ -329,6 +346,7 @@ bronze:
       items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
     - $ref: ../templates/jira_task.yaml#/templates/jira_history
       id_readable: BEW2
+      jira_id: BEW-2
       changelog_id: "50017"
       unique_key: jira-test-BEW2-50017
       created_at: "2026-06-25T14:00:00.000+0000"
@@ -336,6 +354,7 @@ bronze:
       items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
     - $ref: ../templates/jira_task.yaml#/templates/jira_history
       id_readable: BEW3
+      jira_id: BEW-3
       changelog_id: "50018"
       unique_key: jira-test-BEW3-50018
       created_at: "2026-06-25T14:00:00.000+0000"
@@ -343,6 +362,7 @@ bronze:
       items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
     - $ref: ../templates/jira_task.yaml#/templates/jira_history
       id_readable: BEW4
+      jira_id: BEW-4
       changelog_id: "50019"
       unique_key: jira-test-BEW4-50019
       created_at: "2026-06-25T14:00:00.000+0000"

@@ -259,30 +259,35 @@ bronze:
     # ── Alice Alpha (rank 1) ──
     - $ref: ../templates/jira_task.yaml#/templates/closed_hist
       id_readable: PQA1
+      jira_id: PQA-1
       changelog_id: "51000"
       unique_key: jira-test-PQA1-51000
       created_at: "2026-06-25T14:00:00.000+0000"
       author_account_id: alice-jira-acct
     - $ref: ../templates/jira_task.yaml#/templates/closed_hist
       id_readable: PQA2
+      jira_id: PQA-2
       changelog_id: "51001"
       unique_key: jira-test-PQA2-51001
       created_at: "2026-06-25T14:00:00.000+0000"
       author_account_id: alice-jira-acct
     - $ref: ../templates/jira_task.yaml#/templates/closed_hist
       id_readable: PQA3
+      jira_id: PQA-3
       changelog_id: "51002"
       unique_key: jira-test-PQA3-51002
       created_at: "2026-06-25T14:00:00.000+0000"
       author_account_id: alice-jira-acct
     - $ref: ../templates/jira_task.yaml#/templates/closed_hist
       id_readable: PQA4
+      jira_id: PQA-4
       changelog_id: "51003"
       unique_key: jira-test-PQA4-51003
       created_at: "2026-06-25T14:00:00.000+0000"
       author_account_id: alice-jira-acct
     - $ref: ../templates/jira_task.yaml#/templates/closed_hist
       id_readable: PQA5
+      jira_id: PQA-5
       changelog_id: "51004"
       unique_key: jira-test-PQA5-51004
       created_at: "2026-06-25T14:00:00.000+0000"
@@ -290,30 +295,35 @@ bronze:
     # ── Bob Beta (rank 2) ──
     - $ref: ../templates/jira_task.yaml#/templates/closed_hist
       id_readable: PQB1
+      jira_id: PQB-1
       changelog_id: "51005"
       unique_key: jira-test-PQB1-51005
       created_at: "2026-06-25T14:00:00.000+0000"
       author_account_id: bob-jira-acct
     - $ref: ../templates/jira_task.yaml#/templates/closed_hist
       id_readable: PQB2
+      jira_id: PQB-2
       changelog_id: "51006"
       unique_key: jira-test-PQB2-51006
       created_at: "2026-06-25T14:00:00.000+0000"
       author_account_id: bob-jira-acct
     - $ref: ../templates/jira_task.yaml#/templates/closed_hist
       id_readable: PQB3
+      jira_id: PQB-3
       changelog_id: "51007"
       unique_key: jira-test-PQB3-51007
       created_at: "2026-06-25T14:00:00.000+0000"
       author_account_id: bob-jira-acct
     - $ref: ../templates/jira_task.yaml#/templates/closed_hist
       id_readable: PQB4
+      jira_id: PQB-4
       changelog_id: "51008"
       unique_key: jira-test-PQB4-51008
       created_at: "2026-06-25T14:00:00.000+0000"
       author_account_id: bob-jira-acct
     - $ref: ../templates/jira_task.yaml#/templates/closed_hist
       id_readable: PQB5
+      jira_id: PQB-5
       changelog_id: "51009"
       unique_key: jira-test-PQB5-51009
       created_at: "2026-06-25T14:00:00.000+0000"
@@ -321,30 +331,35 @@ bronze:
     # ── Carol Gamma (rank 3) ──
     - $ref: ../templates/jira_task.yaml#/templates/closed_hist
       id_readable: PQC1
+      jira_id: PQC-1
       changelog_id: "51010"
       unique_key: jira-test-PQC1-51010
       created_at: "2026-06-25T14:00:00.000+0000"
       author_account_id: carol-jira-acct
     - $ref: ../templates/jira_task.yaml#/templates/closed_hist
       id_readable: PQC2
+      jira_id: PQC-2
       changelog_id: "51011"
       unique_key: jira-test-PQC2-51011
       created_at: "2026-06-25T14:00:00.000+0000"
       author_account_id: carol-jira-acct
     - $ref: ../templates/jira_task.yaml#/templates/closed_hist
       id_readable: PQC3
+      jira_id: PQC-3
       changelog_id: "51012"
       unique_key: jira-test-PQC3-51012
       created_at: "2026-06-25T14:00:00.000+0000"
       author_account_id: carol-jira-acct
     - $ref: ../templates/jira_task.yaml#/templates/closed_hist
       id_readable: PQC4
+      jira_id: PQC-4
       changelog_id: "51013"
       unique_key: jira-test-PQC4-51013
       created_at: "2026-06-25T14:00:00.000+0000"
       author_account_id: carol-jira-acct
     - $ref: ../templates/jira_task.yaml#/templates/closed_hist
       id_readable: PQC5
+      jira_id: PQC-5
       changelog_id: "51014"
       unique_key: jira-test-PQC5-51014
       created_at: "2026-06-25T14:00:00.000+0000"
@@ -352,30 +367,35 @@ bronze:
     # ── Dave Delta (rank 4) ──
     - $ref: ../templates/jira_task.yaml#/templates/closed_hist
       id_readable: PQD1
+      jira_id: PQD-1
       changelog_id: "51015"
       unique_key: jira-test-PQD1-51015
       created_at: "2026-06-25T14:00:00.000+0000"
       author_account_id: dave-jira-acct
     - $ref: ../templates/jira_task.yaml#/templates/closed_hist
       id_readable: PQD2
+      jira_id: PQD-2
       changelog_id: "51016"
       unique_key: jira-test-PQD2-51016
       created_at: "2026-06-25T14:00:00.000+0000"
       author_account_id: dave-jira-acct
     - $ref: ../templates/jira_task.yaml#/templates/closed_hist
       id_readable: PQD3
+      jira_id: PQD-3
       changelog_id: "51017"
       unique_key: jira-test-PQD3-51017
       created_at: "2026-06-25T14:00:00.000+0000"
       author_account_id: dave-jira-acct
     - $ref: ../templates/jira_task.yaml#/templates/closed_hist
       id_readable: PQD4
+      jira_id: PQD-4
       changelog_id: "51018"
       unique_key: jira-test-PQD4-51018
       created_at: "2026-06-25T14:00:00.000+0000"
       author_account_id: dave-jira-acct
     - $ref: ../templates/jira_task.yaml#/templates/closed_hist
       id_readable: PQD5
+      jira_id: PQD-5
       changelog_id: "51019"
       unique_key: jira-test-PQD5-51019
       created_at: "2026-06-25T14:00:00.000+0000"
@@ -383,30 +403,35 @@ bronze:
     # ── Erin Epsilon (rank 5) ──
     - $ref: ../templates/jira_task.yaml#/templates/closed_hist
       id_readable: PQE1
+      jira_id: PQE-1
       changelog_id: "51020"
       unique_key: jira-test-PQE1-51020
       created_at: "2026-06-25T14:00:00.000+0000"
       author_account_id: erin-jira-acct
     - $ref: ../templates/jira_task.yaml#/templates/closed_hist
       id_readable: PQE2
+      jira_id: PQE-2
       changelog_id: "51021"
       unique_key: jira-test-PQE2-51021
       created_at: "2026-06-25T14:00:00.000+0000"
       author_account_id: erin-jira-acct
     - $ref: ../templates/jira_task.yaml#/templates/closed_hist
       id_readable: PQE3
+      jira_id: PQE-3
       changelog_id: "51022"
       unique_key: jira-test-PQE3-51022
       created_at: "2026-06-25T14:00:00.000+0000"
       author_account_id: erin-jira-acct
     - $ref: ../templates/jira_task.yaml#/templates/closed_hist
       id_readable: PQE4
+      jira_id: PQE-4
       changelog_id: "51023"
       unique_key: jira-test-PQE4-51023
       created_at: "2026-06-25T14:00:00.000+0000"
       author_account_id: erin-jira-acct
     - $ref: ../templates/jira_task.yaml#/templates/closed_hist
       id_readable: PQE5
+      jira_id: PQE-5
       changelog_id: "51024"
       unique_key: jira-test-PQE5-51024
       created_at: "2026-06-25T14:00:00.000+0000"
@@ -414,12 +439,14 @@ bronze:
     # ── Heidi Eta (no bugs) ──
     - $ref: ../templates/jira_task.yaml#/templates/closed_hist
       id_readable: PQH1
+      jira_id: PQH-1
       changelog_id: "51025"
       unique_key: jira-test-PQH1-51025
       created_at: "2026-06-25T14:00:00.000+0000"
       author_account_id: heidi-jira-acct
     - $ref: ../templates/jira_task.yaml#/templates/closed_hist
       id_readable: PQH2
+      jira_id: PQH-2
       changelog_id: "51026"
       unique_key: jira-test-PQH2-51026
       created_at: "2026-06-25T14:00:00.000+0000"

@@ -1,6 +1,6 @@
 version: 2
 
-# Bronze (Airbyte-produced) + staging (Rust jira-enrich output) source declarations.
+# Bronze (Airbyte-produced) source declarations.
 # Connector-level models union into silver `class_task_*` via `union_by_tag`
 # (see src/ingestion/silver/task-tracking/).
 
@@ -43,13 +43,6 @@ sources:
       # Per-board estimation field + column-to-status mapping.
       - name: jira_board_configuration
 
-  # Staging tables written by the Rust `jira-enrich` binary (not by dbt). DDL is
-  # managed by the `create_task_field_history_staging` macro in `on-run-start`.
-  - name: staging_jira
-    schema: staging
-    tables:
-      - name: jira__task_field_history
-
 models:
   - name: jira__bronze_promoted
     description: |
@@ -82,8 +75,6 @@ models:
     description: "Per-source status dimension: Jira status_id → status_category (via statusCategory). Unioned into silver.class_task_statuses. See issue #1541."
   - name: jira__task_issuetypes
     description: "Per-source issue-type dimension: Jira issue type id → issue_kind (classified from untranslatedName). Unioned into silver.class_task_issuetypes."
-  - name: jira__task_field_history
-    description: "Thin view over the Rust-written staging.jira__task_field_history, so dbt can union it into silver.class_task_field_history."
   - name: jira__identity_inputs
     description: "Identity-resolution inputs from the Jira user profile history (email, display_name, id binding). Unioned into silver.identity_inputs via the silver:identity_inputs tag."
   - name: jira__project_visibility_state

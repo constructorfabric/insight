@@ -5,7 +5,7 @@ description: >
 
   bronze -> silver -> gold: jira_issue (Closed) + jira_issue_history (single
   In Progress -> Closed event) + jira_user; bamboohr employees give the
-  Engineering org_unit_id (the cohort). jira-enrich reconstructs the lead time
+  Engineering org_unit_id (the cohort). The derived field history gives the lead time
   created->close per closed issue; the ...0011 query_ref takes the per-person mean
   resolution days (value = the member's own), median/p25/p75/range = the department
   distribution. range_max = cohort P95 (long-tail guard) = max on a 5-point ladder.
@@ -53,8 +53,8 @@ bronze:
 
   bronze_jira.jira_issue_history:
     # Single In Progress -> Closed at 2026-12-25T09:00 for every member.
-    - { $ref: ../templates/jira_task.yaml#/templates/jira_history, id_readable: MRA1, changelog_id: "52001", unique_key: jira-test-MRA1-52001, created_at: "2026-12-25T09:00:00.000+0000", author_account_id: alice-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]' }
-    - { $ref: ../templates/jira_task.yaml#/templates/jira_history, id_readable: MRB1, changelog_id: "52002", unique_key: jira-test-MRB1-52002, created_at: "2026-12-25T09:00:00.000+0000", author_account_id: bob-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]' }
-    - { $ref: ../templates/jira_task.yaml#/templates/jira_history, id_readable: MRC1, changelog_id: "52003", unique_key: jira-test-MRC1-52003, created_at: "2026-12-25T09:00:00.000+0000", author_account_id: carol-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]' }
-    - { $ref: ../templates/jira_task.yaml#/templates/jira_history, id_readable: MRD1, changelog_id: "52004", unique_key: jira-test-MRD1-52004, created_at: "2026-12-25T09:00:00.000+0000", author_account_id: dave-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]' }
-    - { $ref: ../templates/jira_task.yaml#/templates/jira_history, id_readable: MRE1, changelog_id: "52005", unique_key: jira-test-MRE1-52005, created_at: "2026-12-25T09:00:00.000+0000", author_account_id: erin-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]' }
+    - { $ref: ../templates/jira_task.yaml#/templates/jira_history, id_readable: MRA1, jira_id: MRA-1, changelog_id: "52001", unique_key: jira-test-MRA1-52001, created_at: "2026-12-25T09:00:00.000+0000", author_account_id: alice-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]' }
+    - { $ref: ../templates/jira_task.yaml#/templates/jira_history, id_readable: MRB1, jira_id: MRB-1, changelog_id: "52002", unique_key: jira-test-MRB1-52002, created_at: "2026-12-25T09:00:00.000+0000", author_account_id: bob-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]' }
+    - { $ref: ../templates/jira_task.yaml#/templates/jira_history, id_readable: MRC1, jira_id: MRC-1, changelog_id: "52003", unique_key: jira-test-MRC1-52003, created_at: "2026-12-25T09:00:00.000+0000", author_account_id: carol-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]' }
+    - { $ref: ../templates/jira_task.yaml#/templates/jira_history, id_readable: MRD1, jira_id: MRD-1, changelog_id: "52004", unique_key: jira-test-MRD1-52004, created_at: "2026-12-25T09:00:00.000+0000", author_account_id: dave-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]' }
+    - { $ref: ../templates/jira_task.yaml#/templates/jira_history, id_readable: MRE1, jira_id: MRE-1, changelog_id: "52005", unique_key: jira-test-MRE1-52005, created_at: "2026-12-25T09:00:00.000+0000", author_account_id: erin-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]' }

@@ -13,16 +13,12 @@
         'max_bytes_before_external_group_by': 2000000000,
         'max_bytes_before_external_sort': 2000000000,
     },
-    tags=['staging', 'jira']
+    tags=['staging', 'jira', 'silver:class_task_field_history']
 ) }}
 
--- The per-(issue x field x event) journal, derived in dbt.
---
--- This is the replacement for the Rust `jira-enrich` output. It is materialized
--- under its OWN name rather than over `staging.jira__task_field_history` so the
--- two can be compared row for row on a real warehouse before the binary is
--- retired; the cutover is a rename plus dropping the Rust arm from
--- `class_task_field_history`. See
+-- The per-(issue x field x event) journal, derived in dbt. The Jira producer of
+-- `silver.class_task_field_history`, joined there by the availability and
+-- lifecycle arms and by the GitHub arm. See
 -- `connectors/task-tracking/jira/specs/FIELD-HISTORY-IN-DBT.md`.
 --
 -- Six kinds of row, matching the contract the class consumers rely on (§10):
@@ -688,7 +684,11 @@ initial_seq AS (
         toUInt32(row_number() OVER (PARTITION BY insight_source_id, issue_id
                                     ORDER BY field_id)) AS seq
     FROM initial_state
-)
+),
+
+-- The six kinds of row, each arm typed loosely; the projection below fixes the
+-- class types once.
+journal AS (
 
 -- ── row 1: the creation marker ──────────────────────────────────────────────
 SELECT
@@ -935,3 +935,30 @@ FROM unclassified_events AS u
 LEFT JOIN issues AS i
     ON i.insight_source_id = u.insight_source_id
    AND i.issue_id = u.issue_id
+)
+
+-- The class contract's column order and types. The discriminators are
+-- `LowCardinality(String)`, not enums: every source contributes its own arm to
+-- the class, and an enum would make each of them name the values of all the
+-- others. `_version` is UInt64 because the class and the other arms say so.
+SELECT
+    unique_key,
+    insight_source_id,
+    data_source,
+    issue_id,
+    id_readable,
+    event_id,
+    event_at,
+    CAST(event_kind AS LowCardinality(String))          AS event_kind,
+    _seq,
+    author_id,
+    field_id,
+    field_name,
+    CAST(field_cardinality AS LowCardinality(String))   AS field_cardinality,
+    CAST(delta_action AS LowCardinality(String))        AS delta_action,
+    value_ids,
+    value_displays,
+    CAST(value_id_type AS LowCardinality(String))       AS value_id_type,
+    collected_at,
+    toUInt64(_version)                                  AS _version
+FROM journal
