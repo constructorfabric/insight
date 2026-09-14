@@ -6,6 +6,11 @@
 -- Only sources that have declared any binding are checked. A source with no
 -- configuration at all derives its categories from the vendor and owes nothing
 -- here.
+--
+-- Jira's issue type is bound under the vendor field id `issuetype` while its
+-- mappings are authored under `type` (the field_id `jira__task_issuetypes`
+-- reads). Both sides key on the type id, so the two names are canonicalized to
+-- one before the join — without that, every Jira type would read as unmapped.
 
 WITH bound AS (
     SELECT
@@ -30,6 +35,8 @@ observed AS (
         fh.insight_source_id AS insight_source_id,
         fh.data_source       AS data_source,
         fh.field_id          AS field_id,
+        if(fh.data_source = 'jira' AND fh.field_id = 'issuetype',
+           'type', toString(fh.field_id))                     AS map_field_id,
         fh.value_ids[1]      AS value_id
     FROM silver.class_task_field_history AS fh FINAL
     INNER JOIN bound AS b
@@ -42,11 +49,15 @@ observed AS (
       {% endif %}
 )
 
-SELECT o.*
+SELECT
+    o.insight_source_id AS insight_source_id,
+    o.data_source       AS data_source,
+    o.field_id          AS field_id,
+    o.value_id          AS value_id
 FROM observed AS o
 LEFT ANTI JOIN mapped AS m
     ON m.insight_source_id = o.insight_source_id
     AND m.data_source = o.data_source
-    AND m.field_id = o.field_id
+    AND m.field_id = o.map_field_id
     AND m.value_id = o.value_id
 LIMIT 100

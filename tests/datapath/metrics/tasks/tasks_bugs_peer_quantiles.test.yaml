@@ -8,14 +8,14 @@ description: >
   bronze -> silver -> gold: jira_issue + jira_issue_history (Status->Closed event
   = metric_date) + jira_user + jira_issuetypes. The issue's type id lives in
   custom_fields_json (issuetype.id) and resolves through the issue-type
-  dimension; task_issue_kind lower+trims coalesce(nullIf(untranslatedName,''),
-  name) against the configured bug list, so Defect, Regression, "  DEFECT  "
-  (empty untranslatedName, padded display name) and Ошибка (untranslatedName
-  Bug) all classify as bug alongside the literal Bug.
+  dimension, which reads the operator's `config.task_value_map` row for that
+  id. Defect, Regression, "  DEFECT  " (empty untranslatedName, padded display
+  name) and Ошибка each carry their own mapped row, so all classify as bug
+  alongside the literal Bug whatever their names look like.
 
   Department: 6 Engineering members. alice..erin of rank r in 1..5 each close
   EXACTLY 5 issues on the same close date (2026-06-25): r bugs + (5-r) Tasks,
-  each person's bugs carrying THEIR alias type -> bugs_fixed = {1,2,3,4,5} and
+  each person's bugs carrying THEIR own type -> bugs_fixed = {1,2,3,4,5} and
   bugs_ratio = {20,40,60,80,100}. heidi closes 2 Tasks and 0 bugs: sumIfOrNull
   computes NULL over her zero bug rows for bugs_fixed AND for the ratio's
   numerator, so she carries no observation and stays out of both peer pools -
@@ -51,6 +51,14 @@ bronze:
     - $ref: ../templates/jira_task.yaml#/templates/issuetype_regression
     - $ref: ../templates/jira_task.yaml#/templates/issuetype_defect_padded
     - $ref: ../templates/jira_task.yaml#/templates/issuetype_bug_translated
+
+  config.task_value_map:
+    - $ref: ../templates/jira_task.yaml#/templates/value_type_task
+    - $ref: ../templates/jira_task.yaml#/templates/value_type_bug
+    - $ref: ../templates/jira_task.yaml#/templates/value_type_defect
+    - $ref: ../templates/jira_task.yaml#/templates/value_type_regression
+    - $ref: ../templates/jira_task.yaml#/templates/value_type_defect_padded
+    - $ref: ../templates/jira_task.yaml#/templates/value_type_bug_translated
 
   bronze_jira.jira_fields:
     - $ref: ../templates/jira_task.yaml#/templates/field_status

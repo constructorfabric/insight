@@ -23,6 +23,10 @@ bronze:
     - $ref: ../templates/jira_task.yaml#/templates/issuetype_task
     - $ref: ../templates/jira_task.yaml#/templates/issuetype_bug
 
+  config.task_value_map:
+    - $ref: ../templates/jira_task.yaml#/templates/value_type_task
+    - $ref: ../templates/jira_task.yaml#/templates/value_type_bug
+
   bronze_jira.jira_fields:
     - $ref: ../templates/jira_task.yaml#/templates/field_status
     - $ref: ../templates/jira_task.yaml#/templates/field_assignee

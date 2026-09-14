@@ -10,10 +10,12 @@
   canonical value a class dimension carries — a status category, an issue kind.
 
   What `value_id` is depends on how the vendor keys values. GitHub issue types
-  are org-scoped, so it is the type id. Jira mints a distinct type id per
-  project while the name is what recurs, so for Jira `field_id='type'` rows it
-  is the normalized name: lower(trimBoth(coalesce(nullIf(untranslatedName, ''), name))) —
-  the form `jira__task_issuetypes` joins on.
+  are org-scoped, so it is the type id. For Jira `field_id='type'` rows it is
+  the issue-type id too — toString(id), scoped per source. Jira mints a
+  distinct type id per project, so one decision per (project) type is needed,
+  but a rename cannot re-bucket history the way a name key would. Unmapped ids
+  classify as `unknown`. `value_display` records the name the decision was made
+  against, so a later rename is detectable instead of silent.
 
   Bitemporal by design. `valid_from` says which events a mapping applies to: the
   process genuinely changed on a date. `recorded_at` says when the decision was

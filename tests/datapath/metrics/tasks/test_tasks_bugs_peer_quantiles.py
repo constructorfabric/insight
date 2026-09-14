@@ -1,8 +1,8 @@
 """Peer quantiles for bugs_fixed and bugs_ratio once the pool clears MIN_PEER_N.
 
 Six department members; alice..erin of rank r each close 5 issues on one day, r bugs
-(each person's bugs carrying one bug-name alias: Defect, Regression, padded DEFECT,
-translated name with untranslatedName Bug, literal Bug) and (5-r) tasks, so bugs_fixed
+(each person's bugs carrying a type of their own: Defect, Regression, padded DEFECT,
+translated name, literal Bug, each mapped to `bug` by id) and (5-r) tasks, so bugs_fixed
 spreads {1..5} and bugs_ratio {20..100}. heidi closes 2 tasks and 0 bugs: sumIfOrNull
 computes NULL for her, she drops out of both peer pools, and the 5 observed members
 disclose non-NULL p25/median/p75/min/max.
@@ -113,10 +113,11 @@ def test_zero_bug_member_has_no_observation(spec: SpecRun) -> None:
         (DAVE, 4),
         (ERIN, 5),
     ],
-    ids=["Defect", "Regression", "padded DEFECT", "untranslatedName Bug", "literal Bug"],
+    ids=["Defect", "Regression", "padded DEFECT", "translated name", "literal Bug"],
 )
-def test_alias_types_classify_as_bug(spec: SpecRun, email: str, bugs_fixed: int) -> None:
-    """Each member's bugs carry one bug-name alias; every alias counts as a bug."""
+def test_mapped_types_classify_as_bug(spec: SpecRun, email: str, bugs_fixed: int) -> None:
+    """Each member's bugs carry a distinct type; a mapped id counts as a bug however
+    the type is named or cased."""
     r = spec.call(
         {
             "url": "/v1/metric-results",
