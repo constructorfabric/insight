@@ -16,6 +16,9 @@ import { ADMIN_ROLE_ID } from "./identity-me";
 
 const PERSON_ROLES_KEY = ["identity", "person-roles"] as const;
 
+/** `useMe`'s key, session scope and all — the prefix its entries hang under. */
+const ME_KEY = ["identity", "me"] as const;
+
 const personRolesKey = (personId: string) =>
   [...PERSON_ROLES_KEY, personId] as const;
 
@@ -56,9 +59,11 @@ export function useGrantAdmin(
   return useMutation({
     mutationFn: () =>
       grantPersonRole({ person_id: personId, role_id: ADMIN_ROLE_ID }),
-    onSuccess: () => {
-      void client.invalidateQueries({ queryKey: personRolesKey(personId) });
-    },
+    // Returned, not fired and forgotten: the mutation stays pending until the
+    // re-read lands, so the verb cannot re-enable showing the state it just
+    // changed.
+    onSuccess: () =>
+      client.invalidateQueries({ queryKey: personRolesKey(personId) }),
   });
 }
 
@@ -68,8 +73,13 @@ export function useRevokeAdmin(
   const client = useQueryClient();
   return useMutation({
     mutationFn: (personRoleId: string) => revokePersonRole(personRoleId),
-    onSuccess: () => {
-      void client.invalidateQueries({ queryKey: personRolesKey(personId) });
-    },
+    // The viewer's OWN roles too: revoking yourself leaves `useMe` holding the
+    // grant that draws this control, and it would keep drawing until that query
+    // went stale on its own.
+    onSuccess: () =>
+      Promise.all([
+        client.invalidateQueries({ queryKey: personRolesKey(personId) }),
+        client.invalidateQueries({ queryKey: ME_KEY }),
+      ]),
   });
 }

@@ -843,10 +843,11 @@ export const handlers = [
       person_id: string;
       role_id: string;
     };
+    // Not derived from `size`: a revoke shrinks the map, and the next grant
+    // would then mint an id another assignment still holds — the delete below
+    // matches by id and would revoke the wrong person.
     const assignment = {
-      person_role_id: `019e27bc-0000-7000-8000-${String(
-        ADMIN_ASSIGNMENTS.size + 1
-      ).padStart(12, "0")}`,
+      person_role_id: crypto.randomUUID(),
       insight_tenant_id: "00000000-0000-4000-8000-00000000c0de",
       person_id: body.person_id,
       role_id: body.role_id,

@@ -142,6 +142,7 @@ beforeEach(() => {
   hooks.me.isAdmin = true;
   hooks.me.isPending = false;
   hooks.me.isError = false;
+  hooks.me.retry.mockReset();
   hooks.adminRole.isAdmin = false;
   hooks.adminRole.personRoleId = null;
   hooks.adminRole.isPending = false;
@@ -749,6 +750,39 @@ describe("the admin role control", () => {
 
   // The service's own sentence beats ours whenever it sent one, the way every
   // other verb in this window reports a refusal.
+  // Failing closed is right; saying nothing is not. A real admin whose own
+  // check failed would otherwise go asking for a role they already hold.
+  it("offers a retry when the viewer's own role could not be checked", async () => {
+    hooks.me.isAdmin = false;
+    hooks.me.isError = true;
+    const user = userEvent.setup();
+
+    open();
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "Your admin status could not be checked. Retry.",
+      }),
+    );
+    expect(hooks.me.retry).toHaveBeenCalledTimes(1);
+  });
+
+  it("stays silent for a viewer confirmed not to be an admin", () => {
+    hooks.me.isAdmin = false;
+    hooks.me.isError = false;
+
+    open();
+
+    expect(
+      screen.queryByRole("button", {
+        name: "Your admin status could not be checked. Retry.",
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Make admin" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("shows the service's reason when a grant fails for some other cause", () => {
     hooks.grantAdmin.isError = true;
     hooks.grantAdmin.error = new IdentityApiError(403, {
