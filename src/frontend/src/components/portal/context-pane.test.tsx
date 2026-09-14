@@ -53,7 +53,10 @@ import { SidebarProvider } from "@/components/ui/sidebar";
 // The sections nav asks where the person stands so it can mark each section;
 // the standings come from the section screens' own queries, which this test
 // has no reason to run.
-vi.mock("@/lib/portal/use-person-sections", () => ({
+// `useSelectedPersonSection` is left real: it reads the router mock above, and
+// it is what decides whether "At a glance" or a section row is the active one.
+vi.mock("@/lib/portal/use-person-sections", async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
   usePersonSectionStandings: () => mocks.standings,
 }));
 
@@ -75,6 +78,7 @@ beforeEach(() => {
     dispatchEvent: () => false,
   })) as unknown as typeof window.matchMedia;
   mocks.zone = { activeZone: "overview", activePerson: "boss@x" };
+  mocks.isFlat = false;
   mocks.standings = [];
   act(() => {
     portalRouter.set({ zone: undefined });
@@ -143,6 +147,29 @@ describe("ContextPane", () => {
     pane();
     expect(screen.getByText("People & org structure")).toBeInTheDocument();
     expect(screen.getByTestId("org-tree")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["org chart", false],
+    ["flat roster", true],
+  ])("keeps the %s list in its own scroll region", (_policy, isFlat) => {
+    mocks.isFlat = isFlat;
+    mocks.zone = { activeZone: "people", activePerson: "boss@x" };
+
+    pane();
+
+    const search = screen.getByLabelText("Find someone in the org");
+    const scrollArea = screen
+      .getByTestId("org-tree")
+      .closest('[data-slot="scroll-area"]');
+
+    expect(scrollArea).not.toBeNull();
+    expect(scrollArea).toHaveClass("min-h-0", "flex-1");
+    expect(scrollArea).not.toContainElement(search);
+    expect(scrollArea?.closest('[data-slot="sidebar-group"]')).toHaveClass(
+      "min-h-0",
+      "flex-1"
+    );
   });
 
   it("renders Manage items", () => {

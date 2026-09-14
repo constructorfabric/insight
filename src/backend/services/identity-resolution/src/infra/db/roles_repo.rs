@@ -45,19 +45,6 @@ pub async fn has_active_role(
     Ok(db.query_one_raw(stmt).await?.is_some())
 }
 
-/// Convenience: does `person_id` hold the active `admin` role in the tenant?
-///
-/// # Errors
-///
-/// Returns an error if the query fails.
-pub async fn has_active_admin(
-    db: &DatabaseConnection,
-    tenant_id: Uuid,
-    person_id: Uuid,
-) -> anyhow::Result<bool> {
-    has_active_role(db, tenant_id, person_id, ADMIN_ROLE_ID).await
-}
-
 /// One row of the global `roles` catalogue (no tenant, no audit columns).
 #[derive(Debug, Clone)]
 pub struct Role {

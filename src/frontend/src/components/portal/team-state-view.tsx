@@ -1,9 +1,18 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 import { AttentionList } from "@/components/portal/attention-list";
+import { MemberFilter } from "@/components/portal/member-filter";
+import {
+  selectedMembers,
+  type MemberSelection,
+} from "@/components/portal/member-selection";
 import { personDisplayName } from "@/lib/identities/person-display";
 import { orgScopeGate } from "@/components/portal/org-scope-gate";
-import { MembersGrid } from "@/components/widgets/dashboard/members-grid";
+import {
+  MembersGrid,
+  type MembersGridProps,
+} from "@/components/widgets/dashboard/members-grid";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { usePortalPeriod } from "@/hooks/use-portal-period";
 import { formatMetricValue } from "@/lib/format";
@@ -24,6 +33,7 @@ import {
 } from "@/lib/metrics/collection";
 import { normalizePersonId } from "@/lib/metrics/entity";
 import {
+  usePortalScope,
   usePortalSlice,
 } from "@/lib/portal/portal-nav";
 import type { TeamMember } from "@/types/insight";
@@ -34,6 +44,50 @@ import { TEXT_FIGURE } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
 const EMPTY_COLLECTION: MetricCollectionConfig = { metrics: [] };
+
+function TeamMembersSection({ members, ...gridProps }: MembersGridProps) {
+  const [selection, setSelection] = useState<MemberSelection>({ kind: "all" });
+  const visibleMembers = useMemo(
+    () => selectedMembers(members, selection),
+    [members, selection],
+  );
+
+  return (
+    <section className="flex flex-col gap-3">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+          Members
+        </p>
+        <MemberFilter
+          members={members}
+          selection={selection}
+          onChange={setSelection}
+        />
+      </div>
+      {visibleMembers.length > 0 ? (
+        <Card>
+          <CardContent className="p-0">
+            <MembersGrid members={visibleMembers} {...gridProps} />
+          </CardContent>
+        </Card>
+      ) : (
+        <Card>
+          <CardContent className="flex min-h-40 flex-col items-center justify-center gap-3 text-center">
+            <p className="text-sm text-muted-foreground">No people selected.</p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setSelection({ kind: "all" })}
+            >
+              Show all
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+    </section>
+  );
+}
 
 /**
  * Team-state dashboard — the People roster reframed for a lead: "what's the
@@ -50,19 +104,21 @@ export function TeamStateView() {
   const { period, dateRange } = usePortalPeriod();
 
   const orgScope = useOrgScope();
+  const portalScope = usePortalScope();
   const { pivot, roster } = orgScope;
 
-  // The roster IS the member list: identity owns who is on the team and
-  // every metric for them comes from `/v1/metric-results`. There is no second
-  // source to reconcile — the legacy per-member batch this used to call was
-  // removed upstream with the rest of the old metric UI.
+  // INVARIANT: People evaluates the selected manager with the reports-only org scope.
   const members = useMemo<TeamMember[]>(
-    () =>
-      (roster ?? []).map((entry) => ({
+    () => [
+      ...(pivot
+        ? [{ person_id: pivot.person_id, name: personDisplayName(pivot) }]
+        : []),
+      ...(roster ?? []).map((entry) => ({
         person_id: entry.person_id,
         name: personDisplayName(entry),
       })),
-    [roster],
+    ],
+    [pivot, roster],
   );
   const memberIds = useMemo(
     () => members.map((m) => normalizePersonId(m.person_id)),
@@ -74,6 +130,14 @@ export function TeamStateView() {
   );
   const personIdByEntity = useMemo(
     () => new Map(members.map((m) => [normalizePersonId(m.person_id), m.person_id])),
+    [members],
+  );
+  const gridMembers = useMemo(
+    () =>
+      members.map((member) => ({
+        entityId: normalizePersonId(member.person_id),
+        displayName: member.name,
+      })),
     [members],
   );
 
@@ -215,7 +279,7 @@ export function TeamStateView() {
           {teamName ? `${teamName}'s team` : "Team"}
         </h1>
         <p className="text-sm text-muted-foreground">
-          {orgScope.count} people · state &amp; attention
+          {members.length} people · state &amp; attention
         </p>
       </div>
 
@@ -241,27 +305,16 @@ export function TeamStateView() {
       />
 
       {/* Detailed scan */}
-      <section className="flex flex-col gap-3">
-        <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
-          Members
-        </p>
-        <Card>
-          <CardContent className="p-0">
-            <MembersGrid
-              members={members.map((m) => ({
-                entityId: normalizePersonId(m.person_id),
-                displayName: m.name,
-                personId: m.person_id,
-              }))}
-              metricKeys={shownKeys}
-              byKey={heatByKey}
-              previousByKey={grid.previousByKey}
-              caption={`${teamName || "Team"} — people × metrics`}
-              cohortLabel={cohortLabel}
-            />
-          </CardContent>
-        </Card>
-      </section>
+      <TeamMembersSection
+        key={`${orgScope.pivotPersonId}:${portalScope.directOnly}`}
+        members={gridMembers}
+        defaultSort="input"
+        metricKeys={shownKeys}
+        byKey={heatByKey}
+        previousByKey={grid.previousByKey}
+        caption={`${teamName || "Team"} — people × metrics`}
+        cohortLabel={cohortLabel}
+      />
     </div>
   );
 }

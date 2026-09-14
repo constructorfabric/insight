@@ -55,7 +55,12 @@ Subcommands:
 
 Options:
   --dry-run              Print diff report without applying changes
-  --connector <name>     Limit reconcile to a single connector
+  --connector <name>     Limit reconcile to one connector — every instance of it
+  --source-id <id>       Narrow further to one instance. Only accepted beside
+                         --connector, and only for `reconcile`: a source id
+                         names an instance WITHIN a connector and is not
+                         guaranteed unique across them, and `adopt` refuses a
+                         connector that has more than one instance at all.
   --no-gc                Skip orphan garbage collection (reconcile only)
   --no-sync-trigger      Suppress one-shot sync-trigger after data-affecting changes
   -h, --help             Show this usage and exit 0
@@ -91,6 +96,58 @@ resolve_tenant_id() {
 # @cpt-end:cpt-insightspec-flow-reconcile-run-reconcile-v2:p1:inst-rr-resolve-tenant
 
 main() {
+  # Arguments before the endpoint is probed: a misspelled flag is the caller's
+  # own mistake, and making them wait on a network timeout to be told so — or
+  # to be shown `--help` — is a poor trade.
+  local subcmd="reconcile"
+  local dry_run=0
+  local connector=""
+  local source_id=""
+  local no_gc=0
+  local no_sync_trigger=0
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      adopt|reconcile)   subcmd="$1"; shift ;;
+      --dry-run)         dry_run=1; shift ;;
+      # Checked rather than `${2:?}`: that expansion ends the shell where it
+      # stands, so the caller is told nothing about usage and the exit code is
+      # not the one this CLI answers a bad invocation with.
+      --connector)
+        [[ $# -ge 2 && -n "$2" ]] || { printf -- '--connector requires NAME\n' >&2; usage >&2; return 64; }
+        connector="$2"; shift 2 ;;
+      --source-id)
+        [[ $# -ge 2 && -n "$2" ]] || { printf -- '--source-id requires ID\n' >&2; usage >&2; return 64; }
+        source_id="$2"; shift 2 ;;
+      --no-gc)           no_gc=1; shift ;;
+      --no-sync-trigger) no_sync_trigger=1; shift ;;
+      -h|--help)         usage; return 0 ;;
+      *)                 printf 'unknown arg: %s\n' "$1" >&2; usage >&2; return 64 ;;
+    esac
+  done
+
+  # A source id names an instance within a connector, not across the install:
+  # two connectors may both have one called `main`. Searching for it on its own
+  # would either pick a connector by accident or claim to have narrowed to one
+  # instance while touching several.
+  if [[ -n "${source_id}" && -z "${connector}" ]]; then
+    printf -- '--source-id requires --connector: a source id identifies an instance within one connector\n' >&2
+    usage >&2
+    return 64
+  fi
+
+  # `adopt` reads which instance the existing resources belong to from the one
+  # Secret the connector has, and refuses a connector that has more than one —
+  # so there is never an instance for this flag to choose between. Refused
+  # rather than ignored: a flag that is accepted and does nothing reads as a
+  # narrowing that was applied.
+  if [[ -n "${source_id}" && "${subcmd}" != "reconcile" ]]; then
+    printf -- '--source-id applies to reconcile only; %s does not select between instances\n' \
+      "${subcmd}" >&2
+    usage >&2
+    return 64
+  fi
+
   # @cpt-begin:cpt-insightspec-flow-reconcile-run-reconcile-v2:p1:inst-rr-resolve-airbyte-env
   # AIRBYTE_URL / AIRBYTE_TOKEN_FILE are honored by lib/airbyte.sh; nothing
   # to do here besides asserting the URL is non-empty.
@@ -118,24 +175,6 @@ main() {
   fi
   # @cpt-end:cpt-insightspec-flow-reconcile-run-reconcile-v2:p1:inst-rr-resolve-airbyte-env
 
-  local subcmd="reconcile"
-  local dry_run=0
-  local connector=""
-  local no_gc=0
-  local no_sync_trigger=0
-
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      adopt|reconcile)   subcmd="$1"; shift ;;
-      --dry-run)         dry_run=1; shift ;;
-      --connector)       connector="${2:?--connector requires NAME}"; shift 2 ;;
-      --no-gc)           no_gc=1; shift ;;
-      --no-sync-trigger) no_sync_trigger=1; shift ;;
-      -h|--help)         usage; return 0 ;;
-      *)                 printf 'unknown arg: %s\n' "$1" >&2; usage >&2; return 64 ;;
-    esac
-  done
-
   local tenant_id
   if ! tenant_id="$(resolve_tenant_id)"; then
     return 1
@@ -150,11 +189,13 @@ main() {
         --arg tenant "${tenant_id}" \
         --arg subcommand "${subcmd}" \
         --arg connector "${connector:-}" \
+        --arg source_id "${source_id:-}" \
         --argjson dry_run "$(( dry_run ))" \
         --argjson no_gc "$(( no_gc ))" \
         --argjson no_sync_trigger "$(( no_sync_trigger ))" \
         '{tenant: $tenant, subcommand: $subcommand,
           connector: (if $connector == "" then "all" else $connector end),
+          source_id: (if $source_id == "" then "all" else $source_id end),
           dry_run: ($dry_run == 1), no_gc: ($no_gc == 1),
           no_sync_trigger: ($no_sync_trigger == 1)}')"
 
@@ -164,7 +205,7 @@ main() {
       adopt_run "${dry_run}" "${connector}"
       ;;
     reconcile)
-      reconcile_run "${dry_run}" "${no_sync_trigger}" "${no_gc}" "${connector}"
+      reconcile_run "${dry_run}" "${no_sync_trigger}" "${no_gc}" "${connector}" "${source_id}"
       ;;
     *)
       printf 'unreachable: bad subcommand %s\n' "${subcmd}" >&2

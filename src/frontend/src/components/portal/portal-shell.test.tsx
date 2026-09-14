@@ -96,6 +96,7 @@ import {
   usePortalSlice,
   usePortalZone,
 } from "@/lib/portal/portal-nav";
+import { setPortalShowPlanned } from "@/lib/portal/portal-store";
 import { renderHook } from "@testing-library/react";
 
 import { DirectionView } from "./direction-view";
@@ -130,6 +131,7 @@ beforeEach(() => {
     portalRouter.set({ lens: "Delivery" });
     portalRouter.set({ slice: undefined });
     portalRouter.set({ scope: undefined, direct: false });
+    setPortalShowPlanned(true);
   });
 });
 

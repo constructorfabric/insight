@@ -26,9 +26,9 @@ vi.mock("@/components/ui/sonner", () => ({
 }));
 
 const columns = [
-  { key: "ref", label: "Ref", type: "string" as const },
-  { key: "value", label: "Value", type: "number" as const },
-  { key: "active", label: "Active", type: "string" as const },
+  { key: "ref", label: "Ref", type: "string" as const, sortable: true },
+  { key: "value", label: "Value", type: "number" as const, sortable: true },
+  { key: "active", label: "Active", type: "string" as const, sortable: true },
 ];
 
 const rows = [
@@ -63,6 +63,32 @@ describe("MetricEvidenceTable", () => {
       configurable: true,
       value: { writeText: vi.fn().mockResolvedValue(undefined) },
     });
+  });
+
+  // A row that sized its own cells drifted out of the headings above it as
+  // soon as the two had different space to grow into, and put its last cell on
+  // a line of its own. One template decides both.
+  it("lays the headings and the rows out on one set of columns", () => {
+    renderTable();
+    const [header, ...body] = screen.getAllByRole("row");
+    const template = header!.style.gridTemplateColumns;
+
+    expect(template).not.toBe("");
+    for (const row of body) {
+      expect(row.style.gridTemplateColumns).toBe(template);
+      expect(row.style.flexWrap).toBe("");
+    }
+  });
+
+  // A column the reader can widen must widen in both places or the values slide
+  // out from under their heading.
+  it("gives every column a track, expander included", () => {
+    renderTable();
+    const header = screen.getAllByRole("row")[0]!;
+
+    expect(header.style.gridTemplateColumns.split(/\s+(?![^(]*\))/)).toHaveLength(
+      columns.length + 1
+    );
   });
 
   it("renders a branch column the server sent, value and header alike", () => {
@@ -127,6 +153,28 @@ describe("MetricEvidenceTable", () => {
 
     await user.click(screen.getByRole("button", { name: "Value" }));
     expect(onSortChange).toHaveBeenCalledWith("value");
+  });
+
+  // A control that does nothing when clicked is worse than a label: the
+  // reader spends the click finding out.
+  // Announcing the served order means a click on a header changes nothing on
+  // screen until the rows land; the busy state is what acknowledges it.
+  it("says it is busy while the rows it shows are being replaced", () => {
+    renderTable({ reordering: true });
+
+    expect(screen.getByRole("table")).toHaveAttribute("aria-busy", "true");
+  });
+
+  it("leaves a column the server cannot order by as a plain label", () => {
+    renderTable({
+      columns: [
+        { key: "person", label: "Who", type: "string" as const },
+        ...columns,
+      ],
+    });
+
+    expect(screen.queryByRole("button", { name: "Who" })).toBeNull();
+    expect(screen.getByRole("columnheader", { name: "Who" })).toBeDefined();
   });
 
   describe("the full record", () => {

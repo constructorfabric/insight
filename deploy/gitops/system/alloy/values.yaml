@@ -1,10 +1,20 @@
 ##
-## Grafana Alloy — log collector for the L2 system layer (observability
-## `bundled` mode).
+## Grafana Alloy — telemetry collector for the L2 system layer
+## (observability `bundled` mode). Two pipelines:
+##   logs: node-local pod stdout → Loki (DaemonSet tail, below);
+##   OTLP: services push to alloy:4317 (gRPC) / 4318 (HTTP) — metrics
+##         remote-write to VictoriaMetrics, traces forward to Tempo.
+## The umbrella's `global.observability.otlp.endpoint` points here when the
+## bundled stack is on.
 ##
 ## Chart: grafana/alloy   (https://grafana.github.io/helm-charts)
 ## Pin in Makefile: ALLOY_VERSION
-## Release: `alloy` in namespace `insight-infra`.
+## Release: `alloy` in the infra namespace (inventory `namespaces.infra`,
+## `insight-infra` by default).
+##
+## The `${NS_*}` placeholders below are the namespaces of the releases this
+## config pushes to, resolved by scripts/render-system-values.sh before helm
+## reads the file (see system/README.md § Values layout).
 ##
 ## Per-env overrides go in environments/<env>/alloy-values.yaml.
 ##
@@ -26,6 +36,20 @@ alloy:
   # read pod stdout. The chart wires the hostPath mounts for daemonset mode.
   mounts:
     varlog: true
+  # OTLP listeners, added to both the container and the chart's ClusterIP
+  # Service — `alloy.<infra-ns>.svc.cluster.local:4317/4318` is the
+  # stable endpoint services export to. The Service spans every DaemonSet
+  # pod; any node's agent accepts and routes the payload.
+  extraPorts:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+      protocol: TCP
+      appProtocol: h2c
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+      protocol: TCP
   configMap:
     content: |-
       // ── Discover pods scheduled on THIS node ───────────────────────────
@@ -66,10 +90,43 @@ alloy:
       // ── Parse OUR structured JSON to promote `level` to a label.
       //    Non-JSON lines (raw Airbyte / dbt output) fall through the
       //    stage untouched — they still arrive in Loki, just without a
-      //    `level` label.
+      //    `level` label. Lowercased before labelling — the gears services
+      //    (tracing-subscriber JSON) write "INFO"/"ERROR" uppercase.
       loki.process "parse" {
         stage.json {
           expressions = { level = "level" }
+        }
+        // WORKAROUND: the chart tpl-renders this config, so no Go-template
+        // funcs here (ToLower breaks the render) — literal per-level replaces.
+        stage.replace {
+          source     = "level"
+          expression = "^(?i)(trace)$"
+          replace    = "trace"
+        }
+        stage.replace {
+          source     = "level"
+          expression = "^(?i)(debug)$"
+          replace    = "debug"
+        }
+        stage.replace {
+          source     = "level"
+          expression = "^(?i)(info|information|notice)$"
+          replace    = "info"
+        }
+        stage.replace {
+          source     = "level"
+          expression = "^(?i)(warn|warning)$"
+          replace    = "warn"
+        }
+        stage.replace {
+          source     = "level"
+          expression = "^(?i)(error|err)$"
+          replace    = "error"
+        }
+        stage.replace {
+          source     = "level"
+          expression = "^(?i)(fatal|crit|alert|emerg|panic)$"
+          replace    = "fatal"
         }
         stage.labels {
           values = { level = "" }
@@ -79,6 +136,95 @@ alloy:
 
       loki.write "default" {
         endpoint {
-          url = "http://loki.insight-infra.svc.cluster.local:3100/loki/api/v1/push"
+          url = "http://loki.${NS_MONITORING}.svc.cluster.local:3100/loki/api/v1/push"
+        }
+      }
+
+      // ── OTLP entry point for the app services (umbrella
+      //    `global.observability.otlp.endpoint` → alloy:4317). Metrics go to
+      //    VictoriaMetrics, traces to Tempo. The logs signal is NOT routed:
+      //    logs reach Loki through the stdout tail above, and routing both
+      //    would double every line.
+      otelcol.receiver.otlp "services" {
+        grpc {
+          endpoint = "0.0.0.0:4317"
+        }
+        http {
+          endpoint = "0.0.0.0:4318"
+        }
+        output {
+          metrics = [otelcol.processor.k8sattributes.pods.input]
+          traces  = [otelcol.processor.k8sattributes.pods.input]
+        }
+      }
+
+      // Two replicas of one service export identical resource identities, so
+      // their cumulative counters collide into one stored series and every
+      // scrape reads as a counter reset. Stamp each stream with its pod.
+      otelcol.processor.k8sattributes "pods" {
+        // Refuse readiness until the pod cache syncs — telemetry accepted
+        // before it would miss k8s.pod.name and collide again.
+        wait_for_metadata = true
+        extract {
+          metadata = ["k8s.pod.name"]
+        }
+        pod_association {
+          source {
+            from = "connection"
+          }
+        }
+        output {
+          metrics = [otelcol.processor.transform.instance_from_pod.input]
+          traces  = [otelcol.exporter.otlp.to_tempo.input]
+        }
+      }
+
+      // service.instance.id is what otelcol.exporter.prometheus turns into
+      // the `instance` label.
+      otelcol.processor.transform "instance_from_pod" {
+        error_mode = "ignore"
+        metric_statements {
+          context = "resource"
+          statements = [
+            "set(attributes[\"service.instance.id\"], attributes[\"k8s.pod.name\"]) where attributes[\"service.instance.id\"] == nil",
+          ]
+        }
+        output {
+          metrics = [otelcol.processor.filter.drop_probe_routes.input]
+        }
+      }
+
+
+      // Liveness/readiness probes out of the RED metrics: they are traffic
+      // nobody sent, and the toolkit records them with a coarser bucket set
+      // whose merge skews every histogram_quantile over the service.
+      otelcol.processor.filter "drop_probe_routes" {
+        metrics {
+          datapoint = [
+            "IsMatch(attributes[\"http.route\"], \"^/health(z)?$\")",
+          ]
+        }
+        output {
+          metrics = [otelcol.exporter.prometheus.to_victoriametrics.input]
+        }
+      }
+
+      otelcol.exporter.prometheus "to_victoriametrics" {
+        forward_to = [prometheus.remote_write.victoriametrics.receiver]
+      }
+
+      prometheus.remote_write "victoriametrics" {
+        endpoint {
+          url = "http://victoriametrics-server.${NS_MONITORING}.svc.cluster.local:8428/api/v1/write"
+        }
+      }
+
+      otelcol.exporter.otlp "to_tempo" {
+        client {
+          endpoint = "tempo.${NS_MONITORING}.svc.cluster.local:4317"
+          tls {
+            // In-cluster hop; Tempo's ingest is plaintext.
+            insecure = true
+          }
         }
       }

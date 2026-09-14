@@ -3,10 +3,8 @@
 //! the endpoint-coverage ledger.
 //!
 //! The ledger lands at `$E2E_COVERAGE_LEDGER` (run-e2e.sh sets it; unset means
-//! recording is off and the client is a plain passthrough). Its schema matches
-//! the bronze-to-api rig's `observed_endpoints.json` — a JSON list of
-//! `{method, path, statuses}` rows — so the same gate script consumes it:
-//! `src/ingestion/tests/e2e/lib/api_coverage.py --suite authenticator`.
+//! recording is off and the client is a plain passthrough). It is a JSON list of
+//! `{method, path, statuses}` rows, which `scripts/ci/api_coverage.py` consumes.
 //!
 //! Only requests whose origin matches `$AUTH_BASE` / `$AUTH_BASE_DISABLED`
 //! (the two authenticator instances) are recorded: the same client also talks
@@ -94,6 +92,13 @@ impl RequestBuilder {
         }
     }
 
+    pub fn query<T: serde::Serialize + ?Sized>(self, query: &T) -> Self {
+        Self {
+            inner: self.inner.query(query),
+            ..self
+        }
+    }
+
     pub async fn send(self) -> reqwest::Result<reqwest::Response> {
         // Build first so the request's final method + URL are readable; a
         // build error surfaces exactly like reqwest's own send() would.
@@ -117,7 +122,7 @@ fn record(method: &reqwest::Method, url: &reqwest::Url, status: u16) {
     }
     let _guard = LEDGER_LOCK.lock().expect("ledger lock");
 
-    // (method, path) -> statuses; same row shape api_coverage._dump writes.
+    // (method, path) -> statuses; the row shape the gate script reads.
     let mut merged: BTreeMap<(String, String), BTreeSet<u16>> = BTreeMap::new();
     if let Ok(existing) = std::fs::read_to_string(&ledger)
         && let Ok(rows) = serde_json::from_str::<Vec<serde_json::Value>>(&existing)

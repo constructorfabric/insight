@@ -45,6 +45,7 @@ const mocks = vi.hoisted(() => ({
     collection: MetricCollectionConfig;
     entity: MetricCollectionEntity;
     range: DateRange;
+    compareTo: DateRange | undefined;
   }>,
   setCalls: [] as Array<{
     collections: ReadonlyArray<{ key: string; collection: MetricCollectionConfig }>;
@@ -69,11 +70,22 @@ vi.mock("@/queries/metric-results", () => ({
   useMetricCollection: (
     collection: MetricCollectionConfig,
     entity: MetricCollectionEntity,
-    range: DateRange
+    range: DateRange,
+    options?: { compareTo?: DateRange }
   ) => {
-    mocks.calls.push({ collection, entity, range });
-    const half = mocks.rangeResults.get(`${range.from}..${range.to}`);
-    if (half) return half;
+    const compareTo = options?.compareTo;
+    mocks.calls.push({ collection, entity, range, compareTo });
+    // Both halves come from one call now: the range is the second half and the
+    // comparison window the first, each answered from the same fixtures.
+    if (compareTo) {
+      const result = emptyResult();
+      result.byKey =
+        mocks.rangeResults.get(`${range.from}..${range.to}`)?.byKey ?? new Map();
+      result.previousByKey =
+        mocks.rangeResults.get(`${compareTo.from}..${compareTo.to}`)?.byKey ??
+        new Map();
+      return result;
+    }
     return range.from === PORTAL_RANGE.from && range.to === PORTAL_RANGE.to
       ? mocks.result
       : emptyResult();
@@ -264,13 +276,12 @@ describe("TenantLensView", () => {
   it("requests the lens over a tenant entity with per-section views", () => {
     render(<TenantLensView config={CONFIG} />);
 
-    // Main + the two half-window hooks (disabled: empty collections).
-    expect(mocks.calls).toHaveLength(3);
+    // Main + the halves hook (disabled: empty collection).
+    expect(mocks.calls).toHaveLength(2);
     for (const call of mocks.calls) {
       expect(call.entity).toEqual({ type: "tenant" });
     }
     expect(mocks.calls[1].collection.metrics).toHaveLength(0);
-    expect(mocks.calls[2].collection.metrics).toHaveLength(0);
     // No conflicting views → no extra collections.
     expect(mocks.setCalls[0].collections).toHaveLength(0);
 
@@ -906,9 +917,12 @@ describe("TenantLensView", () => {
     mocks.rangeResults.set(SECOND_HALF, secondHalf);
 
     render(<TenantLensView config={config} />);
-    // The month split at its midpoint, the odd day to the second half.
-    expect(mocks.calls[1].range).toEqual({ from: "2026-03-01", to: "2026-03-15" });
-    expect(mocks.calls[2].range).toEqual({ from: "2026-03-16", to: "2026-03-31" });
+    // Both halves come from ONE request: the second half is its period and the
+    // first its comparison window, so nothing computes a third aggregate over
+    // the whole range that no section reads.
+    expect(mocks.calls).toHaveLength(2);
+    expect(mocks.calls[1].range).toEqual({ from: "2026-03-16", to: "2026-03-31" });
+    expect(mocks.calls[1].compareTo).toEqual({ from: "2026-03-01", to: "2026-03-15" });
     expect(mocks.calls[1].collection.metrics).toEqual([
       {
         key: "ci.gate_pass_rate",

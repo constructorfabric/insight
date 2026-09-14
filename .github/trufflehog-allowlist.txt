@@ -2,6 +2,7 @@
 # so an entry survives a rebase. A line here is a reviewed claim that the match is not a
 # credential; adding one goes through pull request review, removing one is always safe.
 # Seeded 2026-08-06 from a scan of every ref with trufflehog 3.96.0.
+# A reason must not quote a flagged value verbatim: this file is scanned too.
 
 96923d309cc0326b  Atlassian          docs/connectors/support/jsm.md  # example account id quoted from vendor documentation
 b92efd223e8930c0  CloudflareApiToken STORAGE_TECHNOLOGY_EVALUATION.md  # prose fragment in a document
@@ -11,12 +12,10 @@ ef9a241f59d1ac1e  Gitlab             src/backend/services/analytics/src/domain/e
 1c236cb81bf7da61  Gitlab             docs/CONNECTORS_REFERENCE.md  # code identifier / constant name
 bd0c5f545b463920  Gitlab             docs/components/deployment/gitops/SPEC.md  # code identifier / constant name
 bd093b6d7b23051a  Gitlab             docs/components/deployment/specs/PRD.md  # code identifier / constant name
-f805794a8092a445  Gitlab             docs/connectors/gitlab.md  # code identifier / constant name
 68ac8b9bf3049a2b  Gitlab             src/ingestion/connectors/git/bitbucket-cloud/dbt/bitbucket_cloud__commits.sql  # bronze column name is_in_default_branch, not a token
 a0cb61bc8b698803  Gitlab             src/ingestion/connectors/git/bitbucket-cloud/descriptor.yaml  # bronze column name is_in_default_branch, not a token
 386dc4480c56ba22  Gitlab             src/ingestion/connectors/git/github/dbt/github__commits.sql  # bronze column name is_in_default_branch, not a token
 900162680ea34d4f  Gitlab             src/ingestion/connectors/git/github/descriptor.yaml  # bronze column name is_in_default_branch, not a token
-65b16a9d3ed875d7  Gitlab             src/ingestion/tests/e2e/metrics/schemas/bronze_github.commits.yaml  # bronze column name is_in_default_branch, not a token
 9a6a2ad8f26d96a0  Gitlab             src/ingestion/connectors/git/gitlab-nocode/descriptor.yaml  # connector name, not a token
 4ccd2051f51a85a9  Gitlab             src/ingestion/connectors/git/gitlab/dbt/gitlab__commits.sql  # code identifier / constant name
 c71d7d6ef85cd006  Gitlab             src/ingestion/connectors/git/gitlab/dbt/gitlab__file_changes.sql  # code identifier / constant name
@@ -26,14 +25,70 @@ c71d7d6ef85cd006  Gitlab             src/ingestion/connectors/git/gitlab/dbt/git
 7081af253c603dbf  Gitlab             src/ingestion/connectors/git/gitlab/dbt/gitlab__pull_requests_reviewers.sql  # code identifier / constant name
 8396587d742ca623  Gitlab             src/ingestion/connectors/git/gitlab/dbt/gitlab__repositories.sql  # code identifier / constant name
 28dd5d564e2c82c3  Gitlab             src/ingestion/connectors/git/gitlab/dbt/gitlab__repository_branches.sql  # code identifier / constant name
-248cd327790a9dbc  Gitlab             src/ingestion/connectors/git/gitlab/dev/config.example.json  # code identifier / constant name
-968ddfbbb41c029f  Gitlab             src/ingestion/connectors/git/gitlab/source_gitlab/streams/issues.py  # code identifier / constant name
-135883ae40a7dd42  Gitlab             src/ingestion/connectors/git/gitlab/source_gitlab/streams/merge_request_child.py  # code identifier / constant name
-5804c17e4c07e9bb  Gitlab             src/ingestion/connectors/git/gitlab/source_gitlab/streams/merge_requests.py  # code identifier / constant name
-cd968567652ff20b  Gitlab             src/ingestion/connectors/git/gitlab/source_gitlab/streams/project_incremental.py  # code identifier / constant name
-d1c1dd2c5248b565  Gitlab             src/ingestion/connectors/git/gitlab/tests/test_source.py  # code identifier / constant name
-079c134aaca8eb24  Gitlab             src/ingestion/scripts/connectors-ddl/gitlab-nocode.sql  # connector name in a DDL snapshot, not a token
+a1d64ea5858af851  Gitlab             src/ingestion/tools/seed/insight_seed/generators/git_repos.py  # the vendor project seeding function's name, not a token
+b7724cdd5c80cebb  Gitlab             src/ingestion/tools/seed/tests/test_git_repos.py  # a bronze relation name in the vendor-relation assertion, not a token
+17941e7c349f9b80  Gitlab             src/ingestion/connectors/git/gitlab/README.md  # code identifier / constant name
+0d11bcc8018d8086  Gitlab             src/ingestion/connectors/git/gitlab/dbt/gitlab__account_emails.sql  # code identifier / constant name
+80d5a03ac107ffac  Gitlab             src/ingestion/connectors/git/gitlab/dbt/gitlab__bronze_promoted.sql  # code identifier / constant name
+ee8d1fe3c4f9e4e5  Gitlab             src/ingestion/connectors/git/gitlab/dbt/gitlab__ci_runs.sql  # code identifier / constant name
+1a229c8a7225a517  Gitlab             src/ingestion/connectors/git/gitlab/dbt/gitlab__deployment_events.sql  # code identifier / constant name
+5eae1b0f9c40368f  Gitlab             src/ingestion/connectors/git/gitlab/dbt/gitlab__deployments.sql  # code identifier / constant name
+00a3815754557032  Gitlab             src/ingestion/connectors/git/gitlab/dbt/gitlab__deployments.sql  # code identifier / constant name
+7b422bd28516d8f7  Gitlab             src/ingestion/connectors/git/gitlab/dbt/gitlab__item_events.sql  # code identifier / constant name
+0f59ee53b851ea82  Gitlab             src/ingestion/connectors/git/gitlab/dbt/gitlab__pr_review_events.sql  # code identifier / constant name
+065b5e46fa7954a8  Gitlab             src/ingestion/connectors/git/gitlab/dbt/gitlab__pull_requests_commits.sql  # code identifier / constant name
+30b51188bf3e2a87  Gitlab             src/ingestion/connectors/git/gitlab/dbt/gitlab__unowned_commit_emails.sql  # code identifier / constant name
+136fc1e55088a7de  Gitlab             src/ingestion/connectors/git/gitlab/tests/test_gitlab_proxy_streams.py  # code identifier / constant name
+7a55702f5399e506  Gitlab             src/ingestion/scripts/connectors-ddl/gitlab.sql  # a bronze relation name in the DDL snapshot, not a token
+db81f4ceb1b447a8  Gitlab             .github/trufflehog-allowlist.txt  # this file's own entries name the identifier, not a token
+001ef6ca495466c2  Gitlab             .github/trufflehog-allowlist.txt  # this file's own entries name the identifier, not a token
+93b61de828413759  Gitlab             .github/trufflehog-allowlist.txt  # this file's own entries name the identifier, not a token
+7da47d076b96c55f  Gitlab             tests/datapath/identity/test_gitlab_account_claims.py  # code identifier / constant name
+c08db45fbe30f429  Gitlab             tests/datapath/metrics/git/git_pr_gitlab_account_attribution.test.yaml  # code identifier / constant name
+5681cee5332b9215  Gitlab             tests/datapath/metrics/schemas/bronze_gitlab.merge_request_commits.yaml  # code identifier / constant name
+4a7db28a0f948daf  Gitlab             tests/datapath/metrics/schemas/bronze_gitlab.pull_request_commits.yaml  # code identifier / constant name
 5976017fb71ea0e2  HubSpotApiKey      docs/architecture/CONNECTOR_AUTOMATION.md  # synthetic UUID fixture
+10c14a66053d0859  SQLServer          src/backend/services/identity/.env.local.example  # placeholder in an example env file / unit test
+a41e6a136aac6865  SQLServer          src/backend/services/identity/tests/Insight.Identity.Tests.Unit/MariaDbConnectionFactoryTests.cs  # placeholder in an example env file / unit test
+ffa3052a64e250a1  URI                src/backend/infra/local-dev.sh  # local dev connection string, no live credential
+95b838ac246d5801  URI                src/backend/services/git-cli-proxy/src/engine/url.rs  # test literal asserting a userinfo clone URL is rejected
+823cebaae9cccd2e  URI                src/backend/services/identity/src/Insight.Identity.Infrastructure/ClickHouse/ClickHouseOptions.cs  # local dev connection string, no live credential
+523b1ceec0ec4385  URI                src/backend/services/identity/tests/Insight.Identity.Tests.Unit/ClickHouseConnectionFactoryTests.cs  # local dev connection string, no live credential
+a80cb0d9ce8131da  URI                src/backend/services/identity/tests/Insight.Identity.Tests.Unit/ClickHouseConnectionFactoryTests.cs  # local dev connection string, no live credential
+da8ef1e259b19b30  URI                src/backend/services/insight-v3-core/src/mcp/auth/tests.rs  # test literal asserting a userinfo public URL is rejected
+260f1be2d35046b4  Wit                src/backend/services/analytics-api/src/migration/m20260529_000001_metric_query_catalog_link.rs  # zero-padded id constant in a migration
+009efa5af4e23dd0  JiraToken          tests/datapath/metrics/tasks/tasks_bugs.test.yaml  # synthetic e2e metric fixture value
+94d8a6f64b975efa  JiraToken          tests/datapath/metrics/tasks/tasks_bugs.test.yaml  # synthetic e2e metric fixture value
+381649b71f1f06e9  JiraToken          tests/datapath/metrics/tasks/tasks_closed.test.yaml  # synthetic e2e metric fixture value
+9de24c1259694d0f  JiraToken          tests/datapath/metrics/tasks/tasks_closed.test.yaml  # synthetic e2e metric fixture value
+1dc9b04228f59921  JiraToken          tests/datapath/metrics/tasks/tasks_closed_deleted_excluded.test.yaml  # synthetic e2e metric fixture value
+844d1ef4ec9aed09  JiraToken          tests/datapath/metrics/tasks/tasks_closed_deleted_excluded.test.yaml  # synthetic e2e metric fixture value
+de3f304652beeef4  JiraToken          tests/datapath/metrics/tasks/tasks_closed_deleted_excluded.test.yaml  # repeated-digit placeholder identifier from an earlier revision of this fixture
+004745da342d7320  JiraToken          tests/datapath/metrics/tasks/tasks_dev_time.test.yaml  # synthetic e2e metric fixture value
+328427f59cdc64f5  JiraToken          tests/datapath/metrics/tasks/tasks_dev_time.test.yaml  # synthetic e2e metric fixture value
+437efa33245a9c5e  JiraToken          tests/datapath/metrics/tasks/tasks_due_dates.test.yaml  # synthetic e2e metric fixture value
+44e4c60c9e1aa04a  JiraToken          tests/datapath/metrics/tasks/tasks_due_dates.test.yaml  # synthetic e2e metric fixture value
+085bc675055a6aae  JiraToken          tests/datapath/metrics/tasks/tasks_estimation_accuracy.test.yaml  # synthetic e2e metric fixture value
+1c1ebd6ae1bb522d  JiraToken          tests/datapath/metrics/tasks/tasks_estimation_accuracy.test.yaml  # synthetic e2e metric fixture value
+844b7cc56a951033  JiraToken          tests/datapath/metrics/tasks/tasks_flow_efficiency.test.yaml  # synthetic e2e metric fixture value
+8c4f2f24d46cc272  JiraToken          tests/datapath/metrics/tasks/tasks_flow_efficiency.test.yaml  # synthetic e2e metric fixture value
+7550680aa7461b23  JiraToken          tests/datapath/metrics/tasks/tasks_pickup_time.test.yaml  # synthetic e2e metric fixture value
+8f88e9176bac8607  JiraToken          tests/datapath/metrics/tasks/tasks_pickup_time.test.yaml  # synthetic e2e metric fixture value
+dffbd148b88cad72  JiraToken          tests/datapath/metrics/tasks/tasks_reopen_rate.test.yaml  # synthetic e2e metric fixture value
+fe7bc730b8204f07  JiraToken          tests/datapath/metrics/tasks/tasks_reopen_rate.test.yaml  # synthetic e2e metric fixture value
+0eb34d9a4bde422a  JiraToken          tests/datapath/metrics/tasks/tasks_resolution_time.test.yaml  # synthetic e2e metric fixture value
+e6400951ec3d32be  JiraToken          tests/datapath/metrics/tasks/tasks_resolution_time.test.yaml  # synthetic e2e metric fixture value
+8848e1dc2118ce68  JiraToken          tests/datapath/metrics/tasks/tasks_stale_in_progress.test.yaml  # synthetic e2e metric fixture value
+8cc09af247045802  JiraToken          tests/datapath/metrics/tasks/tasks_stale_in_progress.test.yaml  # synthetic e2e metric fixture value
+a17758cf03c537dc  JiraToken          tests/datapath/metrics/tasks/tasks_worklog_accuracy.test.yaml  # synthetic e2e metric fixture value
+de93042515ab723b  JiraToken          tests/datapath/metrics/tasks/tasks_worklog_accuracy.test.yaml  # synthetic e2e metric fixture value
+30824eb2a2d37486  JiraToken          tests/datapath/metrics/tasks/tasks_worklog_deleted_excluded.test.yaml  # synthetic e2e metric fixture value
+7aad0a849a609676  JiraToken          tests/datapath/metrics/tasks/tasks_worklog_deleted_excluded.test.yaml  # synthetic e2e metric fixture value
+23b497b98d695cfa  JiraToken          tests/datapath/metrics/tasks/tasks_worklog_deleted_excluded.test.yaml  # repeated-digit placeholder identifier from an earlier revision of this fixture
+a1bf6f0828538dc7  JiraToken          tests/datapath/metrics/templates/jira_task.yaml  # synthetic e2e metric fixture value
+
+# Retired paths. The nightly sweep reads every ref, so a value stays reachable
+# while the commit that carried it does — the path leaving HEAD retires nothing.
 fdd801f84b096f9b  HubSpotApiKey      src/ingestion/tests/e2e/lib/metric_coverage.py  # synthetic UUID fixture
 93192185cb9d3fc6  HubSpotApiKey      src/ingestion/tests/e2e/lib/metric_coverage.py  # synthetic UUID fixture
 175ae9997104cde3  HubSpotApiKey      src/ingestion/tests/e2e/lib/metric_coverage.py  # synthetic UUID fixture
@@ -77,87 +132,3 @@ c6f108c3d2b0717f  JiraToken          src/ingestion/tests/e2e/metrics/team_bullet
 f74e89258c6ae15e  JiraToken          src/ingestion/tests/e2e/metrics/team_bullet_task_delivery_tasks_completed.test.yaml  # synthetic e2e metric fixture value
 3fdd46f911f50d69  JiraToken          src/ingestion/tests/e2e/metrics/templates/confluence_wiki_pages.yaml  # synthetic e2e metric fixture value
 a32d11c0e57c50f7  JiraToken          src/ingestion/tests/e2e/specs/templates/jira_task.yaml  # synthetic e2e metric fixture value
-84ccb186bda267d2  Lob                ?  # test function name; `test_` + 35 chars is also the Lob key shape
-d3eac4f45d3aa99b  Lob                ?  # test function name; `test_` + 35 chars is also the Lob key shape
-49ecd707196e4990  Lob                ?  # test function name; `test_` + 35 chars is also the Lob key shape
-d3a5da2ebda00b3f  Lob                deploy/preview/tests/test_render.py  # test function name; `test_` + 35 chars is also the Lob key shape
-c74cd50dc146bc0e  Lob                src/backend/services/gateway/tests/downstream-verify/test_downstream.py  # test function name; `test_` + 35 chars is also the Lob key shape
-37aea45b8c947947  Lob                src/backend/services/identity-resolution/helm/tests/test_seed_cronjob_contract.py  # test function name; `test_` + 35 chars is also the Lob key shape
-58392041bbf26f2d  Lob                src/backend/services/keycloak/helm/tests/test_httproute_contract.py  # test function name; `test_` + 35 chars is also the Lob key shape
-840a5e59e79d9d33  Lob                src/ingestion/connectors/ai/claude-team-invoices/tests/test_build_records.py  # test function name; `test_` + 35 chars is also the Lob key shape
-2eba2f79df37b4cf  Lob                src/ingestion/connectors/ai/claude-team-invoices/tests/test_stripe_chain.py  # test function name; `test_` + 35 chars is also the Lob key shape
-69768a957e81bddc  Lob                src/ingestion/connectors/ai/github-copilot/tests/test_base.py  # test function name; `test_` + 35 chars is also the Lob key shape
-5f08f11f567aae92  Lob                src/ingestion/connectors/ai/github-copilot/tests/test_base.py  # test function name; `test_` + 35 chars is also the Lob key shape
-c66b1be441c9ff70  Lob                src/ingestion/connectors/ai/github-copilot/tests/test_org_metrics.py  # test function name; `test_` + 35 chars is also the Lob key shape
-a4cae566b72bbab0  Lob                src/ingestion/connectors/ai/github-copilot/tests/test_seats.py  # test function name; `test_` + 35 chars is also the Lob key shape
-926924bfe4eb4ed0  Lob                src/ingestion/connectors/ai/github-copilot/tests/test_user_metrics.py  # test function name; `test_` + 35 chars is also the Lob key shape
-ec5f49b4f73e7ff1  Lob                src/ingestion/connectors/ai/github-copilot/tests/test_user_metrics.py  # test function name; `test_` + 35 chars is also the Lob key shape
-158a36f6d83cbf34  Lob                src/ingestion/connectors/collaboration/zoom/tests/test_participants.py  # test function name; `test_` + 35 chars is also the Lob key shape
-912bbd51f2e80888  Lob                src/ingestion/connectors/crm/hubspot/tests/test_api.py  # test function name; `test_` + 35 chars is also the Lob key shape
-cfe6ecf368006fc3  Lob                src/ingestion/connectors/crm/hubspot/tests/test_associations.py  # test function name; `test_` + 35 chars is also the Lob key shape
-21bb5cc69bde481b  Lob                src/ingestion/connectors/crm/hubspot/tests/test_envelope.py  # test function name; `test_` + 35 chars is also the Lob key shape
-3649c8352a82056a  Lob                src/ingestion/connectors/crm/hubspot/tests/test_search_stream.py  # test function name; `test_` + 35 chars is also the Lob key shape
-05092a26fe2566e1  Lob                src/ingestion/connectors/crm/salesforce/tests/test_envelope.py  # test function name; `test_` + 35 chars is also the Lob key shape
-1e1920c8bd339274  Lob                src/ingestion/connectors/crm/salesforce/tests/test_incremental.py  # test function name; `test_` + 35 chars is also the Lob key shape
-5d3e965fc90f996e  Lob                src/ingestion/connectors/crm/salesforce/tests/test_incremental.py  # test function name; `test_` + 35 chars is also the Lob key shape
-2bf4bdc68babea2e  Lob                src/ingestion/connectors/crm/salesforce/tests/test_source.py  # test function name; `test_` + 35 chars is also the Lob key shape
-31e1d0e9c3deca94  Lob                src/ingestion/connectors/crm/salesforce/tests/test_source.py  # test function name; `test_` + 35 chars is also the Lob key shape
-ba59650be7fd4a57  Lob                src/ingestion/connectors/crm/salesforce/tests/test_source.py  # test function name; `test_` + 35 chars is also the Lob key shape
-63f9b03bc055f398  Lob                src/ingestion/connectors/git/bitbucket-cloud/tests/test_base.py  # test function name; `test_` + 35 chars is also the Lob key shape
-5096929df4189458  Lob                src/ingestion/connectors/git/bitbucket-cloud/tests/test_bitbucket_vendor_streams.py  # test function name; `test_` + 35 chars is also the Lob key shape
-9ea0853eab44fffc  Lob                src/ingestion/connectors/git/bitbucket-cloud/tests/test_branches.py  # test function name; `test_` + 35 chars is also the Lob key shape
-26c6ef39c8697db2  Lob                src/ingestion/connectors/git/bitbucket-cloud/tests/test_branches.py  # test function name; `test_` + 35 chars is also the Lob key shape
-dc2a8b9f078b90a1  Lob                src/ingestion/connectors/git/bitbucket-cloud/tests/test_commits.py  # test function name; `test_` + 35 chars is also the Lob key shape
-3918de4ed9d23f06  Lob                src/ingestion/connectors/git/bitbucket-cloud/tests/test_commits.py  # test function name; `test_` + 35 chars is also the Lob key shape
-5d68fd720a1d9e7e  Lob                src/ingestion/connectors/git/bitbucket-cloud/tests/test_concurrency.py  # test function name; `test_` + 35 chars is also the Lob key shape
-c66f2f99c351dfe2  Lob                src/ingestion/connectors/git/bitbucket-cloud/tests/test_legacy_compat.py  # test function name; `test_` + 35 chars is also the Lob key shape
-4ee93de18dafddbe  Lob                src/ingestion/connectors/git/bitbucket-cloud/tests/test_metric_events.py  # test function name; `test_` + 35 chars is also the Lob key shape
-9ed6f7a6d343045c  Lob                src/ingestion/connectors/git/bitbucket-cloud/tests/test_repositories.py  # test function name; `test_` + 35 chars is also the Lob key shape
-a67bc177d183319c  Lob                src/ingestion/connectors/git/bitbucket-cloud/tests/test_request_budget.py  # test function name; `test_` + 35 chars is also the Lob key shape
-fbe6ea67ba120e80  Lob                src/ingestion/connectors/git/bitbucket-cloud/tests/test_unresolvable_heads.py  # test function name; `test_` + 35 chars is also the Lob key shape
-d1e880a97fcc9690  Lob                src/ingestion/connectors/git/bitbucket-nocode/tests/test_bitbucket_vendor_streams.py  # test function name; `test_` + 35 chars is also the Lob key shape
-b4061d441060f295  Lob                src/ingestion/connectors/git/github-directory/tests/test_org_members.py  # test function name; `test_` + 35 chars is also the Lob key shape
-99a303b6fd7a5331  Lob                src/ingestion/connectors/git/github-nocode/tests/test_github_streams.py  # test function name; `test_` + 35 chars is also the Lob key shape
-2a7b0de409622f98  Lob                src/ingestion/connectors/git/github-v2/tests/test_base.py  # test function name; `test_` + 35 chars is also the Lob key shape
-beee0351c639ec18  Lob                src/ingestion/connectors/git/github-v2/tests/test_commits.py  # test function name; `test_` + 35 chars is also the Lob key shape
-595ba01586789e6c  Lob                src/ingestion/connectors/git/github-v2/tests/test_commits.py  # test function name; `test_` + 35 chars is also the Lob key shape
-26cff599ec98ae8e  Lob                src/ingestion/connectors/git/github-v2/tests/test_file_changes.py  # test function name; `test_` + 35 chars is also the Lob key shape
-bb3a7fbda6080765  Lob                src/ingestion/connectors/git/github/tests/test_github_streams.py  # test function name; `test_` + 35 chars is also the Lob key shape
-6c468f60e43fd1a7  Lob                src/ingestion/connectors/git/github/tests/test_github_streams.py  # test function name; `test_` + 35 chars is also the Lob key shape
-73541b8bbce187c2  Lob                src/ingestion/connectors/git/github/tests/test_github_streams.py  # test function name; `test_` + 35 chars is also the Lob key shape
-948bef05dac17ef1  Lob                src/ingestion/connectors/git/github/tests/test_github_streams.py  # test function name; `test_` + 35 chars is also the Lob key shape
-286b669ccca78278  Lob                src/ingestion/connectors/git/gitlab/tests/test_file_changes_stream.py  # test function name; `test_` + 35 chars is also the Lob key shape
-063a530576b20665  Lob                src/ingestion/connectors/git/gitlab/tests/test_mr_child.py  # test function name; `test_` + 35 chars is also the Lob key shape
-6975843dfd4f4686  Lob                src/ingestion/connectors/git/gitlab/tests/test_windowing.py  # test function name; `test_` + 35 chars is also the Lob key shape
-bb96cc56962de929  Lob                src/ingestion/connectors/hr-directory/bamboohr/tests/test_client.py  # test function name; `test_` + 35 chars is also the Lob key shape
-c92f1ad78ae8322c  Lob                src/ingestion/connectors/hr-directory/bamboohr/tests/test_fields_discovery.py  # test function name; `test_` + 35 chars is also the Lob key shape
-67d774383c91b87e  Lob                src/ingestion/reconcile-connectors/tests/test_sweep_plan.py  # test function name; `test_` + 35 chars is also the Lob key shape
-e0ecc3df5888177a  Lob                src/ingestion/scripts/tests/test_reconcile_against_clickhouse.py  # test function name; `test_` + 35 chars is also the Lob key shape
-ac6b1f5e17b6f4fb  Lob                src/ingestion/scripts/tests/test_reconcile_bronze_schema.py  # test function name; `test_` + 35 chars is also the Lob key shape
-2fd74bf6cecacdff  Lob                src/ingestion/tests/e2e/api/test_metric_thresholds.py  # test function name; `test_` + 35 chars is also the Lob key shape
-404c030adb3a9f56  Lob                src/ingestion/tests/e2e/api/test_metrics.py  # test function name; `test_` + 35 chars is also the Lob key shape
-d862b325ee9b396a  Lob                src/ingestion/tests/e2e/api/test_metrics.py  # test function name; `test_` + 35 chars is also the Lob key shape
-513ffaaf7d267bfb  Lob                src/ingestion/tests/e2e/identity/test_admin_reads.py  # test function name; `test_` + 35 chars is also the Lob key shape
-f6dc123b40097b5a  Lob                src/ingestion/tests/e2e/identity/test_error_contracts.py  # test function name; `test_` + 35 chars is also the Lob key shape
-2dda12c4a953d825  Lob                src/ingestion/tests/e2e/identity/test_internal.py  # test function name; `test_` + 35 chars is also the Lob key shape
-27cf66f2728a8db3  Lob                src/ingestion/tests/e2e/identity/test_internal.py  # test function name; `test_` + 35 chars is also the Lob key shape
-985d49dc057fb058  Lob                src/ingestion/tests/e2e/identity/test_meta_gate.py  # test function name; `test_` + 35 chars is also the Lob key shape
-2b6e591bb3aa713f  Lob                src/ingestion/tests/e2e/identity/test_profiles.py  # test function name; `test_` + 35 chars is also the Lob key shape
-f79234b092fd64ee  Lob                src/ingestion/tests/e2e/meta/test_expect_engine.py  # test function name; `test_` + 35 chars is also the Lob key shape
-765a20889dcefd84  Lob                src/ingestion/tools/seed/tests/test_bulk_insert.py  # test function name; `test_` + 35 chars is also the Lob key shape
-28a2f3aecef95b84  Lob                src/ingestion/tools/seed/tests/test_credential_scrub.py  # test function name; `test_` + 35 chars is also the Lob key shape
-358783a6504aa34e  Lob                src/ingestion/tools/seed/tests/test_full_refresh.py  # test function name; `test_` + 35 chars is also the Lob key shape
-bb93a5ad3d2ed56d  Lob                src/ingestion/tools/seed/tests/test_org_headcount.py  # test function name; `test_` + 35 chars is also the Lob key shape
-b901145d1a8a857c  Lob                tests/stand/api/identity/test_resolution.py  # test function name; `test_` + 35 chars is also the Lob key shape
-ae0f3db7b13618ec  Lob                tests/stand/api/test_analytics_queries.py  # test function name; `test_` + 35 chars is also the Lob key shape
-a2a99adc2d26a608  Lob                tests/stand/api/test_analytics_results.py  # test function name; `test_` + 35 chars is also the Lob key shape
-c393fa520bb7aad6  Lob                tests/stand/api/test_authenticated.py  # test function name; `test_` + 35 chars is also the Lob key shape
-f6a76a6832046cba  Lob                tests/stand/api/test_identity.py  # test function name; `test_` + 35 chars is also the Lob key shape
-10c14a66053d0859  SQLServer          src/backend/services/identity/.env.local.example  # placeholder in an example env file / unit test
-a41e6a136aac6865  SQLServer          src/backend/services/identity/tests/Insight.Identity.Tests.Unit/MariaDbConnectionFactoryTests.cs  # placeholder in an example env file / unit test
-ffa3052a64e250a1  URI                src/backend/infra/local-dev.sh  # local dev connection string, no live credential
-95b838ac246d5801  URI                src/backend/services/git-cli-proxy/src/engine/url.rs  # test literal asserting a userinfo clone URL is rejected
-823cebaae9cccd2e  URI                src/backend/services/identity/src/Insight.Identity.Infrastructure/ClickHouse/ClickHouseOptions.cs  # local dev connection string, no live credential
-523b1ceec0ec4385  URI                src/backend/services/identity/tests/Insight.Identity.Tests.Unit/ClickHouseConnectionFactoryTests.cs  # local dev connection string, no live credential
-a80cb0d9ce8131da  URI                src/backend/services/identity/tests/Insight.Identity.Tests.Unit/ClickHouseConnectionFactoryTests.cs  # local dev connection string, no live credential
-260f1be2d35046b4  Wit                src/backend/services/analytics-api/src/migration/m20260529_000001_metric_query_catalog_link.rs  # zero-padded id constant in a migration

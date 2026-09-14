@@ -28,6 +28,7 @@
 {% do promote_bronze_to_rmt(table='bronze_github.issues',                      order_by='unique_key') %}
 {% do promote_bronze_to_rmt(table='bronze_github.projects_v2',                 order_by='unique_key') %}
 {% do promote_bronze_to_rmt(table='bronze_github.issue_fields',                order_by='unique_key') %}
+{% do promote_bronze_to_rmt(table='bronze_github.issue_links',                 order_by='unique_key') %}
 {% do promote_bronze_to_rmt(table='bronze_github.project_fields',              order_by='unique_key') %}
 {% do promote_bronze_to_rmt(table='bronze_github.project_items',               order_by='unique_key') %}
 {% do promote_bronze_to_rmt(table='bronze_github.issue_types',                 order_by='unique_key') %}

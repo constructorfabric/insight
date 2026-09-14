@@ -1,39 +1,107 @@
 # FEATURE Expert Checklist
 
+
+<!-- toc -->
+
+- [Referenced Standards](#referenced-standards)
+- [Review Scope Selection](#review-scope-selection)
+  - [Quick Review (Core Items Only)](#quick-review-core-items-only)
+  - [Domain Prioritization by Feature Type](#domain-prioritization-by-feature-type)
+- [Prerequisites](#prerequisites)
+- [Applicability Context](#applicability-context)
+- [Severity Dictionary](#severity-dictionary)
+- [🏗️ ARCHITECTURE Expertise (ARCH)](#architecture-expertise-arch)
+  - [ARCH-FDESIGN-001: Feature Context Completeness](#arch-fdesign-001-feature-context-completeness)
+  - [ARCH-FDESIGN-002: Overall Design Alignment](#arch-fdesign-002-overall-design-alignment)
+  - [ARCH-FDESIGN-003: Actor Flow Completeness](#arch-fdesign-003-actor-flow-completeness)
+  - [ARCH-FDESIGN-004: Algorithm Completeness](#arch-fdesign-004-algorithm-completeness)
+  - [ARCH-FDESIGN-005: State Management](#arch-fdesign-005-state-management)
+  - [ARCH-FDESIGN-006: Component Interaction](#arch-fdesign-006-component-interaction)
+  - [ARCH-FDESIGN-007: Extension Points](#arch-fdesign-007-extension-points)
+- [Semantic Alignment (SEM)](#semantic-alignment-sem)
+  - [SEM-FDESIGN-001: PRD Coverage Integrity](#sem-fdesign-001-prd-coverage-integrity)
+  - [SEM-FDESIGN-002: Design Principles and Constraints](#sem-fdesign-002-design-principles-and-constraints)
+  - [SEM-FDESIGN-003: Architecture and Component Consistency](#sem-fdesign-003-architecture-and-component-consistency)
+  - [SEM-FDESIGN-004: Feature Semantics Completeness](#sem-fdesign-004-feature-semantics-completeness)
+  - [SEM-FDESIGN-005: Design Decomposition Consistency](#sem-fdesign-005-design-decomposition-consistency)
+- [⚡ PERFORMANCE Expertise (PERF)](#performance-expertise-perf)
+  - [PERF-FDESIGN-001: Performance-Critical Paths](#perf-fdesign-001-performance-critical-paths)
+  - [PERF-FDESIGN-002: Resource Management](#perf-fdesign-002-resource-management)
+  - [PERF-FDESIGN-003: Scalability Considerations](#perf-fdesign-003-scalability-considerations)
+  - [PERF-FDESIGN-004: Performance Acceptance Criteria](#perf-fdesign-004-performance-acceptance-criteria)
+- [🔒 SECURITY Expertise (SEC)](#security-expertise-sec)
+  - [SEC-FDESIGN-001: Authentication Integration](#sec-fdesign-001-authentication-integration)
+  - [SEC-FDESIGN-002: Authorization Implementation](#sec-fdesign-002-authorization-implementation)
+  - [SEC-FDESIGN-003: Input Validation](#sec-fdesign-003-input-validation)
+  - [SEC-FDESIGN-004: Data Protection](#sec-fdesign-004-data-protection)
+  - [SEC-FDESIGN-005: Audit Trail](#sec-fdesign-005-audit-trail)
+  - [SEC-FDESIGN-006: Security Error Handling](#sec-fdesign-006-security-error-handling)
+- [🛡️ RELIABILITY Expertise (REL)](#reliability-expertise-rel)
+  - [REL-FDESIGN-001: Error Handling Completeness](#rel-fdesign-001-error-handling-completeness)
+  - [REL-FDESIGN-002: Fault Tolerance](#rel-fdesign-002-fault-tolerance)
+  - [REL-FDESIGN-003: Data Integrity](#rel-fdesign-003-data-integrity)
+  - [REL-FDESIGN-004: Resilience Patterns](#rel-fdesign-004-resilience-patterns)
+  - [REL-FDESIGN-005: Recovery Procedures](#rel-fdesign-005-recovery-procedures)
+- [📊 DATA Expertise (DATA)](#data-expertise-data)
+  - [DATA-FDESIGN-001: Data Access Patterns](#data-fdesign-001-data-access-patterns)
+  - [DATA-FDESIGN-002: Data Validation](#data-fdesign-002-data-validation)
+  - [DATA-FDESIGN-003: Data Transformation](#data-fdesign-003-data-transformation)
+  - [DATA-FDESIGN-004: Data Lifecycle](#data-fdesign-004-data-lifecycle)
+  - [DATA-FDESIGN-005: Data Privacy](#data-fdesign-005-data-privacy)
+- [🔌 INTEGRATION Expertise (INT)](#integration-expertise-int)
+  - [INT-FDESIGN-001: API Interactions](#int-fdesign-001-api-interactions)
+  - [INT-FDESIGN-002: Database Operations](#int-fdesign-002-database-operations)
+  - [INT-FDESIGN-003: External Integrations](#int-fdesign-003-external-integrations)
+  - [INT-FDESIGN-004: Event/Message Handling](#int-fdesign-004-eventmessage-handling)
+  - [INT-FDESIGN-005: Cache Integration](#int-fdesign-005-cache-integration)
+- [🖥️ OPERATIONS Expertise (OPS)](#operations-expertise-ops)
+  - [OPS-FDESIGN-001: Observability](#ops-fdesign-001-observability)
+  - [OPS-FDESIGN-002: Configuration](#ops-fdesign-002-configuration)
+  - [OPS-FDESIGN-003: Health & Diagnostics](#ops-fdesign-003-health--diagnostics)
+  - [OPS-FDESIGN-004: Rollout & Rollback](#ops-fdesign-004-rollout--rollback)
+- [🔧 MAINTAINABILITY Expertise (MAINT)](#maintainability-expertise-maint)
+  - [MAINT-FDESIGN-001: Code Organization](#maint-fdesign-001-code-organization)
+  - [MAINT-FDESIGN-002: Documentation Quality](#maint-fdesign-002-documentation-quality)
+  - [MAINT-FDESIGN-003: Technical Debt Awareness](#maint-fdesign-003-technical-debt-awareness)
+- [🧪 TESTING Expertise (TEST)](#testing-expertise-test)
+  - [TEST-FDESIGN-001: Testability](#test-fdesign-001-testability)
+  - [TEST-FDESIGN-002: Test Coverage Guidance](#test-fdesign-002-test-coverage-guidance)
+  - [TEST-FDESIGN-003: Acceptance Criteria](#test-fdesign-003-acceptance-criteria)
+  - [TEST-FDESIGN-004: Testing Scenario Vector Attribution](#test-fdesign-004-testing-scenario-vector-attribution)
+- [📜 COMPLIANCE Expertise (COMPL)](#compliance-expertise-compl)
+  - [COMPL-FDESIGN-001: Regulatory Compliance](#compl-fdesign-001-regulatory-compliance)
+  - [COMPL-FDESIGN-002: Privacy Compliance](#compl-fdesign-002-privacy-compliance)
+- [👤 USABILITY Expertise (UX)](#usability-expertise-ux)
+  - [UX-FDESIGN-001: User Experience Flows](#ux-fdesign-001-user-experience-flows)
+  - [UX-FDESIGN-002: Accessibility](#ux-fdesign-002-accessibility)
+- [🏢 BUSINESS Expertise (BIZ)](#business-expertise-biz)
+  - [BIZ-FDESIGN-001: Requirements Alignment](#biz-fdesign-001-requirements-alignment)
+  - [BIZ-FDESIGN-002: Value Delivery](#biz-fdesign-002-value-delivery)
+- [DOC (DOC)](#doc-doc)
+  - [DOC-FDESIGN-001: Explicit Non-Applicability](#doc-fdesign-001-explicit-non-applicability)
+  - [ARCH-FDESIGN-NO-001: No System-Level Type Redefinitions](#arch-fdesign-no-001-no-system-level-type-redefinitions)
+  - [ARCH-FDESIGN-NO-002: No New API Endpoints](#arch-fdesign-no-002-no-new-api-endpoints)
+  - [ARCH-FDESIGN-NO-003: No Architectural Decisions](#arch-fdesign-no-003-no-architectural-decisions)
+  - [BIZ-FDESIGN-NO-001: No Product Requirements](#biz-fdesign-no-001-no-product-requirements)
+  - [BIZ-FDESIGN-NO-002: No Sprint/Task Breakdowns](#biz-fdesign-no-002-no-sprinttask-breakdowns)
+  - [MAINT-FDESIGN-NO-001: No Code Snippets](#maint-fdesign-no-001-no-code-snippets)
+  - [TEST-FDESIGN-NO-001: No Test Implementation](#test-fdesign-no-001-no-test-implementation)
+  - [SEC-FDESIGN-NO-001: No Security Secrets](#sec-fdesign-no-001-no-security-secrets)
+  - [OPS-FDESIGN-NO-001: No Infrastructure Code](#ops-fdesign-no-001-no-infrastructure-code)
+- [Final Checklist](#final-checklist)
+  - [Explicit Handling Verification](#explicit-handling-verification)
+- [Reporting Readiness Checklist](#reporting-readiness-checklist)
+- [Reporting](#reporting)
+  - [Full Report Format (Standard/Full Reviews)](#full-report-format-standardfull-reviews)
+  - [Compact Report Format (Quick Reviews)](#compact-report-format-quick-reviews)
+- [Reporting Commitment](#reporting-commitment)
+
+<!-- /toc -->
+
 **Artifact**: Feature (FEATURE)
-**Version**: 2.0
-**Last Updated**: 2026-02-03
+**Version**: 2.1
+**Last Updated**: 2026-09-09
 **Purpose**: Comprehensive quality checklist for FEATURE artifacts
-
-## Table of Contents
-
-1. [Referenced Standards](#referenced-standards)
-2. [Review Scope Selection](#review-scope-selection)
-3. [Prerequisites](#prerequisites)
-4. [Applicability Context](#applicability-context)
-5. [Severity Dictionary](#severity-dictionary)
-6. [MUST HAVE](#must-have)
-   - [🏗️ ARCHITECTURE Expertise (ARCH)](#architecture-expertise-arch)
-   - [Semantic Alignment (SEM)](#semantic-alignment-sem)
-   - [⚡ PERFORMANCE Expertise (PERF)](#performance-expertise-perf)
-   - [🔒 SECURITY Expertise (SEC)](#security-expertise-sec)
-   - [🛡️ RELIABILITY Expertise (REL)](#reliability-expertise-rel)
-   - [📊 DATA Expertise (DATA)](#data-expertise-data)
-   - [🔌 INTEGRATION Expertise (INT)](#integration-expertise-int)
-   - [🖥️ OPERATIONS Expertise (OPS)](#operations-expertise-ops)
-   - [🔧 MAINTAINABILITY Expertise (MAINT)](#maintainability-expertise-maint)
-   - [🧪 TESTING Expertise (TEST)](#testing-expertise-test)
-   - [📜 COMPLIANCE Expertise (COMPL)](#compliance-expertise-compl)
-   - [👤 USABILITY Expertise (UX)](#usability-expertise-ux)
-   - [🏢 BUSINESS Expertise (BIZ)](#business-expertise-biz)
-   - [DOC (DOC)](#doc-doc)
-7. [MUST NOT HAVE](#must-not-have)
-8. [Validation Summary](#validation-summary)
-   - [Final Checklist](#final-checklist)
-   - [Reporting Readiness Checklist](#reporting-readiness-checklist)
-   - [Reporting](#reporting)
-   - [Reporting Commitment](#reporting-commitment)
-
 ---
 
 ## Referenced Standards
@@ -666,6 +734,28 @@ Before evaluating each checklist item, the expert MUST:
 - [ ] Criteria cover happy path
 - [ ] Criteria cover error paths
 - [ ] Criteria testable automatically
+
+### TEST-FDESIGN-004: Testing Scenario Vector Attribution
+**Severity**: HIGH
+**Ref**: [quality-vector guide](../../guides/quality-vectors.md) (kit-local framing, not an ISO/IEC 25010 characteristic set)
+
+> **New in v2.1**: Added to gate the vector and suite-tag attribution `FEATURE/rules.md` requires of every authored `## 7. Testing` scenario.
+
+- [ ] Every authored Testing scenario carries exactly one primary quality vector (Efficiency, Reliability, Performance, Security, Versatility) and exactly one suite tag
+- [ ] Each scenario traces to an executable test, citing the feature path, feature ID and stable scenario number (or is explicitly marked "Not implemented")
+- [ ] The vector attributed to a scenario is the one the scenario's own claim tests, not the vector the underlying requirement is filed under in section 1.2
+- [ ] A vector category with no scenario is not reported as a violation by itself — missing coverage across the five vectors is not a gate (`FEATURE/rules.md`)
+
+---
+
+## Authoring aid — quality vectors
+
+**Authoring aid:** Use the [quality-vector guide](../../guides/quality-vectors.md)
+to suggest clearer requirement mappings, contribution boundaries and evidence
+links. Report these as improvement opportunities, without a severity or
+pass/fail verdict. Canonical criteria above and agreed requirements retain
+their meaning. Vector and suite-tag attribution on authored Testing scenarios
+is checked under TEST-FDESIGN-004.
 
 ---
 

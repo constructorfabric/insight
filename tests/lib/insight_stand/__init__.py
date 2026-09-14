@@ -14,8 +14,8 @@ This package holds:
 This package is deliberately test-framework agnostic: no pytest import, no
 fixtures, no assertions. `tests/stand/conftest.py` is what turns it into a
 suite, and phases 6-8 add person fixtures and browser journeys on top. Nothing
-here imports from `src/ingestion/tests/e2e/**` — that rig owns in-process
-correctness and feeds four blocking coverage gates; it is read-only reference.
+here imports from `insight_datapath` — that package seeds and clears a warehouse,
+and the dependency runs the other way.
 """
 
 from __future__ import annotations
@@ -46,8 +46,12 @@ from .manifest import (
     BOOLEAN_CAPABILITIES,
     MANIFEST_PATH,
     MANIFEST_PATH_ENV,
+    SUPPORTED_GOLDEN_METRICS_VERSION,
     SUPPORTED_MANIFEST_VERSION,
     Capabilities,
+    GoldenMetrics,
+    GoldenTasks,
+    GoldenTaskTotals,
     Manifest,
     Person,
     Realm,
@@ -62,14 +66,24 @@ from .personas import (
     MEMBER_ROLE,
     OTHER_TENANT_FIXTURE,
     PASSWORD_ENV,
+    REALM_EXPORT_ENV,
     REALM_EXPORT_PATH,
     ROLE_TO_REALM_ROLES,
     PersonaSession,
     expected_realm_roles,
     open_session,
     persona_password,
+    realm_export_path,
     resolve_by_realm_role,
     verify_realm_roles,
+)
+from .scratch_identity import (
+    RUN_TAG,
+    SCRATCH_PREFIX,
+    SCRATCH_SOURCE_ID,
+    SCRATCH_SOURCE_TYPE,
+    issued_names,
+    scratch_name,
 )
 from .service_token import (
     ASSERTION_TYPE,
@@ -120,15 +134,24 @@ __all__: Sequence[str] = (
     "MEMBER_ROLE",
     "OTHER_TENANT_FIXTURE",
     "PASSWORD_ENV",
+    "REALM_EXPORT_ENV",
     "REALM_EXPORT_PATH",
     "ROLE_TO_REALM_ROLES",
+    "RUN_TAG",
+    "SCRATCH_PREFIX",
+    "SCRATCH_SOURCE_ID",
+    "SCRATCH_SOURCE_TYPE",
     "SERVICE_NAME",
     "SESSION_COOKIE_NAME",
+    "SUPPORTED_GOLDEN_METRICS_VERSION",
     "SUPPORTED_MANIFEST_VERSION",
     "TOKEN_URL_ENV",
     "ApiClient",
     "ApiResponse",
     "Capabilities",
+    "GoldenMetrics",
+    "GoldenTaskTotals",
+    "GoldenTasks",
     "JsonValue",
     "LoginNotCompletedError",
     "LoginSession",
@@ -156,14 +179,17 @@ __all__: Sequence[str] = (
     "expected_realm_roles",
     "governs_vector",
     "identity_path",
+    "issued_names",
     "load_manifest",
     "open_service_session",
     "open_session",
     "persona_password",
     "quality_vectors",
+    "realm_export_path",
     "resolve_base_url",
     "resolve_by_realm_role",
     "resolve_endpoint",
+    "scratch_name",
     "verify_realm_roles",
     "wait_for",
     "wait_until",

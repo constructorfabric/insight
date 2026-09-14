@@ -716,7 +716,7 @@ Checks strict semver on image-bearing descriptors, `connectors-config.yaml`
 registration, the `class_<X>.sql` `depends_on` edge, and cross-source column-type
 agreement. Exit 0 = clean; warnings are allowed (an empty `images.*.image` on a
 brand-new connector is expected — the first `main` build patches it). This runs
-in CI as the `connector-wiring-guard` job in `.github/workflows/ci.yml`, so a
+in CI as a step of the `guards` job in `.github/workflows/ci.yml`, so a
 failure here blocks the PR — which is the point: it is the only one of these
 checks that fires *before* merge.
 

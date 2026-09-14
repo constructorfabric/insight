@@ -43,10 +43,28 @@ export interface SyncFact {
   records_reported?: number | null;
 }
 
-export interface ConnectorHealth {
+/**
+ * Which installation of a connector a row is.
+ *
+ * One connector can be configured more than once — a second Secret naming its
+ * own source id — so the name alone does not identify what synced. Both halves
+ * are absent together on history recorded before the ledger carried the
+ * identity that no single installation could be shown to own.
+ */
+export interface ConnectorInstance {
+  tenant_id?: string | null;
+  source_id?: string | null;
+}
+
+export interface ConnectorHealth extends ConnectorInstance {
   connector: string;
   configured: boolean;
   last_sync?: SyncFact | null;
+}
+
+/** One installation, as the caller names it when asking for its history. */
+export interface ConnectorInstanceRef extends ConnectorInstance {
+  connector: string;
 }
 
 export interface ConnectorHealthSummary {
@@ -65,7 +83,7 @@ export interface ConnectorHealthSummary {
   connectors: ConnectorHealth[];
 }
 
-export interface ConnectorSyncHistory {
+export interface ConnectorSyncHistory extends ConnectorInstance {
   connector: string;
   syncs: SyncFact[];
   /** The most rows this window can hold, so the page can say it is a window. */
@@ -81,10 +99,21 @@ export async function getConnectorHealth(): Promise<ConnectorHealthSummary> {
 }
 
 export async function getConnectorSyncs(
-  connector: string,
+  instance: ConnectorInstanceRef,
 ): Promise<ConnectorSyncHistory> {
+  // Both halves or neither. The service refuses half an identity rather than
+  // widening the window back to every installation, and a source id is unique
+  // only within a tenant — so sending one alone would be asking a question
+  // whose answer could not be trusted even if it were served.
+  const scope = new URLSearchParams();
+  if (instance.tenant_id != null && instance.source_id != null) {
+    scope.set("tenant_id", instance.tenant_id);
+    scope.set("source_id", instance.source_id);
+  }
+  const query = scope.toString();
   const res = await fetchWithAuth(
-    `${BASE}/connector-health/${encodeURIComponent(connector)}/syncs`,
+    `${BASE}/connector-health/${encodeURIComponent(instance.connector)}/syncs` +
+      (query === "" ? "" : `?${query}`),
   );
   if (!res.ok) {
     throw new AnalyticsApiError(res.status, await res.json().catch(() => null));

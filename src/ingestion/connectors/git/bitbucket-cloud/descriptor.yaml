@@ -12,7 +12,36 @@ name: bitbucket-cloud
 #   same reason as github 6.0.0 — the patch id has been in Bronze all along,
 #   but staging never re-reads Bronze, so the column heals to NULL on existing
 #   rows and a NULL identity never folds.
-version: "5.0.0"
+# 6.0.0: the class-contract column `date` now carries the AUTHOR date rather
+#   than the committer date, and `committer_date` joins it as its own column.
+#   A rebase, an amend and a cherry-pick rewrite the committer date and keep
+#   the author date, so a branch rebased before merging used to collapse every
+#   day of work on it onto the day of the last rewrite. MAJOR for the same
+#   reason as the patch id: staging is incremental on _airbyte_extracted_at and
+#   never re-reads Bronze, so already-materialized commits keep the committer
+#   date forever and the install would run in two regimes. Only the one-shot
+#   scoped `dbt --full-refresh` a major bump dispatches re-materializes them.
+#   Safe: both dates have been in Bronze all along, and the author date falls
+#   back to the committer date where a source left it empty. #3153
+# 7.0.0: the class-contract column `closed_on` now has a fallback for a
+#   merge the vendor recorded without a terminal activity entry. The merge
+#   commit the request names is what corroborates such a merge — without one
+#   collected the request still keeps no close time — and the time is then the
+#   request's own last update where nothing in its activity accounts for that
+#   update, the commit's own timestamp where something does, and nothing at
+#   all where neither candidate is at or after the creation. Bitbucket reports
+#   no close time of its own, and a merge reached by pushing a commit that
+#   carries the request's head produces no merge action to read one from — so
+#   those requests carried no close time and were dropped by every measure
+#   that dates by the close, while the rate measures, which read the state
+#   alone, kept counting them. MAJOR for the same reason as 6.0.0: staging is
+#   incremental on _airbyte_extracted_at and never re-reads Bronze, so
+#   already-materialized requests keep their empty close time forever and the
+#   install would run in two regimes. Only the one-shot scoped full refresh a
+#   major bump dispatches re-materializes them. Safe: the merge hash and the
+#   commits have been in Bronze all along, and a request the activity does
+#   date is untouched. #3051
+version: "7.2.0"
 # A slot of its own: replication pods sharing a slot with other connector
 # syncs can be starved of workers, which surfaces as startup and activity
 # timeouts rather than as a connector error.

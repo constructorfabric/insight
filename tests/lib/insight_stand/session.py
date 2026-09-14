@@ -3,9 +3,7 @@
 `LoginSession` is the one thing a request can carry to prove who it is, and it
 is a session cookie obtained by actually logging in at the stand's IdP. That is
 the only kind that proves anything about the deployed product. Minting a bearer
-token is the in-process rig's path
-(`src/ingestion/tests/e2e/lib/gateway_jwt.py`); doing it here would exercise
-JWT verification — which that rig already covers — and skip the login entirely.
+token here would exercise JWT verification and skip the login entirely.
 
 There IS now a second implementation, and so an interface: `ServiceTokenSession`
 (`service_token.py`) is a service principal, obtained by exchanging an RFC 7523

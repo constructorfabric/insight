@@ -46,11 +46,68 @@ fn golden_strip_prefix() {
     assert_golden("stripprefix.routes.yaml", "stripprefix.nginx.conf");
 }
 
+#[test]
+fn instance_token_prefix_route_can_strip_its_platform_prefix() {
+    let routes = "version: 1\nroutes:\n  - prefix: /api/core\n    upstream: http://core:8086\n    auth: instance_token\n    strip_prefix: true\n";
+
+    let conf = generate(routes, &Settings::default())
+        .unwrap_or_else(|error| panic!("core instance-token route should generate: {error}"));
+
+    assert!(conf.contains("location = /api/core {"));
+    assert!(conf.contains("location ^~ /api/core/ {"));
+    assert!(!conf.contains("location /api/core {"));
+    assert_eq!(
+        conf.matches("require(\"gateway\").pass_instance_token()")
+            .count(),
+        2
+    );
+    assert_eq!(
+        conf.matches("rewrite ^/api/core/?(.*)$ /$1 break;").count(),
+        2
+    );
+    assert!(!conf.contains("require(\"gateway\").exchange()"));
+    assert!(!conf.contains("require(\"gateway\").pass_bearer()"));
+}
+
+#[test]
+fn instance_token_route_bypasses_session_and_mcp_oauth() {
+    let routes = "version: 1\nroutes:\n  - prefix: /api/sql/query\n    upstream: http://analytics:8086\n    auth: instance_token\n";
+    let conf = generate(routes, &Settings::default()).unwrap();
+    assert!(conf.contains("location = /api/sql/query {"));
+    assert!(conf.contains("require(\"gateway\").pass_instance_token()"));
+    assert!(!conf.contains("require(\"gateway\").pass_bearer()"));
+    assert!(!conf.contains("require(\"gateway\").exchange()"));
+    let sql_location = conf
+        .split("location = /api/sql/query {")
+        .nth(1)
+        .unwrap()
+        .split("        }\n")
+        .next()
+        .unwrap();
+    for directive in [
+        "proxy_set_header Host $host;",
+        "proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+        "proxy_set_header X-Forwarded-Proto $scheme;",
+        "proxy_connect_timeout 5s;",
+        "proxy_read_timeout 30s;",
+        "proxy_buffering off;",
+    ] {
+        assert!(sql_location.contains(directive), "missing: {directive}");
+    }
+    assert!(
+        generate(
+            &routes.replace("/api/sql/query", "/mcp"),
+            &Settings::default()
+        )
+        .is_err()
+    );
+}
+
 /// Every generated `/api/` location must carry the full hygiene block (DESIGN
 /// 3.9): the Lua exchange, no browser Authorization survives, the session cookie
 /// is stripped in Lua, a fresh correlation id, and gateway-authored forwarding.
 #[test]
-fn every_api_location_has_the_hygiene_block() {
+fn every_session_location_has_the_hygiene_block() {
     let conf = generate(&fixture("full.routes.yaml"), &Settings::default()).unwrap();
     // One access_by_lua per /api route (3 routes in the fixture).
     assert_eq!(
@@ -93,11 +150,59 @@ fn real_ip_emitted_only_when_trusted_cidrs_configured() {
 }
 
 #[test]
-fn jwks_is_not_fronted_by_the_gateway() {
-    // JWKS is public and served directly by the authenticator (the key issuer),
-    // never proxied through the edge.
+fn stub_status_is_loopback_only() {
     let conf = generate(&fixture("full.routes.yaml"), &Settings::default()).unwrap();
-    assert!(!conf.contains("jwks"), "gateway must not front JWKS");
+    let status_server = conf
+        .split("server {")
+        .find(|s| s.contains("stub_status;"))
+        .expect("a server block serving stub_status");
+    let listens: Vec<&str> = status_server
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.starts_with("listen "))
+        .collect();
+    assert_eq!(listens, ["listen 127.0.0.1:8090;"]);
+}
+
+#[test]
+fn mcp_oauth_metadata_and_jwks_are_fronted_by_the_gateway() {
+    let conf = generate(&fixture("full.routes.yaml"), &Settings::default()).unwrap();
+    assert!(conf.contains("location = /.well-known/oauth-authorization-server"));
+    assert!(conf.contains("location = /.well-known/oauth-protected-resource/mcp"));
+    assert!(conf.contains("location = /.well-known/jwks.json"));
+    assert!(!conf.contains("location = /.well-known/openid-configuration"));
+}
+
+#[test]
+fn configured_mcp_origin_reaches_bearer_challenges() {
+    let conf = generate(
+        &fixture("full.routes.yaml"),
+        &Settings {
+            mcp_public_url: Some("https://insight.example.com".to_owned()),
+            ..Settings::default()
+        },
+    )
+    .unwrap();
+    assert!(conf.contains(
+        "mcp_resource_metadata_url = \"https://insight.example.com/.well-known/oauth-protected-resource/mcp\""
+    ));
+}
+
+#[test]
+fn rejects_mcp_public_url_with_a_path() {
+    let result = generate(
+        &fixture("full.routes.yaml"),
+        &Settings {
+            mcp_public_url: Some("https://insight.example.com/base".to_owned()),
+            ..Settings::default()
+        },
+    );
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("MCP public URL must be an HTTP(S) origin")
+    );
 }
 
 fn reject(yaml: &str) -> String {

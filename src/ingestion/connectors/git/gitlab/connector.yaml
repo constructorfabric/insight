@@ -1,0 +1,2941 @@
+version: 7.0.4
+
+type: DeclarativeSource
+
+# GitLab connector built on the git-cli-proxy.
+#
+# Two upstreams in ONE manifest: project discovery, merge requests, CI and
+# deployments talk to the GitLab API (REST v4, GraphQL where REST has no
+# answer), while commit-level extraction talks to the proxy, which serves it
+# from a bare blobless clone instead of one API call per commit. `url_base` is
+# a per-requester property, so mixing them needs no special machinery.
+#
+# The manifest is FULLY INLINED (no $ref, no definitions.linked): the Builder
+# strict validator resolves no $ref, so shared pieces are YAML anchors, which
+# the loader expands before the validator sees them.
+#
+#   repositories               -> GitLab projects listing        incremental (last_activity_at)
+#   commits                    -> proxy /v1/commits              incremental (committed_date), per project
+#   file_changes               -> proxy /v1/file-changes         incremental (committed_date), per project
+#   branches                   -> proxy /v1/branches             full refresh, per project
+#   pull_requests              -> GitLab merge requests           incremental (updated_at), monthly steps
+#   pull_request_diff_stats    -> GraphQL diffStatsSummary        incremental (updatedAfter), per project
+#   pull_request_notes         -> /merge_requests/{iid}/notes     windowed MR parent
+#   pull_request_commits       -> /merge_requests/{iid}/commits   windowed MR parent
+#   pull_request_state_events  -> /merge_requests/{iid}/resource_state_events
+#   pull_request_label_events  -> /merge_requests/{iid}/resource_label_events
+#   group_members              -> /groups/{g}/members/all         full refresh, per configured scope
+#   pipelines                  -> GraphQL project.pipelines       incremental (updatedAfter), per project
+#   deployments                -> /projects/{id}/deployments      incremental (updated_at), per project
+#   users                      -> /users (keyset)                 full refresh, opt-in, instance-wide
+#   commit_authors             -> GitLab /users?search=<e-mail>  per distinct author the proxy enumerates
+#
+# Scope. Every vendor stream partitions over the configured scopes: each
+# `gitlab_groups` entry (subgroups included), each `gitlab_projects` entry,
+# or — when both are empty — the whole instance (`*`), which the spec refuses
+# on gitlab.com. A scope decides the endpoint family (`/groups/{g}/…`,
+# `/projects/{p}/…`, or the instance-wide listing) through one shared
+# expression, so the streams stay uniform across the three modes.
+#
+# Conditional request parameters render to '' when they do not apply: the CDK
+# drops a parameter whose value is '' and would send the literal text "None"
+# for a null, so '' is the only safe sentinel.
+
+definitions:
+  # ── Error handling ───────────────────────────────────────────────────────
+  proxy_error_handler: &proxy_error_handler
+    type: DefaultErrorHandler
+    # The proxy holds a cold request in-connection while it clones, so a 429
+    # is the exception: cache headroom that stayed exhausted for the whole
+    # in-connection wait. 200 x the 30 s the proxy asks for outlasts a cold
+    # clone queue on a large installation.
+    max_retries: 200
+    backoff_strategies:
+      - type: WaitTimeFromHeader
+        header: Retry-After
+        max_waiting_time_in_seconds: 600
+      # Fallback for failures that carry no response and so no header — a
+      # connection refused or reset while the proxy restarts during a deploy.
+      # Without it the request dies after two immediate tries; the ladder
+      # rides out any restart shorter than the CDK's overall retry ceiling.
+      - type: ExponentialBackoffStrategy
+        factor: 5
+    response_filters:
+      # The repository is being cloned in the background: the proxy is
+      # working, the caller waits.
+      - type: HttpResponseFilter
+        http_codes: [401]
+        action: FAIL
+        failure_type: config_error
+        error_message: The git-cli-proxy rejected git_proxy_token; it must match the token the proxy was started with
+      - type: HttpResponseFilter
+        http_codes: [429]
+        action: RETRY
+        error_message: Repository is being prepared by the proxy
+      # Both are permanent for THIS repository and harmless for the rest,
+      # so the partition is skipped rather than the whole stream failed.
+      # A rising git_proxy_rejections_total is the alert: a 413 means a
+      # repository is silently absent from bronze until an operator raises
+      # cache.maxRepoBytes.
+      - type: HttpResponseFilter
+        http_codes: [404, 413]
+        action: IGNORE
+        error_message: >-
+          Skipping this repository: gone or refused at origin (404), or
+          larger than cache.maxRepoBytes (413). Other repositories continue.
+      # The pinned snapshot was superseded mid-walk: a refresh or an eviction
+      # bumped the generation, so the page token is dead. RETRY would replay
+      # it and 409 again; RESET_PAGINATION restarts the partition's walk from
+      # its first page, and the retriever's `pagination_reset` narrows that
+      # restart to the last cursor value already seen.
+      - type: HttpResponseFilter
+        http_codes: [409]
+        action: RESET_PAGINATION
+        error_message: Proxy snapshot changed mid-walk; restarting the walk from the last record already seen
+      - type: HttpResponseFilter
+        http_codes: [500, 502, 503, 504]
+        action: RETRY
+        error_message: Transient proxy error (the origin can reset a clone mid-transfer)
+
+  # GitLab answers a throttle with 429 + Retry-After (seconds). The
+  # exponential fallback covers the 5xx that carry no header, and the
+  # connection failures that carry no response at all.
+  vendor_backoff: &vendor_backoff
+    - type: WaitTimeFromHeader
+      header: Retry-After
+      max_waiting_time_in_seconds: 600
+    - type: ExponentialBackoffStrategy
+      factor: 5
+
+  # Scope discovery is the parent every other stream partitions on, so a
+  # throttle or a bad token here must classify, not surface as a generic
+  # error. No 403/404 IGNORE: on the listing itself that would silently yield
+  # an empty scope instead of failing — a group the token cannot see, or a
+  # mistyped path, is a configuration error the operator must hear about.
+  discovery_error_handler: &discovery_error_handler
+    type: DefaultErrorHandler
+    max_retries: 5
+    backoff_strategies: *vendor_backoff
+    response_filters:
+      - type: HttpResponseFilter
+        http_codes: [429]
+        action: RATE_LIMITED
+        error_message: GitLab is rate limiting this token
+      - type: HttpResponseFilter
+        http_codes: [401]
+        action: FAIL
+        failure_type: config_error
+        error_message: >-
+          GitLab rejected the token. It needs the read_api scope for the API
+          and read_repository for the clone the proxy performs on its behalf.
+      - type: HttpResponseFilter
+        http_codes: [403, 404]
+        action: FAIL
+        failure_type: config_error
+        error_message: >-
+          A configured group or project is not visible to this token (403) or
+          does not exist (404). Check gitlab_groups / gitlab_projects paths and
+          the token's membership.
+      - type: HttpResponseFilter
+        http_codes: [500, 502, 503, 504]
+        action: RETRY
+        error_message: Transient GitLab error
+
+  # The user directory is enrichment, not a data path, and it is on by
+  # default: a token that may not list it (403) or an instance that does not
+  # serve it (404) leaves the directory empty and the sync green. A rejected
+  # token (401) is still a configuration error.
+  directory_error_handler: &directory_error_handler
+    type: DefaultErrorHandler
+    max_retries: 5
+    backoff_strategies: *vendor_backoff
+    response_filters:
+      - type: HttpResponseFilter
+        http_codes: [429]
+        action: RATE_LIMITED
+        error_message: GitLab is rate limiting this token
+      - type: HttpResponseFilter
+        http_codes: [401]
+        action: FAIL
+        failure_type: config_error
+        error_message: >-
+          GitLab rejected the token. It needs the read_api scope for the API
+          and read_repository for the clone the proxy performs on its behalf.
+      - type: HttpResponseFilter
+        http_codes: [403, 404]
+        action: IGNORE
+        error_message: >-
+          The user directory (/users) is not readable with this token; the
+          sync continues without it. Set gitlab_instance_users to "false" to
+          stop asking, or use a personal token to read it.
+      - type: HttpResponseFilter
+        http_codes: [500, 502, 503, 504]
+        action: RETRY
+        error_message: Transient GitLab error
+
+  # Per-project endpoints (merge requests, deployments, members) and per-MR
+  # children. Unlike scope discovery, a 403/404 here is about ONE project or
+  # merge request — deleted, hidden from the token, or a feature this edition
+  # or project has disabled (402 is GitLab's "not licensed") — and permanent
+  # for it, so it is skipped and the walk continues. Failing instead aborts
+  # partition generation and silently truncates every project later in the
+  # walk.
+  project_scoped_error_handler: &project_scoped_error_handler
+    type: DefaultErrorHandler
+    max_retries: 5
+    backoff_strategies: *vendor_backoff
+    response_filters:
+      - type: HttpResponseFilter
+        http_codes: [429]
+        action: RATE_LIMITED
+        error_message: GitLab is rate limiting this token
+      - type: HttpResponseFilter
+        http_codes: [402, 403, 404]
+        action: IGNORE
+        error_message: >-
+          Project, merge request or feature not accessible with this token;
+          other projects continue.
+      - type: HttpResponseFilter
+        http_codes: [401]
+        action: FAIL
+        failure_type: config_error
+        error_message: >-
+          GitLab rejected the token. It needs the read_api scope for the API
+          and read_repository for the clone the proxy performs on its behalf.
+      - type: HttpResponseFilter
+        http_codes: [500, 502, 503, 504]
+        action: RETRY
+        error_message: Transient GitLab error
+
+  # GraphQL errors arrive as HTTP 200 with an `errors` array, so the HTTP-code
+  # filters never see them. A project the token cannot read is a 200 whose
+  # `data.project` is null and carries no error at all — the extractor then
+  # finds nothing, which is the skip-not-fail the REST 403/404 handler gives.
+  graphql_error_handler: &graphql_error_handler
+    type: DefaultErrorHandler
+    max_retries: 5
+    backoff_strategies: *vendor_backoff
+    response_filters:
+      - type: HttpResponseFilter
+        action: RATE_LIMITED
+        http_codes: [429]
+        error_message: GitLab is rate limiting this token
+      - type: HttpResponseFilter
+        action: RATE_LIMITED
+        predicate: "{{ 'rate limit' in ((response.get('errors') or []) | map(attribute='message') | join(' ') | lower) }}"
+      - type: HttpResponseFilter
+        action: FAIL
+        http_codes: [401]
+        failure_type: config_error
+        error_message: >-
+          GitLab rejected the token. It needs the read_api scope for the API
+          and read_repository for the clone the proxy performs on its behalf.
+      # Any other GraphQL error is still HTTP 200, and a query-level one omits
+      # `data` entirely; without this the extractor finds nothing and the
+      # paginator throws an unreadable interpolation error. Fail with what
+      # GitLab actually said.
+      - type: HttpResponseFilter
+        action: FAIL
+        predicate: "{{ (response.get('errors') or []) | length > 0 }}"
+        error_message: "GitLab GraphQL error: {{ (response.get('errors') or []) | map(attribute='message') | join('; ') }}"
+      - type: HttpResponseFilter
+        action: RETRY
+        http_codes: [500, 502, 503, 504]
+        error_message: Transient GitLab error
+
+  # ── Requesters ───────────────────────────────────────────────────────────
+  # PRIVATE-TOKEN is accepted for personal, group and project access tokens
+  # alike, so one header serves every token kind an operator may supply.
+  vendor_authenticator: &vendor_authenticator
+    type: ApiKeyAuthenticator
+    inject_into:
+      type: RequestOption
+      inject_into: header
+      field_name: PRIVATE-TOKEN
+    api_token: "{{ config['gitlab_token'] }}"
+
+  vendor_requester: &vendor_requester
+    type: HttpRequester
+    url_base: "{{ config['gitlab_url'] | trim('/') }}/api/v4"
+    http_method: GET
+    authenticator: *vendor_authenticator
+
+  graphql_requester: &graphql_requester
+    type: HttpRequester
+    url_base: "{{ config['gitlab_url'] | trim('/') }}/api"
+    path: /graphql
+    http_method: POST
+    authenticator: *vendor_authenticator
+    error_handler: *graphql_error_handler
+
+  # The same GitLab token is forwarded to the proxy for the clone; the proxy
+  # never stores it. Any non-empty username works with a token over HTTPS on
+  # GitLab, and `oauth2` is the documented one.
+  proxy_requester: &proxy_requester
+    type: HttpRequester
+    url_base: "{{ config['git_proxy_url'] }}"
+    http_method: GET
+    authenticator:
+      type: BearerAuthenticator
+      api_token: "{{ config['git_proxy_token'] }}"
+    request_headers:
+      X-Tenant-Id: "{{ config['insight_tenant_id'] }}"
+      X-Source-Id: "{{ config['insight_source_id'] }}"
+      X-Git-Username: oauth2
+      X-Git-Token: "{{ config['gitlab_token'] }}"
+      # The proxy reserves cache headroom from the project's reported
+      # repository size instead of its per-repository cap.
+      X-Repo-Size-Hint: "{{ stream_slice.extra_fields.get('statistics.repository_size') or '' }}"
+    error_handler: *proxy_error_handler
+
+  # GitLab sends `Link: <…>; rel="next"` for offset and keyset pagination
+  # alike, so one paginator serves both. Absolute URL, consumed as the path.
+  link_paginator: &link_paginator
+    type: DefaultPaginator
+    pagination_strategy:
+      type: CursorPagination
+      cursor_value: "{{ headers['link']['next']['url'] }}"
+      stop_condition: "{{ 'next' not in headers.get('link', {}) }}"
+    page_token_option:
+      type: RequestPath
+
+  proxy_paginator: &proxy_paginator
+    type: DefaultPaginator
+    pagination_strategy:
+      type: CursorPagination
+      cursor_value: "{{ response['next_page_token'] }}"
+      stop_condition: "{{ not response.get('next_page_token') }}"
+    page_token_option:
+      type: RequestOption
+      field_name: page_token
+      inject_into: request_parameter
+
+  standard_fields: &standard_fields
+    - type: AddedFieldDefinition
+      path: [tenant_id]
+      value: "{{ config['insight_tenant_id'] }}"
+      value_type: string
+    - type: AddedFieldDefinition
+      path: [source_id]
+      value: "{{ config['insight_source_id'] }}"
+      value_type: string
+    - type: AddedFieldDefinition
+      path: [data_source]
+      value: insight_gitlab
+      value_type: string
+    - type: AddedFieldDefinition
+      path: [collected_at]
+      value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+      value_type: string
+
+  # ── Scopes ───────────────────────────────────────────────────────────────
+  # One partition per configured group or project; `*` when nothing is
+  # configured, meaning every project the token can see.
+  scope_router: &scope_router
+    type: ListPartitionRouter
+    values: "{{ ((config.get('gitlab_groups') or []) + (config.get('gitlab_projects') or [])) or ['*'] }}"
+    cursor_field: scope
+
+  # Same list without the instance sentinel: streams that have no
+  # instance-wide form (members) simply have no partitions when nothing is
+  # configured.
+  configured_scope_router: &configured_scope_router
+    type: ListPartitionRouter
+    values: "{{ (config.get('gitlab_groups') or []) + (config.get('gitlab_projects') or []) }}"
+    cursor_field: scope
+
+  # The projects listing per scope. A single project answers as one object
+  # rather than a list, which the extractor's empty path accepts as one
+  # record. Group listings include subgroups and exclude projects merely
+  # shared with the group, which belong to another owner. The instance-wide
+  # listing uses keyset pagination — offset pagination is capped at 50k rows
+  # on gitlab.com and on any instance that enforces the default — and keyset
+  # supports ordering by id only. Archived projects never leave the vendor.
+  projects_listing_params: &projects_listing_params
+    include_subgroups: "{{ 'true' if stream_partition.scope != '*' and stream_partition.scope not in (config.get('gitlab_projects') or []) else '' }}"
+    with_shared: "{{ 'false' if stream_partition.scope != '*' and stream_partition.scope not in (config.get('gitlab_projects') or []) else '' }}"
+    archived: "false"
+    statistics: "true"
+    pagination: "{{ 'keyset' if stream_partition.scope == '*' else '' }}"
+    # WORKAROUND: page-numbered listings sorted on a key that moves when an
+    # item is touched skip the item at the next page boundary; id never moves.
+    order_by: "{{ '' if stream_partition.scope in (config.get('gitlab_projects') or []) else 'id' }}"
+    sort: "{{ '' if stream_partition.scope in (config.get('gitlab_projects') or []) else 'asc' }}"
+    per_page: "100"
+
+  # Forks carry their whole upstream history, so admitting one attributes
+  # every upstream commit to this installation; they are opt-in. The exclude
+  # patterns are `search`-matched against path_with_namespace, wrapped in one
+  # group because `regex_search` returns the first capture group or '' when
+  # the pattern has none. `$^` is the unmatchable default that keeps an empty
+  # list collecting everything. The last clause is the activity gate of the
+  # incremental roster: the listing has no server-side date filter, so a
+  # project is admitted when its last activity reaches the slice start, which
+  # already sits one lookback window before the stored cursor. A full-refresh
+  # roster has no slice start and admits every project.
+  projects_selector: &projects_selector
+    type: RecordSelector
+    extractor:
+      type: DpathExtractor
+      field_path: []
+    record_filter:
+      type: RecordFilter
+      condition: >-
+        {{ not record.get('archived')
+           and (config.get('gitlab_include_forks') == 'true' or not record.get('forked_from_project'))
+           and not (record['path_with_namespace'] | regex_search('(' ~ ((config.get('gitlab_exclude_projects') or ['$^']) | join('|')) ~ ')'))
+           and (not stream_interval.get('start_time') or timestamp(record['last_activity_at']) >= timestamp(stream_interval['start_time'])) }}
+
+  # Slim project roster the proxy streams partition over. Incremental on
+  # last_activity_at through the selector's activity gate, so with
+  # incremental_dependency only projects active since the last sync are
+  # visited. The CDK caches a parent by name, so streams sharing this exact
+  # definition share one HTTP pass per sync.
+  projects_active_parent: &projects_active_parent
+    type: DeclarativeStream
+    name: projects_active
+    primary_key:
+      - id
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          id: {type: [integer, "null"]}
+          path_with_namespace: {type: [string, "null"]}
+          http_url_to_repo: {type: [string, "null"]}
+          last_activity_at: {type: [string, "null"]}
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *vendor_requester
+        path: "{{ '/projects' if stream_partition.scope == '*' else ('/projects/' ~ (stream_partition.scope | replace('/', '%2F')) if stream_partition.scope in (config.get('gitlab_projects') or []) else '/groups/' ~ (stream_partition.scope | replace('/', '%2F')) ~ '/projects') }}"
+        request_parameters: *projects_listing_params
+        error_handler: *discovery_error_handler
+      record_selector: *projects_selector
+      paginator: *link_paginator
+      partition_router: *scope_router
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: last_activity_at
+      datetime_format: "%Y-%m-%dT%H:%M:%S.%f%z"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S.%f%z"
+        - "%Y-%m-%dT%H:%M:%S%z"
+      # WORKAROUND: GitLab moves last_activity_at at most once an hour, so a
+      # push inside that hour can leave a project below the stored cursor.
+      # Admitting a day back re-admits it; it re-walks from its own cursors.
+      lookback_window: P1D
+      # A project whose last activity predates the start date has no commit,
+      # file change or author inside the window, so it is never worth the
+      # clone the proxy streams would spend on it.
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['gitlab_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
+
+  # Full roster (no activity gate): pipelines, deployments and diff stats
+  # advance on their own clocks, so their parents must not be activity-gated.
+  projects_all_parent: &projects_all_parent
+    type: DeclarativeStream
+    name: projects_all
+    primary_key:
+      - id
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          id: {type: [integer, "null"]}
+          path_with_namespace: {type: [string, "null"]}
+          http_url_to_repo: {type: [string, "null"]}
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *vendor_requester
+        path: "{{ '/projects' if stream_partition.scope == '*' else ('/projects/' ~ (stream_partition.scope | replace('/', '%2F')) if stream_partition.scope in (config.get('gitlab_projects') or []) else '/groups/' ~ (stream_partition.scope | replace('/', '%2F')) ~ '/projects') }}"
+        request_parameters: *projects_listing_params
+        error_handler: *discovery_error_handler
+      record_selector: *projects_selector
+      paginator: *link_paginator
+      partition_router: *scope_router
+
+  # Merge-request listings used as fan-out parents. The start date is a
+  # FLOOR, not a window: everything from it to now, nothing older. A rolling
+  # window would stop short of it and silently drop merge requests inside the
+  # range the operator asked for.
+  #
+  # `stream_interval.start_time` is the floor on the first run and stored
+  # state afterwards, which is what makes the floor affordable: the window is
+  # walked in full once, then only what changed. Both halves are required —
+  # the parent carries a cursor so there IS state, and each child carries one
+  # plus `incremental_dependency: true` so the state is persisted.
+  #
+  # The group listing covers every project in the group and its subgroups in
+  # one paged walk — one listing per scope instead of one per project. A
+  # merge request from a project the discovery filter excluded (a fork, an
+  # excluded pattern) still appears here; the staging models join on the
+  # project roster and drop it there, so exclusion stays consistent.
+  merge_requests_listing_params: &merge_requests_listing_params
+    scope: "{{ 'all' if stream_partition.scope == '*' or stream_partition.scope not in (config.get('gitlab_projects') or []) else '' }}"
+    state: all
+    # WORKAROUND: page-numbered listing; sorting on updated_at moves a touched
+    # merge request to the end mid-walk and skips the one at the page boundary.
+    order_by: created_at
+    sort: asc
+    per_page: "100"
+
+  merge_requests_path: &merge_requests_path
+    path: "{{ '/merge_requests' if stream_partition.scope == '*' else ('/projects/' ~ (stream_partition.scope | replace('/', '%2F')) if stream_partition.scope in (config.get('gitlab_projects') or []) else '/groups/' ~ (stream_partition.scope | replace('/', '%2F'))) ~ '/merge_requests' }}"
+
+  pull_requests_window_parent: &pull_requests_window_parent
+    type: DeclarativeStream
+    name: pull_requests_window
+    primary_key:
+      - id
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          id: {type: [integer, "null"]}
+          iid: {type: [integer, "null"]}
+          project_id: {type: [integer, "null"]}
+          updated_at: {type: [string, "null"]}
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: [*vendor_requester, *merge_requests_path]
+        request_parameters: *merge_requests_listing_params
+        error_handler: *discovery_error_handler
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+      paginator: *link_paginator
+      partition_router: *scope_router
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: updated_at
+      datetime_format: "%Y-%m-%dT%H:%M:%S.%f%z"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S.%f%z"
+        - "%Y-%m-%dT%H:%M:%S%z"
+        - "%Y-%m-%dT%H:%M:%SZ"
+      step: P1M
+      cursor_granularity: PT0.001S
+      lookback_window: P1D
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['gitlab_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
+      start_time_option:
+        type: RequestOption
+        field_name: updated_after
+        inject_into: request_parameter
+      end_time_option:
+        type: RequestOption
+        field_name: updated_before
+        inject_into: request_parameter
+
+check:
+  type: CheckStream
+  # branches is the cheapest proxy-backed stream; checking it makes a wrong
+  # git_proxy_url or git_proxy_token fail at setup instead of on the first sync.
+  stream_names:
+    - repositories
+    - branches
+
+streams:
+  # ── Project discovery (GitLab API) ──────────────────────────────────────
+  # The full project record per scope; incremental on last_activity_at so a
+  # sync re-emits only projects touched since the last one. The slim parents
+  # above walk the same listing for the substreams.
+  - type: DeclarativeStream
+    name: repositories
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          id: {type: [integer, "null"]}
+          name: {type: [string, "null"]}
+          path: {type: [string, "null"]}
+          path_with_namespace: {type: [string, "null"]}
+          namespace_id: {type: [integer, "null"]}
+          namespace_full_path: {type: [string, "null"]}
+          namespace_kind: {type: [string, "null"]}
+          description: {type: [string, "null"]}
+          default_branch: {type: [string, "null"]}
+          visibility: {type: [string, "null"]}
+          archived: {type: [boolean, "null"]}
+          empty_repo: {type: [boolean, "null"]}
+          issues_enabled: {type: [boolean, "null"]}
+          wiki_enabled: {type: [boolean, "null"]}
+          is_fork: {type: [boolean, "null"]}
+          forked_from_project_path: {type: [string, "null"]}
+          mirror: {type: [boolean, "null"]}
+          topics: {type: [string, "null"]}
+          star_count: {type: [integer, "null"]}
+          forks_count: {type: [integer, "null"]}
+          open_issues_count: {type: [integer, "null"]}
+          repository_size: {type: [integer, "null"]}
+          http_url_to_repo: {type: [string, "null"]}
+          web_url: {type: [string, "null"]}
+          created_at: {type: [string, "null"]}
+          last_activity_at: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *vendor_requester
+        path: "{{ '/projects' if stream_partition.scope == '*' else ('/projects/' ~ (stream_partition.scope | replace('/', '%2F')) if stream_partition.scope in (config.get('gitlab_projects') or []) else '/groups/' ~ (stream_partition.scope | replace('/', '%2F')) ~ '/projects') }}"
+        request_parameters: *projects_listing_params
+        error_handler: *discovery_error_handler
+      record_selector: *projects_selector
+      paginator: *link_paginator
+      partition_router: *scope_router
+    # Full refresh: the roster is one listing per scope, and a project's
+    # default branch, visibility or archived flag changes without any activity.
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [namespace_id]
+            value: "{{ (record.get('namespace') or {}).get('id') }}"
+          - type: AddedFieldDefinition
+            path: [namespace_full_path]
+            value: "{{ (record.get('namespace') or {}).get('full_path') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [namespace_kind]
+            value: "{{ (record.get('namespace') or {}).get('kind') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [description]
+            value: "{{ (record.get('description') or '')[:1024] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [is_fork]
+            value: "{{ record.get('forked_from_project') is not none }}"
+            value_type: boolean
+          - type: AddedFieldDefinition
+            path: [forked_from_project_path]
+            value: "{{ (record.get('forked_from_project') or {}).get('path_with_namespace') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [mirror]
+            value: "{{ record.get('mirror') or false }}"
+            value_type: boolean
+          - type: AddedFieldDefinition
+            path: [topics]
+            value: "{{ (record.get('topics') or []) | tojson }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [repository_size]
+            value: "{{ (record.get('statistics') or {}).get('repository_size') }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ record['id'] }}
+      - type: RemoveFields
+        # Hoisted above; the nested originals stay out of bronze.
+        field_pointers:
+          - [namespace]
+          - [forked_from_project]
+          - [statistics]
+          - [owner]
+          - [permissions]
+          - [_links]
+          - [shared_with_groups]
+          - [container_expiration_policy]
+          - [license]
+          - [runners_token]
+          - [import_url]
+
+  # ── Commits (git-cli-proxy) ─────────────────────────────────────────────
+  # Every commit reachable from any branch, ascending by (committed_date, sha),
+  # with default-branch membership decided by the proxy from the clone.
+  - type: DeclarativeStream
+    name: commits
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          project_id: {type: [integer, "null"]}
+          repository: {type: [string, "null"]}
+          repo_path: {type: [string, "null"]}
+          sha: {type: [string, "null"]}
+          message: {type: [string, "null"]}
+          authored_date: {type: [string, "null"]}
+          committed_date: {type: [string, "null"]}
+          author_name: {type: [string, "null"]}
+          author_email: {type: [string, "null"]}
+          author_account_id: {type: [integer, "null"]}
+          committer_name: {type: [string, "null"]}
+          committer_email: {type: [string, "null"]}
+          parent_hashes: {type: [array, "null"], items: {type: string}}
+          is_merge: {type: [boolean, "null"]}
+          additions: {type: [integer, "null"]}
+          deletions: {type: [integer, "null"]}
+          changed_files: {type: [integer, "null"]}
+          is_in_default_branch: {type: [boolean, "null"]}
+          patch_id: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *proxy_requester
+        path: /v1/commits
+        request_parameters:
+          repo: "{{ stream_partition.repo_clone_url }}"
+          page_size: "500"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [items]
+      paginator: *proxy_paginator
+      pagination_reset:
+        type: PaginationReset
+        action: SPLIT_USING_CURSOR
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: http_url_to_repo
+            partition_field: repo_clone_url
+            extra_fields:
+              - [id]
+              - [path_with_namespace]
+              - [statistics, repository_size]
+            # `incremental_dependency` is what keeps the sync proportional to
+            # activity: the parent is itself incremental, so only projects
+            # active since the last sync are visited. The CDK persists parent
+            # state ONLY when the child is incremental — which this stream is.
+            incremental_dependency: true
+            stream: *projects_active_parent
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: committed_date
+      datetime_format: "%Y-%m-%dT%H:%M:%S%z"
+      # WORKAROUND: the cursor takes the newest date it sees, unbounded; a
+      # commit dated ahead of now would park `since` in the future for good.
+      is_client_side_incremental: true
+      # `git log --since` is a traversal cutoff: after a rebase the
+      # replacement commits can carry dates BELOW the stored cursor and would
+      # never be visited again. Re-enumerating one window each sync recovers
+      # them; bronze dedups the re-read rows. A rewrite older than the window
+      # is still lost, and nothing detects it.
+      lookback_window: "P1M"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S%z"
+        - "%Y-%m-%dT%H:%M:%SZ"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['gitlab_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
+      start_time_option:
+        type: RequestOption
+        field_name: since
+        inject_into: request_parameter
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [project_id]
+            value: "{{ stream_slice.extra_fields['id'] }}"
+          - type: AddedFieldDefinition
+            path: [repository]
+            value: "{{ stream_partition.repo_clone_url }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [repo_path]
+            value: "{{ stream_slice.extra_fields['path_with_namespace'] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [message]
+            value: "{{ (record.get('message') or '')[:2048] }}"
+            value_type: string
+          # The private commit address names its account outright, but only
+          # on this instance's own host: another GitLab's address form names an
+          # account there.
+          - type: AddedFieldDefinition
+            path: [author_account_id]
+            value: >-
+              {{ ((record.get('author_email') or '') | lower | regex_search('^([0-9]+)-[^@]+@' ~ (((config.get('gitlab_commit_email_hostname') or ('users.noreply.' ~ config['gitlab_url'].split('://')[-1].split('/')[0].split(':')[0])) | lower | replace('.', '\\.'))) ~ '$')) or none }}
+          # Project identity is REQUIRED in the key: forks share commit SHAs,
+          # so tenant+source+sha alone would let the ReplacingMergeTree
+          # collapse commits from different projects into one row. The
+          # numeric id, not the path: a project keeps its id through renames
+          # and transfers, which the path does not survive.
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['id'] }}:{{ record['sha'] }}
+
+  # ── Per-file changes (git-cli-proxy) ────────────────────────────────────
+  - type: DeclarativeStream
+    name: file_changes
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          project_id: {type: [integer, "null"]}
+          repository: {type: [string, "null"]}
+          repo_path: {type: [string, "null"]}
+          sha: {type: [string, "null"]}
+          committed_date: {type: [string, "null"]}
+          filename: {type: [string, "null"]}
+          previous_filename: {type: [string, "null"]}
+          status: {type: [string, "null"]}
+          additions: {type: [integer, "null"]}
+          deletions: {type: [integer, "null"]}
+          changes: {type: [integer, "null"]}
+          is_binary: {type: [boolean, "null"]}
+          patch: {type: [string, "null"]}
+          patch_truncated: {type: [boolean, "null"]}
+          pre_image_oid: {type: [string, "null"]}
+          post_image_oid: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *proxy_requester
+        path: /v1/file-changes
+        request_parameters:
+          repo: "{{ stream_partition.repo_clone_url }}"
+          page_size: "500"
+          # The diff text is not stored: nothing downstream reads it, while
+          # producing it is the proxy's most expensive work — every page
+          # fetches the blobs behind each diff. Filenames, statuses and line
+          # counts are unaffected.
+          include_patch: "false"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [items]
+      paginator: *proxy_paginator
+      pagination_reset:
+        type: PaginationReset
+        action: SPLIT_USING_CURSOR
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: http_url_to_repo
+            partition_field: repo_clone_url
+            extra_fields:
+              - [id]
+              - [path_with_namespace]
+              - [statistics, repository_size]
+            incremental_dependency: true
+            stream: *projects_active_parent
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: committed_date
+      datetime_format: "%Y-%m-%dT%H:%M:%S%z"
+      # WORKAROUND: same future-date guard as `commits`.
+      is_client_side_incremental: true
+      lookback_window: "P1M"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S%z"
+        - "%Y-%m-%dT%H:%M:%SZ"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['gitlab_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
+      start_time_option:
+        type: RequestOption
+        field_name: since
+        inject_into: request_parameter
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [project_id]
+            value: "{{ stream_slice.extra_fields['id'] }}"
+          - type: AddedFieldDefinition
+            path: [repository]
+            value: "{{ stream_partition.repo_clone_url }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [repo_path]
+            value: "{{ stream_slice.extra_fields['path_with_namespace'] }}"
+            value_type: string
+          # One row per (commit, file); the filename disambiguates within a
+          # commit, so it joins the key.
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['id'] }}:{{ record['sha'] }}:{{ record['filename'] | replace(':', '%3A') }}
+
+  # ── Branches (git-cli-proxy) ────────────────────────────────────────────
+  # Full refresh — bronze keeps the latest head per branch. No head_sha in the
+  # key: the key identifies the BRANCH, so the ReplacingMergeTree collapses to
+  # current state and a head move is a tracked-column change.
+  - type: DeclarativeStream
+    name: branches
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          project_id: {type: [integer, "null"]}
+          repository: {type: [string, "null"]}
+          repo_path: {type: [string, "null"]}
+          name: {type: [string, "null"]}
+          head_sha: {type: [string, "null"]}
+          head_committed_date: {type: [string, "null"]}
+          is_default: {type: [boolean, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *proxy_requester
+        path: /v1/branches
+        request_parameters:
+          repo: "{{ stream_partition.repo_clone_url }}"
+          page_size: "500"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [items]
+      paginator: *proxy_paginator
+      pagination_reset:
+        type: PaginationReset
+        action: RESET
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: http_url_to_repo
+            partition_field: repo_clone_url
+            extra_fields:
+              - [id]
+              - [path_with_namespace]
+              - [statistics, repository_size]
+            stream: *projects_active_parent
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [project_id]
+            value: "{{ stream_slice.extra_fields['id'] }}"
+          - type: AddedFieldDefinition
+            path: [repository]
+            value: "{{ stream_partition.repo_clone_url }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [repo_path]
+            value: "{{ stream_slice.extra_fields['path_with_namespace'] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['id'] }}:{{ record['name'] | replace(':', '%3A') }}
+
+  # ── Merge requests (GitLab API) ─────────────────────────────────────────
+  # One listing per scope, all states, ascending by updated_at with the stored
+  # cursor as `updated_after`. Monthly steps keep each listing's offset
+  # pagination well under the 50k-row cap a large group would otherwise hit
+  # on the first walk. Merge requests reach a person through the account id
+  # GitLab puts on the author, so the numeric ids are kept beside usernames.
+  - type: DeclarativeStream
+    name: pull_requests
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          id: {type: [integer, "null"]}
+          iid: {type: [integer, "null"]}
+          project_id: {type: [integer, "null"]}
+          title: {type: [string, "null"]}
+          description: {type: [string, "null"]}
+          state: {type: [string, "null"]}
+          draft: {type: [boolean, "null"]}
+          author_id: {type: [integer, "null"]}
+          author_username: {type: [string, "null"]}
+          author_name: {type: [string, "null"]}
+          merged_by_id: {type: [integer, "null"]}
+          merged_by_username: {type: [string, "null"]}
+          closed_by_id: {type: [integer, "null"]}
+          closed_by_username: {type: [string, "null"]}
+          assignee_ids: {type: [string, "null"]}
+          reviewers: {type: [string, "null"]}
+          labels: {type: [string, "null"]}
+          milestone_id: {type: [integer, "null"]}
+          milestone_title: {type: [string, "null"]}
+          source_branch: {type: [string, "null"]}
+          target_branch: {type: [string, "null"]}
+          source_project_id: {type: [integer, "null"]}
+          target_project_id: {type: [integer, "null"]}
+          sha: {type: [string, "null"]}
+          merge_commit_sha: {type: [string, "null"]}
+          squash_commit_sha: {type: [string, "null"]}
+          squash: {type: [boolean, "null"]}
+          detailed_merge_status: {type: [string, "null"]}
+          has_conflicts: {type: [boolean, "null"]}
+          changes_count: {type: [string, "null"]}
+          user_notes_count: {type: [integer, "null"]}
+          upvotes: {type: [integer, "null"]}
+          downvotes: {type: [integer, "null"]}
+          web_url: {type: [string, "null"]}
+          created_at: {type: [string, "null"]}
+          updated_at: {type: [string, "null"]}
+          merged_at: {type: [string, "null"]}
+          closed_at: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: [*vendor_requester, *merge_requests_path]
+        request_parameters: *merge_requests_listing_params
+        error_handler: *discovery_error_handler
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+      paginator: *link_paginator
+      partition_router: *scope_router
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: updated_at
+      datetime_format: "%Y-%m-%dT%H:%M:%S.%f%z"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S.%f%z"
+        - "%Y-%m-%dT%H:%M:%S%z"
+        - "%Y-%m-%dT%H:%M:%SZ"
+      step: P1M
+      cursor_granularity: PT0.001S
+      # A merge request updated moments before the previous sync read the
+      # page can carry an updated_at below the stored cursor by clock skew
+      # between GitLab nodes; one day of overlap re-reads it, bronze dedups.
+      lookback_window: P1D
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['gitlab_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
+      start_time_option:
+        type: RequestOption
+        field_name: updated_after
+        inject_into: request_parameter
+      end_time_option:
+        type: RequestOption
+        field_name: updated_before
+        inject_into: request_parameter
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [title]
+            value: "{{ (record.get('title') or '')[:1024] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [description]
+            value: "{{ (record.get('description') or '')[:2048] }}"
+            value_type: string
+          # `draft` replaced `work_in_progress` in 14.0; older instances carry
+          # only the old name.
+          - type: AddedFieldDefinition
+            path: [draft]
+            value: "{{ record.get('draft') if record.get('draft') is not none else (record.get('work_in_progress') or false) }}"
+            value_type: boolean
+          - type: AddedFieldDefinition
+            path: [author_id]
+            value: "{{ (record.get('author') or {}).get('id') }}"
+          - type: AddedFieldDefinition
+            path: [author_username]
+            value: "{{ (record.get('author') or {}).get('username') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [author_name]
+            value: "{{ (record.get('author') or {}).get('name') or '' }}"
+            value_type: string
+          # `merge_user` replaced `merged_by` in 14.7 and is the one that is
+          # still populated on newer instances; the old name is the fallback.
+          - type: AddedFieldDefinition
+            path: [merged_by_id]
+            value: "{{ ((record.get('merge_user') or record.get('merged_by')) or {}).get('id') }}"
+          - type: AddedFieldDefinition
+            path: [merged_by_username]
+            value: "{{ ((record.get('merge_user') or record.get('merged_by')) or {}).get('username') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [closed_by_id]
+            value: "{{ (record.get('closed_by') or {}).get('id') }}"
+          - type: AddedFieldDefinition
+            path: [closed_by_username]
+            value: "{{ (record.get('closed_by') or {}).get('username') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [assignee_ids]
+            value: "{{ ((record.get('assignees') or []) | map(attribute='id') | list) | tojson }}"
+            value_type: string
+          # The requested reviewers, id and username per entry: the reviewers
+          # class needs both, and a review that never happened has no other
+          # carrier.
+          - type: AddedFieldDefinition
+            path: [reviewers]
+            value: "{{ (record.get('reviewers') or []) | tojson }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [labels]
+            value: "{{ (record.get('labels') or []) | tojson }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [milestone_id]
+            value: "{{ (record.get('milestone') or {}).get('id') }}"
+          - type: AddedFieldDefinition
+            path: [milestone_title]
+            value: "{{ ((record.get('milestone') or {}).get('title') or '')[:512] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [changes_count]
+            value: "{{ record.get('changes_count') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ record['project_id'] }}:{{ record['iid'] }}
+      - type: RemoveFields
+        # Hoisted above; the nested originals stay out of bronze.
+        field_pointers:
+          - [author]
+          - [assignee]
+          - [assignees]
+          - [merged_by]
+          - [merge_user]
+          - [closed_by]
+          - [milestone]
+          - [references]
+          - [time_stats]
+          - [task_completion_status]
+          - [head_pipeline]
+          - [pipeline]
+          - [diff_refs]
+          - [user]
+          - [work_in_progress]
+
+  # ── Merge-request size (GitLab GraphQL) ─────────────────────────────────
+  # REST exposes no line counts on a merge request — only `changes_count`, a
+  # capped string ("1000+") — so the size comes from GraphQL, one paged query
+  # per project filtered server-side by updatedAfter. A merge request whose
+  # stats GitLab has not finished computing reports null rather than zero;
+  # the next window re-reads it.
+  - type: DeclarativeStream
+    name: pull_request_diff_stats
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          project_id: {type: [integer, "null"]}
+          repo_path: {type: [string, "null"]}
+          mr_iid: {type: [integer, "null"]}
+          updated_at: {type: [string, "null"]}
+          additions: {type: [integer, "null"]}
+          deletions: {type: [integer, "null"]}
+          files_changed: {type: [integer, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *graphql_requester
+        request_body_json:
+          query: |
+            query($project: ID!, $updatedAfter: Time, $cursor: String) {
+              project(fullPath: $project) {
+                mergeRequests(updatedAfter: $updatedAfter, sort: UPDATED_ASC, first: 100, after: $cursor) {
+                  pageInfo { hasNextPage endCursor }
+                  nodes {
+                    iid
+                    updatedAt
+                    diffStatsSummary { additions deletions fileCount }
+                  }
+                }
+              }
+            }
+          variables:
+            project: "{{ stream_partition.project_path }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [data, project, mergeRequests, nodes]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          # `data.project` is null when the token cannot see the project, so
+          # every hop is guarded rather than subscripted.
+          cursor_value: "{{ ((((response.get('data') or {}).get('project') or {}).get('mergeRequests') or {}).get('pageInfo') or {}).get('endCursor') }}"
+          stop_condition: "{{ not ((((response.get('data') or {}).get('project') or {}).get('mergeRequests') or {}).get('pageInfo') or {}).get('hasNextPage') }}"
+        page_token_option:
+          type: RequestOption
+          inject_into: body_json
+          field_path: [variables, cursor]
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: path_with_namespace
+            partition_field: project_path
+            extra_fields:
+              - [id]
+            stream: *projects_all_parent
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: updated_at
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%SZ"
+        - "%Y-%m-%dT%H:%M:%S%z"
+      lookback_window: P1D
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['gitlab_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
+      start_time_option:
+        type: RequestOption
+        inject_into: body_json
+        field_path: [variables, updatedAfter]
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [project_id]
+            value: "{{ stream_slice.extra_fields['id'] }}"
+          - type: AddedFieldDefinition
+            path: [repo_path]
+            value: "{{ stream_partition.project_path }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [mr_iid]
+            value: "{{ record.get('iid') }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path: [updated_at]
+            value: "{{ record.get('updatedAt') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [additions]
+            value: "{{ (record.get('diffStatsSummary') or {}).get('additions') }}"
+          - type: AddedFieldDefinition
+            path: [deletions]
+            value: "{{ (record.get('diffStatsSummary') or {}).get('deletions') }}"
+          - type: AddedFieldDefinition
+            path: [files_changed]
+            value: "{{ (record.get('diffStatsSummary') or {}).get('fileCount') }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['id'] }}:{{ record['iid'] }}
+      - type: RemoveFields
+        field_pointers:
+          - [iid]
+          - [updatedAt]
+          - [diffStatsSummary]
+
+  # ── Merge-request notes (GitLab API) ────────────────────────────────────
+  # Every note on a merge request, system notes included: GitLab records the
+  # review verdicts — approved, unapproved, requested changes, review
+  # requested — as system notes with the actor and a timestamp, which the
+  # approvals endpoint (current approvers only, no time) cannot give. User
+  # notes are the review comments. The staging models split the two.
+  - type: DeclarativeStream
+    name: pull_request_notes
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          project_id: {type: [integer, "null"]}
+          mr_iid: {type: [integer, "null"]}
+          mr_updated_at: {type: [string, "null"]}
+          id: {type: [integer, "null"]}
+          body: {type: [string, "null"]}
+          type: {type: [string, "null"]}
+          system: {type: [boolean, "null"]}
+          internal: {type: [boolean, "null"]}
+          resolvable: {type: [boolean, "null"]}
+          resolved: {type: [boolean, "null"]}
+          resolved_by_id: {type: [integer, "null"]}
+          author_id: {type: [integer, "null"]}
+          author_username: {type: [string, "null"]}
+          author_name: {type: [string, "null"]}
+          position_new_path: {type: [string, "null"]}
+          position_old_path: {type: [string, "null"]}
+          position_new_line: {type: [integer, "null"]}
+          position_old_line: {type: [integer, "null"]}
+          created_at: {type: [string, "null"]}
+          updated_at: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *vendor_requester
+        path: "/projects/{{ stream_slice.extra_fields['project_id'] }}/merge_requests/{{ stream_slice.extra_fields['iid'] }}/notes"
+        request_parameters:
+          order_by: created_at
+          sort: asc
+          per_page: "100"
+        error_handler: *project_scoped_error_handler
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+      paginator: *link_paginator
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: id
+            partition_field: mr_id
+            extra_fields:
+              - [project_id]
+              - [iid]
+              - [updated_at]
+            # Without this the parent cursor never persists, and every merge
+            # request since the start date is re-walked — one call each — on
+            # every sync.
+            incremental_dependency: true
+            stream: *pull_requests_window_parent
+    incremental_sync:
+      # A cursor of its own is what lets the parent's state persist
+      # (`incremental_dependency` above): the note's own timestamp, so a later
+      # sync resumes instead of re-reading everything since the start date.
+      type: DatetimeBasedCursor
+      cursor_field: updated_at
+      datetime_format: "%Y-%m-%dT%H:%M:%S.%f%z"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S.%f%z"
+        - "%Y-%m-%dT%H:%M:%S%z"
+        - "%Y-%m-%dT%H:%M:%SZ"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['gitlab_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [project_id]
+            value: "{{ stream_slice.extra_fields['project_id'] }}"
+          - type: AddedFieldDefinition
+            path: [mr_iid]
+            value: "{{ stream_slice.extra_fields['iid'] }}"
+          - type: AddedFieldDefinition
+            path: [mr_updated_at]
+            value: "{{ stream_slice.extra_fields['updated_at'] or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [body]
+            value: "{{ (record.get('body') or '')[:2048] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [type]
+            value: "{{ record.get('type') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [internal]
+            value: "{{ record.get('internal') or record.get('confidential') or false }}"
+            value_type: boolean
+          - type: AddedFieldDefinition
+            path: [resolved_by_id]
+            value: "{{ (record.get('resolved_by') or {}).get('id') }}"
+          - type: AddedFieldDefinition
+            path: [author_id]
+            value: "{{ (record.get('author') or {}).get('id') }}"
+          - type: AddedFieldDefinition
+            path: [author_username]
+            value: "{{ (record.get('author') or {}).get('username') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [author_name]
+            value: "{{ (record.get('author') or {}).get('name') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [position_new_path]
+            value: "{{ (record.get('position') or {}).get('new_path') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [position_old_path]
+            value: "{{ (record.get('position') or {}).get('old_path') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [position_new_line]
+            value: "{{ (record.get('position') or {}).get('new_line') }}"
+          - type: AddedFieldDefinition
+            path: [position_old_line]
+            value: "{{ (record.get('position') or {}).get('old_line') }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['project_id'] }}:{{ stream_slice.extra_fields['iid'] }}:{{ record['id'] }}
+      - type: RemoveFields
+        field_pointers:
+          - [author]
+          - [resolved_by]
+          - [position]
+          - [attachment]
+          - [noteable_id]
+          - [noteable_iid]
+          - [noteable_type]
+          - [project_id_from_note]
+          - [commands_changes]
+          - [confidential]
+          - [imported]
+          - [imported_from]
+
+  # ── Merge-request commits (GitLab API) ──────────────────────────────────
+  # MR<->commit membership is vendor metadata: it does not exist in git, and
+  # a squash-merged request leaves its original commits unreachable from
+  # every ref the proxy clones. Fork-sourced and force-pushed commits reach
+  # no other stream either, so this one carries the commit's own metadata as
+  # well as the membership edge.
+  - type: DeclarativeStream
+    name: pull_request_commits
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          project_id: {type: [integer, "null"]}
+          mr_iid: {type: [integer, "null"]}
+          mr_updated_at: {type: [string, "null"]}
+          sha: {type: [string, "null"]}
+          short_id: {type: [string, "null"]}
+          title: {type: [string, "null"]}
+          message: {type: [string, "null"]}
+          author_name: {type: [string, "null"]}
+          author_email: {type: [string, "null"]}
+          author_account_id: {type: [integer, "null"]}
+          authored_date: {type: [string, "null"]}
+          committer_name: {type: [string, "null"]}
+          committer_email: {type: [string, "null"]}
+          committed_date: {type: [string, "null"]}
+          parent_ids: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *vendor_requester
+        path: "/projects/{{ stream_slice.extra_fields['project_id'] }}/merge_requests/{{ stream_slice.extra_fields['iid'] }}/commits"
+        request_parameters:
+          per_page: "100"
+        error_handler: *project_scoped_error_handler
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+      paginator: *link_paginator
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: id
+            partition_field: mr_id
+            extra_fields:
+              - [project_id]
+              - [iid]
+              - [updated_at]
+            incremental_dependency: true
+            stream: *pull_requests_window_parent
+    incremental_sync:
+      # The commit list carries no timestamp of its own that moves, so the
+      # parent's updated_at, stamped onto every row, is the cursor that lets
+      # the parent's state persist.
+      type: DatetimeBasedCursor
+      cursor_field: mr_updated_at
+      datetime_format: "%Y-%m-%dT%H:%M:%S.%f%z"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S.%f%z"
+        - "%Y-%m-%dT%H:%M:%S%z"
+        - "%Y-%m-%dT%H:%M:%SZ"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['gitlab_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [project_id]
+            value: "{{ stream_slice.extra_fields['project_id'] }}"
+          - type: AddedFieldDefinition
+            path: [mr_iid]
+            value: "{{ stream_slice.extra_fields['iid'] }}"
+          - type: AddedFieldDefinition
+            path: [mr_updated_at]
+            value: "{{ stream_slice.extra_fields['updated_at'] or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [sha]
+            value: "{{ record.get('id') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [title]
+            value: "{{ (record.get('title') or '')[:1024] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [message]
+            value: "{{ (record.get('message') or '')[:2048] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [parent_ids]
+            value: "{{ (record.get('parent_ids') or []) | tojson }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [author_account_id]
+            value: >-
+              {{ ((record.get('author_email') or '') | lower | regex_search('^([0-9]+)-[^@]+@' ~ (((config.get('gitlab_commit_email_hostname') or ('users.noreply.' ~ config['gitlab_url'].split('://')[-1].split('/')[0].split(':')[0])) | lower | replace('.', '\\.'))) ~ '$')) or none }}
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['project_id'] }}:{{ stream_slice.extra_fields['iid'] }}:{{ record['id'] }}
+      - type: RemoveFields
+        field_pointers:
+          - [id]
+          - [created_at]
+          - [web_url]
+          - [trailers]
+          - [extended_trailers]
+
+  # ── Merge-request state events (GitLab API) ─────────────────────────────
+  # closed / reopened / merged, each with the actor and the instant. The
+  # merge request row carries only the final merged_at / closed_at; a request
+  # closed and reopened twice is one row there and four events here.
+  - type: DeclarativeStream
+    name: pull_request_state_events
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          project_id: {type: [integer, "null"]}
+          mr_iid: {type: [integer, "null"]}
+          id: {type: [integer, "null"]}
+          state: {type: [string, "null"]}
+          user_id: {type: [integer, "null"]}
+          user_username: {type: [string, "null"]}
+          user_name: {type: [string, "null"]}
+          created_at: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *vendor_requester
+        path: "/projects/{{ stream_slice.extra_fields['project_id'] }}/merge_requests/{{ stream_slice.extra_fields['iid'] }}/resource_state_events"
+        request_parameters:
+          per_page: "100"
+        error_handler: *project_scoped_error_handler
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+      paginator: *link_paginator
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: id
+            partition_field: mr_id
+            extra_fields:
+              - [project_id]
+              - [iid]
+            incremental_dependency: true
+            stream: *pull_requests_window_parent
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: created_at
+      datetime_format: "%Y-%m-%dT%H:%M:%S.%f%z"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S.%f%z"
+        - "%Y-%m-%dT%H:%M:%S%z"
+        - "%Y-%m-%dT%H:%M:%SZ"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['gitlab_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [project_id]
+            value: "{{ stream_slice.extra_fields['project_id'] }}"
+          - type: AddedFieldDefinition
+            path: [mr_iid]
+            value: "{{ stream_slice.extra_fields['iid'] }}"
+          - type: AddedFieldDefinition
+            path: [state]
+            value: "{{ record.get('state') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [user_id]
+            value: "{{ (record.get('user') or {}).get('id') }}"
+          - type: AddedFieldDefinition
+            path: [user_username]
+            value: "{{ (record.get('user') or {}).get('username') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [user_name]
+            value: "{{ (record.get('user') or {}).get('name') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['project_id'] }}:{{ stream_slice.extra_fields['iid'] }}:state:{{ record['id'] }}
+      - type: RemoveFields
+        field_pointers:
+          - [user]
+          - [resource_type]
+          - [resource_id]
+          - [source_commit]
+          - [source_merge_request]
+
+  # ── Merge-request label events (GitLab API) ─────────────────────────────
+  - type: DeclarativeStream
+    name: pull_request_label_events
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          project_id: {type: [integer, "null"]}
+          mr_iid: {type: [integer, "null"]}
+          id: {type: [integer, "null"]}
+          action: {type: [string, "null"]}
+          label_id: {type: [integer, "null"]}
+          label_name: {type: [string, "null"]}
+          user_id: {type: [integer, "null"]}
+          user_username: {type: [string, "null"]}
+          user_name: {type: [string, "null"]}
+          created_at: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *vendor_requester
+        path: "/projects/{{ stream_slice.extra_fields['project_id'] }}/merge_requests/{{ stream_slice.extra_fields['iid'] }}/resource_label_events"
+        request_parameters:
+          per_page: "100"
+        error_handler: *project_scoped_error_handler
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+      paginator: *link_paginator
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: id
+            partition_field: mr_id
+            extra_fields:
+              - [project_id]
+              - [iid]
+            incremental_dependency: true
+            stream: *pull_requests_window_parent
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: created_at
+      datetime_format: "%Y-%m-%dT%H:%M:%S.%f%z"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S.%f%z"
+        - "%Y-%m-%dT%H:%M:%S%z"
+        - "%Y-%m-%dT%H:%M:%SZ"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['gitlab_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [project_id]
+            value: "{{ stream_slice.extra_fields['project_id'] }}"
+          - type: AddedFieldDefinition
+            path: [mr_iid]
+            value: "{{ stream_slice.extra_fields['iid'] }}"
+          - type: AddedFieldDefinition
+            path: [action]
+            value: "{{ record.get('action') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [label_id]
+            value: "{{ (record.get('label') or {}).get('id') }}"
+          - type: AddedFieldDefinition
+            path: [label_name]
+            value: "{{ (record.get('label') or {}).get('name') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [user_id]
+            value: "{{ (record.get('user') or {}).get('id') }}"
+          - type: AddedFieldDefinition
+            path: [user_username]
+            value: "{{ (record.get('user') or {}).get('username') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [user_name]
+            value: "{{ (record.get('user') or {}).get('name') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['project_id'] }}:{{ stream_slice.extra_fields['iid'] }}:label:{{ record['id'] }}
+      - type: RemoveFields
+        field_pointers:
+          - [user]
+          - [label]
+          - [resource_type]
+          - [resource_id]
+
+  # ── Members (GitLab API) ────────────────────────────────────────────────
+  # Everyone with access to a configured group (inherited and direct, the
+  # `/all` form) or project. This is the roster the identity layer resolves
+  # usernames against on instances where `/users` is not open to the token.
+  # No instance-wide form: with nothing configured the stream has no
+  # partitions and `users` (opt-in) covers the instance.
+  - type: DeclarativeStream
+    name: group_members
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          scope: {type: [string, "null"]}
+          id: {type: [integer, "null"]}
+          username: {type: [string, "null"]}
+          name: {type: [string, "null"]}
+          state: {type: [string, "null"]}
+          access_level: {type: [integer, "null"]}
+          email: {type: [string, "null"]}
+          public_email: {type: [string, "null"]}
+          membership_state: {type: [string, "null"]}
+          created_at: {type: [string, "null"]}
+          expires_at: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *vendor_requester
+        path: "{{ ('/projects/' ~ (stream_partition.scope | replace('/', '%2F')) if stream_partition.scope in (config.get('gitlab_projects') or []) else '/groups/' ~ (stream_partition.scope | replace('/', '%2F'))) ~ '/members/all' }}"
+        request_parameters:
+          per_page: "100"
+        error_handler: *discovery_error_handler
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+      paginator: *link_paginator
+      partition_router: *configured_scope_router
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [scope]
+            value: "{{ stream_partition.scope }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [email]
+            value: "{{ record.get('email') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [public_email]
+            value: "{{ record.get('public_email') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.scope }}:{{ record['id'] }}
+      - type: RemoveFields
+        field_pointers:
+          - [avatar_url]
+          - [web_url]
+          - [created_by]
+          - [group_saml_identity]
+          - [locked]
+
+  # ── Pipelines (GitLab GraphQL) ──────────────────────────────────────────
+  # REST `/pipelines` filters by `updated_after` too, but gives no source,
+  # no queued duration and no merge-request link without a second call per
+  # pipeline; GraphQL returns the whole row in one paged query per project.
+  # GraphQL ids are global (`gid://gitlab/Ci::Pipeline/N`); the numeric tail
+  # is what the REST API and the UI show, so both are kept.
+  - type: DeclarativeStream
+    name: pipelines
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          project_id: {type: [integer, "null"]}
+          repo_path: {type: [string, "null"]}
+          id: {type: [integer, "null"]}
+          iid: {type: [integer, "null"]}
+          sha: {type: [string, "null"]}
+          ref: {type: [string, "null"]}
+          status: {type: [string, "null"]}
+          source: {type: [string, "null"]}
+          user_id: {type: [integer, "null"]}
+          user_username: {type: [string, "null"]}
+          user_name: {type: [string, "null"]}
+          mr_iid: {type: [integer, "null"]}
+          created_at: {type: [string, "null"]}
+          updated_at: {type: [string, "null"]}
+          started_at: {type: [string, "null"]}
+          finished_at: {type: [string, "null"]}
+          duration: {type: [integer, "null"]}
+          queued_duration: {type: [number, "null"]}
+          retryable: {type: [boolean, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *graphql_requester
+        request_body_json:
+          query: |
+            query($project: ID!, $updatedAfter: Time, $cursor: String) {
+              project(fullPath: $project) {
+                pipelines(updatedAfter: $updatedAfter, first: 100, after: $cursor) {
+                  pageInfo { hasNextPage endCursor }
+                  nodes {
+                    id
+                    iid
+                    sha
+                    ref
+                    status
+                    source
+                    createdAt
+                    updatedAt
+                    startedAt
+                    finishedAt
+                    duration
+                    queuedDuration
+                    retryable
+                    user { id username name }
+                    mergeRequest { iid }
+                  }
+                }
+              }
+            }
+          variables:
+            project: "{{ stream_partition.project_path }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [data, project, pipelines, nodes]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ ((((response.get('data') or {}).get('project') or {}).get('pipelines') or {}).get('pageInfo') or {}).get('endCursor') }}"
+          stop_condition: "{{ not ((((response.get('data') or {}).get('project') or {}).get('pipelines') or {}).get('pageInfo') or {}).get('hasNextPage') }}"
+        page_token_option:
+          type: RequestOption
+          inject_into: body_json
+          field_path: [variables, cursor]
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: path_with_namespace
+            partition_field: project_path
+            extra_fields:
+              - [id]
+            stream: *projects_all_parent
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: updated_at
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%SZ"
+        - "%Y-%m-%dT%H:%M:%S%z"
+      lookback_window: P1D
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['gitlab_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
+      start_time_option:
+        type: RequestOption
+        inject_into: body_json
+        field_path: [variables, updatedAfter]
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [project_id]
+            value: "{{ stream_slice.extra_fields['id'] }}"
+          - type: AddedFieldDefinition
+            path: [repo_path]
+            value: "{{ stream_partition.project_path }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [id]
+            value: "{{ (record.get('id') or '').rsplit('/', 1)[-1] }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path: [iid]
+            value: "{{ record.get('iid') }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path: [sha]
+            value: "{{ record.get('sha') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [ref]
+            value: "{{ record.get('ref') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [status]
+            value: "{{ (record.get('status') or '') | lower }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [source]
+            value: "{{ record.get('source') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [user_id]
+            value: "{{ (((record.get('user') or {}).get('id') or '') | string).rsplit('/', 1)[-1] or none }}"
+          - type: AddedFieldDefinition
+            path: [user_username]
+            value: "{{ (record.get('user') or {}).get('username') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [user_name]
+            value: "{{ (record.get('user') or {}).get('name') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [mr_iid]
+            value: "{{ (record.get('mergeRequest') or {}).get('iid') }}"
+          - type: AddedFieldDefinition
+            path: [created_at]
+            value: "{{ record.get('createdAt') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [updated_at]
+            value: "{{ record.get('updatedAt') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [started_at]
+            value: "{{ record.get('startedAt') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [finished_at]
+            value: "{{ record.get('finishedAt') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [queued_duration]
+            value: "{{ record.get('queuedDuration') }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['id'] }}:{{ record['id'] }}
+      - type: RemoveFields
+        field_pointers:
+          - [user]
+          - [mergeRequest]
+          - [createdAt]
+          - [updatedAt]
+          - [startedAt]
+          - [finishedAt]
+          - [queuedDuration]
+
+  # ── Environments (GitLab API) ───────────────────────────────────────────
+  # The deployment listing embeds its environment without the tier; the
+  # environment listing carries it. Full refresh: a tier or name can change,
+  # and the listing is a page or two per project.
+  - type: DeclarativeStream
+    name: environments
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          project_id: {type: [integer, "null"]}
+          repo_path: {type: [string, "null"]}
+          id: {type: [integer, "null"]}
+          name: {type: [string, "null"]}
+          slug: {type: [string, "null"]}
+          state: {type: [string, "null"]}
+          tier: {type: [string, "null"]}
+          external_url: {type: [string, "null"]}
+          created_at: {type: [string, "null"]}
+          updated_at: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *vendor_requester
+        path: "/projects/{{ stream_partition.project_id }}/environments"
+        request_parameters:
+          per_page: "100"
+        error_handler: *project_scoped_error_handler
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+      paginator: *link_paginator
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: id
+            partition_field: project_id
+            extra_fields:
+              - [path_with_namespace]
+            stream: *projects_all_parent
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [project_id]
+            value: "{{ stream_partition.project_id }}"
+          - type: AddedFieldDefinition
+            path: [repo_path]
+            value: "{{ stream_slice.extra_fields['path_with_namespace'] or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [state]
+            value: "{{ record.get('state') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [tier]
+            value: "{{ record.get('tier') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.project_id }}:{{ record['id'] }}
+      - type: RemoveFields
+        field_pointers:
+          - [project]
+          - [last_deployment]
+
+  # ── Deployments (GitLab API) ────────────────────────────────────────────
+  # One row per deployment PER STATUS: a deployment moves created -> running
+  # -> success/failed/canceled, and `updated_at` advances with each. Keeping
+  # the status in the key turns the successive reads into the status history
+  # the deployment-events class wants, while the latest row per deployment id
+  # is the deployment itself.
+  - type: DeclarativeStream
+    name: deployments
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          project_id: {type: [integer, "null"]}
+          repo_path: {type: [string, "null"]}
+          id: {type: [integer, "null"]}
+          iid: {type: [integer, "null"]}
+          ref: {type: [string, "null"]}
+          sha: {type: [string, "null"]}
+          status: {type: [string, "null"]}
+          environment_id: {type: [integer, "null"]}
+          environment_name: {type: [string, "null"]}
+          deployable_id: {type: [integer, "null"]}
+          deployable_name: {type: [string, "null"]}
+          deployable_stage: {type: [string, "null"]}
+          pipeline_id: {type: [integer, "null"]}
+          user_id: {type: [integer, "null"]}
+          user_username: {type: [string, "null"]}
+          user_name: {type: [string, "null"]}
+          created_at: {type: [string, "null"]}
+          updated_at: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *vendor_requester
+        path: "/projects/{{ stream_partition.project_id }}/deployments"
+        request_parameters:
+          # WORKAROUND: page-numbered listing; a mutable sort key skips the
+          # item at a page boundary when another is updated mid-walk.
+          order_by: id
+          sort: asc
+          per_page: "100"
+        error_handler: *project_scoped_error_handler
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+      paginator: *link_paginator
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: id
+            partition_field: project_id
+            extra_fields:
+              - [path_with_namespace]
+            stream: *projects_all_parent
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: updated_at
+      datetime_format: "%Y-%m-%dT%H:%M:%S.%f%z"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S.%f%z"
+        - "%Y-%m-%dT%H:%M:%S%z"
+        - "%Y-%m-%dT%H:%M:%SZ"
+      lookback_window: P1D
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['gitlab_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
+      start_time_option:
+        type: RequestOption
+        field_name: updated_after
+        inject_into: request_parameter
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [project_id]
+            value: "{{ stream_partition.project_id }}"
+          - type: AddedFieldDefinition
+            path: [repo_path]
+            value: "{{ stream_slice.extra_fields['path_with_namespace'] or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [status]
+            value: "{{ record.get('status') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [environment_id]
+            value: "{{ (record.get('environment') or {}).get('id') }}"
+          - type: AddedFieldDefinition
+            path: [environment_name]
+            value: "{{ (record.get('environment') or {}).get('name') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [deployable_id]
+            value: "{{ (record.get('deployable') or {}).get('id') }}"
+          - type: AddedFieldDefinition
+            path: [deployable_name]
+            value: "{{ (record.get('deployable') or {}).get('name') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [deployable_stage]
+            value: "{{ (record.get('deployable') or {}).get('stage') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [pipeline_id]
+            value: "{{ ((record.get('deployable') or {}).get('pipeline') or {}).get('id') }}"
+          - type: AddedFieldDefinition
+            path: [user_id]
+            value: "{{ (record.get('user') or {}).get('id') }}"
+          - type: AddedFieldDefinition
+            path: [user_username]
+            value: "{{ (record.get('user') or {}).get('username') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [user_name]
+            value: "{{ (record.get('user') or {}).get('name') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.project_id }}:{{ record['id'] }}:{{ record.get('status') or '' }}
+      - type: RemoveFields
+        field_pointers:
+          - [environment]
+          - [deployable]
+          - [user]
+
+  # ── Users (GitLab API) ──────────────────────────────────────────────────
+  # The instance directory, keyset-paged so an instance past the offset cap
+  # still lists fully. On by default; a token that may not read it leaves it
+  # empty rather than failing the sync. `email` is returned only to
+  # administrators. The spec refuses it on gitlab.com, where the listing would
+  # be every account on the platform.
+  - type: DeclarativeStream
+    name: users
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          id: {type: [integer, "null"]}
+          username: {type: [string, "null"]}
+          name: {type: [string, "null"]}
+          state: {type: [string, "null"]}
+          email: {type: [string, "null"]}
+          public_email: {type: [string, "null"]}
+          commit_email: {type: [string, "null"]}
+          bot: {type: [boolean, "null"]}
+          external: {type: [boolean, "null"]}
+          is_admin: {type: [boolean, "null"]}
+          created_at: {type: [string, "null"]}
+          last_activity_on: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *vendor_requester
+        path: /users
+        request_parameters:
+          pagination: keyset
+          order_by: id
+          sort: asc
+          per_page: "100"
+        error_handler: *directory_error_handler
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+      paginator: *link_paginator
+      partition_router:
+        type: ListPartitionRouter
+        # Absent means the spec default: a Secret carries no defaults.
+        values: "{{ ['*'] if (config.get('gitlab_instance_users') or 'true') == 'true' else [] }}"
+        cursor_field: scope
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [email]
+            value: "{{ record.get('email') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [public_email]
+            value: "{{ record.get('public_email') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [commit_email]
+            value: "{{ record.get('commit_email') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ record['id'] }}
+      - type: RemoveFields
+        field_pointers:
+          - [avatar_url]
+          - [web_url]
+          - [bio]
+          - [location]
+          - [skype]
+          - [linkedin]
+          - [twitter]
+          - [discord]
+          - [github]
+          - [website_url]
+          - [organization]
+          - [job_title]
+          - [pronouns]
+          - [work_information]
+          - [followers]
+          - [following]
+          - [local_time]
+          - [identities]
+          - [namespace_id]
+          - [is_followed]
+          - [theme_id]
+          - [color_scheme_id]
+          - [projects_limit]
+          - [can_create_group]
+          - [can_create_project]
+          - [two_factor_enabled]
+          - [private_profile]
+          - [note]
+          - [current_sign_in_at]
+          - [last_sign_in_at]
+          - [confirmed_at]
+          - [locked]
+          - [created_by]
+          - [email_reset_offered_at]
+          - [is_auditor]
+          - [using_license_seat]
+          - [shared_runners_minutes_limit]
+          - [extra_shared_runners_minutes_limit]
+          - [plan]
+          - [trial]
+          - [highest_role]
+          - [scim_identities]
+          - [provisioned_by_group_id]
+          - [enterprise_group_id]
+          - [enterprise_group_associated_at]
+
+  # ── Commit authors (git-cli-proxy + GitLab API) ─────────────────────────
+  # A commit names an e-mail and no account, so it reaches a person only once
+  # something claims that e-mail for one. GitLab has no commit-to-account
+  # endpoint at all. The proxy enumerates a project's distinct authors from
+  # the clone it already holds, and this stream asks the user search for each
+  # of them — one call per AUTHOR, not per commit. The search matches a
+  # private e-mail only for an administrator's token; for anyone else it
+  # matches the address a user chose to publish (`public_email`), so a match
+  # here is the vendor naming the account, not a guess.
+  #
+  # Only an exact address match becomes a row: the search also matches names
+  # and usernames, and a partial hit is not evidence about the address.
+  - type: DeclarativeStream
+    name: commit_authors
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          project_id: {type: [integer, "null"]}
+          repo_path: {type: [string, "null"]}
+          author_email: {type: [string, "null"]}
+          author_account_id: {type: [integer, "null"]}
+          author_username: {type: [string, "null"]}
+          author_name: {type: [string, "null"]}
+          author_state: {type: [string, "null"]}
+          matched_field: {type: [string, "null"]}
+          sample_sha: {type: [string, "null"]}
+          last_committed_date: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *vendor_requester
+        path: /users
+        request_parameters:
+          search: "{{ stream_partition.author_email }}"
+          per_page: "20"
+        error_handler: *discovery_error_handler
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+        record_filter:
+          type: RecordFilter
+          # Case-insensitive on both sides: git idents and profile addresses
+          # are typed by humans. Compared against the partition's address so
+          # a search hit on the name never claims the e-mail.
+          condition: >-
+            {{ ((record.get('email') or '') | lower) == (stream_partition.author_email | lower)
+               or ((record.get('public_email') or '') | lower) == (stream_partition.author_email | lower) }}
+      paginator: *link_paginator
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: author_email
+            partition_field: author_email
+            extra_fields:
+              - [project_id]
+              - [repo_path]
+              - [sample_sha]
+              - [last_committed_date]
+            incremental_dependency: true
+            stream:
+              type: DeclarativeStream
+              name: repository_authors
+              primary_key:
+                - author_email
+              schema_loader:
+                type: InlineSchemaLoader
+                schema:
+                  type: object
+                  $schema: http://json-schema.org/schema#
+                  properties:
+                    author_email: {type: [string, "null"]}
+                    author_name: {type: [string, "null"]}
+                    sample_sha: {type: [string, "null"]}
+                    last_committed_date: {type: [string, "null"]}
+                    commit_count: {type: [integer, "null"]}
+                    project_id: {type: [integer, "null"]}
+                    repo_path: {type: [string, "null"]}
+                  additionalProperties: true
+              retriever:
+                type: SimpleRetriever
+                requester:
+                  <<: *proxy_requester
+                  path: /v1/authors
+                  request_parameters:
+                    repo: "{{ stream_partition.repo_clone_url }}"
+                    page_size: "500"
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path: [items]
+                paginator: *proxy_paginator
+                pagination_reset:
+                  type: PaginationReset
+                  action: RESET
+                partition_router:
+                  type: SubstreamPartitionRouter
+                  parent_stream_configs:
+                    - type: ParentStreamConfig
+                      parent_key: http_url_to_repo
+                      partition_field: repo_clone_url
+                      extra_fields:
+                        - [id]
+                        - [path_with_namespace]
+                        - [statistics, repository_size]
+                      incremental_dependency: true
+                      stream: *projects_active_parent
+              incremental_sync:
+                # Per project, "authors who committed since": after one
+                # completed pass a sync asks each project only for authors
+                # with newer commits, and the vendor lookups below run for
+                # those alone.
+                type: DatetimeBasedCursor
+                cursor_field: last_committed_date
+                datetime_format: "%Y-%m-%dT%H:%M:%S%z"
+                # WORKAROUND: same future-date guard as `commits`.
+                is_client_side_incremental: true
+                # A commit can be pushed days after its date while another
+                # author's push has already moved `since` past it.
+                lookback_window: "P1M"
+                cursor_datetime_formats:
+                  - "%Y-%m-%dT%H:%M:%S%z"
+                  - "%Y-%m-%dT%H:%M:%SZ"
+                start_datetime:
+                  type: MinMaxDatetime
+                  datetime: "{{ config['gitlab_start_date'] }}"
+                  datetime_format: "%Y-%m-%d"
+                start_time_option:
+                  type: RequestOption
+                  field_name: since
+                  inject_into: request_parameter
+              transformations:
+                - type: AddFields
+                  fields:
+                    - type: AddedFieldDefinition
+                      path: [project_id]
+                      value: "{{ stream_slice.extra_fields['id'] }}"
+                    - type: AddedFieldDefinition
+                      path: [repo_path]
+                      value: "{{ stream_slice.extra_fields['path_with_namespace'] }}"
+                      value_type: string
+    # The stamped parent date is the cursor: it carries the author walk's state
+    # (and, through it, the roster's) along with this stream's own.
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: last_committed_date
+      datetime_format: "%Y-%m-%dT%H:%M:%S%z"
+      # Nothing reads this cursor's value; one entry per (project, author)
+      # partition would only grow the state.
+      global_substream_cursor: true
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S%z"
+        - "%Y-%m-%dT%H:%M:%SZ"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['gitlab_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [project_id]
+            value: "{{ stream_slice.extra_fields['project_id'] }}"
+          - type: AddedFieldDefinition
+            path: [repo_path]
+            value: "{{ stream_slice.extra_fields['repo_path'] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [author_email]
+            value: "{{ stream_partition.author_email }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [sample_sha]
+            value: "{{ stream_slice.extra_fields['sample_sha'] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [last_committed_date]
+            value: "{{ stream_slice.extra_fields['last_committed_date'] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [author_account_id]
+            value: "{{ record.get('id') }}"
+          - type: AddedFieldDefinition
+            path: [author_username]
+            value: "{{ record.get('username') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [author_name]
+            value: "{{ record.get('name') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [author_state]
+            value: "{{ record.get('state') or '' }}"
+            value_type: string
+          # Which profile field named the address — an administrator's token
+          # sees the private one, everyone else only the published one.
+          - type: AddedFieldDefinition
+            path: [matched_field]
+            value: "{{ 'email' if ((record.get('email') or '') | lower) == (stream_partition.author_email | lower) else 'public_email' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['project_id'] }}:{{ stream_partition.author_email | lower | replace(':', '%3A') }}
+      - type: RemoveFields
+        # The search returns whole user profiles; only the pairing is kept.
+        field_pointers:
+          - [id]
+          - [username]
+          - [name]
+          - [state]
+          - [locked]
+          - [avatar_url]
+          - [web_url]
+          - [email]
+          - [public_email]
+          - [created_at]
+          - [bio]
+          - [location]
+          - [skype]
+          - [linkedin]
+          - [twitter]
+          - [discord]
+          - [website_url]
+          - [organization]
+          - [job_title]
+          - [pronouns]
+          - [bot]
+          - [work_information]
+          - [followers]
+          - [following]
+          - [local_time]
+          - [last_sign_in_at]
+          - [confirmed_at]
+          - [last_activity_on]
+          - [theme_id]
+          - [color_scheme_id]
+          - [projects_limit]
+          - [current_sign_in_at]
+          - [identities]
+          - [can_create_group]
+          - [can_create_project]
+          - [two_factor_enabled]
+          - [external]
+          - [private_profile]
+          - [commit_email]
+          - [is_admin]
+          - [note]
+          - [namespace_id]
+          - [created_by]
+          - [email_reset_offered_at]
+          - [is_auditor]
+          - [using_license_seat]
+          - [shared_runners_minutes_limit]
+          - [extra_shared_runners_minutes_limit]
+          - [scim_identities]
+          - [plan]
+          - [trial]
+
+concurrency_level:
+  type: ConcurrencyLevel
+  # `| int` because a Secret's values arrive as strings and the CDK rejects a
+  # concurrency that does not evaluate to an integer; the filter's fallback
+  # covers an absent value, which must never resolve to 0 or 1 — the
+  # concurrent CDK self-deadlocks at a single worker once a sync generates
+  # ~10k partitions. `config.get` because the interpolation is strict about a
+  # missing key.
+  default_concurrency: "{{ config.get('gitlab_concurrency') | int(8) }}"
+  # Required by the CDK whenever the level comes from config, as a safeguard
+  # against a value that would spawn more workers than the pod can hold.
+  max_concurrency: 32
+
+spec:
+  type: Spec
+  connection_specification:
+    type: object
+    $schema: http://json-schema.org/draft-07/schema#
+    title: GitLab (git-cli-proxy) Spec
+    required:
+      - insight_tenant_id
+      - insight_source_id
+      - gitlab_url
+      - gitlab_token
+      - git_proxy_url
+      - git_proxy_token
+      - gitlab_start_date
+    properties:
+      insight_tenant_id:
+        type: string
+        description: Insight tenant identifier stamped onto every emitted record.
+        title: Insight Tenant ID
+        order: 0
+      insight_source_id:
+        type: string
+        description: >-
+          Instance discriminator for multi-instance support (e.g. gitlab-acme).
+        title: Insight Source ID
+        order: 1
+      gitlab_url:
+        type: string
+        description: >-
+          Base URL of the GitLab instance, e.g. https://gitlab.com or
+          https://gitlab.example.com. The connector appends /api/v4 and
+          /api/graphql itself.
+        title: GitLab URL
+        format: uri
+        order: 2
+      gitlab_token:
+        type: string
+        description: >-
+          Personal, group or project access token with the `read_api` scope
+          (the API) and `read_repository` (the clone the proxy performs on its
+          behalf). Group and project tokens see only their own scope; the
+          instance-wide and users listings need a personal token, and `email`
+          on users needs an administrator's. The same token is forwarded to
+          the proxy for the clone and never stored there.
+        title: GitLab Token
+        airbyte_secret: true
+        order: 3
+      gitlab_groups:
+        type: array
+        items:
+          type: string
+        description: >-
+          Full paths of groups to sync (e.g. acme or acme/platform); every
+          project in the group and its subgroups is included. Leave empty
+          together with gitlab_projects to sync every project the token can
+          see — not available on gitlab.com.
+        title: Groups
+        order: 4
+      gitlab_projects:
+        type: array
+        items:
+          type: string
+        description: >-
+          Full paths of individual projects to sync (e.g. acme/tools/cli), for
+          projects outside the configured groups.
+        title: Projects
+        order: 5
+      gitlab_include_forks:
+        # A string, not a boolean: a Secret's values reach the source config as
+        # strings and the spec is validated against them.
+        type: string
+        pattern: "^(true|false)$"
+        default: "false"
+        description: >-
+          Sync forked projects. Off by default: a fork's history is its
+          upstream's, and counting it doubles the upstream's commits.
+        title: Include forks
+        order: 6
+      gitlab_exclude_projects:
+        type: array
+        items:
+          type: string
+        description: >-
+          Regular expressions matched against a project's full path
+          (e.g. ^acme/sandbox/ or -archive$); a matching project is skipped.
+          Archived projects are always skipped.
+        title: Exclude projects
+        order: 7
+      gitlab_instance_users:
+        type: string
+        pattern: "^(true|false)$"
+        default: "true"
+        description: >-
+          Sync the instance user directory (/users) for identity resolution.
+          A token that may not read it leaves the directory empty without
+          failing the sync; e-mail addresses are returned only to
+          administrators. Must be "false" on gitlab.com, where the directory
+          is every account on the platform.
+        title: Sync instance users
+        order: 8
+      git_proxy_url:
+        type: string
+        description: >-
+          Base URL of the git-cli-proxy service. Cluster-internal and
+          namespace-qualified, because the connector pod resolving it runs in
+          the Airbyte namespace rather than the proxy's, e.g.
+          http://insight-git-cli-proxy.insight.svc.cluster.local:8084. No
+          default: a wrong or absent value must fail the check, not fall back
+          somewhere.
+        title: Git Proxy URL
+        order: 9
+      git_proxy_token:
+        type: string
+        description: Bearer token the git-cli-proxy requires on every /v1 request.
+        title: Git Proxy Token
+        airbyte_secret: true
+        order: 10
+      gitlab_start_date:
+        type: string
+        description: >-
+          Earliest date for incremental sync (YYYY-MM-DD). Required: it bounds
+          the first-sync cost, so choosing it is a deployment decision.
+        title: Start Date
+        format: date
+        order: 11
+      gitlab_concurrency:
+        type: string
+        pattern: "^[1-9][0-9]*$"
+        default: "8"
+        description: >-
+          Worker threads the sync may use against the GitLab API. Self-hosted
+          instances without a request limit can raise it; the ceiling is 32.
+          The clone-backed streams are additionally paced by the
+          git-cli-proxy's own clone and page-serve caps, so raising this alone
+          does not speed them up.
+        title: Concurrency
+        order: 12
+      gitlab_commit_email_hostname:
+        type: string
+        description: >-
+          Host of the instance's private commit addresses,
+          `{id}-{username}@<host>`, when the administrator changed it from
+          the default `users.noreply.<GitLab host>`. A commit authored under
+          that form names its account outright; the same form on any other
+          host names an account elsewhere and is left unmatched.
+        title: Commit e-mail hostname
+        order: 13
+    # On gitlab.com the instance-wide listing is every public project on the
+    # platform and the user directory every account on it; the spec refuses
+    # both outright, the directory by demanding an explicit "false".
+    allOf:
+      - if:
+          properties:
+            gitlab_url:
+              pattern: "^https?://(www\\.)?gitlab\\.com/?$"
+        then:
+          required: [gitlab_instance_users]
+          properties:
+            gitlab_instance_users:
+              const: "false"
+          anyOf:
+            - required: [gitlab_groups]
+              properties:
+                gitlab_groups:
+                  minItems: 1
+            - required: [gitlab_projects]
+              properties:
+                gitlab_projects:
+                  minItems: 1
+    additionalProperties: true
+
+metadata:
+  autoImportSchema:
+    repositories: false
+    commits: false
+    file_changes: false
+    branches: false
+    commit_authors: false
+    pull_requests: false
+    pull_request_diff_stats: false
+    pull_request_notes: false
+    pull_request_commits: false
+    pull_request_state_events: false
+    pull_request_label_events: false
+    pipelines: false
+    environments: false
+    deployments: false
+    group_members: false
+    users: false

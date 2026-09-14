@@ -10,8 +10,9 @@
 --
 -- A vendor whose system fields are the same in every installation carries a
 -- built-in default, so an operator writes nothing until a custom field needs a
--- role. A vendor that states no roles anywhere — GitHub, whose issue fields are
--- defined per organization — has no defaults and must be configured. An
+-- role. A vendor whose issue fields are defined per organization — GitHub —
+-- carries a default only for the fields the PRODUCT fixes, and must be
+-- configured for the rest. An
 -- authored row always wins over a default: that is the override channel for a
 -- field whose vendor meaning does not match how a team uses it.
 --
@@ -48,6 +49,7 @@ vendor_defaults AS (
     FROM observed_sources AS s
     ARRAY JOIN [
         ('status',               'status',    'none'),
+        ('summary',              'title',     'none'),
         ('assignee',             'assignee',  'none'),
         ('issuetype',            'issuetype', 'none'),
         ('duedate',              'duedate',   'none'),
@@ -55,6 +57,21 @@ vendor_defaults AS (
         ('timespent',            'spent',     'seconds')
     ] AS d
     WHERE s.data_source = 'jira'
+
+    UNION ALL
+
+    -- GitHub's issue FIELDS are defined per organization and carry no defaults,
+    -- but its title is not one of them: `title` is fixed by the product, the
+    -- same in every installation, so it is stated here for the same reason
+    -- Jira's system fields are. This is the whole of GitHub's default set.
+    SELECT
+        s.insight_source_id                     AS insight_source_id,
+        s.data_source                           AS data_source,
+        'title'                                 AS field_id,
+        'title'                                 AS role,
+        'none'                                  AS value_unit
+    FROM observed_sources AS s
+    WHERE s.data_source = 'github'
 ),
 
 authored AS (

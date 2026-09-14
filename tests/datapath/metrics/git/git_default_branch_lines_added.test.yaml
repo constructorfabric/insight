@@ -1,0 +1,71 @@
+spec_version: 1
+description: >
+  Metric: git.default_branch_lines_added — every line added by a commit that
+  reached the repository's default branch, #3048.
+
+  How it's computed (bronze → silver → gold):
+    • bronze: the file rows a commit reported, or none at all when the
+      connector never collected its diff
+    • silver: one class row per commit and per file change
+    • gold:   the lines come from the FILE rows when there are any, and from
+      the commit's own stats when there are none — two emission paths, one
+      measure, and each builds its own dimension tuple
+
+  The second path is what this fixture is for, and ONE of its assertions is a
+  regression guard rather than coverage. `git_uncollected_file_changes` owns
+  that path for the unscoped measures and asserts none of the branch-scoped
+  ones, so nothing said the fallback reaches this measure at all.
+
+  A repository breakdown groups by a hidden source-id key as well as by the
+  dimensions asked for, so a fallback row missing that key answers as its own
+  repository: two rows carrying one repository's name, splitting its lines
+  between them, one of them unlinkable. `size(items) == 1` in the second case
+  is what fails when that key goes missing again — the first case passes
+  either way, because a request without `repository` never groups by it.
+
+  The key itself is not directly assertable: it reaches the response only as
+  the repository dimension's link, which needs an external source registered
+  and the rig registers none. The row count is what stands in.
+
+  Cases: the two paths summing into one figure and one category split; the
+  repository split, where both paths must answer with a single row; the
+  code-lines twin, which the fallback must NOT reach — a size with no file
+  grain is lines, never code lines; and an empty window.
+
+  The API rejects a metric that requests the same view twice, so each split
+  needs its own case.
+
+  Fixture — erin only, one repository, every commit's scope carried by the
+  connector's own flag rather than by a branch row or a merged request:
+    * dbla-diffed, landed, diff collected
+        src/a.rs   +11  code
+        docs/a.md  +20  docs
+    * dbla-blind, landed, NO file rows at all — its own stats say +30, and
+      that is the only record of them
+    * dbla-wip, not landed, diff collected
+        src/b.rs   +7   code, and it belongs to the other scope
+
+  So the metric reads 11 + 20 + 30 = 61, its category split is code 11, docs
+  20 and unknown 30, and the repository holding all of it is one repository.
+  `git.default_branch_code_lines` reads 11 alone: the blind commit's thirty
+  lines have no path to classify, so nothing may call them code. The other
+  scope's half of that rule lives in `git_uncollected_file_changes`; this is
+  the default side, which a build emitting the fallback into the code measure
+  left green everywhere.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/erin
+
+  bronze_github.commits:
+    # Commit-level stats reach no measure asserted here unless a commit has no
+    # collected file rows at all, which is what dbla-blind is for.
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: dbla-diffed, repository: "https://github.com/acme/dbla.git", sha: dbla-diffed, authored_date: "2026-10-01T09:00:00Z", committed_date: "2026-10-01T09:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 31, changed_files: 2, is_in_default_branch: true}
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: dbla-blind, repository: "https://github.com/acme/dbla.git", sha: dbla-blind, authored_date: "2026-10-01T09:10:00Z", committed_date: "2026-10-01T09:10:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 30, changed_files: 1, is_in_default_branch: true}
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: dbla-wip, repository: "https://github.com/acme/dbla.git", sha: dbla-wip, authored_date: "2026-10-01T09:20:00Z", committed_date: "2026-10-01T09:20:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 7, changed_files: 1, is_in_default_branch: false}
+
+  bronze_github.file_changes:
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: dbla-f-a, repository: "https://github.com/acme/dbla.git", sha: dbla-diffed, filename: src/a.rs, status: modified, additions: 11, deletions: 0, pre_image_oid: db1a0000000000000000000000000000000000a1, post_image_oid: db1a0000000000000000000000000000000000a2}
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: dbla-f-doc, repository: "https://github.com/acme/dbla.git", sha: dbla-diffed, filename: docs/a.md, status: added, additions: 20, deletions: 0, post_image_oid: db1a0000000000000000000000000000000000b1}
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: dbla-f-b, repository: "https://github.com/acme/dbla.git", sha: dbla-wip, filename: src/b.rs, status: modified, additions: 7, deletions: 0, pre_image_oid: db1a0000000000000000000000000000000000c1, post_image_oid: db1a0000000000000000000000000000000000c2}
+

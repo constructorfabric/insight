@@ -18,8 +18,9 @@
 5. [5. Functional Requirements](#5-functional-requirements)
    - [5.1 Core Features](#51-core-features)
 6. [6. Non-Functional Requirements](#6-non-functional-requirements)
-   - [6.1 Module-Specific NFRs](#61-module-specific-nfrs)
-   - [6.2 NFR Exclusions](#62-nfr-exclusions)
+   - [6.1 Quality Vector Analysis](#61-quality-vector-analysis)
+   - [6.2 Module-Specific NFRs](#62-module-specific-nfrs)
+   - [6.3 NFR Exclusions](#63-nfr-exclusions)
 7. [7. Public Library Interfaces](#7-public-library-interfaces)
    - [7.1 Public API Surface](#71-public-api-surface)
    - [7.2 External Integration Contracts](#72-external-integration-contracts)
@@ -111,6 +112,7 @@ None.
 - Task creation, assignment, and lifecycle tracking
 - Real-time updates for task status changes
 - Deadline notifications
+- Multiple teams sharing a single deployment, each with its own tasks and membership
 
 ### 4.2 Out of Scope
 
@@ -143,7 +145,17 @@ The system MUST send push notifications for task assignments. The system MUST se
 
 ## 6. Non-Functional Requirements
 
-### 6.1 Module-Specific NFRs
+### 6.1 Quality Vector Analysis
+
+| Quality Vector | Show-Stopper Requirement | Rationale |
+|-----------------|---------------------------|-----------|
+| Efficiency | None — not material because the MVP targets small teams (under 100 tasks) on a single cloud deployment; infrastructure cost at that scale is negligible | No cost-driven design decision changes at this scale |
+| Reliability | Task and assignment data MUST NOT be lost (per `cpt-ex-task-flow-nfr-reliability`) | The task list is the team's system of record for who owns what; data loss breaks accountability and trust in the tool |
+| Performance | Real-time status updates MUST propagate to all clients within 2 seconds (per `cpt-ex-task-flow-nfr-performance`) | Missing the "real-time" latency budget removes the tool's core value over a shared spreadsheet or chat thread |
+| Security | A team member MUST NOT be able to view or modify another team's tasks without authorization (per `cpt-ex-task-flow-nfr-security`) | Cross-team data exposure breaks the trust required for teams to adopt a shared tool |
+| Versatility | None — not material because v1 intentionally supports one locale (English) and standard desktop browsers only, with cross-organization collaboration out of scope | Broader platform and format support is a deliberate v1 exclusion, not an unmanaged gap |
+
+### 6.2 Module-Specific NFRs
 
 #### Security
 
@@ -155,12 +167,19 @@ The system MUST send push notifications for task assignments. The system MUST se
 
 #### Performance
 
-- [ ] `p2` - **ID**: `cpt-ex-task-flow-nfr-performance`
+- [ ] `p1` - **ID**: `cpt-ex-task-flow-nfr-performance`
 
 - Task list SHOULD load within 500ms for teams under 100 tasks
-- Real-time updates SHOULD propagate within 2 seconds
+- Real-time updates MUST propagate within 2 seconds
 
-### 6.2 NFR Exclusions
+#### Reliability
+
+- [ ] `p1` - **ID**: `cpt-ex-task-flow-nfr-reliability`
+
+- Task and assignment data MUST be persisted durably; no acknowledged write may be lost
+- Task and assignment data MUST be backed up daily, with a recovery point objective of 24 hours
+
+### 6.3 NFR Exclusions
 
 - **Accessibility** (UX-PRD-002): Not applicable — MVP targets internal teams with standard desktop browsers
 - **Internationalization** (UX-PRD-003): Not applicable — English-only for initial release

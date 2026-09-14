@@ -1,0 +1,74 @@
+spec_version: 1
+description: >-
+  Metric: git.default_branch_commits and its branch-scope siblings — the scope
+  of a commit whose hash sits in two connected repositories, #3354.
+  How it's computed (bronze → silver → gold):
+    • bronze: each repository reports its own copy of a commit with its own
+      default-branch flag; a request lists the hashes it merged.
+    • silver: one commit row per repository copy.
+    • gold:   copies of one hash collapse to one commit. It lands if ANY copy
+      sits on its repository's default branch, or a merged request into a
+      default branch lists the hash, whichever repository holds the copy.
+      The copy whose own repository shows the landing survives and names the
+      repository; repository coordinates only break ties. The squash result
+      a merged request produced is derived even when its branch commits were
+      collected in another repository.
+  A fork (alpha-fork/payments) and its upstream (constructor/payments); the
+  fork's owner sorts first, so a collapse that read scope off the first copy
+  kept the fork's, and a membership test keyed by repository coordinates
+  missed a request filed under the upstream.
+  Cases: dave — flag on the later-sorting copy only, lands under the upstream,
+  a fork-only commit stays in flight; bob — both copies unflagged, a request
+  merged upstream lists the hash, lands under the upstream; erin — collected
+  in the fork only, listed by a request merged upstream whose squash result
+  was collected on the upstream's default branch: the original lands once,
+  the squash is derived, an unlisted commit stays in flight.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/dave
+    - $ref: ../templates/people.yaml#/templates/bob
+    - $ref: ../templates/people.yaml#/templates/erin
+  bronze_github.branches:
+    # Both repositories call their default branch main, as forks do.
+    - {$ref: ../templates/git_activity.yaml#/templates/base, unique_key: br-fork-main, repository: "https://github.com/alpha-fork/payments.git", name: main, head_sha: head-fork-main, is_default: true}
+    - {$ref: ../templates/git_activity.yaml#/templates/base, unique_key: br-upstream-main, repository: "https://github.com/constructor/payments.git", name: main, head_sha: head-upstream-main, is_default: true}
+  bronze_github.commits:
+    # dave: the same hash in both repositories; only the upstream copy is on
+    # its default branch. `alpha-fork` sorts before `constructor`.
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: c-dave-fork, repository: "https://github.com/alpha-fork/payments.git", sha: sha-dave-shared, author_name: dave, author_email: dave@example.com, committer_name: dave, committer_email: dave@example.com, additions: 12, deletions: 3, is_in_default_branch: false}
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: c-dave-upstream, repository: "https://github.com/constructor/payments.git", sha: sha-dave-shared, author_name: dave, author_email: dave@example.com, committer_name: dave, committer_email: dave@example.com, additions: 12, deletions: 3, is_in_default_branch: true}
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: c-dave-inflight, repository: "https://github.com/alpha-fork/payments.git", sha: sha-dave-inflight, author_name: dave, author_email: dave@example.com, committer_name: dave, committer_email: dave@example.com, additions: 5, deletions: 0, is_in_default_branch: false}
+    # bob: the same hash in both repositories, neither copy flagged (the
+    # upstream copy was first seen on the request's branch); the upstream's
+    # merged request is the only evidence, and it names the upstream.
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: c-bob-fork, repository: "https://github.com/alpha-fork/payments.git", sha: sha-bob-shared, author_name: bob, author_email: bob@example.com, committer_name: bob, committer_email: bob@example.com, additions: 9, deletions: 2, is_in_default_branch: false}
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: c-bob-upstream, repository: "https://github.com/constructor/payments.git", sha: sha-bob-shared, author_name: bob, author_email: bob@example.com, committer_name: bob, committer_email: bob@example.com, additions: 9, deletions: 2, is_in_default_branch: false}
+    # erin: collected in the fork only; the upstream's merged request lists
+    # it, and the squash it produced sits on the upstream's default branch.
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: c-erin-fork, repository: "https://github.com/alpha-fork/payments.git", sha: sha-erin-shared, author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 7, deletions: 0, is_in_default_branch: false}
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: c-erin-squash, repository: "https://github.com/constructor/payments.git", sha: sha-erin-squash, author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, authored_date: "2026-10-01T12:00:00Z", committed_date: "2026-10-01T12:00:00Z", additions: 7, deletions: 0, is_in_default_branch: true}
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: c-erin-inflight, repository: "https://github.com/alpha-fork/payments.git", sha: sha-erin-inflight, author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 3, deletions: 0, is_in_default_branch: false}
+  bronze_github.file_changes:
+    # `.rs` under src/ classifies as code. Two copies of one commit report the
+    # same diff, as two clones of one commit do.
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: f-dave-fork, repository: "https://github.com/alpha-fork/payments.git", sha: sha-dave-shared, filename: src/pay.rs, additions: 12, deletions: 3, pre_image_oid: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa0, post_image_oid: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1}
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: f-dave-upstream, repository: "https://github.com/constructor/payments.git", sha: sha-dave-shared, filename: src/pay.rs, additions: 12, deletions: 3, pre_image_oid: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa0, post_image_oid: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1}
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: f-dave-inflight, repository: "https://github.com/alpha-fork/payments.git", sha: sha-dave-inflight, filename: src/wip.rs, status: added, additions: 5, deletions: 0, pre_image_oid: null, post_image_oid: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb1}
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: f-bob-fork, repository: "https://github.com/alpha-fork/payments.git", sha: sha-bob-shared, filename: src/bob.rs, additions: 9, deletions: 2, pre_image_oid: eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee0, post_image_oid: eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee1}
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: f-bob-upstream, repository: "https://github.com/constructor/payments.git", sha: sha-bob-shared, filename: src/bob.rs, additions: 9, deletions: 2, pre_image_oid: eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee0, post_image_oid: eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee1}
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: f-erin-fork, repository: "https://github.com/alpha-fork/payments.git", sha: sha-erin-shared, filename: src/erin.rs, status: added, additions: 7, deletions: 0, pre_image_oid: null, post_image_oid: ccccccccccccccccccccccccccccccccccccccc1}
+    # The squash carries the branch's content to the upstream's default branch.
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: f-erin-squash, repository: "https://github.com/constructor/payments.git", sha: sha-erin-squash, filename: src/erin.rs, status: added, additions: 7, deletions: 0, pre_image_oid: null, post_image_oid: ccccccccccccccccccccccccccccccccccccccc1}
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: f-erin-inflight, repository: "https://github.com/alpha-fork/payments.git", sha: sha-erin-inflight, filename: src/erin_wip.rs, status: added, additions: 3, deletions: 0, pre_image_oid: null, post_image_oid: ddddddddddddddddddddddddddddddddddddddd1}
+  bronze_github.pull_requests:
+    # Both requests live in the upstream and merged into its default branch.
+    # bob's result commit was never collected; erin's is the squash above.
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: pr-bob-upstream, repo_full_name: constructor/payments, id: 61, number: 61, author_login: bob, base_ref: main, closed_at: "2026-10-01T12:00:00Z", merged_at: "2026-10-01T12:00:00Z", merge_commit_sha: sha-bob-merge}
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: pr-erin-upstream, repo_full_name: constructor/payments, id: 51, number: 51, author_login: erin, base_ref: main, closed_at: "2026-10-01T12:00:00Z", merged_at: "2026-10-01T12:00:00Z", merge_commit_sha: sha-erin-squash}
+  bronze_github.pull_request_diff_stats:
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-bob-upstream, repo_full_name: constructor/payments, pull_number: 61, additions: 9, deletions: 2, author_email: bob@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-erin-upstream, repo_full_name: constructor/payments, pull_number: 51, additions: 7, deletions: 0, author_email: erin@example.com}
+  bronze_github.pull_request_commits:
+    - {$ref: ../templates/git_activity.yaml#/templates/base, unique_key: lnk-bob-upstream, sha: sha-bob-shared, pull_number: 61, repo_full_name: constructor/payments, author_email: bob@example.com, is_merge: false}
+    - {$ref: ../templates/git_activity.yaml#/templates/base, unique_key: lnk-erin-upstream, sha: sha-erin-shared, pull_number: 51, repo_full_name: constructor/payments, author_email: erin@example.com, is_merge: false}

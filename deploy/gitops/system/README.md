@@ -1,18 +1,20 @@
 # L2 — System Layer
 
-Shared infrastructure services that live in the `insight-infra`
-namespace, **one Helm release per service**. Run manually via
-`make system-<svc> ENV=<env>` — there is no top-level chain because
-each cluster picks which services it self-hosts vs. swaps for managed
-external endpoints (RDS, MSK, Confluent Cloud, S3, …) or another
-team's infra.
+Shared infrastructure services that live in the infra namespace
+(inventory `namespaces.infra`, `insight-infra` by default), **one Helm
+release per service**. `make system ENV=<env>`
+chains every service whose `inventory.system.<svc>` toggle is true;
+per-service `make system-<svc>` targets remain for one-offs and
+rotation. The toggles exist because each cluster picks which services
+it self-hosts vs. swaps for managed external endpoints (RDS, MSK,
+Confluent Cloud, S3, …) or another team's infra.
 
 See the top-level [`README.md`](../README.md) for the L0 / L2 / L3 layer
 model and full workflow.
 
 ## Services
 
-| Directory | Chart | Helm release in `insight-infra` | Needs a Secret? |
+| Directory | Chart | Helm release (in the infra namespace) | Needs a Secret? |
 |-----------|-------|---------------------------------|-----------------|
 | `mariadb/` | `oci://registry-1.docker.io/bitnamicharts/mariadb` | `mariadb` | yes → [SECRETS.md](mariadb/SECRETS.md) |
 | `clickhouse/` | `oci://registry-1.docker.io/bitnamicharts/clickhouse` | `clickhouse` | yes → [SECRETS.md](clickhouse/SECRETS.md) |
@@ -21,20 +23,58 @@ model and full workflow.
 | `redpanda-console/` | `redpanda/console` | `redpanda-console` | not in baseline |
 | `airbyte/` | `airbyte/airbyte` | `airbyte` | not in baseline (uses embedded Postgres+MinIO); prod overlay needs S3 creds |
 | `argo-workflows/` | `argo/argo-workflows` | `argo-workflows` | not in baseline |
-| `loki/` | `grafana/loki` | `loki` | not in baseline (single-tenant, no auth) |
+| `victoriametrics/` | `vm/victoria-metrics-single` | `victoriametrics` | not in baseline |
+| `loki/` | `grafana-community/loki` | `loki` | not in baseline (single-tenant, no auth) |
+| `tempo/` | `grafana-community/tempo` | `tempo` | not in baseline |
 | `alloy/` | `grafana/alloy` | `alloy` | not in baseline |
-| `grafana/` | `grafana/grafana` | `grafana` | not in baseline (chart auto-gens admin pw; per-env overlay may seal `grafana-creds`) |
+| `kube-state-metrics/` | `prometheus-community/kube-state-metrics` | `kube-state-metrics` | not in baseline |
+| `alloy-metrics/` | `grafana/alloy` | `alloy-metrics` | not in baseline |
+| `grafana/` | `grafana-community/grafana` | `grafana` | not in baseline (chart auto-gens admin pw; per-env overlay may seal `grafana-creds`); ClickHouse datasource needs `grafana-clickhouse-creds` (see grafana/values.yaml, #2888) |
 
-### Observability (loki / alloy / grafana)
+### Observability (victoriametrics / loki / tempo / alloy / kube-state-metrics / alloy-metrics / grafana)
 
-These three are the bundled observability stack (LGTM, logs first). Two
-independent decisions, mirroring the managed-vs-bundled choice for the data
-stores above:
+These are the bundled observability stack: VictoriaMetrics stores metrics
+(PromQL-compatible, remote-write receiver at `/api/v1/write`), Loki stores
+logs, Tempo stores traces (OTLP ingest on `tempo:4317`/`4318`), Alloy
+collects — it tails pod stdout to Loki and accepts OTLP from the services
+on `alloy:4317` (gRPC) / `alloy:4318` (HTTP), remote-writing the metrics
+to VictoriaMetrics and forwarding the traces to Tempo — and Grafana
+serves all three — provisioned as the fixed-uid
+datasources `vm`, `loki` and `tempo` so dashboards reference them portably;
+a `trace_id` in a JSON log line links to the trace via Loki's
+`derivedFields`.
 
-1. **Install the bundled stack?** — the `inventory.system.{loki,alloy,grafana}`
-   toggles. On = self-host Loki/Alloy/Grafana in `insight-infra`. Off = don't
-   (the cluster already runs observability, or stdout is enough).
-2. **Where do services export?** — the umbrella's `observability.otlp.endpoint`
+**Infra metrics (kube-state-metrics / alloy-metrics).** Service health
+without touching the services: `alloy-metrics` is a second Alloy release
+(single-replica Deployment — every target is cluster-wide, so a DaemonSet
+would scrape each once per node) that pull-scrapes the kubelet's cAdvisor
+(per-container CPU / memory / network) and the `kube-state-metrics` release
+(pod readiness, container restarts, OOMKills, deployment status),
+remote-writing both into VictoriaMetrics. It also scrapes ClickHouse's
+built-in Prometheus endpoint (`metrics.enabled` in
+`system/clickhouse/values.yaml`, port 8001, #2888). Enable them together
+with `inventory.system.{kubeStateMetrics,alloyMetrics}`; they need
+`victoriametrics` on to have somewhere to write.
+
+**ClickHouse SQL from Grafana (#2888).** Grafana also carries a
+`clickhouse` fixed-uid datasource for direct SQL over the native protocol,
+authenticating as the SELECT-only `grafana` user the app deploy hook
+provisions (`provision-grafana-access.sh`). It needs the same password in
+two Secrets: `insight-db-creds` key `clickhouse-grafana-password` (ns
+`insight`, consumed by the hook) and `grafana-clickhouse-creds` key
+`CLICKHOUSE_GRAFANA_PASSWORD` (ns `insight-infra`, injected into Grafana's
+environment). Both optional — without them the role is still provisioned
+and only the datasource stays dark.
+
+Two independent decisions, mirroring the
+managed-vs-bundled choice for the data stores above:
+
+1. **Install the bundled stack?** — the
+   `inventory.system.{victoriametrics,loki,tempo,alloy,kubeStateMetrics,alloyMetrics,grafana}`
+   toggles.
+   On = self-host the stack in `insight-infra`. Off = don't (the cluster
+   already runs observability, or stdout is enough).
+2. **Where do services export?** — the umbrella's `global.observability.otlp.endpoint`
    (`environments/<env>/values.yaml`). Point it at this stack's Alloy when the
    toggles are on; at your own collector for an external one; leave it empty
    for stdout-only.
@@ -52,7 +92,8 @@ pods, shipped helm output). Deploy markers come from the
 helm log to Loki via `scripts/push-deploy-log.sh` (best-effort).
 
 **Access (follow-up: auth).** The baseline Grafana ships with no ingress and
-no SSO — reach it via port-forward:
+no SSO — reach it via port-forward (commands assume the default
+`namespaces.infra: insight-infra`; swap in your inventory's value):
 
 ```shell
 kubectl -n insight-infra port-forward svc/grafana 3000:80
@@ -61,6 +102,11 @@ kubectl -n insight-infra get secret grafana -o jsonpath='{.data.admin-password}'
 # Explore → Loki:
 {namespace="insight"}            # service logs
 {component="reconcile-loop"}     # reconcile ticks
+# Explore → VictoriaMetrics (PromQL; empty until a collector remote-writes —
+# alloy-metrics fills it with per-pod series when enabled):
+up
+container_memory_working_set_bytes{namespace="insight"}
+kube_pod_container_status_restarts_total{namespace="insight"}
 ```
 
 Putting Grafana behind auth is a tracked follow-up: seal a `grafana-creds`
@@ -77,11 +123,41 @@ environments/<env>/<svc>-values.yaml                # per-env overlay — create
 Both are passed to `helm upgrade --install` in that order. Missing
 overlay file = base values used as-is.
 
+### Cross-service hostnames
+
+Cross-service references are written as `${NS_*}` placeholders, and
+neither file reaches helm verbatim: `scripts/render-system-values.sh`
+first resolves the `${NS_*}` placeholders that cross-service references
+use (`http://loki.${NS_LOKI}.svc.cluster.local:3100`, …), writing the
+rendered copies to `.deploy/system-values/` — inspect them there after a
+run. Two variables cover every cross-service reference:
+
+| Variable | Locates | Consumers |
+|----------|---------|-----------|
+| `NS_INFRA` | the data stores (`clickhouse`, `redpanda`) | alloy-metrics, grafana, redpanda-console |
+| `NS_MONITORING` | the observability unit (`loki`, `tempo`, `victoriametrics`, `kube-state-metrics`) | alloy, alloy-metrics, grafana |
+
+`NS_MONITORING` defaults to `NS_INFRA` — the layout every environment
+here uses — and exists because the observability stack is the one unit
+an environment plausibly hosts apart from the data stores.
+
+Service *names* stay literal on purpose — `fullnameOverride` in each
+producer's values pins them, so the name is the contract and only the
+namespace moves. Substitution replaces only these two exact braced
+tokens: every other `$` construct — Grafana
+provisioning `$VAR` / `$$VAR` escapes, `$__auto` in dashboards,
+`${…}`-shaped strings in Alloy configs — passes through byte-identical,
+so overlays that carry full Alloy configs or restated datasource lists
+can keep using the placeholders too.
+
 ## Secret layout
 
 ```
-environments/<env>/sealed-secrets/insight-infra/<svc>-creds-sealedsecret.yaml
+environments/<env>/sealed-secrets/<infra-namespace>/<svc>-creds-sealedsecret.yaml
 ```
+
+(`<infra-namespace>` is the inventory's `namespaces.infra` —
+`insight-infra` by default; the Makefile resolves the directory from it.)
 
 Files are sealed against the cluster's sealed-secrets-controller public
 cert (`environments/<env>/pub-cert.pem`). Source of truth for the

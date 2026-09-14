@@ -2,7 +2,7 @@
 # Application AND test source stay in scope (constructorfabric/insight#1797).
 # Syntax is .gitignore-style. Point/path/rule-class waivers live elsewhere:
 #   - per-finding:  inline `// nosemgrep: <rule-id>` / `# nosemgrep: <rule-id>` + issue link
-#   - per-rule:     `--exclude-rule` in .github/workflows/semgrep.yml (e.g. the TruffleHog boundary)
+#   - per-rule:     `--exclude-rule` in .github/workflows/security.yml (e.g. the TruffleHog boundary)
 
 # --- Rust build output ---
 target/

@@ -71,6 +71,7 @@ gears:
       max_repo_bytes: 500000000
       default_max_staleness_seconds: 300
       heavy_ops_concurrency: 2
+      serve_concurrency: 2
       proxy_token: "{token}"
       allow_file_repos: {allow_file_repos}
 "#,

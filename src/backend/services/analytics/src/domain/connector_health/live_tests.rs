@@ -35,6 +35,10 @@ const MIGRATION: &str = include_str!(
 
 const TABLE: &str = "ingestion_history.sync_events";
 
+/// The instance every fixture row belongs to unless it says otherwise.
+const TENANT: &str = "tenant-under-test";
+const SOURCE: &str = "main";
+
 /// Stamps are anchored to now, not to a fixed date.
 ///
 /// The table's TTL runs from `ts`, so a row stamped further back than the
@@ -105,12 +109,22 @@ struct Row<'a> {
     tick_id: &'a str,
     job_id: &'a str,
     connector: &'a str,
+    tenant_id: &'a str,
+    source_id: &'a str,
     event: &'a str,
     status: &'a str,
     started_at: Option<&'a str>,
     job_updated_at: Option<&'a str>,
     duration_ms: Option<u64>,
     records_reported: Option<u64>,
+}
+
+impl<'a> Row<'a> {
+    /// The same row, belonging to a different installation of the connector.
+    fn of_instance(mut self, source_id: &'a str) -> Self {
+        self.source_id = source_id;
+        self
+    }
 }
 
 impl Row<'_> {
@@ -124,11 +138,13 @@ impl Row<'_> {
             None => "NULL".to_owned(),
         };
         format!(
-            "(toDateTime64('{}', 3, 'UTC'), '{}', '{}', '{}', '{}', '{}', {}, {}, {}, {})",
+            "(toDateTime64('{}', 3, 'UTC'), '{}', '{}', '{}', '{}', '{}', '{}', '{}', {}, {}, {}, {})",
             self.ts,
             self.tick_id,
             self.job_id,
             self.connector,
+            self.tenant_id,
+            self.source_id,
             self.event,
             self.status,
             moment(self.started_at),
@@ -142,8 +158,8 @@ impl Row<'_> {
 async fn insert(ch: &insight_clickhouse::Client, rows: &[Row<'_>]) {
     let values: Vec<String> = rows.iter().map(Row::values).collect();
     let sql = format!(
-        "INSERT INTO {TABLE} (ts, tick_id, job_id, connector, event, status, \
-         started_at, job_updated_at, duration_ms, records_reported) VALUES {}",
+        "INSERT INTO {TABLE} (ts, tick_id, job_id, connector, tenant_id, source_id, \
+         event, status, started_at, job_updated_at, duration_ms, records_reported) VALUES {}",
         values.join(", ")
     );
     ch.query(&sql).execute().await.expect("insert");
@@ -155,6 +171,8 @@ fn sync<'a>(job_id: &'a str, connector: &'a str, status: &'a str, updated: &'a s
         tick_id: "tick-1",
         job_id,
         connector,
+        tenant_id: TENANT,
+        source_id: SOURCE,
         event: "sync.completed",
         status,
         started_at: Some(updated),
@@ -170,6 +188,8 @@ fn configured<'a>(connector: &'a str, tick_id: &'a str, at: &'a str) -> Row<'a> 
         tick_id,
         job_id: "",
         connector,
+        tenant_id: TENANT,
+        source_id: SOURCE,
         event: "connector.configured",
         status: "",
         started_at: None,
@@ -185,6 +205,9 @@ fn seal<'a>(tick_id: &'a str, at: &'a str) -> Row<'a> {
         tick_id,
         job_id: "",
         connector: "",
+        // The seal is about the tick, not about anything that synced.
+        tenant_id: "",
+        source_id: "",
         event: "sweep.completed",
         status: "",
         started_at: None,
@@ -231,6 +254,9 @@ async fn the_ledger_reads_answer_from_real_rows() {
     two_rows_for_one_job_resolve_to_the_newer(&ch, &at).await;
     a_dropped_connector_stops_reading_configured(&ch, &at).await;
     one_connectors_window_is_newest_first(&ch).await;
+
+    truncate(&ch).await;
+    two_instances_of_one_connector_resolve_separately(&ch, &at).await;
 
     truncate(&ch).await;
     the_resolution_survives_every_way_it_used_to_be_wrong(&ch, &at).await;
@@ -376,7 +402,7 @@ async fn rows_cross_into_options(ch: &insight_clickhouse::Client, at: &Stamps) {
     assert!(alpha.configured);
 
     assert_eq!(
-        facts.summaries[0].connector, "bravo",
+        facts.summaries[0].instance.connector, "bravo",
         "a failed sync outranks a running one"
     );
 }
@@ -431,7 +457,10 @@ async fn a_dropped_connector_stops_reading_configured(
         "dropped from the snapshot means no longer configured"
     );
     assert_eq!(
-        facts.summaries.last().map(|row| row.connector.as_str()),
+        facts
+            .summaries
+            .last()
+            .map(|row| row.instance.connector.as_str()),
         Some("bravo"),
         "a removed connector sorts last, not first"
     );
@@ -444,16 +473,84 @@ async fn a_dropped_connector_stops_reading_configured(
 }
 
 async fn one_connectors_window_is_newest_first(ch: &insight_clickhouse::Client) {
-    let history = read_syncs(ch, "alpha").await.expect("history");
+    let history = read_syncs(ch, "alpha", None).await.expect("history");
     assert_eq!(history.len(), 2, "one row per job, not per recorded row");
     assert_eq!(history[0].job_id, "2", "newest first");
     assert_eq!(history[1].job_id, "1");
 
-    let missing = read_syncs(ch, "nobody").await.expect("no such connector");
+    let missing = read_syncs(ch, "nobody", None)
+        .await
+        .expect("no such connector");
     assert!(
         missing.is_empty(),
         "an unknown connector is empty, not an error"
     );
+}
+
+/// Two installations of one connector, told apart by nothing but the identity.
+///
+/// The read is the half of this that no unit test can stand in for: the
+/// grouping happens in ClickHouse, and a `GROUP BY` short of the whole identity
+/// resolves both to one row while every pure test still passes.
+async fn two_instances_of_one_connector_resolve_separately(
+    ch: &insight_clickhouse::Client,
+    at: &Stamps,
+) {
+    insert(
+        ch,
+        &[
+            configured("charlie", "tick-3", &at.tick_3),
+            configured("charlie", "tick-3", &at.tick_3).of_instance("second"),
+            sync("10", "charlie", "succeeded", &at.job_older),
+            sync("11", "charlie", "failed", &at.job_newer).of_instance("second"),
+        ],
+    )
+    .await;
+
+    let facts = read_health(ch).await.expect("read");
+    let rows: Vec<&super::model::ConnectorSummary> = facts
+        .summaries
+        .iter()
+        .filter(|row| row.instance.connector == "charlie")
+        .collect();
+
+    assert_eq!(rows.len(), 2, "one row per installation, not one per name");
+    let failing = rows
+        .iter()
+        .find(|row| row.instance.source_id == "second")
+        .expect("the second installation");
+    let healthy = rows
+        .iter()
+        .find(|row| row.instance.source_id == SOURCE)
+        .expect("the first installation");
+    assert_eq!(
+        failing.last_sync.as_ref().expect("synced").status,
+        SyncStatus::Failed,
+    );
+    assert_eq!(
+        healthy.last_sync.as_ref().expect("synced").status,
+        SyncStatus::Succeeded,
+        "the newer sibling's failure must not stand for both",
+    );
+
+    let second = (
+        super::name::TenantId::parse(TENANT).expect("a tenant"),
+        super::name::SourceId::parse("second").expect("a source"),
+    );
+    let scoped = read_syncs(ch, "charlie", Some(&second))
+        .await
+        .expect("scoped history");
+    assert_eq!(
+        scoped
+            .iter()
+            .map(|row| row.job_id.as_str())
+            .collect::<Vec<_>>(),
+        ["11"],
+        "a window asked for one installation holds only its jobs"
+    );
+
+    let whole = read_syncs(ch, "charlie", None).await.expect("history");
+    assert_eq!(whole.len(), 2, "and the unscoped window spans both");
 }
 
 fn summary_for<'a>(
@@ -462,7 +559,7 @@ fn summary_for<'a>(
 ) -> &'a super::model::ConnectorSummary {
     summaries
         .iter()
-        .find(|row| row.connector == connector)
+        .find(|row| row.instance.connector == connector)
         .unwrap_or_else(|| panic!("no summary for {connector}"))
 }
 

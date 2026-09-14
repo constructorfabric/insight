@@ -5,7 +5,8 @@
 # Runs at the end of a reconcile tick, which already authenticates to the mover
 # and knows which connectors it manages. This file is the gatherer: it resolves
 # the connector -> connection map, mints the token, and hands the work to
-# `python3 -m sweep` on stdin. The planning and the writing live there.
+# `python3 -m sweep` on stdin. The planning and the writing live there; the
+# sweep logs its own structured JSON lines straight to stderr.
 #
 # INVARIANT: this never fails a tick. Observability is subordinate to the thing
 # observed — a sweep that cannot record must not stop connectors from being
@@ -18,6 +19,7 @@
 
 _SWEEP_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _SWEEP_PY_DIR="$(cd "${_SWEEP_LIB_DIR}/../python" && pwd)"
+_SWEEP_SCRIPTS_DIR="$(cd "${_SWEEP_LIB_DIR}/../../scripts" && pwd)"
 
 # ---------------------------------------------------------------------------
 # sweep_run
@@ -62,14 +64,14 @@ sweep_run() {
 
   # SAFETY: the token rides the child's environment, never its argv — argv is
   # world-readable inside the pod and the environment is not.
-  local output status=0
-  output="$(printf '%s' "${work}" \
-    | AIRBYTE_TOKEN="${token}" PYTHONPATH="${_SWEEP_PY_DIR}" python3 -m sweep 2>&1)" \
+  # The sweep writes structured JSON lines to stderr itself, so stderr flows
+  # to the pod log untouched — re-wrapping would nest JSON in JSON.
+  local status=0
+  printf '%s' "${work}" \
+    | AIRBYTE_TOKEN="${token}" \
+      PYTHONPATH="${_SWEEP_PY_DIR}:${_SWEEP_SCRIPTS_DIR}" \
+      python3 -m sweep \
     || status=$?
-
-  while IFS= read -r line; do
-    [[ -n "${line}" ]] && log_line INFO "${line}"
-  done <<< "${output}"
 
   if (( status != 0 )); then
     log_line WARN "sweep: this tick recorded nothing or only part of it (exit ${status}); reconciliation is unaffected"
@@ -80,7 +82,18 @@ sweep_run() {
 # ---------------------------------------------------------------------------
 # sweep__build_work <tick_id> <connections_json>
 # Emits the JSON the sweep reads on stdin:
-#   {"tick_id": "...", "connectors": [{"name": ..., "connection_id": ...}]}
+#   {"tick_id": "...",
+#    "connectors":  [{"name": ..., "tenant_id": ..., "source_id": ...,
+#                     "connection_id": ...}],
+#    "descriptors": [{"name": ..., "namespace": ...}]}
+#
+# The identity travels with the name because one connector can be installed
+# more than once, and the ledger tells those instances apart by it.
+#
+# `descriptors` covers every connector this build ships, installed or not: the
+# ledger retains history after a Secret is removed, and the relation a
+# descriptor names is where that connector's own record of which instance it
+# was still lives.
 #
 # Configured means what it means to the reconcile loop: a descriptor WITH a
 # Kubernetes Secret. Descriptors are every connector the product ships, and a
@@ -97,34 +110,42 @@ sweep__build_work() {
   local tick_id="$1"
   local connections="$2"
 
-  local entries=()
-  local name rest conn_name conn_id
+  # SAFETY: one read of the desired state, and a read that failed records
+  # nothing. Asking per connector lets an API blip answer "not configured" for
+  # one of them, and the read surface takes a sealed snapshot as authoritative
+  # — the connector would render as removed rather than as unread.
+  local plan_tsv
+  if ! plan_tsv="$(disc_load_instances)"; then
+    log_line WARN "sweep: cannot read the connector Secrets; recording nothing this tick"
+    return 1
+  fi
+
+  local entries=() shipped=()
+  local name connector_dir version type cdk_image enrich_image dbt_select ns_format
+  local source_id secret_name cfg_hash conn_name conn_id tenant
+  local seen_descriptor=""
   # Re-delimited on US for the same reason reconcile_run does it: TAB is
-  # IFS-whitespace, so empty descriptor fields would collapse and shift. Only
-  # the name is read here; `rest` absorbs the columns this sweep has no use for.
-  local missing_rc
-  while IFS=$'\037' read -r name rest; do
+  # IFS-whitespace, so the plan's empty fields would collapse and shift.
+  while IFS=$'\037' read -r name connector_dir version type cdk_image enrich_image dbt_select \
+        ns_format source_id secret_name cfg_hash; do
     [[ -n "${name}" ]] || continue
-    : "${rest}"  # read into it deliberately; nothing here needs the other columns
-    # Exit codes are the gate's contract: 0=missing, 1=exists, 2=API blip.
-    # A blip may not be read as "missing" here for the same reason it may not
-    # in the reconcile loop — there it would cascade-delete a live source, and
-    # here it would seal a snapshot claiming the connector is no longer
-    # configured, which the read surface takes as authoritative.
-    # SAFETY: stdout is this function's JSON contract, so the gate's is
-    # discarded rather than allowed to land in the middle of it. stderr is left
-    # alone — it is where the reason for a failed lookup reaches the pod log.
-    valsec_secret_missing_p "${name}" >/dev/null
-    missing_rc=$?
-    case ${missing_rc} in
-      0) continue ;;
-      1) ;;
-      *)
-        log_line WARN "sweep: secret lookup failed for ${name}; recording nothing this tick"
-        return 1
-        ;;
-    esac
-    conn_name="$(reconcile_compute_connection_name "${name}")"
+    # Read into deliberately; the snapshot needs the identity and nothing else.
+    : "${connector_dir}${version}${type}${cdk_image}${enrich_image}${dbt_select}${cfg_hash}"
+
+    # Every descriptor, installed or not: history outlives a Secret, and the
+    # only place an uninstalled connector's own recorded identity survives is
+    # the relation this names.
+    if [[ "${seen_descriptor}" != *"|${name}|"* ]]; then
+      seen_descriptor+="|${name}|"
+      shipped+=("$(jq -cn --arg n "${name}" --arg ns "${ns_format}" \
+        '{name: $n, namespace: $ns}')")
+    fi
+
+    # A descriptor no Secret names is not installed here, and reconcile agrees:
+    # it deletes such a connector's source rather than driving it.
+    [[ -n "${secret_name}" ]] || continue
+    tenant="$(reconcile_compute_tenant "${name}")"
+    conn_name="$(reconcile_compute_connection_name "${name}" "${source_id}")"
     # Not piped into `head`: without `pipefail` that hides a nonzero exit from
     # the filter, and a failed lookup would read as "no connection yet" — which
     # would seal a snapshot claiming a connector the mover was never asked
@@ -136,19 +157,25 @@ sweep__build_work() {
     fi
     conn_id="${conn_id%%$'\n'*}"
     if [[ -n "${conn_id}" ]]; then
-      entries+=("$(jq -cn --arg n "${name}" --arg c "${conn_id}" \
-        '{name: $n, connection_id: $c}')")
+      entries+=("$(jq -cn --arg n "${name}" --arg t "${tenant}" \
+        --arg s "${source_id}" --arg c "${conn_id}" \
+        '{name: $n, tenant_id: $t, source_id: $s, connection_id: $c}')")
     else
-      entries+=("$(jq -cn --arg n "${name}" '{name: $n}')")
+      entries+=("$(jq -cn --arg n "${name}" --arg t "${tenant}" \
+        --arg s "${source_id}" \
+        '{name: $n, tenant_id: $t, source_id: $s}')")
     fi
-  done < <(disc_load_descriptors | tr '\t' '\037')
+  done < <(printf '%s\n' "${plan_tsv}" | tr '\t' '\037')
 
   # `jq -s` slurps the stream into an array, so the objects never have to be
   # joined by hand — no separator to get wrong and no `IFS` to reassign.
-  local connectors_json='[]'
+  local connectors_json='[]' descriptors_json='[]'
   if (( ${#entries[@]} > 0 )); then
     connectors_json="$(printf '%s\n' "${entries[@]}" | jq -sc '.')"
   fi
-  jq -cn --arg t "${tick_id}" --argjson c "${connectors_json}" \
-    '{tick_id: $t, connectors: $c}'
+  if (( ${#shipped[@]} > 0 )); then
+    descriptors_json="$(printf '%s\n' "${shipped[@]}" | jq -sc '.')"
+  fi
+  jq -cn --arg t "${tick_id}" --argjson c "${connectors_json}" --argjson d "${descriptors_json}" \
+    '{tick_id: $t, connectors: $c, descriptors: $d}'
 }

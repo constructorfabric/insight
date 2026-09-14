@@ -1,4 +1,5 @@
 -- depends_on: {{ ref('github__deployment_events') }}
+-- depends_on: {{ ref('gitlab__deployment_events') }}
 {{ config(
     materialized='incremental',
     full_refresh=false,

@@ -26,6 +26,7 @@ This runbook shows a platform or DevOps engineer how to install the Insight busi
 - [Step 3 — Create the namespace and apply the secrets](#step-3--create-the-namespace-and-apply-the-secrets)
 - [Step 4 — Install with Helm](#step-4--install-with-helm)
 - [Step 5 — Verify the install](#step-5--verify-the-install)
+  - [Where the logs go](#where-the-logs-go)
 - [Step 6 — Configure connectors (optional)](#step-6--configure-connectors-optional)
 - [Step 7 — Seed demo data (test stands only)](#step-7--seed-demo-data-test-stands-only)
 - [Appendix — Reference](#appendix--reference)
@@ -403,9 +404,23 @@ kubectl -n insight get cronworkflow
 
 Then open `https://<HOST>` — the host from Step 1 — and confirm the login redirect to your OIDC provider.
 
+### Where the logs go
+
+On a default install no log collector is configured (`global.observability.otlp.endpoint` is empty), and the umbrella never installs one. Every pod then writes its log lines to its own standard output/error and nowhere else; read them with `kubectl -n insight logs deploy/<service>` (ingestion workflow pods are not Deployments — read those with `kubectl -n insight logs <workflow-pod>` while the pod is retained). The five gears services emit JSON (one object per line), governed by two install-wide knobs: `global.observability.logs.level` (`info` by default) and `global.observability.logs.format` (`json` by default; set `text` for human-readable lines, at the cost of any collector's level parsing). The ingestion workflow pods' Python steps emit the same JSON shape, governed by the same `global.observability.logs.level` knob (handed to them as the platform ConfigMap's `INSIGHT_LOG_LEVEL`); only the gateway and frontend keep formats of their own for now (constructorfabric/insight#2488 tracks converging them).
+
+A line a gears service writes while handling a request carries, in its `spans` chain under the `log_ctx` entry:
+
+- `correlation_id` — echoed from the `X-Correlation-Id` the request arrived with (on `/api` routes the gateway mints it as sole author and logs the same value as `correlation_id`, so one id joins the edge and every service); a request without one falls back to its `x-request-id`;
+- `tenant_id` — present only on authenticated requests;
+- `service` and `version` — from the service's `opentelemetry.resource` config (`service_name` and the `service.version` attribute, which the chart sets to the image tag) — the same identity traces carry.
+
+Startup and background lines carry none of these yet — that requires a gears toolkit change, tracked in constructorfabric/insight#2488.
+
+No token, session credential or personal data is reachable from a log line: values a service must hold but never say (session credentials, IdP tokens, client secrets, store passwords, addresses) render as a `<redacted>` marker, and each service's own test suite carries seeded-leak tests that fail where a leaking line is written. One check, `scripts/ci/logging_bar.py`, reports every service against this bar (shape, level, fields, leaks) on each pipeline run.
+
 ## Step 6 — Configure connectors (optional)
 
-Configure connectors after the app is up. Each of the 25 connectors is a single Kubernetes Secret; the `insight-reconcile-loop` CronWorkflow discovers it and provisions the Airbyte source automatically, so there is nothing else to run.
+Configure connectors after the app is up. Each connector is a single Kubernetes Secret; the `insight-reconcile-loop` CronWorkflow discovers it and provisions the Airbyte source automatically, so there is nothing else to run.
 
 See [deploy/CONNECTORS.md](./CONNECTORS.md) for the connector list and a copy-paste Secret for each.
 

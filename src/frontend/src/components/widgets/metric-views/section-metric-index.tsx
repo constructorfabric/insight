@@ -81,7 +81,10 @@ export function SectionMetricIndex({
           break at each row's padding and read as a dotted column; the whole
           point is an unbroken line for the ordinary readings to disappear
           into. */}
-      <dl className="relative pt-2">
+      {/* A container query, not a viewport one: this list is as narrow as
+          whatever holds it, which on a wide screen can still be a drilldown
+          pane. */}
+      <dl className="@container relative pt-2">
         <span
           aria-hidden
           className="pointer-events-none absolute inset-y-2 w-px bg-foreground/20"
@@ -90,17 +93,20 @@ export function SectionMetricIndex({
         {rest.map((metric) => (
           <div
             key={metric.metric_key}
-            className="flex items-center justify-between gap-4 border-b border-dashed py-1 last:border-b-0"
+            className="flex flex-wrap items-center gap-x-4 gap-y-0.5 border-b border-dashed py-1 last:border-b-0"
           >
-            <dt className={cn("min-w-0 flex-1 truncate", TEXT_NAME)}>
+            <dt className={cn("min-w-0 truncate", TEXT_NAME)}>
               <MetricName metric={metric} />
             </dt>
             {/* Layout only. Putting the label role on the container greyed
                 the person's own value along with its median, so the subject of
                 the row and the context around it read the same — which is the
                 distinction this scale exists to make. */}
-            <dd className="flex shrink-0 items-baseline gap-2 tabular-nums">
-              <span className={cn("w-32 text-right", TEXT_BODY)}>
+            {/* INVARIANT: 26rem is the readings' own 368px (128 + 112 + the
+                mark's 112, plus two gaps) with a name floor on top — the fixed
+                columns come back only where they fit. */}
+            <dd className="ms-auto flex min-w-0 flex-wrap items-baseline justify-end gap-2 tabular-nums">
+              <span className={cn("w-auto text-right @min-[26rem]:w-32", TEXT_BODY)}>
                 {formatMetricValue(
                   forEntity(metric, entityId).value,
                   metric.format,
@@ -111,7 +117,7 @@ export function SectionMetricIndex({
                   anything. Uncoloured: a list of thirty numbers lit up by
                   quartile is a scoreboard, and the reader did not ask to be
                   scored on every one of them. */}
-              <span className={cn("w-28 text-right", TEXT_LABEL)}>
+              <span className={cn("w-auto text-right @min-[26rem]:w-28", TEXT_LABEL)}>
                 {metricComparisons(metric, null, entityId).median ?? ""}
               </span>
               {/* And how far off that middle, on the axis every row shares.

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ logEvent: vi.fn() }));
+const mocks = vi.hoisted(() => ({ logEvent: vi.fn(), createTelemetry: vi.fn() }));
 
 vi.mock("@gears-frontx/telemetry", () => {
   const service = {
@@ -9,7 +9,8 @@ vi.mock("@gears-frontx/telemetry", () => {
     logEvent: mocks.logEvent,
     destroy: () => {},
   };
-  return { createTelemetry: () => service };
+  mocks.createTelemetry.mockImplementation(() => service);
+  return { createTelemetry: mocks.createTelemetry };
 });
 
 vi.mock("@/api/usage-client", () => ({
@@ -104,5 +105,26 @@ describe("scopeLabel", () => {
         attrFilter: { key: "department", value: "Engineering" },
       }),
     ).toBe("attr:department");
+  });
+});
+
+describe("a session opened on somebody else's behalf", () => {
+  // #2573 scenario 11 — a fresh module, because a collector another test already
+  // started would short-circuit the guard under test and pass for that reason.
+  it("starts no collector and sends nothing, for either person", async () => {
+    vi.resetModules();
+    mocks.createTelemetry.mockClear();
+    mocks.logEvent.mockClear();
+
+    const telemetry = await import("./telemetry");
+    await telemetry.startUsageTelemetry({
+      personId: "p1",
+      impersonatorEmail: "operator@example.com",
+    } as unknown as Parameters<typeof startUsageTelemetry>[0]);
+    telemetry.recordPageView("/portal/people");
+    telemetry.recordUsageEvent("drill", "git.commits");
+
+    expect(mocks.createTelemetry).not.toHaveBeenCalled();
+    expect(mocks.logEvent).not.toHaveBeenCalled();
   });
 });

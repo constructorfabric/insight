@@ -827,6 +827,7 @@ pub async fn update_definition_status(
     definition_id: Uuid,
     status: SchemaStatus,
     error_code: Option<MetricSchemaErrorCode>,
+    first_observed: OldestObservation,
     last_observed: Option<chrono::NaiveDate>,
 ) -> Result<(), sea_orm::DbErr> {
     // last_observed_date is monotonic knowledge, not per-sweep state: keep the
@@ -837,12 +838,27 @@ pub async fn update_definition_status(
         Some(date) => Value::from(date.to_string()),
         None => Value::String(None),
     };
+    // first_observed_date takes the sweep's answer instead, because it reports
+    // what the relation still holds rather than what it once held: retention
+    // moves the bound forward, and clearing the last of it is the same fact
+    // said at its limit. A sweep that established nothing writes neither, which
+    // is why the flag is separate from the value — as one nullable column they
+    // would be indistinguishable.
+    let (write_first, first_val) = match first_observed {
+        OldestObservation::At(date) => (true, Value::from(date.to_string())),
+        OldestObservation::Absent => (true, Value::String(None)),
+        OldestObservation::Unknown => (false, Value::String(None)),
+    };
     db.execute_raw(Statement::from_sql_and_values(
         db.get_database_backend(),
         "UPDATE metric_definitions \
          SET schema_status = ?, \
              schema_checked_at = CURRENT_TIMESTAMP(3), \
              schema_error_code = ?, \
+             first_observed_date = CASE \
+                 WHEN ? THEN ? \
+                 ELSE first_observed_date \
+             END, \
              last_observed_date = CASE \
                  WHEN ? IS NULL THEN last_observed_date \
                  ELSE GREATEST(?, COALESCE(last_observed_date, ?)) \
@@ -855,6 +871,8 @@ pub async fn update_definition_status(
                 Some(code) => Value::from(code.as_db()),
                 None => Value::String(None),
             },
+            Value::from(write_first),
+            first_val,
             last_val.clone(),
             last_val.clone(),
             last_val,
@@ -863,6 +881,21 @@ pub async fn update_definition_status(
     ))
     .await?;
     Ok(())
+}
+
+/// What a sweep established about the oldest observation a definition holds.
+///
+/// Three outcomes, because two of them are the same value as a bare `Option`: a
+/// sweep that read the relation and found it empty must clear the stored bound,
+/// while one that established nothing at all must leave it standing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OldestObservation {
+    /// The probe found rows, the oldest on this date.
+    At(chrono::NaiveDate),
+    /// The probe read the relation and it holds nothing for these measures.
+    Absent,
+    /// Nothing was established; whatever is stored stands.
+    Unknown,
 }
 
 fn uuid_value(value: Uuid) -> Value {

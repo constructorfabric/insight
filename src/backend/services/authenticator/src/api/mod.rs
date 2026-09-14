@@ -14,6 +14,7 @@ use crate::config::AuthenticatorConfig;
 use crate::identity::PersonResolver;
 use crate::issuers::IssuerSelector;
 use crate::jwt::KeyStore;
+use crate::mcp_oauth::McpOAuthStore;
 use crate::service_token::ServiceRegistry;
 use crate::session::SessionManager;
 
@@ -35,6 +36,7 @@ pub struct AppState {
     pub authn_client: Arc<dyn authenticator_sdk::AuthenticatorClientV1>,
     /// Audit publisher (Redpanda; no-op when unconfigured).
     pub audit: crate::audit::AuditEmitter,
+    pub mcp_oauth: McpOAuthStore,
 }
 
 /// Register the authenticator routes onto the host router. The `Extension`
@@ -53,19 +55,83 @@ pub fn register_routes(
             state.clone(),
             crate::csrf::middleware,
         ))
-        .layer(Extension(state));
+        .layer(Extension(state))
+        .layer(insight_http_metrics::ServerMetricsLayer::new(
+            "authenticator",
+        ))
+        .layer(insight_log_context::LogContextLayer::new());
     host_router.merge(api)
 }
 
+#[cfg(test)]
+mod log_context_tests;
+#[cfg(test)]
+mod log_leak_tests;
+
 /// Declare every operation through the toolkit's `OperationBuilder` so each
 /// lands in the generated OpenAPI (the machine-checkable subrequest contract),
-/// grouped by surface. All step-04 endpoints are `.public()` — the credential
+/// grouped by surface. All step-04 endpoints are `.anonymous().exposed()` — the credential
 /// is the session cookie, checked inside the handler.
 fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
     let router = register_auth_routes(router, openapi);
+    let router = register_mcp_oauth_routes(router, openapi);
     let router = register_session_routes(router, openapi);
     let router = register_internal_routes(router, openapi);
     register_well_known_routes(router, openapi)
+}
+
+fn register_mcp_oauth_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
+    let mut router = router;
+
+    router = OperationBuilder::post("/auth/oauth/register")
+        .operation_id("authenticator.mcp_oauth.register")
+        .summary("Register a public MCP OAuth client")
+        .tag("mcp-oauth")
+        .anonymous()
+        .exposed()
+        .text_response(StatusCode::CREATED, "Registered client", "application/json")
+        .handler(crate::mcp_oauth::handlers::register_client)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/auth/oauth/authorize")
+        .operation_id("authenticator.mcp_oauth.authorize")
+        .summary("Authorize an MCP client with code and PKCE")
+        .tag("mcp-oauth")
+        .anonymous()
+        .exposed()
+        .text_response(StatusCode::OK, "Authorization confirmation", "text/html")
+        .handler(crate::mcp_oauth::handlers::authorize)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/auth/oauth/decision")
+        .operation_id("authenticator.mcp_oauth.decision")
+        .summary("Approve or deny a pending MCP authorization")
+        .tag("mcp-oauth")
+        .anonymous()
+        .exposed()
+        .text_response(StatusCode::OK, "Client redirect", "application/json")
+        .handler(crate::mcp_oauth::handlers::decide)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/auth/oauth/token")
+        .operation_id("authenticator.mcp_oauth.token")
+        .summary("Exchange an authorization code or refresh token")
+        .tag("mcp-oauth")
+        .anonymous()
+        .exposed()
+        .text_response(StatusCode::OK, "OAuth token response", "application/json")
+        .handler(crate::mcp_oauth::handlers::token)
+        .register(router, openapi);
+
+    OperationBuilder::post("/auth/oauth/revoke")
+        .operation_id("authenticator.mcp_oauth.revoke")
+        .summary("Revoke an MCP refresh token")
+        .tag("mcp-oauth")
+        .anonymous()
+        .exposed()
+        .no_content_response(StatusCode::OK, "Token revoked")
+        .handler(crate::mcp_oauth::handlers::revoke)
+        .register(router, openapi)
 }
 
 /// The browser-facing `/auth/*` surface (proxied plainly by the gateway).
@@ -76,7 +142,8 @@ fn register_auth_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router
         .operation_id("authenticator.login")
         .summary("Start the OIDC code+PKCE login flow (the request Host selects the issuer)")
         .tag("auth")
-        .public()
+        .anonymous()
+        .exposed()
         .no_content_response(StatusCode::FOUND, "Redirect to the IdP authorize endpoint")
         .error_403(openapi)
         .handler(handlers::login)
@@ -86,7 +153,8 @@ fn register_auth_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router
         .operation_id("authenticator.callback")
         .summary("Complete login: exchange the code and set the session cookie")
         .tag("auth")
-        .public()
+        .anonymous()
+        .exposed()
         .no_content_response(
             StatusCode::FOUND,
             "Redirect to the SPA: with the session cookie set on success, or \
@@ -101,7 +169,8 @@ fn register_auth_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router
         .operation_id("authenticator.csrf")
         .summary("Issue the CSRF token bound to the current session")
         .tag("auth")
-        .public()
+        .anonymous()
+        .exposed()
         .text_response(StatusCode::OK, "CSRF token", "application/json")
         .error_401(openapi)
         .handler(handlers::csrf)
@@ -111,7 +180,8 @@ fn register_auth_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router
         .operation_id("authenticator.me")
         .summary("Current session summary for the SPA")
         .tag("auth")
-        .public()
+        .anonymous()
+        .exposed()
         .text_response(StatusCode::OK, "Session summary", "application/json")
         .error_401(openapi)
         .handler(handlers::me)
@@ -121,7 +191,8 @@ fn register_auth_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router
         .operation_id("authenticator.refresh")
         .summary("Rotate the session cookie and extend the session (grace-tolerant)")
         .tag("auth")
-        .public()
+        .anonymous()
+        .exposed()
         .text_response(
             StatusCode::OK,
             "{expires_at, refresh_at} + re-issued cookie",
@@ -135,7 +206,8 @@ fn register_auth_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router
         .operation_id("authenticator.back_channel_logout")
         .summary("Receive IdP back-channel logout tokens (OIDC BCL 1.0)")
         .tag("auth")
-        .public()
+        .anonymous()
+        .exposed()
         .no_content_response(StatusCode::OK, "Logout processed (or idempotent replay)")
         .error_400(openapi)
         .handler(handlers::back_channel_logout)
@@ -145,7 +217,8 @@ fn register_auth_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router
         .operation_id("authenticator.logout")
         .summary("Revoke the session, clear the cookie, return the RP-logout URL")
         .tag("auth")
-        .public()
+        .anonymous()
+        .exposed()
         .text_response(StatusCode::OK, "RP-logout URL", "application/json")
         .handler(handlers::logout)
         .register(router, openapi)
@@ -160,7 +233,8 @@ fn register_session_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Rou
         .operation_id("authenticator.sessions.list")
         .summary("List the current user's active sessions")
         .tag("auth")
-        .public()
+        .anonymous()
+        .exposed()
         .text_response(StatusCode::OK, "Active sessions", "application/json")
         .error_401(openapi)
         .handler(handlers::sessions_list)
@@ -170,7 +244,8 @@ fn register_session_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Rou
         .operation_id("authenticator.sessions.revoke")
         .summary("Revoke one of the current user's sessions")
         .tag("auth")
-        .public()
+        .anonymous()
+        .exposed()
         .text_response(StatusCode::OK, "Revocation result", "application/json")
         .error_401(openapi)
         .error_404(openapi)
@@ -181,7 +256,8 @@ fn register_session_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Rou
         .operation_id("authenticator.sessions.revoke_all")
         .summary("Revoke all sessions of the current user (log out everywhere)")
         .tag("auth")
-        .public()
+        .anonymous()
+        .exposed()
         .text_response(StatusCode::OK, "Revocation result", "application/json")
         .error_401(openapi)
         .handler(handlers::sessions_revoke_all)
@@ -212,7 +288,8 @@ fn register_internal_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Ro
         .operation_id("authenticator.authz")
         .summary("Exchange the session cookie for the linked gateway JWT")
         .tag("internal")
-        .public()
+        .anonymous()
+        .exposed()
         .no_content_response(StatusCode::OK, "JWT attached via X-Gateway-Jwt")
         .error_401(openapi)
         .handler(handlers::authz)
@@ -227,7 +304,8 @@ fn register_well_known_routes(router: Router, openapi: &dyn OpenApiRegistry) -> 
         .operation_id("authenticator.openid_configuration")
         .summary("OIDC discovery document (issuer + jwks_uri) for downstream verifiers")
         .tag("internal")
-        .public()
+        .anonymous()
+        .exposed()
         .text_response(
             StatusCode::OK,
             "OIDC discovery document",
@@ -236,13 +314,70 @@ fn register_well_known_routes(router: Router, openapi: &dyn OpenApiRegistry) -> 
         .handler(handlers::openid_configuration)
         .register(router, openapi);
 
-    OperationBuilder::get("/.well-known/jwks.json")
+    let router = OperationBuilder::get("/.well-known/jwks.json")
         .operation_id("authenticator.jwks")
         .summary("Public JWKS for gateway-JWT verification")
         .tag("internal")
-        .public()
+        .anonymous()
+        .exposed()
         .text_response(StatusCode::OK, "JWKS document", "application/json")
         .handler(handlers::jwks)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/.well-known/oauth-authorization-server")
+        .operation_id("authenticator.mcp_oauth.metadata")
+        .summary("OAuth authorization server metadata for MCP clients")
+        .tag("mcp-oauth")
+        .anonymous()
+        .exposed()
+        .text_response(
+            StatusCode::OK,
+            "Authorization server metadata",
+            "application/json",
+        )
+        .handler(crate::mcp_oauth::handlers::authorization_server_metadata)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/.well-known/oauth-protected-resource")
+        .operation_id("authenticator.mcp_oauth.protected_resource")
+        .summary("Protected resource metadata for the MCP endpoint")
+        .tag("mcp-oauth")
+        .anonymous()
+        .exposed()
+        .text_response(
+            StatusCode::OK,
+            "Protected resource metadata",
+            "application/json",
+        )
+        .handler(crate::mcp_oauth::handlers::protected_resource_metadata)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/.well-known/oauth-protected-resource/mcp")
+        .operation_id("authenticator.mcp_oauth.protected_resource_mcp")
+        .summary("Path-specific protected resource metadata for the MCP endpoint")
+        .tag("mcp-oauth")
+        .anonymous()
+        .exposed()
+        .text_response(
+            StatusCode::OK,
+            "Protected resource metadata",
+            "application/json",
+        )
+        .handler(crate::mcp_oauth::handlers::protected_resource_metadata)
+        .register(router, openapi);
+
+    OperationBuilder::get("/.well-known/oauth-protected-resource/mcp/v3")
+        .operation_id("authenticator.mcp_oauth.protected_resource_mcp_v3")
+        .summary("Protected resource metadata for the custom-surface MCP endpoint")
+        .tag("mcp-oauth")
+        .anonymous()
+        .exposed()
+        .text_response(
+            StatusCode::OK,
+            "Protected resource metadata",
+            "application/json",
+        )
+        .handler(crate::mcp_oauth::handlers::protected_resource_metadata)
         .register(router, openapi)
 }
 

@@ -137,13 +137,20 @@ async fn run(args: Args) -> Result<()> {
     let snapshots = reader::fetch_all_snapshots(&cfg, &args.insight_source_id).await?;
     tracing::info!(snapshots = snapshots.len(), "loaded all issue snapshots");
 
-    let known_issues: Vec<String> = hwms.keys().cloned().collect();
-    let last_state = if known_issues.is_empty() {
+    // Scoped to the issues the cursor will stream, not every issue in the journal: this map
+    // holds one entry per (issue, field) and is the largest thing phase 1 builds, so keying it
+    // off the whole corpus makes a run's memory grow with history rather than with its backlog.
+    let pending_issues = reader::issues_with_new_events(&cfg, &args.insight_source_id).await?;
+    let last_state = if pending_issues.is_empty() {
         HashMap::new()
     } else {
-        reader::fetch_last_state_for(&cfg, &args.insight_source_id, &known_issues).await?
+        reader::fetch_last_state_for(&cfg, &args.insight_source_id, &pending_issues).await?
     };
-    tracing::info!(last_state_issues = last_state.len(), "loaded last state");
+    tracing::info!(
+        pending_issues = pending_issues.len(),
+        last_state_issues = last_state.len(),
+        "loaded last state"
+    );
 
     let meta: Arc<HashMap<String, FieldMeta>> = Arc::new(meta);
     let snapshots: Arc<HashMap<String, IssueSnapshot>> = Arc::new(snapshots);
@@ -318,7 +325,11 @@ async fn run(args: Args) -> Result<()> {
             if touched_issues.contains(issue_key) {
                 continue;
             }
-            if last_state.contains_key(issue_key) {
+            // `hwms`, not `last_state`: the latter now covers only issues with new events,
+            // while this needs every issue already in the journal. The synthetic event id is
+            // deterministic, so a miss here re-emits rows the RMT collapses rather than
+            // corrupting anything — but it re-derives every untouched issue on every run.
+            if hwms.contains_key(issue_key) {
                 continue;
             }
             let rows = crate::core::process_issue(&meta, snapshot, &[], None);

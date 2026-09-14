@@ -9,6 +9,7 @@ mod handlers;
 mod http_live_tests;
 mod listing;
 pub mod me;
+pub mod people;
 pub mod person_roles;
 pub mod persons;
 pub mod resolution;
@@ -52,10 +53,20 @@ pub fn register_routes(
     openapi: &dyn OpenApiRegistry,
     state: Arc<AppState>,
 ) -> Router {
-    let api = build_operations(Router::new(), openapi).layer(Extension(state));
+    let api = build_operations(Router::new(), openapi)
+        .layer(Extension(state))
+        .layer(insight_http_metrics::ServerMetricsLayer::new(
+            "identity-resolution",
+        ))
+        .layer(insight_log_context::LogContextLayer::new());
 
     host_router.merge(api)
 }
+
+#[cfg(test)]
+mod log_context_tests;
+#[cfg(test)]
+mod log_leak_tests;
 
 /// Title/version/description of the emitted document. Kept in step with the
 /// `openapi` block of `config/insight.yaml`, which the live gear reads: the two
@@ -122,6 +133,10 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         "/internal/persons/provision",
         axum::routing::post(handlers::internal_provision_person),
     );
+    let router = router.route(
+        "/internal/persons/active-roles",
+        axum::routing::get(handlers::internal_person_active_roles),
+    );
 
     let router = OperationBuilder::post("/v1/profiles")
         .operation_id("identity_resolution.profiles.resolve")
@@ -138,6 +153,21 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .handler(handlers::resolve_profile)
         .register(router, openapi);
 
+    let router = OperationBuilder::post("/v1/profiles/batch")
+        .operation_id("identity_resolution.profiles.batch")
+        .summary("Resolve visible profiles by canonical person id")
+        .authenticated()
+        .no_license_required()
+        .json_request::<profile::BatchProfilesRequest>(openapi, "Canonical people to resolve")
+        .json_response_with_schema::<profile::BatchProfilesResponse>(
+            openapi,
+            StatusCode::OK,
+            "Visible profiles",
+        )
+        .standard_errors(openapi)
+        .handler(handlers::batch_profiles)
+        .register(router, openapi);
+
     let router = OperationBuilder::get("/v1/me")
         .operation_id("identity_resolution.me.get")
         .summary("The caller's identity and active roles")
@@ -150,6 +180,56 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         )
         .standard_errors(openapi)
         .handler(me::get_me)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/v1/people")
+        .operation_id("identity_resolution.people.list")
+        .summary("List current roster people")
+        .authenticated()
+        .query_param(
+            "visibility",
+            false,
+            "`caller` (default) returns people visible to the caller; `tenant` returns the entire tenant roster and requires admin",
+        )
+        .query_param(
+            "q",
+            false,
+            "Search display name, first name, last name, username, or email; every whitespace-separated term must match",
+        )
+        .query_param_typed(
+            "limit",
+            false,
+            "Cap on returned people (1..=500, default 50)",
+            "integer",
+        )
+        .query_param(
+            "cursor",
+            false,
+            "Opaque `next_cursor` from the previous page; valid only for the same caller, visibility, and query",
+        )
+        .no_license_required()
+        .json_response_with_schema::<people::PeopleListResponse>(
+            openapi,
+            StatusCode::OK,
+            "One page of current roster people",
+        )
+        .standard_errors(openapi)
+        .handler(people::list_people)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/v1/people/{person_id}")
+        .operation_id("identity_resolution.people.get")
+        .summary("Get one current roster person")
+        .authenticated()
+        .path_param("person_id", "Canonical person id")
+        .no_license_required()
+        .json_response_with_schema::<people::PeopleListItemResponse>(
+            openapi,
+            StatusCode::OK,
+            "Current roster person visible to the caller",
+        )
+        .standard_errors(openapi)
+        .handler(people::get_person)
         .register(router, openapi);
 
     let router = OperationBuilder::get("/v1/persons")
@@ -290,7 +370,8 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
              or observed name (whole, or composed from parts). The source is the \
              exception — it matches a whole `_`/`-` separated segment from its \
              start, so `github` and `entra` list those connectors' accounts \
-             while `hub` lists none. Absent or blank lists every open account.",
+             while `hub` lists none. At most 200 characters. Absent or blank \
+             lists every open account.",
             "string",
         )
         .query_param_typed(
@@ -682,6 +763,14 @@ mod openapi_tests {
     fn the_document_builds_without_state_or_backends() -> anyhow::Result<()> {
         let document = openapi_document()?;
 
+        assert!(
+            document.paths.paths.contains_key("/v1/people"),
+            "the additive people listing must be described"
+        );
+        assert!(
+            document.paths.paths.contains_key("/v1/people/{person_id}"),
+            "the canonical person detail must be described"
+        );
         assert!(
             document.paths.paths.contains_key("/v1/resolution/bind"),
             "the correction surface must be described: {:?}",

@@ -1,6 +1,6 @@
 ---
 name: file-bug-insight
-description: "File an Insight defect as a GitHub issue in constructorfabric/insight — triage against existing issues, gather evidence, collect what the reproduction produced, draft a report that reads in under a minute, confirm, create, and verify the metadata landed. It reports OBSERVATIONS ONLY — no investigation, no root-cause analysis, no naming the file or layer to fix; that is the assignee's job. Use whenever the user asks to file/report/raise/log a bug, ticket, defect or issue, and trigger PROACTIVELY once an investigation has converged on 'this is broken and should be recorded' — don't wait for the words 'file a bug'. Also fires on 'log this', 'report it', 'this is broken, make a ticket', 'turn this into an issue', 'we should file two bugs for X and Y'. The repo is PUBLIC, so the default flow is draft → confirm → create and the body must be scrubbed of internal detail. Prefer this over the general `file-bug` skill for anything in the Insight product — dashboards, metrics, connectors, dbt, ClickHouse, identity, the Helm install — since it carries the medallion evidence walk, the reproduction-data discipline and the live board IDs; the general skill is for a Constructor *platform* defect that belongs in YouTrack."
+description: "File an Insight defect as a GitHub issue in constructorfabric/insight — triage against existing issues, gather evidence, collect what the reproduction produced, draft a report that reads in under a minute, confirm, create, and verify the metadata landed. Prefer this over the general `file-bug` skill for anything in the Insight product — dashboards, metrics, connectors, dbt, ClickHouse, identity, the Helm install — since it carries the medallion evidence walk, the reproduction-data discipline and the live board IDs; the general skill is the router, and it owns a Constructor *platform* defect that belongs in YouTrack. It reports OBSERVATIONS ONLY — no investigation, no root-cause analysis, no naming the file or layer to fix; that is the assignee's job. Use whenever the user asks to file/report/raise/log a bug, ticket, defect or issue, and trigger PROACTIVELY once an investigation has converged on 'this is broken and should be recorded' — don't wait for the words 'file a bug'. Also fires on 'log this', 'report it', 'this is broken, make a ticket', 'turn this into an issue', 'we should file two bugs for X and Y'. The repo is PUBLIC, so the default flow is draft → confirm → create and the body must be scrubbed of internal detail."
 disable-model-invocation: false
 user-invocable: true
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep, Skill, Agent, AskUserQuestion
@@ -61,6 +61,10 @@ Search more than once with different vocabulary — the metric key, the field na
 
 Collect first, write second. The evidence must let someone else reproduce this.
 
+**Two facts belong in every report, whatever the bug's kind.** The version you reproduced on, and how many attempts out of how many reproduced it.
+
+On a Kubernetes stand the release is the umbrella `insight` chart, so `helm list -n <namespace>` prints both the chart version and the appVersion — record both. A chart version can pin an appVersion older than the code you believe you are testing, and that gap is how a fix gets declared verified against a build that never contained it. On the compose stack the version is the image tag the containers are running. Then run the reproduction again and count: `10/10` is deterministic, `2/10` is intermittent, and the two are triaged differently and proven fixed differently. Report the count you actually ran — one successful attempt is `1/1`, never `10/10`.
+
 **Artifacts do not go in this repo.** Nothing in this tree is gitignored for scratch output — `scratch/`, `tmp/`, `artifacts/` are merely untracked, so a screenshot or a body file left behind surfaces in someone's `git status` and rides along on the next `git add -A`. Write evidence and the issue body to the session scratchpad directory your environment names, or to a fresh `mktemp -d`; that is what the `--body-file` path below assumes. (`../insight-workspace/scratch/` also works when that checkout sits alongside this one.)
 
 - **Data / metric bugs** — run the same question at all three layers and record all three answers, even the ones that look normal. A reader who sees rows at bronze and silver but not at gold learns more from those three counts than from any sentence you could write about them. Empty **bronze** is the one case that ends the report: nothing was synced or seeded, so there is no product defect to file.
@@ -86,12 +90,16 @@ Split deliberately when a finding has two halves. Prove the volume behaviour whe
 - **Priority is the Insight #40 project *field*, not a label.** Never add `priority:*`. Options: `Blocker` (blocks the next installable release), `High` (meaningful demo features), `Medium` (default). Suggest a level and confirm it.
 - **Don't label.** Component, team, release and planning labels are applied during grooming by the people who own that call, and a wrong one routes the bug to the wrong team. Describe the symptom; the owning team is identified during grooming.
 
-## Body template — four headings
+## Body template
 
 ```markdown
 ## Summary
 <ONE sentence: what is broken in product terms, and its consequence. Nothing else — no repro
 detail, no history, no scope. A reader triaging a list often reads only this line.>
+
+**Version:** <what the instance reports, e.g. `0.5.289` (appVersion `0.5.261`) — or `unknown` + what you checked>
+**Reproduction rate:** <n/m, e.g. `10/10`>
+**State:** <the state a reader must recreate, e.g. "a freshly migrated database". Never a hostname.>
 
 ## Steps to Reproduce
 1. <UI path, or the fastest isolated check — one query or command>
@@ -104,22 +112,24 @@ detail, no history, no scope. A reader triaging a list often reads only this lin
 
 <A runnable proof, or a matched comparison with one variable changed. If a field being *absent*
 (bug) versus *present-but-null* (no data) is the distinguishing signal, say so — that one line
-stops a reviewer waving off a real defect as missing data. If it only reproduces from a given
-state, name the STATE ("a freshly migrated database"), never the environment.>
+stops a reviewer waving off a real defect as missing data.>
 
 ## Additional information
 <The data the reproduction produced, and nothing you inferred from it. Whatever you ran and what
 it returned: counts at each layer, the API status and response body, the log or dbt error, the
-same check on a state where it works. Label each one with what produced it. If a value looks
-wrong, give the value you saw and the value the spec or the UI led you to expect — not a theory
-about where it went wrong.>
+same check on a state where it works, whether this used to work. Label each one with what
+produced it. If the rate is below n/n, what differed between the attempts that reproduced and the
+ones that did not. If a value looks wrong, give the value you saw and the value the spec or the UI
+led you to expect — not a theory about where it went wrong.>
 
 ## Notes        ← optional, one line (e.g. `related to #N`)
 ```
 
 **No `## Root Cause` heading.** It used to be in this template, and removing it is the point of the observations-only rule: a cause written by someone who reproduced the bug but did not write the code reads as authoritative, and the assignee spends their first hour ruling it out. What you observed goes under Additional information; what it means is theirs to decide.
 
-**No `## Impact` heading.** It restates the Summary in longer words. Affected instances or states go next to the evidence in Steps; a knock-on effect is one line in Notes. Wanting the heading back means the Summary sentence is not carrying its weight.
+**No `## Impact` heading.** It restates the Summary in longer words. A knock-on effect is one line in Notes. Wanting the heading back means the Summary sentence is not carrying its weight.
+
+**No `## Environment` heading either** — the three labelled lines under Summary are the whole of what the report says about where it ran. They are facts a reader acts on: which build to check out, whether to expect a race, what state to recreate. A prose section around them turns those three lines back into paragraphs that restate the Summary.
 
 Additive when it sharpens the report: an **Examples** table (observed → expected) for a rule, threshold, sign or mapping bug. No fix checklist and no code links — a list of sites to change is a diagnosis, and naming one wrong is worse than naming none.
 
@@ -155,12 +165,16 @@ The check that catches this: read the Summary as if you had not spent the last h
 
 ## Worked example
 
-A real filed bug, condensed. Read it for calibration on how little text a complete report needs.
+A real filed bug, condensed, with the fact block filled in to show the shape. Read it for calibration on how little text a complete report needs.
 
 > **Adding a threshold to a metric makes its threshold list fail permanently**
 >
 > ## Summary
 > Once a metric has its first threshold, every read of that metric's thresholds fails, so thresholds can no longer be viewed, edited or removed.
+>
+> **Version:** 0.5.289 (appVersion 0.5.261)
+> **Reproduction rate:** 5/5
+> **State:** a freshly migrated database with no other data.
 >
 > ## Steps to Reproduce
 > 1. Create a metric, then `POST /v1/metrics/{id}/thresholds` with any valid body.
@@ -169,8 +183,6 @@ A real filed bug, condensed. Read it for calibration on how little text a comple
 >
 > **Expected:** 201 with the created threshold, then 200 with the list.
 > **Actual:** 500 on the create and on every later read of that metric's thresholds.
->
-> Reproduces on a freshly migrated database with no other data.
 >
 > ## Additional information
 > - Every later read of that metric's thresholds returns the same 500: the create's read-back, the list, an update and a delete.

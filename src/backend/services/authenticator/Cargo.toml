@@ -13,6 +13,9 @@ workspace = true
 
 [dependencies]
 authenticator-sdk = { workspace = true }
+insight-http-metrics = { workspace = true }
+insight-log-context = { workspace = true }
+insight-openapi = { workspace = true }
 
 # ToolKit host runtime. The authenticator runs as a gears-rust host: routes are
 # declared via `OperationBuilder` and served by the `api-gateway` system gear
@@ -42,7 +45,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 # OpenAPI schemas for request/response DTOs; version tracks the `utoipa` the
 # toolkit's `OperationBuilder` is compiled against (see analytics).
-utoipa = { version = "5.5", features = ["chrono", "uuid"] }
+utoipa = { workspace = true, features = ["chrono", "uuid"] }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 tokio = { workspace = true }
@@ -52,7 +55,7 @@ futures = { workspace = true }
 uuid = { workspace = true, features = ["v5"] }
 chrono = { workspace = true }
 tracing = { workspace = true }
-opentelemetry = "0.32"
+opentelemetry = { workspace = true }
 # Audit events to the platform Redpanda topic (Kafka-compatible rdkafka API
 # only — backend PRD migration constraint). cmake-build vendors librdkafka.
 rdkafka = { version = "0.39", features = ["cmake-build", "tokio"] }
@@ -79,6 +82,7 @@ base64 = "0.23"
 rand = "0.10"
 
 [dev-dependencies]
+insight-log-context = { workspace = true, features = ["test-support"] }
 tower = { version = "0.5", features = ["util"] }
 # Parse the dev config in a test so a YAML mistake in the service-token registry
 # fails fast, not only at container boot.

@@ -32,6 +32,13 @@ export interface DimRow {
 }
 
 /** One dimensioned timeseries entry scoped to the tenant entity. */
+export {
+  dayHourMatrix,
+  HOUR_BLOCKS,
+  WEEKDAY_LABELS,
+  type DayHourMatrix,
+} from "@/lib/portal/day-hour-matrix";
+
 export interface DimSeries {
   dimensions: MetricDimension[];
   label?: string;
@@ -364,45 +371,6 @@ export function smallMultiples(
     ...multiples.flatMap((m) => m.points.map((p) => p.value))
   );
   return { multiples, max };
-}
-
-export const HOUR_BLOCKS = Array.from({ length: 12 }, (_, i) =>
-  String(i * 2).padStart(2, "0")
-);
-
-export const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
-export interface DayHourMatrix {
-  /** cells[weekday (Mon=0)][hour-block index] — summed values. */
-  cells: number[][];
-  max: number;
-  total: number;
-}
-
-/**
- * Day-of-week × two-hour-block magnitudes from a DAY-bucketed series
- * dimensioned by hour_block. Weekday from the bucket date, UTC — the same
- * clock the hour_block dimension is derived in.
- */
-export function dayHourMatrix(series: readonly DimSeries[]): DayHourMatrix {
-  const cells = WEEKDAY_LABELS.map(() => HOUR_BLOCKS.map(() => 0));
-  let max = 0;
-  let total = 0;
-  for (const entry of series) {
-    const block = dimValue(entry, "hour_block");
-    const blockIndex = block == null ? -1 : HOUR_BLOCKS.indexOf(block);
-    if (blockIndex < 0) continue;
-    for (const point of entry.points) {
-      if (point.value == null || point.value <= 0) continue;
-      const day = new Date(`${point.bucket_start}T00:00:00Z`);
-      if (Number.isNaN(day.getTime())) continue;
-      const weekday = (day.getUTCDay() + 6) % 7;
-      cells[weekday][blockIndex] += point.value;
-      max = Math.max(max, cells[weekday][blockIndex]);
-      total += point.value;
-    }
-  }
-  return { cells, max, total };
 }
 
 export interface HourColumn {

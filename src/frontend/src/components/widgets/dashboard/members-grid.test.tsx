@@ -144,6 +144,61 @@ describe("MembersGrid", () => {
     expect(screen.queryByText(/near the median/)).not.toBeInTheDocument();
   });
 
+  it("cycles every column through ascending, descending, and input order", async () => {
+    const user = userEvent.setup();
+    render(
+      <MembersGrid
+        members={[MEMBERS[1]!, MEMBERS[2]!, MEMBERS[0]!]}
+        metricKeys={["ai.active_days"]}
+        byKey={byKeyFor(
+          metric("ai.active_days", [
+            { id: "ann@x.com", value: 8 },
+            { id: "bo@x.com", value: 20 },
+            { id: "cy@x.com", value: 2 },
+          ]),
+        )}
+        defaultSort="input"
+        caption="Members grid"
+      />,
+    );
+    const table = screen.getByRole("table", { name: "Members grid" });
+    const names = () =>
+      within(table)
+        .getAllByRole("rowheader")
+        .map((header) => header.textContent);
+    const personHeader = within(table).getAllByRole("columnheader")[0]!;
+    const personSort = within(personHeader).getByRole("button");
+    const metricHeader = within(table).getAllByRole("columnheader")[1]!;
+    const metricSort = within(metricHeader).getByRole("button");
+
+    expect(names()).toEqual(["Bo", "Cy", "Ann"]);
+    expect(personHeader).not.toHaveAttribute("aria-sort");
+
+    await user.click(personSort);
+    expect(names()).toEqual(["Ann", "Bo", "Cy"]);
+    expect(personHeader).toHaveAttribute("aria-sort", "ascending");
+
+    await user.click(personSort);
+    expect(names()).toEqual(["Cy", "Bo", "Ann"]);
+    expect(personHeader).toHaveAttribute("aria-sort", "descending");
+
+    await user.click(personSort);
+    expect(names()).toEqual(["Bo", "Cy", "Ann"]);
+    expect(personHeader).not.toHaveAttribute("aria-sort");
+
+    await user.click(metricSort);
+    expect(names()).toEqual(["Cy", "Ann", "Bo"]);
+    expect(metricHeader).toHaveAttribute("aria-sort", "ascending");
+
+    await user.click(metricSort);
+    expect(names()).toEqual(["Bo", "Ann", "Cy"]);
+    expect(metricHeader).toHaveAttribute("aria-sort", "descending");
+
+    await user.click(metricSort);
+    expect(names()).toEqual(["Bo", "Cy", "Ann"]);
+    expect(metricHeader).not.toHaveAttribute("aria-sort");
+  });
+
   it("skips metric keys absent from the results", () => {
     render(
       <MembersGrid
@@ -159,7 +214,7 @@ describe("MembersGrid", () => {
     expect(screen.getAllByRole("columnheader")).toHaveLength(2);
   });
 
-  it("sorts best-first on column click, flips on the second click, missing always last", async () => {
+  it("sorts ascending, descending, then resets while keeping missing values last", async () => {
     const user = userEvent.setup();
     render(
       <MembersGrid
@@ -184,18 +239,24 @@ describe("MembersGrid", () => {
       name: "Active AI days — sort by this column",
     });
     await user.click(sortButton);
-    // higher_is_better best-first: Bo (20), Ann (8); unmeasured Cy last.
-    expect(names()).toEqual(["Bo", "Ann", "Cy"]);
-    expect(
-      screen.getAllByRole("columnheader")[1],
-    ).toHaveAttribute("aria-sort", "descending");
+    expect(names()).toEqual(["Ann", "Bo", "Cy"]);
+    expect(screen.getAllByRole("columnheader")[1]).toHaveAttribute(
+      "aria-sort",
+      "ascending",
+    );
 
     await user.click(sortButton);
-    // Flipped: worst-first, but missing still sorts last.
+    expect(names()).toEqual(["Bo", "Ann", "Cy"]);
+    expect(screen.getAllByRole("columnheader")[1]).toHaveAttribute(
+      "aria-sort",
+      "descending",
+    );
+
+    await user.click(sortButton);
     expect(names()).toEqual(["Ann", "Bo", "Cy"]);
-    expect(
-      screen.getAllByRole("columnheader")[1],
-    ).toHaveAttribute("aria-sort", "ascending");
+    expect(screen.getAllByRole("columnheader")[1]).not.toHaveAttribute(
+      "aria-sort",
+    );
   });
 
   it("renders — for unobserved members and neutral for suppressed cohorts", () => {

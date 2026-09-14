@@ -8,7 +8,8 @@ PT14H, global substream cursor) and nextPageToken pagination.
 
 Coverage matrix rows: substream_partition, incremental_state (state emission +
 resume-read request filtering), pagination_multi_page (CursorPagination),
-tenant_source_stamping (unique_key from issue key), transformations (cursor
+tenant_source_stamping (unique_key from the immutable issue id),
+transformations (cursor
 hoist). schema_conformance is explicitly SKIPPED — the rig found a real
 manifest<->schema type drift (see the skip reason).
 
@@ -23,15 +24,7 @@ import json
 import freezegun
 import pytest
 from config import JIRA_URL, JiraConfigBuilder
-
-from connector_tests import (
-    ANY_QUERY_PARAMS,
-    HttpMocker,
-    HttpRequest,
-    HttpResponse,
-    load_fixture,
-    read_stream,
-)
+from connector_tests import ANY_QUERY_PARAMS, HttpMocker, HttpRequest, HttpResponse, load_fixture, read_stream
 
 _STREAM = "jira_issue_keys"
 _CONNECTOR = "task-tracking/jira"
@@ -45,13 +38,7 @@ _WINDOW_END = "2026-07-01 00:00"
 
 def _projects_response(keys: list[str]) -> HttpResponse:
     values = [
-        load_fixture(
-            __file__,
-            "discovery_project.json",
-            id=str(10000 + i),
-            key=key,
-            name=f"Project {key}",
-        )
+        load_fixture(__file__, "discovery_project.json", id=str(10000 + i), key=key, name=f"Project {key}")
         for i, key in enumerate(keys)
     ]
     return HttpResponse(body=json.dumps({"values": values, "isLast": True}), status_code=200)
@@ -59,10 +46,7 @@ def _projects_response(keys: list[str]) -> HttpResponse:
 
 def _jql_params(project: str, start: str, end: str, page_token: str | None = None) -> dict:
     params = {
-        "jql": (
-            f'project = "{project}" AND updated >= "{start}" '
-            f'AND updated <= "{end}" ORDER BY updated ASC'
-        ),
+        "jql": (f'project = "{project}" AND updated >= "{start}" AND updated <= "{end}" ORDER BY updated ASC'),
         "fields": "updated",
         "maxResults": "100",
     }
@@ -89,8 +73,7 @@ def test_substream_partition_per_project(http_mocker: HttpMocker) -> None:
     request would fail the test (no network fallthrough)."""
     config = JiraConfigBuilder().build()
     http_mocker.get(
-        HttpRequest(_PROJECT_SEARCH_URL, query_params=ANY_QUERY_PARAMS),
-        _projects_response(["PROJ1", "PROJ2"]),
+        HttpRequest(_PROJECT_SEARCH_URL, query_params=ANY_QUERY_PARAMS), _projects_response(["PROJ1", "PROJ2"])
     )
     http_mocker.get(
         HttpRequest(_JQL_URL, query_params=_jql_params("PROJ1", _WINDOW_START, _WINDOW_END)),
@@ -115,10 +98,7 @@ def test_cursor_hoist_and_stamping(http_mocker: HttpMocker) -> None:
     (otherwise the cursor never observes values), and identity stamping uses
     the issue key."""
     config = JiraConfigBuilder().build()
-    http_mocker.get(
-        HttpRequest(_PROJECT_SEARCH_URL, query_params=ANY_QUERY_PARAMS),
-        _projects_response(["PROJ1"]),
-    )
+    http_mocker.get(HttpRequest(_PROJECT_SEARCH_URL, query_params=ANY_QUERY_PARAMS), _projects_response(["PROJ1"]))
     http_mocker.get(
         HttpRequest(_JQL_URL, query_params=ANY_QUERY_PARAMS),
         _issues_response([("10001", "PROJ1-1", "2026-06-15T10:00:00.000+0000")]),
@@ -131,9 +111,8 @@ def test_cursor_hoist_and_stamping(http_mocker: HttpMocker) -> None:
     # CDK interpolation literal-evals the rendered value: numeric-string id -> int.
     assert rec["jira_id"] == 10001
     assert rec["id_readable"] == "PROJ1-1"
-    assert rec["unique_key"] == (
-        f"{config['insight_tenant_id']}-{config['insight_source_id']}-PROJ1-1"
-    )
+    # The immutable id, not the renameable key — see test_jira_issue.
+    assert rec["unique_key"] == (f"{config['insight_tenant_id']}-{config['insight_source_id']}-10001")
 
 
 @pytest.mark.skip(
@@ -152,21 +131,13 @@ def test_pagination_next_page_token(http_mocker: HttpMocker) -> None:
     """CursorPagination: a nextPageToken in the response drives a second
     request carrying it; a response without the token stops."""
     config = JiraConfigBuilder().build()
-    http_mocker.get(
-        HttpRequest(_PROJECT_SEARCH_URL, query_params=ANY_QUERY_PARAMS),
-        _projects_response(["PROJ1"]),
-    )
+    http_mocker.get(HttpRequest(_PROJECT_SEARCH_URL, query_params=ANY_QUERY_PARAMS), _projects_response(["PROJ1"]))
     http_mocker.get(
         HttpRequest(_JQL_URL, query_params=_jql_params("PROJ1", _WINDOW_START, _WINDOW_END)),
-        _issues_response(
-            [("10001", "PROJ1-1", "2026-06-10T10:00:00.000+0000")], next_token="tok-2"
-        ),
+        _issues_response([("10001", "PROJ1-1", "2026-06-10T10:00:00.000+0000")], next_token="tok-2"),
     )
     http_mocker.get(
-        HttpRequest(
-            _JQL_URL,
-            query_params=_jql_params("PROJ1", _WINDOW_START, _WINDOW_END, page_token="tok-2"),
-        ),
+        HttpRequest(_JQL_URL, query_params=_jql_params("PROJ1", _WINDOW_START, _WINDOW_END, page_token="tok-2")),
         _issues_response([("10002", "PROJ1-2", "2026-06-12T10:00:00.000+0000")]),
     )
 
@@ -182,10 +153,7 @@ def test_incremental_state_emitted_and_resume_filters(http_mocker: HttpMocker) -
     read given that state must issue a JQL filtered from the cursor minus the
     PT14H lookback window — asserted by the exact request matcher."""
     config = JiraConfigBuilder().build()
-    http_mocker.get(
-        HttpRequest(_PROJECT_SEARCH_URL, query_params=ANY_QUERY_PARAMS),
-        _projects_response(["PROJ1"]),
-    )
+    http_mocker.get(HttpRequest(_PROJECT_SEARCH_URL, query_params=ANY_QUERY_PARAMS), _projects_response(["PROJ1"]))
     http_mocker.get(
         HttpRequest(_JQL_URL, query_params=_jql_params("PROJ1", _WINDOW_START, _WINDOW_END)),
         _issues_response([("10001", "PROJ1-1", "2026-06-15T10:00:00.000+0000")]),
@@ -201,14 +169,10 @@ def test_incremental_state_emitted_and_resume_filters(http_mocker: HttpMocker) -
     resume_mocker = HttpMocker()
     with resume_mocker:
         resume_mocker.get(
-            HttpRequest(_PROJECT_SEARCH_URL, query_params=ANY_QUERY_PARAMS),
-            _projects_response(["PROJ1"]),
+            HttpRequest(_PROJECT_SEARCH_URL, query_params=ANY_QUERY_PARAMS), _projects_response(["PROJ1"])
         )
         resume_mocker.get(
-            HttpRequest(
-                _JQL_URL,
-                query_params=_jql_params("PROJ1", "2026-06-14 20:00", _WINDOW_END),
-            ),
+            HttpRequest(_JQL_URL, query_params=_jql_params("PROJ1", "2026-06-14 20:00", _WINDOW_END)),
             _issues_response([]),
         )
 

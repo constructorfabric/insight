@@ -175,6 +175,12 @@
   html {
     @apply font-sans;
   }
+  /* Tailwind 4's preflight leaves a button at the browser's `default` arrow,
+     so a rail item that is a button read as inert beside one that is a link. */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
 }
 
 /* The kit's CSS sits in this layer too, so these outrank it on specificity

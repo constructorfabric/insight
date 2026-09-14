@@ -1,3 +1,5 @@
+use crate::infra::metrics::ErrorClass;
+
 use super::dto::{MetricResultViewDto, MetricViewErrorCode};
 
 /// One view's failed computation: a stable code plus the underlying
@@ -10,42 +12,18 @@ pub struct ViewFailure {
     pub detail: String,
 }
 
-// The resource-limit signatures ClickHouse reports when a query is refused
-// rather than broken: memory (241), rows/bytes-to-read (158/307), execution
-// time (159), simultaneous queries (202), quota (201). Mirrors the drilldown
-// classifier's list.
-const RESOURCE_LIMIT_MARKERS: [&str; 9] = [
-    "MEMORY_LIMIT_EXCEEDED",
-    "TOO_MANY_ROWS_OR_BYTES",
-    "TOO_MANY_SIMULTANEOUS_QUERIES",
-    "TIMEOUT_EXCEEDED",
-    "QUOTA_EXCEEDED",
-    "Code: 241.",
-    "Code: 159.",
-    "Code: 202.",
-    "Code: 201.",
-];
-
 impl ViewFailure {
     /// Classify a ClickHouse error message (submit or fetch failure).
     pub fn from_query_error(message: &str) -> Self {
-        if message.contains("UNKNOWN_TABLE") || message.contains("Code: 60.") {
-            return Self {
-                code: MetricViewErrorCode::SourceRelationMissing,
-                detail: message.to_owned(),
-            };
-        }
-        if RESOURCE_LIMIT_MARKERS
-            .iter()
-            .any(|marker| message.contains(marker))
-        {
-            return Self {
-                code: MetricViewErrorCode::ResourceExhausted,
-                detail: message.to_owned(),
-            };
-        }
+        let code = match ErrorClass::classify(message) {
+            ErrorClass::RelationMissing => MetricViewErrorCode::SourceRelationMissing,
+            ErrorClass::ResourceExhausted => MetricViewErrorCode::ResourceExhausted,
+            ErrorClass::Timeout => MetricViewErrorCode::QueryTimeout,
+            ErrorClass::ParseFailed => MetricViewErrorCode::ResultParseFailed,
+            ErrorClass::QueryFailed => MetricViewErrorCode::QueryFailed,
+        };
         Self {
-            code: MetricViewErrorCode::QueryFailed,
+            code,
             detail: message.to_owned(),
         }
     }

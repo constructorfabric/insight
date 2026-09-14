@@ -11,6 +11,7 @@ brew "kubeseal"       # Bitnami sealed-secrets client
 brew "skopeo"         # OCI registry tag listing (optional, for chart-version automation)
 brew "yq"             # YAML editing (image.tag bumps, values reads)
 brew "jq"             # JSON post-processing
+brew "gettext"        # envsubst — argo RBAC templating (make system-argo)
 brew "gnu-getopt"     # GNU getopt for portable option parsing in scripts (optional)
 
 # Password-manager CLI: integration-specific. `make seal-secret` shells out

@@ -1,11 +1,11 @@
 import { useEffect, useRef, type CSSProperties } from "react";
+import { Outlet } from "@tanstack/react-router";
 
 import { MockBanner } from "@/components/mock-banner";
 import { ViewAsBanner } from "@/components/view-as-banner";
 import { ContextPane } from "@/components/portal/context-pane";
 import { LensRail } from "@/components/portal/lens-rail";
 import { PortalTopBar } from "@/components/portal/portal-topbar";
-import { ZoneContent } from "@/components/portal/zone-content";
 import {
   SidebarInset,
   SidebarProvider,
@@ -93,7 +93,7 @@ export function PortalLayout() {
             they were not looking at their own org, and no exit. */}
         <ViewAsBanner />
         <PortalTopBar />
-        <ZoneContent />
+        <Outlet />
       </SidebarInset>
     </SidebarProvider>
   );

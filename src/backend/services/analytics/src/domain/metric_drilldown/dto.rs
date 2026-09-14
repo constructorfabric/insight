@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::domain::metric_definitions::definition::{AliasCollapse, MetricInputRole};
 
 use super::cursor::CursorKey;
+use super::sort::MetricDrilldownSort;
 use crate::domain::metric_definitions::{
     EvidenceGranularity, EvidencePresentation, EvidenceRelation, MetricDefinition,
 };
@@ -22,6 +23,7 @@ pub(super) const MAX_DISPLAY_DIMENSIONS: usize = 10;
 pub(super) const MAX_ENTITY_PERSONS: usize = 1_000;
 pub(super) const MAX_FILTER_VALUES: usize = 100;
 pub(super) const MAX_FILTER_VALUE_BYTES: usize = 512;
+pub(super) const MAX_SEARCH_BYTES: usize = 200;
 pub const MAX_EXPORT_ROWS: usize = 50_000;
 pub const EVIDENCE_QUERY_TIMEOUT_SECS: u64 = 45;
 pub const EVIDENCE_QUERY_MEMORY_BYTES: usize = 256 * 1024 * 1024;
@@ -94,6 +96,10 @@ pub struct MetricDrilldownRequest {
     pub filters: Vec<MetricDrilldownFilter>,
     #[serde(default)]
     pub display_dimensions: Vec<String>,
+    #[serde(default)]
+    pub sort: Option<MetricDrilldownSort>,
+    #[serde(default)]
+    pub search: Option<String>,
     pub limit: Option<usize>,
     pub cursor: Option<String>,
 }
@@ -114,6 +120,10 @@ pub struct MetricDrilldownExportRequest {
     pub filters: Vec<MetricDrilldownFilter>,
     #[serde(default)]
     pub display_dimensions: Vec<String>,
+    #[serde(default)]
+    pub sort: Option<MetricDrilldownSort>,
+    #[serde(default)]
+    pub search: Option<String>,
     pub format: MetricDrilldownExportFormat,
 }
 
@@ -124,6 +134,10 @@ pub struct MetricDrilldownSelection {
     pub period: MetricDrilldownPeriod,
     pub filters: Vec<MetricDrilldownFilter>,
     pub display_dimensions: Vec<String>,
+    /// Always the effective order, never the caller's omission — a client that
+    /// finds this field missing is talking to a server that cannot sort at all.
+    pub sort: MetricDrilldownSort,
+    pub search: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
@@ -139,7 +153,14 @@ pub struct MetricDrilldownColumn {
     pub key: String,
     pub label: String,
     pub r#type: MetricDrilldownColumnType,
+    /// Whether the query can order by this column. A column the evidence row
+    /// does not carry in a form SQL can compare is shown, not sorted.
+    pub sortable: bool,
 }
+
+/// Names for the people a roster read resolved, keyed by person id. Empty for
+/// every selection that does not present the `person` column.
+pub type PersonNames = BTreeMap<String, String>;
 
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct MetricDrilldownRow {
@@ -218,6 +239,10 @@ pub struct ValidatedMetricDrilldown {
     pub to: NaiveDate,
     pub limit: usize,
     pub cursor: Option<CursorKey>,
+    /// People whose name the search matches. The reader searches the `Who`
+    /// column by name; the query holds an id, so the handler reads the names
+    /// it already resolved back into ids the predicate can compare.
+    pub search_person_ids: Vec<String>,
     pub plan: EvidencePlan,
     pub snapshot_id: String,
     pub fingerprint: String,
@@ -244,6 +269,13 @@ pub struct EvidenceInput {
 #[derive(Debug, Clone, Deserialize)]
 pub struct EvidenceQueryRow {
     pub role: String,
+    /// The person the identity map resolves this row to, empty unless the
+    /// selection reads a roster and the column is presented.
+    pub person_id: String,
+    /// Ordering key of the row, in the two parts the cursor replays: whether
+    /// the sorted cell is blank, and the cell itself as text.
+    pub sort_flag: u8,
+    pub sort_value: String,
     /// Source identity the row was recorded under; closes the ordering key when
     /// two of a person's identities tie on every other column.
     pub entity_id: String,

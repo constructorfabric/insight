@@ -95,6 +95,8 @@ fn build_state_with_ch(
         identity,
         anthropic: dead_anthropic(),
         ai_calls: Arc::new(tokio::sync::Semaphore::new(1)),
+        report_generations: Arc::new(tokio::sync::Semaphore::new(1)),
+        report_artifacts: Arc::new(tokio::sync::Semaphore::new(1)),
         config: GearConfig::default(),
         external_links: crate::domain::external_links::ExternalSourceRegistry::default(),
     }
@@ -151,10 +153,8 @@ fn app_with_identity_and_ch(
 ) -> Router {
     let openapi = OpenApiRegistryImpl::new();
     let state = Arc::new(build_state_with_ch(db, identity, ch));
-    let api = super::build_operations(Router::new(), &openapi)
+    super::register_routes(Router::new(), &openapi, state)
         .layer(from_fn_with_state(tenant, inject_host_context))
-        .layer(axum::Extension(state));
-    Router::new().merge(api)
 }
 
 /// Loopback identity serving `POST /v1/visible-persons` — answers with the
@@ -1061,13 +1061,13 @@ fn app_with_usage_collection_off(db: DatabaseConnection, tenant: Uuid) -> Router
         identity,
         anthropic: dead_anthropic(),
         ai_calls: Arc::new(tokio::sync::Semaphore::new(1)),
+        report_generations: Arc::new(tokio::sync::Semaphore::new(1)),
+        report_artifacts: Arc::new(tokio::sync::Semaphore::new(1)),
         config,
         external_links: crate::domain::external_links::ExternalSourceRegistry::default(),
     });
-    let api = super::build_operations(Router::new(), &openapi)
+    super::register_routes(Router::new(), &openapi, state)
         .layer(from_fn_with_state(tenant, inject_host_context))
-        .layer(axum::Extension(state));
-    Router::new().merge(api)
 }
 
 /// One SDK v2 beacon carrying a single page view.

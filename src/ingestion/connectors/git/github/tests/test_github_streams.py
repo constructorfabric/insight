@@ -16,10 +16,12 @@ transformations (None-guard).
 from __future__ import annotations
 
 import json
+from datetime import datetime
+from urllib.parse import parse_qs, urlparse
 
 import freezegun
 import pytest
-from airbyte_cdk.models import SyncMode
+from airbyte_cdk.models import FailureType, SyncMode
 from config import GH_URL, PROXY_URL, GithubConfigBuilder
 from connector_tests import ANY_QUERY_PARAMS, HttpMocker, HttpRequest, HttpResponse, assert_records_conform, read_stream
 from connector_tests.source import load_manifest
@@ -43,6 +45,10 @@ def _graphql_body(stream_name: str, variables: dict, cursor: str | None = None) 
     return body
 
 
+def _instant(stamp: str) -> datetime:
+    return datetime.strptime(stamp.replace("Z", "+00:00"), "%Y-%m-%dT%H:%M:%S%z")
+
+
 def _no_literal_none(records) -> None:
     for r in records:
         for key, value in r.record.data.items():
@@ -60,6 +66,7 @@ def _repo() -> dict:
         "private": True,
         "clone_url": "https://github.com/acme/app.git",
         "pushed_at": "2026-06-20T10:00:00Z",
+        "size": 716800,
         "created_at": "2020-01-01T00:00:00Z",
         "updated_at": "2026-06-20T10:00:00Z",
     }
@@ -141,36 +148,17 @@ def test_proxy_429_then_success(http_mocker: HttpMocker) -> None:
         HttpRequest(f"{PROXY_URL}/v1/commits", query_params=ANY_QUERY_PARAMS),
         [
             HttpResponse(body="", status_code=429, headers={"Retry-After": "0"}),
-            HttpResponse(
-                body=json.dumps(
-                    {
-                        "items": [
-                            {
-                                "sha": "d" * 40,
-                                "message": "m",
-                                "committed_date": "2026-06-15T10:00:00Z",
-                                "authored_date": "2026-06-15T10:00:00Z",
-                                "author_name": "Dev",
-                                "author_email": "dev@example.com",
-                                "committer_name": "Dev",
-                                "committer_email": "dev@example.com",
-                                "parent_hashes": [],
-                                "is_merge": False,
-                                "is_in_default_branch": True,
-                                "patch_id": None,
-                            }
-                        ],
-                        "next_page_token": None,
-                    }
-                ),
-                status_code=200,
-            ),
+            _commits_page(_commit_row("d" * 40, "2026-06-15T10:00:00Z")),
         ],
     )
 
     output = read_stream(_CONNECTOR, "commits", config)
 
     assert not output.errors
+    hints = {r.headers.get("X-Repo-Size-Hint") for r in http_mocker._mocker.request_history if "/v1/commits" in r.url}
+    assert hints == {"734003200"}, (
+        f"every proxy call carries the repository's size in bytes (GitHub reports KiB): {hints}"
+    )
     assert len(output.records) == 1
     _no_literal_none(output.records)
 
@@ -241,12 +229,13 @@ def test_pull_requests_trim_body_and_hoist_author(http_mocker: HttpMocker) -> No
 
 
 @freezegun.freeze_time(_FROZEN)
-def test_data_feed_stops_at_start_date_but_boundary_page_tail_emits(http_mocker: HttpMocker) -> None:
+def test_data_feed_stops_at_start_date_and_drops_the_boundary_page_tail(http_mocker: HttpMocker) -> None:
     """First-sync data-feed behavior, pinned: pagination stops at the first
     record older than start_date (the Link-next page is never mocked, so a
-    fetch would fail the test) — but the boundary page's old tail still
-    emits. A record_filter must never be added to "fix" the tail: the stop
-    condition sees post-filter records, so it would unbound pagination."""
+    fetch would fail the test), and the boundary page's older tail is
+    dropped by the cursor's own window check. No record_filter is needed
+    for that, and none must be added: the stop condition sees post-filter
+    records, so a filter would unbound pagination."""
     config = GithubConfigBuilder().build()
     http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
 
@@ -279,8 +268,7 @@ def test_data_feed_stops_at_start_date_but_boundary_page_tail_emits(http_mocker:
 
     assert not output.errors, "page 2 must never be fetched"
     nums = [r.record.data["number"] for r in output.records]
-    assert 31 in nums
-    assert 30 in nums, "boundary-page tail is expected to emit (accepted, documented)"
+    assert nums == [31], f"the in-window record emits, the older tail does not: {nums}"
 
 
 @freezegun.freeze_time(_FROZEN)
@@ -932,14 +920,51 @@ def _authors_page(*rows: dict) -> HttpResponse:
     return HttpResponse(body=json.dumps({"items": list(rows), "next_page_token": None}), status_code=200)
 
 
-def _author(email: str, sha: str, name: str = "Dev") -> dict:
+def _author(email: str, sha: str, name: str = "Dev", committed: str = "2026-06-15T10:00:00+00:00") -> dict:
     return {
         "author_email": email,
         "author_name": name,
         "sample_sha": sha,
-        "last_committed_date": "2026-06-15T10:00:00+00:00",
+        "last_committed_date": committed,
         "commit_count": 3,
     }
+
+
+def _commit_row(sha: str, committed: str) -> dict:
+    return {
+        "sha": sha,
+        "message": "m",
+        "committed_date": committed,
+        "authored_date": committed,
+        "author_name": "Dev",
+        "author_email": "dev@example.com",
+        "committer_name": "Dev",
+        "committer_email": "dev@example.com",
+        "parent_hashes": [],
+        "is_merge": False,
+        "is_in_default_branch": True,
+        "patch_id": None,
+    }
+
+
+def _commits_page(*rows: dict) -> HttpResponse:
+    return HttpResponse(body=json.dumps({"items": list(rows), "next_page_token": None}), status_code=200)
+
+
+def _resolved_commit(sha: str, email: str, login: str, account_id: int) -> HttpResponse:
+    return HttpResponse(
+        body=json.dumps(
+            {
+                "sha": sha,
+                "node_id": "C_1",
+                "commit": {"author": {"name": "Dev", "email": email}},
+                "author": {"login": login, "id": account_id, "type": "User"},
+                "committer": {"login": login, "id": account_id, "type": "User"},
+                "parents": [],
+            }
+        ),
+        status_code=200,
+    )
 
 
 @freezegun.freeze_time(_FROZEN)
@@ -955,19 +980,7 @@ def test_commit_authors_resolve_a_proxy_author_to_an_account(http_mocker: HttpMo
     )
     http_mocker.get(
         HttpRequest(f"{GH_URL}/repos/acme/app/commits/{'a' * 40}", query_params=ANY_QUERY_PARAMS),
-        HttpResponse(
-            body=json.dumps(
-                {
-                    "sha": "a" * 40,
-                    "node_id": "C_1",
-                    "commit": {"author": {"name": "Ada", "email": "ada@example.com"}},
-                    "author": {"login": "ada", "id": 4242, "type": "User"},
-                    "committer": {"login": "ada", "id": 4242, "type": "User"},
-                    "parents": [],
-                }
-            ),
-            status_code=200,
-        ),
+        _resolved_commit("a" * 40, "ada@example.com", "ada", 4242),
     )
 
     output = read_stream(_CONNECTOR, "commit_authors", config)
@@ -1015,6 +1028,138 @@ def test_commit_authors_drops_an_email_github_matches_to_nobody(http_mocker: Htt
 
     assert not output.errors
     assert len(output.records) == 0, "an unmatched e-mail claims no account"
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_commit_authors_state_carries_the_authors_since_date(http_mocker: HttpMocker) -> None:
+    """The child carries a cursor so the author list's state persists. Without
+    it every sync re-lists every author since the start date and re-resolves
+    each one against GitHub; with it, the run emits the date the next run
+    lists from."""
+    config = GithubConfigBuilder().build()
+    committed = "2026-06-15T10:00:00+00:00"
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(f"{PROXY_URL}/v1/authors", query_params=ANY_QUERY_PARAMS),
+        _authors_page(_author("ada@example.com", "a" * 40)),
+    )
+    http_mocker.get(
+        HttpRequest(f"{GH_URL}/repos/acme/app/commits/{'a' * 40}", query_params=ANY_QUERY_PARAMS),
+        _resolved_commit("a" * 40, "ada@example.com", "ada", 4242),
+    )
+
+    output = read_stream(_CONNECTOR, "commit_authors", config)
+
+    assert not output.errors
+    assert len(output.records) == 1
+    # The record has no date of its own; it carries the author's last commit
+    # date, which is what the cursor observes.
+    assert output.records[0].record.data["last_committed_date"] == committed
+    assert output.state_messages, "an incremental child must emit state"
+    state = output.state_messages[-1].state.stream.stream_state.__dict__
+    resumed = state["parent_state"]["repository_authors"]["state"]["last_committed_date"]
+    assert _instant(resumed) == _instant(committed), f"parent state must carry the author's date: {state}"
+    assert_records_conform(output.records, _CONNECTOR, "commit_authors", strict=True)
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_a_resumed_commit_authors_sync_lists_from_one_window_before_the_saved_date(http_mocker: HttpMocker) -> None:
+    """The start date is a floor paid once. A run carrying state asks the proxy
+    for the authors who committed since one lookback window before the saved
+    date — a commit can be pushed days after it was made — so the GitHub
+    lookups it spends follow recent activity rather than the whole history."""
+    config = GithubConfigBuilder().build()
+    # Far enough back that one window before the saved date is not clamped to it.
+    config["github_start_date"] = "2026-01-01"
+    one_window_before = "2026-05-15T10:00:00+00:00"
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(f"{PROXY_URL}/v1/authors", query_params=ANY_QUERY_PARAMS),
+        _authors_page(_author("ada@example.com", "a" * 40)),
+    )
+    http_mocker.get(
+        HttpRequest(f"{GH_URL}/repos/acme/app/commits/{'a' * 40}", query_params=ANY_QUERY_PARAMS),
+        _resolved_commit("a" * 40, "ada@example.com", "ada", 4242),
+    )
+    first = read_stream(_CONNECTOR, "commit_authors", config)
+    assert not first.errors
+    state = [m.state for m in first.state_messages][-1:]
+
+    resume_mocker = HttpMocker()
+    with resume_mocker:
+        resume_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+        # The proxy bound is inclusive, so the author on the boundary is listed again.
+        resume_mocker.get(
+            HttpRequest(f"{PROXY_URL}/v1/authors", query_params=ANY_QUERY_PARAMS),
+            _authors_page(_author("ada@example.com", "a" * 40)),
+        )
+        resume_mocker.get(
+            HttpRequest(f"{GH_URL}/repos/acme/app/commits/{'a' * 40}", query_params=ANY_QUERY_PARAMS),
+            _resolved_commit("a" * 40, "ada@example.com", "ada", 4242),
+        )
+
+        second = read_stream(_CONNECTOR, "commit_authors", config, state=state)
+
+        assert not second.errors
+        since = [
+            parse_qs(urlparse(r.url).query)["since"][0]
+            for r in resume_mocker._mocker.request_history
+            if r.url.startswith(f"{PROXY_URL}/v1/authors")
+        ]
+        assert since, "the resumed run must list authors"
+        assert all(_instant(value) == _instant(one_window_before) for value in since), since
+        lookups = [r.url for r in resume_mocker._mocker.request_history if "/commits/" in r.url]
+        assert len(lookups) == 1, f"one author listed, one lookup: {lookups}"
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_a_future_dated_commit_never_becomes_the_commits_cursor(http_mocker: HttpMocker) -> None:
+    """A committer clock set ahead would otherwise become the saved cursor, and
+    every later sync would ask for commits since a date that has not come. The
+    row is dropped at the client and the cursor stays on the newest real date."""
+    config = GithubConfigBuilder().build()
+    sane, future = "2026-06-15T10:00:00+00:00", "2099-01-01T00:00:00+00:00"
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(f"{PROXY_URL}/v1/commits", query_params=ANY_QUERY_PARAMS),
+        _commits_page(_commit_row("a" * 40, sane), _commit_row("b" * 40, future)),
+    )
+
+    output = read_stream(_CONNECTOR, "commits", config)
+
+    assert not output.errors
+    assert [r.record.data["sha"] for r in output.records] == ["a" * 40]
+    saved = json.dumps(output.state_messages[-1].state.stream.stream_state.__dict__)
+    assert "2099" not in saved, f"the future date leaked into state: {saved}"
+    assert "2026-06-15T10:00:00" in saved, f"the newest real date must be the cursor: {saved}"
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_a_future_dated_author_never_becomes_the_authors_since(http_mocker: HttpMocker) -> None:
+    """The author list is what a later sync bounds with `since`; an author whose
+    last commit is dated ahead would push that bound past now and the list
+    would come back empty forever. The author is dropped before the cursor
+    sees them, and the others are still resolved."""
+    config = GithubConfigBuilder().build()
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(f"{PROXY_URL}/v1/authors", query_params=ANY_QUERY_PARAMS),
+        _authors_page(
+            _author("ada@example.com", "a" * 40),
+            _author("zed@example.com", "b" * 40, committed="2099-01-01T00:00:00+00:00"),
+        ),
+    )
+    http_mocker.get(
+        HttpRequest(f"{GH_URL}/repos/acme/app/commits/{'a' * 40}", query_params=ANY_QUERY_PARAMS),
+        _resolved_commit("a" * 40, "ada@example.com", "ada", 4242),
+    )
+
+    output = read_stream(_CONNECTOR, "commit_authors", config)
+
+    assert not output.errors
+    assert [r.record.data["author_email"] for r in output.records] == ["ada@example.com"]
+    saved = json.dumps(output.state_messages[-1].state.stream.stream_state.__dict__)
+    assert "2099" not in saved, f"the future date leaked into state: {saved}"
 
 
 @freezegun.freeze_time(_FROZEN)
@@ -1503,10 +1648,11 @@ def test_project_fields_mark_the_issue_mirrors(http_mocker: HttpMocker) -> None:
 
 
 @freezegun.freeze_time(_FROZEN)
-def test_project_fields_key_carries_the_snapshot_day(http_mocker: HttpMocker) -> None:
-    """GitHub keeps no history of an option rename, so a succession of daily
-    snapshots is the only record of one. Without the day in the key a rename
-    erases the name every earlier status event carries."""
+def test_project_fields_key_is_the_field_so_bronze_holds_the_present(http_mocker: HttpMocker) -> None:
+    """Bronze states what is true now and the ReplacingMergeTree collapses each
+    re-collection onto it. History belongs to the SCD2 snapshot downstream, not
+    to the row key: keying by day would keep every version permanently current
+    (ADR-0001, ADR-0004)."""
     config = GithubConfigBuilder().build()
     _mock_projects_parent(http_mocker, [{"id": "PVT_1", "number": 40}])
     http_mocker.post(
@@ -1539,8 +1685,9 @@ def test_project_fields_key_carries_the_snapshot_day(http_mocker: HttpMocker) ->
 
     assert not output.errors
     key = output.records[0].record.data["unique_key"]
-    assert key.endswith(":project:PVT_1:field:F_est:2026-07-01"), key
-    assert output.records[0].record.data["snapshot_date"] == "2026-07-01"
+    assert key.endswith(":project:PVT_1:field:F_est"), key
+    assert "2026-07-01" not in key, "a collection day in the key would defeat the RMT collapse"
+    assert "snapshot_date" not in output.records[0].record.data
 
 
 @freezegun.freeze_time(_FROZEN)
@@ -1655,11 +1802,10 @@ def test_project_items_drop_a_draft_card_but_keep_an_unreadable_one(http_mocker:
 
 
 @freezegun.freeze_time(_FROZEN)
-def test_project_item_key_carries_the_day_the_card_changed(http_mocker: HttpMocker) -> None:
-    """No API exposes the history of a non-status board field, so the record is
-    a succession of snapshots. The day comes from the card's own updatedAt, so
-    re-reading an unchanged card inside the overlap window rewrites its row
-    instead of adding one."""
+def test_project_item_key_is_the_card_so_a_re_read_collapses(http_mocker: HttpMocker) -> None:
+    """The cursor re-reads a day on every sync by design. That is free only
+    while the key is the card itself: the re-read collapses onto the row
+    already there instead of appending a version."""
     config = GithubConfigBuilder().build()
     _mock_projects_parent(http_mocker, [{"id": "PVT_1", "number": 40}])
     http_mocker.post(
@@ -1689,9 +1835,8 @@ def test_project_item_key_carries_the_day_the_card_changed(http_mocker: HttpMock
 
     assert not output.errors
     keys = [r.record.data["unique_key"] for r in output.records]
-    assert keys[0].endswith(":project:PVT_1:item:PVTI_1:2026-06-20")
-    assert keys[1].endswith(":project:PVT_1:item:PVTI_1:2026-06-21")
-    assert keys[0] != keys[1], "one row per day the card changed, not one row ever"
+    assert keys[0].endswith(":project:PVT_1:item:PVTI_1")
+    assert keys[0] == keys[1], "the same card twice is the same row, whatever day it moved"
     first = output.records[0].record.data
     assert first["content_number"] == 7
     assert first["content_repo_full_name"] == "acme/app"
@@ -1819,3 +1964,259 @@ def test_status_change_names_the_board_it_happened_on(http_mocker: HttpMocker) -
     assert by_event["E_removed"]["project_id"] == "PVT_2"
     assert by_event["E_added"]["new_value"] == ""
     _no_literal_none(output.records)
+
+
+def _issue_links_body(cursor: str | None = None) -> dict:
+    return _graphql_body("issue_links", {"owner": "acme", "name": "app"}, cursor)
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_link_events_collapse_six_payload_shapes_into_one_target(http_mocker: HttpMocker) -> None:
+    """Each link event names the other end under its own key — subIssue,
+    parent, blockingIssue, blockedIssue, subject, canonical. Downstream has to
+    fold adds against removes, which it cannot do while the target's location
+    depends on which of the twelve types carried it."""
+    config = GithubConfigBuilder().build()
+    http_mocker.get(
+        HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps([_repo()]), status_code=200),
+    )
+    http_mocker.get(
+        HttpRequest(f"{GH_URL}/repos/acme/app/issues", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(
+            body=json.dumps([{"id": 901, "number": 7, "updated_at": "2026-06-20T00:00:00Z"}]), status_code=200
+        ),
+    )
+    actor = {"login": "alice", "databaseId": 1001}
+    other = {"number": 11, "repository": {"nameWithOwner": "acme/app"}}
+    cross = {"number": 3, "repository": {"nameWithOwner": "acme/other"}}
+    nodes = [
+        {
+            "__typename": "SubIssueAddedEvent",
+            "id": "L1",
+            "createdAt": "2026-06-01T00:00:00Z",
+            "actor": actor,
+            "subIssue": other,
+        },
+        {
+            "__typename": "SubIssueRemovedEvent",
+            "id": "L2",
+            "createdAt": "2026-06-02T00:00:00Z",
+            "actor": actor,
+            "subIssue": other,
+        },
+        {
+            "__typename": "ParentIssueAddedEvent",
+            "id": "L3",
+            "createdAt": "2026-06-03T00:00:00Z",
+            "actor": actor,
+            "parent": cross,
+        },
+        {
+            "__typename": "BlockedByAddedEvent",
+            "id": "L4",
+            "createdAt": "2026-06-04T00:00:00Z",
+            "actor": actor,
+            "blockingIssue": other,
+        },
+        {
+            "__typename": "BlockingAddedEvent",
+            "id": "L5",
+            "createdAt": "2026-06-05T00:00:00Z",
+            "actor": actor,
+            "blockedIssue": other,
+        },
+        {
+            "__typename": "ConnectedEvent",
+            "id": "L6",
+            "createdAt": "2026-06-06T00:00:00Z",
+            "actor": actor,
+            "isCrossRepository": False,
+            "subject": {"__typename": "PullRequest", "number": 42, "repository": {"nameWithOwner": "acme/app"}},
+        },
+        {
+            "__typename": "MarkedAsDuplicateEvent",
+            "id": "L7",
+            "createdAt": "2026-06-07T00:00:00Z",
+            "actor": actor,
+            "isCrossRepository": True,
+            "canonical": {"__typename": "Issue", "number": 9, "repository": {"nameWithOwner": "acme/other"}},
+        },
+    ]
+    http_mocker.post(
+        HttpRequest(f"{GH_URL}/graphql", body=_issue_timeline_body()),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "data": {
+                        "repository": {
+                            "issue": {
+                                "timelineItems": {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": nodes}
+                            }
+                        }
+                    }
+                }
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "issue_timeline_events", config)
+
+    assert not output.errors
+    by_event = {r.record.data["event_id"]: r.record.data for r in output.records}
+    assert set(by_event) == {"L1", "L2", "L3", "L4", "L5", "L6", "L7"}
+    for event_id in ("L1", "L2", "L4", "L5"):
+        assert by_event[event_id]["link_target_number"] == 11, event_id
+        assert by_event[event_id]["link_target_repo_full_name"] == "acme/app", event_id
+        assert by_event[event_id]["link_target_type"] == "Issue", event_id
+    # A hierarchy link may cross repositories, so the target's repository is
+    # part of its identity and not decoration.
+    assert by_event["L3"]["link_target_repo_full_name"] == "acme/other"
+    # Only the connect and duplicate pairs state a __typename of their own.
+    assert by_event["L6"]["link_target_type"] == "PullRequest"
+    assert by_event["L6"]["link_target_number"] == 42
+    assert by_event["L7"]["link_target_type"] == "Issue"
+    assert by_event["L7"]["is_cross_repository"] is True
+    # An event that is not a link leaves the columns empty rather than guessing.
+    _no_literal_none(output.records)
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_issue_links_snapshot_carries_every_link_set(http_mocker: HttpMocker) -> None:
+    """A pull request that closes an issue has no reliable event — the timeline
+    may call it a connection, a cross-reference that claims it will NOT close
+    the issue, or say nothing. Observing the connection is the only way to know
+    it, so the snapshot must carry it alongside the sets the timeline does
+    cover."""
+    config = GithubConfigBuilder().build()
+    http_mocker.get(
+        HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps([_repo()]), status_code=200),
+    )
+    node = {
+        "number": 7,
+        "updatedAt": "2026-06-20T10:00:00Z",
+        "parent": {"number": 1, "repository": {"nameWithOwner": "acme/app"}},
+        "subIssues": {
+            "totalCount": 2,
+            "nodes": [
+                {"number": 8, "repository": {"nameWithOwner": "acme/app"}},
+                {"number": 9, "repository": {"nameWithOwner": "acme/other"}},
+            ],
+        },
+        "blockedBy": {"totalCount": 1, "nodes": [{"number": 5, "repository": {"nameWithOwner": "acme/app"}}]},
+        "blocking": {"totalCount": 0, "nodes": []},
+        "closedByPullRequestsReferences": {
+            "totalCount": 1,
+            "nodes": [{"number": 42, "repository": {"nameWithOwner": "acme/app"}}],
+        },
+    }
+    http_mocker.post(
+        HttpRequest(f"{GH_URL}/graphql", body=_issue_links_body()),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "data": {
+                        "repository": {
+                            "issues": {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": [node]}
+                        }
+                    }
+                }
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "issue_links", config)
+
+    assert not output.errors
+    row = output.records[0].record.data
+    assert row["item_number"] == 7
+    assert row["repo_full_name"] == "acme/app"
+    assert json.loads(row["parent_json"])["number"] == 1
+    assert [n["number"] for n in json.loads(row["sub_issues_json"])] == [8, 9]
+    assert [n["number"] for n in json.loads(row["blocked_by_json"])] == [5]
+    assert json.loads(row["blocking_json"]) == [], "an empty set is empty, never absent"
+    assert [n["number"] for n in json.loads(row["closed_by_pull_requests_json"])] == [42]
+    # The vendor's own counts travel with the sets: a nested connection cannot
+    # be paginated here, so the count is the only way a truncated set is
+    # visible at all.
+    assert row["sub_issues_total"] == 2
+    assert row["blocking_total"] == 0
+    assert row["closed_by_pull_requests_total"] == 1
+    assert row["unique_key"].endswith(":acme/app:issue_links:7")
+    _no_literal_none(output.records)
+    assert_records_conform(output.records, _CONNECTOR, "issue_links", strict=True)
+
+
+_PROXY_RESET_ACTIONS = {
+    "/v1/commits": "SPLIT_USING_CURSOR",
+    "/v1/file-changes": "SPLIT_USING_CURSOR",
+    "/v1/branches": "RESET",
+    "/v1/authors": "RESET",
+}
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_a_proxy_401_is_the_proxy_token_and_fails_as_a_config_error(http_mocker: HttpMocker) -> None:
+    config = GithubConfigBuilder().build()
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(f"{PROXY_URL}/v1/branches", query_params=ANY_QUERY_PARAMS), HttpResponse(body="", status_code=401)
+    )
+
+    output = read_stream(_CONNECTOR, "branches", config, expecting_exception=True)
+
+    assert output.errors
+    assert output.errors[-1].trace.error.failure_type == FailureType.config_error
+
+
+def test_every_proxy_request_carries_the_repository_size_hint() -> None:
+    """The proxy reserves cache headroom from the hint instead of its per-repository
+    cap; a proxy requester without it, or a proxy parent that does not pass the size
+    along, silently falls back to the cap."""
+    retrievers = _proxy_retrievers(load_manifest(_CONNECTOR)["streams"])
+    assert retrievers
+    for retriever in retrievers:
+        hint = (retriever["requester"].get("request_headers") or {}).get("X-Repo-Size-Hint", "")
+        assert "extra_fields.get('size')" in hint, retriever["requester"]["path"]
+        parents = retriever["partition_router"]["parent_stream_configs"]
+        for parent in parents:
+            if parent.get("partition_field") == "repo_clone_url":
+                assert ["size"] in (parent.get("extra_fields") or []), retriever["requester"]["path"]
+
+
+def _proxy_retrievers(node, out=None):
+    """Every SimpleRetriever whose requester targets the git proxy."""
+    if out is None:
+        out = []
+    if isinstance(node, dict):
+        requester = node.get("requester", {})
+        if node.get("type") == "SimpleRetriever" and "git_proxy_url" in str(requester.get("url_base", "")):
+            out.append(node)
+        for value in node.values():
+            _proxy_retrievers(value, out)
+    elif isinstance(node, list):
+        for item in node:
+            _proxy_retrievers(item, out)
+    return out
+
+
+def test_a_superseded_proxy_snapshot_restarts_the_walk_instead_of_failing_it() -> None:
+    """A 409 means the page token points into a snapshot the proxy no longer
+    holds. Failing the partition freezes its cursor until the next run; a
+    pagination reset restarts the walk, and a walk the proxy orders by the
+    cursor restarts from the last value already seen. Commits and file
+    changes come out ordered by committed_date; branches and authors carry
+    no such order, so their restart is from the first page."""
+    manifest = load_manifest(_CONNECTOR)
+    retrievers = _proxy_retrievers(manifest["streams"])
+    assert {r["requester"]["path"] for r in retrievers} == set(_PROXY_RESET_ACTIONS)
+    for retriever in retrievers:
+        path = retriever["requester"]["path"]
+        filters = retriever["requester"]["error_handler"]["response_filters"]
+        on_409 = [f["action"] for f in filters if 409 in f.get("http_codes", [])]
+        assert on_409 == ["RESET_PAGINATION"], f"{path}: a 409 must reset pagination, got {on_409}"
+        reset = retriever.get("pagination_reset")
+        assert reset == {"type": "PaginationReset", "action": _PROXY_RESET_ACTIONS[path]}, f"{path}: {reset}"

@@ -192,10 +192,10 @@ assert reports, "the manifest places nobody under this lead — the test would a
 That guard is not decoration. A derived expectation that comes back empty makes
 every assertion below it vacuous.
 
-**No metric value while the golden set is empty** — which it is, by design.
-Hand-authoring an expected number is forbidden under `tests/stand/`; the
-criteria an expectation must meet before it is admitted are in
-`src/ingestion/tools/seed/insight_seed/golden_metrics.py`.
+**No metric value.** Hand-authoring an expected number is forbidden under
+`tests/stand/`, and the seed publishes none: an admissible expectation would
+have to be computable from the seed inputs rather than read back out of the
+gold layer.
 What a journey *can* assert about numbers is their **honesty**:
 
 - a populated tile is `not_to_have_text("—")`
@@ -277,8 +277,8 @@ coverage.
    other vector count.
 9. Audit fidelity, then run headed once to confirm it fails for the right
    reason when you break the expectation deliberately.
-10. When the journey implements a scenario tracked in a feature issue's Testing
-    section, cite it in the test docstring (`#2163 scenario 3`) and keep the
-    marker equal to the scenario's vector tag; the full traceability contract
-    (id-not-prose, box-checking after merge) is the `quality-vector-tests`
-    skill's tracking section.
+10. When the journey implements a scenario from a feature's Testing section,
+    cite it in the test docstring — the FEATURE path, its `cpt-…-feature-…` ID
+    and the stable scenario number — and keep the pytest marker equal to the
+    scenario's vector; the full traceability contract is section 5 of the
+    `quality-vector-tests` skill.

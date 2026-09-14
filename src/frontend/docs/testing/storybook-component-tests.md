@@ -50,7 +50,8 @@ cyber-insight-front/
 ├─ src/test/storybook/
 │   ├─ test-router.ts          # createTestingRouter() — memory-history TanStack Router
 │   ├─ with-providers.tsx      # QueryClient + router + theme + i18n decorator
-│   └─ theme-decorators.ts     # addon-themes adapted to light/dark
+│   ├─ theme-decorators.ts     # addon-themes adapted to light/dark
+│   └─ layout.ts               # geometry assertions + the card widths stories measure at
 ├─ vitest.config.ts            # test.projects = [unit (jsdom), storybook (browser)]
 ├─ public/mockServiceWorker.js # already present (msw workerDirectory: public)
 └─ src/components/widgets/dashboard/kpi-tile.stories.tsx  # PoC story + play tests

@@ -32,6 +32,11 @@ pub struct GearConfig {
     pub default_max_staleness_seconds: u64,
     /// Concurrency cap for heavy git operations (clone / fetch / repack).
     pub heavy_ops_concurrency: usize,
+    /// Concurrency cap for page serves. Each serve runs git children whose
+    /// memory scales with the window's blob bytes, so the pod's peak is
+    /// roughly this cap times the heaviest window; excess requests wait
+    /// in-connection for a slot.
+    pub serve_concurrency: usize,
     /// Static bearer token protecting every `/v1` route (service-to-service
     /// auth; the service is cluster-internal and never behind the platform
     /// gateway). Supplied per-deployment, never committed.
@@ -76,6 +81,7 @@ impl std::fmt::Debug for GearConfig {
                 &self.default_max_staleness_seconds,
             )
             .field("heavy_ops_concurrency", &self.heavy_ops_concurrency)
+            .field("serve_concurrency", &self.serve_concurrency)
             .field("ca_cert_path", &self.ca_cert_path)
             .field("allow_file_repos", &self.allow_file_repos)
             .field("allowed_repo_hosts", &self.allowed_repo_hosts)
@@ -111,6 +117,9 @@ impl GearConfig {
         }
         if self.heavy_ops_concurrency == 0 {
             missing.push("heavy_ops_concurrency (clone/fetch/repack cap, > 0)");
+        }
+        if self.serve_concurrency == 0 {
+            missing.push("serve_concurrency (page-serve cap, > 0)");
         }
         if self.proxy_token.is_empty() {
             missing.push("proxy_token (service-to-service bearer token)");
@@ -148,6 +157,7 @@ mod tests {
             max_repo_bytes: 2_000_000_000,
             default_max_staleness_seconds: 300,
             heavy_ops_concurrency: 4,
+            serve_concurrency: 4,
             proxy_token: "secret".to_owned(),
             ca_cert_path: String::new(),
             allow_file_repos: false,
@@ -209,6 +219,13 @@ mod tests {
                 },
             ),
             (
+                "serve_concurrency",
+                GearConfig {
+                    serve_concurrency: 0,
+                    ..valid()
+                },
+            ),
+            (
                 "proxy_token",
                 GearConfig {
                     proxy_token: String::new(),
@@ -238,6 +255,7 @@ mod tests {
             "max_repo_bytes",
             "default_max_staleness_seconds",
             "heavy_ops_concurrency",
+            "serve_concurrency",
             "proxy_token",
         ] {
             assert!(

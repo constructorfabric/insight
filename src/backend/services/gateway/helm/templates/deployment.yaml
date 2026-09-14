@@ -49,6 +49,10 @@ spec:
               value: {{ tpl .Values.gateway.authenticatorUrl . | quote }}
             - name: GATEWAY_FRONT_URL
               value: {{ tpl .Values.gateway.frontUrl . | quote }}
+            {{- if .Values.global.mcp.enabled }}
+            - name: GATEWAY_MCP_PUBLIC_URL
+              value: {{ required "global.mcp.publicUrl is required when MCP is enabled" .Values.global.mcp.publicUrl | quote }}
+            {{- end }}
             {{- with .Values.gateway.setRealIpFrom }}
             - name: GATEWAY_SET_REAL_IP_FROM
               value: {{ join "," . | quote }}
@@ -85,6 +89,26 @@ spec:
           {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+        {{- if .Values.metrics.enabled }}
+        - name: metrics-exporter
+          image: "{{ .Values.metrics.image.repository }}:{{ .Values.metrics.image.tag }}"
+          imagePullPolicy: {{ .Values.metrics.image.pullPolicy }}
+          args:
+            # Matches the loopback-only stub_status listener routegen emits.
+            - --nginx.scrape-uri=http://127.0.0.1:8090/stub_status
+            - --web.listen-address=:{{ .Values.metrics.port }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.metrics.port }}
+              protocol: TCP
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.metrics.resources | nindent 12 }}
+        {{- end }}
       volumes:
         - name: routes
           configMap:

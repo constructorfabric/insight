@@ -18,6 +18,7 @@ DO:
   - LOAD {cf-studio-path}/config/artifacts.toml to resolve FEATURE path (artifacts_dir default `architecture`, subdir `features/`)
   - LOAD {feature_template} for structure
   - RUN author content: actor flows (complete user journeys), algorithms (processing logic), state machines (entity lifecycle), DoD/acceptance criteria, test scenarios
+  - RUN author `## 7. Testing`: one checkbox scenario per line, each carrying exactly one quality vector (Efficiency, Reliability, Performance, Security, Versatility), one suite tag, and a do → expect pass criterion; declare the owning feature ID once and link each scenario to the relevant PRD FR/NFR subset from section 1.2, to the feature criterion it covers where one applies — a `cpt-{system}-dod-{feature-slug}-{slug}` or a section 6 acceptance criterion — and to its test when implemented
   - RUN define featstatus ID under H1 (before `## Feature Context`): `cpt-{system}-featstatus-{feature-slug}` (status rollup, not to_code)
   - RUN assign IDs: flow `cpt-{system}-flow-{feature-slug}-{slug}`, algo `cpt-{system}-algo-{feature-slug}-{slug}`, state `cpt-{system}-state-{feature-slug}-{slug}`, dod `cpt-{system}-dod-{feature-slug}-{slug}`
   - RUN assign priority markers `p1`-`p9` per feature priority
@@ -32,6 +33,9 @@ RULES:
   - ALWAYS check FEATURE element when ALL its code markers exist and implementation verified (dod: when impl complete AND tests pass)
   - ALWAYS treat {feature_checklist} as the source of semantic quality criteria
   - NEVER duplicate semantic criteria already in {feature_checklist}
+  - ALWAYS preserve the canonical section 6 Acceptance Criteria checklist; do not introduce AC IDs or AC coverage ratios to link tests
+  - ALWAYS trace PRD FR/NFR -> FEATURE Requirements and feature ID -> scenario -> executable test, carrying the covered feature criterion where one applies; tests cite the feature path, feature ID and stable scenario number, and keep the criterion reference an implemented scenario already names
+  - ALWAYS give each authored Testing scenario one primary vector and one suite tag — gated by {feature_checklist}; use `../../guides/quality-vectors.md` (relative to this file) only for advisory scope, shared-test attribution and changed-scenario guidance; coverage of all five vector categories is not required — a feature legitimately may not exercise every vector, and no category's absence alone creates a readiness gate
   - NEVER include placeholder content (TODO, TBD, FIXME)
   - NEVER create duplicate IDs within the document
 

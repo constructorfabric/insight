@@ -6,7 +6,7 @@ name: zoom
 # pre-fix manifest and every zoom sync kept dying on the blocked meeting UUID.
 # Patch bump per ADR-0015: republish + catalog re-discover, NO full-refresh
 # (bronze→silver semantics unchanged).
-version: "1.2.1"
+version: "1.2.2"
 schedule: 0 3 * * *
 dbt_select: tag:zoom+
 workflow: sync

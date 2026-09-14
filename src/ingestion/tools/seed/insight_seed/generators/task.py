@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import datetime as _dt
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from ..profiles import TEAM_PROFILES, Person
@@ -38,7 +39,7 @@ if TYPE_CHECKING:
     import clickhouse_connect.driver.client
 
 
-def _task_persons(roster: Sequence[Person]) -> list[Person]:
+def task_persons(roster: Sequence[Person]) -> list[Person]:
     return [
         p
         for p in roster
@@ -48,6 +49,13 @@ def _task_persons(roster: Sequence[Person]) -> list[Person]:
             or TEAM_PROFILES[p.team].weights.get("zendesk-placeholder", 0) > 0
         )
     ]
+
+
+def task_weight(team: str) -> float:
+    """The dominant task-tracking weight for a team — jira or the zendesk
+    placeholder, whichever the team actually lives in."""
+    weights = TEAM_PROFILES[team].weights
+    return max(weights.get("jira", 0), weights.get("zendesk-placeholder", 0))
 
 
 def seed_task_worklogs(
@@ -72,7 +80,7 @@ def seed_task_worklogs(
     ]
     rows: list[tuple[object, ...]] = []
     version = 1
-    for p in _task_persons(roster):
+    for p in task_persons(roster):
         persona = persona_multiplier(p.uuid)
         jira_w = TEAM_PROFILES[p.team or ""].weights.get("jira", 0)
         zendesk_w = TEAM_PROFILES[p.team or ""].weights.get("zendesk-placeholder", 0)
@@ -133,7 +141,7 @@ def seed_task_users(
     ]
     rows: list[tuple[object, ...]] = []
     version = 1
-    for p in _task_persons(roster):
+    for p in task_persons(roster):
         src_id = deterministic_uuid("task.source", p.uuid)
         # author_id in class_task_worklogs == p.email — mirror that here so
         # the JOIN matches.
@@ -246,6 +254,92 @@ def _fh_row(
     )
 
 
+@dataclass(frozen=True)
+class IssuePlan:
+    """One issue's whole deterministic lifecycle, as the day's rng draws it.
+
+    The single source both the row emitter (`seed_task_field_history`) and the
+    expected-value derivation (`insight_seed.golden_metrics`) read, so the
+    numbers the manifest promises cannot drift from the rows the seed writes.
+    """
+
+    issue_id: str
+    issue_type: str
+    priority: str
+    created_at: _dt.datetime
+    est_seconds: float
+    spent_seconds: float
+    due_date: str
+    close_status: str | None
+    close_at: _dt.datetime | None
+
+    @property
+    def issue_kind(self) -> str:
+        """The reconciled kind gold classifies this issue as ('bug' / 'other')."""
+        return _ISSUE_TYPE_DIM[self.issue_type][1]
+
+
+def plan_issues(
+    person_uuid: str,
+    weight: float,
+    created_day: _dt.date,
+    anchor: _dt.date,
+) -> list[IssuePlan]:
+    """Every issue one person opens on one day, with its optional close.
+
+    INVARIANT: the draw order against the per-(person, day) rng is the wire
+    format of the seeded data — reordering or skipping a draw silently
+    re-deals every value after it and desynchronises the golden metrics from
+    any stand seeded before the change.
+    """
+    persona = persona_multiplier(person_uuid)
+    rng = seeded_rng(person_uuid, created_day, "task.fh")
+    # ~0.5 new issue/business-day for medium-load persons.
+    mean = 0.6 * persona * weight * weekday_multiplier(created_day)
+    n_new = poisson(rng, mean)
+
+    plans: list[IssuePlan] = []
+    for i in range(n_new):
+        issue_id = deterministic_uuid("task.issue", person_uuid, created_day.isoformat(), str(i))
+        issue_type = _ISSUE_TYPES[rng.randint(0, len(_ISSUE_TYPES) - 1)]
+        priority = _PRIORITIES[rng.randint(0, len(_PRIORITIES) - 1)]
+        created_at = _dt.datetime.combine(
+            created_day,
+            _dt.time(9 + rng.randint(0, 8), rng.randint(0, 59)),
+        )
+        est_seconds = float(rng.randint(2, 16) * 3600)
+        spent_seconds = float(est_seconds * rng.uniform(0.5, 1.5))
+        due_date = (created_day + _dt.timedelta(days=rng.randint(7, 30))).isoformat()
+
+        # ~55% of issues get closed before the anchor.
+        close_status: str | None = None
+        close_at: _dt.datetime | None = None
+        if rng.random() < 0.55:
+            days_to_close = rng.randint(3, 28)
+            close_day = created_day + _dt.timedelta(days=days_to_close)
+            if close_day < anchor:
+                close_status = _CLOSE_STATUSES[rng.randint(0, len(_CLOSE_STATUSES) - 1)]
+                close_at = _dt.datetime.combine(
+                    close_day,
+                    _dt.time(rng.randint(10, 17), rng.randint(0, 59)),
+                )
+
+        plans.append(
+            IssuePlan(
+                issue_id=issue_id,
+                issue_type=issue_type,
+                priority=priority,
+                created_at=created_at,
+                est_seconds=est_seconds,
+                spent_seconds=spent_seconds,
+                due_date=due_date,
+                close_status=close_status,
+                close_at=close_at,
+            )
+        )
+    return plans
+
+
 def seed_task_field_history(
     client: clickhouse_connect.driver.client.Client,
     roster: Sequence[Person],
@@ -283,40 +377,28 @@ def seed_task_field_history(
     rows: list[tuple[object, ...]] = []
     window = days_window(days)
 
-    for p in _task_persons(roster):
-        persona = persona_multiplier(p.uuid)
-        # ~0.5 new issue/business-day for medium-load persons.
-        jira_w = TEAM_PROFILES[p.team or ""].weights.get("jira", 0)
-        zd_w = TEAM_PROFILES[p.team or ""].weights.get("zendesk-placeholder", 0)
-        weight = max(jira_w, zd_w)
+    for p in task_persons(roster):
+        weight = task_weight(p.team or "")
         if weight <= 0:
             continue
         src_id = deterministic_uuid("task.source", p.uuid)
         data_source = _task_data_source(p.team)
         for created_day in window:
-            rng = seeded_rng(p.uuid, created_day, "task.fh")
-            mean = 0.6 * persona * weight * weekday_multiplier(created_day)
-            n_new = poisson(rng, mean)
-            for i in range(n_new):
-                issue_id = deterministic_uuid("task.issue", p.uuid, created_day.isoformat(), str(i))
-                issue_type = _ISSUE_TYPES[rng.randint(0, len(_ISSUE_TYPES) - 1)]
-                priority = _PRIORITIES[rng.randint(0, len(_PRIORITIES) - 1)]
-                created_at = _dt.datetime.combine(
-                    created_day,
-                    _dt.time(9 + rng.randint(0, 8), rng.randint(0, 59)),
-                )
-                est_seconds = float(rng.randint(2, 16) * 3600)
-                spent_seconds = float(est_seconds * rng.uniform(0.5, 1.5))
-                due_date = (created_day + _dt.timedelta(days=rng.randint(7, 30))).isoformat()
+            for plan in plan_issues(p.uuid, weight, created_day, anchor_date()):
                 # 7 synthetic_initial rows.
                 base_fields = [
                     ("status", "Status", _STATUS_DIM["To Do"][0], "To Do"),
                     ("assignee", "Assignee", p.email, p.email),
-                    ("issuetype", "Issue Type", _ISSUE_TYPE_DIM[issue_type][0], issue_type),
-                    ("priority", "Priority", None, priority),
-                    ("duedate", "Due Date", None, due_date),
-                    ("timeoriginalestimate", "Original Estimate", None, str(int(est_seconds))),
-                    ("timespent", "Time Spent", None, str(int(spent_seconds))),
+                    (
+                        "issuetype",
+                        "Issue Type",
+                        _ISSUE_TYPE_DIM[plan.issue_type][0],
+                        plan.issue_type,
+                    ),
+                    ("priority", "Priority", None, plan.priority),
+                    ("duedate", "Due Date", None, plan.due_date),
+                    ("timeoriginalestimate", "Original Estimate", None, str(int(plan.est_seconds))),
+                    ("timespent", "Time Spent", None, str(int(plan.spent_seconds))),
                 ]
                 for seq, (fid, fname, vid, vdisp) in enumerate(base_fields):
                     rows.append(
@@ -324,8 +406,8 @@ def seed_task_field_history(
                             tenant_uuid=tenant_uuid,
                             src_id=src_id,
                             data_source=data_source,
-                            issue_id=issue_id,
-                            event_at=created_at,
+                            issue_id=plan.issue_id,
+                            event_at=plan.created_at,
                             event_kind="synthetic_initial",
                             field_id=fid,
                             field_name=fname,
@@ -335,33 +417,23 @@ def seed_task_field_history(
                             seq=seq,
                         )
                     )
-                # ~55% of issues get closed before today.
-                if rng.random() < 0.55:
-                    days_to_close = rng.randint(3, 28)
-                    close_day = created_day + _dt.timedelta(days=days_to_close)
-                    today = anchor_date()
-                    if close_day < today:
-                        close_status = _CLOSE_STATUSES[rng.randint(0, len(_CLOSE_STATUSES) - 1)]
-                        close_at = _dt.datetime.combine(
-                            close_day,
-                            _dt.time(rng.randint(10, 17), rng.randint(0, 59)),
+                if plan.close_status is not None and plan.close_at is not None:
+                    rows.append(
+                        _fh_row(
+                            tenant_uuid=tenant_uuid,
+                            src_id=src_id,
+                            data_source=data_source,
+                            issue_id=plan.issue_id,
+                            event_at=plan.close_at,
+                            event_kind="changelog",
+                            field_id="status",
+                            field_name="Status",
+                            value_id=_STATUS_DIM[plan.close_status][0],
+                            value_display=plan.close_status,
+                            author_id=p.email,
+                            seq=100,
                         )
-                        rows.append(
-                            _fh_row(
-                                tenant_uuid=tenant_uuid,
-                                src_id=src_id,
-                                data_source=data_source,
-                                issue_id=issue_id,
-                                event_at=close_at,
-                                event_kind="changelog",
-                                field_id="status",
-                                field_name="Status",
-                                value_id=_STATUS_DIM[close_status][0],
-                                value_display=close_status,
-                                author_id=p.email,
-                                seq=100,
-                            )
-                        )
+                    )
 
     return bulk_insert(client, "silver", "class_task_field_history", cols, rows)
 
@@ -390,7 +462,7 @@ def seed_class_task_statuses(
     ]
     now = anchor_datetime()
     rows: list[tuple[object, ...]] = []
-    for p in _task_persons(roster):
+    for p in task_persons(roster):
         src_id = deterministic_uuid("task.source", p.uuid)
         data_source = _task_data_source(p.team)
         for name, (status_id, category) in _STATUS_DIM.items():
@@ -433,7 +505,7 @@ def seed_class_task_issuetypes(
     ]
     now = anchor_datetime()
     rows: list[tuple[object, ...]] = []
-    for p in _task_persons(roster):
+    for p in task_persons(roster):
         src_id = deterministic_uuid("task.source", p.uuid)
         data_source = _task_data_source(p.team)
         for name, (issue_type_id, kind) in _ISSUE_TYPE_DIM.items():

@@ -5,9 +5,10 @@ name: GHCR cleanup
 #   • trunk tags (`YYYY.MM.DD.HH.MM-sha7`, suffix-less) — deleted after 4
 #     weeks on a daily schedule, keeping the 15 newest per package as a
 #     backstop. `latest` and the branch-suffixed tags never match the glob.
-#   • branch tags (`…-sha7.<sanitized-branch>`, #1994) — deleted when their
-#     branch is deleted. `release-*` branches are excluded: their images are
-#     kept forever (customer-release pins).
+#   • branch tags (`…-sha7.<sanitized-branch>`, #1994) — swept nightly:
+#     versions all of whose tags point at branches that no longer exist are
+#     deleted. `release-*` suffixes are exempt: their images are kept
+#     forever (customer-release pins).
 #
 # snok/container-retention-policy v3 is multi-arch aware: it protects
 # untagged per-arch digests referenced by tagged manifest lists.
@@ -16,20 +17,22 @@ on:
   schedule:
     - cron: "5 5 * * *"
   workflow_dispatch:
-  # Branch deletions; the `branch` job filters to ref_type == branch.
-  delete: {}
+    inputs:
+      dry_run:
+        description: "Report orphaned branch tags without deleting"
+        type: boolean
+        default: false
 
 permissions:
   packages: write
   contents: read
 
 env:
-  SERVICE_IMAGES: "insight-analytics insight-authenticator insight-frontend insight-gateway insight-identity-resolution insight-toolbox insight-ui-tests"
-  CONNECTOR_IMAGES: "insight-jira-enrich source-active-directory-insight source-gitlab-insight source-hubspot-insight"
+  SERVICE_IMAGES: "insight-analytics insight-authenticator insight-frontend insight-gateway insight-git-cli-proxy insight-identity-resolution insight-previews insight-seed insight-toolbox"
+  CONNECTOR_IMAGES: "insight-jira-enrich source-active-directory-insight source-bamboohr-insight source-claude-team-invoices-insight source-hubspot-insight"
 
 jobs:
   trunk:
-    if: github.event_name != 'delete'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -45,29 +48,31 @@ jobs:
           keep-n-most-recent: 15
           dry-run: false
 
-  branch:
-    if: github.event_name == 'delete' && github.event.ref_type == 'branch' && !startsWith(github.event.ref, 'release-')
+  # Every cache write re-points a buildcache tag and leaves the previous
+  # manifest untagged; nothing references those, so they only cost storage.
+  buildcache:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      # Same sanitizer as the build-tag computation in build-images.yml —
-      # the deleted branch's tags end with `.<sanitized-branch>`.
-      - name: Sanitize branch name
-        id: suffix
-        env:
-          REF_NAME: ${{ github.event.ref }}
-        run: |
-          SAFE="$(printf '%s' "$REF_NAME" \
-            | tr -c 'a-zA-Z0-9._-' '-' \
-            | sed -E 's/^[-.]+//; s/[-.]+$//' \
-            | cut -c1-60)"
-          echo "safe=$SAFE" >> "$GITHUB_OUTPUT"
-          echo "Cleaning image tags with suffix: .$SAFE"
       - uses: snok/container-retention-policy@d3bdcf5ce9b05f685154e4a16c39233b245e3d53 # v3.1.0
         with:
           account: constructorfabric
           token: ${{ secrets.GITHUB_TOKEN }}
-          image-names: ${{ env.SERVICE_IMAGES }} ${{ env.CONNECTOR_IMAGES }}
-          image-tags: "*.${{ steps.suffix.outputs.safe }}"
-          cut-off: 0s
+          image-names: insight-buildcache
+          tag-selection: untagged
+          cut-off: 1w
           dry-run: false
+
+  orphan-sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Sweep branch tags whose branch is gone
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PACKAGES: ${{ env.SERVICE_IMAGES }} ${{ env.CONNECTOR_IMAGES }}
+          DRY_RUN: ${{ inputs.dry_run && 'true' || 'false' }}
+        run: python3 .github/workflows/scripts/ghcr-orphan-sweep.py

@@ -1,4 +1,5 @@
 import { format } from "date-fns";
+import type { MouseHandlerDataParam } from "recharts";
 
 import {
   BarChart,
@@ -29,9 +30,10 @@ export interface MetricTimeseriesChartProps {
   model: MetricTimeseriesModel;
   selectedMetricKey: string;
   multiMetric?: MetricTimeseriesChartConfig["multiMetric"];
+  /** `columnKey` null drills the whole bucket, narrowed by no dimension value. */
   onEvidence?: (
     metricKey: string,
-    columnKey: string,
+    columnKey: string | null,
     bucketStart: string | null
   ) => void;
 }
@@ -138,18 +140,45 @@ export function MetricTimeseriesChart({
       />
     </>
   );
-  const openPoint = (
+  // Recharts reports no active bucket as null, and `Number(null)` is 0 — which
+  // would read as the first bucket rather than as "none".
+  const bucketAt = (index: MouseHandlerDataParam["activeTooltipIndex"]) =>
+    index == null ? undefined : data[Number(index)]?.bucketStart;
+  const openBucketFrom = (bucketStart: string) =>
+    onEvidence?.(chartModel.valueMetric.metric_key, null, bucketStart);
+  const openSegment = (
     series: MetricTimeseriesChartModel["series"][number],
-    state: unknown
+    entry: unknown
   ) => {
-    const point = state as { payload?: { bucketStart?: string } };
+    const point = entry as { payload?: { bucketStart?: string } };
     const bucketStart = point.payload?.bucketStart;
+    if (!bucketStart) return;
+
     const column = model.columns.find(
       (candidate) => candidate.key === series.columnKey
     );
-    if (bucketStart && column && !column.remainder) {
+    // The remainder gathers the dimension values that missed the top N, so no
+    // filter selects it: clicking it reads as clicking past every segment.
+    if (column && !column.remainder) {
       onEvidence?.(series.metricKey, series.columnKey, bucketStart);
+    } else {
+      openBucketFrom(bucketStart);
     }
+  };
+  /**
+   * The column outside its drawn segments. A click on a segment reaches here
+   * too, and asking the event where it landed is what keeps both from
+   * answering it — no assumption about which handler runs first.
+   */
+  const openBucket = (
+    state: MouseHandlerDataParam,
+    event: { target: EventTarget | null }
+  ) => {
+    const target = event.target as Element | null;
+    if (target?.closest?.(".recharts-bar-rectangle")) return;
+
+    const bucketStart = bucketAt(state.activeTooltipIndex);
+    if (bucketStart) openBucketFrom(bucketStart);
   };
 
   return (
@@ -162,6 +191,7 @@ export function MetricTimeseriesChart({
           <BarChart
             data={data}
             margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
+            onClick={openBucket}
           >
             {chartContent}
             <TimeseriesXAxis data={data} />
@@ -173,7 +203,7 @@ export function MetricTimeseriesChart({
                 fill={`var(--color-${series.key})`}
                 name={series.label}
                 radius={[2, 2, 0, 0]}
-                onClick={(point) => openPoint(series, point)}
+                onClick={(point) => openSegment(series, point)}
               />
             ))}
           </BarChart>
@@ -181,6 +211,7 @@ export function MetricTimeseriesChart({
           <LineChart
             data={data}
             margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
+            onClick={openBucket}
           >
             {chartContent}
             <TimeseriesXAxis data={data} numeric />
@@ -219,7 +250,6 @@ export function MetricTimeseriesChart({
                 // a straight line drawn across it.
                 connectNulls={false}
                 name={series.label}
-                onClick={(point) => openPoint(series, point)}
               />
             ))}
           </LineChart>

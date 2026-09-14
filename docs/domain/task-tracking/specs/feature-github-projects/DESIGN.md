@@ -14,7 +14,7 @@ those findings.
   - [2.2 Field catalogue](#22-field-catalogue)
   - [2.3 Cards](#23-cards)
   - [2.4 Timeline additions](#24-timeline-additions)
-- [3. Why a day sits in two row keys](#3-why-a-day-sits-in-two-row-keys)
+- [3. Where the history of a board lives](#3-where-the-history-of-a-board-lives)
 - [4. The incremental filter and its silent failure](#4-the-incremental-filter-and-its-silent-failure)
 - [5. Identity: what a board status is called](#5-identity-what-a-board-status-is-called)
 - [6. Board status is not the issue's state](#6-board-status-is-not-the-issues-state)
@@ -74,21 +74,27 @@ have no issue behind them and no identity outside the board.
 event resolvable at all: every board defines its own status field, and an issue
 on several boards interleaves all their status events in this one timeline.
 
-## 3. Why a day sits in two row keys
+## 3. Where the history of a board lives
 
-GitHub keeps no history of a board field, an option rename, or a non-status card
-value. `ProjectV2Item` and each field value carry `updatedAt`, which says when a
-value was last touched and never what it was before. A succession of snapshots
-is therefore the only possible record, and the day in the key is what makes one:
-bronze is a `ReplacingMergeTree` keyed on `unique_key`, so a re-collection
-inside one day replaces its row while a new day adds one.
+GitHub keeps no history of a board field, an option rename, or a non-status
+card value. `ProjectV2Item` and each field value carry `updatedAt`, which says
+when a value was last touched and never what it was before. A succession of
+observations is therefore the only possible record.
 
-The two keys take their day from different places, and the difference matters.
-`project_items` uses the card's own `updatedAt`, so re-reading an unchanged card
-inside the overlap window rewrites the same row — the stream is a change log,
-not a daily dump. `project_fields` uses the collection day, because a field's
-`updatedAt` is not guaranteed to move when one of its options is renamed, and
-catching renames is the whole point of keeping the catalogue's history.
+Both bronze relations are keyed on the ENTITY — a board field, a card — so the
+`ReplacingMergeTree` collapses each re-collection onto the current state, and
+the record of change is built above them by the shared SCD2 macros:
+`github__project_fields_snapshot` and `github__project_items_snapshot` append a
+version only when a tracked column actually moves, and
+`github__project_fields_history` turns the field catalogue's versions into a
+per-attribute change log.
+
+An earlier revision of this design put the collection day into `unique_key`
+instead. That defeats the collapse: bronze stops holding the present and
+accumulates one row per entity per day whether anything changed or not, which
+is what `union_by_tag` warns against in as many words — *never encode the
+version into `unique_key`* (ADR-0001, ADR-0004). The macros already existed and
+do the job better, because they write nothing on a day when nothing changed.
 
 ## 4. The incremental filter and its silent failure
 
@@ -217,3 +223,6 @@ destination stream on a state clear. Card field values cannot be backfilled.
   operator-facing layout; workflow definitions likely need elevated permission.
 - **Membership in silver**, if a measure ever wants "which boards was this on".
 - **Iteration field values** are collected but nothing reads them.
+- **Per-board-field card history.** `github__project_items_snapshot` versions
+  the whole `field_values_json` blob, so a change is visible but not attributed
+  to a single board field. Splitting it belongs with the first consumer.

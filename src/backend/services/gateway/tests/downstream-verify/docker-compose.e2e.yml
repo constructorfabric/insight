@@ -42,7 +42,7 @@ services:
   # the generated roster realm (conftest.py runs insight-seed-realm into
   # ./keycloak-import before `up`).
   keycloak:
-    image: quay.io/keycloak/keycloak:26.4
+    image: quay.io/keycloak/keycloak:26.7
     command: ["start-dev", "--import-realm"]
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
@@ -72,7 +72,8 @@ services:
   authenticator:
     build:
       context: ../../../..
-      dockerfile: services/authenticator/Dockerfile
+      dockerfile: Dockerfile
+      target: authenticator
     depends_on:
       redis: {condition: service_healthy}
       keycloak: {condition: service_started}
@@ -122,7 +123,8 @@ services:
   analytics-migrate:
     build:
       context: ../../../..
-      dockerfile: services/analytics/Dockerfile
+      dockerfile: Dockerfile
+      target: analytics
     restart: "no"
     depends_on:
       mariadb: {condition: service_healthy}
@@ -139,7 +141,8 @@ services:
   analytics:
     build:
       context: ../../../..
-      dockerfile: services/analytics/Dockerfile
+      dockerfile: Dockerfile
+      target: analytics
     depends_on:
       mariadb: {condition: service_healthy}
       authenticator: {condition: service_started}
@@ -170,7 +173,8 @@ services:
   identity-resolution-migrate:
     build:
       context: ../../../..
-      dockerfile: services/identity-resolution/Dockerfile
+      dockerfile: Dockerfile
+      target: identity-resolution
     depends_on:
       mariadb: {condition: service_healthy}
     environment:
@@ -191,7 +195,8 @@ services:
   identity-resolution:
     build:
       context: ../../../..
-      dockerfile: services/identity-resolution/Dockerfile
+      dockerfile: Dockerfile
+      target: identity-resolution
     depends_on:
       mariadb: {condition: service_healthy}
       authenticator: {condition: service_started}

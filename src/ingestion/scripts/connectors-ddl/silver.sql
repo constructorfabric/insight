@@ -462,7 +462,8 @@ CREATE TABLE IF NOT EXISTS silver.class_git_commits
     `data_source` String,
     `_version` Int64,
     `_airbyte_extracted_at` DateTime64(3),
-    `patch_id` Nullable(String)
+    `patch_id` Nullable(String),
+    `committer_date` Nullable(DateTime)
 )
 ENGINE = ReplacingMergeTree(_version)
 ORDER BY unique_key
@@ -893,13 +894,10 @@ CREATE TABLE IF NOT EXISTS silver.class_task_field_history
     `event_kind` Enum8('changelog' = 1, 'synthetic_initial' = 2, 'availability' = 3, 'lifecycle' = 4),
     `_seq` UInt32,
     `author_id` Nullable(String),
-    `author_display` Nullable(String),
     `field_id` String,
     `field_name` String,
     `field_cardinality` Enum8('single' = 1, 'multi' = 2),
     `delta_action` Enum8('set' = 1, 'add' = 2, 'remove' = 3),
-    `delta_value_id` Nullable(String),
-    `delta_value_display` Nullable(String),
     `value_ids` Array(String),
     `value_displays` Array(String),
     `value_id_type` Enum8('opaque_id' = 1, 'account_id' = 2, 'string_literal' = 3, 'path' = 4, 'none' = 5),
@@ -941,6 +939,31 @@ CREATE TABLE IF NOT EXISTS silver.class_task_issuetypes
     `issue_kind` String,
     `collected_at` DateTime64(3),
     `_version` Int64
+)
+ENGINE = ReplacingMergeTree(_version)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS silver.class_task_links
+(
+    `unique_key` String,
+    `insight_source_id` String,
+    `data_source` String,
+    `id_readable` String,
+    `link_type` String,
+    `target_type` Enum8('issue' = 1, 'pull_request' = 2),
+    `target_readable` String,
+    `is_cross_repository` Bool,
+    `valid_from` DateTime64(3),
+    `valid_from_known` UInt8,
+    `valid_to` Nullable(DateTime64(3)),
+    `added_by` Nullable(String),
+    `removed_by` Nullable(String),
+    `evidence` Enum8('event' = 1, 'observation' = 2),
+    `origin_event_id` Nullable(String),
+    `collected_at` DateTime64(3),
+    `_version` UInt64
 )
 ENGINE = ReplacingMergeTree(_version)
 ORDER BY unique_key

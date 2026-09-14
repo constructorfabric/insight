@@ -64,6 +64,32 @@ import {
   withOwnTarget,
 } from "@/components/metric-evidence-context";
 
+/**
+ * INVARIANT: every step leaves room for the names plus one whole metric column
+ * (`METRIC_COL_PX`) inside the container it applies to — a step wider than
+ * that is the bug this replaced, where the roster showed names and nothing
+ * else. A container query, not a viewport one: a drilldown pane on a desktop
+ * is as narrow as a phone.
+ */
+const MEMBER_COL_WIDTH =
+  "[--member-col:9rem] @min-[26rem]:[--member-col:12rem] @min-[32rem]:[--member-col:16rem]";
+
+/** Falls back rather than collapsing to `auto` if the wrapper ever loses it. */
+const MEMBER_COL_CELL =
+  "sticky start-0 z-10 w-[var(--member-col,16rem)] bg-card text-left";
+
+/**
+ * INVARIANT: the cap is what gives the roster a scrollport of its own. The
+ * headings stick to it, never to the page, so without a height they cannot
+ * hold at all.
+ */
+const ROSTER_SCROLLPORT = "max-h-[75svh] overflow-auto";
+
+const HEADING_CELL =
+  "sticky top-0 z-20 bg-card shadow-[0_4px_0_0_var(--card)]";
+
+const METRIC_COL_PX = 108;
+
 export interface MembersGridMember {
   /** Canonical person id — keys every metric lookup AND the IC link. */
   entityId: string;
@@ -72,6 +98,8 @@ export interface MembersGridMember {
 
 export interface MembersGridProps {
   members: MembersGridMember[];
+  /** Row order restored after a column completes its sort cycle. */
+  defaultSort?: "input" | "issues";
   /** Column metrics, in display order; keys absent from `byKey` are skipped. */
   metricKeys: readonly string[];
   /** Current-period value + peer standing per metric key. */
@@ -166,12 +194,11 @@ interface RowShape {
 }
 
 type SortKey = "name" | "issues" | string;
+type SortDirection = "ascending" | "descending";
 
-interface SortState {
-  key: SortKey;
-  /** Flipped by clicking the active column a second time. */
-  reversed: boolean;
-}
+type SortState =
+  | { key: null }
+  | { key: SortKey; direction: SortDirection };
 
 /** Cell text: bare number — the unit lives in the header tooltip and the
  *  cell popover, so ten columns of "141 commits / 707 lines" don't shout. */
@@ -199,6 +226,7 @@ function cellMissing(cell: CellShape | undefined): boolean {
  */
 export function MembersGrid({
   members,
+  defaultSort = "issues",
   metricKeys,
   byKey,
   previousByKey,
@@ -211,17 +239,23 @@ export function MembersGrid({
 }: MembersGridProps) {
   const { focusMode } = useSettings();
   const hasIssuesFacet = showIssues ?? countsByMember != null;
-  const [sort, setSort] = useState<SortState>({
-    key: "issues",
-    reversed: false,
-  });
+  const [sort, setSort] = useState<SortState>({ key: null });
 
-  const toggleSort = (key: SortKey) => {
-    setSort((current) =>
-      current.key === key
-        ? { key, reversed: !current.reversed }
-        : { key, reversed: false }
-    );
+  const toggleSort = (
+    key: SortKey,
+    firstDirection: SortDirection = "ascending",
+  ) => {
+    setSort((current) => {
+      if (current.key !== key) return { key, direction: firstDirection };
+      if (current.direction === firstDirection) {
+        return {
+          key,
+          direction:
+            firstDirection === "ascending" ? "descending" : "ascending",
+        };
+      }
+      return { key: null };
+    });
   };
 
   const columns = useMemo(
@@ -293,7 +327,18 @@ export function MembersGrid({
 
   const sortedRows = useMemo(() => {
     const copy = [...rows];
-    const flip = sort.reversed ? -1 : 1;
+    if (sort.key == null) {
+      if (defaultSort === "issues") {
+        copy.sort(
+          (a, b) =>
+            b.counts.bottom - a.counts.bottom ||
+            a.member.displayName.localeCompare(b.member.displayName),
+        );
+      }
+      return copy;
+    }
+
+    const flip = sort.direction === "descending" ? -1 : 1;
     if (sort.key === "name") {
       copy.sort(
         (a, b) =>
@@ -302,7 +347,7 @@ export function MembersGrid({
     } else if (sort.key === "issues") {
       copy.sort(
         (a, b) =>
-          flip * (b.counts.bottom - a.counts.bottom) ||
+          flip * (a.counts.bottom - b.counts.bottom) ||
           a.member.displayName.localeCompare(b.member.displayName)
       );
     } else {
@@ -318,38 +363,21 @@ export function MembersGrid({
           const aMissing = cellMissing(ac);
           const bMissing = cellMissing(bc);
           if (aMissing || bMissing) return Number(aMissing) - Number(bMissing);
-          // First click ranks best-first: lower-is-better puts smallest first;
-          // higher-is-better and neutral put largest first (neutral's order is
-          // arbitrary but stable — it implies no "best"). A second click flips.
-          const bestFirst =
-            betterWhenHigher(col.direction) === false
-              ? ac!.value! - bc!.value!
-              : bc!.value! - ac!.value!;
-          return flip * bestFirst;
+          return flip * (ac!.value! - bc!.value!);
         });
       }
     }
     return copy;
-  }, [rows, sort, columns]);
+  }, [rows, sort, columns, defaultSort]);
 
   /**
-   * The active-column sort order as a real value direction — drives both
-   * `aria-sort` and the header arrow. A metric column's first click sorts
-   * best-first, so the value direction depends on the metric's own
-   * better/worse direction (lower-is-better ascends first); name/issues
-   * ascend on the first click and descend on the flip.
+   * The active-column sort order drives both `aria-sort` and the header arrow.
    */
   const directionFor = (
     key: SortKey
   ): "ascending" | "descending" | undefined => {
     if (sort.key !== key) return undefined;
-    // Issues sorts most-first, so its unflipped order is descending; name
-    // sorts A→Z (ascending unflipped).
-    if (key === "issues") return sort.reversed ? "ascending" : "descending";
-    const col = columns.find((c) => c.key === key);
-    if (!col) return sort.reversed ? "descending" : "ascending";
-    const bestIsHigh = betterWhenHigher(col.direction) !== false;
-    return bestIsHigh !== sort.reversed ? "descending" : "ascending";
+    return sort.direction;
   };
 
   // Member-level orderings (name / issues) live on the Member header; metric
@@ -359,8 +387,8 @@ export function MembersGrid({
   const memberSortActive = sort.key === "issues" || sort.key === "name";
 
   return (
-    <div className={cn("flex flex-col gap-3", className)}>
-      <div className="overflow-x-auto">
+    <div className={cn("@container flex flex-col gap-3", className)}>
+      <div className={cn(ROSTER_SCROLLPORT, MEMBER_COL_WIDTH)}>
         {/* Fixed layout so metric columns are uniform — auto layout sizes
             each column to its own content, making them ragged. The member
             column takes a fixed width; the metric columns split the rest
@@ -370,7 +398,9 @@ export function MembersGrid({
             wrapper scrolls instead of crushing columns. */}
         <table
           className="w-full max-w-[1600px] table-fixed border-separate border-spacing-1"
-          style={{ minWidth: `${256 + columns.length * 108}px` }}
+          style={{
+            minWidth: `calc(var(--member-col, 16rem) + ${columns.length * METRIC_COL_PX}px)`,
+          }}
         >
           <caption className="sr-only">{caption}</caption>
           <thead>
@@ -378,7 +408,7 @@ export function MembersGrid({
               <th
                 scope="col"
                 aria-sort={memberDirection}
-                className="sticky left-0 z-10 w-64 bg-card px-2 text-left"
+                className={cn(MEMBER_COL_CELL, HEADING_CELL, "z-30 px-2")}
               >
                 {hasIssuesFacet ? (
                   // Two member orderings (issues / name) → a small header menu,
@@ -400,7 +430,9 @@ export function MembersGrid({
                       }
                     />
                     <DropdownMenuContent align="start">
-                      <DropdownMenuItem onClick={() => toggleSort("issues")}>
+                      <DropdownMenuItem
+                        onClick={() => toggleSort("issues", "descending")}
+                      >
                         Furthest behind
                       </DropdownMenuItem>
                       <DropdownMenuItem onClick={() => toggleSort("name")}>
@@ -428,7 +460,7 @@ export function MembersGrid({
                   key={col.key}
                   scope="col"
                   aria-sort={directionFor(col.key)}
-                  className="p-0"
+                  className={cn(HEADING_CELL, "p-0")}
                 >
                   <ColumnHeader
                     col={col}
@@ -496,7 +528,7 @@ function MemberRow({
     <tr>
       <th
         scope="row"
-        className="sticky left-0 z-10 w-64 bg-card px-2 py-1 text-left font-normal"
+        className={cn(MEMBER_COL_CELL, "px-2 py-1 font-normal")}
       >
         <div className="flex min-h-12 flex-col justify-center gap-0.5">
           <div className="flex items-center gap-1.5">

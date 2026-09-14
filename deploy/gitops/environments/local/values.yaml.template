@@ -11,9 +11,10 @@
 # Gitops contract: `insight-db-creds` is pre-sealed in the `insight`
 # namespace, fetched by `scripts/secret-fetch.sh` with resource name
 # `insight-local-insight-db-creds`. The composed Secrets the chart
-# references via existingSecret — `insight-analytics-config` and
-# `insight-identity-resolution-config` — are derived from `insight-db-creds` + the
-# L2 hosts/ports below by `scripts/compose-app-secrets.sh` (invoked
+# references via existingSecret — `insight-analytics-config`,
+# `insight-identity-resolution-config`, and `insight-v3-core-config` — are
+# derived from `insight-db-creds`, `insight-v3-core-token`, and the L2
+# hosts/ports below by `scripts/compose-app-secrets.sh` (invoked
 # from `apply-app-secrets`, a `deploy-insight` prereq). No chart-side
 # autogen; the chart validator enforces autoGenerate=false in gitops
 # mode (otherwise ArgoCD-style reconciles would rotate passwords).
@@ -89,6 +90,11 @@ ingestion:
 # (and k3d/kind with a loaded image) share the Docker image store with the
 # cluster, so `IfNotPresent` finds them without a registry. Build them first:
 #     ./dev-compose.sh build            # builds all backend service images :dev
+
+insightV3Core:
+  image: { repository: insight-v3-core, tag: dev, pullPolicy: IfNotPresent }
+  replicaCount: 1
+  existingSecret: insight-v3-core-config
 
 # Full auth (NGINX_BFF EPIC #1583) — no auth_disabled anywhere. The nginx
 # `gateway` is the single edge: auth_request -> authenticator, ES256 gateway-JWT

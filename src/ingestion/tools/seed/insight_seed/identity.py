@@ -1,5 +1,5 @@
 """
-MariaDB identity seed: persons, org_chart, person_roles.
+MariaDB identity seed: people, persons, org_chart, person_roles.
 
 All UUIDs are stored as BINARY(16) in RFC 4122 big-endian — the
 convention the identity-resolution service's schema uses.
@@ -297,6 +297,34 @@ def seed_person_names(
     return inserted
 
 
+def seed_people(
+    cur: pymysql.cursors.Cursor,
+    tenant_uuid: str,
+    roster: Iterable[Person],
+) -> int:
+    sql = """
+        INSERT IGNORE INTO people (
+            insight_tenant_id, person_id, email, username,
+            display_name, first_name, last_name, attributes, valid_from
+        ) VALUES (
+            %s, %s, %s, NULL, %s, %s, %s, JSON_OBJECT(), '2000-01-01 00:00:00'
+        )
+    """
+    rows = [
+        (
+            _bin(tenant_uuid),
+            _bin(person.uuid),
+            person.email,
+            person.display_name,
+            person.first_name,
+            person.last_name,
+        )
+        for person in roster
+    ]
+    cur.executemany(sql, rows)
+    return cur.rowcount
+
+
 def seed_org_chart(
     cur: pymysql.cursors.Cursor,
     tenant_uuid: str,
@@ -428,6 +456,7 @@ def run() -> None:
         n_persons = seed_persons(cur, tenant, roster)
         n_login_id = seed_login_ids(cur, tenant, roster)
         n_names = seed_person_names(cur, tenant, roster)
+        n_people = seed_people(cur, tenant, roster)
         n_org = seed_org_chart(cur, tenant, roster)
         n_roles = seed_person_roles(cur, tenant, roster)
 
@@ -440,11 +469,12 @@ def run() -> None:
             n_names += seed_person_names(cur, TENANT_OTHER, other_roster)
 
     LOG.info(
-        "DONE: persons=%d (new), login_id=%d (new), names=%d (new), "
+        "DONE: persons=%d (new), login_id=%d (new), names=%d (new), people=%d (new), "
         "org_chart=%d (new), person_roles=%d (new)",
         n_persons,
         n_login_id,
         n_names,
+        n_people,
         n_org,
         n_roles,
     )

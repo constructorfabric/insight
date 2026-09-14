@@ -1,0 +1,33 @@
+description: >
+  Metric: ci.run_duration_min — typical (median) minutes a gate run takes
+  (tenant-grain, issue #2803).
+  How it's computed (bronze → silver → gold):
+    • bronze: workflow run attempts with start and finish timestamps
+    • silver: duration = finish − start of the LAST attempt, minutes
+    • gold:   per-run rows at event grain; the value is the exact median over
+      runs in the period — the tail is a different metric (p90)
+
+  Seeded: three gate runs of 1, 2 and 10 minutes — median 2, mean 4.33, so a
+  mean-computed value fails.
+  Cases: median 2, daily point, per-pipeline breakdown, histogram exposes the
+  event rows.
+bronze:
+  bronze_github.workflow_runs:
+    - $ref: ../templates/github_ci.yaml#/templates/workflow_run
+      unique_key: gh-run-m1
+      id: 1
+      run_number: 1
+      run_started_at: "2026-03-02T10:00:00Z"
+      updated_at: "2026-03-02T10:01:00Z"
+    - $ref: ../templates/github_ci.yaml#/templates/workflow_run
+      unique_key: gh-run-m2
+      id: 2
+      run_number: 2
+      run_started_at: "2026-03-02T10:00:00Z"
+      updated_at: "2026-03-02T10:02:00Z"
+    - $ref: ../templates/github_ci.yaml#/templates/workflow_run
+      unique_key: gh-run-m3
+      id: 3
+      run_number: 3
+      run_started_at: "2026-03-02T10:00:00Z"
+      updated_at: "2026-03-02T10:10:00Z"

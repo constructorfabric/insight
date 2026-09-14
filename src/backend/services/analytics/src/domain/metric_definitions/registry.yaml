@@ -6,7 +6,7 @@ sources:
       evidence_ref: ai_metric_evidence
       # Longest lookback_window among the connectors feeding this source:
       # claude-enterprise re-reads 3 days, claude-team and chatgpt-team 2.
-      revision_window_days: 3
+      revision: !rolling_days 3
     measures:
       - key: accepted_lines
         evidence_granularity: source_summary
@@ -178,6 +178,7 @@ sources:
       - comment_target
       - destination_branch
       - file_extension
+      - hour_block
       - project
       - repository
       - source
@@ -322,9 +323,10 @@ sources:
       kind: managed_observation
       source_ref: ai_cost_metric_observations
       evidence_ref: ai_cost_metric_evidence
-      # The month in progress is revisable throughout, and 31 days is the
-      # longest such month.
-      revision_window_days: 31
+      # Every correction in ai_cost_metric_evidence is partitioned by
+      # period_month, so a reading can only rewrite days of the month it
+      # reports and the whole month settles when it closes.
+      revision: billing_month
     measures:
       - key: extra_usage_usd
         evidence_granularity: source_summary
@@ -340,6 +342,18 @@ sources:
         evidence_granularity: source_summary
         evidence_presentation: *seat_month_row
       - key: daily_extra_usage_usd
+        # Describes the supplier's NORMAL revision behaviour, not a guarantee.
+        # A day's step is the difference between two readings, and the ordinary
+        # case — a later cumulative reading at or above the one before it —
+        # closes that step: it is reported as settled from then on. That is
+        # unlike the month-to-date figures above, which every reading rewrites
+        # until the month closes.
+        #
+        # The rarer case is a later reading that comes in LOWER. The suffix
+        # minimum in ai_cost_metric_evidence then corrects earlier steps of the
+        # same month after they were already reported settled. Declaring 0 says
+        # that case is rare enough to report against, not that it cannot happen.
+        revision: !rolling_days 0
         evidence_granularity: source_summary
         evidence_presentation:
           show_value: true
@@ -968,6 +982,7 @@ metrics:
         measure_key: commit_count
     dimensions:
       - branch_scope
+      - hour_block
       - project
       - repository
       - source
@@ -993,6 +1008,7 @@ metrics:
       - input_role: value
         measure_key: default_commit_count
     dimensions:
+      - hour_block
       - project
       - repository
       - source
@@ -1018,6 +1034,7 @@ metrics:
       - input_role: value
         measure_key: non_default_commit_count
     dimensions:
+      - hour_block
       - project
       - repository
       - source
@@ -1029,9 +1046,10 @@ metrics:
     description: Lines added to code files
     explanation: >-
       Lines added to files classified as code — tests, configuration, and
-      documentation excluded. Each change counts once: when the same content
-      reaches a repository in more than one commit, the lines belong to the
-      commit that introduced them first.
+      documentation excluded. A commit whose diff was never collected has no
+      classification, so its commit-level size stays out. Each change counts
+      once: when the same change content appears in more than one commit, the
+      lines belong to the first such commit.
     unit: lines
     format: integer
     direction: higher_is_better
@@ -1107,10 +1125,11 @@ metrics:
     short_label: Lines +
     description: All lines added, by file category
     explanation: >-
-      Lines added across all files, split by file category: code, tests,
-      configuration, documentation. Each change counts once: when the same
-      content reaches a repository in more than one commit, the lines belong
-      to the commit that introduced them first.
+      Lines added, attributed by file category when file changes are
+      available; a commit whose diff was never collected contributes its
+      commit-level size as Unknown. Each change counts once: when the same
+      change content appears in more than one commit, the lines belong to the
+      first such commit.
     unit: lines
     format: integer
     direction: higher_is_better
@@ -1214,10 +1233,11 @@ metrics:
     short_label: Lines −
     description: All lines removed, by file category
     explanation: >-
-      Lines removed across all reported file changes, with file-category,
-      repository, and source breakdowns available. Each change counts once:
-      when the same removal reaches a repository in more than one commit, the
-      lines belong to the commit that made it first.
+      Lines removed, attributed by file category when file changes are
+      available; a commit whose diff was never collected contributes its
+      commit-level size as Unknown. Each change counts once: when the same
+      change content appears in more than one commit, the lines belong to the
+      first such commit.
     unit: lines
     format: integer
     direction: neutral
@@ -1366,7 +1386,7 @@ metrics:
     short_label: PRs merged
     description: Authored pull requests merged
     explanation: >-
-      Authored pull requests that merged, dated by the merge — so a request
+      Authored pull requests that merged, dated by the merge in UTC — so a request
       counts in the period it landed and can carry commits written in earlier
       ones. Under a branch-scope breakdown the split says where the request was
       aimed, not where its commits sit.

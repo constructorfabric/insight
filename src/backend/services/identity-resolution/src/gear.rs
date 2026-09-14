@@ -104,9 +104,23 @@ pub async fn run_seed(
             "`gears.identity-resolution.config.database_url` is required for seed"
         )));
     }
-    let summary = crate::seed_runner::run(&cfg, mode, force).await?;
+
+    // The job runs outside the server bootstrap, so it installs and flushes its
+    // own meter provider — without the flush the run's series never ship.
+    let metrics = crate::infra::telemetry::MetricsGuard::install(&app.opentelemetry);
+    let outcome = seed_and_publish(&cfg, mode, force).await;
+    metrics.shutdown();
+    outcome
+}
+
+async fn seed_and_publish(
+    cfg: &crate::config::GearConfig,
+    mode: &str,
+    force: bool,
+) -> Result<(), crate::seed_runner::SeedRunError> {
+    let summary = crate::seed_runner::run(cfg, mode, force).await?;
     tracing::info!(?summary, "persons-seed run finished");
-    publish_after_seed(crate::sync_runner::run(&cfg, false).await)
+    publish_after_seed(crate::sync_runner::run(cfg, false).await)
         .map_err(crate::seed_runner::SeedRunError::Failed)
 }
 

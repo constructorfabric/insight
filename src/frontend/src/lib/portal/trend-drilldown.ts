@@ -1,57 +1,5 @@
-import type {
-  MetricEvidenceColumn,
-  MetricEvidenceRow,
-} from "@/api/metric-drilldown-client";
+import type { MetricBucket } from "@/api/metric-results-client";
 import { forEntity, type NormalizedMetricResult } from "@/lib/metrics/collection";
-
-/** One person's evidence page, as the drilldown answered it. */
-export interface MemberRecords {
-  personId: string;
-  name: string;
-  columns: readonly MetricEvidenceColumn[];
-  rows: readonly MetricEvidenceRow[];
-}
-
-const WHO: MetricEvidenceColumn = { key: "who", label: "Who", type: "string" };
-
-/**
- * Fold per-person evidence pages into the one table an org-wide chart implies.
- *
- * The catalog defines these metrics for a person, not for a tenant, so the
- * only way to evidence a team total is to ask for each member and join the
- * answers here. The join is what makes the table readable: a merged row says
- * nothing about whose work it was until the person it came from rides along
- * with it.
- */
-export function mergeMemberRecords(pages: readonly MemberRecords[]): {
-  columns: MetricEvidenceColumn[];
-  rows: MetricEvidenceRow[];
-} {
-  const columns: MetricEvidenceColumn[] = [WHO];
-  for (const page of pages) {
-    for (const column of page.columns) {
-      if (column.key === WHO.key) continue;
-      if (columns.some((seen) => seen.key === column.key)) continue;
-      columns.push(column);
-    }
-  }
-
-  const rows: MetricEvidenceRow[] = pages.flatMap((page) =>
-    page.rows.map((row) => ({
-      values: { ...row.values, who: page.name },
-    })),
-  );
-
-  // Newest first, and only where every row carries a date: a mixed sort would
-  // silently reorder records that have no ordering to claim.
-  if (rows.every((row) => typeof row.values.date === "string")) {
-    rows.sort((a, b) =>
-      String(b.values.date).localeCompare(String(a.values.date)),
-    );
-  }
-
-  return { columns, rows };
-}
 
 /** A bucket of the chart, opened up: its total and the people behind it. */
 export interface BucketBreakdownRow {
@@ -110,4 +58,30 @@ export function bucketBreakdown(
         .sort((a, b) => a.localeCompare(b)),
     }))
     .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/**
+ * The day range one chart bucket covers, from the label the axis shows.
+ *
+ * The axis is keyed by `bucket_start`, and the evidence request needs both
+ * ends: a reader clicking a week wants that week's records, not the day the
+ * week happens to start on. The last bucket is NOT clipped to the period
+ * here — the request's own period does that, and clipping twice would need
+ * this function to know about a period it is not given.
+ */
+export function bucketRange(
+  bucketStart: string,
+  bucket: MetricBucket
+): { from: string; to: string } {
+  const start = new Date(`${bucketStart}T00:00:00Z`);
+  if (Number.isNaN(start.getTime()))
+    return { from: bucketStart, to: bucketStart };
+
+  const end = new Date(start);
+  if (bucket === "week") end.setUTCDate(end.getUTCDate() + 6);
+  else if (bucket === "month") {
+    end.setUTCMonth(end.getUTCMonth() + 1);
+    end.setUTCDate(0);
+  }
+  return { from: bucketStart, to: end.toISOString().slice(0, 10) };
 }

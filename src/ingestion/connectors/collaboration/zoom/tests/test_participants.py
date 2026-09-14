@@ -44,15 +44,7 @@ from __future__ import annotations
 import json
 
 import freezegun
-from config import (
-    FROZEN_NOW,
-    METRICS_URL,
-    PARENT_MEETING_SLICES,
-    ZoomConfigBuilder,
-    metrics_params,
-    mock_meeting_slices,
-    mock_token,
-)
+from config import FROZEN_NOW, METRICS_URL, ZoomConfigBuilder, metrics_params, mock_meeting_slices, mock_token
 from connector_tests import HttpMocker, HttpRequest, HttpResponse, assert_records_conform, load_fixture, read_stream
 
 _STREAM = "participants"
@@ -82,11 +74,10 @@ def _participants_page(participants: list[dict], next_token: str | None = None) 
 
 def _mock_parent(http_mocker: HttpMocker, meetings: list[dict]) -> None:
     """The inline `_meetings` parent slices the same now-150d window as the
-    top-level meetings stream (PARENT_MEETING_SLICES — the sync read path emits
-    a 1-day tail instead of absorbing it); all parent meetings are served in
-    the 2026-06-01 slice, the other slices are empty. Exact from/to matchers
-    keep the job-529 window pin on the parent path too."""
-    mock_meeting_slices(http_mocker, {"2026-06-01": _meetings_page(meetings)}, slices=PARENT_MEETING_SLICES)
+    top-level meetings stream; all parent meetings are served in the
+    2026-06-01 slice, the other slices are empty. Exact from/to matchers keep
+    the window pin on the parent path too."""
+    mock_meeting_slices(http_mocker, {"2026-06-01": _meetings_page(meetings)})
 
 
 def _participants_url(escaped_uuid: str) -> str:
@@ -195,7 +186,7 @@ def test_parent_state_persisted_in_child_state(http_mocker: HttpMocker) -> None:
     final_state = output.state_messages[-1].state.stream.stream_state.__dict__
     assert "__ab_no_cursor_state_message" not in final_state
     parent_state = final_state.get("parent_state")
-    assert parent_state == {"_meetings": {"end_time": "2026-06-15T10:30:00Z"}}, parent_state
+    assert parent_state == {"_meetings": {"end_time": "2026-06-15"}}, parent_state
 
 
 @freezegun.freeze_time(_NOW)
@@ -251,7 +242,7 @@ def test_resume_enumerates_parent_from_saved_cursor(http_mocker: HttpMocker) -> 
         assert not second.errors
         assert [r.record.data["participant_uuid"] for r in second.records] == ["part-2"]
         final_state = second.state_messages[-1].state.stream.stream_state.__dict__
-        assert final_state.get("parent_state") == {"_meetings": {"end_time": "2026-06-20T10:30:00Z"}}
+        assert final_state.get("parent_state") == {"_meetings": {"end_time": "2026-06-20"}}
 
 
 # The meeting uuid Cloudflare's WAF started blocking on dev-vhc on 2026-07-23,
@@ -307,7 +298,7 @@ def test_cloudflare_blocked_meeting_is_skipped(http_mocker: HttpMocker) -> None:
     assert not output.errors
     assert [r.record.data["participant_uuid"] for r in output.records] == ["part-good"]
     final_state = output.state_messages[-1].state.stream.stream_state.__dict__
-    assert final_state.get("parent_state") == {"_meetings": {"end_time": "2026-06-16T10:30:00Z"}}
+    assert final_state.get("parent_state") == {"_meetings": {"end_time": "2026-06-16"}}
 
 
 @freezegun.freeze_time(_NOW)

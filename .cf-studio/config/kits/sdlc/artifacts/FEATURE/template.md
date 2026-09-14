@@ -126,3 +126,25 @@ The system **MUST** {clear description of what to implement}.
 
 - [ ] {Testable criterion for this feature}
 - [ ] {Another testable criterion}
+
+## 7. Testing
+
+**Feature**: `cpt-{system}-feature-{slug}`
+
+{Brief scope, primary risk, fixtures and test boundaries. This Testing section is
+an Insight extension; keep Acceptance Criteria above in the canonical kit form.
+Use the [quality-vector guide](../../guides/quality-vectors.md) for shared
+obligations, test attribution and scenario changes.}
+
+- [ ] 1. **{Scenario name}** — {Vector} · {suite-tag} — {do → expect}.
+  **Requirements**: {the FR/NFR subset this proves, e.g. `cpt-{system}-fr-{slug}`, `cpt-{system}-nfr-{slug}`}.
+  **Covers**: {the feature criterion it verifies, where one applies — a `cpt-{system}-dod-{feature-slug}-{slug}` or a section 6 acceptance criterion; omit when none does}.
+  **Test**: {exact test link when implemented, otherwise "Not implemented"}.
+
+{When useful, explain a considered vector with no applicable obligation as
+`**{Vector}** — n/a: {reason}.` Categories do not impose new requirements.}
+
+{Each requirement above is also declared in section 1.2. Implemented tests cite
+the feature ID, FEATURE path and scenario number, and carry the suite's vector
+attribution; a scenario naming a covered criterion keeps that reference once
+implemented. Passing evidence separately identifies revision and conditions.}

@@ -20,15 +20,22 @@ Resolution is metadata-driven, in dbt, from `bronze_jira.jira_fields`
 2. fields named exactly `Story Points` (case-insensitive);
 3. fields named exactly `Story point estimate`.
 
-All matches become an ordered candidate list per source instance;
-`jira__issue_field_snapshot` extracts the value per issue by coalescing over
-the candidates in `custom_fields_json` — an issue holds a value only in the
-field its project style actually uses, so per-issue coalescing is the correct
-merge of the company-/team-managed split.
+**Superseded by generic field extraction.** `jira__issue_field_snapshot` no
+longer resolves story points as a special case: it unpivots every key the issue
+JSON carries and classifies each by `jira__task_field_kind`, so a story-points
+field is read like any other `scalar`
+(see [FIELD-HISTORY-IN-DBT.md](FIELD-HISTORY-IN-DBT.md)). The candidate list and
+the per-issue coalescing it required are gone.
 
-The snapshot emits the **resolved Jira-native field id** as `field_id` (not a
-synthetic `story_points` label), so snapshot rows merge with changelog rows
-for the same field — the same rule that governs `duedate`.
+What made the removal safe is a property of the data rather than of the code: an
+issue holds a value in at most one candidate field, because a project's style
+decides which field it uses. Coalescing therefore had nothing to merge, and
+emitting each field under its own id produces the same one row per issue. A
+singular test guards the property.
+
+Both shapes emit the **Jira-native field id** as `field_id` (never a synthetic
+`story_points` label), so snapshot rows merge with changelog rows for the same
+field — the rule that also governs `duedate`.
 
 Connector-side, the `jira_story_points_field_id` config key no longer has a
 hardcoded default; it remains as an explicit operator override that lands in

@@ -8,36 +8,22 @@
     tags=['gitlab', 'silver:class_git_repository_branches']
 ) }}
 
--- project_key / repo_slug resolved from projects (branch bronze carries only
--- numeric project_id). last_commit_date is null: the branches stream keeps the
--- head sha but not its commit date.
-WITH proj AS (
-    SELECT
-        tenant_id,
-        source_id,
-        id AS project_id,
-        COALESCE(namespace_full_path, '') AS project_key,
-        COALESCE(path, '') AS repo_slug
-    FROM {{ source('bronze_gitlab', 'projects') }} FINAL
-)
+-- repo_path is path_with_namespace; everything before the last segment is the
+-- namespace, the last segment the project.
 SELECT
-    b.tenant_id AS tenant_id,
-    b.source_id AS source_id,
-    b.unique_key AS unique_key,
-    COALESCE(p.project_key, '') AS project_key,
-    COALESCE(p.repo_slug, '') AS repo_slug,
-    COALESCE(b.name, '') AS branch_name,
-    if(b.`default` = true, 1, 0) AS is_default,
-    COALESCE(b.commit_sha, '') AS last_commit_hash,
-    CAST(NULL AS Nullable(DateTime)) AS last_commit_date,
+    tenant_id,
+    source_id,
+    unique_key,
+    arrayStringConcat(arrayPopBack(splitByChar('/', COALESCE(repo_path, ''))), '/') AS project_key,
+    arrayElement(splitByChar('/', COALESCE(repo_path, '')), -1) AS repo_slug,
+    COALESCE(name, '') AS branch_name,
+    if(COALESCE(is_default, false), 1, 0) AS is_default,
+    COALESCE(head_sha, '') AS last_commit_hash,
+    parseDateTimeBestEffortOrNull(head_committed_date) AS last_commit_date,
     'insight_gitlab' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,
-    b._airbyte_extracted_at
-FROM {{ source('bronze_gitlab', 'branches') }} AS b FINAL
-LEFT JOIN proj AS p
-    ON p.project_id = b.project_id
-    AND p.tenant_id = b.tenant_id
-    AND p.source_id = b.source_id
+    _airbyte_extracted_at
+FROM {{ source('bronze_gitlab', 'branches') }} FINAL
 {% if is_incremental() %}
-WHERE b._airbyte_extracted_at > (SELECT max(_airbyte_extracted_at) FROM {{ this }})
+WHERE _airbyte_extracted_at > (SELECT max(_airbyte_extracted_at) FROM {{ this }})
 {% endif %}

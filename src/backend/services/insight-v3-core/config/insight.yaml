@@ -1,0 +1,91 @@
+server:
+  home_dir: "~/.insight"
+
+logging:
+  default:
+    console_level: info
+
+gears:
+  api-gateway:
+    config:
+      metrics:
+        prefix: "host"
+      bind_addr: "0.0.0.0:8086"
+      enable_docs: true
+      cors_enabled: true
+      openapi:
+        title: "Insight v3 Core API"
+        version: "0.1.0"
+        description: "Insight v3 Core"
+      auth_disabled: false
+
+  gear-orchestrator:
+    config: {}
+
+  grpc-hub:
+    config:
+      listen_addr: "uds:///tmp/insight-v3-core-grpc"
+
+  authn-resolver:
+    config:
+      vendor: "hyperspot"
+
+  oidc-authn-plugin:
+    config:
+      vendor: "hyperspot"
+      priority: 50
+      jwt:
+        supported_algorithms: ["ES256"]
+        clock_skew_leeway: 60s
+        require_audience: true
+        expected_audience:
+          - "internal-services"
+        trusted_issuers:
+          - issuer: "https://gateway.invalid"
+        claim_mapping:
+          subject_id: "sub"
+          subject_tenant_id: "tenant_id"
+          subject_type: "sub_type"
+          token_scopes: "roles"
+        required_claims: []
+      http_client:
+        request_timeout: 5s
+      s2s_oauth:
+        discovery_url: "https://gateway.invalid"
+        default_subject_type: "service"
+        token_cache:
+          ttl: 300s
+          max_entries: 100
+
+  authz-resolver:
+    config:
+      vendor: "hyperspot"
+
+  static-authz-plugin:
+    config:
+      vendor: "hyperspot"
+      priority: 100
+
+  tenant-resolver:
+    config:
+      vendor: "hyperspot"
+
+  single-tenant-tr-plugin:
+    config:
+      vendor: "hyperspot"
+      priority: 20
+
+  insight-v3-core:
+    config:
+      clickhouse_url: ""
+      clickhouse_database: "insight"
+      clickhouse_user: null
+      clickhouse_password: null
+      ingest_token: ""
+      anthropic_token: ""
+      chat_model: "claude-sonnet-5"
+      mcp:
+        enabled: false
+        bind_addr: "0.0.0.0:8087"
+        public_url: ""
+        allow_insecure_private_network: false

@@ -38,7 +38,8 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.commit_authors
     `author_uuid` Nullable(String),
     `author_nickname` Nullable(String),
     `author_display_name` Nullable(String),
-    `sample_sha` Nullable(String)
+    `sample_sha` Nullable(String),
+    `last_committed_date` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
@@ -370,6 +371,25 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.repositories
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
 SETTINGS allow_nullable_key = 1, index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.repository_visibility
+(
+    `_airbyte_raw_id` String,
+    `_airbyte_extracted_at` DateTime64(3),
+    `_airbyte_meta` String,
+    `_airbyte_generation_id` UInt32,
+    `unique_key` Nullable(String),
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `data_source` Nullable(String),
+    `collected_at` Nullable(String),
+    `workspace` Nullable(String),
+    `repository_uuid` Nullable(String)
+)
+ENGINE = MergeTree
+ORDER BY _airbyte_raw_id
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.workspace_members

@@ -1,0 +1,3 @@
+# Rebuilt every session, and several of these files exceed the repository's size gate.
+.dbt/
+.artifacts/

@@ -1,0 +1,52 @@
+name: Previews — Helm contract
+
+# Render-contract gate for the previews chart (#2373), most importantly the
+# single-source experiments namespace (gear config + Namespace + Role/
+# RoleBinding must agree or every create 403s) and the confinement of the
+# service's RBAC to the experiment trio in that one namespace. Pure
+# `helm template` + assertions — no cluster, no images.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/backend/services/previews/helm/**"
+      - "src/backend/services/gateway/helm/values.yaml"
+      - "charts/insight/**"
+      - ".github/workflows/previews-helm.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  helm-contract:
+    name: render contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Pinned to full SHAs (mutable tags are repointable — supply-chain
+      # hardening, same as the other helm-contract lanes).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install test deps
+        run: pip install --quiet pytest pyyaml
+
+      - name: helm lint
+        run: |
+          helm lint src/backend/services/previews/helm
+          helm dependency update charts/insight
+          helm lint charts/insight
+
+      - name: Render-contract tests (namespace single-source, RBAC confinement, edge route)
+        run: python -m pytest src/backend/services/previews/helm/tests/ -q

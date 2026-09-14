@@ -1,13 +1,32 @@
 import { describe, expect, it } from "vitest";
 
+import type { PeopleListItem } from "@/api/identity-client";
 import type { IdentityPerson } from "@/types/insight";
 import {
   availableSlices,
   cohortKey,
+  collectPeopleAttrs,
   collectRosterAttrs,
   personAttributes,
   type SliceAttr,
 } from "./slices";
+
+function rosterPerson(
+  personId: string,
+  attributes: Record<string, string>,
+  managerPersonId: string | null = null,
+): PeopleListItem {
+  return {
+    person_id: personId,
+    display_name: null,
+    first_name: null,
+    last_name: null,
+    username: null,
+    email: null,
+    attributes,
+    manager_person_id: managerPersonId,
+  };
+}
 
 function person(over: Partial<IdentityPerson>): IdentityPerson {
   return {
@@ -97,6 +116,36 @@ describe("collectRosterAttrs", () => {
 
   it("returns an empty map for a null root", () => {
     expect(collectRosterAttrs(null, (e) => e).size).toBe(0);
+  });
+});
+
+describe("collectPeopleAttrs", () => {
+  it("reads generic roster attributes and normalizes the title key", () => {
+    const result = collectPeopleAttrs(
+      [
+        rosterPerson(
+          "PERSON-A",
+          { division: "R&D", job_title: "Developer", customTeam: "Core" },
+          "PERSON-MANAGER",
+        ),
+      ],
+      (id) => id.toLowerCase(),
+    );
+
+    expect(result.get("person-a")).toEqual({
+      division: { key: "division", label: "Division", value: "R&D" },
+      title: { key: "title", label: "Title", value: "Developer" },
+      customTeam: {
+        key: "customTeam",
+        label: "customTeam",
+        value: "Core",
+      },
+      manager: {
+        key: "manager",
+        label: "Manager",
+        value: "PERSON-MANAGER",
+      },
+    });
   });
 });
 

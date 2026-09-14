@@ -1,0 +1,92 @@
+spec_version: 1
+description: >
+  Metric: git.default_branch_prs_created — requests opened against the
+  repository's own default branch, #3050.
+
+  How it's computed (bronze → silver → gold):
+    • bronze: each request's destination branch, and the branch list the
+      connector reports per repository
+    • silver: one class row per request and per branch
+    • gold:   the destination is compared against THAT repository's declared
+      default branch, and the scope picks one of the pair — so default plus
+      other always equals the total, by construction rather than by
+      reconciliation
+
+  Only two specs assert this comparison: `git_branch_scope` across all four
+  views of both created metrics, and `git_prs_merged` as the branch-scope split
+  on merges. Both use ONE repository whose default is `main` and give every
+  request a destination — so a comparison hardcoded to `main`, one that let an
+  empty destination match an unknown default, or one that stopped selecting
+  branches on the default flag at all, passes both.
+
+  The comparison also uses the repository's CURRENT declared default, so
+  renaming a default branch reclassifies requests opened before the rename —
+  which this metric's own explanation ("does not move afterwards") denies. The
+  rig seeds one branch state per run and rebuilds once, so no fixture can
+  express a rename: recorded here, not asserted.
+
+  Cases: the comparison across three repositories that disagree about what
+  their default branch is, for requests opened and for requests merged; the
+  destination split, which is where a hardcoded branch name shows; the
+  repository split, where a repository that reported no branches contributes
+  to one scope and not the other; and an empty window.
+
+  A request carries at most one breakdown view per metric, so each split is
+  asked for in a call of its own.
+
+  Fixture — erin only, six requests over three repositories:
+    * acme/mainline, default `main`
+        91 → main         counts
+        92 → release/1.x  does not
+    * acme/legacy, default `master`
+        93 → master       counts — its default is not `main`
+        94 → main         does NOT count: `main` is nothing special here, and
+                          a comparison hardcoded to it would count this one
+    * acme/nodefault, NO branch list reported
+        95 → trunk        does not count: the default is unknown
+        96 → (empty)      does not count either. This is the sharper one —
+                          with an unknown default, dropping the guard on an
+                          empty destination compares one blank against
+                          another and promotes it. GitHub cannot itself emit
+                          an empty destination; bitbucket and gitlab can, and
+                          all three normalise a missing one to blank
+
+  So the metric reads 2 for requests opened and 1 for requests merged, and the
+  other scope 4 and 1. Three wrong readings, each caught by a different rule:
+  hardcoding `main` leaves both totals unchanged and is caught by the
+  destination split, where `main` reads twice and `master` matches no row;
+  dropping the empty-destination guard reads 3; and selecting branches without
+  the default flag answers `dev` for acme/mainline and reads 1.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/erin
+
+  bronze_github.branches:
+    - {$ref: ../templates/git_activity.yaml#/templates/base, unique_key: dbpc-br-mainline, repository: "https://github.com/acme/mainline.git", name: main, is_default: true}
+    # INVARIANT: `dev` sorts BEFORE `main`. The default is resolved as a min()
+    # over the rows flagged default, so a filter that stopped selecting on the
+    # flag would answer `dev` here and drop request 91 out of this scope.
+    # Renaming this branch to anything after `main` disarms that guard.
+    - {$ref: ../templates/git_activity.yaml#/templates/base, unique_key: dbpc-br-mainline-dev, repository: "https://github.com/acme/mainline.git", name: dev, is_default: false}
+    - {$ref: ../templates/git_activity.yaml#/templates/base, unique_key: dbpc-br-legacy, repository: "https://github.com/acme/legacy.git", name: master, is_default: true}
+    # acme/nodefault reports no branches at all, so its default is unknown.
+
+  bronze_github.pull_requests:
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: dbpc-pr-91, repo_full_name: acme/mainline, number: 91, author_login: erin, base_ref: main, created_at: "2026-10-01T09:00:00Z", state: open, closed_at: "", merged_at: "", merge_commit_sha: ""}
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: dbpc-pr-92, repo_full_name: acme/mainline, number: 92, author_login: erin, base_ref: release/1.x, created_at: "2026-10-01T09:10:00Z", state: open, closed_at: "", merged_at: "", merge_commit_sha: ""}
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: dbpc-pr-93, repo_full_name: acme/legacy, number: 93, author_login: erin, base_ref: master, created_at: "2026-10-01T09:20:00Z", state: closed, closed_at: "2026-10-01T12:00:00Z", merged_at: "2026-10-01T12:00:00Z", merge_commit_sha: dbpc-m93}
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: dbpc-pr-94, repo_full_name: acme/legacy, number: 94, author_login: erin, base_ref: main, created_at: "2026-10-01T09:30:00Z", state: closed, closed_at: "2026-10-01T12:10:00Z", merged_at: "2026-10-01T12:10:00Z", merge_commit_sha: dbpc-m94}
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: dbpc-pr-95, repo_full_name: acme/nodefault, number: 95, author_login: erin, base_ref: trunk, created_at: "2026-10-01T09:40:00Z", state: open, closed_at: "", merged_at: "", merge_commit_sha: ""}
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: dbpc-pr-96, repo_full_name: acme/nodefault, number: 96, author_login: erin, base_ref: "", created_at: "2026-10-01T09:50:00Z", state: open, closed_at: "", merged_at: "", merge_commit_sha: ""}
+
+  bronze_github.pull_request_diff_stats:
+    # A request reaches a person only through this row: bronze pull_requests
+    # carries the author's login and no address.
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: dbpc-ds-91, repo_full_name: acme/mainline, pull_number: 91, author_email: erin@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: dbpc-ds-92, repo_full_name: acme/mainline, pull_number: 92, author_email: erin@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: dbpc-ds-93, repo_full_name: acme/legacy, pull_number: 93, author_email: erin@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: dbpc-ds-94, repo_full_name: acme/legacy, pull_number: 94, author_email: erin@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: dbpc-ds-95, repo_full_name: acme/nodefault, pull_number: 95, author_email: erin@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: dbpc-ds-96, repo_full_name: acme/nodefault, pull_number: 96, author_email: erin@example.com}
+

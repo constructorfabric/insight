@@ -13,18 +13,20 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { MetricName } from "@/components/widgets/metric-help-tooltip";
 import {
+  beforeAvailableDataDays,
+  isCovered,
+  notYetCollectedDays,
   provisionalDays,
   silentDays,
   stripDays,
-  uncollectedDays,
   type StripDay,
 } from "@/lib/insight/day-strip";
 import { metricComparisons } from "@/lib/insight/metric-comparison";
 import { metricHelp } from "@/lib/insight/metric-help";
 import {
   activityEvents,
-  dailyReadings,
   finestGrain,
+  type DayReading,
 } from "@/lib/insight/metric-grain";
 import { formatDate, formatMetricValue } from "@/lib/format";
 import {
@@ -37,9 +39,10 @@ import {
   withTypeDimension,
 } from "@/lib/metrics/provider-links";
 import { RecordLink } from "@/components/record-link";
+import { useMetricDaySeries } from "@/queries/metric-day-series";
 import { useMetricDetail } from "@/queries/metric-detail";
 import {
-  useCollectedThrough,
+  useCollectionBoundary,
   useDeclaredMetricDimensions,
 } from "@/queries/metric-definitions";
 import { cn } from "@/lib/utils";
@@ -80,10 +83,12 @@ export function MetricActivity({
     ? declared.byMetricKey?.get(base.metric_key)
     : null;
   const selection = base ? withTypeDimension(base, declaredForMetric) : null;
-  const detail = useMetricDetail(
-    selection,
-    grain != null && !declared.isPending
-  );
+  // Two shapes of detail, and only the one this grain renders is fetched: a
+  // list of things reads evidence rows, a strip of days reads the metric's own
+  // daily series.
+  const ready = grain != null && !declared.isPending;
+  const detail = useMetricDetail(selection, ready && grain === "event");
+  const series = useMetricDaySeries(selection, ready && grain !== "event");
   const help = metricHelp(metric);
   const data = forEntity(metric, entityId);
   const total = formatMetricValue(data.value, metric.format, metric.unit);
@@ -91,8 +96,11 @@ export function MetricActivity({
 
   return (
     <section className="flex flex-col gap-2 border-t py-4 first:border-t-0">
-      <header className="flex items-baseline justify-between gap-4">
-        <div className="min-w-0">
+      <header className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+        {/* INVARIANT: a fixed basis, because a flex line breaks on content
+            size — with none, the untruncated description decides the width at
+            which the figures drop to their own line. */}
+        <div className="min-w-0 flex-[1_1_16rem]">
           <MetricName metric={metric} className="text-sm font-medium" />
           {help?.description ? (
             <p className="truncate text-xs text-muted-foreground">
@@ -100,7 +108,7 @@ export function MetricActivity({
             </p>
           ) : null}
         </div>
-        <div className="shrink-0 text-right">
+        <div className="ms-auto shrink-0 text-right">
           <div className="text-sm tabular-nums">{total}</div>
           {/* Both readings, stated and neither judged. The reader's own last
               period comes first because it is the one they can act on; the
@@ -129,6 +137,7 @@ export function MetricActivity({
         metric={metric}
         selection={selection}
         detail={detail}
+        series={series}
       />
     </section>
   );
@@ -139,13 +148,16 @@ function Body({
   metric,
   selection,
   detail,
+  series,
 }: {
   grain: ReturnType<typeof finestGrain>;
   metric: NormalizedMetricResult;
   /** The read's own selection — the dialog opens on exactly what was listed. */
   selection: MetricEvidenceSelection | null;
   detail: ReturnType<typeof useMetricDetail>;
+  series: ReturnType<typeof useMetricDaySeries>;
 }) {
+  const source = grain === "event" ? detail : series;
   if (grain == null) {
     // Said plainly rather than left blank: a reader who can open the day of
     // every other metric on the page will otherwise read the silence here as
@@ -157,40 +169,43 @@ function Body({
       </p>
     );
   }
-  if (detail.isPending) {
+  if (source.isPending) {
     return (
       <div className="flex h-12 items-center">
         <Spinner className="size-4 text-muted-foreground" />
       </div>
     );
   }
-  if (detail.isError) {
+  if (source.isError) {
     return (
       <p className="text-xs text-muted-foreground">
         The detail behind this number could not be loaded.{" "}
         <button
           type="button"
           className="underline underline-offset-2"
-          onClick={() => void detail.refetch()}
+          onClick={() => void source.refetch()}
         >
           Try again
         </button>
       </p>
     );
   }
-  const rows = detail.data?.rows ?? [];
-  const columns = detail.data?.columns ?? [];
-  if (rows.length === 0) {
-    return (
-      <p className="text-xs text-muted-foreground">
-        Nothing recorded in this period.
-      </p>
-    );
-  }
   if (grain === "event") {
+    const rows = detail.data?.rows ?? [];
+    if (rows.length === 0) return <NothingRecorded />;
     return <EventList metric={metric} selection={selection} rows={rows} />;
   }
-  return <DayStrip metric={metric} rows={rows} columns={columns} />;
+  const readings = series.data ?? [];
+  if (readings.length === 0) return <NothingRecorded />;
+  return <DayStrip metric={metric} readings={readings} />;
+}
+
+function NothingRecorded() {
+  return (
+    <p className="text-xs text-muted-foreground">
+      Nothing recorded in this period.
+    </p>
+  );
 }
 
 function EventList({
@@ -279,11 +294,6 @@ function eventType(values: Readonly<Record<string, unknown>>): string | null {
   return type === "" ? null : type;
 }
 
-/** A ratio's daily value is a fraction; the metric says what to scale it by. */
-function scaled(metric: NormalizedMetricResult, value: number): number {
-  return metric.computation === "ratio" ? value * (metric.scale ?? 1) : value;
-}
-
 /**
  * One day, in words.
  *
@@ -293,13 +303,15 @@ function scaled(metric: NormalizedMetricResult, value: number): number {
  */
 function dayTitle(metric: NormalizedMetricResult, day: StripDay): string {
   const when = formatDate(day.date, "d MMM");
-  if (!day.collected) return `${when} — not collected yet`;
+  if (day.coverage === "before_available_data")
+    return `${when} — before available data`;
+  if (day.coverage === "not_yet_collected")
+    return `${when} — not collected yet`;
   if (day.value == null) return `${when} — no reading`;
-  const value = formatMetricValue(
-    scaled(metric, day.value),
-    metric.format,
-    metric.unit
-  );
+  // Formatted once, from the reading as the metric computed it. A ratio
+  // arrives with its scale and its value transform already applied, so
+  // anything applied again here would show a clamped share past its clamp.
+  const value = formatMetricValue(day.value, metric.format, metric.unit);
   const suffix = day.provisional ? ", may still change" : "";
   if (day.numerator != null && day.denominator != null) {
     return `${when} — ${value} of ${day.denominator}${suffix}`;
@@ -330,15 +342,21 @@ function stripSummary(
         : best,
     null
   );
-  const pending = uncollectedDays(days);
+  const pending = notYetCollectedDays(days);
+  const before = beforeAvailableDataDays(days);
   const parts = [`${metric.label} by day, ${span}`];
   if (busiest?.value != null)
     parts.push(`busiest ${dayTitle(metric, busiest)}`);
   parts.push(
     silent === 0
-      ? "every collected day has a reading"
+      ? "every covered day has a reading"
       : `${silent} ${silent === 1 ? "day has" : "days have"} no reading`
   );
+  if (before > 0) {
+    parts.push(
+      `${before} ${before === 1 ? "day is" : "days are"} before available data`
+    );
+  }
   if (pending > 0) {
     parts.push(
       `${pending} ${pending === 1 ? "day is" : "days are"} not collected yet`
@@ -346,39 +364,87 @@ function stripSummary(
   }
   const open = provisionalDays(days);
   if (open > 0) {
-    parts.push(
-      `${open} ${open === 1 ? "day may" : "days may"} still change`
-    );
+    parts.push(`${open} ${open === 1 ? "day may" : "days may"} still change`);
   }
   return `${parts.join("; ")}.`;
 }
 
+function dayWord(n: number): string {
+  return n === 1 ? "day" : "days";
+}
+
+/**
+ * What the period holds that the drawing cannot say: how much of it the source
+ * never reached, and what is unsettled inside the part it did.
+ *
+ * Two slots, each assembled from its own facts rather than picked off a
+ * priority list. Within a slot both facts are stated when both apply — a slot
+ * that chose between them let the larger hide the smaller, which is how a
+ * window with weeks of missing coverage reported only its two open days.
+ */
+function coverageNote(strip: StripDay[]): string | null {
+  const before = beforeAvailableDataDays(strip);
+  const pending = notYetCollectedDays(strip);
+  const parts = [
+    before > 0 ? `${before} ${dayWord(before)} before available data` : null,
+    pending > 0
+      ? `${pending}${before > 0 ? "" : ` ${dayWord(pending)}`} not collected yet`
+      : null,
+  ].filter((part): part is string => part != null);
+  return parts.length === 0 ? null : parts.join(", ");
+}
+
+function observedNote(strip: StripDay[]): string | null {
+  const silent = silentDays(strip);
+  const open = provisionalDays(strip);
+  const parts = [
+    silent > 0 ? `${silent} ${dayWord(silent)} with no reading` : null,
+    open > 0
+      ? `${open}${silent > 0 ? "" : ` ${dayWord(open)}`} may still change`
+      : null,
+  ].filter((part): part is string => part != null);
+  return parts.length === 0 ? null : parts.join(", ");
+}
+
+/**
+ * The caption: the two notes above, and the denominator only where one of them
+ * had nothing to say. The denominator is context for a share, never a reason
+ * to drop a fact about coverage or settlement.
+ */
+function stripNotes(
+  strip: StripDay[],
+  constantDenominator: number | null
+): string | null {
+  const notes = [coverageNote(strip), observedNote(strip)].filter(
+    (note): note is string => note != null
+  );
+  if (notes.length < 2 && constantDenominator != null) {
+    notes.push(`measured against ${constantDenominator} per day`);
+  }
+  return notes.length === 0 ? null : notes.join(" · ");
+}
+
 function DayStrip({
   metric,
-  rows,
-  columns,
+  readings,
 }: {
   metric: NormalizedMetricResult;
-  rows: NonNullable<ReturnType<typeof useMetricDetail>["data"]>["rows"];
-  columns: NonNullable<ReturnType<typeof useMetricDetail>["data"]>["columns"];
+  readings: DayReading[];
 }) {
   const [hovered, setHovered] = useState<number | null>(null);
   const period = metric.selection?.period;
-  const { collectedThrough, revisionWindowDays } = useCollectedThrough(
-    metric.metric_key
-  );
+  const { collectedFrom, collectedThrough, settledThrough } =
+    useCollectionBoundary(metric.metric_key);
   const days = useMemo(
     () =>
       period
-        ? stripDays(
-            dailyReadings(rows, columns),
-            period.from,
-            period.to,
+        ? stripDays(readings, period.from, period.to, {
+            collectedFrom,
             collectedThrough,
-            revisionWindowDays
-          )
+            settledThrough,
+          })
         : [],
-    [rows, columns, period, collectedThrough, revisionWindowDays]
+    [readings, period, collectedFrom, collectedThrough, settledThrough]
   );
   if (days.length === 0) return null;
 
@@ -386,9 +452,6 @@ function DayStrip({
   // Which way the hover readout grows: rightwards from the bar over the first
   // half of the strip, leftwards over the second, so it never runs off an end.
   const leftAnchored = hovered != null && hovered < days.length / 2;
-  const silent = silentDays(days);
-  const pending = uncollectedDays(days);
-  const open = provisionalDays(days);
   // One denominator for the whole period is worth naming: it is the thing a
   // reader argues with when a share looks wrong, and it is invisible in the
   // percentage itself.
@@ -453,7 +516,7 @@ function DayStrip({
             onPointerEnter={() => setHovered(index)}
             className="relative flex h-full flex-1 items-end"
           >
-            {!day.collected ? (
+            {!isCovered(day) ? (
               // A wash over the whole column, not a bar: it says the day was
               // never delivered, and at this weight it cannot be misread as a
               // value the way any bottom-anchored height would be.
@@ -481,15 +544,7 @@ function DayStrip({
       <div className="flex justify-between text-xs text-muted-foreground">
         <span>{period ? formatDate(period.from) : null}</span>
         <span className="text-center">
-          {pending > 0
-            ? `${pending} ${pending === 1 ? "day" : "days"} not collected yet`
-            : open > 0
-              ? `last ${open} ${open === 1 ? "day" : "days"} may still change`
-              : constantDenominator != null
-                ? `measured against ${constantDenominator} per day`
-                : silent > 0
-                  ? `${silent} ${silent === 1 ? "day" : "days"} with no reading`
-                  : null}
+          {stripNotes(days, constantDenominator)}
         </span>
         <span>{period ? formatDate(period.to) : null}</span>
       </div>

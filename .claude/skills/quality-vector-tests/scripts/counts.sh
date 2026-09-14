@@ -81,9 +81,9 @@ count "dbt data tests" \
   "find src/ingestion/dbt/tests -name '*.sql' | grep -q ."
 
 count "metrics with a spec" \
-  "src/ingestion/tests/e2e/metrics" \
-  "ls src/ingestion/tests/e2e/metrics/*.test.yaml | wc -l" \
-  "ls src/ingestion/tests/e2e/metrics/*.test.yaml"
+  "tests/datapath/metrics" \
+  "ls tests/datapath/metrics/*/*.test.yaml | wc -l" \
+  "ls tests/datapath/metrics/*/*.test.yaml"
 
 count "stand tests" \
   "tests/stand" \

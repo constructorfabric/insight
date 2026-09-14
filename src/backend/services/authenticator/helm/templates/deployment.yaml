@@ -16,6 +16,8 @@ spec:
       annotations:
         # Roll pods when the gears config changes.
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        # Platform CM arrives via envFrom; roll pods when its observability inputs change.
+        checksum/observability: {{ default dict (default dict .Values.global).observability | toYaml | sha256sum }}
         {{- if .Values.idp.extraCaCertSecret }}
         # Roll pods when the idp-extra-ca Secret's DATA changes under the
         # same name/key (name/key/path changes already alter the pod
@@ -94,6 +96,10 @@ spec:
               containerPort: {{ .Values.service.tokenPort }}
               protocol: TCP
           envFrom:
+            # Umbrella observability contract; optional so standalone installs schedule.
+            - configMapRef:
+                name: {{ .Release.Name }}-platform
+                optional: true
             # Operator MUST pre-create this Secret (umbrella does it
             # automatically as `insight-authenticator-config`). Provides the
             # APP__gears__authenticator__config__* leaf overrides.

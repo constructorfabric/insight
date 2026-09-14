@@ -36,6 +36,7 @@ export function PersonAccountsView() {
       <PersonPicker
         browseWhenEmpty
         asSurface
+        source="roster"
         // The roster's terms live in the URL: a reader who comes back to this
         // mode should not have to find the same person twice. `replace`,
         // because typing is not a place to go back to.

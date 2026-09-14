@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # compose-app-secrets.sh — derive the insight-{analytics,authenticator,
-# identity-resolution}-config Secrets from the credentials already
+# identity-resolution,v3-core}-config Secrets from credentials already
 # materialised in the cluster's `insight-db-creds` Secret, plus the L2
 # service hosts declared in environments/<env>/values.yaml.
 #
@@ -26,6 +26,8 @@
 #   .clickhouse.host .clickhouse.port .clickhouse.username .clickhouse.database
 #   .redis.host      .redis.port
 #   .identityResolution.databaseName (defaults to "identity")
+#   .insightV3Core.existingSecret (optional; when set, compose that Secret and
+#                                  require insight-v3-core-token to exist)
 #   .global.tenantDefaultId      (optional; empty disables the resolver
 #                                 on both identity-resolution and
 #                                 analytics. Single source of truth for
@@ -77,11 +79,14 @@ CH_HOST=$( yq -r '.clickhouse.host'          "$VALUES")
 CH_PORT=$( yq -r '.clickhouse.port  // 8123' "$VALUES")
 CH_USER=$( yq -r '.clickhouse.username'      "$VALUES")
 CH_DB=$(   yq -r '.clickhouse.database'      "$VALUES")
+CORE_CONFIG_SECRET=$(yq -r '.insightV3Core.existingSecret // ""' "$VALUES")
 RD_HOST=$( yq -r '.redis.host'               "$VALUES")
 RD_PORT=$( yq -r '.redis.port       // 6379' "$VALUES")
 TENANT_DEFAULT=$(yq -r '.global.tenantDefaultId          // ""' "$VALUES")
 IDENTITY_RESOLUTION_BOOTSTRAP_ADMIN=$(yq -r '.identityResolution.bootstrapAdminPersonId // ""' "$VALUES")
 IDENTITY_RESOLUTION_DB=$(yq -r '.identityResolution.databaseName // "identity"' "$VALUES")
+CORE_DB=$(yq -r '.insightV3Core.databaseName // "insight_v3"' "$VALUES")
+CORE_CH_READER=$(yq -r '.insightV3Core.clickhouseReaderUsername // "insight_v3_reader"' "$VALUES")
 # The identity URL ANALYTICS calls. Empty = the identity-resolution Service
 # (constructorfabric/insight#1602). The AUTHENTICATOR does NOT use this —
 # see AUTHENTICATOR_IDENTITY_URL below.
@@ -260,6 +265,34 @@ for v in MDB_PW CH_PW CH_ANALYTICS_PW; do
   }
 done
 
+# Static, per-instance ingestion token. There is intentionally no token
+# acquisition flow: operators seal it once and API clients receive it out of
+# band. Environments pinned before insight-v3-core opt in by leaving
+# insightV3Core.existingSecret unset.
+#
+# The Deployment takes the token by secretKeyRef, so it is read here only to
+# fail the apply with a named Secret rather than a pod that never starts.
+CORE_CH_READER_PW=""
+if [ -n "$CORE_CONFIG_SECRET" ] && [ "$CORE_CONFIG_SECRET" != "null" ]; then
+  CORE_CH_READER_PW=$(kubectl -n "$NS_APP" get secret insight-db-creds \
+    -o jsonpath='{.data.clickhouse-v3-reader-password}' 2>/dev/null | base64 -d 2>/dev/null || true)
+  for _ in $(seq 1 30); do
+    kubectl -n "$NS_APP" get secret insight-v3-core-token >/dev/null 2>&1 && break
+    sleep 1
+  done
+  kubectl -n "$NS_APP" get secret insight-v3-core-token >/dev/null 2>&1 || {
+    echo "ERROR: Secret $NS_APP/insight-v3-core-token not found; seal key token before deploying insight-v3-core" >&2
+    exit 1
+  }
+  CORE_TOKEN=$(kubectl -n "$NS_APP" get secret insight-v3-core-token \
+    -o jsonpath='{.data.token}' | base64 -d)
+  [ -n "$CORE_TOKEN" ] || {
+    echo "ERROR: $NS_APP/insight-v3-core-token.token is empty" >&2
+    exit 1
+  }
+  unset CORE_TOKEN
+fi
+
 # Redis password is optional in principle; compose the URL without auth
 # if it's blank, matching the chart's helper logic.
 if [ -n "$RD_PW" ]; then
@@ -303,6 +336,23 @@ stringData:
 EOF
 } | kubectl -n "$NS_APP" apply -f - >/dev/null
 echo "composed → $NS_APP/insight-analytics-config"
+
+if [ -n "$CORE_CONFIG_SECRET" ] && [ "$CORE_CONFIG_SECRET" != "null" ]; then
+  kubectl -n "$NS_APP" create secret generic "$CORE_CONFIG_SECRET" \
+    --from-literal=APP__gears__insight_v3_core__config__clickhouse_url="http://${CH_HOST}:${CH_PORT}" \
+    --from-literal=APP__gears__insight_v3_core__config__clickhouse_database="${CH_DB}" \
+    --from-literal=APP__gears__insight_v3_core__config__clickhouse_user="${CH_USER}" \
+    --from-literal=APP__gears__insight_v3_core__config__clickhouse_password="${CH_PW}" \
+    --from-literal=APP__gears__insight_v3_core__config__database_url="mysql://${MDB_USER}:${MDB_PW}@${MDB_HOST}:${MDB_PORT}/${CORE_DB}" \
+    --from-literal=APP__gears__insight_v3_core__config__identity_url="${IDENTITY_URL}" \
+    ${CORE_CH_READER_PW:+--from-literal=APP__gears__insight_v3_core__config__clickhouse_query_user="${CORE_CH_READER}"} \
+    ${CORE_CH_READER_PW:+--from-literal=APP__gears__insight_v3_core__config__clickhouse_query_password="${CORE_CH_READER_PW}"} \
+    --dry-run=client -o yaml \
+    | kubectl -n "$NS_APP" apply -f - >/dev/null
+  kubectl -n "$NS_APP" annotate secret "$CORE_CONFIG_SECRET" \
+    helm.sh/resource-policy=keep --overwrite >/dev/null
+  echo "composed → $NS_APP/$CORE_CONFIG_SECRET"
+fi
 
 # `insight-authenticator-config` (NGINX_BFF): the authenticator's leaf config.
 # The chart emits this only when autoGenerate=true; in gitops mode we compose it
@@ -388,4 +438,4 @@ EOF
 echo "composed → $NS_APP/insight-identity-resolution-config"
 
 # Don't echo any of the passwords; clear the shell env explicitly.
-unset MDB_PW CH_PW RD_PW REDIS_URL CH_ANALYTICS_PW
+unset MDB_PW CH_PW RD_PW REDIS_URL CH_ANALYTICS_PW CORE_TOKEN CORE_CH_READER_PW

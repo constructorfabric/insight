@@ -7,15 +7,26 @@ use uuid::Uuid;
 use crate::api::error::MetricError;
 use crate::domain::metric_definitions::EvidenceRelation;
 
-use super::dto::{EvidenceQueryRow, MetricDrilldownSelection};
+use super::dto::{EvidenceQueryRow, MetricDrilldownColumn, MetricDrilldownSelection};
 use super::error::{config_error, evidence_unavailable, invalid, invalid_error};
 
 /// Bumped when the ordering key changes: an older cursor addresses a page this
 /// shape would not produce, so it is refused.
-const CURSOR_VERSION: u8 = 2;
+const CURSOR_VERSION: u8 = 3;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CursorKey {
+    /// Leads the key because it leads the ORDER BY: blank cells sit past every
+    /// filled one, whichever way the sorted column runs.
+    ///
+    /// INVARIANT: a bool, not the `UInt8` the query projects. A cursor is
+    /// caller-held bytes, and any other number would compare against the
+    /// query's own 0-or-1 as if it outranked both — serving a page twice or
+    /// dropping the rest of the result set. As a bool there is no such value
+    /// to send: anything else fails to decode, and a cursor that does not
+    /// decode is already refused.
+    pub(super) sort_flag: bool,
+    pub(super) sort_value: String,
     pub(super) role: String,
     pub(super) entity_id: String,
     pub(super) metric_date: String,
@@ -40,11 +51,21 @@ struct EvidenceSnapshotRow {
     snapshot_id: String,
 }
 
+/// What a cursor is bound to.
+///
+/// INVARIANT: the presented columns are in here, not just the selection the
+/// caller sent. The ordering key's SQL is decided by a column's declared TYPE —
+/// a number sorts numerically and replays through a cast, a string sorts
+/// zero-padded and replays as text. That declaration lives in the metric
+/// catalog, which no snapshot pins, so a change to it while a walk is in
+/// flight would otherwise leave the cursor looking valid and comparing against
+/// a differently-shaped key.
 pub(super) fn selection_fingerprint(
     tenant_id: Uuid,
     selection: &MetricDrilldownSelection,
+    columns: &[MetricDrilldownColumn],
 ) -> Result<String, CanonicalError> {
-    let bytes = serde_json::to_vec(&(tenant_id, selection)).map_err(|_| config_error())?;
+    let bytes = serde_json::to_vec(&(tenant_id, selection, columns)).map_err(|_| config_error())?;
     Ok(hex::encode(Sha256::digest(bytes)))
 }
 
@@ -134,6 +155,8 @@ pub(super) fn encode_cursor(
         fingerprint: fingerprint.to_owned(),
         snapshot_id: snapshot_id.to_owned(),
         key: CursorKey {
+            sort_flag: row.sort_flag != 0,
+            sort_value: row.sort_value.clone(),
             role: row.role.clone(),
             entity_id: row.entity_id.clone(),
             metric_date: row.metric_date.clone(),

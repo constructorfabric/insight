@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -15,11 +16,24 @@ from collections.abc import Iterable
 from typing import Any
 
 from . import status as vocab
-from .plan import SYNC_COMPLETED
+from .plan import SYNC_COMPLETED, Instance
 
 TABLE = "ingestion_history.sync_events"
 
+#: SAFETY: a relation name is spliced into SQL, never bound — ClickHouse takes
+#: no bind parameter in that position. The names come from descriptors on disk
+#: and from `system.tables`, so this refuses what could not be either rather
+#: than standing between a request and a query.
+_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
+
 _TIMEOUT_SECS = 30
+
+#: What a synchronous mutation is allowed to take. It waits for the whole
+#: rewrite, and the install that runs it is the one upgrading with months of
+#: history behind it — not a request-shaped wait. Past the deadline the mutation
+#: is still running server-side, so the tick that gave up would report a failure
+#: and the next one would issue the same statement again.
+_MUTATION_TIMEOUT_SECS = 300
 
 #: How far behind the newest recorded job the watermark may be dragged by a job
 #: that never closes. Long enough that no real sync is missed by it; short
@@ -83,7 +97,9 @@ class Ledger:
             source["RECONCILE_DEST_CLICKHOUSE_PASSWORD"],
         )
 
-    def _post(self, body: bytes, query: str | None = None) -> str:
+    def _post(
+        self, body: bytes, query: str | None = None, timeout: int = _TIMEOUT_SECS
+    ) -> str:
         url = self._url + "/"
         if query is not None:
             url += "?query=" + urllib.parse.quote(query)
@@ -92,7 +108,7 @@ class Ledger:
         request.add_header("X-ClickHouse-Key", self._password)
         try:
             # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
-            with urllib.request.urlopen(request, timeout=_TIMEOUT_SECS) as response:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
                 return response.read().decode()
         except urllib.error.HTTPError as error:
             detail = error.read().decode(errors="replace").strip()
@@ -176,13 +192,94 @@ class Ledger:
         if watermark is None:
             return []
         return self._select(
-            "SELECT job_id, connector, toString(job_updated_at) AS updated FROM ("
-            "  SELECT job_id, connector, job_updated_at, status "
+            "SELECT job_id, connector, tenant_id, source_id, "
+            "       toString(job_updated_at) AS updated FROM ("
+            "  SELECT job_id, connector, tenant_id, source_id, "
+            "         job_updated_at, status "
             f"  FROM {TABLE} WHERE event = '{SYNC_COMPLETED}' "
             "    AND job_updated_at IS NOT NULL "
             "  ORDER BY job_id, ts DESC LIMIT 1 BY job_id) "
             f"WHERE status NOT IN ({_OPEN_EXCLUDED}) "
             f"  AND job_updated_at < {_quote(watermark)}"
+        )
+
+    def unidentified_connectors(self) -> list[tuple[str, bool]]:
+        """Connectors holding rows with no identity, and whether any is a sync.
+
+        The seal names no connector and is not one of them: it is about the tick
+        rather than about anything that synced, so its empty identity is the
+        value it is supposed to have.
+
+        The sync flag decides what may be inferred later: a connector whose
+        unidentified rows include a sync is one whose identity says whose work
+        that sync was, and that is not a thing to guess at.
+        """
+        rows = self._select(
+            "SELECT connector, countIf(event = "
+            f"'{SYNC_COMPLETED}') > 0 AS has_syncs FROM {TABLE} "
+            "WHERE connector != '' AND (tenant_id = '' OR source_id = '') "
+            "GROUP BY connector"
+        )
+        return [(str(row["connector"]), bool(int(row["has_syncs"]))) for row in rows]
+
+    def recorded_instance(self, namespace: str) -> tuple[str, str] | None:
+        """The identity a connector's own data was recorded under, or None.
+
+        Its rows carry the tenant and source id the sync ran with, so a
+        connector that ever moved a row said which instance it was — even after
+        its Secret is gone. Read from the relation the descriptor names, never
+        from a name derived off the connector's slug.
+
+        None when nothing can be read straight: no relation, no rows, or more
+        than one identity in them. More than one is not a majority to take — it
+        would mean the era this recovers from was not single-instance after all.
+        """
+        if not _IDENTIFIER.match(namespace):
+            raise LedgerError(f"unusable relation name: {namespace!r}")
+        tables = self._select(
+            "SELECT name FROM system.tables "
+            f"WHERE database = {_quote(namespace)} AND total_rows > 0 "
+            "ORDER BY total_rows DESC LIMIT 1"
+        )
+        if not tables:
+            return None
+        table = str(tables[0]["name"])
+        if not _IDENTIFIER.match(table):
+            raise LedgerError(f"unusable relation name: {table!r}")
+
+        # Two rows are enough to know there is more than one answer.
+        found = self._select(
+            f"SELECT DISTINCT tenant_id, source_id FROM {namespace}.{table} LIMIT 2"
+        )
+        if len(found) != 1:
+            return None
+        tenant_id = str(found[0].get("tenant_id") or "")
+        source_id = str(found[0].get("source_id") or "")
+        if not tenant_id or not source_id:
+            return None
+        return tenant_id, source_id
+
+    def adopt_identity(self, instance: Instance) -> None:
+        """Give every unidentified row under this connector's name its identity.
+
+        Synchronous: a mutation left to the background would still be pending
+        when the next tick reads the same rows as unidentified and issues it
+        again, once every tick until it happened to land.
+
+        The predicate is the same one that found the rows, so a second run after
+        the first succeeded matches nothing — and an identity already recorded is
+        never overwritten by one resolved later.
+        """
+        self._post(
+            (
+                f"ALTER TABLE {TABLE} "
+                f"UPDATE tenant_id = {_quote(instance.tenant_id)}, "
+                f"source_id = {_quote(instance.source_id)} "
+                f"WHERE connector = {_quote(instance.connector)} "
+                "AND (tenant_id = '' OR source_id = '') "
+                "SETTINGS mutations_sync = 1"
+            ).encode(),
+            timeout=_MUTATION_TIMEOUT_SECS,
         )
 
     def insert(self, rows: Iterable[dict[str, Any]]) -> int:

@@ -4,10 +4,12 @@ import {
   getConnectorHealth,
   getConnectorSyncs,
   type ConnectorHealthSummary,
+  type ConnectorInstanceRef,
   type ConnectorSyncHistory,
 } from "@/api/connector-health-client";
 import { sessionAuthorizationScope } from "@/auth/session-scope";
 import { useAuth } from "@/auth/use-auth";
+import { instanceKey } from "@/lib/portal/connector-health";
 
 const KEY = ["connector-health"] as const;
 
@@ -33,14 +35,25 @@ export function useConnectorHealth(): UseQueryResult<ConnectorHealthSummary> {
   });
 }
 
+/**
+ * One installation's history, keyed by the whole identity.
+ *
+ * Keying on the connector name alone would serve one installation's window
+ * from the other's cache entry, because two installations share the name.
+ */
 export function useConnectorSyncs(
-  connector: string | null,
+  instance: ConnectorInstanceRef | null,
 ): UseQueryResult<ConnectorSyncHistory> {
   const { session } = useAuth();
   return useQuery({
-    queryKey: [...KEY, "syncs", connector, sessionAuthorizationScope(session)],
-    queryFn: () => getConnectorSyncs(connector as string),
-    enabled: connector !== null,
+    queryKey: [
+      ...KEY,
+      "syncs",
+      instance === null ? null : instanceKey(instance),
+      sessionAuthorizationScope(session),
+    ],
+    queryFn: () => getConnectorSyncs(instance as ConnectorInstanceRef),
+    enabled: instance !== null,
     staleTime: 0,
   });
 }

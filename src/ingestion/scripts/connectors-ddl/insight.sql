@@ -250,6 +250,7 @@ CREATE TABLE IF NOT EXISTS insight.git_authored_commits
     `author_name` String,
     `message` String,
     `observed_at` Nullable(DateTime),
+    `committer_date` Nullable(DateTime),
     `entity_id` String,
     `metric_date` Nullable(Date),
     `lines_added` Nullable(Int64),
@@ -280,6 +281,7 @@ CREATE TABLE IF NOT EXISTS insight.git_commit_file_changes
     `repo_slug` String,
     `commit_hash` String,
     `observed_at` Nullable(DateTime),
+    `committer_date` Nullable(DateTime),
     `data_source` String,
     `file_path` String,
     `file_extension` String,
@@ -294,13 +296,47 @@ ORDER BY (tenant_id, data_source, commit_hash)
 SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
 ;
 
+CREATE TABLE IF NOT EXISTS insight.git_commit_file_line_totals
+(
+    `tenant_id` Nullable(String),
+    `data_source` String,
+    `commit_hash` String,
+    `file_change_rows` UInt64,
+    `lines_added` Nullable(Int64),
+    `lines_removed` Nullable(Int64)
+)
+ENGINE = MergeTree
+ORDER BY (tenant_id, data_source, commit_hash)
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS insight.git_deduplicated_file_changes
+(
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `project_key` String,
+    `repo_slug` String,
+    `commit_hash` String,
+    `data_source` String,
+    `file_path` String,
+    `file_extension` String,
+    `change_type` String,
+    `lines_added` Nullable(Int64),
+    `lines_removed` Nullable(Int64)
+)
+ENGINE = MergeTree
+ORDER BY (tenant_id, data_source, commit_hash)
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
 CREATE TABLE IF NOT EXISTS insight.git_default_branch_commits
 (
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `project_key` String,
     `repo_slug` String,
-    `commit_hash` String
+    `commit_hash` String,
+    `data_source` String
 )
 ENGINE = MergeTree
 ORDER BY (tenant_id, source_id, project_key, repo_slug, commit_hash)
@@ -316,6 +352,26 @@ CREATE TABLE IF NOT EXISTS insight.git_derived_commits
 )
 ENGINE = MergeTree
 ORDER BY (tenant_id, data_source, commit_hash)
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS insight.git_file_change_coverage
+(
+    `tenant_id` Nullable(String),
+    `data_source` String,
+    `source_id` Nullable(String),
+    `commits` UInt64,
+    `commits_requiring_file_changes` UInt64,
+    `known_zero_size_commits` UInt64,
+    `unknown_size_commits` UInt64,
+    `commits_with_file_changes` UInt64,
+    `collected_pct` Nullable(Float64),
+    `recent_commits_requiring_file_changes` UInt64,
+    `recent_collected_pct` Nullable(Float64),
+    `uncollected_lines` Int64
+)
+ENGINE = MergeTree
+ORDER BY (tenant_id, data_source, source_id)
 SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
 ;
 
@@ -407,6 +463,18 @@ CREATE TABLE IF NOT EXISTS insight.git_review_events
 )
 ENGINE = MergeTree
 ORDER BY (tenant_id, entity_id, metric_date)
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS insight.git_superseded_file_changes
+(
+    `tenant_id` Nullable(String),
+    `data_source` String,
+    `commit_hash` String,
+    `file_path` String
+)
+ENGINE = MergeTree
+ORDER BY (tenant_id, data_source, commit_hash)
 SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
 ;
 
@@ -571,6 +639,21 @@ ENGINE = MergeTree
 PARTITION BY toYYYYMM(metric_date)
 ORDER BY (tenant_id, source_key, entity_type, entity_id, measure_key, metric_date)
 SETTINGS replicated_deduplication_window = '0', index_granularity = 8192
+;
+
+CREATE OR REPLACE VIEW insight.bronze_insert_events
+(
+    `source_database` LowCardinality(String),
+    `connector` LowCardinality(String),
+    `stream` LowCardinality(String),
+    `extracted_at` DateTime64(3)
+)
+AS SELECT
+    toString(_database) AS source_database,
+    replaceOne(toString(_database), 'bronze_', '') AS connector,
+    toString(_table) AS stream,
+    _airbyte_extracted_at AS extracted_at
+FROM merge(REGEXP('^bronze_'), '.*')
 ;
 
 CREATE OR REPLACE VIEW insight.identity_resolution_coverage

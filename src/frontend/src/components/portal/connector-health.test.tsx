@@ -129,11 +129,111 @@ describe("the pane prints what it was served", () => {
     expect(rowFor("bravo")).toHaveAttribute("aria-expanded", "false");
   });
 
+  it("gives two installations of one connector a row each", () => {
+    // They share a name, so the identity cell is the only thing that tells the
+    // rows apart — and a page that collapsed them would report one
+    // installation's failure as the other's health.
+    mocks.summary.data = summary({
+      connectors: [
+        {
+          connector: "claude-team",
+          tenant_id: "acme",
+          source_id: "claude-team-main",
+          configured: true,
+          last_sync: null,
+        },
+        {
+          connector: "claude-team",
+          tenant_id: "acme",
+          source_id: "claude-team-second",
+          configured: true,
+          last_sync: null,
+        },
+      ],
+    });
+    render(<ConnectorHealthPane />);
+
+    expect(screen.getAllByRole("cell", { name: "claude-team" })).toHaveLength(2);
+    expect(
+      screen.getByRole("cell", { name: "acme / claude-team-main" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("cell", { name: "acme / claude-team-second" }),
+    ).toBeInTheDocument();
+  });
+
+  it("opens one installation without opening its sibling", async () => {
+    mocks.summary.data = summary({
+      connectors: [
+        {
+          connector: "claude-team",
+          tenant_id: "acme",
+          source_id: "claude-team-main",
+          configured: true,
+          last_sync: null,
+        },
+        {
+          connector: "claude-team",
+          tenant_id: "acme",
+          source_id: "claude-team-second",
+          configured: true,
+          last_sync: null,
+        },
+      ],
+    });
+    render(<ConnectorHealthPane />);
+
+    const rows = screen.getAllByRole("row", { expanded: false });
+    await userEvent.click(rows[1]);
+
+    const expanded = screen.getAllByRole("row", { expanded: true });
+    expect(expanded).toHaveLength(1);
+    expect(
+      within(expanded[0]).getByRole("cell", { name: "acme / claude-team-second" }),
+    ).toBeInTheDocument();
+  });
+
+  it("points two rows at two disclosures when an identity carries a separator", () => {
+    // The panel id is the row's identity with the separator swapped for one an
+    // id may carry. Values the ledger recorded are not parsed on the way in, so
+    // two identities can differ only in where that separator falls — and both
+    // rows would then name one panel through `aria-controls`.
+    mocks.summary.data = summary({
+      connectors: [
+        {
+          connector: "alpha",
+          tenant_id: "acme_one",
+          source_id: "main",
+          configured: true,
+          last_sync: null,
+        },
+        {
+          connector: "alpha",
+          tenant_id: "acme",
+          source_id: "one_main",
+          configured: true,
+          last_sync: null,
+        },
+      ],
+    });
+    render(<ConnectorHealthPane />);
+
+    const controls = screen
+      .getAllByRole("row", { expanded: false })
+      .map((row) => row.getAttribute("aria-controls"));
+
+    expect(controls[0]).not.toBe(controls[1]);
+  });
+
   it("prints an unmeasured number as absence, not as a zero", () => {
     mocks.summary.data = summary({
       connectors: [
         {
           connector: "alpha",
+          // Named, so the three absences below are the three numbers this test
+          // is about rather than the identity cell joining them.
+          tenant_id: "acme",
+          source_id: "main",
           configured: true,
           last_sync: {
             job_id: "1",
@@ -150,6 +250,33 @@ describe("the pane prints what it was served", () => {
     const row = rowFor("alpha");
     expect(within(row).getAllByText("—")).toHaveLength(3);
     expect(within(row).queryByText("0")).not.toBeInTheDocument();
+  });
+
+  it("says how long a sync in flight has been going, not that it took no time", () => {
+    // The mover reports an unfinished job's duration as a running total, and
+    // ledger rows recorded before that stopped being stored still carry its
+    // zero. A row printing that zero hides the one state this page exists to
+    // surface: a sync that started and never came back.
+    mocks.summary.data = summary({
+      connectors: [
+        {
+          connector: "alpha",
+          configured: true,
+          last_sync: {
+            job_id: "1",
+            status: "running",
+            started_at: "2026-01-15T10:46:00.000Z",
+            duration_ms: 0,
+            records_reported: null,
+          },
+        },
+      ],
+    });
+    render(<ConnectorHealthPane />);
+
+    const row = rowFor("alpha");
+    expect(within(row).getByText("1h 14m so far")).toBeInTheDocument();
+    expect(within(row).queryByText("0 ms")).not.toBeInTheDocument();
   });
 
   it("says a reported zero is a zero", () => {

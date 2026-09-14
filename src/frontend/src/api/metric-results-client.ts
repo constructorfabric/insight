@@ -32,6 +32,12 @@ export type MetricResultsEntity =
 export interface MetricResultsRequest {
   entity: MetricResultsEntity;
   period: { from: string; to: string };
+  /**
+   * A second window answered in the same response — what a delta is measured
+   * against. The `period` and `breakdown` views carry it; every other view
+   * answers over `period`.
+   */
+  compare_to?: { from: string; to: string };
   metrics: MetricRequest[];
 }
 
@@ -151,7 +157,12 @@ export type MetricResultView =
 
 export interface PeriodView {
   view: "period";
-  values: Array<{ entity_id: string; value: number | null }>;
+  values: Array<{
+    entity_id: string;
+    value: number | null;
+    /** The same reading over `compare_to`; absent when none was asked for. */
+    compare_to?: number | null;
+  }>;
 }
 
 export interface TimeseriesView {
@@ -164,7 +175,13 @@ export interface TimeseriesView {
     rank?: number;
     remainder?: boolean;
     label?: string;
-    points: Array<{ bucket_start: string; value: number | null }>;
+    points: Array<{
+    bucket_start: string;
+    value: number | null;
+    /** Both sides of a ratio, for the bucket. Ratio metrics only. */
+    numerator?: number | null;
+    denominator?: number | null;
+  }>;
   }>;
 }
 
@@ -182,6 +199,16 @@ export interface PeerView {
   }>;
 }
 
+export interface BreakdownComparisonValue {
+  value: number | null;
+  /**
+   * Whether a standalone request over the comparison window would have
+   * returned this group at all. Independent of `value`: a ratio over a group
+   * that IS in the window reads null whenever its denominator is zero.
+   */
+  present: boolean;
+}
+
 export interface BreakdownView {
   view: "breakdown";
   dimensions: string[];
@@ -189,6 +216,10 @@ export interface BreakdownView {
     entity_id: string;
     dimensions: MetricDimension[];
     value: number | null;
+    /** Whether the group has observations inside the primary period. */
+    present?: boolean;
+    /** This group's reading over `compare_to`. */
+    compare_to?: BreakdownComparisonValue;
   }>;
 }
 

@@ -60,11 +60,14 @@ pub async fn login(
         return login_denied_unknown_host(&state, &headers, &host);
     };
 
-    let return_to = sanitize_return_to(
-        params.return_to.as_deref(),
-        &state.cfg.default_return_to,
-        &state.cfg.return_to_prefix,
-    );
+    let return_to = match params.return_to.as_deref() {
+        Some(return_to) if is_mcp_oauth_return(return_to) => return_to.to_owned(),
+        candidate => sanitize_return_to(
+            candidate,
+            &state.cfg.default_return_to,
+            &state.cfg.return_to_prefix,
+        ),
+    };
 
     // Preview experiments (`/exp/<name>`) are a capability, off by default. A
     // production stand leaves `experiments_enabled=false`, so a login can never
@@ -84,11 +87,13 @@ pub async fn login(
     };
 
     // `__override` (view-as, #1941): carried into the login state only when
-    // the environment opts in; otherwise the parameter is inert — and logged,
-    // so an attempt against a real environment is visible, not silent.
-    // Sanitized before anything touches it (this log path is reachable in
-    // real environments): control characters stripped so a hostile value
-    // cannot forge log lines, length capped at the RFC 5321 address maximum.
+    // the environment opts in; otherwise the parameter is inert — and logged
+    // as an event, so an attempt against a real environment is visible, not
+    // silent. The presented address itself never reaches the line: it is a
+    // person's address, and the attempt is the fact worth recording
+    // (insight#2488 AC-4). Sanitized before anything touches it: control
+    // characters stripped so a hostile value cannot forge log lines, length
+    // capped at the RFC 5321 address maximum.
     let override_email = match params
         .override_email
         .as_deref()
@@ -99,7 +104,6 @@ pub async fn login(
             tracing::warn!(
                 target: "audit",
                 event = "login_override_ignored",
-                email,
                 "__override presented but override_enabled=false: ignored"
             );
             String::new()
@@ -289,7 +293,6 @@ pub async fn callback(
             target: "audit",
             event = "login_denied_no_tenant",
             idp_sub = %idp.identity.sub,
-            email = %idp.identity.email,
             "login denied: id_token carried no tenant and no default_tenant_id is set"
         );
         return login_error_redirect(&state.cfg.default_return_to, "access_denied");
@@ -321,7 +324,6 @@ pub async fn callback(
                 target: "audit",
                 event = "login_denied_unknown_person",
                 idp_sub = %idp.identity.sub,
-                email = %idp.identity.email,
                 "login denied: no matching person in Identity"
             );
             let client = ClientInfo::from_headers(&headers);
@@ -386,12 +388,16 @@ pub async fn callback(
                 &token,
                 state.cfg.session_ttl_seconds,
             ));
-            let redirect = build_response(
-                StatusCode::FOUND,
-                vec![(LOCATION.clone(), return_to)],
-                Body::empty(),
-            );
-            (jar, redirect).into_response()
+            let response = if is_mcp_oauth_return(&return_to) {
+                crate::mcp_oauth::handlers::login_continuation_page(&return_to)
+            } else {
+                build_response(
+                    StatusCode::FOUND,
+                    vec![(LOCATION.clone(), return_to)],
+                    Body::empty(),
+                )
+            };
+            (jar, response).into_response()
         }
         Err(e) => internal_problem("create_session", &e),
     }
@@ -561,9 +567,7 @@ async fn resolve_override(
                 target: "audit",
                 event = "login_override",
                 impersonator_person_id = %resolution.person_id,
-                impersonator_email = %idp.identity.email,
                 person_id = %t.person_id,
-                email = target_email,
                 "view-as override: minting the session for another person"
             );
             Ok(SessionIdentity {
@@ -579,8 +583,6 @@ async fn resolve_override(
                 target: "audit",
                 event = "login_override_unknown_person",
                 impersonator_person_id = %resolution.person_id,
-                impersonator_email = %idp.identity.email,
-                email = target_email,
                 "view-as override denied: no matching person in Identity"
             );
             // The durable audit sink gets the denial too — an impersonation
@@ -644,9 +646,9 @@ async fn mint_and_store_session(
     let token = csprng_token();
     let csrf_token = csprng_token();
 
-    // Default roles only — RBAC/ACL is a later initiative (DD-AUTH-07); the
-    // permissions service will replace these values, never the claim shape.
-    let roles = cfg.default_roles.clone();
+    // Identity roles, `default_roles` as fallback; values only, never the
+    // claim shape (DD-AUTH-07).
+    let roles = session_roles(state, &identity.person_id, &identity.tenant_id).await;
 
     // exp clamped to the session absolute cap (cheap hygiene, G3).
     let exp = (now + cfg.jwt_ttl_seconds).min(absolute_expires_at);
@@ -711,6 +713,27 @@ async fn mint_and_store_session(
         .await?;
 
     Ok((session_id, token))
+}
+
+/// The roles a session carries, freshly asked of identity. A roles blip must
+/// not fail a login, so an error folds into the fallback and is only logged.
+async fn session_roles(state: &AppState, person_id: &str, tenant_id: &str) -> Vec<String> {
+    let fetched = state.resolver.active_roles(person_id, tenant_id).await;
+    if let Err(e) = &fetched {
+        tracing::warn!(
+            error = format!("{e:#}"),
+            "identity roles fetch failed: falling back to default_roles"
+        );
+    }
+    effective_roles(fetched.ok(), &state.cfg.default_roles)
+}
+
+/// Grants win; no answer or no grants falls back to `default_roles`.
+fn effective_roles(fetched: Option<Vec<String>>, default_roles: &[String]) -> Vec<String> {
+    match fetched {
+        Some(roles) if !roles.is_empty() => roles,
+        Some(_) | None => default_roles.to_vec(),
+    }
 }
 
 // ── /internal/authz ─────────────────────────────────────────────────────────
@@ -871,6 +894,7 @@ pub async fn me(Extension(state): Extension<Arc<AppState>>, jar: CookieJar) -> R
         "expires_at": record.expires_at,
         "refresh_at": refresh_at,
         "csrf_token": record.csrf_token,
+        "experiments_enabled": state.cfg.experiments_enabled,
     });
     // View-as session (#1941): name the real principal so the SPA can show a
     // "viewing as X" banner. Absent on normal sessions.
@@ -978,6 +1002,34 @@ pub async fn refresh(
             Err(e) => internal_problem("session_store", &e),
         };
     }
+    // Roles converge on refresh; the JWT catches up at its next reissue. An
+    // unreachable identity keeps the current roles — a refresh must not fail,
+    // or downgrade a session, over a roles blip.
+    match state
+        .resolver
+        .active_roles(&record.person_id, &record.tenant_id)
+        .await
+    {
+        Ok(fetched) => {
+            let roles = effective_roles(Some(fetched), &state.cfg.default_roles);
+            if roles != record.roles
+                && let Err(e) = state
+                    .sessions
+                    .update_session_roles(&session_id, &roles)
+                    .await
+            {
+                tracing::warn!(error = %e, session_id = %session_id, "refresh: storing re-fetched roles failed");
+            }
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = format!("{e:#}"),
+                session_id = %session_id,
+                "refresh: roles re-fetch failed; keeping the session's current roles"
+            );
+        }
+    }
+
     tracing::debug!(session_id = %session_id, expires_at = new_expires_at, "session refreshed (credential rotated)");
     state.audit.emit(session_audit(
         "session_refresh",
@@ -1510,6 +1562,16 @@ pub fn sanitize_return_to(candidate: Option<&str>, default: &str, prefix: &str) 
         .to_owned()
 }
 
+fn is_mcp_oauth_return(value: &str) -> bool {
+    let Some(request_id) = value.strip_prefix("/auth/oauth/authorize?request_id=") else {
+        return false;
+    };
+    (32..=256).contains(&request_id.len())
+        && request_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+}
+
 /// Reserved path prefix that preview experiments (`/exp/<name>`) are served
 /// under. The single point the experiments capability keys on — a login return
 /// into this subtree is honored only when experiments are enabled.
@@ -1692,6 +1754,26 @@ fn internal_problem(context: &str, err: &anyhow::Error) -> Response {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn identity_grants_win_and_everything_else_is_the_default_roles() {
+        let defaults = vec!["user".to_owned()];
+        for (case, fetched, expected) in [
+            (
+                "grants win",
+                Some(vec!["admin".to_owned(), "previews-admin".to_owned()]),
+                vec!["admin".to_owned(), "previews-admin".to_owned()],
+            ),
+            ("no grants falls back", Some(vec![]), defaults.clone()),
+            ("no answer falls back", None, defaults.clone()),
+        ] {
+            assert_eq!(
+                effective_roles(fetched, &defaults),
+                expected,
+                "wrong roles for: {case}"
+            );
+        }
+    }
 
     #[test]
     fn cache_control_keeps_60s_travel_margin() {

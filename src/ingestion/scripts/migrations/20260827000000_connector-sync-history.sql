@@ -11,10 +11,16 @@
 -- job at all, and is never NULL on a sync row — the read surface orders jobs
 -- along it, and a row without it cannot be placed among them.
 --
--- `job_updated_at` is the mover's own last-update stamp for the job, not a
--- creation time: the listing does not report when a job was created, and it is
--- also the field the listing filters on, so the sweep reads back exactly the
--- field it asks by.
+-- `job_updated_at` is the mover's last word about the job — its last update, or
+-- its start while it is still in flight — never a creation time: the listing
+-- does not report when a job was created, and it is also the field the listing
+-- filters on, so the sweep reads back exactly the field it asks by.
+--
+-- `tenant_id` and `source_id` name the connector INSTANCE. One connector can be
+-- installed more than once — a second Secret carrying its own source id — and
+-- `connector` alone cannot tell those rows apart. Empty only where no instance
+-- can be resolved: rows recorded before the identity was carried whose
+-- connector is no longer configured, so nothing states which instance they are.
 --
 -- Spec: docs/components/backend/analytics/specs/connector-health.
 
@@ -26,6 +32,8 @@ CREATE TABLE IF NOT EXISTS ingestion_history.sync_events (
     tick_id          String,
     job_id           String,
     connector        LowCardinality(String),
+    tenant_id        LowCardinality(String),
+    source_id        LowCardinality(String),
     event            LowCardinality(String),
     status           LowCardinality(String),
     started_at       Nullable(DateTime64(3, 'UTC')),

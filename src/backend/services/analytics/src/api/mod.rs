@@ -4,11 +4,13 @@ pub(crate) mod ai;
 mod connector_health;
 pub(crate) mod error;
 mod feedback;
+mod ingestion;
 mod metric_definitions;
 mod metric_drilldown;
 mod metric_results;
 mod metrics;
 mod person_names;
+mod reports;
 mod saved_queries;
 pub(crate) mod usage;
 
@@ -54,6 +56,8 @@ pub struct AppState {
     pub anthropic: AnthropicClient,
     /// Caps explain calls in flight in this process.
     pub ai_calls: Arc<Semaphore>,
+    pub report_generations: Arc<Semaphore>,
+    pub report_artifacts: Arc<Semaphore>,
     pub config: GearConfig,
     pub external_links: ExternalSourceRegistry,
 }
@@ -126,10 +130,18 @@ pub fn register_routes(
     openapi: &dyn OpenApiRegistry,
     state: Arc<AppState>,
 ) -> Router {
-    let api = build_operations(Router::new(), openapi).layer(Extension(state));
+    let api = build_operations(Router::new(), openapi)
+        .layer(Extension(state))
+        .layer(insight_http_metrics::ServerMetricsLayer::new("analytics"))
+        .layer(insight_log_context::LogContextLayer::new());
 
     host_router.merge(api)
 }
+
+#[cfg(test)]
+mod log_context_tests;
+#[cfg(test)]
+mod log_leak_tests;
 
 /// `OpenAPI` document metadata — the stable API-contract identity baked into
 /// the committed `docs/components/backend/analytics/openapi.json` and the
@@ -235,6 +247,20 @@ pub(crate) fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) ->
         .authenticated()
         .no_license_required()
         .path_param("connector", "Connector name, as the descriptors spell it")
+        .query_param_typed(
+            "tenant_id",
+            false,
+            "Tenant of one installation of the connector. Required alongside \
+             source_id; omit both to span every installation",
+            "string",
+        )
+        .query_param_typed(
+            "source_id",
+            false,
+            "Source id of one installation, as its Secret annotates it. \
+             Required alongside tenant_id",
+            "string",
+        )
         .json_response_with_schema::<connector_health_domain::SyncHistoryResponse>(
             openapi,
             StatusCode::OK,
@@ -242,6 +268,38 @@ pub(crate) fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) ->
         )
         .standard_errors(openapi)
         .handler(connector_health::get_connector_syncs)
+        .register(router, openapi);
+
+    // Ingestion intensity (ops). Admin-gated inside the handler, like the usage
+    // read model: bronze rows carry no tenant, so this surface is
+    // infrastructure-wide and cannot be scoped by the caller's tenant.
+    router = OperationBuilder::get("/v1/ingestion/intensity")
+        .operation_id("analytics_api.ingestion.intensity")
+        .summary("Bronze extraction intensity per bucket")
+        .authenticated()
+        .no_license_required()
+        .query_param_typed("grain", false, "Bucket width: 15m or 1s", "string")
+        .query_param_typed(
+            "scope",
+            false,
+            "Bronze database to scope to, e.g. bronze_bamboohr",
+            "string",
+        )
+        .query_param_typed(
+            "series",
+            false,
+            "What one band counts: connector, stream or total",
+            "string",
+        )
+        .query_param_typed("from", false, "Inclusive lower bound, RFC 3339", "string")
+        .query_param_typed("to", false, "Exclusive upper bound, RFC 3339", "string")
+        .json_response_with_schema::<ingestion::IngestionIntensityResponse>(
+            openapi,
+            StatusCode::OK,
+            "Extraction intensity buckets",
+        )
+        .standard_errors(openapi)
+        .handler(ingestion::get_ingestion_intensity)
         .register(router, openapi);
 
     // Sending is open to any signed-in caller; the listing is admin-gated
@@ -466,6 +524,50 @@ pub(crate) fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) ->
         .handler(metric_results::query_metric_results)
         .register(router, openapi);
 
+    router = OperationBuilder::post("/v1/reports/preview")
+        .operation_id("analytics_api.reports.preview")
+        .summary("Preview a metric report")
+        .authenticated()
+        .no_license_required()
+        .json_request::<crate::domain::reports::dto::ReportPreviewRequest>(openapi, "Report recipe")
+        .json_response_with_schema::<crate::domain::reports::dto::ReportPreviewResponse>(
+            openapi,
+            StatusCode::OK,
+            "Report preview",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_415(openapi)
+        .error_429(openapi)
+        .error_500(openapi)
+        .handler(reports::preview_report)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/v1/reports/export")
+        .operation_id("analytics_api.reports.export")
+        .summary("Export a metric report")
+        .authenticated()
+        .no_license_required()
+        .json_request::<crate::domain::reports::dto::ReportExportRequest>(
+            openapi,
+            "Report export recipe",
+        )
+        .response(ResponseSpec {
+            status: StatusCode::OK.as_u16(),
+            content_type: "text/csv",
+            description: "Complete metric report export".to_owned(),
+            schema: None,
+        })
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_415(openapi)
+        .error_429(openapi)
+        .error_500(openapi)
+        .handler(reports::export_report)
+        .register(router, openapi);
+
     // Saved-query CRUD + run (#1965) — the presentation-layer "Data Analytics"
     // surface. CRUD is service-DB metadata; only `/run` reaches ClickHouse.
     router = OperationBuilder::get("/v1/queries")
@@ -595,7 +697,7 @@ pub(crate) fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) ->
             status: StatusCode::OK.as_u16(),
             content_type: "text/csv",
             description: "Complete metric evidence export".to_owned(),
-            schema_name: None,
+            schema: None,
         })
         .standard_errors(openapi)
         .handler(metric_drilldown::export_metric_drilldown)
@@ -739,17 +841,24 @@ pub fn openapi_document() -> anyhow::Result<utoipa::openapi::OpenApi> {
     let mut document = openapi
         .build_openapi(&openapi_info())
         .map_err(|e| anyhow::anyhow!("failed to build analytics OpenAPI document: {e}"))?;
+    add_file_export_response(&mut document, "/v1/metric-drilldown/export")?;
+    add_file_export_response(&mut document, "/v1/reports/export")?;
+    Ok(document)
+}
+
+fn add_file_export_response(
+    document: &mut utoipa::openapi::OpenApi,
+    path: &str,
+) -> anyhow::Result<()> {
     let response = document
         .paths
         .paths
-        .get_mut("/v1/metric-drilldown/export")
+        .get_mut(path)
         .and_then(|path| path.post.as_mut())
         .and_then(|operation| operation.responses.responses.get_mut("200"))
-        .ok_or_else(|| anyhow::anyhow!("metric drilldown export response is missing"))?;
+        .ok_or_else(|| anyhow::anyhow!("file export response is missing for {path}"))?;
     let RefOr::T(response) = response else {
-        return Err(anyhow::anyhow!(
-            "metric drilldown export response must be inline"
-        ));
+        return Err(anyhow::anyhow!("file export response must be inline"));
     };
     let schema = Schema::Object(
         ObjectBuilder::new()
@@ -773,7 +882,7 @@ pub fn openapi_document() -> anyhow::Result<utoipa::openapi::OpenApi> {
             .description(Some("Attachment filename"))
             .build(),
     );
-    Ok(document)
+    Ok(())
 }
 
 #[cfg(test)]
@@ -818,6 +927,36 @@ mod tests {
         assert!(
             response.headers.contains_key("Content-Disposition"),
             "export must advertise the attachment filename header"
+        );
+    }
+
+    #[test]
+    fn report_export_response_advertises_both_file_media_types_and_the_filename_header() {
+        let document =
+            openapi_document().unwrap_or_else(|error| panic!("document must build: {error}"));
+        let response = document
+            .paths
+            .paths
+            .get("/v1/reports/export")
+            .and_then(|path| path.post.as_ref())
+            .and_then(|operation| operation.responses.responses.get("200"))
+            .unwrap_or_else(|| panic!("report export 200 response must be registered"));
+        let RefOr::T(response) = response else {
+            panic!("report export response must be inline, not a $ref");
+        };
+
+        for media_type in [
+            "text/csv",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ] {
+            assert!(
+                response.content.contains_key(media_type),
+                "report export must advertise {media_type}"
+            );
+        }
+        assert!(
+            response.headers.contains_key("Content-Disposition"),
+            "report export must advertise the attachment filename header"
         );
     }
 }

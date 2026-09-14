@@ -20,4 +20,13 @@ dev = [
 testpaths = ["tests"]
 
 [tool.setuptools]
-py-modules = ["reconcile_bronze_schema"]
+py-modules = [
+    "airbyte_auth",
+    "airbyte_sync_poll",
+    "airbyte_sync_trigger",
+    "data_quality_findings",
+    "dbt_completed",
+    "dbt_profiles",
+    "insight_logging",
+    "reconcile_bronze_schema",
+]

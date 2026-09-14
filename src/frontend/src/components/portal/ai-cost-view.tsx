@@ -389,7 +389,7 @@ export function AiCostView({ item }: { item: string | null }) {
       <div>
         <h1 className="text-lg font-semibold tracking-tight">AI &amp; Cost</h1>
         <p className="text-sm text-muted-foreground">
-          {teamName ? `${teamName}'s org` : "Org"} · {orgScope.count} people
+          {teamName ? `${teamName}'s org` : "Org"} · {orgScope.rosterCount} people
         </p>
       </div>
 

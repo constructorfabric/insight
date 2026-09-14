@@ -131,7 +131,7 @@ describe("pane lists under the install policy", () => {
   it("hides a Manage item even for an admin", () => {
     const policy = hide(["zone:manage/item:metric-catalog"]);
 
-    expect(manageItemsFor(true, policy).map((i) => i.id)).not.toContain(
+    expect(manageItemsFor({ isAdmin: true, canManagePreviews: true }, policy).map((i) => i.id)).not.toContain(
       "metric-catalog"
     );
   });
@@ -145,7 +145,7 @@ describe("pane lists under the install policy", () => {
     const people = peopleItemsFor(false, policy).find(
       (i) => i.id === "employees"
     );
-    const manage = manageItemsFor(true, policy).find(
+    const manage = manageItemsFor({ isAdmin: true, canManagePreviews: true }, policy).find(
       (i) => i.id === "metric-catalog"
     );
 

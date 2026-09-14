@@ -13,13 +13,17 @@ workspace = true
 
 [dependencies]
 insight-clickhouse = { workspace = true }
+insight-http-metrics = { workspace = true }
+insight-log-context = { workspace = true }
+insight-openapi = { workspace = true }
 insight-migration = { workspace = true }
 # Direct `clickhouse` dep is for the `Row` derive on `system.columns` probe
 # rows (Refs #521 schema-validator). `insight-clickhouse` wraps the client
 # but doesn't re-export the row-deserialization derives.
 clickhouse = { workspace = true }
 
-sqlparser = { workspace = true }
+sqlparser = { workspace = true, features = ["visitor"] }
+rmcp = { workspace = true }
 
 axum = { workspace = true }
 sea-orm = { workspace = true }
@@ -34,7 +38,6 @@ sea-orm-migration = { workspace = true }
 toolkit = { workspace = true, features = ["bootstrap"] }
 toolkit-security = { workspace = true }
 toolkit-canonical-errors = { workspace = true }
-toolkit-odata = { workspace = true }
 
 # System gears linked for the REST host + auth pipeline. Discovered at link time
 # via inventory; mirrors the api-gateway service's authenticated gear set.
@@ -49,21 +52,24 @@ grpc_hub = { workspace = true }
 gear_orchestrator = { workspace = true }
 types_registry = { workspace = true }
 reqwest = { workspace = true }
+jsonwebtoken = { workspace = true }
 redis = { workspace = true }
 
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
+schemars = { workspace = true }
 url = { workspace = true }
 # OpenAPI schemas for request/response DTOs. Version pinned to 5.5 to match the
 # `utoipa::ToSchema` the toolkit (`OperationBuilder::json_request` /
 # `json_response_with_schema`) is compiled against (already in Cargo.lock via
 # the toolkit). `chrono` + `uuid` features cover the timestamp / UUID fields on
 # the DTOs; no `time` types are used here.
-utoipa = { version = "5.5", features = ["chrono", "uuid"] }
+utoipa = { workspace = true, features = ["chrono", "uuid"] }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
 futures-util = { workspace = true }
@@ -73,14 +79,18 @@ base64 = { workspace = true }
 aes-gcm = { workspace = true }
 zeroize = { workspace = true }
 sha2 = { workspace = true }
+subtle = { workspace = true }
 hex = { workspace = true }
+secrecy = { workspace = true }
 csv = { workspace = true }
 rust_xlsxwriter = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+opentelemetry = { workspace = true }
 clap = { workspace = true }
 
 [dev-dependencies]
+insight-log-context = { workspace = true, features = ["test-support"] }
 # `tower::ServiceExt::oneshot` for driving the Axum router in the HTTP
 # integration tests. Same dev-dep pattern as api-gateway's proxy tests.
 tower = { version = "0.5", features = ["util"] }
@@ -90,3 +100,6 @@ clickhouse = { workspace = true, features = ["test-util"] }
 # Paused-time `#[tokio::test]` for the semaphore acquire-timeout refusals —
 # the 2 s acquire window elapses instantly instead of being slept through.
 tokio = { workspace = true, features = ["test-util"] }
+tempfile = "3.27"
+zip = { version = "8.6", default-features = false, features = ["deflate"] }
+p256 = { version = "0.14", features = ["pkcs8", "pem", "ecdsa", "getrandom"] }

@@ -23,7 +23,7 @@ impl VisibilityPolicy {
 
 /// Configuration consumed by the identity-resolution gear. Deserialized from
 /// `gears.identity-resolution.config`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(default)]
 pub struct GearConfig {
     /// `MariaDB` connection URL.
@@ -63,6 +63,29 @@ pub struct GearConfig {
     /// (`org_chart`), or every person in the tenant (`flat`). Nothing is
     /// written to `visibility`, so the choice is reversible.
     pub visibility_policy: VisibilityPolicy,
+}
+
+// SAFETY: `database_url` embeds the MariaDB password and `clickhouse_password`
+// is one — a `?config` in any log line must render markers, never the values
+// (insight#2488 AC-4).
+impl std::fmt::Debug for GearConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        const REDACTED: &str = "<redacted>";
+        f.debug_struct("GearConfig")
+            .field("database_url", &REDACTED)
+            .field("org_chart_source_type", &self.org_chart_source_type)
+            .field("roster_source_type", &self.roster_source_type)
+            .field("expand_subordinates", &self.expand_subordinates)
+            .field("max_depth", &self.max_depth)
+            .field("clickhouse_url", &self.clickhouse_url)
+            .field("clickhouse_database", &self.clickhouse_database)
+            .field("clickhouse_user", &self.clickhouse_user)
+            .field("clickhouse_password", &REDACTED)
+            .field("tenant_default_id", &self.tenant_default_id)
+            .field("bootstrap_admin_person_id", &self.bootstrap_admin_person_id)
+            .field("visibility_policy", &self.visibility_policy)
+            .finish()
+    }
 }
 
 impl Default for GearConfig {

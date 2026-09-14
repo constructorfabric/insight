@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/tooltip";
 import { PeriodSelectorBar } from "@/components/widgets/period-selector-bar";
 import { usePortalPeriod } from "@/hooks/use-portal-period";
+import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import { useActiveZone } from "@/lib/portal/use-active-zone";
 import { useCohortOptions } from "@/lib/portal/use-cohort-options";
 import { useVisibilityPolicy } from "@/queries/identity-me";
@@ -25,8 +26,8 @@ import { cn } from "@/lib/utils";
  */
 export function PortalTopBar() {
   const { activeZone } = useActiveZone();
-  // Nothing under Manage reads scope, cohort or period.
-  const filtered = activeZone !== "manage";
+  // Nothing under Manage or Custom reads scope, cohort or period.
+  const filtered = activeZone !== "manage" && activeZone !== "custom";
 
   return (
     // Sticky to the scroll container (`SidebarInset` owns the overflow): scope,
@@ -72,6 +73,8 @@ function ViewFilters() {
   // would offer a single choice and the tooltip would describe a cut that
   // cannot be made.
   const { isFlat } = useVisibilityPolicy();
+  const showPlanned = usePortalShowPlanned();
+  const cohortShown = showPlanned && !isFlat;
 
   return (
     // Narrow screens keep the three controls on ONE scrollable row: wrapped,
@@ -87,7 +90,7 @@ function ViewFilters() {
       className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto md:flex-wrap md:justify-end md:overflow-x-visible"
     >
       {scoped ? <ScopeSelect /> : null}
-      {isFlat ? null : (
+      {cohortShown ? (
         <span className="flex shrink-0 items-center gap-1.5">
           <span className="hidden text-xs text-muted-foreground md:inline">
             Cohort
@@ -120,7 +123,7 @@ function ViewFilters() {
           </TooltipProvider>
           <SliceSelect dims={dims} />
         </span>
-      )}
+      ) : null}
       <PeriodSelectorBar
         period={period}
         customRange={customRange}

@@ -50,7 +50,28 @@ class AccountRequest(BaseModel):
         extra='forbid',
     )
     account: AccountRef
-    comment: str | None = None
+    comment: str | None = Field(None, max_length=500)
+
+
+class BatchProfilesRequest(BaseModel):
+    """
+    Ordered canonical people to hydrate for an authorized consumer.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    person_ids: list[UUID] = Field(..., max_length=1000, min_length=1)
+
+
+class BatchSupervisorResponse(BaseModel):
+    """
+    Supervisor associated with one batch profile.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    attributes: dict[str, str]
+    person_id: UUID
 
 
 class BindItem(BaseModel):
@@ -66,7 +87,7 @@ class BindRequest(BaseModel):
         extra='forbid',
     )
     bindings: list[BindItem] = Field(..., description='One or more bindings; a prepared matching table is submitted as one call.')
-    comment: str | None = None
+    comment: str | None = Field(None, max_length=500)
 
 
 class CreatePersonRoleRequest(BaseModel):
@@ -134,9 +155,31 @@ class MergeRequest(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    comment: str | None = None
+    comment: str | None = Field(None, max_length=500)
     source_person_id: UUID = Field(..., description='The person being absorbed — its accounts move to the target.')
     target_person_id: UUID = Field(..., description='The surviving person, named explicitly by the operator.')
+
+
+class PeopleListItemResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    attributes: dict[str, str]
+    display_name: str | None = Field(None, description='Source-provided display name, or the available source-provided name\nparts joined together.')
+    email: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
+    manager_person_id: UUID | None = None
+    person_id: UUID
+    username: str | None = None
+
+
+class PeopleListResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    items: list[PeopleListItemResponse]
+    next_cursor: str | None = None
 
 
 class PersonAccountEntry(BaseModel):
@@ -539,6 +582,28 @@ class AttentionResponse(BaseModel):
     items_truncated: bool = Field(..., description='`limit` cut the item list — more accounts await a decision than are\nlisted here. Distinct from `truncated`: the rates stay whole-tenant,\nonly this page is short.')
     rates: ResolutionRatesResponse
     truncated: bool = Field(..., description='The evidence read hit its safety cap: the queue and the rates describe\nonly the first accounts of the tenant, not all of them. Consumers must\nnot present these numbers as tenant-wide. (The binding read cannot be a\nprefix — a partial one would misclassify, so it fails the request.)')
+
+
+class BatchProfileResponse(BaseModel):
+    """
+    Generic safe profile data for one canonical person.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    attributes: dict[str, str]
+    person_id: UUID
+    supervisor: BatchSupervisorResponse | None = None
+
+
+class BatchProfilesResponse(BaseModel):
+    """
+    Ordered visible profiles from [`BatchProfilesRequest`].
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    profiles: list[BatchProfileResponse]
 
 
 class CorrectionResponse(BaseModel):

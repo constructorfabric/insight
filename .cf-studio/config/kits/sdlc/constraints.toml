@@ -711,6 +711,15 @@ numbered = true
 pattern = "Acceptance Criteria"
 description = "Acceptance criteria for the feature."
 
+[[artifacts.FEATURE.headings]]
+id = "feature-testing"
+level = 2
+required = false
+multiple = false
+numbered = true
+pattern = "Testing"
+description = "Test scenarios mapped to executable tests, each carrying one quality vector and one suite tag."
+
 # ── FEATURE ID kinds ───────────────────────────────────────────
 
 [artifacts.FEATURE.identifiers.algo]
@@ -947,6 +956,15 @@ multiple = false
 numbered = true
 pattern = "Non-Functional Requirements"
 description = "Non-functional requirements section."
+
+[[artifacts.PRD.headings]]
+id = "prd-quality-vectors"
+level = 3
+required = true
+multiple = false
+numbered = true
+pattern = "Quality Vector Analysis"
+description = "Show-stopper quality requirements across Efficiency, Reliability, Performance, Security, Versatility."
 
 [[artifacts.PRD.headings]]
 id = "prd-nfr-inclusions"

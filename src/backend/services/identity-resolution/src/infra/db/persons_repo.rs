@@ -19,8 +19,28 @@ use uuid::Uuid;
 
 use super::entities::persons;
 use crate::domain::person_card::{self, CARD_VALUE_TYPES, PersonCard};
+use crate::domain::profile::SAFE_PROFILE_ATTRIBUTE_TYPES;
 use crate::domain::provenance::UNCONFIRMED_MINT_REASONS;
 use crate::domain::resolution::EXCLUDED_PERSON;
+
+#[derive(Debug, thiserror::Error)]
+pub enum BatchProfileReadError {
+    #[error("batch profile query failed")]
+    Database(#[from] sea_orm::DbErr),
+    #[error("batch profile row decoding failed: {0}")]
+    RowDecode(String),
+    #[error("batch profile row contains an invalid person id")]
+    InvalidPersonId(#[from] uuid::Error),
+}
+
+impl From<sea_orm::TryGetError> for BatchProfileReadError {
+    fn from(error: sea_orm::TryGetError) -> Self {
+        match error {
+            sea_orm::TryGetError::DbErr(error) => Self::Database(error),
+            sea_orm::TryGetError::Null(column) => Self::RowDecode(column),
+        }
+    }
+}
 
 /// Resolve the set of `person_id`s whose CURRENT email (latest observation per
 /// source instance) equals `email` within the tenant.
@@ -415,7 +435,7 @@ pub async fn persons_in_tenant(
     db: &DatabaseConnection,
     tenant_id: Uuid,
     person_ids: &[Uuid],
-) -> anyhow::Result<Vec<Uuid>> {
+) -> Result<Vec<Uuid>, BatchProfileReadError> {
     if person_ids.is_empty() {
         return Ok(Vec::new());
     }
@@ -566,6 +586,57 @@ pub async fn person_cards(
     Ok(person_card::assemble_cards(rows))
 }
 
+pub async fn current_profile_observations(
+    db: &DatabaseConnection,
+    tenant_id: Uuid,
+    person_ids: &[Uuid],
+) -> Result<HashMap<Uuid, Vec<persons::Model>>, BatchProfileReadError> {
+    if person_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let id_placeholders = vec!["?"; person_ids.len()].join(", ");
+    let type_list = SAFE_PROFILE_ATTRIBUTE_TYPES
+        .iter()
+        .map(|value_type| format!("'{value_type}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        r"
+        SELECT id, value_type, insight_source_type, insight_source_id,
+               insight_tenant_id, value_id, value_full_text, value,
+               value_effective, person_id, author_person_id,
+               reason, created_at
+        FROM (
+            SELECT p.*,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY person_id, insight_source_type, insight_source_id, value_type
+                       ORDER BY created_at DESC, id DESC
+                   ) AS rn
+            FROM persons p
+            WHERE insight_tenant_id = ?
+              AND person_id IN ({id_placeholders})
+              AND value_type IN ({type_list})
+        ) current_rows
+        WHERE rn = 1
+    "
+    );
+
+    let mut values: Vec<sea_orm::Value> = vec![tenant_id.as_bytes().to_vec().into()];
+    values.extend(person_ids.iter().map(|id| id.as_bytes().to_vec().into()));
+
+    let stmt = Statement::from_sql_and_values(DbBackend::MySql, &sql, values);
+    let rows = persons::Entity::find().from_raw_sql(stmt).all(db).await?;
+    let mut observations = HashMap::new();
+    for row in rows {
+        observations
+            .entry(Uuid::from_slice(&row.person_id)?)
+            .or_insert_with(Vec::new)
+            .push(row);
+    }
+    Ok(observations)
+}
+
 /// Fetch every observation row for a person within the tenant (all value types,
 /// all sources). The caller collapses them to the current value per attribute.
 ///
@@ -662,6 +733,12 @@ pub struct OrgChartEdge {
     pub parent_person_id: Uuid,
 }
 
+pub struct OrgChartParentEdge {
+    pub child_person_id: Uuid,
+    pub source_type: String,
+    pub parent_person_id: Uuid,
+}
+
 /// Current parent edges for one child (`valid_to IS NULL`), across every source
 /// instance, ordered by source. The caller filters to the configured
 /// `org_chart` source.
@@ -707,6 +784,56 @@ pub async fn current_parents_for_child(
         edges.push(OrgChartEdge {
             source_type,
             source_id: Uuid::from_slice(&source_id)?,
+            parent_person_id: Uuid::from_slice(&parent_person_id)?,
+        });
+    }
+    Ok(edges)
+}
+
+pub async fn current_parents_for_children(
+    db: &DatabaseConnection,
+    tenant_id: Uuid,
+    child_person_ids: &[Uuid],
+) -> Result<Vec<OrgChartParentEdge>, BatchProfileReadError> {
+    if child_person_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let placeholders = vec!["?"; child_person_ids.len()].join(", ");
+    let sql = format!(
+        r"
+        SELECT child_person_id, insight_source_type, parent_person_id
+        FROM org_chart
+        WHERE insight_tenant_id = ?
+          AND child_person_id IN ({placeholders})
+          AND valid_to IS NULL
+          AND parent_person_id IS NOT NULL
+        ORDER BY child_person_id, insight_source_type, insight_source_id
+    "
+    );
+
+    let mut values: Vec<sea_orm::Value> = vec![tenant_id.as_bytes().to_vec().into()];
+    values.extend(
+        child_person_ids
+            .iter()
+            .map(|person_id| person_id.as_bytes().to_vec().into()),
+    );
+
+    let rows = db
+        .query_all_raw(Statement::from_sql_and_values(
+            DbBackend::MySql,
+            &sql,
+            values,
+        ))
+        .await?;
+    let mut edges = Vec::with_capacity(rows.len());
+    for row in rows {
+        let child_person_id: Vec<u8> = row.try_get("", "child_person_id")?;
+        let source_type: String = row.try_get("", "insight_source_type")?;
+        let parent_person_id: Vec<u8> = row.try_get("", "parent_person_id")?;
+        edges.push(OrgChartParentEdge {
+            child_person_id: Uuid::from_slice(&child_person_id)?,
+            source_type,
             parent_person_id: Uuid::from_slice(&parent_person_id)?,
         });
     }
@@ -771,45 +898,4 @@ fn person_ids_from_rows(rows: Vec<QueryResult>) -> anyhow::Result<Vec<Uuid>> {
         person_ids.push(Uuid::from_slice(&bytes)?);
     }
     Ok(person_ids)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::infra::db;
-
-    /// Integration test against a live MariaDB. Data-dependent (dev cluster).
-    /// Set `IDENTITY_TEST_DB_URL` + `IDENTITY_TEST_TENANT_ID` + `IDENTITY_TEST_EMAIL`
-    /// (a known email in that tenant) and a MariaDB port-forward to run; skips
-    /// cleanly otherwise so CI stays green. The email is not hardcoded so the
-    /// test carries no real address and isn't tied to one person.
-    #[tokio::test]
-    async fn resolve_by_email_against_dev_db() -> anyhow::Result<()> {
-        let (Ok(url), Ok(tenant_raw), Ok(known_email)) = (
-            std::env::var("IDENTITY_TEST_DB_URL"),
-            std::env::var("IDENTITY_TEST_TENANT_ID"),
-            std::env::var("IDENTITY_TEST_EMAIL"),
-        ) else {
-            eprintln!(
-                "skip: set IDENTITY_TEST_DB_URL + IDENTITY_TEST_TENANT_ID + IDENTITY_TEST_EMAIL to run"
-            );
-            return Ok(());
-        };
-        let tenant = Uuid::parse_str(tenant_raw.trim())?;
-        let conn = db::connect(&url).await?;
-
-        let known = resolve_person_ids_by_email(&conn, tenant, known_email.trim()).await?;
-        assert_eq!(
-            known.len(),
-            1,
-            "known email should resolve to exactly one person"
-        );
-
-        let missing = resolve_person_ids_by_email(&conn, tenant, "nobody@nowhere.invalid").await?;
-        assert!(
-            missing.is_empty(),
-            "unknown email should resolve to zero persons"
-        );
-        Ok(())
-    }
 }

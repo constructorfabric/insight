@@ -85,6 +85,7 @@ def test_rendered_config_has_the_types_the_service_parses():
         "max_repo_bytes",
         "default_max_staleness_seconds",
         "heavy_ops_concurrency",
+        "serve_concurrency",
     ):
         assert isinstance(config[numeric], int), f"{numeric} must render as an integer"
     assert config["allow_file_repos"] is False
@@ -161,7 +162,7 @@ def test_byte_budgets_render_as_integers():
     config = one(render(), "ConfigMap")["data"]["insight.yaml"]
     parsed = yaml.safe_load(config)["gears"]["git-cli-proxy"]["config"]
 
-    for field in ("disk_budget_bytes", "max_repo_bytes", "default_max_staleness_seconds", "heavy_ops_concurrency"):
+    for field in ("disk_budget_bytes", "max_repo_bytes", "default_max_staleness_seconds", "heavy_ops_concurrency", "serve_concurrency"):
         assert isinstance(parsed[field], int), f"{field} must be an integer"
     assert parsed["disk_budget_bytes"] > parsed["max_repo_bytes"]
 

@@ -1,5 +1,7 @@
-import { createFileRoute, Outlet, retainSearchParams } from "@tanstack/react-router";
+import { createFileRoute, redirect, retainSearchParams } from "@tanstack/react-router";
 
+import { PortalLayout } from "@/components/portal/portal-layout";
+import { isPersonId } from "@/lib/metrics/entity";
 import {
   PORTAL_SEARCH_KEYS,
   validatePortalSearch,
@@ -16,5 +18,10 @@ export const Route = createFileRoute("/ic/$person")({
     // missed, and the scope silently resets.
     middlewares: [retainSearchParams(PORTAL_SEARCH_KEYS)],
   },
-  component: () => <Outlet />,
+  // A non-person-id `$person` (a pre-cutover email URL, the nil UUID, a typo)
+  // is a 400 from the metrics API that the reader cannot act on.
+  beforeLoad: ({ params }) => {
+    if (!isPersonId(params.person)) throw redirect({ to: "/portal", replace: true });
+  },
+  component: PortalLayout,
 });

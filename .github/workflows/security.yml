@@ -1,0 +1,573 @@
+name: Security scans
+
+# Repository scanning (#2020): dependencies and misconfiguration (Trivy), SAST
+# (Semgrep) and secrets (TruffleHog). Two blocking jobs on a pull request, one
+# report job on main and nightly, two nightly secret sweeps.
+#
+#   secrets (diff)   — the PR's own commits, TruffleHog. BLOCKING, also in the
+#                      merge queue (#2025).
+#   security scan    — Trivy CRITICAL (the one pass that also scans secrets, so
+#                      its output stays in the log and never reaches a SARIF
+#                      upload) plus, on a pull request, Semgrep findings added
+#                      by the PR against `--baseline-commit`. BLOCKING.
+#   report           — every Trivy severity with generated Python locks and
+#                      rendered Helm charts (`trivy-fs`, `trivy-helm`), and the
+#                      Semgrep full-tree baseline (`semgrep`), uploaded to Code
+#                      Scanning. Main pushes and nightly.
+#   secrets (full history), secrets (GitHub API) — nightly, report only.
+#
+# Do not change without reading why:
+#   - Trivy waivers live in `.trivyignore.yaml`, passed explicitly: Trivy
+#     auto-detects the plain `.trivyignore` but NOT the YAML form, and only the
+#     YAML form can scope a waiver to a path. The file is committed, so
+#     `--ignorefile` cannot hit its absent-file FATAL.
+#   - the Trivy report pass must not run the secret scanner: its SARIF is
+#     world-readable here.
+#   - Semgrep excludes secrets — TruffleHog owns them.
+#   - TruffleHog `--results=verified,unknown,unverified,filtered_unverified`:
+#     the default hides findings whose verification failed, which on a public
+#     repository is still a leak. No `--filter-entropy` — it suppresses AWS
+#     access key IDs. `--exclude-detectors=lob` is the ONE detector exception,
+#     and the bar for adding another stays deliberately high: a detector
+#     switched off here is off for every path and every future commit. Lob
+#     earned it — this organisation does not use the Lob service at all, the
+#     key shape is `test_` plus 35 characters (also a long `test_*` function
+#     name), and Lob's sandbox verifies any `test_`-prefixed string, so every
+#     such function name arrives as a "verified" finding and blocked a PR per
+#     test rename. Any other match that is code rather than a credential
+#     belongs in the allowlist, one reviewed line at a time.
+#   - raw secret values never reach a log, summary or artifact — this
+#     repository is public.
+
+on:
+  pull_request:
+    branches: [main]
+  merge_group:
+  push:
+    # A default-branch baseline the moment something lands rather than only
+    # at the nightly run: without it Code Scanning holds no data for `main`
+    # between a merge and the next morning.
+    branches: [main]
+  schedule:
+    # Nightly, 03:13 UTC.
+    - cron: "13 3 * * *"
+  workflow_dispatch:
+
+# A new push obsoletes any run still in flight for the same ref. The nightly
+# run gets its own group so a merge landing during the sweep does not cancel it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'schedule' && 'nightly' || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  TRIVY_IMAGE: aquasec/trivy:0.72.0@sha256:cffe3f5161a47a6823fbd23d985795b3ed72a4c806da4c4df16266c02accdd6f
+
+jobs:
+  secrets-diff:
+    # INVARIANT: `secrets (diff)` is a required status check named in the ruleset.
+    name: secrets (diff)
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history so --since-commit can reach the merge base.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: TruffleHog scan (commits added by this PR)
+        # `pull_request.base.sha` lags main, so it pulls unrelated commits into range (#2025).
+        # The merge ref's first parent is the current base tip — that is the PR's own range.
+        # `--since-commit` alone only prunes what the base can reach: with fetch-depth 0 the
+        # checkout carries every branch, and commits on unmerged ones are scanned too, so an
+        # unrelated branch fails this PR. `--branch` confines the walk to the merge ref.
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" = "merge_group" ]; then
+            SINCE="$BASE_SHA"
+          else
+            SINCE="$(git rev-parse 'HEAD^1' 2>/dev/null || echo "$BASE_SHA")"
+          fi
+          HEAD_SHA="$(git rev-parse HEAD)"
+          echo "Scanning ${SINCE}..HEAD"
+          docker run --rm \
+            -v "${{ github.workspace }}:/src:ro" \
+            -e SINCE \
+            trufflesecurity/trufflehog:3.96.0@sha256:aa821cf4ace8861c7d096d83818cdf7bb9719028a52d37a52eaad44086a52577 \
+            git file:///src \
+              --json \
+              --no-update \
+              --exclude-detectors=lob \
+              --since-commit "$SINCE" \
+              --branch "$HEAD_SHA" \
+              --results=verified,unknown,unverified,filtered_unverified \
+            > trufflehog-findings.jsonl
+
+      - name: Summarize (redacted)
+        if: always()
+        # Blocks on findings whose fingerprint is not in the allowlist. Known false
+        # positives live there with a reason, so adding one is reviewed like any diff.
+        run: |
+          [ -f trufflehog-findings.jsonl ] || exit 0
+          python3 .github/scripts/trufflehog_gate.py \
+            trufflehog-findings.jsonl \
+            "${GITHUB_STEP_SUMMARY:-/dev/null}" \
+            .github/trufflehog-allowlist.txt \
+            block \
+            "commits added by this PR"
+
+
+  scan:
+    name: security scan
+    if: github.event_name != 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # On a pull request Semgrep's baseline needs the base commit reachable.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Trivy fs scan — CRITICAL only (blocking)
+        # Waivers: `.trivyignore.yaml` at the repo root, passed explicitly — the YAML form is not auto-detected.
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/src:ro" \
+            -w /src \
+            "$TRIVY_IMAGE" fs \
+              --ignorefile /src/.trivyignore.yaml \
+              --scanners vuln,secret,misconfig \
+              --severity CRITICAL \
+              --ignore-unfixed \
+              --exit-code 1 \
+              --no-progress \
+              /src
+
+      - name: Semgrep scan — findings added by this pull request (BLOCKING)
+        # Scoped to the PR's own findings; plain `--error` would fail on the existing baseline.
+        # No SARIF from this pass — a baseline-scoped report would mark the baseline fixed.
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/src" \
+            -w /src \
+            -e BASE_SHA \
+            semgrep/semgrep:1.170.0@sha256:c98f8829eea377274ee4b10656458b078b88232469b2ff913f091c2317347c9d \
+            semgrep scan \
+              --config auto \
+              --config p/rust \
+              --exclude-rule generic.secrets.security.detected-generic-secret \
+              --error \
+              --baseline-commit "$BASE_SHA"
+
+
+  report:
+    name: report
+    if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read # checkout
+      security-events: write # upload SARIF to Code Scanning
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Resolve Python dependencies
+        # Locks are generated in the workspace and discarded with the runner. Best-effort: one
+        # unresolvable project must not cost the rest.
+        continue-on-error: true
+        env:
+          UV_IMAGE: ghcr.io/astral-sh/uv:python3.12-bookworm-slim@sha256:e5b65587bce7de595f299855d7385fe7fca39b8a74baa261ba1b7147afa78e58
+        run: |
+          set -uo pipefail
+          git ls-files '**/pyproject.toml' | while read -r manifest; do
+            project="$(dirname "$manifest")"
+            docker run --rm \
+              -v "${{ github.workspace }}:/repo" \
+              -w "/repo/${project}" \
+              "$UV_IMAGE" uv lock \
+              || echo "uv lock failed — skipped ${project}"
+          done
+          echo "Lock files now present:"
+          git ls-files --others --exclude-standard | grep -E 'uv\.lock' | sed 's/^/  /' || echo "  none"
+
+      - name: Trivy fs scan — all severities
+        # `trivy convert` derives the SARIF instead of rescanning.
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "${{ github.workspace }}:/src" \
+            -v /tmp/trivy-cache:/root/.cache \
+            -w /src \
+            "$TRIVY_IMAGE" fs \
+              --ignorefile /src/.trivyignore.yaml \
+              --scanners vuln,misconfig \
+              --severity CRITICAL,HIGH,MEDIUM,LOW \
+              --include-dev-deps \
+              --exit-code 0 \
+              --no-progress \
+              --format json --output /src/trivy-fs.json \
+              /src
+          docker run --rm \
+            -v "${{ github.workspace }}:/src" \
+            "$TRIVY_IMAGE" convert \
+              --format sarif --output /src/trivy-fs.sarif \
+              /src/trivy-fs.json
+
+      - name: Summarize findings in the job summary
+        if: always()
+        run: |
+          [ -f trivy-fs.json ] || exit 0
+          [ -n "${GITHUB_STEP_SUMMARY:-}" ] || exit 0
+          CS_BASE="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/security/code-scanning"
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            CS_URL="${CS_BASE}?query=is%3Aopen+pr%3A${GITHUB_REF_NAME%/merge}"
+          else
+            CS_URL="${CS_BASE}?query=is%3Aopen+branch%3A${GITHUB_REF_NAME}"
+          fi
+          python3 - trivy-fs.json "$GITHUB_STEP_SUMMARY" "$CS_URL" <<'PY'
+          import json, sys, collections
+          d = json.load(open(sys.argv[1], encoding="utf-8"))
+          out = open(sys.argv[2], "a", encoding="utf-8")
+          cs_url = sys.argv[3]
+          w = out.write
+          vulns, miscfg = [], []
+          for r in d.get("Results") or []:
+              vulns += r.get("Vulnerabilities") or []
+              miscfg += [(r.get("Target"), m) for m in (r.get("Misconfigurations") or [])]
+          w("## Trivy SCA — repository (report-only)\n\n")
+          w(f"**{len(vulns)}** vulnerabilit(ies) + **{len(miscfg)}** misconfiguration(s), every "
+            f"severity, including development dependencies and the Python lock files "
+            f"resolved for this run. Image layers are covered by `Trivy Images`. "
+            f"Full details in [Security -> Code scanning]({cs_url}).\n\n")
+          rank = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+          if vulns:
+              bundles = collections.defaultdict(list)
+              for v in vulns:
+                  bundles[(v["PkgName"], v.get("InstalledVersion", "?"))].append(v)
+              w("| Package | Max | CVEs | Fixed in |\n|---|---|---:|---|\n")
+              for (pkg, ver), items in sorted(
+                      bundles.items(), key=lambda kv: (min(rank.get(i["Severity"], 4) for i in kv[1]), kv[0])):
+                  worst = min(items, key=lambda i: rank.get(i["Severity"], 4))["Severity"]
+                  fixes = sorted({i.get("FixedVersion") or "-" for i in items})
+                  w(f"| `{pkg}@{ver}` | {worst} | {len(items)} | {', '.join(fixes)} |\n")
+              w("\n")
+          if miscfg:
+              by_rule = collections.defaultdict(list)
+              for target, m in miscfg:
+                  by_rule[(m["Severity"], m["ID"], m.get("Title", ""))].append(target)
+              w("| Severity | Rule | Files | Title |\n|---|---|---:|---|\n")
+              for (sev, rid, title), targets in sorted(by_rule.items(), key=lambda kv: (rank.get(kv[0][0], 4), kv[0][1])):
+                  w(f"| {sev} | `{rid}` | {len(targets)} | {title} |\n")
+              w("\n<details><summary>Misconfigurations by file</summary>\n\n| Severity | Rule | Target |\n|---|---|---|\n")
+              for target, m in sorted(miscfg, key=lambda tm: (rank.get(tm[1]["Severity"], 4), tm[0])):
+                  w(f"| {m['Severity']} | `{m['ID']}` | `{target}` |\n")
+              w("\n</details>\n")
+          PY
+
+      - name: Upload SARIF to GitHub Code Scanning
+        # Skip on fork PRs: read-only token cannot upload, which would red-X this report-only job.
+        # The hashFiles guard keeps a failed scan from producing a second, misleading error that
+        # points at Code Scanning rather than at the scan that actually broke.
+        if: ${{ always() && hashFiles('trivy-fs.sarif') != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-fs
+
+      # ─── Helm charts, rendered ─────────────────────────────────────────────
+      # After the repository scan, so the rendered output is not swept into it. Values are
+      # throwaway and only satisfy the `required` guards.
+      - name: Render Helm charts
+        continue-on-error: true
+        env:
+          HELM_IMAGE: alpine/helm:3.16.3@sha256:ed9dfc49d43d034df3f9880eb777caf0183e5156508672478b80412c63f3db4f
+        run: |
+          set -uo pipefail
+          mkdir -p .helm-rendered
+          for chart in src/backend/services/*/helm src/frontend/helm; do
+            [ -f "$chart/Chart.yaml" ] || continue
+            name="$(printf '%s' "$chart" | sed -E 's#^src/(backend/services|)/?##; s#/helm$##; s#/#-#g')"
+            docker run --rm \
+              -v "${{ github.workspace }}:/repo" \
+              -w /repo \
+              "$HELM_IMAGE" template scan "$chart" \
+                --set existingSecret=dummy \
+                --set signingKeysSecret=dummy \
+                --set tlsDiscovery.issuerRef.name=dummy \
+                --set issuer=http://idp.invalid \
+                --set hostname=http://kc.invalid \
+                --set image.repository=ghcr.io/example/image \
+                --set image.tag=scan \
+                --set oidc.scopes=openid \
+              > ".helm-rendered/${name}.yaml" \
+              || { echo "render failed — skipped ${chart}"; rm -f ".helm-rendered/${name}.yaml"; }
+          done
+          echo "Rendered:"
+          find .helm-rendered -name '*.yaml' -exec basename {} ';' | sed 's/^/  /'
+
+      - name: Trivy scan — rendered charts
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          find .helm-rendered -name '*.yaml' -print -quit 2>/dev/null | grep -q . \
+            || { echo "nothing rendered — skipping"; exit 0; }
+          docker run --rm \
+            -v "${{ github.workspace }}:/src" \
+            -v /tmp/trivy-cache:/root/.cache \
+            -w /src \
+            "$TRIVY_IMAGE" fs \
+              --ignorefile /src/.trivyignore.yaml \
+              --scanners misconfig \
+              --severity CRITICAL,HIGH,MEDIUM,LOW \
+              --exit-code 0 \
+              --no-progress \
+              --format json --output /src/trivy-helm.json \
+              /src/.helm-rendered
+          docker run --rm \
+            -v "${{ github.workspace }}:/src" \
+            "$TRIVY_IMAGE" convert \
+              --format sarif --output /src/trivy-helm.sarif \
+              /src/trivy-helm.json
+
+      - name: Summarize rendered-chart findings
+        if: always()
+        run: |
+          [ -f trivy-helm.json ] || exit 0
+          [ -n "${GITHUB_STEP_SUMMARY:-}" ] || exit 0
+          python3 - trivy-helm.json "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json, sys, collections, os
+          d = json.load(open(sys.argv[1], encoding="utf-8"))
+          out = open(sys.argv[2], "a", encoding="utf-8")
+          w = out.write
+          rows = [(os.path.basename(r.get("Target", "?")), m)
+                  for r in (d.get("Results") or []) for m in (r.get("Misconfigurations") or [])]
+          w("\n## Trivy — Helm charts, rendered (report-only)\n\n")
+          if not rows:
+              w("No misconfigurations in the rendered charts.\n")
+              sys.exit(0)
+          rank = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+          sev = collections.Counter(m["Severity"] for _, m in rows)
+          w(f"**{len(rows)}** misconfiguration(s) across "
+            f"{len({t for t, _ in rows})} chart(s) — "
+            + ", ".join(f"{sev[s]} {s}" for s in ("CRITICAL", "HIGH", "MEDIUM", "LOW") if sev.get(s))
+            + ". These charts are invisible to a raw-template scan because they require values at "
+              "render time.\n\n")
+          w("| Chart | Findings | Worst |\n|---|---:|---|\n")
+          per = collections.defaultdict(list)
+          for target, m in rows:
+              per[target].append(m)
+          for target, items in sorted(per.items(), key=lambda kv: (min(rank.get(m["Severity"], 4) for m in kv[1]), kv[0])):
+              worst = min(items, key=lambda m: rank.get(m["Severity"], 4))["Severity"]
+              w(f"| `{target}` | {len(items)} | {worst} |\n")
+          w("\n<details><summary>By rule</summary>\n\n| Severity | Rule | Charts | Title |\n|---|---|---:|---|\n")
+          by_rule = collections.defaultdict(set)
+          titles = {}
+          for target, m in rows:
+              by_rule[(m["Severity"], m["ID"])].add(target)
+              titles[(m["Severity"], m["ID"])] = m.get("Title", "")
+          for (s, rid), charts in sorted(by_rule.items(), key=lambda kv: (rank.get(kv[0][0], 4), kv[0][1])):
+              w(f"| {s} | `{rid}` | {len(charts)} | {titles[(s, rid)]} |\n")
+          w("\n</details>\n")
+          out.close()
+          PY
+
+      - name: Upload rendered-chart SARIF
+        # Own category: `.helm-rendered/*` paths do not exist in the tree.
+        if: ${{ always() && hashFiles('trivy-helm.sarif') != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        with:
+          sarif_file: trivy-helm.sarif
+          category: trivy-helm
+
+      - name: Semgrep scan (full tree — owns the SARIF upload, never blocks)
+        # `docker run` rather than a `container:` job so the JS actions keep the runner's Node.
+        # `--config auto` needs metrics on to select rules, so `--metrics off` is omitted.
+        if: ${{ !cancelled() }}
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/src" \
+            -w /src \
+            semgrep/semgrep:1.170.0@sha256:c98f8829eea377274ee4b10656458b078b88232469b2ff913f091c2317347c9d \
+            semgrep scan \
+              --config auto \
+              --config p/rust \
+              --exclude-rule generic.secrets.security.detected-generic-secret \
+              --sarif --output semgrep.sarif
+
+
+      - name: Summarize findings in the job summary
+        if: always()
+        run: |
+          [ -f semgrep.sarif ] || exit 0
+          [ -n "${GITHUB_STEP_SUMMARY:-}" ] || exit 0
+          # On PRs the analysis is attributed to the PR, not the branch.
+          CS_BASE="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/security/code-scanning"
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            CS_URL="${CS_BASE}?query=is%3Aopen+pr%3A${GITHUB_REF_NAME%/merge}"
+          else
+            CS_URL="${CS_BASE}?query=is%3Aopen+branch%3A${GITHUB_REF_NAME}"
+          fi
+          python3 - semgrep.sarif "$GITHUB_STEP_SUMMARY" "$CS_URL" <<'PY'
+          import json, sys, collections
+          d = json.load(open(sys.argv[1]))
+          out = open(sys.argv[2], "a")
+          cs_url = sys.argv[3]
+          res = [x for r in d.get("runs", []) for x in r.get("results", [])]
+          total = len(res)
+          sev = collections.Counter((x.get("level") or "warning") for x in res)
+          rules = collections.Counter(x.get("ruleId", "?").split(".")[-1] for x in res)
+          w = out.write
+          w("## Semgrep SAST (report-only)\n\n")
+          w(f"**{total}** finding(s) from `auto` + `p/rust` (secrets excluded — TruffleHog owns those). "
+            f"This check does **not** block; full details in [Security -> Code scanning]({cs_url}).\n\n")
+          if total:
+              w("| Severity | Count |\n|---|---:|\n")
+              for s in ("error", "warning", "note"):
+                  if sev.get(s):
+                      w(f"| {s} | {sev[s]} |\n")
+              w("\n<details><summary>Findings by rule</summary>\n\n| Count | Rule |\n|---:|---|\n")
+              for rid, n in rules.most_common():
+                  w(f"| {n} | `{rid}` |\n")
+              w("\n</details>\n")
+          w("\n_Report-only: becomes blocking when `--error` is added and the baseline is clean (#1797)._\n")
+          PY
+
+
+      - name: Upload SARIF to GitHub Code Scanning
+        if: ${{ always() && hashFiles('semgrep.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+  secrets-history:
+    name: secrets (full history)
+    permissions:
+      contents: read
+      issues: write
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fetch every branch
+        # The sweep covers all live branches, so a secret parked on a long-lived feature
+        # branch is visible before it reaches main. Explicit authenticated URL because
+        # `persist-credentials: false` leaves no credential on `origin`; Actions masks the
+        # token in logs.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --prune \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            '+refs/heads/*:refs/remotes/origin/*'
+
+      - name: TruffleHog scan (all refs, all result kinds)
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "${{ github.workspace }}:/src:ro" \
+            trufflesecurity/trufflehog:3.96.0@sha256:aa821cf4ace8861c7d096d83818cdf7bb9719028a52d37a52eaad44086a52577 \
+            git file:///src \
+              --json \
+              --no-update \
+              --exclude-detectors=lob \
+              --results=verified,unknown,unverified,filtered_unverified \
+            > trufflehog-findings.jsonl
+
+      - name: Summarize (redacted) — report only
+        if: always()
+        # Never fails the run. Anything outside the allowlist is the signal to act, and it
+        # is listed by fingerprint so an accepted finding can be added there in one line.
+        run: |
+          [ -f trufflehog-findings.jsonl ] || exit 0
+          python3 .github/scripts/trufflehog_gate.py \
+            trufflehog-findings.jsonl \
+            "${GITHUB_STEP_SUMMARY:-/dev/null}" \
+            .github/trufflehog-allowlist.txt \
+            report \
+            "every ref (report-only)" \
+            new-findings.json
+
+      - name: Open an issue per finding outside the baseline
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          [ -s new-findings.json ] || exit 0
+          python3 .github/scripts/trufflehog_notify.py new-findings.json "${GITHUB_REPOSITORY}"
+
+  # The git scan above only reaches commits that some ref still points at. Two classes of leak
+  # sit outside it, and only the GitHub API can see them: objects orphaned by a force push or a
+  # deleted branch, which remain fetchable by SHA, and secrets pasted into pull request or issue
+  # comments, where they arrive more often than in code. On this repository the API source reads
+  # ~8600 chunks against the git scan's ~6900, and takes about ten seconds.
+  #
+  # Off pull requests because it depends on API availability and rate limits, and a transient
+  # outage should not colour a pull request at all.
+
+  secrets-api:
+    name: secrets (GitHub API)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: TruffleHog scan (GitHub API — comments, wikis, unreachable objects)
+        # Deliberately unauthenticated. `GITHUB_TOKEN` cannot be used here: the GitHub source
+        # calls `GET /user` to identify the token owner, and an installation token gets
+        # `403 Resource not accessible by integration`, which fails the whole job. This repository
+        # is public, so no token is needed — measured unauthenticated: 34393 chunks in 15s.
+        #
+        # Known partial coverage: enumerating comments stops with a 422 past ~1000 issues
+        # ("Pagination with the page parameter is not supported for large datasets"). That is a
+        # TruffleHog limitation and `--comments-timeframe` does not avoid it. The git-object half
+        # is unaffected, and that is where the value sits — it reaches commits no ref points at,
+        # which a refs-based scan cannot see at all. TruffleHog still exits 0, so the run stays
+        # green with the error visible in the log.
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            trufflesecurity/trufflehog:3.96.0@sha256:aa821cf4ace8861c7d096d83818cdf7bb9719028a52d37a52eaad44086a52577 \
+            github \
+              --repo "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+              --issue-comments \
+              --pr-comments \
+              --include-wikis \
+              --json \
+              --no-update \
+              --exclude-detectors=lob \
+              --results=verified,unknown,unverified,filtered_unverified \
+            > trufflehog-api-findings.jsonl
+
+      - name: Summarize (redacted) — report only
+        if: always()
+        run: |
+          [ -f trufflehog-api-findings.jsonl ] || exit 0
+          python3 .github/scripts/trufflehog_gate.py \
+            trufflehog-api-findings.jsonl \
+            "${GITHUB_STEP_SUMMARY:-/dev/null}" \
+            .github/trufflehog-allowlist.txt \
+            report \
+            "GitHub API source (report-only)"

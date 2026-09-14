@@ -10,13 +10,25 @@ proxy serves the same rows from a bare clone.
 Repository discovery still uses the Bitbucket API — one call per page of
 repositories, not per commit.
 
-Auth: an Atlassian API token used as HTTP basic `username:token`, both for the
-API and (forwarded per request, never stored) for the clone the proxy performs.
+Auth: an Atlassian API token as HTTP basic `username:token`, or a workspace /
+project / repository access token as `Bearer` with the username left empty —
+both for the API and (forwarded per request, never stored) for the clone the
+proxy performs.
 
 ## Prerequisites
 
-1. A Bitbucket API token with `repository:read`, plus the account username or
-   email it belongs to.
+1. A credential that can read both repositories and pull requests — neither
+   permission implies the other, and a token holding only the first lists
+   repositories while every pull-request call 403s, which the per-repository
+   handler skips silently. The two families name them differently:
+
+   | credential | `bitbucket_username` | permissions |
+   |---|---|---|
+   | Atlassian API token | account email | `read:repository:bitbucket`, `read:pullrequest:bitbucket` |
+   | workspace / project / repository access token | empty | `repository`, `pullrequest` |
+
+   The roster stream additionally wants workspace membership read; without it
+   `workspace_members` 403s and is skipped, costing account display names.
 2. A reachable git-cli-proxy deployment and its bearer token. In-cluster the
    umbrella composes both (`insight-git-cli-proxy-config`); the proxy accepts
    traffic only from the namespaces its NetworkPolicy allows.
@@ -35,7 +47,7 @@ metadata:
     insight.cyberfabric.com/source-id: bitbucket-cloud-main
 type: Opaque
 stringData:
-  bitbucket_username: "CHANGE_ME"
+  bitbucket_username: "CHANGE_ME"   # account email for an API token; empty for an access token
   bitbucket_token: "CHANGE_ME"
   bitbucket_workspaces: '["acme"]'
   bitbucket_start_date: "2026-01-01"
@@ -52,8 +64,8 @@ repository nobody has touched since it is never listed, so never cloned.
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `bitbucket_username` | No | Atlassian account email/username. Set for personal API tokens (Basic `username:token`); leave empty for workspace/repository access tokens (Bearer). The clone username the proxy presents is derived from the same choice |
-| `bitbucket_token` | Yes | API token with `repository:read` |
+| `bitbucket_username` | No | Atlassian account email/username. Set for personal API tokens (Basic `username:token`); leave empty for workspace, project and repository access tokens (Bearer). The clone username the proxy presents is derived from the same choice |
+| `bitbucket_token` | Yes | API token or access token; see Prerequisites for the permissions each family names |
 | `bitbucket_workspaces` | Yes | JSON array of workspace slugs |
 | `bitbucket_api_base_url` | No | API base URL (default `https://api.bitbucket.org/2.0`) |
 | `bitbucket_exclude_repositories` | No | JSON array of regular expressions matched against a repository slug; a match is never listed, cloned or walked. Matched with `search`, so anchor with `$` for "ends with" (e.g. `["\\.rospecs$"]`). Empty collects everything |
@@ -80,6 +92,7 @@ kubectl apply -f src/ingestion/secrets/connectors/bitbucket-cloud.yaml
 | Stream | Upstream | Sync Mode | Cursor |
 |--------|----------|-----------|--------|
 | `repositories` | Bitbucket `/2.0/repositories/{workspace}` | incremental | `updated_on` |
+| `repository_visibility` | Bitbucket `/2.0/repositories/{workspace}`, unfiltered, one row | full refresh | — |
 | `commits` | proxy `/v1/commits` | incremental, per repository | `committed_date` |
 | `file_changes` | proxy `/v1/file-changes` | incremental, per repository | `committed_date` |
 | `branches` | proxy `/v1/branches` | full refresh, per repository | — |
@@ -120,17 +133,24 @@ collapses to current state and a head move is a tracked-column change.
   consumed via `RequestPath`.
 - **`fields=`** trims the response to the used properties; the full repository
   object is large and most of it is unused here.
-- **No server-side "updated after" filter** exists on `/repositories`, so the
-  cursor filters client-side. The listing is requested `sort=updated_on`
-  (ascending) so the cursor still advances monotonically across pages.
+- **The "updated after" bound is server-side**, expressed as
+  `q=updated_on >= start_date` (the `repos_since_start` anchor). It has to be:
+  a cursor's `start_datetime` filters no records unless the stream also sets
+  `is_client_side_incremental`, and none of these do. The listing is requested
+  `sort=updated_on` (ascending) so the cursor still advances monotonically
+  across pages.
 
 ### Cold repositories
 
-The first request for an uncached repository gets `429` + `Retry-After` while
-the proxy clones it in the background; every proxy stream retries on `429`.
-`409` (the pinned snapshot was superseded) and `413` (repository over the
-proxy's size cap) fail the stream instead — retrying the same page token would
-loop.
+The first request for an uncached repository is held in-connection while the
+proxy clones it, and while it waits for cache headroom; a `429` +
+`Retry-After` is the exception (headroom exhausted for the whole wait) and
+every proxy stream retries it. Every proxy request carries
+`X-Repo-Size-Hint`, the repository's reported size, so the proxy reserves
+that much cache instead of its per-repository cap. `409` (the pinned snapshot
+was superseded) restarts the walk from the last record already seen; `413`
+(repository over the proxy's size cap) fails the stream; `401` is the proxy
+token and fails as a config error.
 
 ## The start-date bound
 
@@ -142,13 +162,21 @@ forms so an omission is visible:
 
 | anchor | applies to | form |
 |---|---|---|
-| `repos_since_start` | every repository listing (12 of them) | `q=updated_on >= start_date`, server-side |
+| `repos_since_start` | every repository listing that feeds partitions (12 of them) | `q=updated_on >= start_date`, server-side |
 | `prs_since_start` | the four per-PR fan-out parents | `q=updated_on >= max(start_date, now - 30d)` |
 
 Filtering repositories server-side is what bounds the clone cost: an untouched
 repository is never returned, so the proxy never walks it. VERIFIED against the
 live API — a workspace of 407 public repositories returns 47 for a cutoff six
 weeks back, and no row below the cutoff.
+
+That filtering is also why an empty repository listing is ordinary rather than
+alarming, and why the one listing that must mean something is exempt from it:
+`repository_visibility` asks for a single repository with no `q`, so its empty
+answer means one thing to the connector — no repository is reachable. A token
+that has lost repository access is served `200` with an empty page, not an
+error code, so without that probe every stream lands zero rows and the sync
+still reports success.
 
 One stream cannot comply. The deployments endpoint rejects `sort=created_on`
 (400) and **accepts a `q` on `created_on` while silently ignoring it** — a
@@ -196,7 +224,8 @@ source that shares it.
 | `pull_request_commits` | `bitbucket_cloud__pull_requests_commits` | `class_git_pull_requests_commits` |
 
 `pipelines`, `deployments` and `workspace_members` land in bronze only; no class
-consumes them yet.
+consumes them yet. `repository_visibility` is diagnostic and stays that way: one
+row per workspace recording that the token reached something, fed to no class.
 
 ## Not in git
 

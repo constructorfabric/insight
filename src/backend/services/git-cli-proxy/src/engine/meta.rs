@@ -44,6 +44,12 @@ pub struct RepoMeta {
     /// and is only ever evicted whole.
     #[serde(default)]
     pub full_clone: bool,
+    /// Packs holding the blobless skeleton: the clone's, every fetch's, and
+    /// the last consolidation's. Any other pack is a served window.
+    /// INVARIANT: empty means unknown, never "no skeleton" — a purge then
+    /// falls back to the repack instead of deleting packs it cannot classify.
+    #[serde(default)]
+    pub skeleton_packs: Vec<String>,
 }
 
 const META_FILE: &str = "meta.json";
@@ -178,6 +184,7 @@ mod tests {
             generation: 3,
             cred_fingerprints: vec!["deadbeef".to_owned()],
             full_clone: false,
+            skeleton_packs: vec!["pack-0000".to_owned()],
         }
     }
 

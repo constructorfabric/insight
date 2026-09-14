@@ -27,7 +27,7 @@ _DISC_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ---------------------------------------------------------------------------
 # disc_load_descriptors
 # Walks ${CONNECTORS_DIR}/*/*/descriptor.yaml and emits TSV per descriptor:
-#   name<TAB>connector_dir<TAB>version<TAB>type<TAB>cdk_image<TAB>enrich_image<TAB>dbt_select
+#   name<TAB>connector_dir<TAB>version<TAB>type<TAB>cdk_image<TAB>enrich_image<TAB>dbt_select<TAB>namespace
 #     (type = nocode|cdk; cdk_image is the full Docker reference sourced from
 #      `descriptor.images.cdk.image` per ADR-0016, empty for nocode or absent;
 #      enrich_image is sourced from `descriptor.images.enrich.image`, empty
@@ -62,11 +62,15 @@ enrich_entry = images.get("enrich") or {}
 cdk_image = (cdk_entry.get("image") or "") if isinstance(cdk_entry, dict) else ""
 enrich_image = (enrich_entry.get("image") or "") if isinstance(enrich_entry, dict) else ""
 dbt_select = d.get("dbt_select", "") or ""
+# The connector's ClickHouse namespace, read here because the file is already
+# open. No `bronze_<slug>` fallback: a hyphenated slug would name a database
+# that is not the one the connector writes to.
+namespace = ((d.get("connection") or {}).get("namespace") or "") if isinstance(d.get("connection"), dict) else ""
 if not name:
     sys.stderr.write(f"WARN: descriptor missing name, skip: {path}\n"); sys.exit(0)
 if version is None:
     sys.stderr.write(f"WARN: descriptor missing version, skip: {path}\n"); sys.exit(0)
-print(f"{name}\t{connector_dir}\t{version}\t{ctype}\t{cdk_image}\t{enrich_image}\t{dbt_select}")
+print(f"{name}\t{connector_dir}\t{version}\t{ctype}\t{cdk_image}\t{enrich_image}\t{dbt_select}\t{namespace}")
 PY
   done < <(find "${CONNECTORS_DIR}" -name 'descriptor.yaml' -print0 2>/dev/null)
   # @cpt-end:cpt-insightspec-algo-reconcile-discover-secrets-v2:p1:inst-ds-descriptor
@@ -94,6 +98,60 @@ disc_load_secrets() {
   # the same SHA-256 policy as compute_cfg_hash.py — keep them in lockstep.
   printf '%s' "${json}" | python3 "${_DISC_LIB_DIR}/../python/extract_secret_loop.py"
   # @cpt-end:cpt-insightspec-algo-reconcile-discover-secrets-v2:p1:inst-ds-loop
+}
+
+# ---------------------------------------------------------------------------
+# disc_load_instances [namespace]
+# The desired state as one relation: every descriptor this build ships, joined
+# with every instance of it this install configures. Emits TSV
+#   name  connector_dir  version  type  cdk_image  enrich_image  dbt_select \
+#   source_id  secret_name  cfg_hash
+# with the last three empty for a descriptor no Secret names.
+#
+# INVARIANT: one Secret listing per tick, and a failed listing fails this
+# function. Asking per connector lets a transient API error answer "no Secret"
+# for one of them, and "no Secret" is what drives the cascade that deletes a
+# connector's sources — so the two must not be confusable. Callers MUST treat a
+# non-zero return as "learned nothing this tick", never as an empty desired
+# state.
+# ---------------------------------------------------------------------------
+disc_load_instances() {
+  local namespace="${1:-${INSIGHT_NAMESPACE}}"
+  local descriptors_file secrets_file rc=0
+  descriptors_file="$(mktemp -t insight-descriptors.XXXXXX)" || return 1
+  secrets_file="$(mktemp -t insight-secrets.XXXXXX)" || { rm -f "${descriptors_file}"; return 1; }
+
+  if ! disc_load_descriptors > "${descriptors_file}"; then
+    rm -f "${descriptors_file}" "${secrets_file}"
+    return 1
+  fi
+  if ! disc_load_secrets "${namespace}" > "${secrets_file}"; then
+    rm -f "${descriptors_file}" "${secrets_file}"
+    return 1
+  fi
+
+  python3 "${_DISC_LIB_DIR}/../python/plan_instances.py" \
+    "${descriptors_file}" "${secrets_file}" || rc=$?
+  rm -f "${descriptors_file}" "${secrets_file}"
+  return "${rc}"
+}
+
+# ---------------------------------------------------------------------------
+# disc_instances_of <connector> [namespace]
+# Every instance of ONE connector: TSV `source_id  secret_name  cfg_hash`, one
+# line each, empty when the connector has none.
+#
+# INVARIANT: returns non-zero when the Secrets could not be read, and callers
+# MUST tell that from an empty list. "This connector has no instance" and "the
+# API did not answer" look identical downstream and mean opposite things.
+# ---------------------------------------------------------------------------
+disc_instances_of() {
+  local connector="$1"
+  local namespace="${2:-${INSIGHT_NAMESPACE}}"
+  local secrets
+  secrets="$(disc_load_secrets "${namespace}")" || return 1
+  printf '%s\n' "${secrets}" \
+    | awk -F'\t' -v connector="${connector}" '$1 == connector { print $2 "\t" $3 "\t" $4 }'
 }
 
 # ---------------------------------------------------------------------------

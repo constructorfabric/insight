@@ -2,6 +2,7 @@
 
     GET /v1/connector-health                     200 admin · 403 everybody else
     GET /v1/connector-health/{connector}/syncs   200 admin · 400 unparseable name ·
+                                                 400 half an instance identity ·
                                                  403 everybody else
 
 Both are `.authenticated()` at the edge with the operator gate inside the
@@ -128,6 +129,75 @@ def test_a_name_the_route_cannot_parse_is_refused_as_a_bad_request(
     )
     problem = response.parse(ProblemDocument)
     assert problem.status == 400
+
+
+@pytest.mark.requires_seed("admin_operator")
+@pytest.mark.reliability
+@pytest.mark.parametrize(
+    ("scope", "missing"),
+    [
+        ({"tenant_id": "example-tenant"}, "source_id"),
+        ({"source_id": "example-main"}, "tenant_id"),
+    ],
+    ids=["tenant-without-source", "source-without-tenant"],
+)
+def test_half_an_instance_identity_is_refused_rather_than_widened(
+    admin_operator_session: PersonaSession,
+    scope: dict[str, str],
+    missing: str,
+) -> None:
+    """One connector can be installed twice, and the pair names which one.
+
+    A source id is unique only within a tenant, so half the pair cannot narrow
+    anything. Ignoring it would answer a question about one installation with
+    every installation's rows — and the answer would look right.
+    """
+    response = admin_operator_session.client.get(_syncs(SOME_CONNECTOR), params=scope)
+    assert response.status_code == 400, (
+        f"answered {response.status_code}: {response.text[:300]}"
+    )
+    problem = response.parse(ProblemDocument)
+    assert problem.status == 400
+    assert missing in response.text, (
+        f"the refusal must name the half that is missing: {response.text[:300]}"
+    )
+
+
+@pytest.mark.requires_seed("admin_operator")
+@pytest.mark.reliability
+def test_a_window_narrowed_to_one_installation_says_which(
+    admin_operator_session: PersonaSession,
+) -> None:
+    """Both halves narrow the window, and the answer echoes them back.
+
+    Without the echo a caller cannot tell an answer about one installation from
+    an answer about every installation sharing the name — which is the whole
+    reason the pair is on the request.
+    """
+    scope = {"tenant_id": "example-tenant", "source_id": "example-main"}
+    response = admin_operator_session.client.get(_syncs(SOME_CONNECTOR), params=scope)
+    assert response.status_code == 200, (
+        f"answered {response.status_code}: {response.text[:300]}"
+    )
+    window = response.parse(SyncHistoryResponse)
+    assert window.connector == SOME_CONNECTOR
+    assert window.tenant_id == scope["tenant_id"]
+    assert window.source_id == scope["source_id"]
+
+
+@pytest.mark.requires_seed("admin_operator")
+@pytest.mark.reliability
+def test_an_unscoped_window_names_no_installation(
+    admin_operator_session: PersonaSession,
+) -> None:
+    """Asking about the connector rather than one of its installations."""
+    response = admin_operator_session.client.get(_syncs(SOME_CONNECTOR))
+    assert response.status_code == 200, (
+        f"answered {response.status_code}: {response.text[:300]}"
+    )
+    window = response.parse(SyncHistoryResponse)
+    assert window.tenant_id is None
+    assert window.source_id is None
 
 
 @pytest.mark.security

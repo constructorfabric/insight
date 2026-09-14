@@ -18,8 +18,8 @@ document describes bodies a service does not implement, and no amount of them
 makes generating from it right — only the real document arriving does.
 
 Generating is sound for analytics because its document is itself generated from
-the handlers' own types (`cargo run -p analytics -- openapi`) and drift-gated in
-CI by `.github/workflows/openapi-specs.yml`. There is no second source of truth
+the handlers' own types (`cargo run -p analytics -- openapi`) and drift-gated by
+the service's own test suite. There is no second source of truth
 — the models describe the very structs that serialize the wire.
 
 The output is COMMITTED. A test run must never need the generator, which is a
@@ -131,6 +131,25 @@ Two consequences worth knowing while it stays this small:
 
 '''
 
+
+PREVIEWS_HEADER = '''"""Previews response shapes — GENERATED, do not edit.
+
+Regenerate with:
+
+    uv run --project tests --frozen python tests/generate_schemas.py
+
+Source: `docs/components/backend/previews/openapi.json`, generated offline by
+`cargo run -p previews --bin previews -- openapi` and drift-gated in CI beside
+the analytics and identity documents. These models describe the structs that
+serialize the wire, so a validation failure is a contract disagreement rather
+than a stale transcription.
+
+BODIES ONLY — no status code comes from this document. Its per-operation lists
+are stamped uniformly by `.standard_errors` and describe nothing (#1669), the
+same limitation the other generated documents carry.
+"""
+
+'''
 
 IDENTITY_HEADER = '''"""Identity Resolution response shapes — GENERATED, do not edit.
 
@@ -258,6 +277,12 @@ TARGETS: tuple[Generated | Bodyless | Untrusted, ...] = (
         spec=_SPECS / "identity-resolution" / "openapi.json",
         output=_SCHEMAS / "identity.py",
         header=IDENTITY_HEADER,
+    ),
+    Generated(
+        name="previews",
+        spec=_SPECS / "previews" / "openapi.json",
+        output=_SCHEMAS / "previews.py",
+        header=PREVIEWS_HEADER,
     ),
 )
 

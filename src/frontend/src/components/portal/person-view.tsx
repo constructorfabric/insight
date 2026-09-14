@@ -1,9 +1,10 @@
 import { MetricGroupsView } from "@/components/portal/metric-groups-view";
 import { PersonHeader } from "@/components/portal/person-header";
 import { SingleGroupView } from "@/components/portal/single-group-view";
-import { visibleGroups, type GroupId } from "@/lib/insight/groups";
-import { usePortalItem, usePortalNavActions } from "@/lib/portal/portal-nav";
+import { visibleGroups } from "@/lib/insight/groups";
+import { usePortalNavActions } from "@/lib/portal/portal-nav";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
+import { useSelectedPersonSection } from "@/lib/portal/use-person-sections";
 
 /**
  * Person zone: one specific person.
@@ -18,17 +19,16 @@ import { usePortalShowPlanned } from "@/lib/portal/portal-store";
  * again, in the middle of the page, what the navigation says on its left edge.
  */
 export function PersonView({ person }: { person: string }) {
-  const item = usePortalItem();
   const { setItem } = usePortalNavActions();
   const showPlanned = usePortalShowPlanned();
   const groupIds = visibleGroups(showPlanned).map((group) => group.id);
-  const isSection = item != null && (groupIds as string[]).includes(item);
+  const selectedSection = useSelectedPersonSection();
 
   return (
     <>
       <PersonHeader person={person} />
-      {isSection ? (
-        <SingleGroupView personId={person} groupId={item as GroupId} />
+      {selectedSection ? (
+        <SingleGroupView personId={person} groupId={selectedSection} />
       ) : (
         // "At a glance" — the headline row and what needs attention.
         //

@@ -11,8 +11,7 @@ use super::openapi_document;
 
 #[test]
 fn openapi_document_covers_the_route_table() -> anyhow::Result<()> {
-    // Build offline (no DB / listener) and inspect the serialized form — the
-    // same JSON `print_openapi` emits and the drift gate diffs.
+    // Build offline (no DB / listener) and inspect the serialized form.
     let doc = openapi_document()?;
     let json = serde_json::to_value(&doc)?;
 
@@ -36,10 +35,13 @@ fn openapi_document_covers_the_route_table() -> anyhow::Result<()> {
         "/v1/connector-health",
         "/v1/connector-health/{connector}/syncs",
         "/v1/feedback",
+        "/v1/ingestion/intensity",
         "/v1/metric-definitions",
         "/v1/metric-drilldown",
         "/v1/metric-drilldown/export",
         "/v1/metric-results",
+        "/v1/reports/preview",
+        "/v1/reports/export",
         "/v1/metrics",
         "/v1/metrics/export",
         "/v1/metrics/import",
@@ -55,7 +57,7 @@ fn openapi_document_covers_the_route_table() -> anyhow::Result<()> {
     }
     assert_eq!(
         paths.len(),
-        23,
+        26,
         "the contract must carry exactly the surviving paths, got {:?}",
         paths.keys().collect::<Vec<_>>()
     );
@@ -85,6 +87,21 @@ fn openapi_document_covers_the_route_table() -> anyhow::Result<()> {
     assert!(
         schemas.contains_key("TimeseriesDto"),
         "TimeseriesDto schema missing"
+    );
+    Ok(())
+}
+
+#[test]
+fn report_export_request_is_strict_and_caps_metric_keys() -> anyhow::Result<()> {
+    let json = serde_json::to_value(openapi_document()?)?;
+    let request = &json["components"]["schemas"]["ReportExportRequest"];
+
+    assert_eq!(request["type"], "object");
+    assert_eq!(request["additionalProperties"], false);
+    assert_eq!(request["properties"]["metric_keys"]["maxItems"], 100);
+    assert_eq!(
+        request["required"],
+        serde_json::json!(["subject", "period", "granularity", "metric_keys", "format"])
     );
     Ok(())
 }

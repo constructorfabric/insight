@@ -50,6 +50,7 @@ check kubeseal kubeseal "0.27"  "brew install kubeseal"         'kubeseal --vers
 check skopeo   skopeo   "1.14"  "brew install skopeo"           'skopeo --version'
 check yq       yq       "4.x"   "brew install yq"               'yq --version'
 check jq       jq       "1.6"   "brew install jq"               'jq --version'
+check envsubst envsubst "any"   "brew install gettext"          'envsubst --version | head -n1'
 check git      git      "2.40"  "system / brew install git"     'git --version'
 check make     make     "3.81"  "system / brew install make"    'make --version | head -n1'
 

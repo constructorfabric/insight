@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from "react";
+import { Suspense, lazy, useMemo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
@@ -18,10 +18,12 @@ import type {
 } from "@/api/metric-definitions-client";
 import { ConnectorHealthPane } from "@/components/portal/connector-health";
 import { IdentitiesView } from "@/components/portal/identities-view";
+import { IngestionView } from "@/components/portal/ingestion-view";
 import { PlatformUsage } from "@/components/portal/platform-usage";
 import { useIsAdmin } from "@/queries/identity-me";
 import { useMetricDefinitions } from "@/queries/metric-definitions";
 import { AiAssistantBody } from "@/screens/ai-assistant";
+import { PreviewsBody } from "@/screens/previews";
 import { WhatsNewBody } from "@/screens/whats-new";
 import { cn } from "@/lib/utils";
 
@@ -42,8 +44,22 @@ const STATUS_STYLE: Record<MetricDefinitionSchemaStatus, string> = {
  * namespace (`*_bullet_rows.*`), so listing it here showed an admin a catalog
  * no portal surface reads (constructorfabric/insight#1988).
  */
+const MetricsConsoleBody = lazy(() =>
+  import("@/screens/metrics-console").then((m) => ({ default: m.MetricsConsoleBody }))
+);
+
+const QueryConsoleBody = lazy(() =>
+  import("@/screens/query-console").then((m) => ({ default: m.QueryConsoleBody }))
+);
+
+function Deferred({ children }: { children: ReactNode }) {
+  return <Suspense fallback={<CenteredSpinner />}>{children}</Suspense>;
+}
+
 export function ManageView({ item }: { item: string | null }) {
   if (item === "metric-catalog") return <MetricCatalogTable />;
+  if (item === "custom-metrics") return <Deferred><MetricsConsoleBody /></Deferred>;
+  if (item === "query-console") return <Deferred><QueryConsoleBody /></Deferred>;
   if (item === "connector-health")
     return (
       <AdminGate>
@@ -62,8 +78,16 @@ export function ManageView({ item }: { item: string | null }) {
         <PlatformUsage />
       </AdminGate>
     );
+  if (item === "ingestion")
+    return (
+      <AdminGate>
+        <IngestionView />
+      </AdminGate>
+    );
   if (item === "ai-assistant") return <AiAssistantBody />;
   if (item === "whats-new") return <WhatsNewBody />;
+  // PreviewsBody carries its own gate, so no wrapper.
+  if (item === "previews") return <PreviewsBody />;
   return (
     <div className="mx-auto w-full max-w-md p-8">
       <ComingSoon variant="card" state="empty" label="Not built yet" />

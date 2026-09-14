@@ -1,40 +1,102 @@
 # PRD Expert Checklist
 
+
+<!-- toc -->
+
+- [Referenced Standards](#referenced-standards)
+- [Prerequisites](#prerequisites)
+- [Applicability Context](#applicability-context)
+- [Severity Dictionary](#severity-dictionary)
+- [Applicability Determination](#applicability-determination)
+- [Checkpointing (Long Reviews)](#checkpointing-long-reviews)
+  - [Checkpoint After Each Domain](#checkpoint-after-each-domain)
+  - [If Context Runs Low](#if-context-runs-low)
+  - [Minimum Viable Review](#minimum-viable-review)
+- [BUSINESS Expertise (BIZ)](#business-expertise-biz)
+  - [BIZ-PRD-001: Vision Clarity](#biz-prd-001-vision-clarity)
+  - [BIZ-PRD-002: Stakeholder Coverage](#biz-prd-002-stakeholder-coverage)
+  - [BIZ-PRD-003: Requirements Completeness](#biz-prd-003-requirements-completeness)
+  - [BIZ-PRD-004: Use Case Coverage](#biz-prd-004-use-case-coverage)
+  - [BIZ-PRD-005: Success Metrics](#biz-prd-005-success-metrics)
+  - [BIZ-PRD-006: Terminology & Definitions](#biz-prd-006-terminology--definitions)
+  - [BIZ-PRD-007: Assumptions & Open Questions](#biz-prd-007-assumptions--open-questions)
+  - [BIZ-PRD-008: Risks & Non-Goals](#biz-prd-008-risks--non-goals)
+- [ARCHITECTURE Expertise (ARCH)](#architecture-expertise-arch)
+  - [ARCH-PRD-001: Scope Boundaries](#arch-prd-001-scope-boundaries)
+  - [ARCH-PRD-002: Modularity Enablement](#arch-prd-002-modularity-enablement)
+  - [ARCH-PRD-003: Scalability Considerations](#arch-prd-003-scalability-considerations)
+  - [ARCH-PRD-004: System Actor Clarity](#arch-prd-004-system-actor-clarity)
+  - [ARCH-PRD-005: Compatibility Requirements](#arch-prd-005-compatibility-requirements)
+  - [ARCH-PRD-006: Quality Vector Coverage](#arch-prd-006-quality-vector-coverage)
+- [🔒 SECURITY Expertise (SEC)](#security-expertise-sec)
+  - [SEC-PRD-001: Authentication Requirements](#sec-prd-001-authentication-requirements)
+  - [SEC-PRD-002: Authorization Requirements](#sec-prd-002-authorization-requirements)
+  - [SEC-PRD-003: Data Classification](#sec-prd-003-data-classification)
+  - [SEC-PRD-004: Audit Requirements](#sec-prd-004-audit-requirements)
+  - [SEC-PRD-005: Privacy by Design](#sec-prd-005-privacy-by-design)
+- [🛡️ SAFETY Expertise (SAFE)](#safety-expertise-safe)
+  - [SAFE-PRD-001: Operational Safety Requirements](#safe-prd-001-operational-safety-requirements)
+  - [SAFE-PRD-002: Fail-Safe and Hazard Prevention](#safe-prd-002-fail-safe-and-hazard-prevention)
+- [⚡ PERFORMANCE Expertise (PERF)](#performance-expertise-perf)
+  - [PERF-PRD-001: Response Time Expectations](#perf-prd-001-response-time-expectations)
+  - [PERF-PRD-002: Throughput Requirements](#perf-prd-002-throughput-requirements)
+  - [PERF-PRD-003: Capacity Planning Inputs](#perf-prd-003-capacity-planning-inputs)
+- [🛡️ RELIABILITY Expertise (REL)](#reliability-expertise-rel)
+  - [REL-PRD-001: Availability Requirements](#rel-prd-001-availability-requirements)
+  - [REL-PRD-002: Recovery Requirements](#rel-prd-002-recovery-requirements)
+  - [REL-PRD-003: Error Handling Expectations](#rel-prd-003-error-handling-expectations)
+- [👤 USABILITY Expertise (UX)](#usability-expertise-ux)
+  - [UX-PRD-001: User Experience Goals](#ux-prd-001-user-experience-goals)
+  - [UX-PRD-002: Accessibility Requirements](#ux-prd-002-accessibility-requirements)
+  - [UX-PRD-003: Internationalization Requirements](#ux-prd-003-internationalization-requirements)
+  - [UX-PRD-004: Device/Platform Requirements](#ux-prd-004-deviceplatform-requirements)
+  - [UX-PRD-005: Inclusivity Requirements](#ux-prd-005-inclusivity-requirements)
+- [🔧 MAINTAINABILITY Expertise (MAINT)](#maintainability-expertise-maint)
+  - [MAINT-PRD-001: Documentation Requirements](#maint-prd-001-documentation-requirements)
+  - [MAINT-PRD-002: Support Requirements](#maint-prd-002-support-requirements)
+- [📜 COMPLIANCE Expertise (COMPL)](#compliance-expertise-compl)
+  - [COMPL-PRD-001: Regulatory Requirements](#compl-prd-001-regulatory-requirements)
+  - [COMPL-PRD-002: Industry Standards](#compl-prd-002-industry-standards)
+  - [COMPL-PRD-003: Legal Requirements](#compl-prd-003-legal-requirements)
+- [📊 DATA Expertise (DATA)](#data-expertise-data)
+  - [DATA-PRD-001: Data Ownership](#data-prd-001-data-ownership)
+  - [DATA-PRD-002: Data Quality Requirements](#data-prd-002-data-quality-requirements)
+  - [DATA-PRD-003: Data Lifecycle](#data-prd-003-data-lifecycle)
+- [🔌 INTEGRATION Expertise (INT)](#integration-expertise-int)
+  - [INT-PRD-001: External System Integration](#int-prd-001-external-system-integration)
+  - [INT-PRD-002: API Requirements](#int-prd-002-api-requirements)
+- [🖥️ OPERATIONS Expertise (OPS)](#operations-expertise-ops)
+  - [OPS-PRD-001: Deployment Requirements](#ops-prd-001-deployment-requirements)
+  - [OPS-PRD-002: Monitoring Requirements](#ops-prd-002-monitoring-requirements)
+- [🧪 TESTING Expertise (TEST)](#testing-expertise-test)
+  - [TEST-PRD-001: Acceptance Criteria](#test-prd-001-acceptance-criteria)
+  - [TEST-PRD-002: Testability](#test-prd-002-testability)
+- [DOC (DOC)](#doc-doc)
+  - [DOC-PRD-001: Explicit Non-Applicability](#doc-prd-001-explicit-non-applicability)
+  - [ARCH-PRD-NO-001: No Technical Implementation Details](#arch-prd-no-001-no-technical-implementation-details)
+  - [ARCH-PRD-NO-002: No Architectural Decisions](#arch-prd-no-002-no-architectural-decisions)
+  - [BIZ-PRD-NO-001: No Implementation Tasks](#biz-prd-no-001-no-implementation-tasks)
+  - [BIZ-PRD-NO-002: No Spec-Level Design](#biz-prd-no-002-no-spec-level-design)
+  - [DATA-PRD-NO-001: No Data Schema Definitions](#data-prd-no-001-no-data-schema-definitions)
+  - [INT-PRD-NO-001: No API Specifications](#int-prd-no-001-no-api-specifications)
+  - [TEST-PRD-NO-001: No Test Cases](#test-prd-no-001-no-test-cases)
+  - [OPS-PRD-NO-001: No Infrastructure Specifications](#ops-prd-no-001-no-infrastructure-specifications)
+  - [SEC-PRD-NO-001: No Security Implementation Details](#sec-prd-no-001-no-security-implementation-details)
+  - [MAINT-PRD-NO-001: No Code-Level Documentation](#maint-prd-no-001-no-code-level-documentation)
+- [Final Checklist](#final-checklist)
+  - [Explicit Handling Verification](#explicit-handling-verification)
+- [Reporting Readiness Checklist](#reporting-readiness-checklist)
+- [Reporting](#reporting)
+  - [Full Report Format (Standard/Full Reviews)](#full-report-format-standardfull-reviews)
+  - [Compact Report Format (Quick Reviews)](#compact-report-format-quick-reviews)
+- [Reporting Commitment](#reporting-commitment)
+
+<!-- /toc -->
+
 **Artifact**: Product Requirements Document (PRD)
-**Version**: 1.2
-**Last Updated**: 2026-02-03
+**Version**: 1.3
+**Last Updated**: 2026-09-09
 **Purpose**: Comprehensive quality checklist for PRD artifacts
-
-## Table of Contents
-
-1. [Referenced Standards](#referenced-standards)
-2. [Prerequisites](#prerequisites)
-3. [Applicability Context](#applicability-context)
-4. [Severity Dictionary](#severity-dictionary)
-5. [Applicability Determination](#applicability-determination)
-6. [Checkpointing (Long Reviews)](#checkpointing-long-reviews)
-7. [MUST HAVE](#must-have)
-   - [BUSINESS Expertise (BIZ)](#business-expertise-biz)
-   - [ARCHITECTURE Expertise (ARCH)](#architecture-expertise-arch)
-   - [🔒 SECURITY Expertise (SEC)](#security-expertise-sec)
-   - [🛡️ SAFETY Expertise (SAFE)](#safety-expertise-safe)
-   - [⚡ PERFORMANCE Expertise (PERF)](#performance-expertise-perf)
-   - [🛡️ RELIABILITY Expertise (REL)](#reliability-expertise-rel)
-   - [👤 USABILITY Expertise (UX)](#usability-expertise-ux)
-   - [🔧 MAINTAINABILITY Expertise (MAINT)](#maintainability-expertise-maint)
-   - [📜 COMPLIANCE Expertise (COMPL)](#compliance-expertise-compl)
-   - [📊 DATA Expertise (DATA)](#data-expertise-data)
-   - [🔌 INTEGRATION Expertise (INT)](#integration-expertise-int)
-   - [🖥️ OPERATIONS Expertise (OPS)](#operations-expertise-ops)
-   - [🧪 TESTING Expertise (TEST)](#testing-expertise-test)
-   - [DOC (DOC)](#doc-doc)
-8. [MUST NOT HAVE](#must-not-have)
-9. [Validation Summary](#validation-summary)
-   - [Final Checklist](#final-checklist)
-   - [Reporting Readiness Checklist](#reporting-readiness-checklist)
-   - [Reporting](#reporting)
-   - [Reporting Commitment](#reporting-commitment)
-
 ---
 
 ## Referenced Standards
@@ -295,6 +357,23 @@ Mark review as "PARTIAL" if not all domains completed.
 - [ ] Data format compatibility requirements captured (file formats, protocols)
 - [ ] Hardware/software environment compatibility stated
 - [ ] Backward compatibility requirements documented (if applicable)
+
+### ARCH-PRD-006: Quality Vector Coverage
+**Severity**: HIGH
+**Ref**: [quality-vector guide](../../guides/quality-vectors.md) (kit-local framing, not an ISO/IEC 25010 characteristic set)
+
+> **New in v1.3**: Added to gate the 6.1 Quality Vector Analysis table introduced alongside it.
+
+- [ ] All five quality vectors (Efficiency, Reliability, Performance, Security, Versatility) are present in the Quality Vector Analysis table
+- [ ] Each row's Show-Stopper cell either states a specific, measurable, MUST-strength show-stopper requirement traceable to the NFR that carries it in 6.2, or states why no show-stopper obligation was produced
+- [ ] Each row's cell is classified first by which half of the rule above it took, and, within the reason half, by the kind of reason stated; a bar below applies to that row only where its premise actually held, never by default
+- [ ] Where the cell states the show-stopper, the NFR ID it cites is the actual identifier used in 6.2, not a paraphrase or a general gesture at existing NFRs
+- [ ] Where the stated reason is that the vector's obligations are already covered without rising to a show-stopper, it names the actual covering NFR IDs from 6.2, not a paraphrase or a general gesture at them
+- [ ] Where the stated reason is that the vector is not material, it cites a concrete scope, scale, deployment or exclusion fact, and does not merely restate immateriality
+- [ ] Where the stated reason is that the vector is material but 6.2 carries no covering NFR, that reading applies only when the vector is genuinely material and no NFR in 6.2 in fact covers it; the cell is well-formed once it says so, but the row still carries an open gap, and a reviewer applying this item flags the gap rather than passing the row
+- [ ] Where the cell states the show-stopper, the NFR it cites in 6.2 itself carries MUST strength (a show-stopper is not backed by a `SHOULD` bullet)
+- [ ] Every row's Rationale is distinct from its Show-Stopper cell text: for a material vector it states the business consequence, and for a vector that is not material it explains why the vector is immaterial
+- [ ] The analysis is presented as one consolidated table, not expanded into per-vector subsections
 
 ---
 
@@ -688,6 +767,17 @@ Mark review as "PARTIAL" if not all domains completed.
 - [ ] Requirements specify concrete behaviors
 - [ ] Requirements avoid compound statements (multiple "and"s)
 - [ ] Requirements can be independently verified
+
+---
+
+## Authoring aid — quality vectors
+
+**Authoring aid:** Use the [quality-vector guide](../../guides/quality-vectors.md)
+to suggest clearer expectations, scope, conditions or measurements. Report these
+as improvement opportunities, without a severity or pass/fail verdict. Canonical
+criteria above and agreed requirements retain their meaning. The presence and
+completeness of the Quality Vector Analysis table itself is checked under
+ARCH-PRD-006.
 
 ---
 

@@ -14,6 +14,7 @@ import hashlib
 import logging
 import os
 import random
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from .. import config
@@ -141,6 +142,17 @@ def poisson(rng: random.Random, mean: float) -> int:
 
 def clamp(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
+
+
+def pick[T](rng: random.Random, weighted: Sequence[tuple[T, float]]) -> T:
+    """Deterministic weighted choice: the same `rng` state always picks the
+    same value, so e.g. a PR always lands in the same repository across runs."""
+    roll = rng.random() * sum(w for _, w in weighted)
+    for value, weight in weighted:
+        roll -= weight
+        if roll <= 0:
+            return value
+    return weighted[-1][0]
 
 
 def deterministic_uuid(*parts: str) -> str:

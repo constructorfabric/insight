@@ -1,3 +1,12 @@
+global:
+  sqlApi:
+    enabled: false
+  mcp:
+    enabled: false
+    publicUrl: ""
+  previews:
+    enabled: true
+
 replicaCount: 1
 
 podAnnotations: {}
@@ -52,13 +61,47 @@ gateway:
   # `/v1/metrics` before proxying (the app services host at `/v1/*`, unaware of
   # the platform prefix).
   routes:
+    - prefix: /api/sql/query
+      upstream: 'http://{{ .Release.Name }}-analytics:8086'
+      auth: instance_token
+      timeoutMs: 40000
+      sqlApiOnly: true
+    - prefix: /mcp
+      upstream: 'http://{{ .Release.Name }}-analytics:8086'
+      auth: bearer
+      timeoutMs: 40000
+      mcpOnly: true
+    - prefix: /mcp/v3
+      upstream: 'http://{{ .Release.Name }}-v3-core:8087'
+      auth: bearer
+      mcpScope: "mcp:author"
+      timeoutMs: 40000
+      mcpOnly: true
+      v3Only: true
     - prefix: /api/analytics
       upstream: 'http://{{ .Release.Name }}-analytics:8081'
-      timeoutMs: 60000
+      timeoutMs: 135000
       stripPrefix: true
+    - prefix: /api/core
+      upstream: 'http://{{ .Release.Name }}-v3-core:8086'
+      auth: instance_token
+      timeoutMs: 40000
+      stripPrefix: true
+      v3Only: true
+    # Same service, browser session: the portal's custom surfaces. Ingest is
+    # not reachable through it — raw_data carries its own instance-token check.
+    - prefix: /api/v3
+      upstream: 'http://{{ .Release.Name }}-v3-core:8086'
+      timeoutMs: 40000
+      stripPrefix: true
+      v3Only: true
     - prefix: /api/identity
       upstream: 'http://{{ .Release.Name }}-identity-resolution:8082'
       stripPrefix: true
+    - prefix: /api/previews
+      upstream: 'http://{{ .Release.Name }}-previews:8085'
+      stripPrefix: true
+      previewsOnly: true
 
   # Trusted ingress-hop CIDRs for X-Forwarded-For (set_real_ip_from). Empty =
   # no client-IP trust; set to the ingress/pod network where TLS terminates in
@@ -66,6 +109,22 @@ gateway:
   setRealIpFrom: []
   # lua_shared_dict exchange-cache size (empty = routegen default 64m).
   jwtCacheSize: ""
+
+# nginx-prometheus-exporter sidecar serving stub_status as /metrics.
+metrics:
+  enabled: false
+  port: 9113
+  image:
+    repository: nginx/nginx-prometheus-exporter
+    tag: "1.5.3"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 5m
+      memory: 16Mi
+    limits:
+      cpu: 50m
+      memory: 32Mi
 
 resources:
   requests:

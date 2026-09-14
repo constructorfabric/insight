@@ -25,12 +25,6 @@ MEETING_SLICES = [
     ("2026-06-01", "2026-07-01"),
 ]
 
-# The inline `_meetings` PARENT of participants is read through the CDK's
-# synchronous path (SubstreamPartitionRouter.read_only_records), whose slice
-# generator does NOT absorb the remainder into the last slice — it emits the
-# plain step layout with a 1-day tail. Same window pin, different tail shape.
-PARENT_MEETING_SLICES = MEETING_SLICES[:-1] + [("2026-06-01", "2026-06-30"), ("2026-07-01", "2026-07-01")]
-
 
 def metrics_params(from_date: str, to_date: str, page_token: str | None = None) -> dict:
     params = {"type": "past", "page_size": "100", "from": from_date, "to": to_date}
@@ -39,12 +33,12 @@ def metrics_params(from_date: str, to_date: str, page_token: str | None = None) 
     return params
 
 
-def mock_meeting_slices(http_mocker, non_empty: dict, slices=MEETING_SLICES) -> None:
+def mock_meeting_slices(http_mocker, non_empty: dict) -> None:
     """Register every expected meetings slice; slices whose `from` date is not
     a key of `non_empty` serve an empty page. Exact from/to matchers mean an
     out-of-window request (the job-529 failure mode) matches nothing and fails
     the test."""
-    for from_date, to_date in slices:
+    for from_date, to_date in MEETING_SLICES:
         http_mocker.get(
             HttpRequest(METRICS_URL, query_params=metrics_params(from_date, to_date)),
             non_empty.get(from_date, HttpResponse(body=json.dumps({"meetings": []}), status_code=200)),

@@ -64,7 +64,11 @@ function respond(req: MetricResultsRequest): MetricResultsResponse {
             }
           : {
               view: "period",
-              values: ids.map((id) => ({ entity_id: id, value: 1 })),
+              values: ids.map((id) => ({
+                entity_id: id,
+                value: 1,
+                ...(req.compare_to ? { compare_to: 10 } : {}),
+              })),
             },
       ),
     })),
@@ -127,7 +131,7 @@ describe("useMetricCollection", () => {
     expect(result.current.isError).toBe(false);
   });
 
-  it("normalizes the current result and skips the previous twin by default", async () => {
+  it("normalizes the current result and asks for no comparison by default", async () => {
     const { result } = renderHook(
       () => useMetricCollection(COLLECTION, ENTITY, RANGE),
       { wrapper: wrapper() },
@@ -138,14 +142,37 @@ describe("useMetricCollection", () => {
     expect(mock).toHaveBeenCalledTimes(1);
   });
 
-  it("fires the previous-period twin and exposes previousByKey", async () => {
+  it("serves the previous period as the comparison window of one request", async () => {
     const { result } = renderHook(
       () => useMetricCollection(COLLECTION, ENTITY, RANGE, { previousPeriod: "month" }),
       { wrapper: wrapper() },
     );
-    await waitFor(() => expect(result.current.previousByKey).not.toBeNull());
-    expect(result.current.previousByKey?.get("m")).toBeDefined();
-    expect(mock).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+
+    expect(mock).toHaveBeenCalledTimes(1);
+    expect(mock.mock.calls[0]![0].compare_to).toEqual({
+      from: "2026-05-01",
+      to: "2026-05-30",
+    });
+    expect(
+      result.current.previousByKey?.get("m")?.period?.values[0]?.value,
+    ).toBe(10);
+  });
+
+  it("reads an explicit comparison window back through previousByKey", async () => {
+    const compareTo = { from: "2026-05-01", to: "2026-05-15" };
+    const { result } = renderHook(
+      () => useMetricCollection(COLLECTION, ENTITY, RANGE, { compareTo }),
+      { wrapper: wrapper() },
+    );
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+
+    expect(mock).toHaveBeenCalledTimes(1);
+    expect(mock.mock.calls[0]![0].compare_to).toEqual(compareTo);
+    expect(result.current.previousByKey?.get("m")?.period?.values[0]?.value).toBe(10);
+    // The window carries no standing: reading `peer` here would answer over the
+    // primary period instead.
+    expect(result.current.previousByKey?.get("m")?.peer).toBeUndefined();
   });
 
   it("surfaces errors and leaves byKey empty", async () => {

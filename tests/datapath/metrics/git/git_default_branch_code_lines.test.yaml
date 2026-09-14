@@ -1,0 +1,102 @@
+spec_version: 1
+description: >
+  Metric: git.default_branch_code_lines — code lines whose commit reached the
+  repository's default branch, #3046.
+
+  How it's computed (bronze → silver → gold):
+    • bronze: one row per file a commit touched, plus the flag its connector
+      set for that commit and the requests the repository merged
+    • silver: one class row per commit, per file change and per request
+    • gold:   one row per content per path, classified from its PATH, carried
+      by the commit that first held it — and that commit's branch scope is the
+      connector's flag OR membership of the default-branch set, which a merged
+      request into the default branch and matching content both confer
+
+  Two neighbours already own most of that. `git_branch_scope.test.yaml` owns
+  the flag and the merged-request heal across the branch-scoped pairs;
+  `git_code_lines.test.yaml` owns the classifier. What neither asserts is this
+  measure's own emission: `default_code_lines_added` is built from a different
+  dimension tuple than the unscoped line measures, and nothing breaks it down
+  at all — so its splits are unasserted even though the totals beside them are
+  not.
+
+  Cases: the intersection of the two rules, with the opposite scope and the
+  code total that bound it; a landed test file, which raises the unclassified
+  default total and not this one; the change-type split, which is also the
+  oracle for which of two carriers of one content survived; the extension
+  split; the day a commit is filed under, which is the day its work was
+  WRITTEN and not the day it was committed; and an empty window.
+
+  The API rejects a metric that requests the same view twice, so each split
+  needs its own case.
+
+  Fixture — erin only, in one repository whose default branch is `main`:
+    * dbcl-landed, flag says landed
+        src/a.rs        +12 modified  code and landed — counts
+        tests/a_test.rs +40 added     landed, but the classifier calls it test
+    * dbcl-wip, flag says otherwise, no request
+        src/b.rs        +7  modified  code, but nothing says it landed
+    * dbcl-pr, flag says otherwise, carried by a request merged into `main`
+        src/c.go        +5  renamed   the request is what makes it land
+    * dbcl-branch, flag says otherwise, reachable from no branch
+        src/d.rs        +9  ADDED     shares its content with the row below
+    * dbcl-squash, flag says landed, two hours later
+        src/d.rs        +9  MODIFIED  the same content, so one of the two rows
+                                      is dropped and the other keeps the nine
+                                      lines
+
+  So the metric reads 12 + 5 + 9 = 26 against a code total of 33, and the
+  other scope holds the remaining 7.
+
+  INVARIANT: the two carriers of `src/d.rs` must keep DIFFERENT change types.
+  Both are inside the default scope — one by the flag, one by the content
+  heal — so no total can say which row survived; only the change-type split
+  can. `added: 9` is therefore the assertion that the earliest carrier won,
+  and a dedup that preferred the later one reads `modified: 21` instead.
+
+  Dave carries the dating case alone, so erin's arithmetic above never moves.
+  Every commit of hers has one date; his has two, three days apart — the gap a
+  rebase, a cherry-pick or a late push leaves:
+    * dbcl-late, flag says landed, written on the 2nd, committed on the 5th
+        src/f.rs        +11 added     counts on the 2nd, and not on the 5th
+
+  Nothing else pins this for the branch-scoped line measures: the neighbour
+  that owns the author-date rule asserts active days and the unscoped code
+  lines, and a build that dated commits by the committer left this spec green.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/erin
+    - $ref: ../templates/people.yaml#/templates/dave
+
+  bronze_github.branches:
+    - {$ref: ../templates/git_activity.yaml#/templates/base, unique_key: dbcl-br-main, repository: "https://github.com/acme/dbcl.git", name: main, head_sha: head-main, is_default: true}
+
+  bronze_github.commits:
+    # Commit-level stats reach no measure asserted here: the fallback that
+    # reads them fires only for a commit with no collected file rows.
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: dbcl-landed, repository: "https://github.com/acme/dbcl.git", sha: dbcl-landed, authored_date: "2026-10-01T09:00:00Z", committed_date: "2026-10-01T09:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 52, changed_files: 2, is_in_default_branch: true}
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: dbcl-wip, repository: "https://github.com/acme/dbcl.git", sha: dbcl-wip, authored_date: "2026-10-01T09:10:00Z", committed_date: "2026-10-01T09:10:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 7, changed_files: 1, is_in_default_branch: false}
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: dbcl-pr, repository: "https://github.com/acme/dbcl.git", sha: dbcl-pr, authored_date: "2026-10-01T09:20:00Z", committed_date: "2026-10-01T09:20:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 5, changed_files: 1, is_in_default_branch: false}
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: dbcl-branch, repository: "https://github.com/acme/dbcl.git", sha: dbcl-branch, authored_date: "2026-10-01T09:30:00Z", committed_date: "2026-10-01T09:30:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 9, changed_files: 1, is_in_default_branch: false}
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: dbcl-squash, repository: "https://github.com/acme/dbcl.git", sha: dbcl-squash, authored_date: "2026-10-01T11:30:00Z", committed_date: "2026-10-01T11:30:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 9, changed_files: 1, is_in_default_branch: true}
+    # Written on the 2nd, committed on the 5th: the metric day is the AUTHOR date.
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: dbcl-late, repository: "https://github.com/acme/dbcl.git", sha: dbcl-late, authored_date: "2026-10-02T09:00:00Z", committed_date: "2026-10-05T14:00:00Z", author_name: dave, author_email: dave@example.com, committer_name: dave, committer_email: dave@example.com, additions: 11, changed_files: 1, is_in_default_branch: true}
+
+  bronze_github.file_changes:
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: dbcl-f-a, repository: "https://github.com/acme/dbcl.git", sha: dbcl-landed, filename: src/a.rs, status: modified, additions: 12, deletions: 0, pre_image_oid: dbc10000000000000000000000000000000000a1, post_image_oid: dbc10000000000000000000000000000000000a2}
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: dbcl-f-atest, repository: "https://github.com/acme/dbcl.git", sha: dbcl-landed, filename: tests/a_test.rs, status: added, additions: 40, deletions: 0, post_image_oid: dbc10000000000000000000000000000000000b1}
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: dbcl-f-b, repository: "https://github.com/acme/dbcl.git", sha: dbcl-wip, filename: src/b.rs, status: modified, additions: 7, deletions: 0, pre_image_oid: dbc10000000000000000000000000000000000c1, post_image_oid: dbc10000000000000000000000000000000000c2}
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: dbcl-f-c, repository: "https://github.com/acme/dbcl.git", sha: dbcl-pr, filename: src/c.go, status: renamed, additions: 5, deletions: 0, pre_image_oid: dbc10000000000000000000000000000000000d1, post_image_oid: dbc10000000000000000000000000000000000d2}
+    # One content, two carriers. Their change types differ on purpose: that
+    # is the only signal telling which row the dedup kept.
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: dbcl-f-d-branch, repository: "https://github.com/acme/dbcl.git", sha: dbcl-branch, filename: src/d.rs, status: added, additions: 9, deletions: 0, post_image_oid: dbc10000000000000000000000000000000000e1}
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: dbcl-f-d-squash, repository: "https://github.com/acme/dbcl.git", sha: dbcl-squash, filename: src/d.rs, status: modified, additions: 9, deletions: 0, post_image_oid: dbc10000000000000000000000000000000000e1}
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: dbcl-f-f, repository: "https://github.com/acme/dbcl.git", sha: dbcl-late, filename: src/f.rs, status: added, additions: 11, deletions: 0, post_image_oid: dbc10000000000000000000000000000000000f1}
+
+  bronze_github.pull_requests:
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: dbcl-pr-1, repo_full_name: acme/dbcl, id: 71, number: 71, author_login: erin, base_ref: main, closed_at: "2026-10-01T12:00:00Z", merged_at: "2026-10-01T12:00:00Z", merge_commit_sha: dbcl-merge}
+
+  bronze_github.pull_request_commits:
+    - {$ref: ../templates/git_activity.yaml#/templates/base, unique_key: dbcl-lnk-1, sha: dbcl-pr, pull_number: 71, repo_full_name: acme/dbcl, author_email: erin@example.com, is_merge: false}
+

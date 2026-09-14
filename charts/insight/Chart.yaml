@@ -6,7 +6,8 @@
 ##
 ## What is INCLUDED here:
 ##   - Edge / auth: gateway (nginx+auth), authenticator, keycloak
-##   - Application: analytics, identity-resolution, frontend
+##   - Application: analytics, insight-v3-core, identity-resolution, previews,
+##     frontend
 ##
 ## What is NOT included (deployed separately):
 ##   - L2 infra (ClickHouse, MariaDB, Redis, Redpanda) — deployed as
@@ -25,8 +26,8 @@ type: application
 # version    — packaging version of the chart. Bump on EVERY chart change.
 # appVersion — product version. Matches the image tag of all insight-* images.
 # Release pipeline: git tag v0.1.0 → version=0.1.0, appVersion="0.1.0".
-version: 0.6.9
-appVersion: "2026.08.27.16.42-d703cd5"
+version: 0.7.31
+appVersion: "2026.09.14.11.19-bad622a"
 kubeVersion: ">=1.27.0-0"
 home: https://github.com/constructorfabric/insight
 sources:
@@ -84,6 +85,16 @@ dependencies:
     alias: analytics
     version: "0.3.0"
     repository: "file://../../src/backend/services/analytics/helm"
+  # The one app service with a flag, and off by default: it cannot boot until
+  # its instance's ingest token is sealed, so an instance opts in once that
+  # exists. Global, like previews, so the same switch drops the gateway's three
+  # v3 routes — a route pointing at a Service the release does not create keeps
+  # nginx from loading its config.
+  - name: insight-v3-core
+    alias: insightV3Core
+    version: "0.1.0"
+    repository: "file://../../src/backend/services/insight-v3-core/helm"
+    condition: global.insightV3Core.deploy
   # Identity Resolution — Rust identity service (epic #1602). Reads from the
   # MariaDB `persons` table (per identity ADR-0002). Gated because it needs
   # `persons` populated by the seed pipeline.
@@ -92,6 +103,18 @@ dependencies:
     version: "0.2.0"
     repository: "file://../../src/backend/services/identity-resolution/helm"
     condition: identityResolution.deploy
+  # Previews — preview-experiment provisioning (epic #1981). Manages the
+  # per-experiment FE Deployment/Service/HTTPRoute trio in a dedicated
+  # namespace via the Kubernetes API; the objects ARE the experiments (no
+  # database). Reached through the gateway at /api/previews.
+  - name: insight-previews
+    alias: previews
+    version: "0.1.0"
+    repository: "file://../../src/backend/services/previews/helm"
+    # Global so the gateway subchart drops the /api/previews route in the
+    # same render — a route to a Service the release does not create keeps
+    # nginx from loading its config at pod start.
+    condition: global.previews.enabled
   # Clone-based git extraction for the nocode git connectors. Consumed ONLY by
   # Airbyte connector pods — no gateway route, absent from platform-config, and
   # its own NetworkPolicy closes ingress to everything else.

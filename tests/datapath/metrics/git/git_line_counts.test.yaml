@@ -1,0 +1,62 @@
+spec_version: 1
+description: >
+  Metrics: git.lines_added / git.lines_removed — per-file line counts of a
+  person's authored commits, summed and broken down by file category, change
+  type, file extension and branch scope. One commit carries every file kind
+  the classifier distinguishes, with distinct counts per row, so each
+  breakdown value is unique to the rows it should contain and no two
+  classifications can be confused.
+
+  Classifier precedence pinned (vendored > test > docs > config > code):
+    * node_modules/pkg/x.test.js  — vendored, although its name says test
+    * Cargo.lock                  — vendored, although lockfiles look like config
+    * tests/fixture.yaml          — test, although .yaml looks like config
+    * tests/app_test.rs           — test (tests/ folder)
+    * docs/guide.md               — docs
+    * config.yaml                 — config
+    * src/app.rs, src/new.rs, src/gone.rs, src/feature.rs — code
+    * assets/logo.png             — a binary file: the proxy reports no line
+      counts (null), so it contributes 0 lines, not null, and does not blank
+      the commit
+
+  Change types use the proxy vocabulary: a rename counts only its edited
+  lines, a removal only its removed lines.
+
+  Landed commit (default branch): +155 / −107 across ten files. In-flight
+  commit (non-default): +9 / −4 on one code file. Totals +164 / −111.
+
+  Per category (added/removed): code 22/37, test 11/1, docs 7/3, config 4/0,
+  vendored 120/70. Per change type: modified 46/29, added 115/51, renamed 3/1,
+  removed 0/30. Per extension: rs 27/38, yaml 10/0 (spans test AND config).
+  Per branch scope: default 155/107, other 9/4 — and git.code_lines reads 22,
+  the code category alone, so vendored lines never reach it.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/erin
+
+  bronze_github.commits:
+    # Stats equal the sum of the file rows below; the binary file adds 0.
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: lc-landed, repository: "https://github.com/acme/api.git", sha: lc-landed, committed_date: "2026-10-01T09:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 155, deletions: 107, changed_files: 10, is_in_default_branch: true}
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: lc-inflight, repository: "https://github.com/acme/api.git", sha: lc-inflight, committed_date: "2026-10-01T10:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 9, deletions: 4, changed_files: 1, is_in_default_branch: false}
+
+  bronze_github.file_changes:
+    # code
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: lc-f-app, repository: "https://github.com/acme/api.git", sha: lc-landed, filename: src/app.rs, status: modified, additions: 10, deletions: 2}
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: lc-f-renamed, repository: "https://github.com/acme/api.git", sha: lc-landed, filename: src/new.rs, status: renamed, additions: 3, deletions: 1}
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: lc-f-removed, repository: "https://github.com/acme/api.git", sha: lc-landed, filename: src/gone.rs, status: removed, additions: 0, deletions: 30}
+    # test — folder wins over the .yaml extension
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: lc-f-test, repository: "https://github.com/acme/api.git", sha: lc-landed, filename: tests/app_test.rs, status: added, additions: 5, deletions: 1}
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: lc-f-fixture, repository: "https://github.com/acme/api.git", sha: lc-landed, filename: tests/fixture.yaml, status: added, additions: 6, deletions: 0}
+    # docs
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: lc-f-docs, repository: "https://github.com/acme/api.git", sha: lc-landed, filename: docs/guide.md, status: modified, additions: 7, deletions: 3}
+    # config
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: lc-f-config, repository: "https://github.com/acme/api.git", sha: lc-landed, filename: config.yaml, status: added, additions: 4, deletions: 0}
+    # vendored — wins over the test-looking name and over the lockfile
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: lc-f-vendored, repository: "https://github.com/acme/api.git", sha: lc-landed, filename: node_modules/pkg/x.test.js, status: added, additions: 100, deletions: 50}
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: lc-f-lock, repository: "https://github.com/acme/api.git", sha: lc-landed, filename: Cargo.lock, status: modified, additions: 20, deletions: 20}
+    # binary: no line counts from the proxy
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: lc-f-binary, repository: "https://github.com/acme/api.git", sha: lc-landed, filename: assets/logo.png, status: added, additions: null, deletions: null, is_binary: true}
+    # the in-flight commit's one file
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: lc-f-feature, repository: "https://github.com/acme/api.git", sha: lc-inflight, filename: src/feature.rs, status: modified, additions: 9, deletions: 4}
+

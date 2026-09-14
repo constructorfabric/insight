@@ -28,6 +28,8 @@ FROM nginxinc/nginx-unprivileged:1.31-alpine
 # before the runtime stage.
 USER root
 
+RUN apk upgrade --no-cache libcrypto3 libssl3
+
 COPY --from=builder /app/dist /usr/share/nginx/html
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh

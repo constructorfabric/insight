@@ -1,6 +1,9 @@
-import { Bug, Settings2, type LucideIcon } from "lucide-react";
+import { Bug, Settings, type LucideIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import brandSymbol from "@/assets/brand-symbol.svg";
+import { TEXT_NAME } from "@/lib/type-scale";
+
 
 import { AppSidebarFooter } from "@/components/app-sidebar-footer";
 import { useFeedbackDialog } from "@/components/feedback-context";
@@ -235,8 +238,25 @@ export function LensRail() {
           onClick={close}
         />
         <SidebarHeader className="relative z-10 items-start ps-3">
-          <div className="flex size-8 items-center justify-center rounded-md bg-sidebar-primary text-sm font-bold text-sidebar-primary-foreground">
-            I
+          <div className="flex items-center gap-2">
+            <img
+              src={brandSymbol}
+              alt="Constructor Fabric"
+              className="size-8 shrink-0"
+              width={32}
+              height={32}
+            />
+            {/* The word rides the rail's own open state, like every zone
+                label: while shut there is no room for it. */}
+            <span
+              className={cn(
+                TEXT_NAME,
+                "truncate transition-opacity duration-150",
+                open ? "opacity-100" : "opacity-0"
+              )}
+            >
+              Insight
+            </span>
           </div>
         </SidebarHeader>
         {/* The zone list scrolls while shut and lets the labels out while
@@ -273,7 +293,7 @@ export function LensRail() {
           <Popover open={settingsOpen} onOpenChange={setSettingsOpen}>
             <PopoverTrigger
               render={
-                <RailButton icon={Settings2} label="Settings" />
+                <RailButton icon={Settings} label="Settings" />
               }
             />
             <PopoverContent

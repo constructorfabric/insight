@@ -1,0 +1,29 @@
+description: >
+  Metric: ci.runs — decided pipeline runs, whatever the trigger (tenant-grain,
+  issue #2803).
+  How it's computed (bronze → silver → gold):
+    • bronze: workflow run attempts
+    • silver: attempts dedup; a run counts once at its last attempt
+    • gold:   every DECIDED run counts, all triggers; in-flight runs wait
+
+  Seeded: a push success, a schedule success and a pull_request cancellation —
+  three decided runs across three triggers → period 3, breakdown by trigger
+  1 each.
+  Cases: period total, daily point, per-trigger breakdown.
+bronze:
+  bronze_github.workflow_runs:
+    - $ref: ../templates/github_ci.yaml#/templates/workflow_run
+      unique_key: gh-run-r1
+      id: 1
+      run_number: 1
+    - $ref: ../templates/github_ci.yaml#/templates/workflow_run
+      unique_key: gh-run-r2
+      id: 2
+      run_number: 2
+      event: schedule
+    - $ref: ../templates/github_ci.yaml#/templates/workflow_run
+      unique_key: gh-run-r3
+      id: 3
+      run_number: 3
+      event: pull_request
+      conclusion: cancelled

@@ -1,7 +1,7 @@
 # Keycloak auth (compose stack)
 
 The compose stack always authenticates against a real
-[Keycloak](https://www.keycloak.org/) 26.4 container: full cookie/BFF auth
+[Keycloak](https://www.keycloak.org/) 26.7 container: full cookie/BFF auth
 (NGINX_BFF #1583) — the nginx `gateway` `auth_request`s the `authenticator`,
 which does the OIDC login server-side against Keycloak (real login form,
 **confidential** client, real token claims) and mints the ES256 gateway JWT.

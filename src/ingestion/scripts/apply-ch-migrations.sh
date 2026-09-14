@@ -67,6 +67,19 @@ SQL
 echo "=== Provisioning presentation access (role + grant-less user) (#1963/#1964) ==="
 bash "$SCRIPT_DIR/bootstrap-db/provision-presentation-access.sh"
 
+echo "=== Provisioning insight-v3-core query access (grant-less reader) ==="
+bash "$SCRIPT_DIR/bootstrap-db/provision-v3-access.sh"
+
+if [[ "${MCP_ENABLED:-false}" == "true" || "${SQL_API_ENABLED:-false}" == "true" ]]; then
+  echo "=== Provisioning MCP SQL explorer access ==="
+  bash "$SCRIPT_DIR/bootstrap-db/provision-mcp-access.sh"
+else
+  echo "=== MCP SQL explorer disabled; skipping access provisioning ==="
+fi
+
+echo "=== Provisioning grafana access (SELECT-only role + grant-less user) (#2888) ==="
+bash "$SCRIPT_DIR/bootstrap-db/provision-grafana-access.sh"
+
 echo "=== Creating bronze/silver placeholders (ADR-0007) ==="
 bash "$SCRIPT_DIR/create-bronze-placeholders.sh"
 
@@ -76,6 +89,205 @@ for migration in "$SCRIPT_DIR/migrations"/*.sql; do
   echo "  $(basename "$migration")"
   run_ch < "$migration"
 done
+
+echo "=== Healing GitHub Projects V2 bronze keys ==="
+# Both relations were briefly keyed with the collection day inside `unique_key`.
+# That keeps every observation permanently current instead of collapsing onto
+# the entity — the shape `union_by_tag` names outright (ADR-0001, ADR-0004).
+#
+# The rows cannot be repaired in place, because the key IS the identity: a
+# day-keyed row and its entity-keyed replacement are different rows forever, and
+# no merge will ever reconcile them. Bronze is derivable from the API, so the
+# stale generation is dropped instead.
+#
+# Guarded on the stale rows themselves, so this is a no-op on a fresh cluster
+# and a no-op on the second deploy. It must run BEFORE dbt: the SCD2 snapshots
+# above these tables key on `unique_key`, and a day-keyed row would enter them
+# as its own entity and stay there.
+#
+# `project_fields` is full refresh, so the next sync rewrites it whole.
+# `project_items` is cursored, so it refills as the cursor advances — clearing
+# that stream's state makes it immediate. Nothing reads either relation yet, so
+# the gap costs nothing either way.
+heal_github_project_day_keys() {
+  local table="$1" stale
+  ch_table_exists bronze_github "${table}" || return 0
+  stale="$(printf "SELECT count() FROM bronze_github.%s WHERE match(unique_key, ':[0-9]{4}-[0-9]{2}-[0-9]{2}$')" \
+    "${table}" | _ch_http_query | tr -d '[:space:]')"
+  [[ "${stale}" =~ ^[0-9]+$ ]] || return 0
+  [[ "${stale}" -gt 0 ]] || return 0
+  echo "  bronze_github.${table}: ${stale} day-keyed row(s) — dropping, the connector refills them"
+  run_ch <<SQL
+TRUNCATE TABLE bronze_github.${table};
+SQL
+}
+
+heal_github_project_day_keys project_fields
+heal_github_project_day_keys project_items
+
+echo "=== Healing Jira bronze issue identity ==="
+# Two heals, in this order, both guarded on the rows they would change so a
+# converged warehouse pays one SELECT per table and nothing else.
+#
+# 1. jira_issue_history / jira_comments / jira_worklogs carry `jira_id` since
+#    connector 6.1.0; rows written before it name their issue only by
+#    `id_readable`, the key at fetch time. The id is recovered from the two
+#    issue streams, read WITHOUT FINAL and before the rebuild below: a moved
+#    issue holds one bronze row per key it ever had, and those old-key rows
+#    are the only thing that maps a pre-move key to its id. A mutation cannot
+#    join a subquery, so the pairs go through a Join-engine table and joinGet,
+#    keyed by (tenant_id, source_id, id_readable) because one bronze holds
+#    every connector instance. Worklogs prefer Jira's own `issueId`.
+#
+# 2. jira_issue / jira_issue_keys were keyed by the issue KEY before descriptor
+#    6.0.0, so a moved issue exists once per key and ReplacingMergeTree can
+#    collapse neither. The table is rebuilt with `unique_key` on the immutable
+#    id — one row per issue, the latest extraction — and swapped in atomically.
+#    INVARIANT: nothing may write to the table between the copy and the
+#    EXCHANGE; only the Argo pipeline writes bronze, so a deploy carrying this
+#    heal must not overlap a Jira sync.
+_jira_issue_id_lookup='staging._jira_issue_id_by_key'
+
+# Counts only the rows the lookup can actually fill: a key no issue stream ever
+# delivered stays NULL forever, and counting it would re-run the mutation on
+# every deploy. Worklogs carry Jira's own issueId and count whenever it is set.
+_jira_rows_needing_issue_id() {
+  local table="$1" own="0"
+  [[ "${table}" == "jira_worklogs" ]] && own="issueId IS NOT NULL"
+  printf "SELECT count() FROM bronze_jira.%s
+          WHERE jira_id IS NULL
+            AND (%s
+                 OR (id_readable IS NOT NULL AND tenant_id IS NOT NULL AND source_id IS NOT NULL
+                     AND (assumeNotNull(tenant_id), assumeNotNull(source_id), assumeNotNull(id_readable)) IN (
+                   SELECT assumeNotNull(tenant_id), assumeNotNull(source_id), assumeNotNull(id_readable)
+                   FROM bronze_jira.jira_issue
+                   WHERE tenant_id IS NOT NULL AND source_id IS NOT NULL AND id_readable IS NOT NULL AND jira_id IS NOT NULL
+                   UNION ALL
+                   SELECT assumeNotNull(tenant_id), assumeNotNull(source_id), assumeNotNull(id_readable)
+                   FROM bronze_jira.jira_issue_keys
+                   WHERE tenant_id IS NOT NULL AND source_id IS NOT NULL AND id_readable IS NOT NULL AND jira_id IS NOT NULL)))" \
+    "${table}" "${own}" |
+    _ch_http_query | tr -d '[:space:]'
+}
+
+_jira_rows_keyed_by_issue_key() {
+  local table="$1"
+  printf "SELECT count() FROM bronze_jira.%s WHERE coalesce(unique_key, '') != concat(coalesce(tenant_id, ''), '-', coalesce(source_id, ''), '-', coalesce(jira_id, ''))" "${table}" |
+    _ch_http_query | tr -d '[:space:]'
+}
+
+heal_jira_substream_issue_id() {
+  local pending=() table n
+  for table in jira_issue_history jira_comments jira_worklogs; do
+    ch_table_exists bronze_jira "${table}" || continue
+    n="$(_jira_rows_needing_issue_id "${table}")"
+    [[ "${n}" =~ ^[0-9]+$ && "${n}" -gt 0 ]] || continue
+    echo "  bronze_jira.${table}: ${n} row(s) without jira_id — filling from the issue streams"
+    pending+=("${table}")
+  done
+  [[ "${#pending[@]}" -gt 0 ]] || return 0
+
+  run_ch <<SQL
+DROP TABLE IF EXISTS ${_jira_issue_id_lookup};
+CREATE TABLE ${_jira_issue_id_lookup}
+(
+    tenant_id String,
+    source_id String,
+    id_readable String,
+    jira_id String
+)
+ENGINE = Join(ANY, LEFT, tenant_id, source_id, id_readable);
+INSERT INTO ${_jira_issue_id_lookup}
+SELECT tenant_id, source_id, id_readable, jira_id
+FROM
+(
+    SELECT assumeNotNull(tenant_id) AS tenant_id, assumeNotNull(source_id) AS source_id,
+           assumeNotNull(id_readable) AS id_readable, assumeNotNull(jira_id) AS jira_id
+    FROM bronze_jira.jira_issue
+    WHERE tenant_id IS NOT NULL AND source_id IS NOT NULL AND id_readable IS NOT NULL AND jira_id IS NOT NULL
+    UNION ALL
+    SELECT assumeNotNull(tenant_id) AS tenant_id, assumeNotNull(source_id) AS source_id,
+           assumeNotNull(id_readable) AS id_readable, assumeNotNull(jira_id) AS jira_id
+    FROM bronze_jira.jira_issue_keys
+    WHERE tenant_id IS NOT NULL AND source_id IS NOT NULL AND id_readable IS NOT NULL AND jira_id IS NOT NULL
+)
+GROUP BY tenant_id, source_id, id_readable, jira_id;
+SQL
+
+  local lookup="nullIf(joinGet('${_jira_issue_id_lookup}', 'jira_id', assumeNotNull(tenant_id), assumeNotNull(source_id), assumeNotNull(id_readable)), '')"
+  # A worklog names its issue itself (Jira's `issueId`) and needs no key; the
+  # other two, and a worklog without one, resolve through the lookup and so
+  # need the full (tenant, source, key) identity.
+  for table in "${pending[@]}"; do
+    local value="${lookup}" own="0"
+    if [[ "${table}" == "jira_worklogs" ]]; then
+      value="COALESCE(issueId, ${lookup})"
+      own="issueId IS NOT NULL"
+    fi
+    run_ch <<SQL
+ALTER TABLE bronze_jira.${table}
+    UPDATE jira_id = ${value}
+    WHERE jira_id IS NULL
+      AND (${own} OR (id_readable IS NOT NULL AND tenant_id IS NOT NULL AND source_id IS NOT NULL))
+    SETTINGS mutations_sync = 1;
+SQL
+  done
+
+  run_ch <<SQL
+DROP TABLE IF EXISTS ${_jira_issue_id_lookup};
+SQL
+}
+
+_jira_rows_without_identity() {
+  local table="$1"
+  printf "SELECT count() FROM bronze_jira.%s WHERE tenant_id IS NULL OR source_id IS NULL OR jira_id IS NULL" "${table}" |
+    _ch_http_query | tr -d '[:space:]'
+}
+
+heal_jira_issue_key() {
+  local table="$1" n orphans copy_start_ms
+  ch_table_exists bronze_jira "${table}" || return 0
+  n="$(_jira_rows_keyed_by_issue_key "${table}")"
+  [[ "${n}" =~ ^[0-9]+$ && "${n}" -gt 0 ]] || return 0
+
+  # A row without tenant, source or issue id has no key under the new formula.
+  # None can exist — the connector stamps all three on every record — so one
+  # is a corrupted table, and the deploy stops here rather than dropping it.
+  orphans="$(_jira_rows_without_identity "${table}")"
+  if [[ ! "${orphans}" =~ ^[0-9]+$ || "${orphans}" -gt 0 ]]; then
+    echo "  bronze_jira.${table}: ${orphans:-?} row(s) without tenant_id, source_id or jira_id — refusing to rebuild" >&2
+    return 1
+  fi
+
+  echo "  bronze_jira.${table}: ${n} row(s) keyed by the issue key — rebuilding on the issue id"
+  copy_start_ms="$(printf "SELECT toUnixTimestamp64Milli(now64(3))" | _ch_http_query | tr -d '[:space:]')"
+  [[ "${copy_start_ms}" =~ ^[0-9]+$ ]] || { echo "  bronze_jira.${table}: could not read the server clock — refusing to rebuild" >&2; return 1; }
+  run_ch <<SQL
+DROP TABLE IF EXISTS bronze_jira.${table}__rekey;
+CREATE TABLE bronze_jira.${table}__rekey AS bronze_jira.${table};
+INSERT INTO bronze_jira.${table}__rekey
+SELECT * REPLACE (concat(tenant_id, '-', source_id, '-', jira_id) AS unique_key)
+FROM bronze_jira.${table}
+ORDER BY _airbyte_extracted_at DESC
+LIMIT 1 BY tenant_id, source_id, jira_id;
+EXCHANGE TABLES bronze_jira.${table} AND bronze_jira.${table}__rekey;
+SQL
+  # From the EXCHANGE on, writers land in the rebuilt table by name. Rows a sync
+  # committed into the old table while the copy ran are carried over before it
+  # is dropped; the hour of slack covers an extraction stamp older than the
+  # write, and a row copied twice collapses on its key.
+  run_ch <<SQL
+INSERT INTO bronze_jira.${table}
+SELECT * REPLACE (concat(tenant_id, '-', source_id, '-', jira_id) AS unique_key)
+FROM bronze_jira.${table}__rekey
+WHERE _airbyte_extracted_at >= fromUnixTimestamp64Milli(${copy_start_ms}) - INTERVAL 1 HOUR;
+DROP TABLE IF EXISTS bronze_jira.${table}__rekey;
+SQL
+}
+
+heal_jira_substream_issue_id || exit 1
+heal_jira_issue_key jira_issue || exit 1
+heal_jira_issue_key jira_issue_keys || exit 1
 
 echo "=== Healing AI staging contract schemas ==="
 # Physical column order must equal the model's SELECT order (positional
@@ -126,6 +338,36 @@ heal_ai_dev_staging chatgpt_team__ai_dev_usage
 heal_ai_assistant_staging claude_enterprise__ai_assistant_usage
 heal_ai_assistant_staging chatgpt_team__ai_assistant_usage
 heal_ai_invoice_staging claude_team__ai_invoice
+
+echo "=== Healing task field-history staging arms ==="
+# `author_display`, `delta_value_id` and `delta_value_display` left the class
+# contract: nothing reads them, and a consumer needing the detail of one change
+# joins back to the event it came from. The silver side drops in
+# migrations/*.sql; these three drop here because a staging table exists only
+# after dbt has built it, and dbt runs after the migrations.
+#
+# They cannot be skipped. All three models are `incremental`, so their tables
+# survive a run carrying whatever column list they were created with, and
+# `class_task_field_history` unions them with `SELECT *` — an arm still holding
+# a dropped column fails the union with "different number of columns in
+# queries". The GitHub arm needs no heal: it is a `table`, rebuilt every run.
+#
+# `staging.jira__task_field_history` is deliberately absent from this list. It
+# is the Rust binary's output and the binary still writes all four columns.
+heal_task_field_history_arm() {
+  local table="$1"
+  ch_table_exists staging "${table}" || return 0
+  echo "  staging.${table}"
+  run_ch <<SQL
+ALTER TABLE staging.${table} DROP COLUMN IF EXISTS author_display;
+ALTER TABLE staging.${table} DROP COLUMN IF EXISTS delta_value_id;
+ALTER TABLE staging.${table} DROP COLUMN IF EXISTS delta_value_display;
+SQL
+}
+
+heal_task_field_history_arm jira__availability_events
+heal_task_field_history_arm jira__comment_lifecycle_events
+heal_task_field_history_arm jira__worklog_lifecycle_events
 
 echo "=== Healing CRM staging contract schemas ==="
 # The CRM overflow blob left the contract — the connectors carry the
@@ -198,23 +440,13 @@ SQL
 
 heal_task_users_table silver class_task_users
 
-# Same positional invariant, one relation further along: class_task_field_history
-# gained `title` after `id_readable` (#2739) so evidence rows can name the work
-# item. The connectors-ddl snapshot only CREATEs IF NOT EXISTS, so a warm
-# installation keeps the old column list, and the gold build fails resolving
-# `fh.title`. Staging needs no heal — github's member is a table rebuilt every
-# run, and jira's is altered by the DDL macro that owns it.
-heal_task_field_history_table() {
-  local db="$1" table="$2"
-  ch_table_is_real "$db" "$table" || return 0
-  echo "  ${db}.${table}"
-  run_ch <<SQL
-ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS title Nullable(String) AFTER id_readable;
-ALTER TABLE ${db}.${table} MODIFY COLUMN title Nullable(String) AFTER id_readable;
-SQL
-}
-
-heal_task_field_history_table silver class_task_field_history
+# The `title` heal that used to live here is gone with the column. It added
+# `title` to class_task_field_history after `id_readable` (#2739) so evidence
+# rows could name the work item; the title is now an ordinary field in the
+# journal, bound to the `title` role, and the column is dropped by
+# migrations/20260903000000_task-field-history-drop-columns.sql. Leaving the
+# heal in place would ADD the column straight back after that migration ran —
+# heals run after the .sql files — and gold would still read it.
 
 echo "=== Healing git file-change object id columns ==="
 # The file-change object ids arrive at the tail of every projection that feeds
@@ -271,6 +503,28 @@ SQL
 
 for _git_source in github gitlab bitbucket_cloud; do
   heal_git_commit_patch_id "${_git_source}__commits"
+done
+
+echo "=== Healing git commit committer date column ==="
+# Same positional invariant: every projection feeding class_git_commits gained
+# committer_date at the tail. `date` now carries the AUTHOR date (#3153), which
+# a rebase preserves — so the committer date is the only field left that tells
+# a rebase copy from its original, and two readers rank on it. The silver side
+# heals in migrations/*.sql; staging heals here because these tables exist only
+# after a connector has run. Existing rows heal to NULL and carry a committer
+# date from the first sync that re-collects them. Idempotent.
+heal_git_commit_committer_date() {
+  local table="$1"
+  ch_table_is_real staging "${table}" || return 0
+  echo "  staging.${table}"
+  run_ch <<SQL
+ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS committer_date Nullable(DateTime) AFTER patch_id;
+ALTER TABLE staging.${table} MODIFY COLUMN committer_date Nullable(DateTime) AFTER patch_id;
+SQL
+}
+
+for _git_source in github gitlab bitbucket_cloud; do
+  heal_git_commit_committer_date "${_git_source}__commits"
 done
 
 echo "=== Healing git pull-request author account column ==="

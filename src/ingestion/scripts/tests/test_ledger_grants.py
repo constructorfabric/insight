@@ -116,11 +116,36 @@ def test_nothing_revokes_the_reader_s_own_access() -> None:
         assert not stmt.startswith("REVOKE "), f"unexpected REVOKE: {stmt}"
 
 
-def test_the_ledger_is_granted_in_exactly_one_statement() -> None:
-    """A second statement is how a write slips in beside a legitimate read."""
+def test_the_reader_reaches_the_ledger_in_exactly_one_statement() -> None:
+    """A second statement is how a write slips in beside a legitimate read.
+
+    Scoped to the reader, like the two checks above it: another role reaching
+    the ledger through a wildcard is a different question, and the one below
+    asks it of every role rather than only this one.
+    """
     reaching = [
         grant
         for grant in grants()
-        if (parsed := _privileges_and_object(grant)) and parsed[1] in LEDGER_OBJECTS
+        if (parsed := _privileges_and_object(grant))
+        and parsed[1] in LEDGER_OBJECTS
+        and READER_ROLE.upper() in grant
     ]
     assert len(reaching) == 1, reaching
+
+
+def test_no_role_at_all_is_granted_a_write_that_reaches_the_ledger() -> None:
+    """The reader is not the only role a wildcard can hand the ledger to.
+
+    `insight_v3_ro` holds SELECT on `*.*` so the assistant can query a bronze
+    database a stand gains with a connector — legitimate, and caught here the
+    moment it becomes anything more than a read.
+    """
+    for grant in grants():
+        parsed = _privileges_and_object(grant)
+        if parsed is None or parsed[1] not in LEDGER_OBJECTS:
+            continue
+        privileges, _ = parsed
+        for write in WRITE_PRIVILEGES:
+            assert write not in privileges, (
+                f"nothing may change what the ingestion page reports on: {grant}"
+            )

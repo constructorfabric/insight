@@ -43,8 +43,6 @@ vi.mock("@/queries/saved-queries", () => ({
   useSavedQuery: () => savedQueryState,
 }));
 
-vi.mock("@/components/ui/sidebar", () => ({ SidebarTrigger: () => null }));
-
 // Stubs that actually invoke their callback props, so the screen's delete /
 // edit-open / create-success / update branches run in tests.
 vi.mock("@/components/widgets/query-console/query-detail", () => ({
@@ -89,7 +87,7 @@ vi.mock("@/components/widgets/query-console/query-editor-dialog", () => ({
   ),
 }));
 
-import { QueryConsoleScreen } from "./query-console";
+import { QueryConsoleBody } from "./query-console";
 
 function summary(over: Partial<SavedQuerySummary> = {}): SavedQuerySummary {
   return { id: "q-42", name: "Commits by tool", description: null, ...over };
@@ -114,16 +112,16 @@ beforeEach(() => {
   deleteMutate.mockClear();
 });
 
-describe("QueryConsoleScreen", () => {
+describe("QueryConsoleBody", () => {
   it("shows a spinner while the list is pending", () => {
     listState = { data: undefined, isPending: true, isError: false };
-    render(<QueryConsoleScreen />);
+    render(<QueryConsoleBody />);
     expect(screen.getByRole("status")).toBeInTheDocument();
   });
 
   it("shows an error alert when the list fails", () => {
     listState = { data: undefined, isPending: false, isError: true };
-    render(<QueryConsoleScreen />);
+    render(<QueryConsoleBody />);
     expect(
       screen.getByText("Failed to load saved queries")
     ).toBeInTheDocument();
@@ -131,7 +129,7 @@ describe("QueryConsoleScreen", () => {
 
   it("shows an empty-list hint and no selection when there are no queries", () => {
     listState = { data: [], isPending: false, isError: false };
-    render(<QueryConsoleScreen />);
+    render(<QueryConsoleBody />);
     expect(
       screen.getByText("No saved queries yet. Create one to get started.")
     ).toBeInTheDocument();
@@ -139,13 +137,13 @@ describe("QueryConsoleScreen", () => {
   });
 
   it("selects a query and renders its detail pane", async () => {
-    render(<QueryConsoleScreen />);
+    render(<QueryConsoleBody />);
     await userEvent.click(screen.getByText("Commits by tool"));
     expect(screen.getByText("detail:q-42")).toBeInTheDocument();
   });
 
   it("creates a query, then selects it and closes the dialog", async () => {
-    render(<QueryConsoleScreen />);
+    render(<QueryConsoleBody />);
     await userEvent.click(screen.getByRole("button", { name: /new query/i }));
     expect(screen.getByText("editor:create")).toBeInTheDocument();
 
@@ -159,7 +157,7 @@ describe("QueryConsoleScreen", () => {
   });
 
   it("deletes the selected query and clears the selection", async () => {
-    render(<QueryConsoleScreen />);
+    render(<QueryConsoleBody />);
     await userEvent.click(screen.getByText("Commits by tool"));
     await userEvent.click(screen.getByText("stub-delete"));
     expect(deleteMutate).toHaveBeenCalledWith("q-42", expect.any(Object));
@@ -167,7 +165,7 @@ describe("QueryConsoleScreen", () => {
   });
 
   it("opens the edit dialog and submits an update", async () => {
-    render(<QueryConsoleScreen />);
+    render(<QueryConsoleBody />);
     await userEvent.click(screen.getByText("Commits by tool"));
     await userEvent.click(screen.getByText("stub-edit"));
     expect(screen.getByText("editor:edit")).toBeInTheDocument();
@@ -181,7 +179,7 @@ describe("QueryConsoleScreen", () => {
 
   it("shows a spinner in the edit dialog while the query loads", async () => {
     savedQueryState = { data: undefined, isError: false };
-    render(<QueryConsoleScreen />);
+    render(<QueryConsoleBody />);
     await userEvent.click(screen.getByText("Commits by tool"));
     await userEvent.click(screen.getByText("stub-edit"));
     expect(screen.getByRole("status")).toBeInTheDocument();
@@ -189,7 +187,7 @@ describe("QueryConsoleScreen", () => {
 
   it("shows an error in the edit dialog when the query fails to load", async () => {
     savedQueryState = { data: undefined, isError: true };
-    render(<QueryConsoleScreen />);
+    render(<QueryConsoleBody />);
     await userEvent.click(screen.getByText("Commits by tool"));
     await userEvent.click(screen.getByText("stub-edit"));
     expect(screen.getByText("Failed to load this query")).toBeInTheDocument();
@@ -197,9 +195,17 @@ describe("QueryConsoleScreen", () => {
 
   it("surfaces a delete failure", () => {
     deleteState = { isError: true };
-    render(<QueryConsoleScreen />);
+    render(<QueryConsoleBody />);
     expect(
       screen.getByText("Could not delete the query. Try again.")
     ).toBeInTheDocument();
+  });
+});
+
+describe("QueryConsoleBody inside the portal", () => {
+  it("brings no shell header of its own", () => {
+    render(<QueryConsoleBody />);
+
+    expect(screen.queryByRole("banner")).not.toBeInTheDocument();
   });
 });

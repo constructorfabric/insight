@@ -63,6 +63,12 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+            # Install-wide log level knob from the platform ConfigMap (#3191).
+            - name: INSIGHT_LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Release.Name }}-platform
+                  key: INSIGHT_LOG_LEVEL
             - name: AIRBYTE_URL
               value: {{ include "insight.airbyte.url" . | quote }}
             - name: INSIGHT_NAMESPACE

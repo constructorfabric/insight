@@ -21,6 +21,9 @@ use crate::engine::url::CloneUrlPolicy;
 pub struct AppState {
     pub store: Arc<RepoStore>,
     pub config: GearConfig,
+    /// Page-serve slots. Each serve runs git children whose memory scales
+    /// with the window's blob bytes; this cap is what bounds the pod's peak.
+    pub serves: Arc<tokio::sync::Semaphore>,
 }
 
 impl AppState {
@@ -56,19 +59,31 @@ pub fn register_routes(
         .layer(Extension(state))
         // Outside the bearer layer, so a rejected request is timed too — an
         // operator watching a token rotation needs exactly those.
-        .layer(axum::middleware::from_fn(observe));
+        .layer(axum::middleware::from_fn(observe))
+        .layer(insight_http_metrics::ServerMetricsLayer::new(
+            "git-cli-proxy",
+        ))
+        .layer(insight_log_context::LogContextLayer::new());
 
     host_router.merge(v1)
 }
 
+#[cfg(test)]
+mod log_context_tests;
+#[cfg(test)]
+mod log_leak_tests;
+
 /// Every wait a handler can make is individually bounded (git budgets, the
-/// inline preparation wait, the read-lock wait), but a hold that is never
-/// released — a leaked guard, a wedged permit holder — turns the NEXT
+/// in-connection preparation wait, the read-lock wait), but a hold that is
+/// never released — a leaked guard, a wedged permit holder — turns the NEXT
 /// request's wait into forever: the connector has no client timeout, so one
 /// such request froze a multi-day sync invisibly. This ceiling converts that
 /// class into a bounded, retryable answer. It must stay above every legal
-/// inline duration; the longest is a page-serve blob prefetch (10 minutes).
-const HANDLER_BUDGET: Duration = Duration::from_mins(15);
+/// inline duration; the longest is [`crate::engine::store::PREPARATION_WAIT`].
+const HANDLER_BUDGET: Duration = Duration::from_hours(1);
+
+// INVARIANT: the typed Busy answer must fire before the blanket 503 cutoff.
+const _: () = assert!(HANDLER_BUDGET.as_secs() > crate::engine::store::PREPARATION_WAIT.as_secs());
 
 /// Answer 503 when a handler outlives [`HANDLER_BUDGET`].
 ///
@@ -409,10 +424,12 @@ mod tests {
                 max_repo_bytes: 500_000,
                 default_max_staleness_seconds: 300,
                 heavy_ops_concurrency: 2,
+                serve_concurrency: 2,
                 proxy_token: "t0ken".to_owned(),
                 ca_cert_path: String::new(),
                 allow_file_repos: true,
             },
+            serves: Arc::new(tokio::sync::Semaphore::new(2)),
         })
     }
 

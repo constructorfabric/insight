@@ -27,7 +27,7 @@ user, P2 one control with a workaround. Not screen prominence.
 
 | Scenario | Verdict | Basis |
 |---|---|---|
-| **S-1** Metrics review | **Partial** | `POST /v1/metric-results`, `/v1/metric-definitions`, `/v1/metric-drilldown` all answer, including the `peer` view and the `ai.cost` currency metric. Reach, honesty and suppression are assertable; **values are not** — `golden_metrics` is empty by design |
+| **S-1** Metrics review | **Partial** | `POST /v1/metric-results`, `/v1/metric-definitions`, `/v1/metric-drilldown` all answer, including the `peer` view and the `ai.cost` currency metric. Reach, honesty and suppression are assertable; **values are not** — the seed publishes no expected values |
 | **S-2** Analysis and diagnosis | **No surface** | no conclusion, bottleneck, anomaly or forecast endpoint exists |
 | **S-3** Recommendations and validation | **No surface** | no recommendation object, no validation window |
 | **S-4** Dashboards and exploration | **Partial** | `/v1/queries` CRUD + run, `/v1/metric-drilldown` exist; saved/shared *views* are an Appendix C proposal, not a surface |
@@ -269,7 +269,7 @@ correction surviving the next sync" needs a sync to run, and this stand declares
 | Possibly nothing | the negative case for §5 R10 | `MIN_PEER_N` counts *measured* members per metric, not headcount, so a sparsely-recorded metric may already fall below 5. Check before changing the seed |
 | `other_tenant_lead` has no activity and no org edge | any cross-tenant claim about *data* rather than *identity* | deliberate — they exist only so refusal has a caller |
 | `ingestion: no` | S-7 readiness, R3 lineage, R7 read-only-towards-sources, identity-correction survival | compose seeds silver/gold directly |
-| `golden_metrics` empty | every value assertion, in every scenario | deliberate; admission criteria in `src/ingestion/tools/seed/insight_seed/golden_metrics.py` |
+| No expected metric values | every value assertion, in every scenario | deliberate; an expectation must be computable from the seed inputs, not read back out of the gold layer |
 | Which of the five grant kinds have distinct enforcement points | S9-E-02 | read the access model |
 
 ---
@@ -280,5 +280,6 @@ S-10 (deployment, upgrade, migration) tests the act of installing, which this
 suite deliberately cannot do — *a run that could bring its own stand up would
 hide exactly the deployment failures this suite exists to catch*.
 
-The metric×view matrix and per-metric value assertions belong to the blocking
-gate in `src/ingestion/tests/e2e/` and are not re-specified here.
+The metric×view matrix and per-metric value assertions belong to the data-path
+suite in `tests/datapath/` and its blocking gate
+(`tests/lib/insight_datapath/metric_coverage.py`), and are not re-specified here.

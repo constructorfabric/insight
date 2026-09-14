@@ -151,7 +151,10 @@ resolution. A `planned` entry is demoted to the "Planned" menu group and
 toggled by the viewer's "Show planned sections" switch. Planning is entirely
 deployment-owned: entries absent from `nav.planned` are treated as live. A path
 in both lists is hidden; a path that matches nothing is ignored (malformed ones
-warn in the browser console).
+warn in the browser console). One control is planned in code rather than by
+path: the topbar Cohort select renders only while the switch is on, and with it
+off the `?slice=` parameter is ignored so no view compares against a cohort the
+reader cannot see or change.
 This is presentation, not authorization — the API refuses on its own
 regardless of what the menu shows. Parsing and semantics live in
 [src/lib/portal/nav-policy.ts](src/lib/portal/nav-policy.ts).
@@ -248,6 +251,28 @@ All screens render synthetic data and the warning strip stays visible.
 cp docker-compose.yml docker-compose.override.yml
 docker compose up -d --build
 ```
+
+#### After changing a dependency
+
+`insight-front-dev` keeps `node_modules` in a named volume
+(`insight_frontend-node-modules`), not in the bind-mounted checkout, so a
+`pnpm install` on the host does not reach it. Bumping a dependency needs both:
+
+```bash
+pnpm install                                  # the host, for tsc/eslint/vitest
+docker exec insight-front sh -c 'cd /app && pnpm install'
+docker exec insight-front rm -rf /app/node_modules/.vite   # Vite's pre-bundle
+docker restart insight-front
+```
+
+Without the second install the page fails on an export the older package does
+not have, and without clearing `.vite` it fails the same way from the
+pre-bundled copy.
+
+The container also serves whichever checkout last ran `./dev-compose.sh up` —
+with several worktrees sharing one stack, `docker inspect insight-front` says
+whose source is on `localhost:3000`. Vite's watcher can miss edits made
+through the bind mount; `docker restart insight-front` re-reads from disk.
 
 ### With Insight Backend (Kind cluster)
 

@@ -79,6 +79,7 @@ vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
   }),
 }));
 
+import { MAX_SEARCH_CHARS } from "@/queries/identity-resolution";
 import { portalRouter } from "@/test/portal-router";
 
 import { scrollEndIntoView } from "@/test/intersection-observer";
@@ -154,6 +155,18 @@ describe("AccountSearchView", () => {
   // One letter reaches most of what the connectors reported and costs the fold a
   // pass to say so. Going silent would read as a broken field, so the mode says
   // what it is waiting for — and shows no rows it did not ask for.
+  // The service refuses a needle past 200 characters, so a field that accepted
+  // one would turn an ordinary paste — an id, a url, a line from a log — into a
+  // refusal the operator has no way to read as "too long".
+  it("stops at the length the service accepts", () => {
+    render(<AccountSearchView />);
+
+    expect(screen.getByRole("searchbox")).toHaveAttribute(
+      "maxlength",
+      String(MAX_SEARCH_CHARS),
+    );
+  });
+
   it("asks for a second character instead of searching on one", async () => {
     hooks.search.data = page([match()]);
     render(<AccountSearchView />);

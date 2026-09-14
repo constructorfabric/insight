@@ -1,0 +1,51 @@
+name: Insight v3 Core — Helm contract
+
+# Render-contract gate for the insight-v3-core chart. What it holds: the
+# credentials arrive from the one pre-created Secret and nowhere else, and the
+# MCP surface renders as a whole — Service port, container port and the env
+# leaves that carry the published origin — or not at all. The functional-k3s
+# lane deploys this service but never turns MCP on, so nothing else in CI
+# renders that half of the chart. Pure `helm template` + assertions — no
+# cluster, no images.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/backend/services/insight-v3-core/helm/**"
+      - ".github/workflows/insight-v3-core-helm.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  helm-contract:
+    name: render contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Pinned to full SHAs (mutable tags are repointable — supply-chain
+      # hardening, same as the other helm-contract lanes).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v4
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install test deps
+        run: pip install --quiet pytest pyyaml
+
+      - name: helm lint
+        run: helm lint src/backend/services/insight-v3-core/helm --set existingSecret=cfg
+
+      - name: Render-contract tests (config Secret, MCP surface, migrate image)
+        run: python -m pytest src/backend/services/insight-v3-core/helm/tests/ -q

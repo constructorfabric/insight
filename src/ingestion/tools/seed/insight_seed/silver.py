@@ -40,7 +40,21 @@ from pathlib import Path
 import clickhouse_connect
 
 from . import config
-from .generators import ai, ai_cost, collab, crm, git, hr, people, support, task, wiki
+from .generators import (
+    ai,
+    ai_cost,
+    ci,
+    collab,
+    crm,
+    git,
+    git_history,
+    git_repos,
+    hr,
+    people,
+    support,
+    task,
+    wiki,
+)
 from .generators.base import seed_days
 from .profiles import build_seeded_roster, get_dev_user_email
 
@@ -117,6 +131,19 @@ IDENTITY_INPUTS_SELECT = "+identity_inputs"
 # staging models too, and the placeholder-drop hook then empties their class.
 AI_INVOICE_SELECT = "claude_team__ai_invoice+"
 
+# The bronze-derived CI chain. INVARIANT: no entry may feed a silver relation
+# the generators write directly — the on-run-start placeholder hook would drop
+# it and rebuild it from an empty staging union. `tests/test_dbt_selector_guard.py`
+# enforces this against RESET_TARGETS.
+CI_CHAIN_SELECT = (
+    "github__ci_runs+",
+    "github__deployments+",
+    "github__deployment_events+",
+    "github__repositories+",
+    "gitlab__repositories+",
+    "bitbucket_cloud__repositories+",
+)
+
 
 def apply_ch_migrations(dbt_select: str | None = None, *, full_refresh: bool = False) -> None:
     """Apply gold-view migrations + build dbt-owned gold models.
@@ -185,7 +212,10 @@ def generate_rows(
 
     totals: dict[str, int] = {}
     totals.update(people.generate(client, roster, tenant_uuid))
-    totals.update(git.generate(client, roster, tenant_uuid, days))
+    history = git_history.build_history(roster, days)
+    totals.update(git.generate(client, roster, tenant_uuid, days, history))
+    totals.update(git_repos.generate(client, roster, tenant_uuid))
+    totals.update(ci.generate(client, roster, tenant_uuid, days, history))
     totals.update(crm.generate(client, roster, tenant_uuid, days))
     totals.update(collab.generate(client, roster, tenant_uuid, days))
     totals.update(hr.generate(client, roster, tenant_uuid, days))
@@ -216,7 +246,9 @@ def run() -> None:
         #    builds unresolved here — the orchestrator runs the persons-seed/
         #    sync pair and then the `gold` subcommand to rebuild it.
         apply_ch_migrations(
-            dbt_select=f"tag:gold {IDENTITY_INPUTS_SELECT} {AI_INVOICE_SELECT}",
+            dbt_select=" ".join(
+                ["tag:gold", IDENTITY_INPUTS_SELECT, AI_INVOICE_SELECT, *CI_CHAIN_SELECT]
+            ),
             full_refresh=True,
         )
     finally:

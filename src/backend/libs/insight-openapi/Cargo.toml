@@ -1,0 +1,20 @@
+[package]
+name = "insight-openapi"
+version = "0.1.0"
+description = "Canonical on-disk form of a service's OpenAPI document and the drift check pinning the committed copy to it"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+utoipa = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3.27"

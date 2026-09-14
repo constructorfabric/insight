@@ -1,14 +1,15 @@
 ##
 ## Loki — log store for the L2 system layer (observability `bundled` mode).
 ##
-## Chart: grafana/loki   (https://grafana.github.io/helm-charts)
+## Chart: grafana-community/loki   (https://grafana-community.github.io/helm-charts)
 ## Pin in Makefile: LOKI_VERSION
-## Release: `loki` in namespace `insight-infra`.
+## Release: `loki` in the infra namespace (inventory `namespaces.infra`,
+## `insight-infra` by default).
 ##
 ## Per-env overrides go in environments/<env>/loki-values.yaml.
 ##
 ## Push/query endpoint other components use:
-##   http://loki.insight-infra.svc.cluster.local:3100
+##   http://loki.<infra-ns>.svc.cluster.local:3100
 ##
 ## SCOPE: this is the dev / single-tenant baseline — SingleBinary mode,
 ## node-local filesystem storage, NO HA. For production move to
@@ -36,6 +37,11 @@ loki:
           period: 24h
   storage:
     type: filesystem
+  # INVARIANT: retention_period alone deletes nothing — only the compactor
+  # enforces it; without this block the store grows until the PVC fills.
+  compactor:
+    retention_enabled: true
+    delete_request_store: filesystem
   limits_config:
     # Keep logs cheap: 7d retention for the whole store. Per-stream
     # retention (e.g. shorter for the chatty `namespace=airbyte`) is a

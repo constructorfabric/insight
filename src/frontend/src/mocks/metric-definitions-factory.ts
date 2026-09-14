@@ -63,7 +63,11 @@ function catalogKeys(): string[] {
   ].sort();
 }
 
-function define(metricKey: string, today: string): MetricDefinition {
+function define(
+  metricKey: string,
+  collectedFrom: string,
+  today: string
+): MetricDefinition {
   const meta = metaFor(metricKey);
   const family = FAMILY[familyOf(metricKey)];
   const noun = meta.label.toLowerCase();
@@ -87,11 +91,20 @@ function define(metricKey: string, today: string): MetricDefinition {
     origin: "builtin",
     schema_status: "ok",
     schema_error_code: null,
+    first_observed_date: collectedFrom,
     last_observed_date: today,
   };
 }
 
+const MOCK_HISTORY_DAYS = 365;
+
 export function buildMetricDefinitions(): MetricDefinition[] {
-  const today = new Date().toISOString().slice(0, 10);
-  return catalogKeys().map((key) => define(key, today));
+  const now = Date.now();
+  const today = new Date(now).toISOString().slice(0, 10);
+  // A year of history behind every mock metric, so no screen built on these
+  // renders its period as time before anything was collected.
+  const collectedFrom = new Date(now - MOCK_HISTORY_DAYS * 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+  return catalogKeys().map((key) => define(key, collectedFrom, today));
 }

@@ -1,0 +1,93 @@
+spec_version: 1
+description: >
+  Metric: git.default_branch_lines_removed — every line removed by a commit
+  that reached the repository's default branch, #3049.
+
+  How it's computed (bronze → silver → gold):
+    • bronze: the file rows a commit reported, or none at all when the
+      connector never collected its diff
+    • silver: one class row per commit and per file change
+    • gold:   one row per content per path, and the lines come from the FILE
+      rows when there are any and from the commit's own stats when there are
+      none — two emission paths, one measure
+
+  A whole-file deletion contributes every line the file held, which makes this
+  measure the one most exposed to how a change's content is identified. That
+  identity has to hold in both directions: two removals of DIFFERENT content at
+  one path are two removals, and one removal carried by two commits is one.
+  `git_squash_content_identity` and `git_file_change_content_identity` own both
+  halves on the unscoped `git.lines_removed`, so what is new here is narrow and
+  worth naming: the `change_type` split of the scoped measure, which no spec
+  requests, and the `docs` and `__unknown__` values of its category split,
+  which `test_git_branch_scope` cannot reach because every line in its fixture
+  is code.
+
+  A request carries at most one breakdown view per metric, so each split is
+  asked for in a call of its own.
+
+  Cases: the two directions of content identity together with the fallback and
+  the opposite scope; the category split, where the fallback's lines arrive
+  under an unknown category; the change-type split, where a whole-file deletion
+  reads as `removed` and a row that removed nothing reads as zero; and an empty
+  window.
+
+  Fixture — erin only, one repository, every commit's scope carried by the
+  connector's own flag rather than by a branch row or a merged request:
+    * dblr-diffed, landed
+        src/a.rs   −11  modified, code
+        docs/a.md  −20  REMOVED whole, content X
+    * dblr-readd, landed
+        docs/a.md  +6   added back at the same path, content Y. It removed
+                        nothing, and reports zero rather than nothing at all
+    * dblr-redel, landed
+        docs/a.md  −6   REMOVED whole again, content Y. A second removal at
+                        one path, of different content — keyed on what a
+                        removal produces rather than on what it removed, these
+                        two collapse and six lines vanish
+    * dblr-dup1, landed
+        src/c.rs   −5   modified, reaching content Q
+    * dblr-dup2, landed
+        src/c.rs   −3   the SAME content Q reached again, so this row is the
+                        same change and must not count twice
+    * dblr-blind, landed, NO file rows — its own stats report 30 removed, and
+      that is the only record of them
+    * dblr-wip, not landed
+        src/b.rs   −7   code, and it belongs to the other scope
+
+  So the metric reads 11 + 20 + 6 + 5 + 30 = 72, and four wrong readings are
+  measured rather than reasoned: keying a removal on what it produces reads 66,
+  keying a change on the pre/post PAIR instead of on the content it reaches
+  reads 75, disabling the content dedup reads 75 as well, and dropping the
+  fallback's removed half reads 42.
+
+  Not pinned here: which SET the fallback's gate reads. Both the collected and
+  the surviving row count answer the same for every commit in this fixture, so
+  a gate swapped between them stays green — `test_git_uncollected_file_changes`
+  is where that distinction lives.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/erin
+
+  bronze_github.commits:
+    # Commit-level stats reach nothing asserted here except dblr-blind's, which
+    # is the only commit with no collected rows. They are kept equal to each
+    # commit's file rows so a reader is not misled into checking one against
+    # the other.
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: dblr-diffed, repository: "https://github.com/acme/dblr.git", sha: dblr-diffed, authored_date: "2026-10-01T09:00:00Z", committed_date: "2026-10-01T09:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 0, deletions: 31, changed_files: 2, is_in_default_branch: true}
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: dblr-readd, repository: "https://github.com/acme/dblr.git", sha: dblr-readd, authored_date: "2026-10-01T09:10:00Z", committed_date: "2026-10-01T09:10:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 6, deletions: 0, changed_files: 1, is_in_default_branch: true}
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: dblr-redel, repository: "https://github.com/acme/dblr.git", sha: dblr-redel, authored_date: "2026-10-01T09:20:00Z", committed_date: "2026-10-01T09:20:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 0, deletions: 6, changed_files: 1, is_in_default_branch: true}
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: dblr-dup1, repository: "https://github.com/acme/dblr.git", sha: dblr-dup1, authored_date: "2026-10-01T09:30:00Z", committed_date: "2026-10-01T09:30:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 0, deletions: 5, changed_files: 1, is_in_default_branch: true}
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: dblr-dup2, repository: "https://github.com/acme/dblr.git", sha: dblr-dup2, authored_date: "2026-10-01T09:40:00Z", committed_date: "2026-10-01T09:40:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 0, deletions: 3, changed_files: 1, is_in_default_branch: true}
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: dblr-blind, repository: "https://github.com/acme/dblr.git", sha: dblr-blind, authored_date: "2026-10-01T09:50:00Z", committed_date: "2026-10-01T09:50:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 0, deletions: 30, changed_files: 1, is_in_default_branch: true}
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: dblr-wip, repository: "https://github.com/acme/dblr.git", sha: dblr-wip, authored_date: "2026-10-01T10:00:00Z", committed_date: "2026-10-01T10:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 0, deletions: 7, changed_files: 1, is_in_default_branch: false}
+
+  bronze_github.file_changes:
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: dblr-f-a, repository: "https://github.com/acme/dblr.git", sha: dblr-diffed, filename: src/a.rs, status: modified, additions: 0, deletions: 11}
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: dblr-f-del1, repository: "https://github.com/acme/dblr.git", sha: dblr-diffed, filename: docs/a.md, status: removed, additions: 0, deletions: 20, pre_image_oid: db1f0000000000000000000000000000000000d1, post_image_oid: null}
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: dblr-f-add, repository: "https://github.com/acme/dblr.git", sha: dblr-readd, filename: docs/a.md, status: added, additions: 6, deletions: 0, pre_image_oid: null, post_image_oid: db1f0000000000000000000000000000000000d2}
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: dblr-f-del2, repository: "https://github.com/acme/dblr.git", sha: dblr-redel, filename: docs/a.md, status: removed, additions: 0, deletions: 6, pre_image_oid: db1f0000000000000000000000000000000000d2, post_image_oid: null}
+    # One content reached from two starting points: the same change, twice.
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: dblr-f-dup1, repository: "https://github.com/acme/dblr.git", sha: dblr-dup1, filename: src/c.rs, status: modified, additions: 0, deletions: 5, pre_image_oid: db1f0000000000000000000000000000000000e1, post_image_oid: db1f0000000000000000000000000000000000ee}
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: dblr-f-dup2, repository: "https://github.com/acme/dblr.git", sha: dblr-dup2, filename: src/c.rs, status: modified, additions: 0, deletions: 3, pre_image_oid: db1f0000000000000000000000000000000000e2, post_image_oid: db1f0000000000000000000000000000000000ee}
+    - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: dblr-f-b, repository: "https://github.com/acme/dblr.git", sha: dblr-wip, filename: src/b.rs, status: modified, additions: 0, deletions: 7}

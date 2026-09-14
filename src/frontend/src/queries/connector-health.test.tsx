@@ -115,11 +115,11 @@ describe("one session's answer is never served to another", () => {
       createElement(QueryClientProvider, { client }, children);
 
     mockSyncs.mockResolvedValue({ connector: "alpha", syncs: [], window: 50 });
-    const first = renderHook(() => useConnectorSyncs("alpha"), { wrapper: wrap });
+    const first = renderHook(() => useConnectorSyncs({ connector: "alpha" }), { wrapper: wrap });
     await waitFor(() => expect(first.result.current.isSuccess).toBe(true));
 
     session.value = "scope-b";
-    const second = renderHook(() => useConnectorSyncs("alpha"), { wrapper: wrap });
+    const second = renderHook(() => useConnectorSyncs({ connector: "alpha" }), { wrapper: wrap });
     await waitFor(() => expect(second.result.current.isSuccess).toBe(true));
 
     const keys = client
@@ -144,12 +144,51 @@ describe("useConnectorSyncs", () => {
     const history = { connector: "alpha", syncs: [], window: 50 };
     mockSyncs.mockResolvedValue(history);
 
-    const { result } = renderHook(() => useConnectorSyncs("alpha"), {
+    const { result } = renderHook(() => useConnectorSyncs({ connector: "alpha" }), {
       wrapper: wrapper(),
     });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(mockSyncs).toHaveBeenCalledWith("alpha");
+    expect(mockSyncs).toHaveBeenCalledWith({ connector: "alpha" });
     expect(result.current.data).toEqual(history);
+  });
+
+  it("keys two installations of one connector apart", async () => {
+    // They share a name. Keyed on it, the second would be served the first
+    // one's window out of the cache and the page would show the wrong history.
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    });
+    const wrap = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client }, children);
+
+    mockSyncs.mockResolvedValue({ connector: "alpha", syncs: [], window: 50 });
+    const first = renderHook(
+      () =>
+        useConnectorSyncs({
+          connector: "alpha",
+          tenant_id: "acme",
+          source_id: "main",
+        }),
+      { wrapper: wrap },
+    );
+    await waitFor(() => expect(first.result.current.isSuccess).toBe(true));
+
+    const second = renderHook(
+      () =>
+        useConnectorSyncs({
+          connector: "alpha",
+          tenant_id: "acme",
+          source_id: "second",
+        }),
+      { wrapper: wrap },
+    );
+    await waitFor(() => expect(second.result.current.isSuccess).toBe(true));
+
+    const keys = client
+      .getQueryCache()
+      .getAll()
+      .map((query) => JSON.stringify(query.queryKey));
+    expect(new Set(keys).size).toBe(2);
   });
 });

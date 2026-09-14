@@ -1,18 +1,15 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { PeopleListItem } from "@/api/identity-client";
 import { OrgTree } from "@/components/org-tree";
 import type { IdentityPerson } from "@/types/insight";
 
 const mocks = vi.hoisted(() => ({
   viewer: null as IdentityPerson | null,
   isFlat: false,
-  roster: [] as {
-    person_id: string;
-    display_name?: string | null;
-    email?: string | null;
-    username?: string | null;
-  }[],
+  roster: [] as PeopleListItem[],
 }));
 
 vi.mock("@/auth", () => ({ useViewer: () => ({ personId: "root" }) }));
@@ -29,7 +26,6 @@ vi.mock("@/queries/identity-me", () => ({
 vi.mock("@/queries/visible-roster", () => ({
   useVisibleRoster: () => ({
     roster: mocks.roster,
-    truncated: false,
     isPending: false,
     isError: false,
     retry: () => {},
@@ -52,9 +48,32 @@ vi.mock("@/components/ui/sidebar", () => ({
   SidebarMenuItem: ({ children }: { children?: React.ReactNode }) => (
     <li>{children}</li>
   ),
-  SidebarMenuButton: ({ children }: { children?: React.ReactNode }) => (
-    <span>{children}</span>
-  ),
+  SidebarMenuButton: ({
+    children,
+    render,
+    className,
+    isActive: _isActive,
+    ...props
+  }: {
+    children?: React.ReactNode;
+    render?: React.ReactElement;
+    className?: string;
+    isActive?: boolean;
+  } & React.ComponentProps<"button">) =>
+    render ? (
+      <a
+        href="/person"
+        data-sidebar="menu-button"
+        className={className}
+        onClick={(event) => event.preventDefault()}
+      >
+        {children}
+      </a>
+    ) : (
+      <button data-sidebar="menu-button" className={className} {...props}>
+        {children}
+      </button>
+    ),
 }));
 
 function person(
@@ -70,12 +89,40 @@ function person(
   };
 }
 
+function rosterPerson(
+  personId: string,
+  displayName: string | null,
+  managerPersonId: string | null,
+  username: string | null = null
+): PeopleListItem {
+  return {
+    person_id: personId,
+    display_name: displayName,
+    first_name: null,
+    last_name: null,
+    username,
+    email: null,
+    attributes: {},
+    manager_person_id: managerPersonId,
+  };
+}
+
 mocks.viewer = person("root", "Root Person", [
   person("lead", "Lead Person", [
     person("deep", "Deep Person"),
     person("other", "Other Person"),
   ]),
 ]);
+
+beforeEach(() => {
+  mocks.isFlat = false;
+  mocks.roster = [
+    rosterPerson("root", "Root Person", null),
+    rosterPerson("lead", "Lead Person", "root"),
+    rosterPerson("deep", "Deep Person", "lead"),
+    rosterPerson("other", "Other Person", "lead"),
+  ];
+});
 
 describe("OrgTree", () => {
   it("shows only the root's own level until something opens it", () => {
@@ -84,6 +131,59 @@ describe("OrgTree", () => {
     expect(screen.getByText("Lead Person")).toBeInTheDocument();
     // Nothing is active, so the lead's reports stay folded away.
     expect(screen.queryByText("Deep Person")).not.toBeInTheDocument();
+  });
+
+  it("opens and closes reports without following the person link", async () => {
+    const user = userEvent.setup();
+    render(<OrgTree />);
+
+    const expand = screen.getByRole("button", { name: "Expand Lead Person" });
+    expect(expand).toHaveAttribute("data-sidebar", "menu-button");
+    expect(expand).toHaveClass("w-8", "shrink-0", "justify-center", "p-0");
+    expect(screen.getByRole("link", { name: "Lead Person" })).toHaveAttribute(
+      "data-sidebar",
+      "menu-button"
+    );
+
+    await user.click(expand);
+    expect(screen.getByText("Deep Person")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("link", { name: "Lead Person" }));
+    expect(screen.getByText("Deep Person")).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: "Collapse Lead Person" })
+    );
+    expect(screen.queryByText("Deep Person")).not.toBeInTheDocument();
+  });
+
+  it("allows the root row to collapse and reopen", async () => {
+    const user = userEvent.setup();
+    render(<OrgTree />);
+
+    await user.click(
+      screen.getByRole("button", { name: "Collapse Root Person" })
+    );
+    expect(screen.queryByText("Lead Person")).not.toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: "Expand Root Person" })
+    );
+    expect(screen.getByText("Lead Person")).toBeInTheDocument();
+  });
+
+  it("restores manual expansion after search is cleared", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<OrgTree />);
+
+    await user.click(
+      screen.getByRole("button", { name: "Collapse Root Person" })
+    );
+    rerender(<OrgTree query="Deep" />);
+    expect(screen.getByText("Deep Person")).toBeInTheDocument();
+
+    rerender(<OrgTree query="" />);
+    expect(screen.queryByText("Lead Person")).not.toBeInTheDocument();
   });
 
   it("reveals a deep match and the managers above it, and nothing else", () => {
@@ -113,11 +213,16 @@ describe("OrgTree on an organisation with no reporting lines", () => {
     mocks.isFlat = true;
     // The tree the profile serves is the viewer alone — the shape that left
     // this pane showing one name beside a full Employees table.
-    mocks.viewer = { person_id: "root", display_name: "Me", email: "me@x", subordinates: [] } as IdentityPerson;
+    mocks.viewer = {
+      person_id: "root",
+      display_name: "Me",
+      email: "me@x",
+      subordinates: [],
+    } as IdentityPerson;
     mocks.roster = [
-      { person_id: "root", display_name: "Me", email: "me@x" },
-      { person_id: "p-ann", display_name: "Ann Dev", email: "ann@x" },
-      { person_id: "p-bot", display_name: null, email: null, username: "octo-bot" },
+      rosterPerson("root", "Me", null),
+      rosterPerson("p-ann", "Ann Dev", null),
+      rosterPerson("p-bot", null, null, "octo-bot"),
     ];
   });
 

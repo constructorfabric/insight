@@ -12,16 +12,19 @@ vi.mock("@tanstack/react-router", async () => {
 
 import { portalRouter } from "@/test/portal-router";
 
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { NormalizedMetricResult } from "@/lib/metrics/collection";
-import { identityPerson, pid } from "@/test/identity";
+import type { PeopleListItem } from "@/api/identity-client";
+import { identityPerson, peopleFromIdentityTree, pid } from "@/test/identity";
 import type { IdentityPerson } from "@/types/insight";
 
 const mocks = vi.hoisted(() => ({
   personId: null as string | null,
   tree: undefined as IdentityPerson | undefined,
+  roster: [] as PeopleListItem[],
   grid: {
     byKey: new Map<string, NormalizedMetricResult>(),
     previousByKey: new Map<string, NormalizedMetricResult>(),
@@ -52,8 +55,7 @@ vi.mock("@/queries/identity-me", () => ({
 }));
 vi.mock("@/queries/visible-roster", () => ({
   useVisibleRoster: () => ({
-    roster: [],
-    truncated: false,
+    roster: mocks.roster,
     isPending: false,
     isError: false,
     retry: () => {},
@@ -90,26 +92,28 @@ function metric(
 }
 
 // Roster entity ids: person UUIDs, the same key the metric grid returns.
-const LABELS = ["a", "b", "c", "d"];
-const IDS = LABELS.map(pid);
+const LABELS = ["d", "a", "c", "b"];
+const MEMBER_LABELS = ["boss", ...LABELS];
+const MEMBER_IDS = MEMBER_LABELS.map(pid);
 
 beforeEach(() => {
   mocks.personId = pid("boss");
   mocks.tree = person("boss", LABELS.map((l) => person(l)));
+  mocks.roster = peopleFromIdentityTree(mocks.tree);
   mocks.grid.isPending = false;
   mocks.grid.isError = false;
   // git.commits is a real headline key (GROUPS card.preview) — the view
   // only renders columns from that set.
   mocks.grid.byKey = new Map([
-    ["git.commits", metric("git.commits", [[pid("a"), 10], [pid("b"), 20], [pid("c"), 30], [pid("d"), 40]], { label: "Commits" })],
+    ["git.commits", metric("git.commits", [[pid("boss"), 50], [pid("a"), 10], [pid("b"), 20], [pid("c"), 30], [pid("d"), 40]], { label: "Commits" })],
     // a ratio metric: must roll up as MEDIAN, not a summed percentage
-    ["collab.focus_time_pct", metric("collab.focus_time_pct", [[pid("a"), 40], [pid("b"), 50], [pid("c"), 60], [pid("d"), 70]], {
+    ["collab.focus_time_pct", metric("collab.focus_time_pct", [[pid("boss"), 80], [pid("a"), 40], [pid("b"), 50], [pid("c"), 60], [pid("d"), 70]], {
       computation: "avg",
       label: "Focus Time",
       format: "percent",
     } as never)],
     // ingested nowhere → its column must disappear, not paint zeros
-    ["tasks.closed", metric("tasks.closed", IDS.map((id) => [id, null]), { label: "Tasks closed" })],
+    ["tasks.closed", metric("tasks.closed", MEMBER_IDS.map((id) => [id, null]), { label: "Tasks closed" })],
   ]);
   mocks.grid.previousByKey = new Map();
   act(() => {
@@ -122,19 +126,115 @@ describe("TeamStateView", () => {
   it("renders the scope header and every member row", () => {
     render(<TeamStateView />);
     expect(screen.getByText("boss's team")).toBeInTheDocument();
-    expect(screen.getByText(/4 people · state & attention/)).toBeInTheDocument();
-    // Names come from identity now — the roster is the member list.
-    for (const label of LABELS) {
+    expect(screen.getByText(/5 people · state & attention/)).toBeInTheDocument();
+    for (const label of MEMBER_LABELS) {
       expect(screen.getByText(label)).toBeInTheDocument();
     }
+    expect(
+      within(screen.getByRole("table"))
+        .getAllByRole("rowheader")
+        .map((header) => header.textContent),
+    ).toEqual(MEMBER_LABELS);
+    expect(
+      screen.getByRole("button", { name: "Filter people, all 5 shown" }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows only selected people without changing the team scope", async () => {
+    const user = userEvent.setup();
+    render(<TeamStateView />);
+
+    await user.click(
+      screen.getByRole("button", { name: "Filter people, all 5 shown" }),
+    );
+    await user.click(screen.getByRole("button", { name: "None" }));
+    await user.click(screen.getByRole("checkbox", { name: "boss" }));
+    await user.click(screen.getByRole("checkbox", { name: "c" }));
+
+    expect(
+      within(screen.getByRole("table"))
+        .getAllByRole("rowheader")
+        .map((header) => header.textContent),
+    ).toEqual(["boss", "c"]);
+    expect(screen.getByText(/5 people · state & attention/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Filter people, 2 of 5 shown" }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows an empty selection state and restores all people", async () => {
+    const user = userEvent.setup();
+    render(<TeamStateView />);
+
+    await user.click(
+      screen.getByRole("button", { name: "Filter people, all 5 shown" }),
+    );
+    await user.click(screen.getByRole("button", { name: "None" }));
+
+    expect(screen.getByText("No people selected.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Show all" }));
+    expect(
+      within(screen.getByRole("table"))
+        .getAllByRole("rowheader")
+        .map((header) => header.textContent),
+    ).toEqual(MEMBER_LABELS);
+  });
+
+  it("resets the selection when the manager scope changes", async () => {
+    const user = userEvent.setup();
+    render(<TeamStateView />);
+
+    await user.click(
+      screen.getByRole("button", { name: "Filter people, all 5 shown" }),
+    );
+    await user.click(screen.getByRole("button", { name: "None" }));
+    await user.click(screen.getByRole("checkbox", { name: "boss" }));
+
+    act(() => portalRouter.set({ scope: pid("c") }));
+
+    expect(
+      screen.getByRole("button", { name: "Filter people, all 1 shown" }),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("table"))
+        .getAllByRole("rowheader")
+        .map((header) => header.textContent),
+    ).toEqual(["c"]);
+  });
+
+  it("resets the selection when direct reports mode changes", async () => {
+    mocks.tree = person("boss", [
+      person("a", [person("c")]),
+      person("b"),
+    ]);
+    mocks.roster = peopleFromIdentityTree(mocks.tree);
+    const user = userEvent.setup();
+    render(<TeamStateView />);
+
+    await user.click(
+      screen.getByRole("button", { name: "Filter people, all 4 shown" }),
+    );
+    await user.click(screen.getByRole("button", { name: "None" }));
+    await user.click(screen.getByRole("checkbox", { name: "boss" }));
+
+    act(() => portalRouter.set({ direct: true }));
+
+    expect(
+      screen.getByRole("button", { name: "Filter people, all 3 shown" }),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("table"))
+        .getAllByRole("rowheader")
+        .map((header) => header.textContent),
+    ).toEqual(["boss", "a", "b"]);
   });
 
   it("sums counters into a team total and medians ratios — never the reverse", () => {
     render(<TeamStateView />);
-    expect(screen.getByText("100")).toBeInTheDocument();
+    expect(screen.getByText("150")).toBeInTheDocument();
     expect(screen.getAllByText("team total").length).toBeGreaterThan(0);
-    // median of 40,50,60,70 = 55%, NOT the 220% a sum would fabricate
-    expect(screen.getByText("55%")).toBeInTheDocument();
+    // median of 40,50,60,70,80 = 60%, NOT the 300% a sum would fabricate
+    expect(screen.getAllByText("60%").length).toBeGreaterThan(0);
     expect(screen.getAllByText("team median").length).toBeGreaterThan(0);
   });
 
@@ -145,17 +245,30 @@ describe("TeamStateView", () => {
 
   it("keeps the steady attention note when nobody diverges", () => {
     render(<TeamStateView />);
-    expect(screen.getByText("All 4 people are in their usual range this period.")).toBeInTheDocument();
+    expect(screen.getByText("All 5 people are in their usual range this period.")).toBeInTheDocument();
     expect(screen.getByText("Nothing stands out this period.")).toBeInTheDocument();
   });
 
-  it("gates on the empty roster with the People-specific label", () => {
-    mocks.tree = person("boss"); // a manager with nobody under them
+  it("includes the manager in needs attention", () => {
+    mocks.grid.byKey.set(
+      "git.commits",
+      metric("git.commits", [[pid("boss"), 0], [pid("a"), 10], [pid("b"), 20], [pid("c"), 30], [pid("d"), 40]], { label: "Commits" }),
+    );
+
     render(<TeamStateView />);
-    expect(
-      screen.getByText(
-        "No people in the current scope. Pick a different scope at the top of the page.",
-      ),
-    ).toBeInTheDocument();
+
+    expect(screen.getByText(/1 of 5 people stands out this period/)).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: /Commits/, expanded: false }),
+    );
+    expect(screen.getAllByText("boss")).toHaveLength(2);
+  });
+
+  it("shows a manager with no reports as a one-person scope", () => {
+    mocks.tree = person("boss");
+    mocks.roster = peopleFromIdentityTree(mocks.tree);
+    render(<TeamStateView />);
+    expect(screen.getByText(/1 people · state & attention/)).toBeInTheDocument();
+    expect(screen.getByText("boss")).toBeInTheDocument();
   });
 });

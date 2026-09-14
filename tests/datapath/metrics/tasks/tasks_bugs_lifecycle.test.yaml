@@ -1,0 +1,143 @@
+spec_version: 1
+description: >
+  Task Delivery - bugs_fixed across the issue lifecycle: one person split
+  across two sources, a reopen -> re-close, and a type change after the close.
+
+  bronze -> silver -> gold twice over: the Jira path (jira_issue +
+  jira_issue_history + jira_user + jira_issuetypes) and the GitHub path
+  (issues + issue_timeline_events + issue_types + the operator's role and
+  value-map rows), attributing to the same department.
+
+  Scenarios. (1) bob closes one Jira Bug and one GitHub Bug on 2026-06-25:
+  one person, two sources, so bugs_fixed and tasks.closed each sum to 2 and
+  bugs_ratio is 100. The cross-source sum is by design - the source dimension
+  exists only on evidence, never on the person aggregate, so nothing keeps
+  the two trackers apart at the value level. (2) carol's Jira Bug closes
+  2026-06-20, reopens 2026-06-22 and re-closes 2026-06-27: final_close_at is
+  the LAST transition into a done-category status, so the bug counts once, on
+  the re-close day, and the first close day serves nothing. (3) dave's Jira
+  issue closes 2026-06-25 while it is a Bug, but a 2026-06-26 changelog row
+  retypes it Bug -> Task and the current snapshot carries Task: issue_kind
+  joins on the CURRENT type, so the close lands in closed_non_bug and not in
+  bugs_fixed - pinned as current behavior (snapshot type wins), not intent.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/bob
+    - $ref: ../templates/people.yaml#/templates/carol
+    - $ref: ../templates/people.yaml#/templates/dave
+
+  bronze_jira.jira_user:
+    - $ref: ../templates/jira_task.yaml#/templates/bob_user
+    - $ref: ../templates/jira_task.yaml#/templates/carol_user
+    - $ref: ../templates/jira_task.yaml#/templates/dave_user
+
+  bronze_jira.jira_statuses:
+    - $ref: ../templates/jira_task.yaml#/templates/status_open
+    - $ref: ../templates/jira_task.yaml#/templates/status_in_progress
+    - $ref: ../templates/jira_task.yaml#/templates/status_closed
+
+  bronze_jira.jira_issuetypes:
+    - $ref: ../templates/jira_task.yaml#/templates/issuetype_task
+    - $ref: ../templates/jira_task.yaml#/templates/issuetype_bug
+
+  bronze_jira.jira_fields:
+    - $ref: ../templates/jira_task.yaml#/templates/field_status
+    - $ref: ../templates/jira_task.yaml#/templates/field_assignee
+    - $ref: ../templates/jira_task.yaml#/templates/field_issuetype
+    - $ref: ../templates/jira_task.yaml#/templates/field_duedate
+
+  bronze_jira.jira_issue:
+    # ── Bob Beta: the Jira half of the cross-source pair ──
+    - $ref: ../templates/jira_task.yaml#/templates/jira_issue
+      id: LFB-1
+      jira_id: LFB-1
+      unique_key: jira-test-LFB-1
+      id_readable: LFB1
+      created: "2026-06-01T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10000","name":"Bug"},"assignee":{"accountId":"bob-jira-acct","displayName":"Bob Beta"}}'
+    # ── Carol Gamma: reopened and re-closed; the snapshot is the final Closed ──
+    - $ref: ../templates/jira_task.yaml#/templates/jira_issue
+      id: LFC-1
+      jira_id: LFC-1
+      unique_key: jira-test-LFC-1
+      id_readable: LFC1
+      created: "2026-06-01T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10000","name":"Bug"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
+    # ── Dave Delta: closed as a Bug, retyped to Task the next day — the CURRENT
+    #    snapshot says Task, and that is the type the kind resolves through ──
+    - $ref: ../templates/jira_task.yaml#/templates/jira_issue
+      id: LFD-1
+      jira_id: LFD-1
+      unique_key: jira-test-LFD-1
+      id_readable: LFD1
+      created: "2026-06-01T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"dave-jira-acct","displayName":"Dave Delta"}}'
+
+  bronze_jira.jira_issue_history:
+    # ── Bob: one clean close in the window ──
+    - $ref: ../templates/jira_task.yaml#/templates/closed_hist
+      id_readable: LFB1
+      changelog_id: "51001"
+      unique_key: jira-test-LFB1-51001
+      created_at: "2026-06-25T14:00:00.000+0000"
+      author_account_id: bob-jira-acct
+    # ── Carol: close, reopen, re-close — only the LAST close may score ──
+    - $ref: ../templates/jira_task.yaml#/templates/closed_hist
+      id_readable: LFC1
+      changelog_id: "51002"
+      unique_key: jira-test-LFC1-51002
+      created_at: "2026-06-20T10:00:00.000+0000"
+      author_account_id: carol-jira-acct
+    - $ref: ../templates/jira_task.yaml#/templates/jira_history
+      id_readable: LFC1
+      changelog_id: "51003"
+      unique_key: jira-test-LFC1-51003
+      created_at: "2026-06-22T10:00:00.000+0000"
+      author_account_id: carol-jira-acct
+      items: '[{"field":"Status","fieldId":"status","fromString":"Closed","from":"6","toString":"In Progress","to":"3"}]'
+    - $ref: ../templates/jira_task.yaml#/templates/closed_hist
+      id_readable: LFC1
+      changelog_id: "51004"
+      unique_key: jira-test-LFC1-51004
+      created_at: "2026-06-27T10:00:00.000+0000"
+      author_account_id: carol-jira-acct
+    # ── Dave: the close, then the retype the day after ──
+    - $ref: ../templates/jira_task.yaml#/templates/closed_hist
+      id_readable: LFD1
+      changelog_id: "51005"
+      unique_key: jira-test-LFD1-51005
+      created_at: "2026-06-25T14:00:00.000+0000"
+      author_account_id: dave-jira-acct
+    - $ref: ../templates/jira_task.yaml#/templates/jira_history
+      id_readable: LFD1
+      changelog_id: "51006"
+      unique_key: jira-test-LFD1-51006
+      created_at: "2026-06-26T10:00:00.000+0000"
+      author_account_id: dave-jira-acct
+      items: '[{"field":"Issue Type","fieldId":"issuetype","fromString":"Bug","from":"10000","toString":"Task","to":"10001"}]'
+
+  # ── The GitHub half of bob's pair (no enrich binary in the middle) ──
+  bronze_github.commit_authors:
+    - { $ref: ../templates/github_task.yaml#/templates/commit_author, unique_key: gh-author-1002, _airbyte_raw_id: gh-author-1002, author_id: 1002, author_login: bob, author_email: bob@example.com }
+
+  config.task_field_roles:
+    - $ref: ../templates/github_task.yaml#/templates/role_state
+    - $ref: ../templates/github_task.yaml#/templates/role_assignees
+    - $ref: ../templates/github_task.yaml#/templates/role_type
+
+  config.task_value_map:
+    - $ref: ../templates/github_task.yaml#/templates/value_open
+    - $ref: ../templates/github_task.yaml#/templates/value_closed_completed
+    - { $ref: ../templates/github_task.yaml#/templates/value_open, field_id: type, value_id: IT_bug, unique_key: gh-value-type-bug, canonical_value: bug, value_display: Bug }
+
+  bronze_github.issue_types:
+    - $ref: ../templates/github_task.yaml#/templates/issue_type_bug
+
+  bronze_github.issue_fields: []
+
+  bronze_github.issues:
+    - { $ref: ../templates/github_task.yaml#/templates/issue, id: 1, number: 1, unique_key: gh-issue-1, assignee_logins: bob, assignee_ids: "1002", author_id: 1002, issue_type: Bug, issue_type_id: IT_bug, created_at: "2026-06-01T09:00:00Z", updated_at: "2026-06-25T09:00:00Z", closed_at: "2026-06-25T09:00:00Z" }
+
+  bronze_github.issue_timeline_events:
+    - { $ref: ../templates/github_task.yaml#/templates/closed_event, unique_key: gh-ev-1, event_id: CE_1, item_number: 1, actor_id: 1002, event_at: "2026-06-25T09:00:00Z" }

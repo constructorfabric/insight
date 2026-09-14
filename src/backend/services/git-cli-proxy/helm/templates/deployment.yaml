@@ -30,6 +30,8 @@ spec:
       annotations:
         # Roll the pod when the gears config changes.
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        # Platform CM arrives via envFrom; roll pods when its observability inputs change.
+        checksum/observability: {{ default dict (default dict .Values.global).observability | toYaml | sha256sum }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

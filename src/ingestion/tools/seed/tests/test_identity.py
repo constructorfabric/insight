@@ -195,3 +195,46 @@ class SeedPersonsIdempotencyTests(unittest.TestCase):
         self.assertGreater(first, 0, "names are written on the first run")
         self.assertEqual(second, 0, "a re-run must be a no-op, not a duplicate observation")
         self.assertEqual(cur.insert_count, first)
+
+
+class _PeopleCursor:
+    def __init__(self) -> None:
+        self.rowcount = 0
+        self.rows: list[tuple[Any, ...]] = []
+        self._current: set[tuple[Any, Any]] = set()
+
+    def executemany(self, sql: str, rows: list[tuple[Any, ...]]) -> None:
+        self.assert_people_insert(sql)
+        inserted = 0
+        for row in rows:
+            key = (row[0], row[1])
+            if key in self._current:
+                continue
+            self._current.add(key)
+            self.rows.append(row)
+            inserted += 1
+        self.rowcount = inserted
+
+    @staticmethod
+    def assert_people_insert(sql: str) -> None:
+        if "INSERT IGNORE INTO people" not in sql:
+            raise AssertionError(f"unexpected SQL: {sql}")
+
+
+class SeedPeopleTests(unittest.TestCase):
+    def test_whole_roster_is_projected_once_with_its_profile(self) -> None:
+        cur = _PeopleCursor()
+        roster = _roster()
+
+        first = identity.seed_people(cur, _TENANT, roster)  # type: ignore[arg-type]
+        second = identity.seed_people(cur, _TENANT, roster)  # type: ignore[arg-type]
+
+        self.assertEqual(first, len(roster))
+        self.assertEqual(second, 0)
+        self.assertEqual(
+            [(row[2], row[3], row[4], row[5]) for row in cur.rows],
+            [
+                ("dev@company.nonpresent", "Dev Lead", "Dev", "Lead"),
+                ("sales-lead@company.nonpresent", "Sales Lead", "Sales", "Lead"),
+            ],
+        )

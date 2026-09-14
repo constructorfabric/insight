@@ -1,0 +1,13 @@
+# The connector enrich sidecar, as an overlay on the root docker-compose.yml.
+#
+# An overlay, not a service in the root file: compose interpolates `${VAR:?}` for every
+# command regardless of profile, so a required variable there breaks plain `up`.
+services:
+  enrich:
+    image: ${ENRICH_IMAGE:?ENRICH_IMAGE must name a connector descriptor's images.enrich.image}
+    networks: [insight]
+    environment:
+      CLICKHOUSE_PASSWORD: "${CLICKHOUSE_PASSWORD:-insight-local}"
+      RUST_LOG: "${RUST_LOG:-info}"
+    depends_on:
+      clickhouse: {condition: service_healthy, required: false}

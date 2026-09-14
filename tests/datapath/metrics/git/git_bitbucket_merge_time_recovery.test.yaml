@@ -1,0 +1,130 @@
+spec_version: 1
+description: >
+  A Bitbucket merge the source recorded without an activity entry still has a
+  close time — and so still counts, #3051.
+
+  How it's computed (bronze → silver → gold):
+    • bronze: the pull request (which carries no close time of its own), its
+      activity, and the commits the proxy collected
+    • silver: the terminal activity entry supplies the close time whenever one
+      parses. Where the source recorded the merge without one, the merge commit
+      the request names — resolved against the collected commits by the
+      12-character prefix the vendor reports, inside the request's own
+      repository — corroborates that the merge happened; with nothing
+      corroborating it the request keeps no close time at all. With
+      corroboration the time is the request's last update when nothing in its
+      activity accounts for that update (an unexplained update IS the silent
+      state change), the merge commit's own timestamp when a comment does
+      account for it, and nothing when neither is at or after the creation
+    • gold:   a request in the MERGED state with a known close time contributes
+      exactly 1 to git.prs_merged, dated by the CLOSE — so a merge with no
+      close time reaches no period at all. The same close time feeds the
+      duration measures, which discard an interval that does not run forwards
+
+  Cases, one request each: the terminal entry wins even when the merge commit
+  sits on another day; a silent close with no other activity is dated by the
+  update; a close whose update a comment explains is dated by the merge commit;
+  a merge commit older than the request cannot date it, so the update answers;
+  a merge commit that was never collected leaves the request uncounted, which
+  is the boundary of the recovery; a request whose every candidate precedes it
+  keeps no close time rather than being dated at its own creation; a request
+  whose creation date is unusable still has its corroborated merge dated; a
+  prefix naming two commits in one repository resolves nothing rather than
+  guessing; a commit reporting only an author date still dates its merge. Plus three guards: a commit in ANOTHER
+  repository sharing a reported prefix must not be reachable; an uncounted
+  request must reach NO period rather than the epoch, which a month window
+  structurally cannot show; and a DECLINED request carrying a merge hash must
+  gain no close time, or it would count as an abandonment that never happened.
+
+  Beyond git.prs_merged the module reads git.prs_created as a vacuity guard,
+  git.pr_cycle_time_h to prove a recovered close is usable and not merely
+  countable, and git.pr_abandonment_rate for the DECLINED guard.
+
+  The fixture's commits carry no author address on purpose: they exist to carry
+  a date, and an addressless commit reaches no commit or line metric, so
+  heidi's own commit and line figures stay empty.
+
+identity_accounts:
+  # Bitbucket exposes no author address on a request, so the account binding is
+  # the only way one reaches a person.
+  - {source_type: bitbucket, source_id: bitbucket-test, account_id: "heidi-acct", person: heidi@example.com}
+  - {source_type: bitbucket, source_id: bitbucket-test, account_id: "dave-acct", person: dave@example.com}
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/heidi
+    - $ref: ../templates/people.yaml#/templates/dave
+
+  bronze_bitbucket_cloud.commits:
+    # 401's merge commit, on a different day from its activity entry.
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/commit, unique_key: "c:mt-401", repository: https://bitbucket.org/acme/mergetime.git, sha: a1b2c3d400010000000000000000000000000000, authored_date: "2026-10-09T10:00:00Z", committed_date: "2026-10-09T10:00:00Z", is_merge: true}
+    # 402's, which loses to the update because nothing explains that update.
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/commit, unique_key: "c:mt-402", repository: https://bitbucket.org/acme/mergetime.git, sha: b2c3d4e500020000000000000000000000000000, authored_date: "2026-10-12T10:00:00Z", committed_date: "2026-10-12T10:00:00Z", is_merge: true}
+    # 403's. Its two dates differ, so their precedence is visible: the
+    # committer date decides and the author date is only a fallback.
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/commit, unique_key: "c:mt-403", repository: https://bitbucket.org/acme/mergetime.git, sha: c3d4e5f600030000000000000000000000000000, authored_date: "2026-10-15T09:00:00Z", committed_date: "2026-10-17T10:00:00Z", is_merge: true}
+    # 404's, written before its request was opened — the shape a fast-forward
+    # of an older branch leaves.
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/commit, unique_key: "c:mt-404", repository: https://bitbucket.org/acme/mergetime.git, sha: d4e5f60700040000000000000000000000000000, authored_date: "2026-10-20T10:00:00Z", committed_date: "2026-10-20T10:00:00Z"}
+    # 406's prefix names TWO commits in this repository. Neither may date it.
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/commit, unique_key: "c:mt-406a", repository: https://bitbucket.org/acme/mergetime.git, sha: f6a7b8c900060000000000000000000000000000, authored_date: "2026-10-28T10:00:00Z", committed_date: "2026-10-28T10:00:00Z", is_merge: true}
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/commit, unique_key: "c:mt-406b", repository: https://bitbucket.org/acme/mergetime.git, sha: f6a7b8c900069999999999999999999999999999, authored_date: "2026-10-28T11:00:00Z", committed_date: "2026-10-28T11:00:00Z", is_merge: true}
+    # 407's, collected with no committer date at all.
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/commit, unique_key: "c:mt-407", repository: https://bitbucket.org/acme/mergetime.git, sha: 0a1b2c3d00070000000000000000000000000000, authored_date: "2026-10-30T10:00:00Z", committed_date: null, is_merge: true}
+    # 409's, older than its request — as are 409's own other candidates.
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/commit, unique_key: "c:mt-409", repository: https://bitbucket.org/acme/mergetime.git, sha: 0b2c3d4e00090000000000000000000000000000, authored_date: "2026-10-22T10:00:00Z", committed_date: "2026-10-22T10:00:00Z", is_merge: true}
+    # 410's, for the request whose creation date is unusable.
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/commit, unique_key: "c:mt-410", repository: https://bitbucket.org/acme/mergetime.git, sha: 1c2d3e4f00100000000000000000000000000000, authored_date: "2026-10-16T10:00:00Z", committed_date: "2026-10-16T10:00:00Z", is_merge: true}
+    # 412's, collected — so only the DECLINED state keeps it from dating that
+    # request.
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/commit, unique_key: "c:mt-412", repository: https://bitbucket.org/acme/mergetime.git, sha: e5f6071800120000000000000000000000000000, authored_date: "2026-10-04T10:00:00Z", committed_date: "2026-10-04T10:00:00Z", is_merge: true}
+    # The cross-repository guard, and 408's ONLY candidate: the prefix 408
+    # reports exists in another repository and nowhere in its own. Resolution
+    # must stay inside the request's repository, so 408 stays undated — one
+    # matched row either way, which a duplicate-producing guard would not give.
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/commit, unique_key: "c:ot-408", repository: https://bitbucket.org/acme/othertime.git, sha: bbbbccccdddd0000000000000000000000000000, authored_date: "2026-10-18T10:00:00Z", committed_date: "2026-10-18T10:00:00Z", is_merge: true}
+
+  bronze_bitbucket_cloud.pull_requests:
+    # Terminal entry on the 5th, merge commit on the 9th. The entry wins.
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/pull_request, unique_key: "bb-pr:401", repo_full_name: acme/mergetime, id: 401, author_display_name: Heidi Eta, author_account_id: heidi-acct, created_on: "2026-10-01T08:00:00Z", updated_on: "2026-10-09T13:00:00Z", merge_commit_sha: a1b2c3d40001}
+    # No activity at all: nothing accounts for the update, so the update is the
+    # silent state change and dates the merge.
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/pull_request, unique_key: "bb-pr:402", repo_full_name: acme/mergetime, id: 402, author_display_name: Heidi Eta, author_account_id: heidi-acct, created_on: "2026-10-10T08:00:00Z", updated_on: "2026-10-13T13:00:00Z", merge_commit_sha: b2c3d4e50002}
+    # A comment sits exactly at the update, so the update is explained and the
+    # merge commit is the closer record.
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/pull_request, unique_key: "bb-pr:403", repo_full_name: acme/mergetime, id: 403, author_display_name: Heidi Eta, author_account_id: heidi-acct, created_on: "2026-10-16T08:00:00Z", updated_on: "2026-10-19T15:00:00Z", merge_commit_sha: c3d4e5f60003}
+    # Same shape, but the merge commit predates the request, so it cannot be
+    # the landing and the update answers after all.
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/pull_request, unique_key: "bb-pr:404", repo_full_name: acme/mergetime, id: 404, author_display_name: Heidi Eta, author_account_id: heidi-acct, created_on: "2026-10-22T08:00:00Z", updated_on: "2026-10-25T13:00:00Z", merge_commit_sha: d4e5f6070004}
+    # Reported merge commit never collected: no corroboration, no close time.
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/pull_request, unique_key: "bb-pr:405", repo_full_name: acme/mergetime, id: 405, author_display_name: Heidi Eta, author_account_id: heidi-acct, created_on: "2026-10-26T08:00:00Z", updated_on: "2026-10-27T13:00:00Z", merge_commit_sha: aaaabbbbcccc}
+    # Reported prefix names two commits here: resolves nothing.
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/pull_request, unique_key: "bb-pr:406", repo_full_name: acme/mergetime, id: 406, author_display_name: Heidi Eta, author_account_id: heidi-acct, created_on: "2026-10-28T08:00:00Z", updated_on: "2026-10-29T13:00:00Z", merge_commit_sha: f6a7b8c90006}
+    # A comment explains the update, and the commit carries only an author date.
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/pull_request, unique_key: "bb-pr:407", repo_full_name: acme/mergetime, id: 407, author_display_name: Heidi Eta, author_account_id: heidi-acct, created_on: "2026-10-30T08:00:00Z", updated_on: "2026-10-31T15:00:00Z", merge_commit_sha: 0a1b2c3d0007}
+    # The prefix this one reports exists only in ANOTHER repository, so nothing
+    # here may date it. It has no activity either, so a scope leak would date it
+    # by its update and be plainly visible.
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/pull_request, unique_key: "bb-pr:408", repo_full_name: acme/mergetime, id: 408, author_display_name: Heidi Eta, author_account_id: heidi-acct, created_on: "2026-10-18T08:00:00Z", updated_on: "2026-10-18T13:00:00Z", merge_commit_sha: bbbbccccdddd}
+    # Every candidate precedes the request: the update is older than the
+    # creation and so is the merge commit. Nothing here can be the landing, and
+    # nothing may be invented from the creation either — the answer is no close
+    # time.
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/pull_request, unique_key: "bb-pr:409", repo_full_name: acme/mergetime, id: 409, author_display_name: Heidi Eta, author_account_id: heidi-acct, created_on: "2026-10-24T08:00:00Z", updated_on: "2026-10-23T13:00:00Z", merge_commit_sha: 0b2c3d4e0009}
+    # An unusable creation date must not erase a corroborated merge: the update
+    # still dates it. Such a request contributes no CREATION, so it raises the
+    # merged count without raising the created count.
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/pull_request, unique_key: "bb-pr:410", repo_full_name: acme/mergetime, id: 410, author_display_name: Heidi Eta, author_account_id: heidi-acct, created_on: "not-a-date", updated_on: "2026-10-21T13:00:00Z", merge_commit_sha: 1c2d3e4f0010}
+    # dave's pair, for the DECLINED guard. This one closed with an entry.
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/pull_request, unique_key: "bb-pr:411", repo_full_name: acme/mergetime, id: 411, state: DECLINED, author_display_name: Dave Delta, author_account_id: dave-acct, created_on: "2026-10-02T08:00:00Z", updated_on: "2026-10-03T13:00:00Z"}
+    # Declined with no entry, yet carrying a merge hash whose commit WAS
+    # collected. It must stay without a close time.
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/pull_request, unique_key: "bb-pr:412", repo_full_name: acme/mergetime, id: 412, state: DECLINED, author_display_name: Dave Delta, author_account_id: dave-acct, created_on: "2026-10-02T09:00:00Z", updated_on: "2026-10-05T13:00:00Z", merge_commit_sha: e5f607180012}
+
+  bronze_bitbucket_cloud.pull_request_activity:
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/activity, unique_key: "bb-ac:401", repo_full_name: acme/mergetime, pr_id: 401, update_state: MERGED, event_date: "2026-10-05T09:00:00Z"}
+    # Comments, not state changes: they explain an update without dating a merge.
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/activity, unique_key: "bb-ac:403", repo_full_name: acme/mergetime, pr_id: 403, kind: comment, update_state: null, event_date: "2026-10-19T15:00:00Z"}
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/activity, unique_key: "bb-ac:404", repo_full_name: acme/mergetime, pr_id: 404, kind: comment, update_state: null, event_date: "2026-10-25T13:00:00Z"}
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/activity, unique_key: "bb-ac:407", repo_full_name: acme/mergetime, pr_id: 407, kind: comment, update_state: null, event_date: "2026-10-31T15:00:00Z"}
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/activity, unique_key: "bb-ac:411", repo_full_name: acme/mergetime, pr_id: 411, update_state: DECLINED, event_date: "2026-10-03T09:00:00Z"}

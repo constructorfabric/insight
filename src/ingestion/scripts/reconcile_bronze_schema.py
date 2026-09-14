@@ -41,7 +41,7 @@ on the largest bronze tables.
 
 Used by both callers so the logic cannot diverge:
   * create-bronze-placeholders.sh runs it as a CLI (prod deploy Job).
-  * tests/e2e/lib/migration_applier.py imports reconcile() (test rig).
+  * tests/lib/insight_datapath/schema.py loads it and calls reconcile() (data-path suite).
 """
 
 from __future__ import annotations

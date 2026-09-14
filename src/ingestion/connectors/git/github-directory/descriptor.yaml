@@ -17,13 +17,15 @@ name: github-directory
 # republishes a nocode manifest only on descriptor-version drift, so the
 # previous manifest-only change was live in the repo and inert on every
 # cluster.
-version: "1.0.2"
+# 2.0.0 makes reconcile full-refresh the new roster and profile claims before
+# the persons seed projects them.
+version: "2.0.0"
 # `nocode` = declarative-manifest connector (connector.yaml published to the
 # Airbyte builder), as opposed to `cdk`. MUST be `nocode`/absent for
 # declarative connectors: reconcile only branches on `nocode` vs `cdk` — any
 # other value falls through to the cdk image path and fails with no image.
 type: nocode
-schedule: "30 3 * * *"       # 03:30 UTC daily
+schedule: "30 * * * *"
 workflow: sync               # Argo workflow template: ingestion-pipeline
 
 dbt_select: "tag:github-directory+"

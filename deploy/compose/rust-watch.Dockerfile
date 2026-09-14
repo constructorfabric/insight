@@ -1,4 +1,4 @@
-FROM rust:1.97-bookworm
+FROM rust:1.98-bookworm
 
 ARG CARGO_WATCH_VERSION=8.5.3
 

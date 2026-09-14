@@ -23,6 +23,7 @@ sources:
       - name: issues
       - name: projects_v2
       - name: issue_fields
+      - name: issue_links
       - name: project_fields
       - name: project_items
       - name: issue_types

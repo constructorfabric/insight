@@ -156,7 +156,7 @@ async fn the_admin_role_confers_no_visibility() -> TestResult {
     f.make_admin(admin).await?;
 
     assert!(
-        roles_repo::has_active_admin(&f.db, f.tenant, admin).await?,
+        roles_repo::has_active_role(&f.db, f.tenant, admin, roles_repo::ADMIN_ROLE_ID).await?,
         "the fixture really did grant the admin role"
     );
     assert!(

@@ -1,0 +1,45 @@
+# Derived from the bronze_bitbucket_cloud DDL snapshot. Array/object fields
+# land in bronze as JSON strings (the staging models toString() them), so they
+# are typed string here.
+schemas:
+  bronze_bitbucket_cloud.pull_requests:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      tenant_id: { type: [string, "null"] }
+      source_id: { type: [string, "null"] }
+      unique_key: { type: [string, "null"] }
+      data_source: { type: [string, "null"] }
+      collected_at: { type: [string, "null"] }
+      id: { type: [integer, "null"] }
+      repo_full_name: { type: [string, "null"] }
+      title: { type: [string, "null"] }
+      state: { type: [string, "null"] }
+      draft: { type: [boolean, "null"] }
+      author_uuid: { type: [string, "null"] }
+      author_display_name: { type: [string, "null"] }
+      created_on: { type: [string, "null"] }
+      updated_on: { type: [string, "null"] }
+      merge_commit_sha: { type: [string, "null"] }
+      closed_by_uuid: { type: [string, "null"] }
+      source_branch: { type: [string, "null"] }
+      source_commit_sha: { type: [string, "null"] }
+      destination_branch: { type: [string, "null"] }
+      comment_count: { type: [integer, "null"] }
+      task_count: { type: [integer, "null"] }
+      description: { type: [string, "null"] }
+      destination_commit_sha: { type: [string, "null"] }
+      participants: { type: [string, "null"] }
+      author_account_id: { type: [string, "null"] }
+      author_nickname: { type: [string, "null"] }
+      closed_by_account_id: { type: [string, "null"] }
+      closed_by_display_name: { type: [string, "null"] }
+      source_repo_full_name: { type: [string, "null"] }
+      destination_repo_full_name: { type: [string, "null"] }
+      close_source_branch: { type: [boolean, "null"] }
+      reason: { type: [string, "null"] }
+      _airbyte_raw_id: { type: string }
+      _airbyte_extracted_at: { type: string, format: date-time }
+      _airbyte_meta: { type: string }
+      _airbyte_generation_id: { type: integer }

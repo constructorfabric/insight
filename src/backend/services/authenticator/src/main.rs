@@ -7,7 +7,7 @@
 //! (`cf-gears-api-gateway`, the HTTP-server framework every gear runs on — NOT
 //! the Insight platform api-gateway service that the nginx edge replaces); the
 //! authenticator functionality is [`gear::AuthenticatorGear`] (`rest` +
-//! `stateful`). Its `/auth/*` and `/internal/authz` endpoints are `.public()`
+//! `stateful`). Its `/auth/*` and `/internal/authz` endpoints are `.anonymous().exposed()`
 //! — the credential is the session cookie, checked in the handler.
 //!
 //! # Usage
@@ -33,6 +33,7 @@ mod issuers;
 mod janitor;
 mod jwt;
 mod local_client;
+mod mcp_oauth;
 mod oidc;
 mod ratelimit;
 mod refresher;
@@ -108,7 +109,14 @@ async fn main() -> Result<()> {
     }
 
     match cli.command.unwrap_or(Commands::Run) {
-        Commands::Run => run_server(config).await,
+        Commands::Run => {
+            let resource = &config.opentelemetry.resource;
+            insight_log_context::init_identity_from_resource(
+                &resource.service_name,
+                &resource.attributes,
+            );
+            run_server(config).await
+        }
         Commands::Check => {
             // Loading + parsing the config already validated its shape.
             println!("configuration OK");
@@ -119,11 +127,21 @@ async fn main() -> Result<()> {
     }
 }
 
-/// Print the authenticator `OpenAPI` document as pretty JSON. Offline — see
+/// Print the authenticator `OpenAPI` document in canonical JSON. Offline — see
 /// [`api::openapi_document`]. No config or backends are touched, and no logging
 /// subscriber is initialized on this path, so stdout stays pure JSON.
 fn print_openapi() -> Result<()> {
     let doc = api::openapi_document()?;
-    println!("{}", serde_json::to_string_pretty(&doc)?);
+    print!("{}", insight_openapi::canonical_json(&doc)?);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn committed_openapi_document_is_current() -> anyhow::Result<()> {
+        let doc = super::api::openapi_document()?;
+        insight_openapi::check_committed(&doc, env!("CARGO_MANIFEST_DIR"), env!("CARGO_PKG_NAME"))?;
+        Ok(())
+    }
 }

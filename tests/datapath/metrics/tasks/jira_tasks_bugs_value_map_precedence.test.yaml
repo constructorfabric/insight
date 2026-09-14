@@ -1,0 +1,109 @@
+spec_version: 1
+description: >
+  Task Delivery - `tasks.bugs_fixed` for JIRA, and the exact conditions under
+  which an operator's value-map row is allowed to beat the shared name lists.
+
+  Bronze issue types flow through the Jira type dimension into
+  `silver.class_task_issuetypes`, where `issue_kind` prefers the operator's
+  live map row and only then falls back to the name lists; gold counts a
+  closure as a fixed bug when that kind says `bug`. Unlike GitHub, the map
+  keys on the NORMALIZED TYPE NAME (lower/trim of the untranslated name),
+  because Jira mints a distinct type id per project while the name is what
+  recurs. The map row wins only while it is alive: `is_deleted = 0` and
+  `valid_from` not in the future.
+
+  Carol closes five issues, one per branch of that matrix. `Bug` carries a
+  live map row saying `other`, so the map overrules the name list and the
+  issue counts as a non-bug. `Mapped Custom` is a name no list knows, but a
+  live row says `bug`, so it counts as a bug. `Regression` has a row saying
+  `other`, but the row is deleted, so the name-list fallback claims it as a
+  bug. `Future Custom` has a row saying `bug` that starts in 2030, so it is
+  ignored and no list knows the name — the issue stays `unknown`. `Unmapped
+  Custom` has no row and no list knows it — `unknown` too, the safety net for
+  a new type, so both count in tasks.closed only.
+
+  Two bugs and one non-bug out of five closures is the only total all five
+  branches produce together, and each wrong branch moves it in a distinct
+  direction: a name list beating the live row makes bugs three, a lost custom
+  mapping makes it one, a dead row honoured makes it one (and non-bug two),
+  a future row honoured makes it three.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/alice
+    - $ref: ../templates/people.yaml#/templates/bob
+    - $ref: ../templates/people.yaml#/templates/carol
+
+  bronze_jira.jira_user:
+    - $ref: ../templates/jira_task.yaml#/templates/carol_user
+
+  bronze_jira.jira_statuses:
+    - $ref: ../templates/jira_task.yaml#/templates/status_open
+    - $ref: ../templates/jira_task.yaml#/templates/status_in_progress
+    - $ref: ../templates/jira_task.yaml#/templates/status_closed
+
+  bronze_jira.jira_fields:
+    - $ref: ../templates/jira_task.yaml#/templates/field_status
+    - $ref: ../templates/jira_task.yaml#/templates/field_assignee
+    - $ref: ../templates/jira_task.yaml#/templates/field_issuetype
+
+  config.task_value_map:
+    # Live row overruling the bug-name list.
+    - { $ref: ../templates/jira_task.yaml#/templates/jira_value_type, value_id: bug, unique_key: jira-value-type-bug, canonical_value: other, value_display: Bug }
+    # Live row claiming a name no list knows.
+    - { $ref: ../templates/jira_task.yaml#/templates/jira_value_type, value_id: mapped custom, unique_key: jira-value-type-mapped, canonical_value: bug, value_display: Mapped Custom }
+    # Deleted row: says `other`, must be ignored in favour of the name list.
+    - { $ref: ../templates/jira_task.yaml#/templates/jira_value_type, value_id: regression, unique_key: jira-value-type-regression, canonical_value: other, value_display: Regression, is_deleted: 1 }
+    # Future row: says `bug`, must be ignored; no list knows `Future Custom`.
+    - { $ref: ../templates/jira_task.yaml#/templates/jira_value_type, value_id: future custom, unique_key: jira-value-type-future, canonical_value: bug, value_display: Future Custom, valid_from: "2099-01-01 00:00:00.000" }
+
+  bronze_jira.jira_issuetypes:
+    - $ref: ../templates/jira_task.yaml#/templates/issuetype_bug
+    - $ref: ../templates/jira_task.yaml#/templates/issuetype_regression
+    - { $ref: ../templates/jira_task.yaml#/templates/jira_issuetype, unique_key: jira-test-issuetype-10011, id: "10011", name: Mapped Custom, untranslatedName: Mapped Custom }
+    - { $ref: ../templates/jira_task.yaml#/templates/jira_issuetype, unique_key: jira-test-issuetype-10012, id: "10012", name: Unmapped Custom, untranslatedName: Unmapped Custom }
+    - { $ref: ../templates/jira_task.yaml#/templates/jira_issuetype, unique_key: jira-test-issuetype-10013, id: "10013", name: Future Custom, untranslatedName: Future Custom }
+
+  bronze_jira.jira_issue:
+    - $ref: ../templates/jira_task.yaml#/templates/jira_issue
+      id: JVM-1
+      jira_id: JVM-1
+      unique_key: jira-test-JVM-1
+      id_readable: JVM1
+      created: "2026-03-01T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10000","name":"Bug"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
+    - $ref: ../templates/jira_task.yaml#/templates/jira_issue
+      id: JVM-2
+      jira_id: JVM-2
+      unique_key: jira-test-JVM-2
+      id_readable: JVM2
+      created: "2026-03-01T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10011","name":"Mapped Custom"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
+    - $ref: ../templates/jira_task.yaml#/templates/jira_issue
+      id: JVM-3
+      jira_id: JVM-3
+      unique_key: jira-test-JVM-3
+      id_readable: JVM3
+      created: "2026-03-01T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10003","name":"Regression"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
+    - $ref: ../templates/jira_task.yaml#/templates/jira_issue
+      id: JVM-4
+      jira_id: JVM-4
+      unique_key: jira-test-JVM-4
+      id_readable: JVM4
+      created: "2026-03-01T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10012","name":"Unmapped Custom"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
+    - $ref: ../templates/jira_task.yaml#/templates/jira_issue
+      id: JVM-5
+      jira_id: JVM-5
+      unique_key: jira-test-JVM-5
+      id_readable: JVM5
+      created: "2026-03-01T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10013","name":"Future Custom"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
+
+  bronze_jira.jira_issue_history:
+    - { $ref: ../templates/jira_task.yaml#/templates/closed_hist, id_readable: JVM1, changelog_id: "51000", unique_key: jira-test-JVM1-51000, created_at: "2026-03-25T14:00:00.000+0000", author_account_id: carol-jira-acct }
+    - { $ref: ../templates/jira_task.yaml#/templates/closed_hist, id_readable: JVM2, changelog_id: "51001", unique_key: jira-test-JVM2-51001, created_at: "2026-03-25T14:00:00.000+0000", author_account_id: carol-jira-acct }
+    - { $ref: ../templates/jira_task.yaml#/templates/closed_hist, id_readable: JVM3, changelog_id: "51002", unique_key: jira-test-JVM3-51002, created_at: "2026-03-25T14:00:00.000+0000", author_account_id: carol-jira-acct }
+    - { $ref: ../templates/jira_task.yaml#/templates/closed_hist, id_readable: JVM4, changelog_id: "51003", unique_key: jira-test-JVM4-51003, created_at: "2026-03-25T14:00:00.000+0000", author_account_id: carol-jira-acct }
+    - { $ref: ../templates/jira_task.yaml#/templates/closed_hist, id_readable: JVM5, changelog_id: "51004", unique_key: jira-test-JVM5-51004, created_at: "2026-03-25T14:00:00.000+0000", author_account_id: carol-jira-acct }

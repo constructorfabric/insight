@@ -1,0 +1,144 @@
+{"pull_request": 101, "repo": "example/api", "author": "cleo@example.com", "opened_at": "2025-06-05 10:45:00", "merged_at": "2025-06-06 04:45:00"}
+{"pull_request": 102, "repo": "example/web", "author": "cleo@example.com", "opened_at": "2025-06-07 14:00:00", "merged_at": "2025-06-09 09:00:00"}
+{"pull_request": 103, "repo": "example/api", "author": "bea@example.com", "opened_at": "2025-06-12 10:45:00", "merged_at": "2025-06-14 06:45:00"}
+{"pull_request": 104, "repo": "example/web", "author": "bea@example.com", "opened_at": "2025-06-14 08:30:00", "merged_at": "2025-06-14 23:30:00"}
+{"pull_request": 105, "repo": "example/web", "author": "bea@example.com", "opened_at": "2025-06-19 09:30:00", "merged_at": null}
+{"pull_request": 106, "repo": "example/web", "author": "cleo@example.com", "opened_at": "2025-06-20 15:30:00", "merged_at": "2025-06-22 14:30:00"}
+{"pull_request": 107, "repo": "example/web", "author": "dev@example.com", "opened_at": "2025-06-25 08:30:00", "merged_at": "2025-06-27 03:30:00"}
+{"pull_request": 108, "repo": "example/web", "author": "ada@example.com", "opened_at": "2025-06-27 08:15:00", "merged_at": "2025-06-28 07:15:00"}
+{"pull_request": 109, "repo": "example/api", "author": "cleo@example.com", "opened_at": "2025-07-03 12:00:00", "merged_at": "2025-07-04 16:00:00"}
+{"pull_request": 110, "repo": "example/api", "author": "cleo@example.com", "opened_at": "2025-07-04 10:45:00", "merged_at": "2025-07-05 09:45:00"}
+{"pull_request": 111, "repo": "example/api", "author": "ada@example.com", "opened_at": "2025-07-05 12:30:00", "merged_at": "2025-07-07 06:30:00"}
+{"pull_request": 112, "repo": "example/api", "author": "cleo@example.com", "opened_at": "2025-07-06 15:45:00", "merged_at": null}
+{"pull_request": 113, "repo": "example/web", "author": "cleo@example.com", "opened_at": "2025-07-09 08:30:00", "merged_at": null}
+{"pull_request": 114, "repo": "example/api", "author": "ada@example.com", "opened_at": "2025-07-18 18:45:00", "merged_at": "2025-07-19 18:45:00"}
+{"pull_request": 115, "repo": "example/web", "author": "ada@example.com", "opened_at": "2025-07-19 10:30:00", "merged_at": "2025-07-21 05:30:00"}
+{"pull_request": 116, "repo": "example/web", "author": "ada@example.com", "opened_at": "2025-07-20 16:30:00", "merged_at": "2025-07-21 05:30:00"}
+{"pull_request": 117, "repo": "example/web", "author": "dev@example.com", "opened_at": "2025-07-21 17:00:00", "merged_at": "2025-07-23 13:00:00"}
+{"pull_request": 118, "repo": "example/api", "author": "cleo@example.com", "opened_at": "2025-07-25 14:45:00", "merged_at": "2025-07-27 15:45:00"}
+{"pull_request": 119, "repo": "example/web", "author": "cleo@example.com", "opened_at": "2025-07-26 08:30:00", "merged_at": null}
+{"pull_request": 120, "repo": "example/api", "author": "ada@example.com", "opened_at": "2025-07-31 15:15:00", "merged_at": "2025-08-02 05:15:00"}
+{"pull_request": 121, "repo": "example/web", "author": "dev@example.com", "opened_at": "2025-08-03 11:15:00", "merged_at": "2025-08-04 18:15:00"}
+{"pull_request": 122, "repo": "example/api", "author": "cleo@example.com", "opened_at": "2025-08-04 09:00:00", "merged_at": "2025-08-06 04:00:00"}
+{"pull_request": 123, "repo": "example/api", "author": "bea@example.com", "opened_at": "2025-08-06 09:00:00", "merged_at": "2025-08-06 12:00:00"}
+{"pull_request": 124, "repo": "example/web", "author": "dev@example.com", "opened_at": "2025-08-08 16:30:00", "merged_at": "2025-08-09 21:30:00"}
+{"pull_request": 125, "repo": "example/web", "author": "dev@example.com", "opened_at": "2025-08-10 10:15:00", "merged_at": "2025-08-10 22:15:00"}
+{"pull_request": 126, "repo": "example/api", "author": "dev@example.com", "opened_at": "2025-08-11 12:45:00", "merged_at": "2025-08-11 16:45:00"}
+{"pull_request": 127, "repo": "example/api", "author": "cleo@example.com", "opened_at": "2025-08-14 15:15:00", "merged_at": "2025-08-16 02:15:00"}
+{"pull_request": 128, "repo": "example/api", "author": "dev@example.com", "opened_at": "2025-08-15 09:45:00", "merged_at": "2025-08-16 03:45:00"}
+{"pull_request": 129, "repo": "example/web", "author": "bea@example.com", "opened_at": "2025-08-21 11:30:00", "merged_at": "2025-08-22 08:30:00"}
+{"pull_request": 130, "repo": "example/web", "author": "cleo@example.com", "opened_at": "2025-08-23 11:15:00", "merged_at": "2025-08-25 08:15:00"}
+{"pull_request": 131, "repo": "example/api", "author": "dev@example.com", "opened_at": "2025-08-27 08:15:00", "merged_at": null}
+{"pull_request": 132, "repo": "example/web", "author": "cleo@example.com", "opened_at": "2025-09-10 13:45:00", "merged_at": "2025-09-10 21:45:00"}
+{"pull_request": 133, "repo": "example/api", "author": "ada@example.com", "opened_at": "2025-09-14 18:00:00", "merged_at": "2025-09-15 18:00:00"}
+{"pull_request": 134, "repo": "example/api", "author": "cleo@example.com", "opened_at": "2025-09-21 08:00:00", "merged_at": "2025-09-22 05:00:00"}
+{"pull_request": 135, "repo": "example/web", "author": "dev@example.com", "opened_at": "2025-10-01 12:45:00", "merged_at": null}
+{"pull_request": 136, "repo": "example/api", "author": "cleo@example.com", "opened_at": "2025-10-03 18:15:00", "merged_at": null}
+{"pull_request": 137, "repo": "example/api", "author": "ada@example.com", "opened_at": "2025-10-04 09:15:00", "merged_at": "2025-10-05 22:15:00"}
+{"pull_request": 138, "repo": "example/web", "author": "bea@example.com", "opened_at": "2025-10-06 09:15:00", "merged_at": null}
+{"pull_request": 139, "repo": "example/api", "author": "dev@example.com", "opened_at": "2025-10-09 18:15:00", "merged_at": null}
+{"pull_request": 140, "repo": "example/api", "author": "bea@example.com", "opened_at": "2025-10-15 15:45:00", "merged_at": "2025-10-15 23:45:00"}
+{"pull_request": 141, "repo": "example/web", "author": "dev@example.com", "opened_at": "2025-10-20 08:00:00", "merged_at": "2025-10-21 04:00:00"}
+{"pull_request": 142, "repo": "example/api", "author": "ada@example.com", "opened_at": "2025-10-21 11:45:00", "merged_at": "2025-10-22 01:45:00"}
+{"pull_request": 143, "repo": "example/web", "author": "cleo@example.com", "opened_at": "2025-10-23 18:45:00", "merged_at": "2025-10-25 11:45:00"}
+{"pull_request": 144, "repo": "example/api", "author": "dev@example.com", "opened_at": "2025-10-27 18:30:00", "merged_at": null}
+{"pull_request": 145, "repo": "example/api", "author": "cleo@example.com", "opened_at": "2025-11-04 15:00:00", "merged_at": "2025-11-05 23:00:00"}
+{"pull_request": 146, "repo": "example/web", "author": "ada@example.com", "opened_at": "2025-11-05 13:30:00", "merged_at": "2025-11-05 20:30:00"}
+{"pull_request": 147, "repo": "example/web", "author": "cleo@example.com", "opened_at": "2025-11-06 16:45:00", "merged_at": "2025-11-07 07:45:00"}
+{"pull_request": 148, "repo": "example/web", "author": "bea@example.com", "opened_at": "2025-11-07 12:15:00", "merged_at": "2025-11-08 05:15:00"}
+{"pull_request": 149, "repo": "example/api", "author": "ada@example.com", "opened_at": "2025-11-09 10:00:00", "merged_at": "2025-11-11 08:00:00"}
+{"pull_request": 150, "repo": "example/api", "author": "bea@example.com", "opened_at": "2025-11-10 17:15:00", "merged_at": "2025-11-11 13:15:00"}
+{"pull_request": 151, "repo": "example/api", "author": "bea@example.com", "opened_at": "2025-11-15 15:15:00", "merged_at": "2025-11-17 05:15:00"}
+{"pull_request": 152, "repo": "example/web", "author": "ada@example.com", "opened_at": "2025-11-24 09:30:00", "merged_at": "2025-11-25 10:30:00"}
+{"pull_request": 153, "repo": "example/web", "author": "cleo@example.com", "opened_at": "2025-11-29 15:45:00", "merged_at": "2025-11-30 21:45:00"}
+{"pull_request": 154, "repo": "example/web", "author": "cleo@example.com", "opened_at": "2025-12-03 16:15:00", "merged_at": "2025-12-04 19:15:00"}
+{"pull_request": 155, "repo": "example/api", "author": "bea@example.com", "opened_at": "2025-12-14 16:00:00", "merged_at": null}
+{"pull_request": 156, "repo": "example/web", "author": "dev@example.com", "opened_at": "2025-12-15 09:15:00", "merged_at": "2025-12-15 18:15:00"}
+{"pull_request": 157, "repo": "example/api", "author": "cleo@example.com", "opened_at": "2025-12-17 08:45:00", "merged_at": "2025-12-18 11:45:00"}
+{"pull_request": 158, "repo": "example/web", "author": "bea@example.com", "opened_at": "2025-12-20 18:15:00", "merged_at": "2025-12-22 03:15:00"}
+{"pull_request": 159, "repo": "example/web", "author": "dev@example.com", "opened_at": "2025-12-21 08:30:00", "merged_at": null}
+{"pull_request": 160, "repo": "example/web", "author": "bea@example.com", "opened_at": "2025-12-22 17:15:00", "merged_at": "2025-12-24 12:15:00"}
+{"pull_request": 161, "repo": "example/web", "author": "bea@example.com", "opened_at": "2025-12-25 11:15:00", "merged_at": null}
+{"pull_request": 162, "repo": "example/api", "author": "dev@example.com", "opened_at": "2025-12-26 15:00:00", "merged_at": null}
+{"pull_request": 163, "repo": "example/api", "author": "cleo@example.com", "opened_at": "2025-12-27 14:30:00", "merged_at": "2025-12-29 10:30:00"}
+{"pull_request": 164, "repo": "example/web", "author": "bea@example.com", "opened_at": "2025-12-31 16:00:00", "merged_at": "2026-01-01 04:00:00"}
+{"pull_request": 165, "repo": "example/web", "author": "bea@example.com", "opened_at": "2026-01-03 09:15:00", "merged_at": null}
+{"pull_request": 166, "repo": "example/api", "author": "cleo@example.com", "opened_at": "2026-01-21 14:15:00", "merged_at": "2026-01-21 16:15:00"}
+{"pull_request": 167, "repo": "example/web", "author": "cleo@example.com", "opened_at": "2026-01-22 18:30:00", "merged_at": null}
+{"pull_request": 168, "repo": "example/api", "author": "dev@example.com", "opened_at": "2026-01-24 14:00:00", "merged_at": null}
+{"pull_request": 169, "repo": "example/web", "author": "bea@example.com", "opened_at": "2026-01-26 10:00:00", "merged_at": "2026-01-27 10:00:00"}
+{"pull_request": 170, "repo": "example/api", "author": "dev@example.com", "opened_at": "2026-01-31 13:00:00", "merged_at": "2026-02-01 20:00:00"}
+{"pull_request": 171, "repo": "example/api", "author": "ada@example.com", "opened_at": "2026-02-02 17:00:00", "merged_at": "2026-02-04 22:00:00"}
+{"pull_request": 172, "repo": "example/web", "author": "cleo@example.com", "opened_at": "2026-02-07 09:15:00", "merged_at": "2026-02-09 02:15:00"}
+{"pull_request": 173, "repo": "example/api", "author": "dev@example.com", "opened_at": "2026-02-11 13:30:00", "merged_at": "2026-02-12 17:30:00"}
+{"pull_request": 174, "repo": "example/web", "author": "ada@example.com", "opened_at": "2026-02-14 17:00:00", "merged_at": "2026-02-15 11:00:00"}
+{"pull_request": 175, "repo": "example/api", "author": "dev@example.com", "opened_at": "2026-02-17 13:45:00", "merged_at": null}
+{"pull_request": 176, "repo": "example/api", "author": "bea@example.com", "opened_at": "2026-02-18 09:00:00", "merged_at": "2026-02-19 13:00:00"}
+{"pull_request": 177, "repo": "example/api", "author": "bea@example.com", "opened_at": "2026-02-24 11:30:00", "merged_at": "2026-02-25 23:30:00"}
+{"pull_request": 178, "repo": "example/api", "author": "bea@example.com", "opened_at": "2026-03-05 09:30:00", "merged_at": null}
+{"pull_request": 179, "repo": "example/api", "author": "bea@example.com", "opened_at": "2026-03-22 08:45:00", "merged_at": "2026-03-22 15:45:00"}
+{"pull_request": 180, "repo": "example/web", "author": "bea@example.com", "opened_at": "2026-03-23 14:45:00", "merged_at": "2026-03-24 03:45:00"}
+{"pull_request": 181, "repo": "example/api", "author": "bea@example.com", "opened_at": "2026-03-28 14:00:00", "merged_at": "2026-03-30 04:00:00"}
+{"pull_request": 182, "repo": "example/api", "author": "ada@example.com", "opened_at": "2026-04-01 15:30:00", "merged_at": null}
+{"pull_request": 183, "repo": "example/web", "author": "dev@example.com", "opened_at": "2026-04-03 09:30:00", "merged_at": "2026-04-04 10:30:00"}
+{"pull_request": 184, "repo": "example/api", "author": "bea@example.com", "opened_at": "2026-04-09 16:00:00", "merged_at": "2026-04-11 19:00:00"}
+{"pull_request": 185, "repo": "example/web", "author": "dev@example.com", "opened_at": "2026-04-12 18:00:00", "merged_at": "2026-04-14 15:00:00"}
+{"pull_request": 186, "repo": "example/api", "author": "dev@example.com", "opened_at": "2026-04-14 14:30:00", "merged_at": "2026-04-17 00:30:00"}
+{"pull_request": 187, "repo": "example/web", "author": "dev@example.com", "opened_at": "2026-04-15 15:45:00", "merged_at": "2026-04-17 03:45:00"}
+{"pull_request": 188, "repo": "example/web", "author": "bea@example.com", "opened_at": "2026-04-19 13:15:00", "merged_at": "2026-04-19 15:15:00"}
+{"pull_request": 189, "repo": "example/api", "author": "ada@example.com", "opened_at": "2026-04-21 13:00:00", "merged_at": "2026-04-21 22:00:00"}
+{"pull_request": 190, "repo": "example/api", "author": "cleo@example.com", "opened_at": "2026-04-27 13:15:00", "merged_at": null}
+{"pull_request": 191, "repo": "example/api", "author": "cleo@example.com", "opened_at": "2026-04-28 08:15:00", "merged_at": "2026-04-30 14:15:00"}
+{"pull_request": 192, "repo": "example/web", "author": "dev@example.com", "opened_at": "2026-04-30 18:45:00", "merged_at": "2026-05-02 07:45:00"}
+{"pull_request": 193, "repo": "example/web", "author": "ada@example.com", "opened_at": "2026-05-01 11:15:00", "merged_at": "2026-05-01 14:15:00"}
+{"pull_request": 194, "repo": "example/api", "author": "dev@example.com", "opened_at": "2026-05-02 14:00:00", "merged_at": null}
+{"pull_request": 195, "repo": "example/api", "author": "bea@example.com", "opened_at": "2026-05-03 09:00:00", "merged_at": "2026-05-04 17:00:00"}
+{"pull_request": 196, "repo": "example/web", "author": "ada@example.com", "opened_at": "2026-05-06 16:00:00", "merged_at": null}
+{"pull_request": 197, "repo": "example/api", "author": "ada@example.com", "opened_at": "2026-05-09 18:30:00", "merged_at": null}
+{"pull_request": 198, "repo": "example/api", "author": "bea@example.com", "opened_at": "2026-05-10 10:45:00", "merged_at": "2026-05-10 16:45:00"}
+{"pull_request": 199, "repo": "example/api", "author": "ada@example.com", "opened_at": "2026-05-13 15:00:00", "merged_at": "2026-05-13 23:00:00"}
+{"pull_request": 200, "repo": "example/web", "author": "dev@example.com", "opened_at": "2026-05-14 09:00:00", "merged_at": "2026-05-16 01:00:00"}
+{"pull_request": 201, "repo": "example/api", "author": "cleo@example.com", "opened_at": "2026-05-20 17:45:00", "merged_at": null}
+{"pull_request": 202, "repo": "example/api", "author": "dev@example.com", "opened_at": "2026-05-21 10:30:00", "merged_at": "2026-05-23 11:30:00"}
+{"pull_request": 203, "repo": "example/api", "author": "cleo@example.com", "opened_at": "2026-05-22 15:00:00", "merged_at": "2026-05-23 10:00:00"}
+{"pull_request": 204, "repo": "example/api", "author": "cleo@example.com", "opened_at": "2026-05-23 14:15:00", "merged_at": "2026-05-23 16:15:00"}
+{"pull_request": 205, "repo": "example/api", "author": "dev@example.com", "opened_at": "2026-05-28 11:15:00", "merged_at": null}
+{"pull_request": 206, "repo": "example/api", "author": "bea@example.com", "opened_at": "2026-05-29 09:15:00", "merged_at": "2026-05-31 21:15:00"}
+{"pull_request": 207, "repo": "example/web", "author": "dev@example.com", "opened_at": "2026-06-01 08:30:00", "merged_at": "2026-06-01 16:30:00"}
+{"pull_request": 208, "repo": "example/web", "author": "dev@example.com", "opened_at": "2026-06-07 12:30:00", "merged_at": null}
+{"pull_request": 209, "repo": "example/api", "author": "bea@example.com", "opened_at": "2026-06-11 09:15:00", "merged_at": "2026-06-13 14:15:00"}
+{"pull_request": 210, "repo": "example/api", "author": "cleo@example.com", "opened_at": "2026-06-13 14:00:00", "merged_at": "2026-06-14 08:00:00"}
+{"pull_request": 211, "repo": "example/web", "author": "cleo@example.com", "opened_at": "2026-06-15 08:45:00", "merged_at": null}
+{"pull_request": 212, "repo": "example/api", "author": "ada@example.com", "opened_at": "2026-06-16 16:15:00", "merged_at": "2026-06-17 21:15:00"}
+{"pull_request": 213, "repo": "example/api", "author": "ada@example.com", "opened_at": "2026-06-26 16:15:00", "merged_at": null}
+{"pull_request": 214, "repo": "example/web", "author": "ada@example.com", "opened_at": "2026-06-27 08:45:00", "merged_at": null}
+{"pull_request": 215, "repo": "example/web", "author": "cleo@example.com", "opened_at": "2026-06-28 17:00:00", "merged_at": "2026-06-30 05:00:00"}
+{"pull_request": 216, "repo": "example/web", "author": "bea@example.com", "opened_at": "2026-06-29 15:00:00", "merged_at": "2026-07-02 03:00:00"}
+{"pull_request": 217, "repo": "example/web", "author": "bea@example.com", "opened_at": "2026-06-30 16:00:00", "merged_at": "2026-07-02 07:00:00"}
+{"pull_request": 218, "repo": "example/api", "author": "cleo@example.com", "opened_at": "2026-07-04 08:00:00", "merged_at": "2026-07-05 09:00:00"}
+{"pull_request": 219, "repo": "example/api", "author": "bea@example.com", "opened_at": "2026-07-18 18:45:00", "merged_at": "2026-07-20 03:45:00"}
+{"pull_request": 220, "repo": "example/web", "author": "bea@example.com", "opened_at": "2026-07-19 08:45:00", "merged_at": null}
+{"pull_request": 221, "repo": "example/web", "author": "dev@example.com", "opened_at": "2026-07-25 14:45:00", "merged_at": "2026-07-26 18:45:00"}
+{"pull_request": 222, "repo": "example/api", "author": "ada@example.com", "opened_at": "2026-07-26 13:30:00", "merged_at": "2026-07-27 15:30:00"}
+{"pull_request": 223, "repo": "example/web", "author": "cleo@example.com", "opened_at": "2026-07-28 11:30:00", "merged_at": "2026-07-30 10:30:00"}
+{"pull_request": 224, "repo": "example/api", "author": "bea@example.com", "opened_at": "2026-07-29 16:45:00", "merged_at": "2026-07-30 21:45:00"}
+{"pull_request": 225, "repo": "example/api", "author": "cleo@example.com", "opened_at": "2026-07-31 11:45:00", "merged_at": "2026-08-01 12:45:00"}
+{"pull_request": 226, "repo": "example/web", "author": "ada@example.com", "opened_at": "2026-08-01 11:45:00", "merged_at": "2026-08-02 03:45:00"}
+{"pull_request": 227, "repo": "example/web", "author": "bea@example.com", "opened_at": "2026-08-02 18:30:00", "merged_at": null}
+{"pull_request": 228, "repo": "example/api", "author": "dev@example.com", "opened_at": "2026-08-03 18:45:00", "merged_at": "2026-08-04 03:45:00"}
+{"pull_request": 229, "repo": "example/web", "author": "cleo@example.com", "opened_at": "2026-08-04 10:45:00", "merged_at": "2026-08-05 06:45:00"}
+{"pull_request": 230, "repo": "example/web", "author": "ada@example.com", "opened_at": "2026-08-08 13:15:00", "merged_at": "2026-08-09 13:15:00"}
+{"pull_request": 231, "repo": "example/web", "author": "ada@example.com", "opened_at": "2026-08-10 10:00:00", "merged_at": "2026-08-11 14:00:00"}
+{"pull_request": 232, "repo": "example/web", "author": "ada@example.com", "opened_at": "2026-08-11 13:00:00", "merged_at": "2026-08-13 15:00:00"}
+{"pull_request": 233, "repo": "example/api", "author": "bea@example.com", "opened_at": "2026-08-12 17:00:00", "merged_at": null}
+{"pull_request": 234, "repo": "example/web", "author": "bea@example.com", "opened_at": "2026-08-14 18:00:00", "merged_at": "2026-08-16 21:00:00"}
+{"pull_request": 235, "repo": "example/web", "author": "bea@example.com", "opened_at": "2026-08-16 14:00:00", "merged_at": "2026-08-17 06:00:00"}
+{"pull_request": 236, "repo": "example/api", "author": "ada@example.com", "opened_at": "2026-08-18 16:30:00", "merged_at": "2026-08-19 20:30:00"}
+{"pull_request": 237, "repo": "example/web", "author": "ada@example.com", "opened_at": "2026-08-21 12:15:00", "merged_at": "2026-08-22 06:15:00"}
+{"pull_request": 238, "repo": "example/api", "author": "bea@example.com", "opened_at": "2026-08-22 16:00:00", "merged_at": "2026-08-23 22:00:00"}
+{"pull_request": 239, "repo": "example/web", "author": "ada@example.com", "opened_at": "2026-08-24 09:30:00", "merged_at": "2026-08-24 22:30:00"}
+{"pull_request": 240, "repo": "example/api", "author": "ada@example.com", "opened_at": "2026-08-29 08:15:00", "merged_at": null}
+{"pull_request": 241, "repo": "example/api", "author": "ada@example.com", "opened_at": "2026-08-31 12:00:00", "merged_at": null}
+{"pull_request": 242, "repo": "example/web", "author": "ada@example.com", "opened_at": "2026-09-04 09:45:00", "merged_at": "2026-09-04 13:45:00"}
+{"pull_request": 243, "repo": "example/web", "author": "cleo@example.com", "opened_at": "2026-09-06 15:15:00", "merged_at": "2026-09-09 01:15:00"}
+{"pull_request": 244, "repo": "example/api", "author": "cleo@example.com", "opened_at": "2026-09-07 15:45:00", "merged_at": null}

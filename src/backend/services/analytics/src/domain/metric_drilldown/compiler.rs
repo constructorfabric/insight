@@ -7,9 +7,14 @@ use crate::domain::metric_definitions::definition::{MetricInputRole, RatioDenomi
 
 use super::cursor::CursorKey;
 use super::dto::{
-    EvidenceInput, EvidenceQueryRow, MetricDrilldownFilter, ValidatedMetricDrilldown,
+    EvidenceInput, EvidenceQueryRow, MetricDrilldownColumn, MetricDrilldownEntity,
+    MetricDrilldownFilter, ValidatedMetricDrilldown,
 };
 use super::error::config_error;
+use super::presentation::presentation_columns;
+use super::sort::{
+    MetricDrilldownSort, MetricDrilldownSortDirection, PERSON_KEY, column_sql, empty_flag,
+};
 
 /// Person evidence is keyed by the source identity, so a person's rows are the
 /// rows of every identity the live map resolves to them; tenant evidence
@@ -20,10 +25,12 @@ pub fn compile_query(
     if matches!(req.plan.definition.spec, ComputationSpec::Ratio { .. }) {
         return compile_ratio_query(req);
     }
-    Ok(compile_value_query(req))
+    compile_value_query(req)
 }
 
-fn compile_value_query(req: &ValidatedMetricDrilldown) -> (String, Vec<String>) {
+fn compile_value_query(
+    req: &ValidatedMetricDrilldown,
+) -> Result<(String, Vec<String>), CanonicalError> {
     let (database, table) = req.plan.relation.table_ref();
     let mut params = Vec::new();
     let measures = req
@@ -38,6 +45,14 @@ fn compile_value_query(req: &ValidatedMetricDrilldown) -> (String, Vec<String>) 
         params.push(input.measure_key.clone());
         params.push(input.role.as_db().to_owned());
     }
+    let columns = presentation_columns(
+        &req.plan,
+        &req.selection.filters,
+        &req.selection.display_dimensions,
+        &req.selection.entity,
+    );
+    let order = OrderKey::build(&columns, &req.selection.sort, false)?;
+    let person = person_projection(&req.selection.entity, &columns, &mut params);
     params.extend([
         req.tenant_id.to_string(),
         req.plan.source_key.clone(),
@@ -52,37 +67,123 @@ fn compile_value_query(req: &ValidatedMetricDrilldown) -> (String, Vec<String>) 
             .map(|input| input.measure_key.clone()),
     );
     let filter_sql = filter_predicate(&req.selection.filters, &mut params);
-    let cursor_sql = cursor_predicate(
+    let search = search_predicate(
+        req.selection.search.as_deref(),
+        &columns,
+        false,
+        &person,
+        &req.search_person_ids,
+        &mut params,
+    );
+    let cursor = order.cursor_predicate(
         req.cursor.as_ref(),
-        "AND",
         "role, toString(evidence.metric_date), ifNull(toString(evidence.observed_at), ''), evidence.source_key, evidence.measure_key, evidence.record_id, evidence.record_kind, ifNull(evidence.subject_key, ''), evidence.entity_id",
         &mut params,
     );
+    let narrowing_sql = conjunction("AND", &[search, cursor]);
     let limit = req.limit + 1;
     let tenant =
         crate::domain::metric_results::compiler::tenant_predicate(req.enforce_tenant_scope);
+    let order_by = order.order_by(&[
+        "role",
+        "metric_date",
+        "ifNull(toString(observed_at), '')",
+        "source_key",
+        "measure_key",
+        "record_id",
+        "record_kind",
+        "ifNull(subject_key, '')",
+        "entity_id",
+    ]);
     let sql = format!(
-        "WITH {role_expr} AS role \
+        "WITH {role_expr} AS role, {sort_source} \
          SELECT role, evidence.entity_id AS entity_id, toString(evidence.metric_date) AS metric_date, ifNull(toString(evidence.observed_at), '') AS observed_at, \
                 evidence.source_key, evidence.measure_key, evidence.record_id, evidence.record_kind, \
                 evidence.contribution, CAST(NULL AS Nullable(Float64)) AS numerator, \
                 CAST(NULL AS Nullable(Float64)) AS denominator, \
                 ifNull(evidence.subject_key, '') AS subject_key, \
-                toJSONString(evidence.dimensions) AS dimensions_json, evidence.details \
-         FROM {database}.{table} AS evidence \
+                toJSONString(evidence.dimensions) AS dimensions_json, evidence.details, \
+                {person} AS person_id, {projection} \
+         FROM {database}.{table} AS evidence{person_join} \
          WHERE {tenant} AND evidence.source_key = ? AND evidence.entity_type = ? AND {entity} \
            AND evidence.metric_date >= toDate(?) AND evidence.metric_date <= toDate(?) \
-           AND evidence.measure_key IN ({measures}){filter_sql}{cursor_sql} \
-         ORDER BY role, metric_date, ifNull(toString(observed_at), ''), source_key, measure_key, record_id, record_kind, ifNull(subject_key, ''), entity_id \
+           AND evidence.measure_key IN ({measures}){filter_sql}{narrowing_sql} \
+         ORDER BY {order_by} \
          LIMIT {limit}",
+        person = person.expression,
+        person_join = person.join,
+        sort_source = order.source(),
+        projection = order.projection(),
     );
-    (sql, params)
+    Ok((sql, params))
 }
 
-fn compile_ratio_query(
+/// The `person` column's identity resolution, and nothing more: a selection
+/// that does not present the column pays for no join.
+struct PersonProjection {
+    expression: String,
+    join: String,
+}
+
+impl PersonProjection {
+    /// A query that resolves nobody: the column is not presented, so there is
+    /// no join to read and no identity to compare against.
+    fn unresolved() -> Self {
+        Self {
+            expression: "''".to_owned(),
+            join: String::new(),
+        }
+    }
+
+    fn resolves(&self) -> bool {
+        !self.join.is_empty()
+    }
+}
+
+/// INVARIANT: both identity relations are views, so an unnarrowed join reads
+/// every account and every email the tenant holds. The roster the selection
+/// already binds is what bounds them.
+fn person_projection(
+    entity: &MetricDrilldownEntity,
+    columns: &[MetricDrilldownColumn],
+    params: &mut Vec<String>,
+) -> PersonProjection {
+    let MetricDrilldownEntity::Persons { ids } = entity else {
+        return PersonProjection::unresolved();
+    };
+    if ids.is_empty() || !columns.iter().any(|column| column.key == PERSON_KEY) {
+        return PersonProjection::unresolved();
+    }
+
+    let roster = vec!["?"; ids.len()].join(", ");
+    params.extend(ids.iter().cloned());
+    params.extend(ids.iter().cloned());
+
+    PersonProjection {
+        expression: resolved_person_expr().to_owned(),
+        join: format!(
+            " LEFT JOIN (SELECT source_type, source_id, account_id, person_id \
+                  FROM {account_map} WHERE person_id IN ({roster})) AS account_map \
+                  ON account_map.source_type = evidence.account_source_type \
+                 AND account_map.source_id = {account_source_uuid} \
+                 AND account_map.account_id = {account_id} \
+              LEFT JOIN (SELECT email, person_id FROM {person_map} \
+                  WHERE person_id IN ({roster})) AS person_map \
+                  ON person_map.email = evidence.entity_id",
+            account_map = crate::domain::metric_results::compiler::ACCOUNT_ASSIGNMENT_RELATION,
+            person_map = crate::domain::metric_results::compiler::PERSON_MAP_RELATION,
+            account_source_uuid =
+                crate::domain::metric_results::compiler::account_source_uuid_expr("evidence"),
+            account_id = crate::domain::metric_results::compiler::account_id_expr("evidence"),
+        ),
+    }
+}
+
+/// The two halves of the division and how the denominator adds up — a plan
+/// missing any of the three describes a ratio nothing can compute.
+fn ratio_halves(
     req: &ValidatedMetricDrilldown,
-) -> Result<(String, Vec<String>), CanonicalError> {
-    let (database, table) = req.plan.relation.table_ref();
+) -> Result<(&EvidenceInput, &EvidenceInput, &'static str), CanonicalError> {
     let numerator = req
         .plan
         .inputs
@@ -110,6 +211,21 @@ fn compile_ratio_query(
             "toFloat64(uniqExactIf(collapsed.subject_key, collapsed.measure_key = ? AND collapsed.subject_key IS NOT NULL))"
         }
     };
+    Ok((numerator, denominator, denominator_expr))
+}
+
+fn compile_ratio_query(
+    req: &ValidatedMetricDrilldown,
+) -> Result<(String, Vec<String>), CanonicalError> {
+    let (database, table) = req.plan.relation.table_ref();
+    let (numerator, denominator, denominator_expr) = ratio_halves(req)?;
+    let columns = presentation_columns(
+        &req.plan,
+        &req.selection.filters,
+        &req.selection.display_dimensions,
+        &req.selection.entity,
+    );
+    let order = OrderKey::build(&columns, &req.selection.sort, true)?;
     let mut params = vec![
         numerator.measure_key.clone(),
         denominator.measure_key.clone(),
@@ -125,21 +241,43 @@ fn compile_ratio_query(
         denominator.measure_key.clone(),
     ]);
     let filter_sql = filter_predicate(&req.selection.filters, &mut params);
-    let cursor_sql = cursor_predicate(
+    // Both terms read the aggregates the subquery emits, so both wait for the
+    // outer level rather than joining the filters inside.
+    let search = search_predicate(
+        req.selection.search.as_deref(),
+        &columns,
+        true,
+        &PersonProjection::unresolved(),
+        &[],
+        &mut params,
+    );
+    let cursor = order.cursor_predicate(
         req.cursor.as_ref(),
-        "WHERE",
         "role, metric_date, observed_at, source_key, measure_key, record_id, record_kind, subject_key, entity_id",
         &mut params,
     );
+    let outer_sql = where_clause(&[search, cursor]);
     let limit = req.limit + 1;
     let tenant =
         crate::domain::metric_results::compiler::tenant_predicate(req.enforce_tenant_scope);
+    let order_by = order.order_by(&[
+        "role",
+        "metric_date",
+        "observed_at",
+        "source_key",
+        "measure_key",
+        "record_id",
+        "record_kind",
+        "subject_key",
+        "entity_id",
+    ]);
     // INVARIANT: a flagged measure collapses identities before the daily rollup
     // sums it, or the drilldown explains a ratio the tile never showed.
     let collapsed = collapsed_evidence_value(numerator, denominator);
     let sql = format!(
-        "SELECT * FROM (\
-            SELECT 'value' AS role, '' AS entity_id, toString(collapsed.metric_date) AS metric_date, \
+        "WITH {sort_source} \
+         SELECT *, {projection} FROM (\
+            SELECT 'value' AS role, '' AS entity_id, '' AS person_id, toString(collapsed.metric_date) AS metric_date, \
                    '' AS observed_at, \
                    any(collapsed.source_key) AS source_key, '' AS measure_key, \
                    toString(collapsed.metric_date) AS record_id, 'daily_ratio' AS record_kind, \
@@ -170,9 +308,11 @@ fn compile_ratio_query(
                          {resolved_person}\
             ) AS collapsed \
             GROUP BY collapsed.metric_date\
-         ){cursor_sql} \
-         ORDER BY role, metric_date, observed_at, source_key, measure_key, record_id, record_kind, subject_key, entity_id \
+         ){outer_sql} \
+         ORDER BY {order_by} \
          LIMIT {limit}",
+        sort_source = order.source(),
+        projection = order.projection(),
         account_map_relation = crate::domain::metric_results::compiler::ACCOUNT_ASSIGNMENT_RELATION,
         person_map_relation = crate::domain::metric_results::compiler::PERSON_MAP_RELATION,
         account_source_uuid =
@@ -292,28 +432,172 @@ fn filter_predicate(filters: &[MetricDrilldownFilter], params: &mut Vec<String>)
     sql
 }
 
-fn cursor_predicate(
-    cursor: Option<&CursorKey>,
-    keyword: &str,
-    key_tuple: &str,
+/// The sorted cell, bound once. The flag, the key, the cursor comparison and
+/// the ORDER BY all read it, and the fallback expression behind it is long
+/// enough that repeating it would dominate the query text.
+///
+/// INVARIANT: the bound term carries no placeholder. It leads the query, so
+/// one would take the first bound parameter and shift every other by one —
+/// column keys reach it as inlined literals for exactly this reason.
+const SORT_SOURCE: &str = "sort_source";
+
+/// The order the rows travel in, and everything that has to agree with it: the
+/// ORDER BY, the columns the cursor replays, and how a replayed key re-enters
+/// the comparison.
+///
+/// INVARIANT: one direction for the whole key. Blank cells are pushed last by
+/// the leading flag rather than by a second direction, so the next page stays a
+/// single tuple comparison instead of a per-column chain.
+struct OrderKey {
+    source: String,
+    flag: String,
+    key: String,
+    binding: &'static str,
+    direction: MetricDrilldownSortDirection,
+}
+
+impl OrderKey {
+    /// INVARIANT: an unresolved sort has no ordering key to fall back on. A
+    /// constant one would still be replayed against a cursor minted by a real
+    /// key, and the two leading tuple elements would decide the comparison
+    /// before the tiebreakers were reached — serving a page twice or dropping
+    /// the rest of the result set, silently. Validation refuses such a sort
+    /// first, so reaching here is a fault, not a degradation.
+    fn build(
+        columns: &[MetricDrilldownColumn],
+        sort: &MetricDrilldownSort,
+        ratio: bool,
+    ) -> Result<Self, CanonicalError> {
+        let sql = columns
+            .iter()
+            .find(|column| column.key == sort.key)
+            .and_then(|column| column_sql(&column.key, column.r#type, ratio))
+            .ok_or_else(config_error)?;
+        Ok(Self {
+            flag: empty_flag(SORT_SOURCE, sort.direction),
+            key: sql.order_key(SORT_SOURCE),
+            binding: sql.cursor_binding(),
+            source: sql.as_text().to_owned(),
+            direction: sort.direction,
+        })
+    }
+
+    /// The `WITH` term the rest of the key reads through.
+    fn source(&self) -> String {
+        format!("{source} AS {SORT_SOURCE}", source = self.source)
+    }
+
+    fn projection(&self) -> String {
+        format!(
+            "{flag} AS sort_flag, {key} AS sort_key, toString(sort_key) AS sort_value",
+            flag = self.flag,
+            key = self.key,
+        )
+    }
+
+    fn order_by(&self, tiebreakers: &[&str]) -> String {
+        let direction = self.direction.as_sql();
+        let mut sql = format!("sort_flag {direction}, sort_key {direction}");
+        for tiebreaker in tiebreakers {
+            let _ = write!(sql, ", {tiebreaker} {direction}");
+        }
+        sql
+    }
+
+    fn cursor_predicate(
+        &self,
+        cursor: Option<&CursorKey>,
+        key_tuple: &str,
+        params: &mut Vec<String>,
+    ) -> Option<String> {
+        let cursor = cursor?;
+        // INVARIANT: bound in the order the tuple names the columns.
+        params.push(u8::from(cursor.sort_flag).to_string());
+        params.push(cursor.sort_value.clone());
+        params.extend([
+            cursor.role.clone(),
+            cursor.metric_date.clone(),
+            cursor.observed_at.clone(),
+            cursor.source_key.clone(),
+            cursor.measure_key.clone(),
+            cursor.record_id.clone(),
+            cursor.record_kind.clone(),
+            cursor.subject_key.clone(),
+            cursor.entity_id.clone(),
+        ]);
+        Some(format!(
+            "tuple({flag}, {key}, {key_tuple}) {operator} \
+             tuple(toUInt8(?), {binding}, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            flag = self.flag,
+            key = self.key,
+            operator = self.direction.cursor_operator(),
+            binding = self.binding,
+        ))
+    }
+}
+
+/// A free-text needle against every column the reader can see, read exactly as
+/// the cell is rendered.
+///
+/// INVARIANT: the UTF-8 form of the comparison. A name or a commit subject is
+/// not always ASCII, and the ASCII form would fold only half of one.
+///
+/// `Who` is the one column the row does not carry as text — the query holds an
+/// identity and the reader sees a name — so it is matched by the ids whose
+/// names the caller's needle already picked out. Leaving it out would make a
+/// visible column silently unsearchable.
+fn search_predicate(
+    search: Option<&str>,
+    columns: &[MetricDrilldownColumn],
+    ratio: bool,
+    person: &PersonProjection,
+    person_ids: &[String],
     params: &mut Vec<String>,
-) -> String {
-    let Some(cursor) = cursor else {
+) -> Option<String> {
+    let needle = search?;
+    let mut matches = Vec::new();
+    for column in columns
+        .iter()
+        .filter_map(|column| column_sql(&column.key, column.r#type, ratio))
+    {
+        params.push(needle.to_owned());
+        matches.push(format!(
+            "positionCaseInsensitiveUTF8({}, ?) > 0",
+            column.as_text()
+        ));
+    }
+    if person.resolves() && !person_ids.is_empty() {
+        let placeholders = vec!["?"; person_ids.len()].join(", ");
+        params.extend(person_ids.iter().cloned());
+        matches.push(format!(
+            "{expression} IN ({placeholders})",
+            expression = person.expression
+        ));
+    }
+    if matches.is_empty() {
+        return None;
+    }
+    Some(format!("({})", matches.join(" OR ")))
+}
+
+fn conjunction(keyword: &str, predicates: &[Option<String>]) -> String {
+    let mut sql = String::new();
+    for predicate in predicates.iter().flatten() {
+        let _ = write!(sql, " {keyword} {predicate}");
+    }
+    sql
+}
+
+fn where_clause(predicates: &[Option<String>]) -> String {
+    let present = predicates.iter().flatten().collect::<Vec<_>>();
+    let Some((first, rest)) = present.split_first() else {
         return String::new();
     };
-    // INVARIANT: bound in the order `key_tuple` names the columns.
-    params.extend([
-        cursor.role.clone(),
-        cursor.metric_date.clone(),
-        cursor.observed_at.clone(),
-        cursor.source_key.clone(),
-        cursor.measure_key.clone(),
-        cursor.record_id.clone(),
-        cursor.record_kind.clone(),
-        cursor.subject_key.clone(),
-        cursor.entity_id.clone(),
-    ]);
-    format!(" {keyword} tuple({key_tuple}) > tuple(?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    let mut sql = format!(" WHERE {first}");
+    for predicate in rest {
+        let _ = write!(sql, " AND {predicate}");
+    }
+    sql
 }
 
 fn role_expression(inputs: &[EvidenceInput]) -> String {
@@ -364,6 +648,8 @@ mod tests {
         );
         let mut request = validated(plan);
         request.cursor = Some(CursorKey {
+            sort_flag: false,
+            sort_value: "2026-07-01".to_owned(),
             entity_id: "person@example.com".to_owned(),
             role: "value".to_owned(),
             metric_date: "2026-07-01".to_owned(),
@@ -400,7 +686,9 @@ mod tests {
                 "repository",   // filter: indexOf twice, then values
                 "repository",
                 "org/repo",
-                "value", // cursor tuple, complete ordering key
+                "0", // cursor tuple: emptiness flag, then the sorted cell
+                "2026-07-01",
+                "value", // then the tiebreakers, the complete ordering key
                 "2026-07-01",
                 "",
                 "git",
@@ -607,12 +895,173 @@ mod tests {
         let (sql, _) =
             compile_query(&request).unwrap_or_else(|error| panic!("query must compile: {error}"));
 
-        assert!(sql.contains("ORDER BY role, metric_date"));
+        assert!(sql.contains("ORDER BY sort_flag DESC, sort_key DESC, role DESC"));
         assert!(
-            sql.trim_end()
-                .contains("ifNull(subject_key, ''), entity_id"),
+            sql.contains("ifNull(subject_key, '') DESC, entity_id DESC"),
             "identity is the last ordering column"
         );
+    }
+
+    fn commit_plan() -> ValidatedMetricDrilldown {
+        validated(plan(
+            ComputationSpec::Sum {
+                value: input(MetricInputRole::Value, "commit_count"),
+            },
+            vec![EvidenceInput {
+                role: MetricInputRole::Value,
+                alias_collapse: AliasCollapse::Sum,
+                measure_key: "commit_count".to_owned(),
+                presentation: commit_presentation(),
+            }],
+        ))
+    }
+
+    fn roster_plan(ids: &[Uuid]) -> ValidatedMetricDrilldown {
+        let mut request = commit_plan();
+        request.selection.entity = MetricDrilldownEntity::Persons {
+            ids: ids.iter().map(Uuid::to_string).collect(),
+        };
+        request
+    }
+
+    #[test]
+    fn a_roster_resolves_who_through_identity_narrowed_to_that_roster() {
+        let (sql, params) = compile_query(&roster_plan(&[TEST_PERSON]))
+            .unwrap_or_else(|error| panic!("query must compile: {error}"));
+
+        assert!(sql.contains("AS person_id"));
+        assert!(
+            sql.contains("FROM identity.account_assignment WHERE person_id IN (?)"),
+            "the account side reads the roster, not the tenant: {sql}"
+        );
+        assert!(
+            sql.contains("FROM identity.person_map WHERE person_id IN (?)"),
+            "the email side reads the roster, not the tenant: {sql}"
+        );
+        assert_eq!(sql.matches('?').count(), params.len());
+    }
+
+    // One person's own drilldown already knows whose records it shows, so it
+    // pays for neither the column nor the joins behind it.
+    #[test]
+    fn one_person_pays_for_no_identity_join() {
+        let (sql, params) = compile_query(&commit_plan())
+            .unwrap_or_else(|error| panic!("query must compile: {error}"));
+
+        assert!(sql.contains("'' AS person_id"));
+        assert!(!sql.contains("AS account_map"));
+        assert!(!sql.contains("AS person_map"));
+        assert_eq!(sql.matches('?').count(), params.len());
+    }
+
+    #[test]
+    fn an_ascending_sort_leads_the_key_with_the_emptiness_flag() {
+        let mut request = commit_plan();
+        request.selection.sort = MetricDrilldownSort {
+            key: "ref".to_owned(),
+            direction: MetricDrilldownSortDirection::Asc,
+        };
+        let (sql, params) =
+            compile_query(&request).unwrap_or_else(|error| panic!("query must compile: {error}"));
+
+        assert!(sql.contains("ORDER BY sort_flag ASC, sort_key ASC, role ASC"));
+        assert!(
+            sql.contains("evidence.details['ref']"),
+            "the order reads the same cell the row projection does: {sql}"
+        );
+        assert!(
+            sql.contains("= '') AS sort_flag"),
+            "ascending pushes the blank cells past the filled ones: {sql}"
+        );
+        assert_eq!(sql.matches('?').count(), params.len());
+    }
+
+    #[test]
+    fn a_descending_page_walks_the_cursor_the_other_way() {
+        let mut request = commit_plan();
+        request.cursor = Some(CursorKey {
+            sort_flag: true,
+            sort_value: "2026-07-01".to_owned(),
+            entity_id: "person@example.com".to_owned(),
+            role: "value".to_owned(),
+            metric_date: "2026-07-01".to_owned(),
+            observed_at: String::new(),
+            source_key: "git".to_owned(),
+            measure_key: "commit_count".to_owned(),
+            record_id: "abc".to_owned(),
+            record_kind: "commit".to_owned(),
+            subject_key: String::new(),
+        });
+        let (sql, params) =
+            compile_query(&request).unwrap_or_else(|error| panic!("query must compile: {error}"));
+
+        assert!(sql.contains("< tuple(toUInt8(?)"));
+        assert!(params.contains(&"1".to_owned()), "the flag is replayed too");
+        assert_eq!(sql.matches('?').count(), params.len());
+    }
+
+    #[test]
+    fn a_search_reads_every_column_the_reader_can_see() {
+        let mut request = commit_plan();
+        request.selection.search = Some("fix".to_owned());
+        let (sql, params) =
+            compile_query(&request).unwrap_or_else(|error| panic!("query must compile: {error}"));
+
+        assert_eq!(
+            params.iter().filter(|param| *param == "fix").count(),
+            sql.matches("positionCaseInsensitiveUTF8").count(),
+            "one bound needle per searched column"
+        );
+        assert!(sql.contains("evidence.details['title']"));
+        assert!(sql.contains("toString(evidence.metric_date)"));
+        assert_eq!(sql.matches('?').count(), params.len());
+    }
+
+    // The reader searches a column they can see. `Who` shows a name and the
+    // row carries an identity, so the needle reaches the query as the people
+    // it already picked out.
+    #[test]
+    fn a_search_reaches_the_who_column_through_the_people_it_names() {
+        let mut request = roster_plan(&[TEST_PERSON]);
+        request.selection.search = Some("ada".to_owned());
+        request.search_person_ids = vec![TEST_PERSON.to_string()];
+        let (sql, params) =
+            compile_query(&request).unwrap_or_else(|error| panic!("query must compile: {error}"));
+
+        assert!(
+            sql.contains("OR multiIf(coalesce(account_map.account_id"),
+            "the needle's people join the same OR chain: {sql}"
+        );
+        assert_eq!(sql.matches('?').count(), params.len());
+    }
+
+    // Nothing to compare against, so nothing is added — and never a bare `IN
+    // ()`, which is a syntax error rather than an empty result.
+    #[test]
+    fn a_search_matching_nobody_adds_no_identity_term() {
+        let mut request = roster_plan(&[TEST_PERSON]);
+        request.selection.search = Some("nobody".to_owned());
+        let (sql, params) =
+            compile_query(&request).unwrap_or_else(|error| panic!("query must compile: {error}"));
+
+        assert!(!sql.contains("OR multiIf(coalesce(account_map.account_id"));
+        assert_eq!(sql.matches('?').count(), params.len());
+    }
+
+    #[test]
+    fn a_ratio_narrows_and_orders_outside_its_aggregation() {
+        let mut request = ratio_plan(AliasCollapse::Sum, RatioDenominatorAggregation::Sum);
+        request.selection.search = Some("7".to_owned());
+        request.selection.sort = MetricDrilldownSort {
+            key: "numerator".to_owned(),
+            direction: MetricDrilldownSortDirection::Desc,
+        };
+        let (sql, params) =
+            compile_query(&request).unwrap_or_else(|error| panic!("query must compile: {error}"));
+
+        assert!(sql.contains(") WHERE (positionCaseInsensitiveUTF8"));
+        assert!(sql.contains("ORDER BY sort_flag DESC, sort_key DESC"));
+        assert_eq!(sql.matches('?').count(), params.len());
     }
 
     fn ratio_plan(

@@ -12,6 +12,8 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 
+const REDACTED_SECRET: &str = "<redacted>";
+
 /// Policy for IdPs that issue no refresh token (some withhold `offline_access`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -52,7 +54,7 @@ pub enum ResolveBy {
 
 /// One host-keyed issuer entry: the issuer and its client registration —
 /// the only per-realm settings; everything else in [`IdpConfig`] is global.
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
 pub struct HostIdpConfig {
     /// OIDC issuer URL of this host's realm (discovery root; byte-exact match
@@ -70,8 +72,22 @@ pub struct HostIdpConfig {
     pub default_tenant_id: String,
 }
 
+// SAFETY: `client_secret` is the confidential-client credential — a `?config`
+// in any log line must render a marker, never the value (insight#2488 AC-4).
+impl std::fmt::Debug for HostIdpConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HostIdpConfig")
+            .field("issuer_url", &self.issuer_url)
+            .field("client_id", &self.client_id)
+            .field("client_secret", &REDACTED_SECRET)
+            .field("redirect_uri", &self.redirect_uri)
+            .field("default_tenant_id", &self.default_tenant_id)
+            .finish()
+    }
+}
+
 /// OIDC provider settings and the background-refresh knobs (§4.1 `idp.*`).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct IdpConfig {
     /// OIDC issuer URL — discovery root (`{issuer}/.well-known/openid-configuration`).
@@ -139,6 +155,38 @@ pub struct IdpConfig {
     /// Jitter (± this window) applied to due-times when WRITTEN to the
     /// schedule, so sessions do not herd after a deploy or Redis restore (G5).
     pub refresh_due_jitter_seconds: u64,
+}
+
+// SAFETY: `client_secret` is the confidential-client credential — a `?config`
+// in any log line must render a marker, never the value (insight#2488 AC-4).
+impl std::fmt::Debug for IdpConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IdpConfig")
+            .field("issuer_url", &self.issuer_url)
+            .field("client_id", &self.client_id)
+            .field("client_secret", &REDACTED_SECRET)
+            .field("tenant_claim", &self.tenant_claim)
+            .field("source_type", &self.source_type)
+            .field("external_id_claim", &self.external_id_claim)
+            .field("resolve_by", &self.resolve_by)
+            .field("provision_on_login", &self.provision_on_login)
+            .field("default_tenant_id", &self.default_tenant_id)
+            .field("extra_ca_cert_path", &self.extra_ca_cert_path)
+            .field("hosts", &self.hosts)
+            .field("refresh_enabled", &self.refresh_enabled)
+            .field(
+                "refresh_safety_margin_seconds",
+                &self.refresh_safety_margin_seconds,
+            )
+            .field("refresh_concurrency", &self.refresh_concurrency)
+            .field("no_refresh_token_policy", &self.no_refresh_token_policy)
+            .field("refresher_tick_seconds", &self.refresher_tick_seconds)
+            .field(
+                "refresh_due_jitter_seconds",
+                &self.refresh_due_jitter_seconds,
+            )
+            .finish()
+    }
 }
 
 impl Default for IdpConfig {
@@ -296,6 +344,28 @@ impl Default for RateLimitConfig {
     }
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct McpOAuthConfig {
+    pub enabled: bool,
+    pub public_url: String,
+    pub allow_insecure_private_network: bool,
+    pub authorization_code_ttl_seconds: u64,
+    pub access_token_ttl_seconds: u64,
+}
+
+impl Default for McpOAuthConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            public_url: String::new(),
+            allow_insecure_private_network: false,
+            authorization_code_ttl_seconds: 300,
+            access_token_ttl_seconds: 600,
+        }
+    }
+}
+
 /// The authenticator gear configuration. Deserialized from
 /// `gears.authenticator.config`.
 #[derive(Debug, Clone, Deserialize)]
@@ -402,6 +472,8 @@ pub struct AuthenticatorConfig {
 
     /// Service-token issuance (§10 G1): the second listener + registry.
     pub service_tokens: ServiceTokensConfig,
+
+    pub mcp_oauth: McpOAuthConfig,
 }
 
 /// Deserialize `oidc_scopes` from either a YAML list (`["openid","email"]`) or a
@@ -482,6 +554,7 @@ impl Default for AuthenticatorConfig {
             bind_addr: "0.0.0.0:8083".to_owned(),
             idp: IdpConfig::default(),
             service_tokens: ServiceTokensConfig::default(),
+            mcp_oauth: McpOAuthConfig::default(),
         }
     }
 }
@@ -506,17 +579,7 @@ impl AuthenticatorConfig {
             "session_ttl_seconds must be <= session_absolute_lifetime_seconds"
         );
 
-        // Required fields (all injected per-deployment). `idp.client_secret` is
-        // intentionally optional — public OIDC clients authenticate with PKCE
-        // and no secret. `redis_url` is checked in SessionManager::connect.
-        for (name, value) in [
-            ("gateway_issuer", &self.gateway_issuer),
-            ("redirect_uri", &self.redirect_uri),
-            ("signing_keys_path", &self.signing_keys_path),
-            ("identity_url", &self.identity_url),
-        ] {
-            anyhow::ensure!(!value.trim().is_empty(), "{name} is required (empty)");
-        }
+        validate_required_fields(self)?;
 
         // Only the external-id mode reads these. Requiring them in email mode
         // would make an install name a source_type its login never asks about,
@@ -622,8 +685,64 @@ impl AuthenticatorConfig {
                 );
             }
         }
+
+        validate_mcp_oauth(&self.mcp_oauth)?;
         Ok(())
     }
+}
+
+fn validate_required_fields(config: &AuthenticatorConfig) -> anyhow::Result<()> {
+    for (name, value) in [
+        ("gateway_issuer", &config.gateway_issuer),
+        ("redirect_uri", &config.redirect_uri),
+        ("signing_keys_path", &config.signing_keys_path),
+        ("identity_url", &config.identity_url),
+    ] {
+        anyhow::ensure!(!value.trim().is_empty(), "{name} is required (empty)");
+    }
+    Ok(())
+}
+
+fn validate_mcp_oauth(config: &McpOAuthConfig) -> anyhow::Result<()> {
+    if !config.enabled {
+        return Ok(());
+    }
+
+    let public_url = url::Url::parse(&config.public_url)
+        .map_err(|error| anyhow::anyhow!("mcp_oauth.public_url is invalid: {error}"))?;
+    let private_http = public_url.scheme() == "http"
+        && config.allow_insecure_private_network
+        && public_url
+            .host_str()
+            .and_then(|host| host.parse::<std::net::IpAddr>().ok())
+            .is_some_and(|address| match address {
+                std::net::IpAddr::V4(address) => address.is_private(),
+                std::net::IpAddr::V6(address) => (address.segments()[0] & 0xfe00) == 0xfc00,
+            });
+    anyhow::ensure!(
+        matches!(public_url.scheme(), "https" | "http")
+            && (public_url.scheme() == "https"
+                || matches!(
+                    public_url.host_str(),
+                    Some("localhost" | "127.0.0.1" | "::1")
+                )
+                || private_http)
+            && public_url.path() == "/"
+            && public_url.query().is_none()
+            && public_url.fragment().is_none()
+            && public_url.username().is_empty()
+            && public_url.password().is_none(),
+        "mcp_oauth.public_url must be an HTTPS origin or an allowed local HTTP origin"
+    );
+    anyhow::ensure!(
+        config.authorization_code_ttl_seconds > 0,
+        "mcp_oauth.authorization_code_ttl_seconds must be > 0"
+    );
+    anyhow::ensure!(
+        config.access_token_ttl_seconds > 0,
+        "mcp_oauth.access_token_ttl_seconds must be > 0"
+    );
+    Ok(())
 }
 
 #[cfg(test)]

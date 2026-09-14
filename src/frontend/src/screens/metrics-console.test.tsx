@@ -43,8 +43,6 @@ vi.mock("@/queries/custom-metrics", () => ({
   useCustomMetric: () => metricState,
 }));
 
-vi.mock("@/components/ui/sidebar", () => ({ SidebarTrigger: () => null }));
-
 // Stubs that actually invoke their callback props, so the screen's delete /
 // edit-open / create-success / update branches run in tests.
 vi.mock("@/components/widgets/metrics-console/metric-detail", () => ({
@@ -95,7 +93,7 @@ vi.mock("@/lib/metrics-console/metric-graph", async (importOriginal) => {
   return { ...actual, draftToGraph: (d: unknown) => d, graphToDraft: (g: unknown) => g };
 });
 
-import { MetricsConsoleScreen } from "./metrics-console";
+import { MetricsConsoleBody } from "./metrics-console";
 
 function summary(over: Partial<CustomMetricSummary> = {}): CustomMetricSummary {
   return {
@@ -138,16 +136,16 @@ beforeEach(() => {
   deleteMutate.mockClear();
 });
 
-describe("MetricsConsoleScreen", () => {
+describe("MetricsConsoleBody", () => {
   it("shows a spinner while the list is pending", () => {
     listState = { data: undefined, isPending: true, isError: false };
-    render(<MetricsConsoleScreen />);
+    render(<MetricsConsoleBody />);
     expect(screen.getByRole("status")).toBeInTheDocument();
   });
 
   it("shows an error alert when the list fails", () => {
     listState = { data: undefined, isPending: false, isError: true };
-    render(<MetricsConsoleScreen />);
+    render(<MetricsConsoleBody />);
     expect(
       screen.getByText("Failed to load custom metrics")
     ).toBeInTheDocument();
@@ -155,7 +153,7 @@ describe("MetricsConsoleScreen", () => {
 
   it("shows an empty-list hint and no selection when there are no metrics", () => {
     listState = { data: [], isPending: false, isError: false };
-    render(<MetricsConsoleScreen />);
+    render(<MetricsConsoleBody />);
     expect(
       screen.getByText("No custom metrics yet. Create one to get started.")
     ).toBeInTheDocument();
@@ -163,7 +161,7 @@ describe("MetricsConsoleScreen", () => {
   });
 
   it("selects a metric and renders its detail pane", async () => {
-    render(<MetricsConsoleScreen />);
+    render(<MetricsConsoleBody />);
     await userEvent.click(screen.getByText("Accepted lines"));
     expect(
       screen.getByText("detail:example.accepted_lines")
@@ -171,7 +169,7 @@ describe("MetricsConsoleScreen", () => {
   });
 
   it("creates a metric, then selects it and closes the dialog", async () => {
-    render(<MetricsConsoleScreen />);
+    render(<MetricsConsoleBody />);
     await userEvent.click(screen.getByRole("button", { name: /new metric/i }));
     expect(screen.getByText("editor:create")).toBeInTheDocument();
 
@@ -185,7 +183,7 @@ describe("MetricsConsoleScreen", () => {
   });
 
   it("deletes the selected metric and clears the selection", async () => {
-    render(<MetricsConsoleScreen />);
+    render(<MetricsConsoleBody />);
     await userEvent.click(screen.getByText("Accepted lines"));
     await userEvent.click(screen.getByText("stub-delete"));
     expect(deleteMutate).toHaveBeenCalledWith(
@@ -196,7 +194,7 @@ describe("MetricsConsoleScreen", () => {
   });
 
   it("opens the edit dialog and submits an update", async () => {
-    render(<MetricsConsoleScreen />);
+    render(<MetricsConsoleBody />);
     await userEvent.click(screen.getByText("Accepted lines"));
     await userEvent.click(screen.getByText("stub-edit"));
     expect(screen.getByText("editor:edit")).toBeInTheDocument();
@@ -210,7 +208,7 @@ describe("MetricsConsoleScreen", () => {
 
   it("shows a spinner in the edit dialog while the metric loads", async () => {
     metricState = { data: undefined, isError: false };
-    render(<MetricsConsoleScreen />);
+    render(<MetricsConsoleBody />);
     await userEvent.click(screen.getByText("Accepted lines"));
     await userEvent.click(screen.getByText("stub-edit"));
     expect(screen.getByRole("status")).toBeInTheDocument();
@@ -218,7 +216,7 @@ describe("MetricsConsoleScreen", () => {
 
   it("shows an error in the edit dialog when the metric fails to load", async () => {
     metricState = { data: undefined, isError: true };
-    render(<MetricsConsoleScreen />);
+    render(<MetricsConsoleBody />);
     await userEvent.click(screen.getByText("Accepted lines"));
     await userEvent.click(screen.getByText("stub-edit"));
     expect(screen.getByText("Failed to load this metric")).toBeInTheDocument();
@@ -226,9 +224,17 @@ describe("MetricsConsoleScreen", () => {
 
   it("surfaces a delete failure", () => {
     deleteState = { isError: true };
-    render(<MetricsConsoleScreen />);
+    render(<MetricsConsoleBody />);
     expect(
       screen.getByText("Could not delete the metric. Try again.")
     ).toBeInTheDocument();
+  });
+});
+
+describe("MetricsConsoleBody inside the portal", () => {
+  it("brings no shell header of its own", () => {
+    render(<MetricsConsoleBody />);
+
+    expect(screen.queryByRole("banner")).not.toBeInTheDocument();
   });
 });

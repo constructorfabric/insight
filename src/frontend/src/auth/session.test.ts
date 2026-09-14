@@ -27,6 +27,7 @@ describe("loadSession", () => {
         csrf_token: "csrf-1",
         expires_at: 1770000600,
         refresh_at: 1770000510,
+        experiments_enabled: true,
       }),
     });
 
@@ -43,6 +44,7 @@ describe("loadSession", () => {
       csrfToken: "csrf-1",
       expiresAt: 1770000600,
       refreshAt: 1770000510,
+      experimentsEnabled: true,
       impersonatorEmail: null,
     });
     const [url, init] = fetchMock().mock.calls[0];
@@ -68,8 +70,25 @@ describe("loadSession", () => {
       csrfToken: "csrf-1",
       expiresAt: 0,
       refreshAt: 0,
+      experimentsEnabled: false,
       impersonatorEmail: null,
     });
+  });
+
+  it("reads experiments_enabled as off unless it is literally true", async () => {
+    for (const wire of [undefined, "true", 1, null]) {
+      fetchMock().mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ csrf_token: "csrf-1", experiments_enabled: wire }),
+      });
+
+      await loadSession();
+
+      expect(
+        authStore.getSnapshot().session?.experimentsEnabled,
+        `wire value: ${String(wire)}`,
+      ).toBe(false);
+    }
   });
 
   it("surfaces impersonator_email from a view-as session (insight#1941)", async () => {

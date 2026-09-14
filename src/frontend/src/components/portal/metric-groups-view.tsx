@@ -7,7 +7,6 @@ import { GroupDrilldownSheet } from "@/components/widgets/dashboard/group-drilld
 import { IcNeedsAttention } from "@/components/widgets/dashboard/ic-needs-attention";
 import { PersonCoverage } from "@/components/widgets/dashboard/person-coverage";
 import { KpiTile } from "@/components/widgets/dashboard/kpi-tile";
-import { previousPeriodRange } from "@/api/period-to-date-range";
 import { usePortalPeriod } from "@/hooks/use-portal-period";
 import type { PeriodValue } from "@/types/insight";
 import { useSettings } from "@/hooks/use-settings";
@@ -24,10 +23,7 @@ import {
 } from "@/lib/insight/groups";
 import { metricKpiTiles } from "@/lib/insight/kpi-row";
 import { injectCohortPeer } from "@/lib/insight/within-team-peer";
-import {
-  projectViews,
-  type MetricCollectionConfig,
-} from "@/lib/metrics/collection";
+import type { MetricCollectionConfig } from "@/lib/metrics/collection";
 import { normalizePersonId } from "@/lib/metrics/entity";
 import { TEXT_EYEBROW } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
@@ -40,11 +36,14 @@ import {
   trendBucket,
   trendRange,
 } from "@/lib/portal/person-trend";
-import { usePersonSectionStandings } from "@/lib/portal/use-person-sections";
+import {
+  usePersonSectionCohort,
+  usePersonSectionCollection,
+  usePersonSectionStandings,
+} from "@/lib/portal/use-person-sections";
 import {
   collectionSetPending,
   useMetricCollection,
-  useMetricCollectionSet,
 } from "@/queries/metric-results";
 
 const EMPTY_COLLECTION: MetricCollectionConfig = { metrics: [] };
@@ -125,28 +124,10 @@ export function MetricGroupsView({
     dateRange,
     { previousPeriod: period }
   );
-  const groupData = useMetricCollectionSet(
-    defs.map((def) => ({
-      key: def.id,
-      collection: projectViews(def.collection, ["period", "peer"]),
-    })),
-    entity,
-    dateRange
-  );
-  // The same collections over the previous period: attention needs to know
-  // whether a standing is also a change (see `metricAttentionItems`), and
-  // "period" alone is enough for that — no peer stats needed.
-  const previousRange = previousPeriodRange(dateRange, period);
-  const previousGroupData = useMetricCollectionSet(
-    showKpis
-      ? defs.map((def) => ({
-          key: def.id,
-          collection: projectViews(def.collection, ["period"]),
-        }))
-      : [],
-    showKpis ? entity : CLOSED_ENTITY,
-    previousRange
-  );
+  // Shared with the nav mark, comparison window included — see the invariant on
+  // `usePersonSectionCollection`. It covers every visible section; this view
+  // reads the `defs` it renders and leaves the rest in the map.
+  const groupData = usePersonSectionCollection(personId);
 
   // Slice cohort: the people who share this person's active-slice attribute
   // value. Only fetched when a slice is picked — otherwise the person's own
@@ -162,16 +143,8 @@ export function MetricGroupsView({
     cohortIds.length && showKpis ? cohortEntity : CLOSED_ENTITY,
     dateRange
   );
-  const cohortGroup = useMetricCollectionSet(
-    cohortIds.length
-      ? defs.map((def) => ({
-          key: def.id,
-          collection: projectViews(def.collection, ["period"]),
-        }))
-      : [],
-    cohortEntity,
-    dateRange
-  );
+  // Shared with the nav mark for the same reason `groupData` is.
+  const cohortGroup = usePersonSectionCohort(personId);
 
   const sectionStandings = usePersonSectionStandings(personId);
 
@@ -238,17 +211,14 @@ export function MetricGroupsView({
     cohortIds.length > 0 &&
     ((showKpis && cohortKpi.isPending) || collectionSetPending(cohortGroup));
   const isLoading =
-    (showKpis &&
-      (kpiData.isPending || collectionSetPending(previousGroupData))) ||
+    (showKpis && kpiData.isPending) ||
     collectionSetPending(groupData) ||
     cohortPending;
   if (isLoading) return <CenteredSpinner className="min-h-[60vh]" />;
 
   // Surface a backend failure as a retryable error, not empty section cards.
   const isError =
-    (showKpis &&
-      (kpiData.isError ||
-        [...previousGroupData.values()].some((r) => r.isError))) ||
+    (showKpis && kpiData.isError) ||
     [...groupData.values()].some((r) => r.isError) ||
     (cohortIds.length > 0 &&
       ((showKpis && cohortKpi.isError) ||
@@ -262,7 +232,6 @@ export function MetricGroupsView({
           onRetry={() => {
             kpiData.refetch();
             groupData.forEach((r) => r.refetch());
-            previousGroupData.forEach((r) => r.refetch());
             cohortKpi.refetch();
             cohortGroup.forEach((r) => r.refetch());
           }}
@@ -311,7 +280,7 @@ export function MetricGroupsView({
           metricAttentionItems(
             def,
             groupResult(def.id)?.byKey ?? new Map(),
-            previousGroupData.get(def.id)?.byKey ?? null,
+            groupData.get(def.id)?.previousByKey ?? null,
             entityId,
             headlineKeys
           )

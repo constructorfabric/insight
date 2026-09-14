@@ -1,12 +1,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::Json;
 use axum::extract::Extension;
 use axum::http::HeaderMap;
 use futures::stream::{self, StreamExt};
-use serde::de::DeserializeOwned;
 use toolkit_canonical_errors::CanonicalError;
 use toolkit_security::SecurityContext;
 
@@ -26,13 +24,10 @@ use crate::domain::metric_results::{
     plan_queries, plan_rankings, validate_request,
 };
 use crate::domain::person_visibility::authorize_person_ids;
+use crate::infra::metrics::QueryKind;
+use crate::infra::query::{QueryFetchError, fetch_json_rows};
 
 const QUERY_CONCURRENCY: usize = 4;
-// Client-side bound on one view query, network stalls included. The
-// insight-clickhouse client already caps server-side execution at 30s
-// (`max_execution_time`); this covers the transport path that setting
-// cannot reach (dead peer, half-open connection).
-const QUERY_FETCH_TIMEOUT: Duration = Duration::from_mins(1);
 
 pub async fn query_metric_results(
     Extension(state): Extension<Arc<AppState>>,
@@ -199,12 +194,18 @@ async fn collect_rankings(
             let state = Arc::clone(state);
             async move {
                 let comment = format!("metric-results:ranking:{}", ranking.key.rank_metric_key);
-                let outcome =
-                    match fetch_rows::<RankingQueryRow>(&state, ranking.query, &comment).await {
-                        Ok(rows) => build_ranked_groups(&ranking.dimensions, rows)
-                            .map_err(|e| assembly_failure(&e, &comment)),
-                        Err(failure) => Err(failure),
-                    };
+                let outcome = match fetch_rows::<RankingQueryRow>(
+                    &state,
+                    ranking.query,
+                    QueryKind::Ranking,
+                    &comment,
+                )
+                .await
+                {
+                    Ok(rows) => build_ranked_groups(&ranking.dimensions, rows)
+                        .map_err(|e| assembly_failure(&e, &comment)),
+                    Err(failure) => Err(failure),
+                };
                 (ranking.key, outcome)
             }
         })
@@ -231,12 +232,14 @@ async fn execute_planned(
     match planned {
         PlannedQuery::PeriodBatch { items, query } => {
             let comment = batch_log_comment("period", &items);
-            let outcome = match fetch_rows::<PeriodWideRow>(state, query, &comment).await {
-                Ok(rows) => {
-                    demux_period_rows(&items, rows).map_err(|e| assembly_failure(&e, &comment))
-                }
-                Err(failure) => Err(failure),
-            };
+            let outcome =
+                match fetch_rows::<PeriodWideRow>(state, query, QueryKind::PeriodBatch, &comment)
+                    .await
+                {
+                    Ok(rows) => demux_period_rows(&items, rows, req.compare_to.is_some())
+                        .map_err(|e| assembly_failure(&e, &comment)),
+                    Err(failure) => Err(failure),
+                };
             match outcome {
                 Ok(rows_by_item) => items
                     .iter()
@@ -250,12 +253,14 @@ async fn execute_planned(
         }
         PlannedQuery::PeerBatch { items, query } => {
             let comment = batch_log_comment("peer", &items);
-            let outcome = match fetch_rows::<PeerWideRow>(state, query, &comment).await {
-                Ok(rows) => {
-                    demux_peer_rows(&items, rows).map_err(|e| assembly_failure(&e, &comment))
-                }
-                Err(failure) => Err(failure),
-            };
+            let outcome =
+                match fetch_rows::<PeerWideRow>(state, query, QueryKind::PeerBatch, &comment).await
+                {
+                    Ok(rows) => {
+                        demux_peer_rows(&items, rows).map_err(|e| assembly_failure(&e, &comment))
+                    }
+                    Err(failure) => Err(failure),
+                };
             match outcome {
                 Ok(rows_by_item) => items
                     .iter()
@@ -303,29 +308,42 @@ async fn build_single_view(
             bucket, dimensions, ..
         } => {
             let comment = format!("metric-results:timeseries:{}", def.key());
-            let rows = fetch_rows::<TimeseriesQueryRow>(state, query, &comment).await?;
+            let rows =
+                fetch_rows::<TimeseriesQueryRow>(state, query, QueryKind::Timeseries, &comment)
+                    .await?;
             build_timeseries_view(def, req, bucket, &dimensions, rows)
                 .map_err(|e| assembly_failure(&e, &comment))
         }
         UnbatchedView::Breakdown { dimensions } => {
             let comment = format!("metric-results:breakdown:{}", def.key());
-            let rows = fetch_rows::<BreakdownQueryRow>(state, query, &comment).await?;
+            let rows =
+                fetch_rows::<BreakdownQueryRow>(state, query, QueryKind::Breakdown, &comment)
+                    .await?;
             build_breakdown_view(req, &dimensions, rows, &state.external_links)
                 .map_err(|e| assembly_failure(&e, &comment))
         }
         UnbatchedView::Rollup { dimensions } => {
             let comment = format!("metric-results:rollup:{}", def.key());
-            let rows = fetch_rows::<RollupQueryRow>(state, query, &comment).await?;
+            let rows =
+                fetch_rows::<RollupQueryRow>(state, query, QueryKind::Rollup, &comment).await?;
             build_rollup_view(&dimensions, rows).map_err(|e| assembly_failure(&e, &comment))
         }
         UnbatchedView::Histogram => {
             let comment = format!("metric-results:histogram:{}", def.key());
-            let rows = fetch_rows::<HistogramQueryRow>(state, query, &comment).await?;
+            let rows =
+                fetch_rows::<HistogramQueryRow>(state, query, QueryKind::Histogram, &comment)
+                    .await?;
             Ok(build_histogram_view(req, rows))
         }
         UnbatchedView::PooledHistogram { dimensions } => {
             let comment = format!("metric-results:pooled-histogram:{}", def.key());
-            let rows = fetch_rows::<PooledHistogramQueryRow>(state, query, &comment).await?;
+            let rows = fetch_rows::<PooledHistogramQueryRow>(
+                state,
+                query,
+                QueryKind::PooledHistogram,
+                &comment,
+            )
+            .await?;
             build_pooled_histogram_view(rows, &dimensions)
                 .map_err(|e| assembly_failure(&e, &comment))
         }
@@ -382,47 +400,20 @@ fn view_result(
 async fn fetch_rows<T>(
     state: &Arc<AppState>,
     query: CompiledQuery,
+    kind: QueryKind,
     log_comment: &str,
 ) -> Result<Vec<T>, ViewFailure>
 where
-    T: DeserializeOwned,
+    T: serde::de::DeserializeOwned,
 {
-    let mut ch_query = state
-        .ch
-        .query(&query.sql)
-        .with_setting("log_comment", log_comment);
-    for param in &query.params {
-        ch_query = ch_query.bind(param.as_str());
-    }
-
-    let mut cursor = ch_query.fetch_bytes("JSONEachRow").map_err(|e| {
-        tracing::error!(error = %e, comment = log_comment, sql = %query.sql, "ClickHouse metric-results query failed");
-        ViewFailure::from_query_error(&e.to_string())
-    })?;
-
-    let raw_bytes = tokio::time::timeout(QUERY_FETCH_TIMEOUT, cursor.collect())
+    fetch_json_rows(&state.ch, &query.sql, &query.params, kind, log_comment)
         .await
-        .map_err(|_| {
-            tracing::error!(comment = log_comment, sql = %query.sql, "ClickHouse metric-results fetch timed out");
-            ViewFailure::timeout()
-        })?
-        .map_err(|e| {
-            tracing::error!(error = %e, comment = log_comment, sql = %query.sql, "ClickHouse metric-results fetch failed");
-            ViewFailure::from_query_error(&e.to_string())
-        })?;
-
-    if raw_bytes.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    raw_bytes
-        .split(|&b| b == b'\n')
-        .filter(|line| !line.is_empty())
-        .map(serde_json::from_slice)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| {
-            tracing::error!(error = %e, comment = log_comment, sql = %query.sql, "failed to parse metric-results rows");
-            ViewFailure::from_parse_error(&e.to_string())
+        .map_err(|error| match error {
+            QueryFetchError::Submit(message) | QueryFetchError::Fetch(message) => {
+                ViewFailure::from_query_error(&message)
+            }
+            QueryFetchError::Timeout => ViewFailure::timeout(),
+            QueryFetchError::Parse(message) => ViewFailure::from_parse_error(&message),
         })
 }
 

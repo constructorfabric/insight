@@ -14,9 +14,12 @@ import {
   chunkEntityIds,
   filterCollectionByKey,
   filterCollectionToAvailable,
+  filterCollectionToDeclaredDimensions,
   entityChunkSize,
   mergeNormalizedResults,
   normalizeMetricResults,
+  projectComparison,
+  projectPrimary,
   type MetricCollectionConfig,
   type MetricCollectionEntity,
   type NormalizedMetricResult,
@@ -24,7 +27,10 @@ import {
 import { normalizePersonId } from "@/lib/metrics/entity";
 import { metricVisible } from "@/lib/portal/nav-policy";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
-import { useAvailableMetricKeys } from "@/queries/metric-definitions";
+import {
+  useAvailableMetricKeys,
+  useDeclaredMetricDimensions,
+} from "@/queries/metric-definitions";
 import type { PeriodValue } from "@/types/insight";
 
 /**
@@ -47,17 +53,24 @@ function useMetricGate(): (metricKey: string) => boolean {
 
 export interface MetricCollectionOptions {
   /**
-   * When set, a twin query fetches the same collection over the previous
-   * period of the same kind (the period value drives week/month/quarter/year
-   * shift semantics in `previousPeriodRange`). Consumers derive deltas from
-   * `previousByKey`.
+   * When set, the request carries the previous period of the same kind as an
+   * extra window (the period value drives week/month/quarter/year shift
+   * semantics in `previousPeriodRange`). Consumers derive deltas from
+   * `previousByKey`. Shorthand for a `compareTo` range.
    */
   previousPeriod?: PeriodValue;
+  /**
+   * The window to compare against, served in the same request and read back
+   * through `previousByKey`. Ignored when `previousPeriod` is set, which is
+   * sugar for it.
+   */
+  compareTo?: DateRange;
   keepPreviousData?: boolean;
 }
 
 export interface MetricCollectionResult {
   byKey: Map<string, NormalizedMetricResult>;
+  /** The comparison window's values, or null when none was requested. */
   previousByKey: Map<string, NormalizedMetricResult> | null;
   isPending: boolean;
   isFetching: boolean;
@@ -85,7 +98,8 @@ function queryKeyFor(
   entity: MetricCollectionEntity,
   ids: string[],
   range: DateRange,
-  metrics: MetricRequest[]
+  metrics: MetricRequest[],
+  compareTo?: DateRange
 ) {
   // The derived `metrics` array rides in the key, so key and payload are
   // provably coherent — no hand-maintained collection identity to forget to
@@ -97,6 +111,7 @@ function queryKeyFor(
     range.from,
     range.to,
     metrics,
+    compareTo ?? null,
   ] as const;
 }
 
@@ -111,14 +126,30 @@ export function useMetricCollection(
   // rejects the WHOLE request over one unknown key, so a compiled-in key that
   // a tenant does not have would blank the screen instead of its own tile.
   const catalog = useAvailableMetricKeys();
+  const dimensions = useDeclaredMetricDimensions();
   const gate = useMetricGate();
   const asked = filterCollectionByKey(
-    filterCollectionToAvailable(collection, catalog.keys),
+    filterCollectionToDeclaredDimensions(
+      filterCollectionToAvailable(collection, catalog.keys),
+      dimensions.byMetricKey
+    ),
     gate
   );
   const canonicalEntity: MetricCollectionEntity =
     entity.type === "person" ? { type: "person", ids } : { type: "tenant" };
-  const request = buildMetricCollectionRequest(asked, canonicalEntity, range);
+  // The comparison window rides along inside the request instead of a twin
+  // one: it reads the same rows the primary aggregate already scans, so a delta
+  // arrow no longer costs a second round trip, a second authorization and a
+  // second query slot (#2651).
+  const compareTo = options?.previousPeriod
+    ? previousPeriodRange(range, options.previousPeriod)
+    : options?.compareTo;
+  const request = buildMetricCollectionRequest(
+    asked,
+    canonicalEntity,
+    range,
+    compareTo
+  );
   // Neither an empty entity list nor an empty metric list is a request the
   // backend can answer — it rejects both with 400 invalid_argument. So the
   // query stays disabled, and because `refetch()` bypasses `enabled`, the
@@ -127,62 +158,43 @@ export function useMetricCollection(
     entitySelected(entity, ids) &&
     request.metrics.length > 0 &&
     !catalog.isPending &&
+    !dimensions.isPending &&
     Boolean(range.from && range.to);
 
   const current = useQuery({
-    queryKey: queryKeyFor(entity, ids, range, request.metrics),
+    queryKey: queryKeyFor(entity, ids, range, request.metrics, compareTo),
     queryFn: () => queryMetricResults(request),
     enabled,
     placeholderData: options?.keepPreviousData ? keepPreviousData : undefined,
   });
 
-  const previousRange = options?.previousPeriod
-    ? previousPeriodRange(range, options.previousPeriod)
-    : null;
-  const previousRequest = previousRange
-    ? buildMetricCollectionRequest(asked, canonicalEntity, previousRange)
-    : null;
-  const previous = useQuery({
-    // Sentinel key when no previous period is requested: the disabled twin
-    // must never alias the current query's cache entry.
-    queryKey: previousRequest
-      ? queryKeyFor(
-          entity,
-          ids,
-          previousRange ?? range,
-          previousRequest.metrics
-        )
-      : (["metric-results", "previous-disabled"] as const),
-    queryFn: () => queryMetricResults(previousRequest ?? request),
-    enabled: enabled && previousRequest !== null,
-  });
-
-  const hasPrevious = previousRequest !== null;
-  const byKey = useMemo(
+  // INVARIANT: both projections read the RAW response. A compared breakdown
+  // groups over both windows at once, so filtering the primary first would hide
+  // the groups that belong only to the comparison window — the very rows it
+  // exists to carry.
+  const served = useMemo(
     () => normalizeMetricResults(current.data?.metrics),
     [current.data]
   );
-  // Deltas pair two periods; a failed twin yields "no delta" rather than a
-  // silently mispaired one. Both queries reset together on a period change, so
-  // the previous twin is absent (not stale) while it reloads — nothing to
-  // mispair against.
-  const previousUsable = hasPrevious && !previous.isError;
-  const previousData = previousUsable ? previous.data : undefined;
-  const previousByKey = useMemo(
-    () => (previousData ? normalizeMetricResults(previousData.metrics) : null),
-    [previousData]
-  );
+  const byKey = useMemo(() => projectPrimary(served), [served]);
+  // The comparison window's values, read as if they had been their own request
+  // — a period and its comparison now stand or fall together, so there is no
+  // mispairing to guard against.
+  const previousByKey = compareTo ? projectComparison(served) : null;
 
   return {
     byKey,
     previousByKey,
     // Pending while the catalog resolves too: the request is coming, so the
     // screen must show a skeleton rather than an empty state it would replace
-    // a moment later.
+    // a moment later. Both catalog reads gate `enabled`, so both belong here —
+    // one missing leaves a window where nothing is asked and nothing is
+    // pending, which renders as "no data".
     isPending:
       (current.isPending && enabled) ||
-      (entitySelected(entity, ids) && catalog.isPending),
-    isFetching: current.isFetching || (hasPrevious && previous.isFetching),
+      (entitySelected(entity, ids) &&
+        (catalog.isPending || dimensions.isPending)),
+    isFetching: current.isFetching,
     // Defensive: `ids` and `range` both ride in the query key, so today a
     // disabled query cannot be holding an error from an enabled one. Kept so
     // that a future key change cannot resurrect "Unable to load" for a
@@ -194,7 +206,6 @@ export function useMetricCollection(
       // see the note on `enabled` above.
       if (!enabled) return;
       void current.refetch();
-      if (hasPrevious) void previous.refetch();
     },
   };
 }
@@ -215,20 +226,23 @@ export function collectionSetPending(
 /**
  * One query per collection for a dynamic list (e.g. every metrics-backed
  * group in the registry) — `useQueries`, so the list length can change
- * without violating hook rules. No previous-period twin here; only the KPI
- * row compares periods.
+ * without violating hook rules. `compareTo` rides every request in the set and
+ * reads back per collection through `previousByKey`.
  */
 export function useMetricCollectionSet(
   collections: readonly KeyedCollection[],
   entity: MetricCollectionEntity,
-  range: DateRange
+  range: DateRange,
+  compareTo?: DateRange
 ): Map<string, MetricCollectionResult> {
   const ids = canonicalEntityIds(entity);
   const catalog = useAvailableMetricKeys();
+  const dimensions = useDeclaredMetricDimensions();
   const gate = useMetricGate();
   const enabled =
     entitySelected(entity, ids) &&
     !catalog.isPending &&
+    !dimensions.isPending &&
     Boolean(range.from && range.to);
 
   // Large rosters are chunked so a period+peer collection over N entities
@@ -238,7 +252,10 @@ export function useMetricCollectionSet(
   const requests = collections.flatMap(({ key, collection: raw }) => {
     // Same catalog and install gates as `useMetricCollection` — see the notes there.
     const collection = filterCollectionByKey(
-      filterCollectionToAvailable(raw, catalog.keys),
+      filterCollectionToDeclaredDimensions(
+        filterCollectionToAvailable(raw, catalog.keys),
+        dimensions.byMetricKey
+      ),
       gate
     );
     const chunkSize = entityChunkSize(collection);
@@ -252,7 +269,8 @@ export function useMetricCollectionSet(
         entity.type === "person"
           ? { type: "person", ids: chunkIds }
           : { type: "tenant" },
-        range
+        range,
+        compareTo
       );
       return {
         key,
@@ -269,7 +287,7 @@ export function useMetricCollectionSet(
 
   const results = useQueries({
     queries: requests.map(({ request, chunkIds, active }) => ({
-      queryKey: queryKeyFor(entity, chunkIds, range, request.metrics),
+      queryKey: queryKeyFor(entity, chunkIds, range, request.metrics, compareTo),
       queryFn: () => queryMetricResults(request),
       enabled: active,
     })),
@@ -295,12 +313,13 @@ export function useMetricCollectionSet(
     out.set(key, {
       byKey: new Map(),
       previousByKey: null,
-      // Pending covers the catalog wait too — otherwise a screen reads "no
+      // Pending covers both catalog waits too — otherwise a screen reads "no
       // data" for the moment before its requests are even allowed to fire.
       isPending:
         (existing?.isPending ?? false) ||
         (query.isPending && active) ||
-        (entitySelected(entity, ids) && catalog.isPending),
+        (entitySelected(entity, ids) &&
+          (catalog.isPending || dimensions.isPending)),
       isFetching: (existing?.isFetching ?? false) || query.isFetching,
       isError: (existing?.isError ?? false) || (active && query.isError),
       // Chunks of the same collection share a key; refetch fans out to all.
@@ -314,7 +333,10 @@ export function useMetricCollectionSet(
   });
   for (const [key, maps] of chunkMaps) {
     const entry = out.get(key);
-    if (entry) entry.byKey = mergeNormalizedResults(maps);
+    if (!entry) continue;
+    const served = mergeNormalizedResults(maps);
+    entry.byKey = projectPrimary(served);
+    entry.previousByKey = compareTo ? projectComparison(served) : null;
   }
   return out;
 }

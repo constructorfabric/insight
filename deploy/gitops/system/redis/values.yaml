@@ -3,12 +3,13 @@
 ##
 ## Chart: oci://registry-1.docker.io/bitnamicharts/redis
 ## Pin in Makefile: REDIS_VERSION
-## Release: `redis` in namespace `insight-infra`.
+## Release: `redis` in the infra namespace (inventory `namespaces.infra`,
+## `insight-infra` by default).
 ##
 ## Per-env overrides go in environments/<env>/redis-values.yaml.
 ##
 ## App layer reaches this release as
-## `redis-master.insight-infra.svc.cluster.local:6379`.
+## `redis-master.<infra-ns>.svc.cluster.local:6379`.
 ## Used by analytics as query-response cache.
 ##
 

@@ -1,20 +1,11 @@
 ---
 name: scope-feature-tests
 description: >-
-  Scope testing for a feature in constructorfabric/insight. Turn a GitHub issue or described
-  feature into lean, code-grounded axes, risk-ordered test groups with target suites, an in/out
-  boundary, an acceptance gate, and optionally a linked test subtask. Use whenever the user wants
-  to plan HOW a feature will be tested — "scope the tests for #1602", "what do we need to check
-  here", "how are we going to test this once it's done", "define the test dimensions / groups /
-  axes", "make a test plan or test scope", "create a test subtask for this feature", "what
-  coverage does this screen's options and limits need" — or when reviewing a feature to decide QA
-  coverage. Ground the scope in the actual implementation, bronze→silver→gold flow, consumer
-  contracts and existing tests — this repo, or the sibling ../insight checkout when working from
-  elsewhere; review and correct the acceptance criteria first, map realistic component
-  malfunctions, and say when the code contradicts the issue framing. Keep the output at
-  test-group altitude, not individual cases. Its authoring counterpart is quality-vector-tests,
-  which lays the coverage into the feature body as tracked scenarios; file-bug-insight reports an
-  observed defect, and drive-ui explores a surface that already exists on a stand.
+  Plan testing for an Insight feature: risk-ordered test groups, target suites, scope boundaries
+  and an acceptance gate. Use when deciding QA coverage, test dimensions or a test subtask.
+  Review agreed requirements and inspect implementation, data flow and existing tests to expose
+  risks and specification disagreements. Keep output at test-group level; quality-vector-tests
+  turns that scope into tracked scenarios in an issue or FEATURE artifact.
 ---
 
 # Scope feature tests (Insight)
@@ -29,16 +20,11 @@ expensive, high-leverage part, and it's what this skill produces.
 
 ## Why this skill exists (the one idea)
 
-A test scope written from the issue text alone is a generic checklist and worthless. The value
-comes from **grounding every check in the real implementation** and **correcting the feature's
-stated framing against what the code actually does.** The issue is a hypothesis; the code and
-the data flow are the truth. The single most valuable move you will make is catching where they
-disagree — that's where real coverage decisions live, and it's what a naive checklist misses.
-
-Concretely, in the exercise this skill is built from: the issue implied git was an identity
-source and the debate was "github vs github-v2." Reading the dbt models showed **git emits no
-identity signals at all** — the person is email-keyed by a *different* set of sources, and git
-merely *resolves* onto it. That single correction reshaped the entire test scope. Chase that.
+Agreed requirements determine expected outcomes. Inspecting the implementation and data flow
+reveals boundaries, risks and disagreements that a requirements-only pass can miss. Use those
+findings to propose missing criteria and focus coverage; resolve specification disagreements
+before changing expectations. An unimplemented promise remains a gap until the author changes
+the contract. Follow the grounding contract in `quality-vector-tests` section 2.
 
 ## Workflow
 
@@ -62,23 +48,22 @@ Extract: what it does, why it matters, who consumes it, and its **shape** — on
   gate**: the same harness re-runs for each wave (AI, then git, then crm…), and the first wave
   exists to *prove the gate*. Scope the machinery, not just the first wave.
 
-The shape sets the whole strategy. Treat every claim in the body as a hypothesis to verify in
-step 2.
+The shape sets the strategy. Step 2 checks implementation claims and identifies disagreements
+with the agreed requirements; it does not silently change the contract.
 
 **When the exact target set isn't final** (it'll be settled by a later scoping pass, or items will
 merge/split), do not scope to a hand-count of items — scope the **machinery and invariants** that
 hold regardless of the final list (registry-driven harnesses, sum/parity invariants). A scope
 pinned to today's list rots the moment the list changes; one pinned to invariants survives it.
 
-### 1b. Review the acceptance criteria before scoping against them
-Run the AC review the `quality-vector-tests` skill's step 1 owns — the testable / complete /
-real three-count check, the corrected AC-1..N list proposed to the user *before* anything is
-designed against it, deferred ACs kept with an explicit reason and owner. Everything downstream
-(the groups, the gate, the Testing section `quality-vector-tests` writes) maps to the agreed
-set. Two scoping-side caveats on top of that contract: the **real** check usually needs step
-2's grounding to answer — treat the review as provisional until grounding confirms it — and a
-deferred AC can stay in scope as an executable `xfail` gate (see the boundary traps in step 5)
-instead of dropping out.
+### 1b. Resolve the feature's requirement scope
+Use `quality-vector-tests` step 1 to resolve the owning FEATURE and its section
+1.2 FR/NFR references, including inherited obligations. Read Acceptance Criteria
+as completion conditions; keep the kit's checklist form. Test groups attach to
+the feature and its upstream requirements, without an imposed AC numbering or
+coverage map. Record missing requirements and deferred behaviour with owner,
+reason and resolution point. Grounding in step 2 may reveal disagreements;
+resolve them before claiming a test group's coverage.
 
 ### 2. Ground it in the real code and data flow
 This is the core. Investigate this repo — `src/backend`, `src/ingestion` (and its dbt),
@@ -102,14 +87,14 @@ scope from memory or the issue alone. Look at:
   failures that are real become checks. Each one carries the **expected degraded behaviour** as
   its oracle ("the error banner shows", never "doesn't crash") — and if the product defines no
   degraded behaviour, that is a design finding to raise, not a check to invent. This axis earns
-  its place because error-handling paths have no requirement to derive from: AC-driven tests
+  its place because error-handling paths have no requirement to derive from: requirement-driven tests
   structurally miss them. Note the tooling split: *down/slow* need fault injection (kill or pause
   a container, a latency proxy); *wrong/stale data* is a fixture concern, not chaos tooling.
 
 **In-progress features live on a branch, not `main`.** If `main` doesn't contain the code, find
 the implementation: `gh pr list --search`, `git branch -r | grep`, and read the actual branch
 (worktree it via `git worktree add`, or `git show <branch>:<path>`). Scope against
-the real implementation + its `DESIGN.md`, not the issue's prose — the two often diverge, and a
+the agreed requirements, real implementation and its `DESIGN.md` — these can diverge, and a
 branch's DESIGN doc is frequently the richest single source of the test surface.
 
 Enumerate worktrees authoritatively (`git worktree list --porcelain`) — never glob directory
@@ -117,11 +102,11 @@ names. Spawn parallel `Explore` agents when the surface is broad. Reading the co
 and schema is normally enough to *scope* coverage; a live stand's ClickHouse is an optional
 sharpener for a specific check, not a prerequisite — you're planning tests, not executing them.
 
-**When the code contradicts the framing, say so out loud and let it reshape the scope.** This is
-the skill's whole point, not a footnote. Grounding this deep regularly turns up an **actual defect**
-(a race, an off-by-one, a broken invariant), not just a test dimension — don't drop it: fold it
-into the relevant test group as a must-verify, flag it to the author, and offer to file it
-separately (via `file-bug-insight`) if it's a merged-code defect rather than in-progress work.
+**When code and requirements disagree, report the mismatch before changing expectations.**
+Grounding can reveal a race, an off-by-one, or a broken invariant. Add a must-verify check using
+the agreed expected behavior and flag the defect to the author. If the expected behavior is
+undefined, record a specification question instead of making the implementation its own oracle.
+Offer to file a merged-code defect separately via `file-bug-insight`.
 
 ### 3. Reframe to what a user/consumer observes
 Shift from "does function X return Y" to **"does the right thing show up for whoever depends on
@@ -196,10 +181,10 @@ cases — if you're writing "test that email with trailing space unifies," you'v
 
 **Give each group a home: the target component, then the cheapest suite that can falsify it.**
 The suite menu depends on the component the group targets — take it from the per-component
-layer table in `quality-vector-tests` step 4 rather than from memory (the ladders differ by
+layer table in `quality-vector-tests` step 3 rather than from memory (the ladders differ by
 backend function, and auth claims can terminate in `stand-ui`). The tag names the suite the
 tests will land in, which is what makes a coverage gap checkable later. Suite tags and
-criterion ids are exempt from the strip-internal-identifiers rule below — they are the
+feature and requirement ids are exempt from the strip-internal-identifiers rule below — they are the
 tracking scheme itself. Browser journeys pay a
 permanent flake tax: a stand-ui group must say what is user-visible about the claim that a
 cheaper suite cannot observe.
@@ -344,7 +329,7 @@ resolve-only sources, or the key axis of variation>.
 
 ## Plan
 
-**1. <Verb> <the action>** (<suite> · the AC-<n> it proves) — <what to set up → what to assert;
+**1. <Verb> <the action>** (<suite> · owning feature and FR/NFR references) — <what to set up → what to assert;
 matrix only where it adds signal>.
 **2. <Verb> …** — <one line>.
 ... (~5–8 steps; reusable harnesses first, then the gate, then apply per case)
@@ -352,7 +337,7 @@ matrix only where it adds signal>.
 ## Acceptance
 - [ ] <the coverage/differential gate that actually proves it — e.g. per-source coverage measured;
       differential tagged exact/known-diff(direction)/merge, never blanket zero-diff>
-- [ ] every criterion of the reviewed AC set maps to a test group (deferred ones carry a reason
+- [ ] every applicable feature requirement maps to a test group or shared evidence (deferred ones carry a reason
       and an owner)
 - [ ] <invariant / registry-driven / sequenced-UI checks as they apply>
 ```

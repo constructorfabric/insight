@@ -23,6 +23,21 @@ vars:
   # gold macros and per-model configs read this rather than a literal.
   gold_database: insight
 
+  # Window git_file_change_coverage judges a live source over. The all-time
+  # share carries history no re-read can reach, so only the recent window says
+  # whether collection is working NOW. Wide enough that a connector's own
+  # catch-up (a branch is re-walked when its head moves) is not read as a gap.
+  git_coverage_recent_days: 14
+
+  # Guardrail for assert_git_file_change_coverage_holds. Operational values,
+  # not semantic invariants: the floor is where a healthy connector instance
+  # sits with room for a provider hiccup, and the sample size keeps a new or
+  # tiny instance out of the test, where one lost diff out of three reads as
+  # 66% and means nothing. Raise the floor once an installation's own measured
+  # norm is known.
+  git_coverage_min_pct: 90
+  git_coverage_min_sample: 50
+
   # Path patterns (ClickHouse `match` / RE2 regex fragments, matched
   # case-insensitively) that mark a git file as vendored/generated rather than
   # authored. Files matching any pattern are classified `vendored` by the

@@ -90,12 +90,24 @@ impl ValidatedEntitySelection {
     }
 }
 
+/// One closed day range. `from <= to` holds for every value the validator
+/// admits, so the compiler binds a window without re-checking it.
+#[derive(Debug, Clone, Copy)]
+pub struct DateWindow {
+    pub from: NaiveDate,
+    pub to: NaiveDate,
+}
+
 #[derive(Debug)]
 pub struct ValidatedMetricResultsRequest {
     pub tenant_id: Uuid,
     pub entity: ValidatedEntitySelection,
     pub from: NaiveDate,
     pub to: NaiveDate,
+    /// The comparison window the `period` and `breakdown` views carry alongside
+    /// `from..to`. `None` for a single-window request, and the compiler emits
+    /// byte-identical SQL in that case.
+    pub compare_to: Option<DateWindow>,
     pub metrics: Vec<ValidatedMetricRequest>,
     /// Whether the compiler injects the per-tenant observation filter (#1967).
     /// Set from the `metric_catalog.enforce_tenant_scope` config key by the handler; the
@@ -152,6 +164,7 @@ struct RequestShape {
     entity: ValidatedEntitySelection,
     from: NaiveDate,
     to: NaiveDate,
+    compare_to: Option<DateWindow>,
     metric_keys: Vec<String>,
 }
 
@@ -165,6 +178,7 @@ pub async fn validate_request(
         entity,
         from,
         to,
+        compare_to,
         metric_keys,
     } = shape;
 
@@ -249,6 +263,7 @@ pub async fn validate_request(
         entity,
         from,
         to,
+        compare_to,
         metrics,
         // Off unless the handler turns it on from config; the ingest tenant is
         // not yet aligned to the JWT tenant (#1829), so enforcing here empties
@@ -313,6 +328,27 @@ fn validate_request_shape(
         );
     }
 
+    let compare_to = match &req.compare_to {
+        None => None,
+        Some(window) => {
+            let from = parse_date("compare_to.from", &window.from)?;
+            let to = parse_date("compare_to.to", &window.to)?;
+            if from > to {
+                return invalid(
+                    "compare_to",
+                    "compare_to.from must be before or equal to compare_to.to",
+                );
+            }
+            if (to - from).num_days() >= MAX_PERIOD_DAYS {
+                return invalid(
+                    "compare_to",
+                    format!("compare_to must not exceed {MAX_PERIOD_DAYS} days"),
+                );
+            }
+            Some(DateWindow { from, to })
+        }
+    };
+
     let mut seen_metric_keys = BTreeSet::new();
     let mut metric_keys = Vec::with_capacity(req.metrics.len());
     for metric in &req.metrics {
@@ -333,6 +369,7 @@ fn validate_request_shape(
         entity,
         from,
         to,
+        compare_to,
         metric_keys,
     })
 }
@@ -784,6 +821,7 @@ mod tests {
                 from: from.to_owned(),
                 to: to.to_owned(),
             },
+            compare_to: None,
             metrics: metric_keys
                 .into_iter()
                 .map(|key| super::super::dto::MetricRequest {
@@ -984,6 +1022,60 @@ mod tests {
             "2026-01-01",
             vec!["ai.x"],
         );
+        assert!(validate_request_shape(&req, Uuid::nil()).is_err());
+    }
+
+    fn window(from: &str, to: &str) -> super::super::dto::MetricResultsPeriod {
+        super::super::dto::MetricResultsPeriod {
+            from: from.to_owned(),
+            to: to.to_owned(),
+        }
+    }
+
+    #[test]
+    fn shape_carries_the_comparison_window() {
+        let mut req = shape_request(
+            vec!["019e27bc-dec0-7626-81a9-c5524662a6a9"],
+            "2026-02-01",
+            "2026-02-28",
+            vec!["ai.x"],
+        );
+        req.compare_to = Some(window("2026-01-01", "2026-01-31"));
+
+        let Ok(shape) = validate_request_shape(&req, Uuid::nil()) else {
+            panic!("expected the shape to validate");
+        };
+
+        let Some(compare_to) = shape.compare_to else {
+            panic!("expected a comparison window");
+        };
+        assert_eq!(compare_to.from, day("2026-01-01"));
+        assert_eq!(compare_to.to, day("2026-01-31"));
+    }
+
+    #[test]
+    fn shape_rejects_a_reversed_comparison_window() {
+        let mut req = shape_request(
+            vec!["019e27bc-dec0-7626-81a9-c5524662a6a9"],
+            "2026-02-01",
+            "2026-02-28",
+            vec!["ai.x"],
+        );
+        req.compare_to = Some(window("2026-01-31", "2026-01-01"));
+
+        assert!(validate_request_shape(&req, Uuid::nil()).is_err());
+    }
+
+    #[test]
+    fn shape_rejects_an_oversized_comparison_window() {
+        let mut req = shape_request(
+            vec!["019e27bc-dec0-7626-81a9-c5524662a6a9"],
+            "2026-02-01",
+            "2026-02-28",
+            vec!["ai.x"],
+        );
+        req.compare_to = Some(window("2020-01-01", "2026-01-31"));
+
         assert!(validate_request_shape(&req, Uuid::nil()).is_err());
     }
 
@@ -1423,6 +1515,7 @@ mod tests {
             },
             from: day("2026-01-01"),
             to: day("2026-03-31"),
+            compare_to: None,
             metrics: vec![ValidatedMetricRequest {
                 def,
                 filters: vec![],
@@ -1456,6 +1549,7 @@ mod tests {
             },
             from: day("2025-07-21"),
             to: day("2026-07-20"),
+            compare_to: None,
             metrics: (0..4)
                 .map(|_| ValidatedMetricRequest {
                     def: def.clone(),
@@ -1489,6 +1583,7 @@ mod tests {
             },
             from: day("2026-01-01"),
             to: day("2026-01-31"),
+            compare_to: None,
             metrics: vec![ValidatedMetricRequest {
                 def: median_definition(),
                 filters: vec![],
@@ -1517,6 +1612,7 @@ mod tests {
             },
             from: day("2026-01-01"),
             to: day("2026-01-31"),
+            compare_to: None,
             metrics: vec![ValidatedMetricRequest {
                 def,
                 filters: vec![],

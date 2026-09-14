@@ -14,6 +14,10 @@ use toolkit_canonical_errors::resource_error;
 #[resource_error("gts.cf.insight.analytics_api.metric.v1~")]
 pub struct MetricError;
 
+/// Resource namespace for `/v1/reports*`.
+#[resource_error("gts.cf.insight.analytics_api.report.v1~")]
+pub struct ReportError;
+
 /// Resource namespace for `/v1/queries*` (saved-query CRUD + run, #1965).
 #[resource_error("gts.cf.insight.analytics_api.saved_query.v1~")]
 pub struct SavedQueryError;
@@ -36,6 +40,11 @@ pub struct FeedbackError;
 /// prompt, per-person keys, and the explain call).
 #[resource_error("gts.cf.insight.analytics_api.ai_assist.v1~")]
 pub struct AiError;
+
+/// Resource namespace for `/v1/ingestion*` (the admin ingestion-intensity read
+/// over the bronze ops view). Infrastructure-wide, not tenant-scoped.
+#[resource_error("gts.cf.insight.analytics_api.ingestion.v1~")]
+pub struct IngestionError;
 
 /// Resource namespace for `/v1/metrics*` (custom-metric CRUD + export/import).
 #[resource_error("gts.cf.insight.analytics_api.custom_metric.v1~")]

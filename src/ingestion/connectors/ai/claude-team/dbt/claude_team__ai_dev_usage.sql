@@ -47,6 +47,98 @@
     tags=['claude-team', 'silver:class_ai_dev_usage']
 ) }}
 
+-- Completeness gate (#3172). The per-user endpoint pages an offset window over
+-- sort_by=total_lines_accepted, and everyone with no accepted lines ties on it,
+-- so a person can sit past the page boundary in one request and before it in
+-- the next — returned by neither, while every request succeeds. A read that
+-- lost somebody must not become the day's state, so it is dropped whole here
+-- and the day keeps whatever the last sound read wrote.
+WITH reference AS (
+
+    -- The vendor's own headcount, as of the read that returned it. Keyed on the
+    -- read and not the day: a day still in progress reports fewer people than it
+    -- ends with, so judging an older read against a newer reference would reject
+    -- sound reads.
+    SELECT
+        coalesce(tenant_id, '')                         AS insight_tenant_id,
+        coalesce(source_id, '')                         AS source_id,
+        toDate(metric_date)                             AS day,
+        JSONExtractInt(_airbyte_meta, 'sync_id')        AS read_id,
+        -- Not aliased `total_users`: the alias shadows the source column and
+        -- ClickHouse then resolves the outer reference to the aggregate itself.
+        max(toInt64OrNull(toString(total_users)))       AS read_total_users
+    -- FINAL: the envelope table is a ReplacingMergeTree, so an unmerged part
+    -- can still hold a superseded headcount for the same read.
+    FROM {{ source('bronze_claude_team', 'claude_team_code_metrics_org') }} FINAL
+    WHERE metric_date IS NOT NULL
+      AND total_users IS NOT NULL
+    GROUP BY insight_tenant_id, source_id, day, read_id
+
+),
+
+first_reference AS (
+
+    -- Which read first carried a reference on this instance. Reads before it
+    -- predate the field and cannot be judged; that read and everything after
+    -- must carry one, or they are rejected — an unreferenced later read is the
+    -- silent hole this gate exists to close.
+    --
+    -- The boundary is the READ, not its timestamp. Both streams are written by
+    -- the same job, but not at the same instant: on the first sync after the
+    -- upgrade the per-user rows can land a moment before the envelope that
+    -- would judge them. A timestamp boundary would wave exactly those through
+    -- as legacy.
+    SELECT
+        insight_tenant_id,
+        source_id,
+        min(read_id)                                    AS since_read,
+        toUInt8(1)                                      AS instance_has_references
+    FROM reference
+    GROUP BY insight_tenant_id, source_id
+
+),
+
+read_state AS (
+
+    SELECT
+        coalesce(tenant_id, '')                         AS insight_tenant_id,
+        coalesce(source_id, '')                         AS source_id,
+        toDate(metric_date)                             AS day,
+        JSONExtractInt(_airbyte_meta, 'sync_id')        AS read_id,
+        -- Counts only rows the serving layer can attribute, so a headcount
+        -- that includes someone arriving without an email fails the gate
+        -- closed instead of passing on a body count.
+        uniqExactIf(lower(trim(email)),
+                    email IS NOT NULL AND trim(email) != '') AS people
+    FROM {{ source('bronze_claude_team', 'claude_team_code_metrics') }}
+    WHERE metric_date IS NOT NULL
+    GROUP BY insight_tenant_id, source_id, day, read_id
+
+),
+
+admitted_reads AS (
+
+    SELECT
+        r.insight_tenant_id                             AS insight_tenant_id,
+        r.source_id                                     AS source_id,
+        r.day                                           AS day,
+        r.read_id                                       AS read_id
+    FROM read_state AS r
+    LEFT JOIN first_reference AS f
+           ON f.insight_tenant_id = r.insight_tenant_id
+          AND f.source_id = r.source_id
+    -- coalesce, not IS NULL: without join_use_nulls an unmatched LEFT JOIN
+    -- yields the column's default rather than NULL, and both readings must
+    -- give the same verdict.
+    WHERE (r.insight_tenant_id, r.source_id, r.day, r.read_id, r.people) IN (
+              SELECT insight_tenant_id, source_id, day, read_id, read_total_users
+              FROM reference
+          )
+       OR coalesce(f.instance_has_references, 0) = 0
+       OR r.read_id < f.since_read
+
+)
+
 SELECT
     tenant_id                                           AS insight_tenant_id,
     source_id,
@@ -112,6 +204,15 @@ WHERE email IS NOT NULL
        OR coalesce(toFloat64OrNull(toString(total_cost)), 0) > 0
        OR coalesce(prs_with_cc, 0) > 0
        OR coalesce(total_prs, 0) > 0)
+  -- The read this row came from has to have brought the whole day. Rejected
+  -- whole rather than row by row: a short read is short in an unknown place,
+  -- so the people it DID return say nothing about the ones it did not.
+  AND (coalesce(tenant_id, ''),
+       coalesce(source_id, ''),
+       toDate(metric_date),
+       JSONExtractInt(_airbyte_meta, 'sync_id')) IN (
+          SELECT insight_tenant_id, source_id, day, read_id FROM admitted_reads
+      )
 {% if is_incremental() %}
   -- Empty-table guard. Over an empty `this` (the e2e rig resets staging between
   -- tests) `max(day)` is the Date epoch (1970-01-01) and `- INTERVAL 3 DAY`

@@ -22,13 +22,17 @@ pub enum EvictionTier {
     Blob,
     /// The whole entry deleted.
     Full,
+    /// The whole entry deleted because repeated purges could not shed its
+    /// blobs in place.
+    PurgeExhausted,
 }
 
 impl EvictionTier {
-    const fn as_str(self) -> &'static str {
+    pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Blob => "blob",
             Self::Full => "full",
+            Self::PurgeExhausted => "purge_exhausted",
         }
     }
 }
@@ -68,6 +72,8 @@ pub enum RejectReason {
     PreparationWait,
     /// Origin is throttling this client.
     OriginThrottled,
+    /// Every page-serve slot stayed taken for the whole bounded wait.
+    ServeSaturated,
 }
 
 impl RejectReason {
@@ -78,6 +84,7 @@ impl RejectReason {
             Self::AdmissionExhausted => "admission_exhausted",
             Self::PreparationWait => "preparation_wait",
             Self::OriginThrottled => "origin_throttled",
+            Self::ServeSaturated => "serve_saturated",
         }
     }
 }
@@ -270,6 +277,7 @@ mod tests {
     fn tier_and_result_labels_are_the_documented_values() {
         assert_eq!(EvictionTier::Blob.as_str(), "blob");
         assert_eq!(EvictionTier::Full.as_str(), "full");
+        assert_eq!(EvictionTier::PurgeExhausted.as_str(), "purge_exhausted");
         assert_eq!(FetchResult::Noop.as_str(), "noop");
         assert_eq!(FetchResult::Updated.as_str(), "updated");
         assert_eq!(FetchResult::Error.as_str(), "error");

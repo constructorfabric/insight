@@ -1,6 +1,8 @@
 import type {
   ConnectorHealth,
   ConnectorHealthSummary,
+  ConnectorInstance,
+  ConnectorInstanceRef,
   SyncFact,
   SyncStatus,
 } from "@/api/connector-health-client";
@@ -146,7 +148,7 @@ export function describeRecording(
     };
   }
 
-  const age = ageMs(summary.as_of, summary.checked_at);
+  const age = elapsedMs(summary.as_of, summary.checked_at);
   if (age === null) {
     return {
       state: "unreadable",
@@ -200,19 +202,24 @@ function staleAfter(interval: number | null | undefined): number | null {
 }
 
 /**
- * How long ago the mover was read, or null where the pair cannot say.
+ * How long ago something happened, by the answer's own clock, or null where the
+ * pair cannot say.
  *
- * A negative age is not clamped to zero: the two stamps come from clocks that
+ * Both spans this page states are measured here — how old the read is, and how
+ * long an unfinished sync has been going — because both are the same question
+ * asked of a different stamp, and both must refuse the same inputs.
+ *
+ * A negative span is not clamped to zero: the two stamps come from clocks that
  * are supposed to agree, and one ahead of the other means neither can date the
  * page. Reporting "just now" there would be the page asserting a freshness it
  * has no basis for.
  */
-function ageMs(asOf: string, checkedAt: string): number | null {
+function elapsedMs(asOf: string, since: string | null | undefined): number | null {
   const now = parseStamp(asOf);
-  const then = parseStamp(checkedAt);
+  const then = parseStamp(since);
   if (now === null || then === null) return null;
-  const age = now - then;
-  return age >= 0 ? age : null;
+  const span = now - then;
+  return span >= 0 ? span : null;
 }
 
 /**
@@ -253,6 +260,39 @@ export function describeAge(ageInMs: number): string {
 export const UNMEASURED = "—";
 
 /**
+ * What tells one installation of a connector from another.
+ *
+ * Both halves, because a source id is unique only within a tenant. Absence is
+ * printed as absence: history recorded before the ledger carried the identity
+ * that no single installation could be shown to own has none, and naming one
+ * here would put an instance on the page that nobody recorded.
+ */
+export function describeInstance(row: ConnectorInstance): string {
+  const tenant = row.tenant_id ?? "";
+  const source = row.source_id ?? "";
+  if (tenant === "" && source === "") return UNMEASURED;
+  return `${tenant === "" ? UNMEASURED : tenant} / ${source === "" ? UNMEASURED : source}`;
+}
+
+/**
+ * A stable identity for one row, for React keys and query keys.
+ *
+ * The name alone is not one. Two installations of a connector share it, so a
+ * key built from it collides: React reuses one row's node for the other, and
+ * opening one row opens the other's history. Each part is percent-encoded
+ * before the separator joins them, so the separator cannot occur inside one and
+ * the mapping stays one identity to one key. Encoded rather than assumed safe:
+ * the endpoint that takes an identity as a query parameter parses it, but
+ * nothing constrains what the ledger recorded, and these values are read back
+ * from the ledger.
+ */
+export function instanceKey(row: ConnectorInstanceRef): string {
+  return [row.connector, row.tenant_id ?? "", row.source_id ?? ""]
+    .map(encodeURIComponent)
+    .join("/");
+}
+
+/**
  * A duration, or absence.
  *
  * Rounding is done once, at the top, so no unit can carry 60 of the one below
@@ -272,6 +312,56 @@ export function formatDuration(durationMs: number | null | undefined): string {
   const seconds = totalSeconds % 60;
   if (totalMinutes < 60) return `${totalMinutes}m ${seconds}s`;
   return `${Math.floor(totalMinutes / 60)}h ${totalMinutes % 60}m`;
+}
+
+/**
+ * Which states mean the sync has not finished, so its span is still growing.
+ *
+ * Read off the state name rather than the raw status word, so the one place
+ * that maps the mover's vocabulary stays the only one — a second `=== "running"`
+ * here would silently stop agreeing with the badge beside it.
+ */
+const IN_FLIGHT: ReadonlySet<ConnectorStateName> = new Set(["queued", "syncing"]);
+
+export interface DurationView {
+  /** What the cell prints. */
+  text: string;
+  /** True where the number is time so far rather than a finished measurement. */
+  inFlight: boolean;
+}
+
+/**
+ * What the Duration cell says for one sync.
+ *
+ * A finished sync states what it took; one still in flight states how long it
+ * has been going — a different fact, so it is worded as one rather than left to
+ * be read as a completed measurement.
+ *
+ * INVARIANT: a recorded duration is ignored for an unfinished sync. The mover
+ * reports such a job's duration as a running total, and a zero where it has
+ * none; ledger rows written before the recorder stopped storing it still hold
+ * that zero, and printing it would tell an operator watching a stuck sync that
+ * it took no time at all.
+ *
+ * The span is measured against the answer's own `as_of` rather than the
+ * reader's clock, so it agrees with the "Last checked" line above it instead of
+ * drifting from it by whatever the two machines disagree about.
+ */
+export function describeDuration(
+  sync: Pick<SyncFact, "status" | "started_at" | "duration_ms"> | null | undefined,
+  asOf: string,
+): DurationView {
+  if (sync == null) return { text: UNMEASURED, inFlight: false };
+  if (!IN_FLIGHT.has(stateOf(sync.status).state)) {
+    return { text: formatDuration(sync.duration_ms), inFlight: false };
+  }
+
+  // A queued job has no start, and a job whose start cannot be dated is one
+  // this page cannot time — both print absence rather than a span from nothing.
+  const running = elapsedMs(asOf, sync.started_at);
+  if (running === null) return { text: UNMEASURED, inFlight: false };
+
+  return { text: `${formatDuration(running)} so far`, inFlight: true };
 }
 
 export function formatRecords(records: number | null | undefined): string {

@@ -6,6 +6,8 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use uuid::Uuid;
 
+use crate::domain::resolution::EXCLUDED_PERSON;
+
 /// Cursor envelope version. Bumped when the envelope itself changes; two key
 /// shapes of the same version are told apart by [`PagePosition::KIND`].
 const CURSOR_VERSION: u8 = 1;
@@ -137,6 +139,28 @@ pub(crate) fn search_terms(q: &str) -> Result<Vec<String>, String> {
     Ok(terms)
 }
 
+pub(crate) fn partition_person_terms(terms: &[String]) -> (Vec<Uuid>, Vec<String>) {
+    let mut person_ids = Vec::new();
+    let mut values = Vec::new();
+    for term in terms {
+        match Uuid::parse_str(term) {
+            Ok(person_id) if person_id != EXCLUDED_PERSON => person_ids.push(person_id),
+            Ok(_) => {}
+            Err(_) => values.push(term.clone()),
+        }
+    }
+    (person_ids, values)
+}
+
+pub(crate) fn person_terms_name_nobody(
+    terms: &[String],
+    person_ids: &[Uuid],
+    values: &[String],
+) -> bool {
+    (!terms.is_empty() && person_ids.is_empty() && values.is_empty())
+        || person_ids.windows(2).any(|ids| ids[0] != ids[1])
+}
+
 /// The position a cursor carries, or nothing when none was presented.
 pub(crate) fn resume_from<K: PagePosition>(
     cursor: Option<&str>,
@@ -224,6 +248,21 @@ mod tests {
         ] {
             assert_eq!(clamp_limit(limit, 50, 500), expected, "limit: {limit:?}");
         }
+    }
+
+    #[test]
+    fn person_terms_split_ids_values_and_exclude_the_sentinel() {
+        let person_id = Uuid::from_u128(7);
+        let terms = vec![
+            person_id.simple().to_string(),
+            crate::domain::resolution::EXCLUDED_PERSON.to_string(),
+            "find-person".to_owned(),
+        ];
+
+        assert_eq!(
+            partition_person_terms(&terms),
+            (vec![person_id], vec!["find-person".to_owned()])
+        );
     }
 
     #[test]

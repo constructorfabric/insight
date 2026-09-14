@@ -4,13 +4,14 @@ import {
   Layers,
   LayoutGrid,
   Search,
-  Settings2,
+  Settings,
 } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { AppSidebarFooter } from "@/components/app-sidebar-footer";
 import { useFeedbackDialog } from "@/components/feedback-context";
+import { CustomNav } from "@/components/portal/custom-nav";
 import { OrgTree } from "@/components/org-tree";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
@@ -20,7 +21,10 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { visibleGroups } from "@/lib/insight/groups";
-import { usePersonSectionStandings } from "@/lib/portal/use-person-sections";
+import {
+  usePersonSectionStandings,
+  useSelectedPersonSection,
+} from "@/lib/portal/use-person-sections";
 import { STATUS_BG_CLASS } from "@/lib/status";
 import {
   lensRoadmap,
@@ -69,6 +73,7 @@ import {
 import { useActiveZone } from "@/lib/portal/use-active-zone";
 import { cn } from "@/lib/utils";
 import { useIsAdmin, useVisibilityPolicy } from "@/queries/identity-me";
+import { usePreviewsGate } from "@/queries/previews";
 
 const ZONE_SUB: Record<string, string> = {
   overview: "Cross-functional org rollup",
@@ -79,6 +84,7 @@ const ZONE_SUB: Record<string, string> = {
   scorecard: "By unit and quarter",
   reports: "Generated & custom",
   manage: "Catalog, identity & governance",
+  custom: "Your dashboards, built by chat",
 };
 
 const BADGE_TONE: Record<string, string> = {
@@ -134,7 +140,9 @@ export function ContextPane() {
       )}
       <SidebarContent>
         {isPhone ? <MobileZoneNav /> : null}
-        {activeZone === "directions" ? (
+        {activeZone === "custom" ? (
+          <CustomNav />
+        ) : activeZone === "directions" ? (
           <DirectionsNav />
         ) : activeZone === "people" ? (
           <PeopleNav active={active} />
@@ -159,7 +167,7 @@ export function ContextPane() {
                 <PopoverTrigger
                   render={
                     <SidebarMenuButton>
-                      <Settings2 aria-hidden />
+                      <Settings aria-hidden />
                       <span>Settings</span>
                     </SidebarMenuButton>
                   }
@@ -341,12 +349,13 @@ function ThemeNav({
 }
 
 function ManageNav({ active }: { active: string | null }) {
-  // Admin-only surfaces (Identities) drop from the pane for everyone else;
-  // the view behind them refuses direct URLs on its own.
+  // Gated surfaces (Identities, Previews) drop from the pane for everyone
+  // else; the view behind each refuses direct URLs on its own.
   const { isAdmin } = useIsAdmin();
+  const canManagePreviews = usePreviewsGate();
   return (
     <ItemsNav
-      items={manageItemsFor(isAdmin)}
+      items={manageItemsFor({ isAdmin, canManagePreviews })}
       groupLabel="Manage"
       active={active}
     />
@@ -572,33 +581,16 @@ function WorkChart() {
     </div>
   );
 
-  // A roster is the whole organisation, so it takes the rest of the pane and
-  // scrolls there. The search sits ABOVE the scroll region, not inside it: a
-  // sticky-inside search put the scrollbar (and, mid-inertia, the rows) on top
-  // of it. The standard sidebar shape — fixed search, list scrolling below,
-  // scrollbar contained to the list.
-  if (isFlat) {
-    return (
-      // No group label: "WorkChart" names a structure a flat organisation does
-      // not have, and every other name for the roster restates the zone it
-      // already sits in. The search's own label says what the list is.
-      <SidebarGroup className="min-h-0 flex-1">
-        <SidebarGroupContent className="flex min-h-0 flex-1 flex-col gap-2">
-          {find}
-          <ScrollArea className="min-h-0 flex-1">
-            <OrgTree leadsToTeam query={query} />
-          </ScrollArea>
-        </SidebarGroupContent>
-      </SidebarGroup>
-    );
-  }
-
+  // WORKAROUND: Search stays outside ScrollArea because inertial scrolling can
+  // draw its scrollbar and rows over the search.
   return (
-    <SidebarGroup>
-      <SidebarGroupLabel>WorkChart</SidebarGroupLabel>
-      <SidebarGroupContent className="flex flex-col gap-2">
+    <SidebarGroup className="min-h-0 flex-1">
+      {isFlat ? null : <SidebarGroupLabel>WorkChart</SidebarGroupLabel>}
+      <SidebarGroupContent className="flex min-h-0 flex-1 flex-col gap-2">
         {find}
-        <OrgTree leadsToTeam query={query} />
+        <ScrollArea className="min-h-0 flex-1">
+          <OrgTree leadsToTeam query={query} />
+        </ScrollArea>
       </SidebarGroupContent>
     </SidebarGroup>
   );
@@ -617,8 +609,7 @@ function PersonSectionsNav() {
   const standingById = new Map(standings.map((st) => [st.id as string, st]));
   const showPlanned = usePortalShowPlanned();
   const groups = visibleGroups(showPlanned);
-  const groupIds = groups.map((g) => g.id) as string[];
-  const glance = active == null || !groupIds.includes(active);
+  const glance = useSelectedPersonSection() == null;
   return (
     <SidebarGroup>
       <SidebarGroupLabel>Sections</SidebarGroupLabel>

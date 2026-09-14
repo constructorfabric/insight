@@ -34,7 +34,7 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 CANONICAL_REALM = REPO_ROOT / "deploy/gitops/environments/local/keycloak/realms/insight-broker.yaml"
-KC_IMAGE = "quay.io/keycloak/keycloak:26.4"
+KC_IMAGE = "quay.io/keycloak/keycloak:26.7"
 KC_PORT = 18086
 BASE = f"http://127.0.0.1:{KC_PORT}"
 CONTAINER = "tenant-guard-kc"

@@ -1,0 +1,104 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "insight-v3-core.fullname" . }}
+  labels:
+    {{- include "insight-v3-core.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "insight-v3-core.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "insight-v3-core.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        # Platform CM arrives via envFrom; roll pods when its observability inputs change.
+        checksum/observability: {{ default dict (default dict .Values.global).observability | toYaml | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: insight-v3-core
+          image: "{{ required "image.repository is required" .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/app/insight-v3-core"]
+          args: ["-c", "/app/config/insight.yaml", "run"]
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-platform
+                optional: true
+            - secretRef:
+                name: {{ required "existingSecret is required" .Values.existingSecret | quote }}
+          env:
+            # An explicit `env` entry beats the same name arriving via
+            # `envFrom`, so this wins over a stale copy in `existingSecret`.
+            - name: APP__gears__insight_v3_core__config__ingest_token
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "ingest.tokenSecret is required" (.Values.ingest).tokenSecret | quote }}
+                  key: {{ required "ingest.tokenKey is required" (.Values.ingest).tokenKey | quote }}
+            {{- if ((.Values.global).mcp).enabled }}
+            - name: APP__gears__insight_v3_core__config__mcp__enabled
+              value: "true"
+            - name: APP__gears__insight_v3_core__config__mcp__bind_addr
+              value: "0.0.0.0:{{ .Values.mcp.port }}"
+            - name: APP__gears__insight_v3_core__config__mcp__public_url
+              value: {{ required "global.mcp.publicUrl is required when MCP is enabled" .Values.global.mcp.publicUrl | quote }}
+            - name: APP__gears__insight_v3_core__config__mcp__allow_insecure_private_network
+              value: {{ or (((.Values.global).mcp).allowInsecurePrivateNetwork) .Values.mcp.allowInsecurePrivateNetwork | quote }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+            {{- if ((.Values.global).mcp).enabled }}
+            - name: mcp
+              containerPort: {{ .Values.mcp.port }}
+              protocol: TCP
+            {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /app/config/insight.yaml
+              subPath: insight.yaml
+              readOnly: true
+            - name: data
+              mountPath: /app/data
+            - name: tmp
+              mountPath: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          {{- with .Values.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "insight-v3-core.fullname" . }}-gears-config
+        - name: data
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}

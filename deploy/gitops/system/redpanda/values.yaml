@@ -3,12 +3,13 @@
 ##
 ## Chart: redpanda/redpanda (repo: https://charts.redpanda.com)
 ## Pin in Makefile: REDPANDA_VERSION
-## Release: `redpanda` in namespace `insight-infra`.
+## Release: `redpanda` in the infra namespace (inventory `namespaces.infra`,
+## `insight-infra` by default).
 ##
 ## Per-env overrides go in environments/<env>/redpanda-values.yaml.
 ##
 ## App layer reaches this release as
-## `redpanda.insight-infra.svc.cluster.local:9093` (Kafka API).
+## `redpanda.<infra-ns>.svc.cluster.local:9093` (Kafka API).
 ## Redpanda Console runs as a separate release — see system/redpanda-console/.
 ##
 

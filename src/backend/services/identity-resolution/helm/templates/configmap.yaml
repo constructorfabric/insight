@@ -22,11 +22,37 @@ data:
 
     logging:
       default:
-        console_level: info
+        # The install-wide knobs: global.observability.logs.{level,format} —
+        # the same values the platform CM publishes as INSIGHT_LOG_LEVEL /
+        # INSIGHT_LOG_FORMAT.
+        console_level: {{ ((((.Values.global).observability).logs).level) | default "info" }}
+        console_format: {{ ((((.Values.global).observability).logs).format) | default "json" }}
+
+    opentelemetry:
+      resource:
+        service_name: "insight-identity-resolution"
+        attributes:
+          # The release the pod runs; the log_ctx span and the OTel resource
+          # both read it (semconv service.version).
+          service.version: {{ .Values.image.tag | default .Chart.AppVersion | quote }}
+      exporter:
+        kind: {{ .Values.opentelemetry.exporter.kind }}
+        {{- with .Values.opentelemetry.exporter.endpoint }}
+        endpoint: {{ . | quote }}
+        {{- end }}
+      tracing:
+        enabled: {{ .Values.opentelemetry.tracing.enabled }}
+      metrics:
+        enabled: {{ .Values.opentelemetry.metrics.enabled }}
 
     gears:
       api-gateway:
         config:
+          # INVARIANT: the service router's insight-http-metrics is the single
+          # writer of http.server.request.duration — the host's copy stays renamed
+          # or two bucket layouts collide in one series.
+          metrics:
+            prefix: "host"
           bind_addr: "0.0.0.0:{{ .Values.service.port }}"
           # Auth ENABLED: the oidc-authn-plugin verifies the ES256 gateway JWT
           # and maps its claims into the SecurityContext (R1).

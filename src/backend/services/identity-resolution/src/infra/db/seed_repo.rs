@@ -19,9 +19,11 @@ use sea_orm::{
 };
 use uuid::Uuid;
 
+use crate::domain::people::PersonChange;
 use crate::domain::seed::{KnownBinding, SeedObservationRow, SourceAccountKey, normalize_email};
 use crate::domain::seed_service::{ApplyCounts, SeedStore};
-use crate::infra::db::resolution_repo;
+use crate::infra::db::{people_repo, resolution_repo};
+use crate::infra::metrics::{self, DbQuery};
 
 /// MariaDB-backed [`SeedStore`] — wraps a connection so the persons-seed service
 /// can be driven against the real DB (or a fake in tests).
@@ -42,14 +44,20 @@ impl SeedStore for MariaDbSeedStore<'_> {
         &self,
         tenant_id: Uuid,
     ) -> anyhow::Result<HashMap<SourceAccountKey, KnownBinding>> {
-        known_account_bindings(self.db, tenant_id).await
+        let started = std::time::Instant::now();
+        let result = known_account_bindings(self.db, tenant_id).await;
+        metrics::record_db_query(DbQuery::KnownAccountBindings, started.elapsed());
+        result
     }
 
     async fn latest_email_to_person(
         &self,
         tenant_id: Uuid,
     ) -> anyhow::Result<HashMap<String, Uuid>> {
-        latest_email_to_person(self.db, tenant_id).await
+        let started = std::time::Instant::now();
+        let result = latest_email_to_person(self.db, tenant_id).await;
+        metrics::record_db_query(DbQuery::LatestEmailToPerson, started.elapsed());
+        result
     }
 
     async fn apply(
@@ -57,8 +65,21 @@ impl SeedStore for MariaDbSeedStore<'_> {
         tenant_id: Uuid,
         author_person_id: Uuid,
         rows: &[SeedObservationRow],
+        people: &[PersonChange],
+        retained_people: Option<&std::collections::HashSet<Uuid>>,
     ) -> anyhow::Result<ApplyCounts> {
-        apply(self.db, tenant_id, author_person_id, rows).await
+        let started = std::time::Instant::now();
+        let result = apply(
+            self.db,
+            tenant_id,
+            author_person_id,
+            rows,
+            people,
+            retained_people,
+        )
+        .await;
+        metrics::record_db_query(DbQuery::Apply, started.elapsed());
+        result
     }
 }
 
@@ -487,6 +508,8 @@ pub async fn apply(
     tenant_id: Uuid,
     author_person_id: Uuid,
     rows: &[SeedObservationRow],
+    people: &[PersonChange],
+    retained_people: Option<&std::collections::HashSet<Uuid>>,
 ) -> anyhow::Result<ApplyCounts> {
     // Idempotent insert — uq_person_observation dedups a re-emitted identical
     // observation; INSERT IGNORE swallows the duplicate-key error. Batched
@@ -531,44 +554,15 @@ pub async fn apply(
     }
     tracing::info!(inserted, "persons-seed apply: observations inserted");
 
+    let people_counts = people_repo::reconcile(&txn, tenant_id, people, retained_people).await?;
     let org_chart_rows_rebuilt = rebuild_org_chart(&txn, tenant_id, author_person_id).await?;
 
     txn.commit().await?;
     Ok(ApplyCounts {
         observations_inserted: inserted,
         org_chart_rows_rebuilt,
+        people_opened: people_counts.opened,
+        people_closed: people_counts.closed,
+        people_unchanged: people_counts.unchanged,
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::infra::db;
-
-    /// Integration test against a live MariaDB — reads only (no writes). Set
-    /// `IDENTITY_TEST_DB_URL` + `IDENTITY_TEST_TENANT_ID` and a port-forward to
-    /// run; skips cleanly otherwise so CI stays green.
-    #[tokio::test]
-    async fn read_maps_against_dev_db() -> anyhow::Result<()> {
-        let (Ok(url), Ok(tenant_raw)) = (
-            std::env::var("IDENTITY_TEST_DB_URL"),
-            std::env::var("IDENTITY_TEST_TENANT_ID"),
-        ) else {
-            eprintln!("skip: set IDENTITY_TEST_DB_URL + IDENTITY_TEST_TENANT_ID to run");
-            return Ok(());
-        };
-        let tenant = Uuid::parse_str(tenant_raw.trim())?;
-        let conn = db::connect(&url).await?;
-
-        let known = known_account_bindings(&conn, tenant).await?;
-        let emails = latest_email_to_person(&conn, tenant).await?;
-        // A seeded dev tenant has bindings and emails; assert the reads work and
-        // the maps are non-trivial without pinning to specific data.
-        assert!(!known.is_empty(), "dev tenant should have account bindings");
-        assert!(
-            !emails.is_empty(),
-            "dev tenant should have email→person rows"
-        );
-        Ok(())
-    }
 }

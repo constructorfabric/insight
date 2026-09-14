@@ -1,6 +1,10 @@
 import { useState } from "react";
 
-import type { SyncFact } from "@/api/connector-health-client";
+import type {
+  ConnectorHealth,
+  ConnectorInstanceRef,
+  SyncFact,
+} from "@/api/connector-health-client";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { Badge } from "@/components/ui/badge";
@@ -15,11 +19,13 @@ import {
 import {
   UNMEASURED,
   describeConnector,
+  describeDuration,
+  describeInstance,
   describeRecording,
   describeSync,
-  formatDuration,
   formatRecords,
   formatStarted,
+  instanceKey,
   type ConnectorTone,
 } from "@/lib/portal/connector-health";
 import { useConnectorHealth, useConnectorSyncs } from "@/queries/connector-health";
@@ -36,7 +42,20 @@ const TONE_STYLE: Record<ConnectorTone, string> = {
   idle: "bg-muted text-muted-foreground",
 };
 
-const COLUMNS = 5;
+const COLUMNS = 6;
+
+/**
+ * A DOM id for one row's disclosure panel.
+ *
+ * The identity's own separator is not one an id may carry through a CSS
+ * selector, so it is swapped for an underscore — and any underscore already in
+ * the key is escaped first, or `a_b/c` and `a/b_c` would name one panel and
+ * `aria-controls` would point two rows at the same disclosure.
+ */
+function panelIdFor(row: ConnectorHealth): string {
+  const id = instanceKey(row).replaceAll("_", "%5F").replaceAll("/", "_");
+  return `connector-syncs-${id}`;
+}
 
 export function ConnectorHealthPane() {
   const { data, isPending, isError, refetch } = useConnectorHealth();
@@ -88,6 +107,9 @@ export function ConnectorHealthPane() {
             <TableHeader>
               <TableRow>
                 <TableHead>Connector</TableHead>
+                {/* One connector can be configured more than once; this is the
+                    only cell that tells those rows apart. */}
+                <TableHead>Instance</TableHead>
                 <TableHead>State</TableHead>
                 <TableHead>Last sync started</TableHead>
                 <TableHead className="text-right">Duration</TableHead>
@@ -97,14 +119,15 @@ export function ConnectorHealthPane() {
             <TableBody>
               {data.connectors.map((row) => {
                 const state = describeConnector(row);
-                // Keyed on the connector, not on the row's position. The page
-                // polls, so a position can come to mean a different connector
-                // between renders and the wrong row would open. The name is
-                // safe to key on: the read groups by connector, so the response
-                // cannot carry two rows sharing one.
-                const open = expanded === row.connector;
-                const panelId = `connector-syncs-${row.connector}`;
-                const toggle = () => setExpanded(open ? null : row.connector);
+                // Keyed on the whole identity, not on the row's position and
+                // not on the name. The page polls, so a position can come to
+                // mean a different row between renders; and two installations
+                // of one connector share the name, so keying on it would open
+                // the wrong one's history.
+                const key = instanceKey(row);
+                const open = expanded === key;
+                const panelId = panelIdFor(row);
+                const toggle = () => setExpanded(open ? null : key);
                 return [
                   // The whole row opens the connector, by the same rule every
                   // console listing follows — `activatesRow` is shared with
@@ -117,7 +140,7 @@ export function ConnectorHealthPane() {
                   // table. An inner button would be a second focus stop for the
                   // one thing the row already does.
                   <TableRow
-                    key={row.connector}
+                    key={key}
                     data-state-name={state.state}
                     data-state={open ? "selected" : undefined}
                     tabIndex={0}
@@ -134,6 +157,9 @@ export function ConnectorHealthPane() {
                     className="cursor-pointer select-text"
                   >
                     <TableCell className="font-medium">{row.connector}</TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {describeInstance(row)}
+                    </TableCell>
                     <TableCell>
                       <Badge
                         variant="secondary"
@@ -145,17 +171,15 @@ export function ConnectorHealthPane() {
                     <TableCell className="tabular-nums text-muted-foreground">
                       {formatStarted(row.last_sync?.started_at ?? null)}
                     </TableCell>
-                    <TableCell className="text-right tabular-nums text-muted-foreground">
-                      {formatDuration(row.last_sync?.duration_ms ?? null)}
-                    </TableCell>
+                    <DurationCell sync={row.last_sync} asOf={data.as_of} />
                     <TableCell className="text-right tabular-nums text-muted-foreground">
                       {formatRecords(row.last_sync?.records_reported ?? null)}
                     </TableCell>
                   </TableRow>,
                   open ? (
-                    <TableRow key={`syncs-${row.connector}`}>
+                    <TableRow key={`syncs-${key}`}>
                       <TableCell colSpan={COLUMNS} id={panelId} className="bg-muted/40">
-                        <RecentSyncs connector={row.connector} />
+                        <RecentSyncs instance={row} asOf={data.as_of} />
                       </TableCell>
                     </TableRow>
                   ) : null,
@@ -169,8 +193,39 @@ export function ConnectorHealthPane() {
   );
 }
 
-function RecentSyncs({ connector }: { connector: string }) {
-  const { data, isPending, isError, refetch } = useConnectorSyncs(connector);
+/**
+ * A sync still in flight is not dimmed like a settled one: its number is the
+ * only thing on the row that keeps moving, and it is what an operator opened
+ * the page to see.
+ */
+function DurationCell({
+  sync,
+  asOf,
+}: {
+  sync: ConnectorHealth["last_sync"];
+  asOf: string;
+}) {
+  const duration = describeDuration(sync, asOf);
+  return (
+    <TableCell
+      className={cn(
+        "text-right tabular-nums",
+        duration.inFlight ? "text-foreground" : "text-muted-foreground",
+      )}
+    >
+      {duration.text}
+    </TableCell>
+  );
+}
+
+function RecentSyncs({
+  instance,
+  asOf,
+}: {
+  instance: ConnectorInstanceRef;
+  asOf: string;
+}) {
+  const { data, isPending, isError, refetch } = useConnectorSyncs(instance);
 
   if (isPending) return <CenteredSpinner className="min-h-24" />;
   if (isError || data === undefined) {
@@ -195,23 +250,29 @@ function RecentSyncs({ connector }: { connector: string }) {
       </p>
       <ul className="flex flex-col gap-1">
         {data.syncs.map((sync) => (
-          <SyncLine key={sync.job_id} sync={sync} />
+          <SyncLine key={sync.job_id} sync={sync} asOf={asOf} />
         ))}
       </ul>
     </div>
   );
 }
 
-function SyncLine({ sync }: { sync: SyncFact }) {
+function SyncLine({ sync, asOf }: { sync: SyncFact; asOf: string }) {
   const state = describeSync(sync);
+  const duration = describeDuration(sync, asOf);
   return (
     <li className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
       <Badge className={cn("font-medium", TONE_STYLE[state.tone])}>
         {state.label}
       </Badge>
       <span className="tabular-nums">{formatStarted(sync.started_at)}</span>
-      <span className="tabular-nums text-muted-foreground">
-        {formatDuration(sync.duration_ms)}
+      <span
+        className={cn(
+          "tabular-nums",
+          duration.inFlight ? "text-foreground" : "text-muted-foreground",
+        )}
+      >
+        {duration.text}
       </span>
       <span className="tabular-nums text-muted-foreground">
         {formatRecords(sync.records_reported)} records

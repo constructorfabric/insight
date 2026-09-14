@@ -58,6 +58,23 @@ class AiSettingsResponse(BaseModel):
     system_prompt: str
 
 
+class BreakdownWindowValueDto(BaseModel):
+    """
+    One group's reading over the comparison window.
+
+    `value` and `present` are independent: a ratio over a group that IS in the
+    window reads NULL whenever its denominator is zero, so absence cannot be
+    inferred from the value. A reader that wants what a standalone request over
+    that window would have returned keeps the rows with `present` and renders
+    their `value` as it stands, NULL included.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    present: bool
+    value: float | None = None
+
+
 class Bucket(StrEnum):
     day = 'day'
     week = 'week'
@@ -199,6 +216,16 @@ class FeedbackRequest(BaseModel):
     path: str | None = Field(None, description='The screen the sender was on. Empty when the SPA cannot name one.')
 
 
+class Grain(StrEnum):
+    """
+    Bucket width. The set is closed and validated server-side: the view is a
+    `merge()` over every bronze database, so an operator-supplied interval
+    expression would be a direct route into that scan.
+    """
+    field_15m = '15m'
+    field_1s = '1s'
+
+
 class HistogramBinDto(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -218,6 +245,15 @@ class ImportCustomMetricsResponse(BaseModel):
     )
     imported: int = Field(..., ge=0)
     skipped: list[str]
+
+
+class IngestionPoint(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    bucket: str = Field(..., description="Bucket start as `YYYY-MM-DD HH:MM:SS`, always UTC — the reader's own\nzone would re-cut buckets the server already decided.")
+    key: str = Field(..., description='Connector slug, stream name, or `all`, per the resolved `series`.')
+    rows: int = Field(..., ge=0)
 
 
 class MetricComputation(StrEnum):
@@ -339,19 +375,6 @@ class MetricDrilldownPeriod(BaseModel):
     to: str
 
 
-class MetricDrilldownRequest(BaseModel):
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    cursor: str | None = None
-    display_dimensions: list[str] | None = None
-    entity: MetricDrilldownEntity
-    filters: list[MetricDrilldownFilter] | None = None
-    limit: int | None = Field(None, ge=0)
-    metric_key: str
-    period: MetricDrilldownPeriod
-
-
 class MetricDrilldownRow(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -360,15 +383,9 @@ class MetricDrilldownRow(BaseModel):
     values: dict[str, Any]
 
 
-class MetricDrilldownSelection(BaseModel):
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    display_dimensions: list[str]
-    entity: MetricDrilldownEntity
-    filters: list[MetricDrilldownFilter]
-    metric_key: str
-    period: MetricDrilldownPeriod
+class MetricDrilldownSortDirection(StrEnum):
+    asc = 'asc'
+    desc = 'desc'
 
 
 class MetricFormat(StrEnum):
@@ -676,6 +693,7 @@ class PeriodValueDto(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
+    compare_to: float | None = Field(None, description='The same reading over `compare_to`. Omitted both when no comparison\nwindow was asked for and when the entity has no value in it — the two\nare not distinguished on the wire, and a reader that asked knows which\ncase it is in.')
     entity_id: str
     value: float | None = None
 
@@ -708,6 +726,79 @@ class PutSettingsRequest(BaseModel):
         extra='forbid',
     )
     system_prompt: str
+
+
+class ReportCell(RootModel[str | float]):
+    root: str | float
+
+
+class ReportColumnDataType(StrEnum):
+    text = 'text'
+    date = 'date'
+    number = 'number'
+
+
+class ReportColumnMetadata(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    data_type: ReportColumnDataType
+    format: MetricFormat | None = None
+    key: str
+    label: str
+    unit: str | None = None
+
+
+class ReportExportFormat(StrEnum):
+    csv = 'csv'
+    xlsx = 'xlsx'
+
+
+class ReportGranularity(StrEnum):
+    day = 'day'
+    week = 'week'
+    month = 'month'
+    quarter = 'quarter'
+    year = 'year'
+
+
+class ReportPeriod(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    from_: str = Field(..., alias='from')
+    to: str
+
+
+class ReportRow(RootModel[list[ReportCell | None]]):
+    root: list[ReportCell | None]
+
+
+class Type7(StrEnum):
+    people = 'people'
+
+
+class ReportSubject1(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    ids: list[UUID] = Field(..., max_length=1000)
+    type: Type7
+
+
+class Type8(StrEnum):
+    tenant = 'tenant'
+
+
+class ReportSubject2(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    type: Type8
+
+
+class ReportSubject(RootModel[ReportSubject1 | ReportSubject2]):
+    root: ReportSubject1 | ReportSubject2
 
 
 class RollupValueDto(BaseModel):
@@ -792,6 +883,18 @@ class Scope(StrEnum):
     person = 'person'
 
 
+class Series(StrEnum):
+    """
+    What one plotted band counts. `Total` exists because the full-period trend
+    plots a single line: grouping it by connector would multiply 400 days of
+    15-minute buckets by the connector count for a series the chart then sums
+    back down anyway.
+    """
+    connector = 'connector'
+    stream = 'stream'
+    total = 'total'
+
+
 class SnapshotScope(StrEnum):
     """
     Whose reading this is.
@@ -827,7 +930,9 @@ class SyncHistoryResponse(BaseModel):
         extra='forbid',
     )
     connector: str
+    source_id: str | None = Field(None, description="The installation's own id within that tenant. Absent with `tenant_id`.")
     syncs: list[SyncFact] = Field(..., description='A bounded window, newest first — not the full retained history.')
+    tenant_id: str | None = Field(None, description='Tenant of the installation the window was narrowed to, echoed back.\nAbsent where the caller asked for the connector rather than one\ninstallation of it, in which case the window spans every instance under\nthat name.')
     window: int = Field(..., description='How many rows this window holds at most, so the page can say the list\nis a window rather than everything.', ge=0)
 
 
@@ -849,6 +954,8 @@ class TimeseriesPointDto(BaseModel):
         extra='forbid',
     )
     bucket_start: str
+    denominator: float | None = Field(None, description='What it was taken from, below the line. Ratio metrics only.')
+    numerator: float | None = Field(None, description='What the bucket\'s ratio was taken from, above the line. Ratio metrics\nonly, and absent on a bucket whose numerator measure has no rows —\na share is argued with its denominator, and a reader who can see\n"6 of 8" can tell a quiet day from a bad one.')
     value: float | None = None
 
 
@@ -962,8 +1069,10 @@ class BreakdownValueDto(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
+    compare_to: BreakdownWindowValueDto | None = None
     dimensions: list[MetricDimensionDto]
     entity_id: str
+    present: bool | None = Field(None, description='Whether this group has any observation inside the primary period.\nPresent only on a windowed response, where the group set spans every\nwindow and a reader has to know which of them each group belongs to.')
     value: float | None = None
 
 
@@ -974,6 +1083,8 @@ class ConnectorHealth(BaseModel):
     configured: bool = Field(..., description='Present in the newest sealed snapshot of the set the controller manages.')
     connector: str
     last_sync: SyncFact | None = None
+    source_id: str | None = Field(None, description="The installation's own id within that tenant. Absent with `tenant_id`.")
+    tenant_id: str | None = Field(None, description='Tenant of the installation this row is. Absent together with\n`source_id` on history recorded before the ledger carried the identity\nthat no single instance could be shown to own — unattributed, which is a\ndifferent answer from attributed to something named "".')
 
 
 class ConnectorHealthResponse(BaseModel):
@@ -1054,6 +1165,19 @@ class HistogramValueDto(BaseModel):
     entity_id: str | None = None
 
 
+class IngestionIntensityResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    from_: str = Field(..., alias='from')
+    grain: Grain = Field(..., description='Echoed resolved, not as asked: the caller may have pinned neither bound.')
+    points: list[IngestionPoint]
+    scope: str | None = Field(None, description='The `source_database` the read was scoped to; absent when org-wide.')
+    series: Series
+    to: str
+    truncated: bool = Field(..., description='The group cap clipped the tail: the window is too wide for this grain\nand series to plot honestly. Never silently true — the UI says so.')
+
+
 class MetricDefinitionView(BaseModel):
     """
     One metric definition, display fields only.
@@ -1067,15 +1191,17 @@ class MetricDefinitionView(BaseModel):
     drilldown: MetricDrilldownCapability | None = None
     entity_type: EntityType
     explanation: str | None = None
+    first_observed_date: date_aliased | None = Field(None, description="Oldest `metric_date` the definition's input measures currently hold;\nabsent when they hold none — whether nothing was ever observed or\nretention took the last of it, which a sweep cannot tell apart.\n\nThe oldest observation still available, NOT the date collection began:\nit moves forward as retention drops the oldest rows, and is cleared when\na sweep reads the relation and finds nothing. It does not pair with\n`last_observed_date` as an interval of what is readable — that one is a\nhigh-water mark and is never cleared.")
     format: MetricFormat
     is_enabled: bool
     label: str
     last_observed_date: date_aliased | None = Field(None, description="Newest `metric_date` ever observed across the definition's input\nmeasures; absent when no observation has ever been seen. Freshness\nsignal, orthogonal to `schema_status`. Not maintained for `custom`\nmetrics (see `origin`).")
     metric_key: str
     origin: MetricOrigin = Field(..., description='`builtin` metrics read managed observation relations; `custom` metrics\nexecute inline SQL at query time. The validator stamps `schema_status`\nand `last_observed_date` from materialized relations only, so for\n`custom` those fields stay `unchecked` / absent regardless of data —\nreaders must not interpret them as "never measured" for custom metrics.')
-    revision_window_days: int | None = Field(None, description='How many days back from `last_observed_date` the suppliers may still\nrevise. Absent where the source declares none, and for `custom` metrics,\nwhich read no managed source — absence means "settles on arrival", not\n"revised forever". Registry knowledge, not tenant state, so it is read\nfrom the seed rather than stored per row.', ge=0)
+    revision_window_days: int | None = Field(None, description='Deprecated, kept for consumers written before `settled_through`: how many\ndays back from `last_observed_date` a reading may still be revised.\n\nA duration cannot express a boundary anchored to the billing month, so\nfor a month-anchored measure this is the longest that boundary can ever\nbe — an over-statement, never an under-statement. Absence still means\n"settles on arrival", which is why a metric under any rule reports a\nnumber here rather than omitting one it cannot state exactly. Read\n`settled_through` instead.', ge=0)
     schema_error_code: MetricSchemaErrorCode | None = None
     schema_status: SchemaStatus
+    settled_through: date_aliased | None = Field(None, description='Newest delivered date considered settled under the declared revision\nrule. Absent where the source declares none, and for `custom` metrics,\nwhich read no managed source — absence means "settles on arrival", not\n"revised forever".\n\nA rule states how a supplier normally revises, not what it is incapable\nof: a correction outside that behaviour can still reach a date reported\nas settled.\n\nA date rather than the rule that produced it: how far back revision\nreaches depends on the rule\'s own anchor, and a consumer holding a day\ncount has to re-derive the anchor to use it.')
     short_label: str | None = Field(None, description='Compact label for dense surfaces; absent when the full label is\nalready compact enough.')
     subject: str | None = Field(None, description='The single topic this metric belongs to within its family, so a surface\nlisting a family can partition it into topics rather than only sorting\nby name. Exactly one per metric; absent only for metrics that declare\nnone.')
     tags: list[str] = Field(..., description='Cross-cutting labels a surface can filter or search by; many per metric,\nunlike the singular `subject`. Empty when the metric declares none.')
@@ -1088,29 +1214,16 @@ class MetricDrilldownColumn(BaseModel):
     )
     key: str
     label: str
+    sortable: bool = Field(..., description='Whether the query can order by this column. A column the evidence row\ndoes not carry in a form SQL can compare is shown, not sorted.')
     type: MetricDrilldownColumnType
 
 
-class MetricDrilldownExportRequest(BaseModel):
+class MetricDrilldownSort(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    display_dimensions: list[str] | None = None
-    entity: MetricDrilldownEntity
-    filters: list[MetricDrilldownFilter] | None = None
-    format: MetricDrilldownExportFormat
-    metric_key: str
-    period: MetricDrilldownPeriod
-
-
-class MetricDrilldownResponse(BaseModel):
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    columns: list[MetricDrilldownColumn]
-    next_cursor: str | None = None
-    rows: list[MetricDrilldownRow]
-    selection: MetricDrilldownSelection
+    direction: MetricDrilldownSortDirection
+    key: str
 
 
 class MetricRequest(BaseModel):
@@ -1193,6 +1306,7 @@ class MetricResultsRequest(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
+    compare_to: MetricResultsPeriod | None = None
     entity: MetricResultsEntity
     metrics: list[MetricRequest]
     period: MetricResultsPeriod
@@ -1218,6 +1332,36 @@ class MetricSnapshot(BaseModel):
     trend: list[float | None] | None = Field(None, description="The sparkline's readings, oldest first.")
     until: str = Field(..., description='Inclusive end of the window, `YYYY-MM-DD`.')
     value: str = Field(..., description='The formatted value the tile shows.')
+
+
+class ReportExportRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    format: ReportExportFormat
+    granularity: ReportGranularity
+    metric_keys: list[str] = Field(..., max_length=100)
+    period: ReportPeriod
+    subject: ReportSubject
+
+
+class ReportPreviewResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    columns: list[ReportColumnMetadata]
+    rows: list[ReportRow]
+    total_rows: int = Field(..., ge=0)
+
+
+class ReportRecipe(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    granularity: ReportGranularity
+    metric_keys: list[str] = Field(..., max_length=100)
+    period: ReportPeriod
+    subject: ReportSubject
 
 
 class SavedQueryListResponse(BaseModel):
@@ -1337,6 +1481,48 @@ class MetricDefinitionListResponse(BaseModel):
     metrics: list[MetricDefinitionView]
 
 
+class MetricDrilldownExportRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    display_dimensions: list[str] | None = None
+    entity: MetricDrilldownEntity
+    filters: list[MetricDrilldownFilter] | None = None
+    format: MetricDrilldownExportFormat
+    metric_key: str
+    period: MetricDrilldownPeriod
+    search: str | None = None
+    sort: MetricDrilldownSort | None = None
+
+
+class MetricDrilldownRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    cursor: str | None = None
+    display_dimensions: list[str] | None = None
+    entity: MetricDrilldownEntity
+    filters: list[MetricDrilldownFilter] | None = None
+    limit: int | None = Field(None, ge=0)
+    metric_key: str
+    period: MetricDrilldownPeriod
+    search: str | None = None
+    sort: MetricDrilldownSort | None = None
+
+
+class MetricDrilldownSelection(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    display_dimensions: list[str]
+    entity: MetricDrilldownEntity
+    filters: list[MetricDrilldownFilter]
+    metric_key: str
+    period: MetricDrilldownPeriod
+    search: str | None = None
+    sort: MetricDrilldownSort = Field(..., description="Always the effective order, never the caller's omission — a client that\nfinds this field missing is talking to a server that cannot sort at all.")
+
+
 class MetricResultViewDto2(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -1348,6 +1534,16 @@ class MetricResultViewDto2(BaseModel):
 
 class MetricResultViewDto(RootModel[MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5 | MetricResultViewDto6 | MetricResultViewDto7]):
     root: MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5 | MetricResultViewDto6 | MetricResultViewDto7
+
+
+class MetricDrilldownResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    columns: list[MetricDrilldownColumn]
+    next_cursor: str | None = None
+    rows: list[MetricDrilldownRow]
+    selection: MetricDrilldownSelection
 
 
 class MetricResultDto7(BaseModel):

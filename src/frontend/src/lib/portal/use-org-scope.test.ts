@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import type { PeopleListItem } from "@/api/identity-client";
 import type { IdentityPerson } from "@/types/insight";
 import { flatOrgScope, resolveScopeRoster } from "./use-org-scope";
 
@@ -17,6 +18,22 @@ const person = (
     display_name: name,
     subordinates,
   }) as unknown as IdentityPerson;
+
+const rosterPerson = (
+  personId: string,
+  displayName: string,
+  over: Partial<PeopleListItem> = {},
+): PeopleListItem => ({
+  person_id: personId,
+  display_name: displayName,
+  first_name: null,
+  last_name: null,
+  username: null,
+  email: null,
+  attributes: {},
+  manager_person_id: null,
+  ...over,
+});
 
 //        ao
 //   ┌────┴─────┐
@@ -37,7 +54,8 @@ describe("resolveScopeRoster", () => {
   it("defaults to the viewer's whole subtree", () => {
     const s = resolveScopeRoster(TREE, "p-ao", { root: null, directOnly: false });
     expect(s.label).toBe("Ao");
-    expect(s.count).toBe(5);
+    expect(s.rosterCount).toBe(5);
+    expect(s.scopeMemberCount).toBe(6);
   });
   it("scopes to a sub-lead's subtree", () => {
     const s = resolveScopeRoster(TREE, "p-ao", { root: "p-lead1", directOnly: false });
@@ -51,10 +69,12 @@ describe("resolveScopeRoster", () => {
   it("narrows to direct reports", () => {
     const s = resolveScopeRoster(TREE, "p-ao", { root: "p-lead1", directOnly: true });
     expect(s.roster?.map((r) => r.person_id).sort()).toEqual(["p-ic1", "p-lead2"]);
-    expect(s.reportPeople?.map((person) => person.entityId).sort()).toEqual([
+    expect(s.roster?.map((person) => person.person_id).sort()).toEqual([
       "p-ic1",
       "p-lead2",
     ]);
+    expect(s.rosterCount).toBe(2);
+    expect(s.scopeMemberCount).toBe(3);
   });
   it("falls back to the viewer when root is outside the tree", () => {
     const s = resolveScopeRoster(TREE, "p-ao", { root: "p-stranger", directOnly: false });
@@ -79,7 +99,8 @@ describe("resolveScopeRoster", () => {
       "·p-lead1",
       "··p-lead2",
     ]);
-    expect(s.managerNodes.map((m) => m.teamSize)).toEqual([5, 3, 1]);
+    expect(s.managerNodes.map((m) => m.subtreeMemberCount)).toEqual([6, 4, 2]);
+    expect(s.managerNodes.map((m) => m.directMemberCount)).toEqual([3, 3, 2]);
   });
 
   it("keeps the picker in outline order across branches, not by depth", () => {
@@ -98,15 +119,20 @@ describe("resolveScopeRoster", () => {
       "p-l2",
       "p-l2a",
     ]);
-    expect(s.managerNodes.map((m) => m.teamSize)).toEqual([6, 2, 1, 2, 1]);
+    expect(s.managerNodes.map((m) => m.subtreeMemberCount)).toEqual([
+      7, 3, 2, 3, 2,
+    ]);
+    expect(s.managerNodes.map((m) => m.directMemberCount)).toEqual([
+      3, 2, 2, 2, 2,
+    ]);
   });
 });
 
 describe("flatOrgScope", () => {
   const roster = [
-    { person_id: "p-me", display_name: "Me" },
-    { person_id: "p-b", display_name: "Bea" },
-    { person_id: "p-c", display_name: "Cyd" },
+    rosterPerson("p-me", "Me"),
+    rosterPerson("p-b", "Bea"),
+    rosterPerson("p-c", "Cyd"),
   ];
 
   it("counts everyone the viewer may see, the viewer included", () => {
@@ -115,7 +141,8 @@ describe("flatOrgScope", () => {
     const scope = flatOrgScope(roster);
 
     expect(scope.roster?.map((r) => r.person_id)).toEqual(["p-me", "p-b", "p-c"]);
-    expect(scope.count).toBe(3);
+    expect(scope.rosterCount).toBe(3);
+    expect(scope.scopeMemberCount).toBe(3);
   });
 
   it("offers no manager nodes and no direct-only cut", () => {
@@ -136,7 +163,7 @@ describe("flatOrgScope", () => {
     // The roster entry is what the zones label people by; dropping username
     // here would blank every person the org chart never named.
     const scope = flatOrgScope([
-      { person_id: "p-h", display_name: "", username: "handle", email: "" },
+      rosterPerson("p-h", "", { username: "handle", email: "" }),
     ]);
 
     expect(scope.roster).toEqual([
@@ -151,30 +178,15 @@ describe("flatOrgScope", () => {
     ]);
   });
 
-  it("carries report people from the visible roster", () => {
+  it("carries visible people without creating a report-specific profile", () => {
     const scope = flatOrgScope([
-      {
-        person_id: "p-h",
-        display_name: "Handle",
+      rosterPerson("p-h", "Handle", {
         email: "handle@example.com",
-        job_title: "Engineer",
-        status: "active",
-      },
+        attributes: { job_title: "Engineer", status: "active" },
+      }),
     ]);
 
-    expect(scope.reportPeople).toEqual([
-      {
-        entityId: "p-h",
-        name: "Handle",
-        email: "handle@example.com",
-        division: "",
-        department: "",
-        jobTitle: "Engineer",
-        managerName: "",
-        managerEmail: "",
-        status: "active",
-      },
-    ]);
+    expect(scope.roster?.map((person) => person.person_id)).toEqual(["p-h"]);
   });
 
 
@@ -182,6 +194,7 @@ describe("flatOrgScope", () => {
     const scope = flatOrgScope(null);
 
     expect(scope.roster).toBeNull();
-    expect(scope.count).toBe(0);
+    expect(scope.rosterCount).toBe(0);
+    expect(scope.scopeMemberCount).toBe(0);
   });
 });

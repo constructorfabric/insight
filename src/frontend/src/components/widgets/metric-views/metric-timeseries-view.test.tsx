@@ -6,7 +6,10 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { EvidenceDialogContext } from "@/components/metric-evidence-context";
+import {
+  EvidenceDialogContext,
+  type EvidenceDialogTarget,
+} from "@/components/metric-evidence-context";
 import { MetricTimeseriesView } from "@/components/widgets/metric-views/metric-timeseries-view";
 import {
   ENTITY_ID,
@@ -35,7 +38,7 @@ vi.mock("@/components/widgets/metric-views/metric-timeseries-chart", () => ({
   }: {
     onEvidence?: (
       metricKey: string,
-      columnKey: string,
+      columnKey: string | null,
       bucketStart: string | null
     ) => void;
   }) => (
@@ -48,6 +51,12 @@ vi.mock("@/components/widgets/metric-views/metric-timeseries-chart", () => ({
         }
       >
         drill point
+      </button>
+      <button
+        type="button"
+        onClick={() => onEvidence?.("git.commits", null, "2026-04-20")}
+      >
+        drill bucket
       </button>
     </div>
   ),
@@ -549,8 +558,7 @@ describe("MetricTimeseriesView", () => {
     );
   });
 
-  it("opens a grouped point with its exact period and dimensions", async () => {
-    const user = userEvent.setup();
+  function renderDrillableGroupedChart(id: string): ReturnType<typeof vi.fn> {
     const byKey = timeseriesByKey();
     const metric = byKey.get("git.commits");
     if (!metric) throw new Error("missing fixture metric");
@@ -563,6 +571,7 @@ describe("MetricTimeseriesView", () => {
     };
     mocks.collection.mockReturnValue({ ...ready, byKey });
     mocks.evidenceColumn = groupedTimeseriesModel().columns[0]?.key ?? "";
+
     const openEvidenceTargets = vi.fn();
     render(
       <EvidenceDialogContext.Provider
@@ -573,7 +582,7 @@ describe("MetricTimeseriesView", () => {
       }}
       >
         <MetricTimeseriesView
-          id="point-evidence"
+          id={id}
           entityId={ENTITY_ID}
           range={RANGE}
           metricKeys={["git.commits"]}
@@ -581,6 +590,60 @@ describe("MetricTimeseriesView", () => {
         />
       </EvidenceDialogContext.Provider>
     );
+    return openEvidenceTargets;
+  }
+
+  it("holds every combined target to the clicked bucket", async () => {
+    const user = userEvent.setup();
+    const byKey = timeseriesByKey();
+    for (const metric of byKey.values()) {
+      metric.drilldown = { granularity: ["event"] };
+      metric.selection = {
+        metric_key: metric.metric_key,
+        entity: { type: "person", ids: [ENTITY_ID] },
+        period: RANGE,
+        filters: [],
+      };
+    }
+    mocks.collection.mockReturnValue({ ...ready, byKey });
+    const openEvidenceTargets = vi.fn();
+    render(
+      <EvidenceDialogContext.Provider
+        value={{
+        openEvidence: vi.fn(),
+        openEvidenceTargets,
+        openEvidencePeople: vi.fn(),
+      }}
+      >
+        <MetricTimeseriesView
+          id="combined-bucket"
+          entityId={ENTITY_ID}
+          range={RANGE}
+          metricKeys={["git.commits", "git.lines_added"]}
+          chart={{ multiMetric: "combined" }}
+        />
+      </EvidenceDialogContext.Provider>
+    );
+
+    await user.click(screen.getByRole("button", { name: "drill bucket" }));
+    const [targets, options] = openEvidenceTargets.mock.calls.at(-1) ?? [];
+    expect(
+      targets.map((target: EvidenceDialogTarget) => target.selection.metric_key)
+    ).toEqual(["git.commits", "git.lines_added"]);
+    // Picking the other metric in the dialog must not widen the period back
+    // out to the widget's own range.
+    for (const target of targets as EvidenceDialogTarget[]) {
+      expect(target.selection.period).toEqual({
+        from: "2026-04-20",
+        to: "2026-04-26",
+      });
+    }
+    expect(options).toEqual({ activeMetricKey: "git.commits" });
+  });
+
+  it("opens a grouped point with its exact period and dimensions", async () => {
+    const user = userEvent.setup();
+    const openEvidenceTargets = renderDrillableGroupedChart("point-evidence");
 
     await user.click(screen.getByRole("button", { name: "drill point" }));
     expect(openEvidenceTargets).toHaveBeenCalledWith(
@@ -595,6 +658,27 @@ describe("MetricTimeseriesView", () => {
                 values: ["org/repo-a"],
               },
             ],
+            display_dimensions: ["repository"],
+          }),
+          label: "Commits",
+        },
+      ],
+      { activeMetricKey: "git.commits" }
+    );
+  });
+
+  it("opens a whole bucket with no dimension narrowing", async () => {
+    const user = userEvent.setup();
+    const openEvidenceTargets = renderDrillableGroupedChart("bucket-evidence");
+
+    await user.click(screen.getByRole("button", { name: "drill bucket" }));
+    expect(openEvidenceTargets).toHaveBeenCalledWith(
+      [
+        {
+          selection: expect.objectContaining({
+            metric_key: "git.commits",
+            period: { from: "2026-04-20", to: "2026-04-26" },
+            filters: [],
             display_dimensions: ["repository"],
           }),
           label: "Commits",

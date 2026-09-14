@@ -80,6 +80,25 @@ pub(crate) enum Attention {
     NoLongerConfigured,
 }
 
+/// Which installation of a connector a row belongs to.
+///
+/// One connector can be configured more than once — a second Secret naming its
+/// own source id, reading a different account of the same vendor — so the name
+/// alone does not identify the thing that synced. Grouping by it would resolve
+/// both instances to one newest sync, and whichever ran last would stand for
+/// the pair: a failing instance reads as healthy because its sibling succeeded.
+///
+/// Ordered by its own fields, which is what breaks a tie between two rows that
+/// need the same attention and were last active at the same moment.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub(crate) struct InstanceKey {
+    pub connector: String,
+    /// Empty on history recorded before the ledger carried the identity that no
+    /// single instance could be shown to own. Not a name — an absence.
+    pub tenant_id: String,
+    pub source_id: String,
+}
+
 /// One connector's newest recorded sync, as the ledger holds it.
 #[derive(Debug, Clone)]
 pub(crate) struct LastSync {
@@ -96,7 +115,7 @@ pub(crate) struct LastSync {
 
 #[derive(Debug, Clone)]
 pub(crate) struct ConnectorSummary {
-    pub connector: String,
+    pub instance: InstanceKey,
     pub configured: bool,
     pub last_sync: Option<LastSync>,
 }
@@ -142,7 +161,10 @@ pub(crate) fn by_attention(summaries: &mut [ConnectorSummary]) {
             // Descending, and `None` is the smallest `Option` — so a row with
             // no activity lands at the end of its band rather than the front.
             .then_with(|| right.last_activity().cmp(&left.last_activity()))
-            .then_with(|| left.connector.cmp(&right.connector))
+            // The whole identity, not the name: two instances of one connector
+            // tie on the name, and a tie the sort cannot break leaves their
+            // order down to which the warehouse happened to return first.
+            .then_with(|| left.instance.cmp(&right.instance))
     });
 }
 
@@ -181,6 +203,13 @@ pub struct SyncFact {
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ConnectorHealth {
     pub connector: String,
+    /// Tenant of the installation this row is. Absent together with
+    /// `source_id` on history recorded before the ledger carried the identity
+    /// that no single instance could be shown to own — unattributed, which is a
+    /// different answer from attributed to something named "".
+    pub tenant_id: Option<String>,
+    /// The installation's own id within that tenant. Absent with `tenant_id`.
+    pub source_id: Option<String>,
     /// Present in the newest sealed snapshot of the set the controller manages.
     pub configured: bool,
     /// Absent for a configured connector that has never synced.
@@ -208,6 +237,13 @@ impl toolkit::api::api_dto::ResponseApiDto for ConnectorHealthResponse {}
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct SyncHistoryResponse {
     pub connector: String,
+    /// Tenant of the installation the window was narrowed to, echoed back.
+    /// Absent where the caller asked for the connector rather than one
+    /// installation of it, in which case the window spans every instance under
+    /// that name.
+    pub tenant_id: Option<String>,
+    /// The installation's own id within that tenant. Absent with `tenant_id`.
+    pub source_id: Option<String>,
     /// A bounded window, newest first — not the full retained history.
     pub syncs: Vec<SyncFact>,
     /// How many rows this window holds at most, so the page can say the list
@@ -234,9 +270,17 @@ impl ConnectorHealthResponse {
 }
 
 impl SyncHistoryResponse {
-    pub(crate) fn build(connector: String, syncs: Vec<LastSync>, window: u32) -> Self {
+    pub(crate) fn build(
+        connector: String,
+        tenant_id: Option<String>,
+        source_id: Option<String>,
+        syncs: Vec<LastSync>,
+        window: u32,
+    ) -> Self {
         Self {
             connector,
+            tenant_id,
+            source_id,
             syncs: syncs.into_iter().map(Into::into).collect(),
             window,
         }
@@ -245,6 +289,15 @@ impl SyncHistoryResponse {
 
 pub(crate) fn stamp(moment: DateTime<Utc>) -> String {
     moment.to_rfc3339_opts(SecondsFormat::Millis, true)
+}
+
+/// An identity the ledger does not hold crosses the wire as absent.
+///
+/// The column is `LowCardinality(String)` and cannot be NULL, so "nobody could
+/// say" is stored as the empty string. Shipping that verbatim would put a row
+/// on the page whose instance is named "", which reads as a fact.
+fn label(value: String) -> Option<String> {
+    (!value.is_empty()).then_some(value)
 }
 
 impl From<LastSync> for SyncFact {
@@ -262,7 +315,9 @@ impl From<LastSync> for SyncFact {
 impl From<ConnectorSummary> for ConnectorHealth {
     fn from(summary: ConnectorSummary) -> Self {
         Self {
-            connector: summary.connector,
+            connector: summary.instance.connector,
+            tenant_id: label(summary.instance.tenant_id),
+            source_id: label(summary.instance.source_id),
             configured: summary.configured,
             last_sync: summary.last_sync.map(Into::into),
         }

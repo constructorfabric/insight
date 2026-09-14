@@ -487,6 +487,19 @@ jobs:
           echo "lines above."
           exit 1
 
+      # Chromium and its system libraries, resolved by the locked test
+      # environment so every runner drives the same build. Its own step: a
+      # failed install is an infrastructure problem, not a red suite.
+      #
+      # INVARIANT: this runs BEFORE the smoke gate. `stand_smoke` selects
+      # browser journeys as well as API cases, so a smoke-only run needs the
+      # browser too — move this below the gate and a `deploy+seed+smoke` run
+      # can never pass.
+      - name: 'Install the browser the journeys drive'
+        if: steps.stages.outputs.run_smoke == 'true' || steps.stages.outputs.run_suite == 'true'
+        timeout-minutes: 10
+        run: uv run --project tests --frozen playwright install --with-deps chromium
+
       - name: 'Stage 4/5 — smoke the stand through its public URL'
         id: smoke
         if: steps.stages.outputs.run_smoke == 'true'
@@ -506,14 +519,6 @@ jobs:
           uv run --project tests --frozen \
             pytest tests/stand -m stand_smoke --stand-manifest "$INSIGHT_STAND_MANIFEST" \
             2>&1 | python3 "$REDACT"
-
-      # Chromium and its system libraries, resolved by the locked test
-      # environment so every runner drives the same build. Its own step: a
-      # failed install is an infrastructure problem, not a red suite.
-      - name: 'Stage 5/5 — install the browser the journeys drive'
-        if: steps.stages.outputs.run_suite == 'true'
-        timeout-minutes: 10
-        run: uv run --project tests --frozen playwright install --with-deps chromium
 
       # Every API contract and every browser journey, against the stand this run
       # just deployed and seeded — the smoke gate above says a persona can sign

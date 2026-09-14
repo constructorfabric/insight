@@ -49,6 +49,14 @@ vi.mock("@/components/portal/connector-health", () => ({
   ConnectorHealthPane: () => <div data-testid="connector-health-pane" />,
 }));
 
+vi.mock("@/screens/metrics-console", () => ({
+  MetricsConsoleBody: () => <div data-testid="metrics-console-body" />,
+}));
+
+vi.mock("@/screens/query-console", () => ({
+  QueryConsoleBody: () => <div data-testid="query-console-body" />,
+}));
+
 import { MANAGE_ITEMS } from "@/lib/portal/nav-model";
 
 import { ManageView } from "./manage-view";
@@ -158,7 +166,7 @@ describe("Manage · What's new", () => {
 
     expect(screen.getByText("Insight · What's new")).toBeInTheDocument();
     expect(
-      screen.getByText("We've moved to the new interface for good"),
+      screen.getByText("The pages the portal has now")
     ).toBeInTheDocument();
     expect(screen.queryByRole("banner")).not.toBeInTheDocument();
   });
@@ -170,7 +178,7 @@ describe("Manage · Connector health", () => {
     render(<ManageView item="connector-health" />);
 
     expect(
-      screen.queryByTestId("connector-health-pane"),
+      screen.queryByTestId("connector-health-pane")
     ).not.toBeInTheDocument();
     // A gate rendering nothing at all would satisfy the line above, and would
     // leave a non-admin on a blank screen with nothing to act on.
@@ -217,9 +225,7 @@ describe("identities gate", () => {
     render(<ManageView item="identities" />);
 
     expect(screen.getByRole("alert")).toHaveTextContent(/admin surface/i);
-    expect(
-      screen.queryByText(/under construction/i),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/under construction/i)).not.toBeInTheDocument();
   });
 
   it("never flashes the console while the role check is in flight", () => {
@@ -227,9 +233,7 @@ describe("identities gate", () => {
     render(<ManageView item="identities" />);
 
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(
-      screen.queryByText(/under construction/i),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/under construction/i)).not.toBeInTheDocument();
   });
 
   it("opens for an admin", () => {
@@ -252,5 +256,19 @@ describe("identities gate", () => {
     expect(screen.getByText(/could not verify/i)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /retry/i }));
     expect(retry).toHaveBeenCalledOnce();
+  });
+});
+
+describe("Manage · the consoles the legacy shell used to own", () => {
+  it("opens the custom-metric console", async () => {
+    render(<ManageView item="custom-metrics" />);
+
+    expect(await screen.findByTestId("metrics-console-body")).toBeInTheDocument();
+  });
+
+  it("opens the saved-query console", async () => {
+    render(<ManageView item="query-console" />);
+
+    expect(await screen.findByTestId("query-console-body")).toBeInTheDocument();
   });
 });

@@ -27,6 +27,14 @@ UNKNOWN = "unknown"
 #: can, at the cost of a duplicate row that resolves to the same answer.
 TERMINAL_STATUSES = frozenset({"succeeded", "failed", "cancelled", "incomplete"})
 
+#: A job carrying one of these has not finished, so nothing it reports about
+#: itself is a completed measurement.
+#:
+#: INVARIANT: `UNKNOWN` is absent here too, and for the opposite reason to its
+#: absence above. A word we could not read may well be a finished job, and
+#: treating it as in flight would discard the measurement it carries.
+IN_FLIGHT_STATUSES = frozenset({"pending", "running"})
+
 
 def normalise(raw: object) -> str:
     """Map the mover's reported status onto the closed set."""
@@ -39,3 +47,8 @@ def normalise(raw: object) -> str:
 def is_terminal(status: str) -> bool:
     """Whether a recorded status closes its job for coverage purposes."""
     return status in TERMINAL_STATUSES
+
+
+def is_in_flight(status: str) -> bool:
+    """Whether a recorded status describes a job that has not finished."""
+    return status in IN_FLIGHT_STATUSES

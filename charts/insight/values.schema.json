@@ -86,7 +86,26 @@
         "imageRegistry":    { "type": "string" },
         "imagePullPolicy":  { "enum": ["Always", "IfNotPresent", "Never"] },
         "imagePullSecrets": { "type": "array", "items": { "type": "object" } },
-        "storageClass":     { "type": "string" }
+        "storageClass":     { "type": "string" },
+        "observability":    { "$ref": "#/definitions/observability" },
+        "sqlApi": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" }
+          }
+        },
+        "mcp": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "publicUrl": {
+              "anyOf": [
+                { "const": "" },
+                { "type": "string", "format": "uri" }
+              ]
+            }
+          }
+        }
       }
     },
 
@@ -117,9 +136,14 @@
     },
 
     "analytics":          { "$ref": "#/definitions/appService" },
+    "insightV3Core":      { "$ref": "#/definitions/appService" },
     "identity":           { "$ref": "#/definitions/appService" },
     "frontend":           { "$ref": "#/definitions/appService" },
 
+    "observability": { "$ref": "#/definitions/observability" }
+  },
+
+  "definitions": {
     "observability": {
       "type": "object",
       "properties": {
@@ -137,10 +161,7 @@
           }
         }
       }
-    }
-  },
-
-  "definitions": {
+    },
     "infraDep": {
       "type": "object",
       "properties": {

@@ -16,6 +16,8 @@ spec:
       annotations:
         # Roll pods when the gears config changes.
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        # Platform CM arrives via envFrom; roll pods when its observability inputs change.
+        checksum/observability: {{ default dict (default dict .Values.global).observability | toYaml | sha256sum }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -59,17 +61,43 @@ spec:
             # binds its UDS under /tmp (both set in the ConfigMap).
             - name: data
               mountPath: /app/data
+            - name: report-artifacts
+              mountPath: {{ .Values.reports.tempDir | quote }}
             - name: tmp
               mountPath: /tmp
           ports:
             - name: http
               containerPort: {{ .Values.service.port }}
               protocol: TCP
+            {{- if or .Values.global.mcp.enabled .Values.global.sqlApi.enabled }}
+            - name: mcp
+              containerPort: {{ .Values.mcp.port }}
+              protocol: TCP
+            {{- end }}
+          {{- if or .Values.global.mcp.enabled .Values.global.sqlApi.enabled }}
+          env:
+            - name: APP__gears__analytics__config__mcp__clickhouse_password
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "mcp.credentialsSecret is required when a SQL explorer is enabled" .Values.mcp.credentialsSecret | quote }}
+                  key: {{ required "mcp.clickhousePasswordKey is required when a SQL explorer is enabled" .Values.mcp.clickhousePasswordKey | quote }}
+            {{- if .Values.global.sqlApi.enabled }}
+            - name: APP__gears__analytics__config__sql_api__token
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "sqlApi.tokenSecret is required when SQL API is enabled" .Values.sqlApi.tokenSecret | quote }}
+                  key: {{ required "sqlApi.tokenKey is required when SQL API is enabled" .Values.sqlApi.tokenKey | quote }}
+            {{- end }}
+          {{- end }}
           # Gateway-JWT verification (NGINX_BFF R1): the plugin's verification
           # config is nested/list-shaped and rendered into the ConfigMap from
           # `.Values.gateway.*` (issuer / discoveryUrl / audience / caCertPaths),
           # so there are no APP__ env overrides for it here.
           envFrom:
+            # Umbrella observability contract; optional so standalone installs schedule.
+            - configMapRef:
+                name: {{ .Release.Name }}-platform
+                optional: true
             # Operator MUST pre-create this Secret (umbrella does it
             # automatically as `insight-analytics-config`). Provides the
             # APP__gears__analytics__config__* leaf overrides.
@@ -96,6 +124,9 @@ spec:
             name: {{ include "insight-analytics.fullname" . }}-gears-config
         - name: data
           emptyDir: {}
+        - name: report-artifacts
+          emptyDir:
+            sizeLimit: {{ .Values.reports.storageSizeLimit | quote }}
         - name: tmp
           emptyDir: {}
         {{- if .Values.gateway.caCertSecret }}

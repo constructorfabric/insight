@@ -172,7 +172,7 @@ cd deploy/gitops
 cp environments/local/inventory.yaml.template environments/local/inventory.yaml
 # Edit:
 #   kubeContext: <ctx>                       # required
-#   bootstrap.{ingressNginx,certManager,sealedSecrets}: true|false
+#   bootstrap.{envoyGateway,certManager,sealedSecrets}: true|false
 #   system.{airbyte,argoWorkflows,redpandaConsole,loki,alloy,grafana}: true|false
 
 # 2. Umbrella overlay: image tags / OIDC / tenant id / L2 hosts.
@@ -183,8 +183,10 @@ cp environments/local/values.yaml.template environments/local/values.yaml
 #   authenticator.oidc.issuerUrl: <idp>      #   authenticator.oidc.* at a real IdP
 #   <l2>.host / <l2>.port                    # only when <l2>.deploy=false
 # The `__INGRESS_LB_IP__` placeholders (authenticator.oidc.issuerUrl,
-# keycloak.hostname) must be replaced with your ingress-nginx LoadBalancer IP
-# (`kubectl -n ingress-nginx get svc ingress-nginx-controller`).
+# keycloak.hostname) must be replaced with the address of the Envoy
+# data-plane Service that Envoy Gateway creates for the shared Gateway:
+# (`kubectl -n envoy-gateway-system get svc \
+#    -l gateway.envoyproxy.io/owning-gateway-name=insight`).
 
 # 3. Cleartext secret store (read by `make seal`, never committed).
 cp secrets-store.yaml.template secrets-store.yaml

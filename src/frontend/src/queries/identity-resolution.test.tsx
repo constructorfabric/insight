@@ -34,6 +34,7 @@ import {
 } from "./identity-resolution";
 
 const searchPersons = vi.mocked(identityClient.searchPersons);
+const listPeople = vi.mocked(identityClient.listPeople);
 
 const bindAccount = vi.mocked(identityClient.bindAccount);
 
@@ -149,6 +150,7 @@ describe("useBindAccount cache behavior", () => {
     const keys = invalidate.mock.calls.map((c) => c[0]?.queryKey);
     expect(keys).toContainEqual(["identity", "resolution"]);
     expect(keys).toContainEqual(["identity", "persons", "search"]);
+    expect(keys).toContainEqual(["identity", "people", "search"]);
   });
 });
 
@@ -158,6 +160,41 @@ describe("usePersonList", () => {
   function roster(): identityClient.PersonSearchResponse {
     return { items: [{ person_id: "01900000-0000-7000-8000-0000000000b0" }] };
   }
+
+  it("uses the tenant canonical roster for roster people", async () => {
+    const { wrapper } = harness();
+    listPeople.mockResolvedValue({
+      items: [
+        {
+          person_id: "01900000-0000-7000-8000-0000000000b0",
+          display_name: "Example Person",
+          first_name: "Example",
+          last_name: "Person",
+          username: "example-person",
+          email: "person@example.com",
+          attributes: { job_title: "Engineer", status: "active" },
+          manager_person_id: null,
+        },
+      ],
+    });
+
+    const { result } = renderHook(
+      () => usePersonList("example", "browse", "roster"),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(listPeople).toHaveBeenCalledWith(
+      { q: "example", visibility: "tenant", limit: 50, cursor: undefined },
+      expect.any(AbortSignal),
+    );
+    expect(searchPersons).not.toHaveBeenCalled();
+    expect(result.current.data?.pages[0]?.items[0]).toMatchObject({
+      display_name: "Example Person",
+      job_title: "Engineer",
+      status: "active",
+    });
+  });
 
   it.each([
     ["browse", true],

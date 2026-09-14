@@ -1,3 +1,4 @@
+import { evidenceCarriers } from "@/lib/metrics/evidence-via";
 import {
   directionHidden,
   directionPlanned,
@@ -92,6 +93,25 @@ export type SectionSpec =
       dimension: string;
       title: string;
     }
+  // The people who carried one dimension value, ranked, with the leader's
+  // share called out. Only ever rendered inside a drilldown, where the value
+  // is already the subject — a leaderboard of the whole roster is a different
+  // thing and this is not it.
+  | {
+      kind: "contributors";
+      metric: string;
+      title: string;
+      /** People shown before the rest folds into one line. */
+      limit?: number;
+    }
+  // Weekday × two-hour block ramp of one event-grain metric: when the work
+  // lands, read from the metric's own `hour_block` dimension.
+  | {
+      kind: "heatmap-hours";
+      metric: string;
+      title: string;
+      caption: string;
+    }
   | {
       kind: "participation";
       metrics: readonly string[];
@@ -113,6 +133,20 @@ export interface LensConfig {
   sections: readonly SectionSpec[];
   /** Whole-tab message when no metric of the lens is observed (rule 6). */
   notIngested?: string;
+  /**
+   * The screen for ONE value of a dimension the lens already groups by.
+   *
+   * A lens answers "which of these", and past a certain point the reader is
+   * asking about one of them instead. The drilldown is that screen: the same
+   * section kinds, every request filtered to the value, reached by clicking a
+   * row and left by the breadcrumb.
+   */
+  drilldown?: {
+    dimension: string;
+    /** Shown after the value, e.g. "activity, reach & risk". */
+    tagline?: string;
+    sections: readonly SectionSpec[];
+  };
 }
 
 export interface LensRoadmap {
@@ -349,7 +383,9 @@ export function overviewCardDirections(
 /** Unique metric keys a config needs in its period+peer grid. */
 export function sectionMetricKeys(config: LensConfig): string[] {
   const keys = new Set<string>();
-  for (const s of config.sections) {
+  // The drilldown's own sections count: they ride the same grid request, so a
+  // key it needs and the lens does not would otherwise never be asked for.
+  for (const s of [...config.sections, ...(config.drilldown?.sections ?? [])]) {
     switch (s.kind) {
       case "headline":
       case "stat-tiles":
@@ -363,6 +399,8 @@ export function sectionMetricKeys(config: LensConfig): string[] {
       case "composition":
       case "event-histogram":
       case "ownership":
+      case "contributors":
+      case "heatmap-hours":
         keys.add(s.metric);
         break;
       case "dimension-table":
@@ -429,6 +467,8 @@ export function visibleSections(
       case "composition":
       case "event-histogram":
       case "ownership":
+      case "contributors":
+      case "heatmap-hours":
         if (metricVisible(s.metric, showPlanned, policy)) sections.push(s);
         break;
       case "dimension-table": {
@@ -948,6 +988,64 @@ const DEV: Record<string, LensEntry> = {
         title: "How long pull requests stayed open",
       },
     ],
+    // One repository: who carried it, when the work landed, and how it splits
+    // between the trunk and everything else.
+    drilldown: {
+      dimension: "repository",
+      tagline: "one repository",
+      sections: [
+        {
+          kind: "headline",
+          metrics: [
+            "git.prs_merged",
+            "git.default_branch_prs_merged",
+            "git.commits",
+            "git.default_branch_code_lines",
+          ],
+        },
+        {
+          kind: "stat-tiles",
+          title: "Typical values (median)",
+          metrics: [
+            "git.pr_cycle_time_h",
+            "git.pr_cycle_time_p75_h",
+            "git.pr_size",
+            "git.pr_commits",
+            "git.merge_rate",
+            "git.review_coverage",
+          ],
+        },
+        {
+          kind: "contributors",
+          metric: "git.default_branch_code_lines",
+          title: "Top contributors — code lines on the default branch",
+        },
+        {
+          kind: "heatmap-hours",
+          metric: "git.commits",
+          title: "When commits land",
+          caption:
+            "Weekday × two-hour block, in UTC. Click a block for its commits.",
+        },
+        {
+          kind: "composition",
+          metric: "git.code_lines",
+          dimension: "branch_scope",
+          title: "Where the lines went — default branch vs the rest",
+        },
+        {
+          kind: "ownership",
+          metric: "git.default_branch_code_lines",
+          dimension: "repository",
+          title: "Ownership concentration",
+        },
+        {
+          kind: "event-histogram",
+          metric: "git.pr_cycle_time_h",
+          title: "How long pull requests stayed open",
+        },
+      ],
+    },
   },
   Elements: SCREEN_GAP("Element-level (file/module) analytics"),
 };
@@ -1228,5 +1326,8 @@ export function directionMetricKeys(dir: string): string[] {
     if ("comingSoon" in entry || "entity" in entry) continue;
     for (const k of sectionMetricKeys(entry)) keys.add(k);
   }
+  // A figure whose records live under another metric needs that metric in the
+  // same request, or its tile has nothing to open.
+  for (const carrier of evidenceCarriers([...keys])) keys.add(carrier);
   return [...keys];
 }

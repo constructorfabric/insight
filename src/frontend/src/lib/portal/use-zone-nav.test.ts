@@ -47,6 +47,26 @@ describe("useZoneNav", () => {
     expect(zoneIds()).toEqual(["person"]);
   });
 
+  it("keeps Custom out of the rail for a non-admin who manages a cohort", () => {
+    mocks.canSeeOthers = true;
+    mocks.reachPending = false;
+    mocks.isAdmin = false;
+
+    // Having reports opens the org zones; it does not open Custom.
+    expect(zoneIds()).not.toContain("custom");
+    expect(zoneIds()).toContain("overview");
+  });
+
+  it("opens Custom to an admin who manages nobody", () => {
+    mocks.canSeeOthers = false;
+    mocks.reachPending = false;
+    mocks.isAdmin = true;
+
+    // Custom rolls nothing up, so having no reports does not hide it from an
+    // admin - but the role is what opens it.
+    expect(zoneIds()).toEqual(["person", "custom", "manage"]);
+  });
+
   it("offers the org zones once the viewer has a cohort", () => {
     // The flat-organisation case: no reports, and still an organisation.
     mocks.canSeeOthers = true;

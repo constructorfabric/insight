@@ -22,7 +22,46 @@ name: jira
 # event_kind gains the 'availability' and 'lifecycle' values — and per
 # ADR-0015 a major bump dispatches the one-shot sync with dbt --full-refresh
 # that rebuilds those tables; no ALTER migrations are shipped.
-version: "4.0.0"
+# 5.0.0 (major): jira-enrich carries the issue summary into the class contract's
+# `title`, so task evidence rows can name the work item. MAJOR because the fix
+# only reaches rows the binary writes, and it skips any issue that already has
+# them — the deploy hook empties the staging table and the one-shot sync a major
+# dispatches is what re-bootstraps every issue with its summary (#2738).
+# 5.4.0 (minor): stop emitting the raw `fields` object on jira_issue. It was
+# the same payload `custom_fields_json` already carries, re-serialized — the key
+# sets are identical and every value difference is nested-key ordering — and it
+# was the larger of the two by a wide margin. MINOR, not major: nothing needs
+# re-deriving, the column is simply no longer produced. It must be removed from
+# bronze in this order, or the destination recreates it: bump and deploy, let a
+# sync complete, then the ALTER migration.
+# 6.0.0 (major): key jira_issue and jira_issue_keys on the issue's immutable
+# numeric id instead of its "PROJ-123" key. Jira changes that key when an issue
+# moves between projects, and bronze replaces rows by `unique_key` — so a moved
+# issue stopped replacing itself: the new key inserted a second row and the old
+# one stayed behind with a stale payload, leaving the issue present twice
+# downstream, once with its real history and once as a ghost.
+#
+# Rows written before this are rebuilt by `heal_jira_issue_key` in
+# apply-ch-migrations.sh: `unique_key` is the sort key and cannot be updated in
+# place, so the table is copied with the new key, one row per issue, and
+# swapped in atomically. Readers dedup by (source_id, jira_id) regardless — the
+# issue's stable key within a source, which is what joins use; `unique_key`
+# exists for ReplacingMergeTree alone. `id_readable` keeps the mutable key as
+# an attribute — the rename is a fact about the issue.
+#
+# MAJOR because the key an existing row is stored under changes, which is what
+# a major means here; the full refresh it dispatches also clears anything
+# derived while the two copies were both visible.
+# 6.1.0 (minor): jira_issue_history, jira_comments and jira_worklogs carry
+# `jira_id`, the parent issue's immutable numeric id, taken from the parent
+# slice. Each of these substreams is partitioned by the issue KEY and stamped
+# only `id_readable`, the key at fetch time — so after an issue moved between
+# projects nothing in its changelog, comments or worklogs named the issue by
+# anything stable, and every reader had to recover the id by joining on a key
+# that no longer matched. MINOR: a new column, nothing re-derived; rows written
+# before this are filled by `heal_jira_substream_issue_id` from the two issue
+# streams.
+version: "6.2.0"
 schedule: "0 3 * * *"
 workflow: sync
 # CI build metadata + runtime image refs (ADR-0016). The `images:` block is
@@ -37,7 +76,7 @@ images:
     name: insight-jira-enrich
     dockerfile: ./enrich/Dockerfile
     context: ./enrich
-    image: "ghcr.io/constructorfabric/insight-jira-enrich:2026.08.12.03.58-5772f43"
+    image: "ghcr.io/constructorfabric/insight-jira-enrich:2026.09.11.16.23-7e78828"
 # Silver routing (class_task_*) is delivered by the task-tracking Silver layer
 # package, not by this connector. The pipeline runs the jira-rust path:
 # dbt(tag:jira) → tt-enrich-jira-run → dbt(<selector below>). The selector is

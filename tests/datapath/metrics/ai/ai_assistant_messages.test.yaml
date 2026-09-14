@@ -1,0 +1,34 @@
+spec_version: 1
+description: >
+  Metric: ai.assistant_messages.
+  How it's computed (bronze → silver → gold):
+    • bronze: ChatGPT daily per-user chat activity (message counts)
+    • silver: deduped to one row per user/day carrying the chat-message count
+    • gold:   metric = sum of ChatGPT chat messages over the window
+
+  Team (median/range = the person's department):
+    alice 40 · bob 20 · carol 10 (alice row re-synced once → must not double)
+    → median 20, range [10, 40].
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/alice
+    - $ref: ../templates/people.yaml#/templates/bob
+    - $ref: ../templates/people.yaml#/templates/carol
+  bronze_chatgpt_team.chatgpt_team_chat_activity:
+    - $ref: ../templates/chatgpt_team_chat.yaml#/templates/alice
+      unique_key: chat-alice-20260105
+      date: "2026-01-05"
+      messages: 40
+    - $ref: ../templates/chatgpt_team_chat.yaml#/templates/alice   # re-sync dup → must NOT double
+      unique_key: chat-alice-20260105
+      date: "2026-01-05"
+      messages: 40
+    - $ref: ../templates/chatgpt_team_chat.yaml#/templates/bob
+      unique_key: chat-bob-20260105
+      date: "2026-01-05"
+      messages: 20
+    - $ref: ../templates/chatgpt_team_chat.yaml#/templates/carol
+      unique_key: chat-carol-20260105
+      date: "2026-01-05"
+      messages: 10

@@ -2,7 +2,7 @@ import { useRouterState } from "@tanstack/react-router";
 import { useMemo } from "react";
 
 import { normalizePersonId } from "@/lib/metrics/entity";
-import type { OrgScope } from "@/lib/portal/portal-store";
+import { type OrgScope, usePortalShowPlanned } from "@/lib/portal/portal-store";
 import { recordUsageEvent, scopeLabel } from "@/telemetry";
 import { usePortalSearch, useSetPortalSearch } from "@/lib/portal/portal-search";
 
@@ -21,6 +21,7 @@ import { usePortalSearch, useSetPortalSearch } from "@/lib/portal/portal-search"
 export function usePortalZone(): string | null {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const { zone } = usePortalSearch();
+  if (/^\/portal\/custom(\/|$)/.test(pathname)) return "custom";
   if (/^\/ic\/[^/]+\/team\/?$/.test(pathname)) return "people";
   if (/^\/ic\/[^/]+\/personal\/?$/.test(pathname)) return "person";
   return zone ?? null;
@@ -41,9 +42,10 @@ export function usePortalLens(): string {
   return usePortalSearch().lens ?? "";
 }
 
-/** The active slice attribute, or "" when the roster is one undivided cohort. */
+/** The active slice attribute, or "" while no cohort is in effect. */
 export function usePortalSlice(): string {
-  return usePortalSearch().slice ?? "";
+  const slice = usePortalSearch().slice ?? "";
+  return usePortalShowPlanned() ? slice : "";
 }
 
 /** The org scope the URL names: a root person id (absent = the viewer) + direct-only. */
@@ -73,6 +75,8 @@ export interface PortalNavActions {
   setLens: (lens: string) => void;
   /** Open a direction on a lens — one write, so one screen and one history entry. */
   openDirection: (dir: string, lens: string) => void;
+  /** Descend into one repository of the current lens, or leave it (""). */
+  openRepository: (repo: string) => void;
   setSlice: (slice: string) => void;
   setScope: (patch: Partial<OrgScope>) => void;
 }
@@ -102,8 +106,12 @@ export function usePortalNavActions(): PortalNavActions {
         ),
       setItem: (item) => setSearch({ item: item ?? undefined, acct: undefined }),
       setAcct: (acct) => setSearch({ acct: acct ?? undefined }),
-      setDir: (dir) => setSearch({ dir: dir || undefined }),
-      setLens: (lens) => setSearch({ lens: lens || undefined, item: undefined }),
+      // `repo` drops with the direction and the lens the same way `item` drops
+      // with the zone: one repository under inspection means nothing on another
+      // screen, and a retained param would reopen it on the way back.
+      setDir: (dir) => setSearch({ dir: dir || undefined, repo: undefined }),
+      setLens: (lens) =>
+        setSearch({ lens: lens || undefined, item: undefined, repo: undefined }),
       openDirection: (dir, lens) =>
         setSearch({
           zone: "directions",
@@ -111,7 +119,9 @@ export function usePortalNavActions(): PortalNavActions {
           lens: lens || undefined,
           item: undefined,
           acct: undefined,
+          repo: undefined,
         }),
+      openRepository: (repo) => setSearch({ repo: repo || undefined }),
       setSlice: (slice) => {
         recordUsageEvent("cohort", slice || "none");
         setSearch({ slice: slice || undefined });

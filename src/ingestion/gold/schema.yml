@@ -94,8 +94,11 @@ models:
     description: >
       One row per authored commit that reaches a git measure: the surviving row
       of the commit-hash collapse, with branch scope, repository, project and
-      source dimensions already resolved. Materialized so the commit class read
-      and the collapse run once per build in their own query budget.
+      source dimensions already resolved. Branch scope belongs to the commit,
+      not to the copy: a hash held by several repositories lands if any copy
+      did, and a copy whose own repository shows the landing is the one that
+      survives. Materialized so the commit class read and the collapse run
+      once per build in their own query budget.
     columns:
       - name: commit_hash
         description: "Commit identifier; one row per tenant, data source and hash"
@@ -113,16 +116,80 @@ models:
         tests:
           - not_null
 
+  - name: git_deduplicated_file_changes
+    description: >
+      The collected file changes reduced to one row per change CONTENT within a
+      repository and path, with the earliest carrying commit kept, and the
+      superseded merge-result paths removed. This is the set every git size
+      measure sums: a cherry-pick, a squash and a rebase copy all describe one
+      authored change, and counting each carrier would report those lines more
+      than once. Materialized so the collapse runs once per build in its own
+      query budget rather than once per reference inside the evidence build.
+    columns:
+      - name: tenant_id
+        description: >
+          Tenant isolation field. Nullable on the git class relations and
+          preserved as such here, so no not_null test.
+      - name: source_id
+        description: "Connector instance of the surviving carrier"
+      - name: project_key
+        description: "Project the repository belongs to"
+      - name: repo_slug
+        description: "Repository the content entered"
+      - name: commit_hash
+        description: "Earliest commit that carries the content"
+        tests:
+          - not_null
+      - name: data_source
+        description: "Git source discriminator (insight_github, insight_gitlab, ...)"
+        tests:
+          - not_null
+      - name: file_path
+        description: "Path the content was written to"
+        tests:
+          - not_null
+      - name: file_extension
+        description: "Extension of file_path, lowercased, empty when it has none"
+      - name: change_type
+        description: "Vendor change type as reported (added, modified, renamed, ...)"
+      - name: lines_added
+        description: "Added lines of the surviving carrier's diff for the path"
+      - name: lines_removed
+        description: "Removed lines of the surviving carrier's diff for the path"
+
   - name: git_default_branch_commits
     description: >
-      Commits that reached a repository's default branch through a merged pull
-      request: one row per tenant/source/project/repo/commit. Materialized so
-      the pull-request membership joins run once per build in their own query
-      budget; the git evidence build reads it as a semi-join set alongside the
-      sync-time is_default_branch flag.
+      Commits that reached a repository's default branch, either through a
+      merged pull request or by carrying content a default-branch commit also
+      carries at the same path, unless the default branch already held that
+      content when the commit was written: one row per
+      tenant/source/project/repo/commit.
+      Materialized so the membership joins run once per build in their own
+      query budget; the commit collapse reads it by tenant, data source and
+      hash alongside the sync-time is_default_branch flag.
     columns:
       - name: commit_hash
         description: "Commit identifier within the repository"
+        tests:
+          - not_null
+      - name: data_source
+        description: "Git source discriminator (insight_github, insight_gitlab, ...)"
+        tests:
+          - not_null
+
+  - name: git_superseded_file_changes
+    description: >
+      Paths on a merge-result commit whose work a collected commit of the same
+      pull request already carries, for the partial-coverage case the content
+      dedup cannot reach: one row per tenant/source/commit/path. The git
+      evidence build subtracts it before deduplicating file changes.
+    columns:
+      - name: commit_hash
+        description: "The merge-result commit whose copy of the path is suppressed"
+        tests:
+          - not_null
+      - name: file_path
+        description: "Path a collected commit of the same request already carries"
         tests:
           - not_null
 
@@ -823,6 +890,37 @@ models:
           add back up to it. An issue whose type is not reported at all falls in
           `__unknown__`. Empty for the day-grain and duration measures.
 
+  - name: task_field_roles_current
+    description: >
+      Which vendor field plays which metric role, resolved to one row per
+      (source, field): operator-authored bindings from config.task_field_roles
+      merged over the built-in vendor defaults, with an authored row always
+      winning. Rows whose role is 'ignored' are filtered out. Ephemeral —
+      inlined wherever it is joined, so its tests compile it as a CTE.
+    columns:
+      - name: insight_source_id
+        description: "Source instance identifier"
+        tests:
+          - not_null
+      - name: data_source
+        description: "Source system discriminator (e.g. 'jira')"
+        tests:
+          - not_null
+      - name: field_id
+        description: "Vendor field identifier the role is bound to"
+        tests:
+          - not_null
+      - name: role
+        description: "Metric role the field plays (status, assignee, issuetype, estimate, ...)"
+        tests:
+          - not_null
+      - name: precedence
+        description: "Authored tie-break between fields bound to the same role; 0 for a vendor default"
+      - name: value_unit
+        description: "Unit the field's value is stated in; 'none' when it is not a quantity"
+      - name: unit_multiplier
+        description: "Factor converting the stated unit to the canonical one; 1 for a vendor default"
+
   - name: task_issue_state
     description: >
       Per-issue lifecycle state for the task-delivery observation pipeline:
@@ -843,6 +941,16 @@ models:
         description: "Source issue identifier; unique per insight_source_id"
         tests:
           - not_null
+      - name: issue_kind
+        description: >
+          Reconciled issue kind from the issue-type dimension. An issue whose
+          type id has no dimension row is 'unknown' — never an empty string,
+          whichever join_use_nulls regime built the table.
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['bug', 'other', 'unknown']
 
   - name: task_status_spans
     description: >
@@ -859,6 +967,31 @@ models:
         description: "Span start (status event time)"
         tests:
           - not_null
+
+  - name: task_worklog_flow
+    description: >
+      Per-person per-day time flow for the task-delivery observation pipeline:
+      in-progress seconds split from the status spans by calendar day, full
+      outer joined with the worklog seconds logged per author. One row per
+      (tenant, entity, date); either figure is 0 on a day the other side has
+      no rows for.
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: entity_id
+        description: "Lowercased email of the assignee or worklog author"
+        tests:
+          - not_null
+      - name: metric_date
+        description: "Calendar day the seconds fall on"
+        tests:
+          - not_null
+      - name: in_progress_seconds
+        description: "Seconds of the day the person's issues sat in an in-progress status"
+      - name: worklog_seconds
+        description: "Seconds of work the person logged on the day (deleted worklogs excluded)"
 
   - name: ci_metric_observations
     description: >
@@ -1121,6 +1254,93 @@ models:
           Cohort membership value: org unit id when present, department name
           fallback otherwise. NULL when the person has neither.
 
+  - name: git_commit_file_line_totals
+    description: >
+      Per-commit totals over the file changes AS COLLECTED — before the content
+      dedup removes what an earlier commit already carries. Keyed on the
+      canonical commit grain (tenant, data_source, commit_hash), the one
+      git_authored_commits collapses to. file_change_rows is the membership
+      answer the evidence build reads: a count rather than a sum, because the
+      line columns are Nullable and an all-NULL group sums to NULL, which no
+      join could tell from a commit the file-change stream never reached.
+    columns:
+      - name: tenant_id
+        description: >
+          Tenant isolation field. Nullable on the git class relations and
+          preserved as such here, so no not_null test.
+      - name: data_source
+        description: "Git source discriminator (insight_github, insight_gitlab, ...)"
+        tests:
+          - not_null
+      - name: commit_hash
+        description: "Commit the totals belong to"
+        tests:
+          - not_null
+      - name: file_change_rows
+        description: "Collected file-change rows for the commit, pre-dedup"
+        tests:
+          - not_null
+      - name: lines_added
+        description: "Sum of collected added lines, pre-dedup"
+      - name: lines_removed
+        description: "Sum of collected removed lines, pre-dedup"
+
+  - name: git_file_change_coverage
+    description: >
+      How much of each connector instance's authored work arrived with its file
+      changes — the measuring device for diff collection, since the size
+      metrics report a commit's own total when its changes were never collected
+      and so no longer show the gap themselves. Measured on the class relations
+      and grouped per source_id on purpose: collection is a property of a
+      connector instance, and the gold commit set deliberately collapses one
+      hash across a fork and its upstream, which would let a healthy instance
+      hide a broken one. Merge commits are excluded — every connector skips
+      their diffs by design. Judge a live instance by recent_collected_pct; the
+      all-time share carries history no re-read can reach.
+    columns:
+      - name: tenant_id
+        description: >
+          Tenant isolation field. Nullable on the git class relations and
+          preserved as such here, so no not_null test.
+      - name: data_source
+        description: "Git source discriminator (insight_github, insight_gitlab, ...)"
+        tests:
+          - not_null
+      - name: source_id
+        description: "Connector instance the commits were collected by"
+      - name: commits
+        description: "Non-merge commits the instance delivered"
+      - name: commits_requiring_file_changes
+        description: >
+          Of those, the commits whose source reported a non-zero size — the
+          only class coverage is measured over, because a diff must exist.
+      - name: known_zero_size_commits
+        description: >
+          Commits the source reported as 0 added and 0 removed. No file detail
+          was ever due, so counting them would move coverage with the share of
+          empty commits rather than with collection health.
+      - name: unknown_size_commits
+        description: >
+          Commits whose source reported no size at all — neither a collection
+          success nor a failure, and a data-quality signal of its own.
+      - name: commits_with_file_changes
+        description: "Of commits_requiring_file_changes, those the file-change stream reached"
+      - name: collected_pct
+        description: >
+          Share of commits_requiring_file_changes with collected changes, all
+          time, percent (1 decimal). NULL when nothing required a diff.
+      - name: recent_commits_requiring_file_changes
+        description: "Requiring commits inside the git_coverage_recent_days window"
+      - name: recent_collected_pct
+        description: >
+          The same share inside the recent window. This is the number a live
+          collection regression moves, and what the data-quality test reads.
+      - name: uncollected_lines
+        description: >
+          Added plus removed lines reported by commits that required a diff and
+          have none — the prioritisation signal for how much authored volume
+          has no file grain.
+
   - name: identity_resolution_coverage
     description: >
       Identity-resolution match rate measured over ACTIVITY (evidence source
@@ -1146,3 +1366,29 @@ models:
         description: "Distinct entity_id (emails) behind the unresolved rows"
       - name: match_rate_pct
         description: "Share of source rows that resolve to a person, percent (1 decimal)"
+
+  - name: bronze_insert_events
+    description: >
+      Ops/monitoring view over every bronze connector database (one row per
+      physical bronze record) exposing the Airbyte extraction timestamp and
+      its origin. Built for ingestion-intensity charts and ad-hoc sync
+      debugging; aggregate on top with any toStartOfInterval() grain.
+      Documented exception to the layer conventions: reads bronze directly
+      (an ops relation measuring ingestion itself) and intentionally performs
+      no dedup — duplicate physical rows are the signal. extracted_at is
+      stamped by the source at extraction time, not at ClickHouse insert
+      time; destination flushes can land rows up to ~1h later.
+    columns:
+      - name: source_database
+        description: >
+          Bronze database the row lives in (e.g. bronze_bamboohr). Preferred
+          scope filter: conditions on this column map to the merge() virtual
+          column _database and prune non-matching tables before reading.
+      - name: connector
+        description: "Connector slug: source_database without the bronze_ prefix"
+      - name: stream
+        description: >
+          Airbyte stream = table name inside the connector database (merge()
+          virtual column _table, also prunes when filtered).
+      - name: extracted_at
+        description: "Source-side extraction timestamp (_airbyte_extracted_at)"

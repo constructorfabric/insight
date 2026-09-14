@@ -1,0 +1,70 @@
+replicaCount: 1
+
+global:
+  imagePullSecrets: []
+  observability:
+    logs:
+      level: info
+      format: json
+  # Turning MCP on serves the custom-surface server too, against the same
+  # published origin the read-only warehouse server verifies tokens for.
+  mcp:
+    enabled: false
+    publicUrl: ""
+
+# The custom-surface MCP server's own listener. Enabled by global.mcp.
+mcp:
+  port: 8087
+  # Permits an http origin on a private network, for a stand without TLS.
+  allowInsecurePrivateNetwork: false
+
+podAnnotations: {}
+
+image:
+  repository: ghcr.io/constructorfabric/insight-v3-core
+  tag: ""
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8086
+
+# The raw-data ingest token. Operator-supplied; absent, the pod does not start.
+ingest:
+  tokenSecret: insight-v3-core-token
+  tokenKey: token
+
+# Pre-created Secret carrying these gears-rust leaf overrides:
+#   APP__gears__insight_v3_core__config__clickhouse_url
+#   APP__gears__insight_v3_core__config__clickhouse_database
+#   APP__gears__insight_v3_core__config__clickhouse_user
+#   APP__gears__insight_v3_core__config__clickhouse_password
+existingSecret: ""
+
+# Optional hook Secret for fresh umbrella installs. GitOps deployments
+# pre-create existingSecret, so this reference may remain absent there.
+migrateEnvSecret: ""
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+    ephemeral-storage: 64Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+    ephemeral-storage: 256Mi
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 5

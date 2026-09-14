@@ -8,9 +8,13 @@
 
 use chrono::{DateTime, TimeZone, Utc};
 
-use super::model::{Attention, ConnectorSummary, LastSync, LedgerFacts, SyncStatus, by_attention};
+use super::model::{
+    Attention, ConnectorSummary, InstanceKey, LastSync, LedgerFacts, SyncStatus, by_attention,
+};
 use super::model::{ConnectorHealth, ConnectorHealthResponse, SyncFact, SyncHistoryResponse};
-use super::name::ConnectorName;
+use super::name::{ConnectorName, SourceId, TenantId};
+
+const TENANT: &str = "tenant-under-test";
 
 fn moment(offset: i64) -> DateTime<Utc> {
     Utc.timestamp_opt(1_700_000_000 + offset, 0)
@@ -29,9 +33,17 @@ fn sync(status: SyncStatus, started: Option<i64>) -> LastSync {
     }
 }
 
+fn instance(name: &str, source: &str) -> InstanceKey {
+    InstanceKey {
+        connector: name.to_owned(),
+        tenant_id: TENANT.to_owned(),
+        source_id: source.to_owned(),
+    }
+}
+
 fn summary(name: &str, configured: bool, last: Option<LastSync>) -> ConnectorSummary {
     ConnectorSummary {
-        connector: name.to_owned(),
+        instance: instance(name, "main"),
         configured,
         last_sync: last,
     }
@@ -129,7 +141,10 @@ fn rows_are_ordered_worst_first() {
         summary("broken", true, Some(sync(SyncStatus::Failed, Some(0)))),
     ];
     by_attention(&mut rows);
-    let order: Vec<&str> = rows.iter().map(|row| row.connector.as_str()).collect();
+    let order: Vec<&str> = rows
+        .iter()
+        .map(|row| row.instance.connector.as_str())
+        .collect();
     assert_eq!(order, ["broken", "murky", "quiet", "fresh", "gone"]);
 }
 
@@ -141,7 +156,10 @@ fn inside_a_band_the_most_recent_activity_comes_first() {
         summary("middle", true, Some(sync(SyncStatus::Failed, Some(500)))),
     ];
     by_attention(&mut rows);
-    let order: Vec<&str> = rows.iter().map(|row| row.connector.as_str()).collect();
+    let order: Vec<&str> = rows
+        .iter()
+        .map(|row| row.instance.connector.as_str())
+        .collect();
     assert_eq!(order, ["newest", "middle", "older"]);
 }
 
@@ -152,7 +170,7 @@ fn a_row_with_no_activity_sorts_after_rows_that_have_some() {
         summary("started", true, Some(sync(SyncStatus::Failed, Some(1)))),
     ];
     by_attention(&mut rows);
-    assert_eq!(rows[0].connector, "started");
+    assert_eq!(rows[0].instance.connector, "started");
 }
 
 #[test]
@@ -163,7 +181,10 @@ fn the_order_is_stable_for_rows_that_tie() {
         summary("mike", true, None),
     ];
     by_attention(&mut rows);
-    let order: Vec<&str> = rows.iter().map(|row| row.connector.as_str()).collect();
+    let order: Vec<&str> = rows
+        .iter()
+        .map(|row| row.instance.connector.as_str())
+        .collect();
     assert_eq!(order, ["alpha", "mike", "zulu"], "ties break on the name");
 }
 
@@ -319,6 +340,8 @@ fn the_answer_keeps_the_order_it_was_given() {
 fn the_window_says_how_large_it_is() {
     let response = SyncHistoryResponse::build(
         "example-tracker".to_owned(),
+        None,
+        None,
         vec![sync(SyncStatus::Succeeded, Some(0))],
         50,
     );
@@ -328,8 +351,31 @@ fn the_window_says_how_large_it_is() {
 }
 
 #[test]
+fn a_window_asked_for_one_instance_says_which_one() {
+    // Without the echo a caller cannot tell an answer about one installation
+    // from an answer about every installation under the name.
+    let response = SyncHistoryResponse::build(
+        "example-tracker".to_owned(),
+        Some(TENANT.to_owned()),
+        Some("second".to_owned()),
+        Vec::new(),
+        50,
+    );
+    assert_eq!(response.tenant_id.as_deref(), Some(TENANT));
+    assert_eq!(response.source_id.as_deref(), Some("second"));
+}
+
+#[test]
+fn a_window_asked_for_the_whole_connector_names_no_instance() {
+    let response =
+        SyncHistoryResponse::build("example-tracker".to_owned(), None, None, Vec::new(), 50);
+    assert!(response.tenant_id.is_none());
+    assert!(response.source_id.is_none());
+}
+
+#[test]
 fn a_connector_with_no_recorded_sync_answers_an_empty_window() {
-    let response = SyncHistoryResponse::build("nobody".to_owned(), Vec::new(), 50);
+    let response = SyncHistoryResponse::build("nobody".to_owned(), None, None, Vec::new(), 50);
     assert!(response.syncs.is_empty());
     assert_eq!(response.window, 50, "still a window, just an empty one");
 }
@@ -341,4 +387,110 @@ fn a_parsed_name_round_trips_unchanged() {
     let parsed = ConnectorName::parse("claude-team").expect("a valid name");
     assert_eq!(parsed.as_str(), "claude-team");
     assert_eq!(parsed.into_string(), "claude-team");
+}
+
+// ── the instance at the boundary ───────────────────────────────────────────
+
+#[test]
+fn the_two_halves_of_an_instance_identity_parse() {
+    // A source id is a connector slug with a suffix; a tenant id is a slug or a
+    // lowercase UUID. Both are the vocabulary the ledger stores.
+    assert!(TenantId::parse("00000000-0000-0000-0000-000000000000").is_some());
+    assert!(TenantId::parse("acme").is_some());
+    assert!(SourceId::parse("claude-team-main").is_some());
+}
+
+#[test]
+fn an_identity_half_outside_the_vocabulary_is_refused() {
+    for raw in [
+        "",
+        "-leading",
+        "Upper",
+        "with space",
+        "quote'; DROP",
+        "../etc",
+    ] {
+        assert!(TenantId::parse(raw).is_none(), "should refuse {raw:?}");
+        assert!(SourceId::parse(raw).is_none(), "should refuse {raw:?}");
+    }
+}
+
+// ── two installations of one connector ─────────────────────────────────────
+
+#[test]
+fn two_instances_of_one_connector_are_two_rows() {
+    // They share a name, so nothing but the identity separates them — and the
+    // page exists to show one failing while the other is fine.
+    let first = ConnectorSummary {
+        instance: instance("claude-team", "main"),
+        configured: true,
+        last_sync: Some(sync(SyncStatus::Failed, Some(0))),
+    };
+    let second = ConnectorSummary {
+        instance: instance("claude-team", "second"),
+        configured: true,
+        last_sync: Some(sync(SyncStatus::Succeeded, Some(0))),
+    };
+    let mut rows = vec![second, first];
+    by_attention(&mut rows);
+
+    assert_eq!(rows[0].instance.source_id, "main", "the failing one leads");
+    assert_eq!(rows[1].instance.source_id, "second");
+}
+
+#[test]
+fn siblings_that_tie_break_on_the_identity_rather_than_the_name() {
+    // Tied on attention and on activity, they would otherwise be ordered by
+    // whichever the warehouse returned first.
+    let mut rows = vec![
+        ConnectorSummary {
+            instance: instance("claude-team", "second"),
+            configured: true,
+            last_sync: None,
+        },
+        ConnectorSummary {
+            instance: instance("claude-team", "main"),
+            configured: true,
+            last_sync: None,
+        },
+    ];
+    by_attention(&mut rows);
+
+    let order: Vec<&str> = rows
+        .iter()
+        .map(|row| row.instance.source_id.as_str())
+        .collect();
+    assert_eq!(order, ["main", "second"]);
+}
+
+#[test]
+fn an_identity_the_ledger_does_not_hold_crosses_the_wire_as_absent() {
+    // History recorded before the ledger carried the identity that no single
+    // instance could be shown to own. The column cannot be NULL, so it holds
+    // the empty string — which must not ship as an instance named "".
+    let health = ConnectorHealth::from(ConnectorSummary {
+        instance: InstanceKey {
+            connector: "departed-tracker".to_owned(),
+            tenant_id: String::new(),
+            source_id: String::new(),
+        },
+        configured: false,
+        last_sync: Some(sync(SyncStatus::Succeeded, Some(0))),
+    });
+
+    assert_eq!(health.connector, "departed-tracker");
+    assert!(health.tenant_id.is_none());
+    assert!(health.source_id.is_none());
+}
+
+#[test]
+fn an_identity_the_ledger_holds_crosses_the_wire_intact() {
+    let health = ConnectorHealth::from(ConnectorSummary {
+        instance: instance("claude-team", "second"),
+        configured: true,
+        last_sync: None,
+    });
+
+    assert_eq!(health.tenant_id.as_deref(), Some(TENANT));
+    assert_eq!(health.source_id.as_deref(), Some("second"));
 }

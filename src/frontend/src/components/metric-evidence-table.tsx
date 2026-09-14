@@ -11,6 +11,7 @@ import {
 import type {
   MetricEvidenceColumn,
   MetricEvidenceRow,
+  MetricEvidenceSort,
 } from "@/api/metric-drilldown-client";
 import { CopyValueButton } from "@/components/copy-value-button";
 import { RecordLink } from "@/components/record-link";
@@ -28,12 +29,12 @@ import {
   cellText,
   evidenceRowKeys,
   summaryLine,
-  type EvidenceSort,
 } from "@/lib/metrics/evidence-rows";
 import { evidenceRefText } from "@/lib/metrics/provider-links";
 import { cn } from "@/lib/utils";
 
 function columnLayout(column: MetricEvidenceColumn) {
+  if (column.key === "person") return { basisRem: 11, grow: 0.5 };
   if (column.key === "ref") return { basisRem: 9, grow: 0 };
   if (column.key === "title") return { basisRem: 24, grow: 4 };
   if (column.key === "type") return { basisRem: 8, grow: 0 };
@@ -74,17 +75,24 @@ export function MetricEvidenceTable({
   fetchNextPage,
   hasNextPage,
   isFetchingNextPage,
+  reordering,
   nextPageError,
   pageLimitReached,
 }: {
   metricKey: string | null;
   rows: MetricEvidenceRow[];
   columns: MetricEvidenceColumn[];
-  sort: EvidenceSort | null;
+  sort: MetricEvidenceSort | null;
   onSortChange: (key: string) => void;
   fetchNextPage: () => Promise<unknown>;
   hasNextPage: boolean;
   isFetchingNextPage: boolean;
+  /**
+   * A read is replacing these rows wholesale. The header keeps announcing the
+   * order the rows are actually in, so this is the only acknowledgement a
+   * click on a column gets until the new rows land.
+   */
+  reordering?: boolean;
   nextPageError: boolean;
   pageLimitReached: boolean;
 }) {
@@ -109,6 +117,17 @@ export function MetricEvidenceTable({
   const minimumWidth = columns.reduce((total, column) => {
     return total + columnLayout(column).basisRem;
   }, EXPANDER_REM);
+  // INVARIANT: the header and every body row lay out on THIS template. Two
+  // rows sizing themselves independently drift apart as soon as one of them
+  // has different free space to grow into, and a value under the wrong
+  // heading is worse than no value.
+  const gridTemplate = useMemo(() => {
+    const tracks = columns.map((column) => {
+      const { basisRem, grow } = columnLayout(column);
+      return grow > 0 ? `minmax(${basisRem}rem, ${grow}fr)` : `${basisRem}rem`;
+    });
+    return [`${EXPANDER_REM}rem`, ...tracks].join(" ");
+  }, [columns]);
 
   function toggleRow(key: string): void {
     setExpanded((current) => {
@@ -140,6 +159,7 @@ export function MetricEvidenceTable({
     <div className="relative min-h-0 flex-1">
       <Table
         role="table"
+        aria-busy={reordering ? true : undefined}
         // Counting the header row, which is row 1: `aria-rowindex` below starts
         // the data at 2, so a total of `rows.length` would make the last row
         // "n+1 of n".
@@ -159,19 +179,30 @@ export function MetricEvidenceTable({
         >
           <TableRow
             role="row"
-            className="flex w-full border-b-0 hover:bg-transparent"
+            className="grid w-full border-b-0 hover:bg-transparent"
+            style={{ gridTemplateColumns: gridTemplate }}
           >
             <TableHead
               role="columnheader"
-              className="flex h-10 shrink-0 items-center p-0"
-              style={{ flex: `0 0 ${EXPANDER_REM}rem` }}
+              className="flex h-10 items-center p-0"
             >
               <span className="sr-only">Expand record</span>
             </TableHead>
             {columns.map((column) => {
-              const layout = columnLayout(column);
               const state = sort?.key === column.key ? sort.direction : null;
               const numeric = column.type === "number";
+              const label = (
+                <span
+                  className={cn(
+                    "min-w-0",
+                    numeric
+                      ? "text-right leading-tight whitespace-normal"
+                      : "truncate"
+                  )}
+                >
+                  {column.label}
+                </span>
+              );
               return (
                 <TableHead
                   role="columnheader"
@@ -189,31 +220,25 @@ export function MetricEvidenceTable({
                       ? "justify-end text-right"
                       : "justify-start text-left"
                   )}
-                  style={{
-                    flex: `${layout.grow} 0 ${layout.basisRem}rem`,
-                  }}
                 >
-                  <button
-                    type="button"
-                    onClick={() => onSortChange(column.key)}
-                    className={cn(
-                      "group/sort flex min-w-0 items-center gap-1 rounded-sm hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
-                      numeric && "flex-row-reverse",
-                      state && "text-foreground"
-                    )}
-                  >
-                    <span
+                  {/* A header the server cannot order by is a label, not a
+                      control that does nothing when clicked. */}
+                  {column.sortable ? (
+                    <button
+                      type="button"
+                      onClick={() => onSortChange(column.key)}
                       className={cn(
-                        "min-w-0",
-                        numeric
-                          ? "text-right leading-tight whitespace-normal"
-                          : "truncate"
+                        "group/sort flex min-w-0 items-center gap-1 rounded-sm hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+                        numeric && "flex-row-reverse",
+                        state && "text-foreground"
                       )}
                     >
-                      {column.label}
-                    </span>
-                    <SortIcon state={state} />
-                  </button>
+                      {label}
+                      <SortIcon state={state} />
+                    </button>
+                  ) : (
+                    label
+                  )}
                 </TableHead>
               );
             })}
@@ -239,15 +264,15 @@ export function MetricEvidenceTable({
                 aria-rowindex={virtualRow.index + 2}
                 aria-expanded={isOpen}
                 onClick={() => toggleRow(key)}
-                className="absolute top-0 left-0 flex w-full cursor-pointer flex-wrap hover:bg-muted/20"
+                className="absolute top-0 left-0 grid w-full cursor-pointer hover:bg-muted/20"
                 style={{
+                  gridTemplateColumns: gridTemplate,
                   transform: `translateY(${virtualRow.start}px)`,
                 }}
               >
                 <TableCell
                   role="cell"
-                  className="flex h-11 shrink-0 items-center justify-center p-0"
-                  style={{ flex: `0 0 ${EXPANDER_REM}rem` }}
+                  className="flex h-11 items-center justify-center p-0"
                 >
                   <Button
                     type="button"
@@ -267,7 +292,6 @@ export function MetricEvidenceTable({
                   </Button>
                 </TableCell>
                 {columns.map((column) => {
-                  const layout = columnLayout(column);
                   const value = row.values[column.key];
                   const text = cellText(value, column.type);
                   const full = summaryLine(text);
@@ -286,9 +310,6 @@ export function MetricEvidenceTable({
                         "h-11 min-w-0 truncate px-3 py-3 tabular-nums",
                         column.type === "number" && "text-right"
                       )}
-                      style={{
-                        flex: `${layout.grow} 0 ${layout.basisRem}rem`,
-                      }}
                       title={full}
                     >
                       {column.key === "ref" && value != null ? (
@@ -317,7 +338,10 @@ export function MetricEvidenceTable({
                     // INVARIANT: selecting text here must not reach the row's
                     // expand toggle.
                     onClick={(event) => event.stopPropagation()}
-                    className="w-full basis-full cursor-auto border-t bg-muted/40 px-3 py-3"
+                    className="cursor-auto border-t bg-muted/40 px-3 py-3"
+                    // The record entire, under the row it belongs to: a track
+                    // of its own across every column.
+                    style={{ gridColumn: "1 / -1" }}
                   >
                     {/* INVARIANT: a fixed cap, not a vh — the window can
                         exceed the table's own height. */}
@@ -354,7 +378,7 @@ export function MetricEvidenceTable({
           })}
         </TableBody>
       </Table>
-      {isFetchingNextPage ? (
+      {isFetchingNextPage || reordering ? (
         <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center bg-card/80 p-3">
           <Spinner />
         </div>

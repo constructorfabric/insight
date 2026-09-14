@@ -97,12 +97,12 @@ session cookie.
 
 ## CI required gate
 
-`.github/workflows/e2e-stand.yml` starts on every pull request so its stable
-`Stand E2E` context always reports. Its cheap `changes` job decides whether
-the diff can affect this suite: relevant changes run both `api-smoke` and
-`ui-journeys`, and the umbrella fails unless both succeed; irrelevant changes
-skip both lanes and the umbrella reports success. Branch protection should
-therefore require `Stand E2E`, not either conditional lane directly.
+`.github/workflows/e2e-stand.yml` runs the suite in the merge queue. It
+starts on every pull request too, with every job skipped, so the required
+`api-smoke` and `ui-journeys` contexts exist there and pass as skipped. In the
+queue its `changes` job decides whether the diff can affect this suite:
+relevant changes run both lanes, irrelevant changes skip them and the lane
+checks report success.
 
 ## Reading PROFILE.md before writing a test
 
@@ -113,22 +113,22 @@ disagree. Before adding a test, read it for:
 - **the roster and fixtures** — the `fixtures{}` table is the set of stable,
   role-shaped names (`dev_lead`, `admin_operator`, …) a test may declare
   against; a raw email or UUID is never a stable target.
-- **populated / golden metrics** — that table is empty by design (see
-  `src/ingestion/tools/seed/golden_metrics.py`'s admission criteria: an expectation must be
-  computable from the seed inputs, not read back out of the gold layer). No
-  test here asserts a metric's exact value, and none should until the table
-  has entries — reading a number off a running stand and asserting it back
-  only proves that the code which produced it produced it.
-
-  What `api/analytics/test_drilldown.py` does is a different thing and is
-  allowed: it asks two independent serving relations the same question — the
-  evidence rows behind a metric, and the metric's own value — and requires them
-  to agree. Neither side is a number typed into the test, so the seed can change
-  underneath it, and a disagreement is a real defect rather than a stale
-  expectation. `drilldown_matrix.py` states what "agree" means per metric.
 - **capabilities** — e.g. `ingestion`, which this stand does not have
   (compose seeds silver/gold directly). A test that needs a capability the
   stand may lack should carry the matching marker (below), not assume it.
+
+What it does not describe is an expected value for any metric: the seed
+publishes none, and no test here asserts one. An admissible expectation would
+have to be computable from the seed inputs rather than read back out of the
+gold layer; reading a number off a running stand and asserting it back only
+proves that the code which produced it produced it.
+
+What `api/analytics/test_drilldown.py` does is a different thing and is
+allowed: it asks two independent serving relations the same question — the
+evidence rows behind a metric, and the metric's own value — and requires them
+to agree. Neither side is a number typed into the test, so the seed can change
+underneath it, and a disagreement is a real defect rather than a stale
+expectation. `drilldown_matrix.py` states what "agree" means per metric.
 
 Regenerate it with `python3 -m insight_seed.render_profile` (from
 `src/ingestion/tools/seed`) after changing
@@ -198,13 +198,10 @@ it":
   against a declared expectation. One was written and is being migrated
   separately, so this directory has `api/` and `ui/` and nothing else — do not
   read the absence as "metric values are not worth testing".
-- **Nothing measures this suite's own coverage.** There is no per-operation,
-  per-status-code gate here, so a route that gains a status code no test
-  exercises goes unreported. The rig has one
-  (`src/ingestion/tests/e2e/lib/api_coverage.py` — an httpx-hook ledger plus a
-  gate over the committed OpenAPI document); migrating it is a known
-  follow-up. Until it lands, `api/operations.py` is the only catalogue of the
-  surface and it is kept honest by hand.
+- **This suite measures its own coverage.** `lib/insight_stand/coverage.py` records
+  every response and gates the ledger against the committed OpenAPI document, so a
+  route that gains a status code no test exercises is reported. `api/operations.py`
+  remains the catalogue of the surface and is kept honest by hand.
 - **Cross-tenant refusal.** Covered on compose, and only there: the second
   tenant's caller is a fixture the seed writes when
   `SEED_CROSS_TENANT_FIXTURE` is on, which `docker-compose.yml` sets. A cluster

@@ -33,7 +33,9 @@ mod config;
 mod domain;
 mod gear;
 mod infra;
+mod mcp;
 mod migration;
+mod sql_explorer;
 
 // System gears — linked via inventory for the REST host + auth pipeline.
 // `oidc-authn-plugin` verifies the ES256 gateway JWT against the authenticator's
@@ -107,12 +109,22 @@ async fn main() -> Result<()> {
     config.apply_cli_overrides(cli.verbose);
 
     if cli.print_config {
-        println!("Effective configuration:\n{}", config.to_yaml()?);
+        println!(
+            "Effective configuration:\n{}",
+            config::redacted_yaml(&config)?
+        );
         return Ok(());
     }
 
     match cli.command.unwrap_or(Commands::Run) {
-        Commands::Run => run_server(config).await,
+        Commands::Run => {
+            let resource = &config.opentelemetry.resource;
+            insight_log_context::init_identity_from_resource(
+                &resource.service_name,
+                &resource.attributes,
+            );
+            run_server(config).await
+        }
         Commands::Migrate => {
             init_subcommand_logging();
             gear::run_migrate(&config).await
@@ -144,12 +156,12 @@ fn init_subcommand_logging() {
         .try_init();
 }
 
-/// Print the analytics `OpenAPI` document as pretty JSON. Offline — see
+/// Print the analytics `OpenAPI` document in canonical JSON. Offline — see
 /// [`api::openapi_document`]. No config or backends are touched, and no logging
 /// subscriber is initialized on this path, so stdout stays pure JSON.
 fn print_openapi() -> Result<()> {
     let doc = api::openapi_document()?;
-    println!("{}", serde_json::to_string_pretty(&doc)?);
+    print!("{}", insight_openapi::canonical_json(&doc)?);
     Ok(())
 }
 
@@ -170,6 +182,13 @@ mod tests {
     #[test]
     fn print_openapi_writes_the_document() -> anyhow::Result<()> {
         super::print_openapi()
+    }
+
+    #[test]
+    fn committed_openapi_document_is_current() -> anyhow::Result<()> {
+        let doc = super::api::openapi_document()?;
+        insight_openapi::check_committed(&doc, env!("CARGO_MANIFEST_DIR"), env!("CARGO_PKG_NAME"))?;
+        Ok(())
     }
 
     /// The `passports` subcommand's happy path: render the passports offline

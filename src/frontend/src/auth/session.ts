@@ -33,6 +33,7 @@ export async function loadSession(): Promise<AuthStatus> {
       csrf_token?: string;
       expires_at?: number;
       refresh_at?: number;
+      experiments_enabled?: boolean;
       impersonator_email?: string;
     };
     // Fail closed on a missing CSRF token. A live session always carries one
@@ -61,6 +62,8 @@ export async function loadSession(): Promise<AuthStatus> {
       // only, so guard the wire values like refresh.ts guards its inputs.
       expiresAt: unixSeconds(body.expires_at),
       refreshAt: unixSeconds(body.refresh_at),
+      // Strictly `=== true`: absent or malformed reads as off (fail closed).
+      experimentsEnabled: body.experiments_enabled === true,
       // Present only on `__override` view-as sessions (insight#1941).
       impersonatorEmail: body.impersonator_email || null,
     });

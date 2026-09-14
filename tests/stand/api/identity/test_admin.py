@@ -1,6 +1,6 @@
 """The admin-gated half of identity-resolution.
 
-Thirteen operations sit behind `require_admin`, which resolves the caller from
+Twenty-two operations sit behind `require_admin`, which resolves the caller from
 the gateway JWT and requires an active `admin` row in `identity.person_roles`.
 It never reads the `insight-admin` REALM role — so the CEO, who holds that role,
 is refused exactly like everybody else. The seed grants the row to one account:
@@ -13,7 +13,10 @@ assertion. `test_operator_sees_nobody_in_the_org_chart` below is what keeps that
 true: if the operator ever acquires an org edge, it fails here rather than as a
 mysterious drift in an unrelated test.
 
-The 401 half is in `test_gateway.py`, swept over every operation at once.
+Both refusal halves are swept elsewhere, over every operation at once: 401 in
+`test_gateway.py`, 403 in `test_request_contracts.py`. What is left here is what
+the grant BUYS — the listings answering 200 in the shape they claim, and the
+round-trips.
 
 
 """
@@ -21,7 +24,7 @@ The 401 half is in `test_gateway.py`, swept over every operation at once.
 from __future__ import annotations
 
 import pytest
-from insight_stand import ADMIN_ROLE, ApiClient, Manifest, PersonaSession, identity_path
+from insight_stand import ApiClient, Manifest, PersonaSession, identity_path
 from pydantic import BaseModel
 
 from .. import scratch
@@ -100,31 +103,6 @@ def test_admin_listing_is_200_for_the_operator(
     response.parse(model)
 
 
-@pytest.mark.requires_seed("admin_operator", "ceo")
-@pytest.mark.parametrize("path", [path for path, _ in ADMIN_LISTINGS_WITH_MODELS])
-@pytest.mark.security
-def test_admin_listing_is_403_for_a_realm_admin_without_the_grant(
-    realm_admin_session: PersonaSession, path: str
-) -> None:
-    """Holding `insight-admin` in the realm is NOT administrative authority.
-
-    The sharpest statement of what the gate reads. This persona carries the
-    realm's admin role in its token and is still refused, because the gate
-    consults `person_roles` and nothing else. A regression that started trusting
-    the token's roles would open the admin API to the CEO, and only this test
-    would notice.
-    """
-    assert realm_admin_session.has_realm_role(ADMIN_ROLE)
-    response = realm_admin_session.client.get(identity_path(path))
-    assert response.status_code == 403, (
-        f"{path} answered {response.status_code} to {realm_admin_session.name}, who holds "
-        f"{ADMIN_ROLE} in the realm but no person_roles grant: {response.text[:300]}"
-    )
-    problem = response.parse(ProblemDocument)
-    assert problem.status == 403
-    assert problem.detail, f"{path}: the refusal carries no detail a caller can act on"
-
-
 #: The two admin listings that also serve a per-operation detail route. The
 #: other three (`/v1/roles`, `/v1/person-roles`, `/v1/visibility`) have no GET
 #: by id — their by-id verb is DELETE, covered by the round-trips below.
@@ -151,27 +129,6 @@ def test_an_unknown_journal_entry_is_404_for_the_operator(
         f"{response.text[:300]}"
     )
     assert response.parse(ProblemDocument).status == 404
-
-
-@pytest.mark.requires_seed("admin_operator", "ceo")
-@pytest.mark.parametrize("journal", JOURNALS_WITH_A_DETAIL_ROUTE)
-@pytest.mark.security
-def test_a_journal_entry_is_403_without_the_grant(
-    realm_admin_session: PersonaSession, journal: str
-) -> None:
-    """And the detail route reads the same grant its listing does.
-
-    The pair that makes the 404 above mean something: alone it is equally
-    consistent with the route being open to anyone authenticated. Ordered as
-    the service checks — admin first, existence second — so a caller without
-    the grant cannot tell an id that exists from one that does not.
-    """
-    response = realm_admin_session.client.get(identity_path(f"{journal}/{scratch.UNKNOWN_ID}"))
-    assert response.status_code == 403, (
-        f"{journal}/<unknown> answered {response.status_code} to {realm_admin_session.name}, "
-        f"who holds {ADMIN_ROLE} in the realm but no person_roles grant — a 404 here would "
-        f"leak that the gate ran after the lookup: {response.text[:300]}"
-    )
 
 
 @pytest.mark.requires_seed("admin_operator")

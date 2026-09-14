@@ -1,0 +1,35 @@
+[package]
+name = "insight-log-context"
+version = "0.1.0"
+description = "Request-scoped log context span: correlation id echo, tenant, service name and version"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# Line-capture helper for the per-service contract tests (insight#2488 AC-3).
+test-support = ["dep:serde_json", "dep:thiserror", "dep:tokio", "dep:tracing-subscriber"]
+
+[dependencies]
+axum = { workspace = true }
+toolkit-security = { workspace = true }
+tower = "0.5"
+tracing = { workspace = true }
+uuid = { workspace = true }
+
+serde_json = { workspace = true, optional = true }
+thiserror = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, optional = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tower = { version = "0.5", features = ["util"] }
+tracing-subscriber = { workspace = true }

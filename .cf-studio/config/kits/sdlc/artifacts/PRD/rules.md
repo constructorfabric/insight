@@ -16,15 +16,23 @@ DO:
   - LOAD {prd_template} for structure
   - RUN read project config for ID prefix and resolve output path from {cf-studio-path}/config/artifacts.toml
   - LOAD {prd_example} for content-depth reference
-  - RUN author each required section guided by template prompts (Vision, Actors, Capabilities/FRs, Use Cases, NFRs + Exclusions, Non-Goals, Assumptions, Risks)
+  - RUN author each required section guided by template prompts (Overview, Actors, Operational Concept & Environment, Scope, Functional Requirements, Quality Vector Analysis, NFR Inclusions, NFR Exclusions, Public Library Interfaces incl. Public API Surface and External Integration Contracts, Use Cases, Acceptance Criteria, Dependencies, Assumptions, Risks)
   - SET actor IDs = cpt-{hierarchy-prefix}-actor-{slug}; capability/FR IDs = cpt-{hierarchy-prefix}-fr-{slug}; assign priorities p1-p9 by business impact
   - RUN cfs list-ids to verify ID uniqueness
+  - RUN use `../../guides/quality-vectors.md` (relative to this file) for advisory quality-vector suggestions: clarify relevant expectations, preserve agreed targets, and identify open decisions; do not create a new readiness gate for vector formatting — table completeness is already gated by {prd_checklist} (ARCH-PRD-006)
+  - RUN distinguish individually excluded default NFRs in section 6.3 from wholly inapplicable quality vectors recorded in section 6.1; an inherited obligation remains applicable unless explicitly excluded with a reason
 
 RULES:
   - ALWAYS follow {prd_template} structure; all required sections present and non-empty
   - ALWAYS use ID convention cpt-{hierarchy-prefix}-{kind}-{slug} and priority markers p1-p9 on capabilities/FRs
   - ALWAYS version on change: increment frontmatter version when editing; when changing a capability definition add -v{N} suffix (e.g. cpt-{hierarchy-prefix}-cap-{slug}-v2) or increment existing version; keep a changelog of significant changes
-  - ALWAYS keep the PRD requirements-only (WHAT not HOW); express every NFR as a business-level quality requirement (user/business outcome, SLA, measurable target), not a technical implementation spec
+  - ALWAYS keep the PRD requirements-only (WHAT not HOW); express NFRs as business-level quality requirements (user/business outcome, SLA, observable target), not technical implementation specs
+  - ALWAYS give every quality vector a row in the 6.1 Quality Vector Analysis table, presented in the order Efficiency, Reliability, Performance, Security, Versatility as a display convention, not a ranking (see the quality-vector guide); an empty or omitted row is never acceptable
+  - ALWAYS fill a row's Show-Stopper cell by applying the generative rule: the cell either states the MUST-strength show-stopper requirement traceable to the NFR that carries it in 6.2, or states why no show-stopper obligation was produced; see `../../guides/quality-vectors.md` for the recognized cell forms
+  - ALWAYS treat a Show-Stopper cell that records no covering obligation for a material vector as a legitimate, honest gap for the PRD's owner to close, not a defect in the table; author it only when both claims are true — the vector is material and nothing in 6.2 covers it — never as a shortcut for skipping the analysis
+  - ALWAYS treat the table as recording analysis, not requirements: no row, material or not, creates an obligation on its own, though a material show-stopper is expected to correspond to an NFR defined in 6.2 that carries the actual obligation, and calling a vector immaterial still records a decision that silence does not
+  - ALWAYS give every row in the 6.1 table a Rationale distinct from its Show-Stopper cell text: for a material vector, the Rationale states the business consequence; for a vector that is not material, the Rationale explains why the vector is immaterial; either way it never restates the cell
+  - NEVER give a requirement a `**Vector**` line unless one vector is intrinsic to it — a latency budget is Performance, a tenant-isolation property is Security — applying to an FR as readily as an NFR; scenarios that verify the requirement under different vectors get none, because the vector belongs to the claim a scenario makes, not to the requirement, and picking one would be wrong for the others
   - ALWAYS state authorization as exact per-actor/operation permissions (which actor may perform which action on which resource); NEVER restate the generic "every API/endpoint requires authentication/authorization", which is assumed
   - ALWAYS treat {prd_checklist} as the single source of semantic quality criteria
   - NEVER duplicate semantic criteria here; NEVER leave placeholders (TODO, TBD, FIXME); NEVER create duplicate IDs within the document

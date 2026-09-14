@@ -2,6 +2,7 @@ import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useCallback } from "react";
 
 import { validateDateRange } from "@/api/period-to-date-range";
+import { isRangeToken } from "@/lib/custom/time-range";
 import type { PeriodValue } from "@/types/insight";
 
 /**
@@ -41,12 +42,33 @@ export interface PortalSearch {
   /** Expanded direction + its active lens, within the Directions zone. */
   dir?: string;
   lens?: string;
+  /**
+   * Connector under inspection in the Ingestion surface, as a bronze slug
+   * without the `bronze_` prefix (e.g. `bamboohr`).
+   *
+   * In the URL because the drill-down IS the view: a reload and a shared link
+   * must both land on the same connector's streams.
+   */
+  conn?: string;
+  /**
+   * One repository under inspection, by its dimension VALUE (`<source>:<owner>/<repo>`).
+   * The value and not the label, because two repositories can share a display
+   * name and a link has to reproduce the one that was opened.
+   */
+  repo?: string;
   /** Org-scope root: a manager's person id. Absent = the viewer's own subtree. */
   scope?: string;
   /** Narrow the scope to direct reports only. */
   direct?: boolean;
   /** Person-attribute that groups rosters and defines peer cohorts. */
   slice?: string;
+  /**
+   * The window a custom dashboard is read over, as the token the server
+   * understands: a preset like `P30D` or an ISO interval. Separate from
+   * `period` on purpose — that union is shared by every other zone, and only
+   * this one speaks these tokens.
+   */
+  range?: string;
   /** Period preset. A custom range rides in `from`/`to` beside it. */
   period?: PeriodValue;
   from?: string;
@@ -54,6 +76,9 @@ export interface PortalSearch {
 }
 
 const PERIODS = new Set<string>(["week", "month", "quarter", "year"]);
+/** A bronze connector slug: what the endpoint's `scope` validator accepts,
+ *  minus the `bronze_` prefix the URL does not need to carry. */
+const CONNECTOR_SLUG = /^[a-z0-9_]{1,120}$/;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 function str(v: unknown): string | undefined {
@@ -90,6 +115,10 @@ export function validatePortalSearch(raw: Record<string, unknown>): PortalSearch
     find: str(raw.find),
     dir: str(raw.dir),
     lens: str(raw.lens),
+    // Validated to the same slug shape the endpoint accepts as a `scope`, so a
+    // hand-edited value degrades to the overview instead of a 400.
+    conn: CONNECTOR_SLUG.test(str(raw.conn) ?? "") ? str(raw.conn) : undefined,
+    repo: str(raw.repo),
     // Lower-cased to match `normalizePersonId`: the same id reaches us from a
     // link, an identity record or a hand-edited URL, and the resolver compares
     // it as a string. An id outside the viewer's subtree (or a pre-cutover
@@ -101,6 +130,9 @@ export function validatePortalSearch(raw: Record<string, unknown>): PortalSearch
       ? { direct: true as const }
       : {}),
     slice: str(raw.slice),
+    // The same check the run endpoint makes, so a hand-edited token
+    // degrades to the board's default.
+    range: isRangeToken(str(raw.range) ?? "") ? str(raw.range) : undefined,
     period: period && PERIODS.has(period) ? (period as PeriodValue) : undefined,
     ...(custom ? { from, to } : {}),
   };
@@ -116,12 +148,15 @@ export const PORTAL_SEARCH_KEYS = [
   "find",
   "dir",
   "lens",
+  "repo",
   "scope",
   "direct",
   "slice",
   "period",
   "from",
   "to",
+  "conn",
+  "range",
 ] satisfies Array<keyof PortalSearch>;
 
 /** The validated portal params for the current route. */

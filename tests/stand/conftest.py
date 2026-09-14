@@ -1,10 +1,9 @@
 """Suite-wide wiring for the deployed-stand tests.
 
 This conftest assumes an ALREADY-RUNNING stand. It does not start compose, does
-not spawn service processes and does not apply migrations — deliberately unlike
-`src/ingestion/tests/e2e/conftest.py`, whose `compose_stack` /
-`ch_migrations_applied` / `analytics` fixtures own that lifecycle because that
-rig builds its own private stack per session. Here the stand is brought up and
+not spawn service processes and does not apply migrations — unlike
+`tests/datapath/conftest.py`, which seeds and clears the warehouse of an
+instance raised for it alone. Here the stand is brought up and
 seeded by `./dev-compose.sh test-stand up`, and the suite only reads it. A test
 run that could bring its own stand up would hide exactly the deployment failures
 this suite exists to catch.

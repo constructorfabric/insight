@@ -11,8 +11,10 @@ ISO-8601 duration, so both are parsed rather than cast.
 
 INVARIANT: the entry carries no creation time. The listing accepts a creation
 filter but never reports one, so reading a job's moment from anything other
-than its last-update stamp refuses every entry — indistinguishable, from the
-page, from a mover that has run no syncs at all.
+than the stamps it does carry refuses every entry — indistinguishable, from the
+page, from a mover that has run no syncs at all. Nor does every entry carry
+every stamp it does report: a job still running can arrive with a start and no
+update at all.
 """
 
 from __future__ import annotations
@@ -60,6 +62,22 @@ _ISO_DURATION = re.compile(
 _SECONDS_PER = {"days": 86_400.0, "hours": 3_600.0, "minutes": 60.0, "seconds": 1.0}
 
 
+class Instance(NamedTuple):
+    """Which installation of a connector a row belongs to.
+
+    One connector can be installed more than once — a second Secret naming its
+    own source id — so its name alone does not identify the thing that synced.
+    """
+
+    connector: str
+    tenant_id: str
+    source_id: str
+
+
+#: The seal is about the tick itself, so it names no instance.
+_NO_INSTANCE = Instance(_ABSENT, _ABSENT, _ABSENT)
+
+
 class Skipped(NamedTuple):
     """A job the planner refused, and why. Logged, never written."""
 
@@ -96,13 +114,24 @@ def moment(stamp: object) -> str | None:
 
 
 def entry_moment(entry: Mapping[str, Any]) -> str | None:
-    """One listing entry's last-update moment, in the ledger's own form.
+    """Where one listing entry sits on the axis the ledger orders jobs along.
 
-    The single reader of that field: the watermark is compared against it, the
-    listing is filtered by it and the planner records it, and the three must
-    never disagree about which of an entry's stamps places it.
+    The mover's last word about the job — its last update, or its start when the
+    mover has not updated it yet. A job still running can carry no update stamp
+    at all, and refusing it would drop the one state the page most needs to
+    show: the connector reads as last synced whenever it last finished, while a
+    sync is in flight or stuck.
+
+    The fallback is not a guess. The listing itself places such an entry around
+    its start — it serves the entry when filtered from that moment and withholds
+    it when filtered from after — so recording the start keeps the watermark on
+    the same axis the filter runs on.
+
+    INVARIANT: the watermark is compared against this, the listing is filtered
+    by it and the planner records it, and the three must never disagree about
+    which of an entry's stamps places it.
     """
-    return moment(entry.get("lastUpdatedAt"))
+    return moment(entry.get("lastUpdatedAt")) or moment(entry.get("startTime"))
 
 
 def as_listing_stamp(recorded: str | None) -> str | None:
@@ -210,7 +239,7 @@ def records_reported(entry: Mapping[str, Any]) -> int | None:
 
 
 def sync_row(
-    entry: Mapping[str, Any], connectors: Mapping[str, str], tick_id: str
+    entry: Mapping[str, Any], connectors: Mapping[str, Instance], tick_id: str
 ) -> dict[str, Any] | Skipped:
     """One ledger row for one listing entry, or the reason it cannot be recorded."""
     raw_id = entry.get("jobId")
@@ -223,36 +252,49 @@ def sync_row(
         return Skipped("", "listing entry carries an empty job identity")
 
     connection = entry.get("connectionId")
-    connector = connectors.get(str(connection)) if connection is not None else None
-    if not connector:
+    instance = connectors.get(str(connection)) if connection is not None else None
+    if instance is None:
         # A job on a connection this install does not manage: another tenant's,
         # or one left behind by a connector since removed. Recording it under a
         # guessed name would put syncs on the wrong row.
+        #
+        # The connection is also what tells two instances of one connector
+        # apart: they share a name and hold separate connections, so this map
+        # is the only place the job's instance can be read from.
         return Skipped(job_id, "job belongs to no managed connection")
 
     # SAFETY: the summary resolves the newest sync per connector along this
     # column, and a row without it can never win that comparison. Recording it
     # anyway would hide the connector rather than the row.
-    updated = entry_moment(entry)
-    if updated is None:
-        return Skipped(job_id, "job carries no readable update time")
+    placed = entry_moment(entry)
+    if placed is None:
+        return Skipped(job_id, "job carries no readable moment")
+
+    status = vocab.normalise(entry.get("status"))
 
     return {
         "tick_id": tick_id,
         "job_id": job_id,
-        "connector": connector,
+        "connector": instance.connector,
+        "tenant_id": instance.tenant_id,
+        "source_id": instance.source_id,
         "event": SYNC_COMPLETED,
-        "status": vocab.normalise(entry.get("status")),
+        "status": status,
         "started_at": moment(entry.get("startTime")),
-        "job_updated_at": updated,
-        "duration_ms": duration_ms(entry.get("duration")),
+        "job_updated_at": placed,
+        # SAFETY: an unfinished job's reported duration is not what this column
+        # holds. Recorded as-is, the mover's zero reads as a sync that took no
+        # time; how long such a job has been going is derived from its start.
+        "duration_ms": (
+            None if vocab.is_in_flight(status) else duration_ms(entry.get("duration"))
+        ),
         "records_reported": records_reported(entry),
     }
 
 
 def plan_syncs(
     entries: Iterable[Mapping[str, Any]],
-    connectors: Mapping[str, str],
+    connectors: Mapping[str, Instance],
     tick_id: str,
     closed_job_ids: frozenset[str],
 ) -> Plan:
@@ -293,11 +335,17 @@ def plan_abandoned(
         updated = str(job.get("updated", ""))
         if not job_id or not connector or not updated:
             continue
+        # SAFETY: the identity is copied from the open row, never required and
+        # never resolved afresh. A marker written under a different one leaves
+        # the open row open, and the page goes on reporting a sync that stopped
+        # being readable.
         rows.append(
             {
                 "tick_id": tick_id,
                 "job_id": job_id,
                 "connector": connector,
+                "tenant_id": str(job.get("tenant_id", "")),
+                "source_id": str(job.get("source_id", "")),
                 "event": SYNC_COMPLETED,
                 "status": vocab.UNKNOWN,
                 "started_at": None,
@@ -309,11 +357,13 @@ def plan_abandoned(
     return rows
 
 
-def _bare_row(tick_id: str, event: str, connector: str) -> dict[str, Any]:
+def _bare_row(tick_id: str, event: str, instance: Instance) -> dict[str, Any]:
     return {
         "tick_id": tick_id,
         "job_id": _ABSENT,
-        "connector": connector,
+        "connector": instance.connector,
+        "tenant_id": instance.tenant_id,
+        "source_id": instance.source_id,
         "event": event,
         "status": _ABSENT,
         "started_at": None,
@@ -323,11 +373,11 @@ def _bare_row(tick_id: str, event: str, connector: str) -> dict[str, Any]:
     }
 
 
-def plan_snapshot(connectors: Iterable[str], tick_id: str) -> list[dict[str, Any]]:
-    """One row per connector the controller manages this tick."""
+def plan_snapshot(instances: Iterable[Instance], tick_id: str) -> list[dict[str, Any]]:
+    """One row per connector instance the controller manages this tick."""
     return [
-        _bare_row(tick_id, CONNECTOR_CONFIGURED, connector)
-        for connector in sorted(set(connectors))
+        _bare_row(tick_id, CONNECTOR_CONFIGURED, instance)
+        for instance in sorted(set(instances))
     ]
 
 
@@ -338,4 +388,4 @@ def plan_seal(tick_id: str) -> dict[str, Any]:
     keys the configured set on the newest sealed tick, so a row arriving after
     its seal would join a snapshot already being read as complete.
     """
-    return _bare_row(tick_id, SWEEP_COMPLETED, _ABSENT)
+    return _bare_row(tick_id, SWEEP_COMPLETED, _NO_INSTANCE)

@@ -50,9 +50,7 @@ def docs(umbrella_deps) -> list[dict]:
 
 
 def _named(docs: list[dict], kind: str, suffix: str) -> dict:
-    matches = [
-        d for d in docs if d.get("kind") == kind and d["metadata"]["name"].endswith(suffix)
-    ]
+    matches = [d for d in docs if d.get("kind") == kind and d["metadata"]["name"].endswith(suffix)]
     assert len(matches) == 1, f"expected one {kind} ending {suffix}, got {len(matches)}"
     return matches[0]
 
@@ -104,20 +102,9 @@ def _dbt_run_script(docs: list[dict]) -> str:
 
 
 def _run_script(
-    tmp_path: Path,
-    script: str,
-    *,
-    selected: str,
-    remaining: str,
-    select: str,
-    exclude: str,
+    tmp_path: Path, script: str, *, selected: str, remaining: str, select: str, exclude: str
 ) -> tuple[int, str]:
-    """Execute the rendered script with a stub `dbt` on PATH.
-
-    Two lines cannot run outside the toolbox image and are replaced: the `cd`
-    into the image's dbt project, and the profiles.yml heredoc (it needs a
-    real adapter). Everything the guard does is executed verbatim.
-    """
+    """Execute the rendered script with a stub `dbt` on PATH."""
     stub = tmp_path / "bin"
     stub.mkdir()
     # The stub distinguishes the two resolutions, which is the whole point:
@@ -135,20 +122,18 @@ def _run_script(
     )
     (stub / "dbt").chmod(0o755)
 
-    # Strip ONLY the first heredoc — the profiles.yml writer, which needs a
-    # real adapter. The trailing one emits the lifecycle event and must run.
-    keep, skipping, stripped = [], False, False
-    for line in script.replace("cd /ingestion/dbt", f"cd {tmp_path}").splitlines():
-        if not stripped and line.strip() == "python3 - <<'PY'":
-            skipping, stripped = True, True
-            continue
-        if skipping:
-            if line.strip() == "PY":
-                skipping = False
-            continue
-        keep.append(line)
+    # Two calls cannot run outside the toolbox image and are adjusted: the
+    # profiles.yml writer is dropped (it needs a real adapter), and the
+    # /ingestion/scripts prefix is rewritten to this repo's checkout so the
+    # lifecycle emitter runs for real. Everything the guard does is verbatim.
+    scripts_dir = Path(__file__).resolve().parents[6] / "src" / "ingestion" / "scripts"
+    runnable = (
+        script.replace("cd /ingestion/dbt", f"cd {tmp_path}")
+        .replace("python3 /ingestion/scripts/dbt_profiles.py --correlated-subqueries", "true")
+        .replace("/ingestion/scripts", str(scripts_dir))
+    )
     script_file = tmp_path / "script.sh"
-    script_file.write_text("\n".join(keep))
+    script_file.write_text(runnable)
 
     env = {
         **os.environ,
@@ -163,14 +148,7 @@ def _run_script(
         "CLICKHOUSE_USER": "u",
         "CLICKHOUSE_PASSWORD": "p",
     }
-    proc = subprocess.run(
-        ["bash", str(script_file)],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        env=env,
-        check=False,
-    )
+    proc = subprocess.run(["bash", str(script_file)], capture_output=True, text=True, timeout=120, env=env, check=False)
     return proc.returncode, proc.stdout + proc.stderr
 
 
@@ -192,14 +170,7 @@ def test_a_selection_an_earlier_step_covered_is_not_an_error(docs, tmp_path) -> 
 
 def test_a_selector_matching_nothing_still_fails(docs, tmp_path) -> None:
     """#2362's guard, intact: a typo'd selector must not report success."""
-    rc, output = _run_script(
-        tmp_path,
-        _dbt_run_script(docs),
-        selected="",
-        remaining="",
-        select="tag:typo+",
-        exclude="",
-    )
+    rc, output = _run_script(tmp_path, _dbt_run_script(docs), selected="", remaining="", select="tag:typo+", exclude="")
     assert rc == 1, output
     assert "matches no models" in output
     assert "DBT_RUN_INVOKED" not in output, "nothing may run behind a failed guard"
@@ -221,14 +192,7 @@ def test_a_normal_connector_runs_with_both_flags(docs, tmp_path) -> None:
 
 def test_an_empty_selector_still_runs_everything(docs, tmp_path) -> None:
     """Manual triggers submit no selector; the guard must stay out of the way."""
-    rc, output = _run_script(
-        tmp_path,
-        _dbt_run_script(docs),
-        selected="",
-        remaining="",
-        select="",
-        exclude="",
-    )
+    rc, output = _run_script(tmp_path, _dbt_run_script(docs), selected="", remaining="", select="", exclude="")
     assert rc == 0, output
     assert "DBT_RUN_INVOKED" in output
     assert "--select" not in output

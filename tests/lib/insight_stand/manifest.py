@@ -183,6 +183,80 @@ class Capabilities:
         return bool(getattr(self, name))
 
 
+#: The `golden_metrics` shape revision this model understands. A manifest
+#: carrying a newer one parses (the field is self-versioned exactly so a bump
+#: does not brick older readers) but reports its payload as absent, and a test
+#: needing it skips with the version in the reason.
+SUPPORTED_GOLDEN_METRICS_VERSION: Final[int] = 1
+
+
+@dataclass(frozen=True)
+class GoldenTaskTotals:
+    """One person's expected task totals over the golden window — exact values,
+    derived by the seed from its own deterministic generator plan."""
+
+    tasks_closed: int
+    bugs_fixed: int
+    closed_non_bug: int
+
+    @classmethod
+    def parse(cls, doc: Mapping[str, Any], where: str) -> GoldenTaskTotals:
+        return cls(
+            tasks_closed=_require(doc, "tasks_closed", int, where),
+            bugs_fixed=_require(doc, "bugs_fixed", int, where),
+            closed_non_bug=_require(doc, "closed_non_bug", int, where),
+        )
+
+
+@dataclass(frozen=True)
+class GoldenTasks:
+    """`golden_metrics.tasks` — per-person expected totals, close-date grain.
+
+    `window` is a `from..to` ISO range: every counted close lands inside it, so
+    a period query over exactly this range must answer exactly these numbers.
+    """
+
+    window: str
+    per_person: Mapping[str, GoldenTaskTotals]
+
+    @classmethod
+    def parse(cls, doc: Mapping[str, Any], where: str) -> GoldenTasks:
+        per_person_raw = _require(doc, "per_person", dict, where)
+        per_person = {
+            email: GoldenTaskTotals.parse(
+                _as_mapping(entry, f"{where}.per_person[{email!r}]"),
+                f"{where}.per_person[{email!r}]",
+            )
+            for email, entry in per_person_raw.items()
+        }
+        return cls(window=_require(doc, "window", str, where), per_person=per_person)
+
+
+@dataclass(frozen=True)
+class GoldenMetrics:
+    """`golden_metrics` — expected values the seeded rows imply, exactly.
+
+    Optional on the manifest: a stand seeded before the field existed reports
+    it as None, and a test asserting golden numbers skips rather than fails.
+    `tasks` is None when the document's version is newer than this reader —
+    version, unlike absence, is worth naming in the skip reason.
+    """
+
+    version: int
+    tasks: GoldenTasks | None
+
+    @classmethod
+    def parse(cls, doc: Mapping[str, Any], where: str) -> GoldenMetrics:
+        version = _require(doc, "version", int, where)
+        if version != SUPPORTED_GOLDEN_METRICS_VERSION:
+            return cls(version=version, tasks=None)
+        tasks = GoldenTasks.parse(
+            _as_mapping(_require(doc, "tasks", dict, where), f"{where}.tasks"),
+            f"{where}.tasks",
+        )
+        return cls(version=version, tasks=tasks)
+
+
 @dataclass(frozen=True)
 class Tenants:
     """Every tenant the stand seeded, named.
@@ -225,6 +299,7 @@ class Manifest:
     seed_revision: str
     data_window: str
     anchor_date: str
+    golden_metrics: GoldenMetrics | None
     seeded: tuple[str, ...]
     source_path: Path
 
@@ -314,6 +389,16 @@ class Manifest:
             seed_revision=_require(doc, "seed_revision", str, where),
             data_window=_require(doc, "data_window", str, where),
             anchor_date=_require(doc, "anchor_date", str, where),
+            # Optional like `tenants`: a manifest written before golden metrics
+            # existed still parses, and reports them as absent.
+            golden_metrics=(
+                None
+                if doc.get("golden_metrics") is None
+                else GoldenMetrics.parse(
+                    _as_mapping(doc["golden_metrics"], f"{where}.golden_metrics"),
+                    f"{where}.golden_metrics",
+                )
+            ),
             seeded=tuple(seeded_raw),
             source_path=source_path,
         )
@@ -380,8 +465,12 @@ __all__: Sequence[str] = (
     "BOOLEAN_CAPABILITIES",
     "MANIFEST_PATH",
     "MANIFEST_PATH_ENV",
+    "SUPPORTED_GOLDEN_METRICS_VERSION",
     "SUPPORTED_MANIFEST_VERSION",
     "Capabilities",
+    "GoldenMetrics",
+    "GoldenTaskTotals",
+    "GoldenTasks",
     "Manifest",
     "Person",
     "Realm",

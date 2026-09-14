@@ -18,6 +18,12 @@ describe("validatePortalSearch", () => {
     expect(
       validatePortalSearch({ zone: "directions", dir: "dev", lens: "Delivery" }),
     ).toMatchObject({ zone: "directions", dir: "dev", lens: "Delivery" });
+    // A repository is carried by its dimension VALUE, so a shared link
+    // reproduces the one that was opened even when two share a display name.
+    expect(
+      validatePortalSearch({ lens: "Repositories", repo: "src-a:acme/api" }),
+    ).toMatchObject({ lens: "Repositories", repo: "src-a:acme/api" });
+    expect(validatePortalSearch({ repo: "" }).repo).toBeUndefined();
   });
 
   it("lowercases the scope — an email is case-insensitive but our keys are not", () => {
@@ -78,6 +84,28 @@ describe("validatePortalSearch", () => {
   });
 });
 
+describe("the ingestion drill-down key", () => {
+  it("keeps a connector slug", () => {
+    expect(validatePortalSearch({ conn: "bamboohr" }).conn).toBe("bamboohr");
+    expect(validatePortalSearch({ conn: "claude_enterprise" }).conn).toBe(
+      "claude_enterprise",
+    );
+  });
+
+  it("drops anything the endpoint would refuse as a scope", () => {
+    // A hand-edited value must degrade to the overview, not reach the API and
+    // come back a 400 the reader cannot act on.
+    for (const raw of ["Jira", "bronze jira", "jira;drop", "jira/../x", ""]) {
+      expect(validatePortalSearch({ conn: raw }).conn, raw).toBeUndefined();
+    }
+  });
+
+  it("is retained across navigation", () => {
+    // Without this the drill-down is lost the moment anything else navigates.
+    expect(PORTAL_SEARCH_KEYS).toContain("conn");
+  });
+});
+
 describe("applySearchPatch", () => {
   /** The real middleware the portal routes install, over the patched result. */
   function afterRetain(
@@ -118,5 +146,36 @@ describe("applySearchPatch", () => {
     expect(patched.zone).toBe("directions");
     expect(patched.slice).toBeUndefined();
     expect(patched.direct).toBeUndefined();
+  });
+});
+
+describe("the picked time range", () => {
+  it("keeps a preset and an interval the server would accept", () => {
+    expect(validatePortalSearch({ range: "P30D" }).range).toBe("P30D");
+    expect(validatePortalSearch({ range: "2026-08-01/2026-09-01" }).range).toBe(
+      "2026-08-01/2026-09-01",
+    );
+  });
+
+  it("drops what the server would refuse, leaving the board's own default", () => {
+    for (const range of [
+      "P14D",
+      "2026-09-02/2026-09-01",
+      "2026-02-30/2026-03-01",
+      "2026-09-01/2026-09-02/2026-09-03",
+      "",
+    ]) {
+      expect(validatePortalSearch({ range }).range, range).toBeUndefined();
+    }
+  });
+
+  it("does not disturb the rest of the search", () => {
+    expect(
+      validatePortalSearch({ range: "nonsense", zone: "custom", item: "x" }),
+    ).toMatchObject({ zone: "custom", item: "x" });
+  });
+
+  it("is carried across a route change like every other portal key", () => {
+    expect(PORTAL_SEARCH_KEYS).toContain("range");
   });
 });

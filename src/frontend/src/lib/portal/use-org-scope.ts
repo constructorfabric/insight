@@ -5,23 +5,14 @@ import {
   findIdentityNode,
   flattenSubordinates,
   hasIndirectReports,
+  rosterTree,
   scopeRosterToDirectReports,
   type RosterEntry,
 } from "@/lib/insight/identity-tree";
-import {
-  reportPeopleInFlatScope,
-  reportPeopleInScope,
-  type ReportPerson,
-} from "@/lib/identities/report-person";
-import {
-  type OrgScope,
-} from "@/lib/portal/portal-store";
-import {
-  usePortalScope,
-} from "@/lib/portal/portal-nav";
-import type { PersonSummary } from "@/api/identity-client";
+import { usePortalScope } from "@/lib/portal/portal-nav";
+import type { OrgScope } from "@/lib/portal/portal-store";
+import type { PeopleListItem } from "@/api/identity-client";
 import { personDisplayName } from "@/lib/identities/person-display";
-import { useIcPerson } from "@/queries/ic-dashboard";
 import { useVisibilityPolicy } from "@/queries/identity-me";
 import { useVisibleRoster } from "@/queries/visible-roster";
 import type { IdentityPerson } from "@/types/insight";
@@ -32,18 +23,23 @@ export interface ManagerNode {
   person_id: string;
   name: string;
   depth: number;
-  teamSize: number;
+  /** Manager plus every descendant. */
+  subtreeMemberCount: number;
+  /** Manager plus direct reports. */
+  directMemberCount: number;
 }
 
 /** The scope resolved against the viewer's own subtree — the permission boundary. */
 export interface ResolvedScope {
   /** The scope pivot (root manager node); null while the tree loads. */
   pivot: IdentityPerson | null;
-  /** Everyone inside the scope (subtree or direct reports). */
+  /** Reports below the pivot (full subtree or direct reports). */
   roster: RosterEntry[] | null;
-  reportPeople: ReportPerson[] | null;
   label: string;
-  count: number;
+  /** Number of reports used by report-only analytics. */
+  rosterCount: number;
+  /** Number of people represented by the scope selector, pivot included. */
+  scopeMemberCount: number;
   /** All manager nodes of the viewer's tree, for the ScopeSelect picker. */
   managerNodes: ManagerNode[];
   /** Whether directOnly can change anything at this pivot. */
@@ -62,15 +58,15 @@ export const WHOLE_ORG_LABEL = "Whole organisation";
  * is looking disagrees with the roster listed right beside it (#2724).
  */
 export function flatOrgScope(
-  roster: readonly PersonSummary[] | null,
+  roster: readonly PeopleListItem[] | null,
 ): ResolvedScope {
   if (!roster) {
     return {
       pivot: null,
       roster: null,
-      reportPeople: null,
       label: WHOLE_ORG_LABEL,
-      count: 0,
+      rosterCount: 0,
+      scopeMemberCount: 0,
       managerNodes: [],
       canDirectOnly: false,
     };
@@ -89,9 +85,9 @@ export function flatOrgScope(
   return {
     pivot: null,
     roster: members,
-    reportPeople: reportPeopleInFlatScope(roster),
     label: WHOLE_ORG_LABEL,
-    count: members.length,
+    rosterCount: members.length,
+    scopeMemberCount: members.length,
     managerNodes: [],
     canDirectOnly: false,
   };
@@ -111,9 +107,9 @@ export function resolveScopeRoster(
     return {
       pivot: null,
       roster: null,
-      reportPeople: null,
       label: "",
-      count: 0,
+      rosterCount: 0,
+      scopeMemberCount: 0,
       managerNodes: [],
       canDirectOnly: false,
     };
@@ -129,9 +125,9 @@ export function resolveScopeRoster(
   const roster = scopeRosterToDirectReports(full, canDirectOnly && scope.directOnly);
 
   const managerNodes: ManagerNode[] = [];
-  // One pass: each call returns its own subtree size, so a team size costs one
-  // visit per node. Flattening per manager node re-walked that manager's whole
-  // subtree — O(n · depth), which degrades on a deep reporting chain.
+  // One pass: each call returns its inclusive subtree member count. Flattening
+  // per manager node re-walked that manager's whole subtree — O(n · depth),
+  // which degrades on a deep reporting chain.
   //
   // The entry is pushed BEFORE recursing and its size filled in after, so the
   // picker keeps its depth-first outline order (a lead, then that lead's leads).
@@ -142,23 +138,24 @@ export function resolveScopeRoster(
             person_id: node.person_id,
             name: personDisplayName(node),
             depth,
-            teamSize: 0,
+            subtreeMemberCount: 0,
+            directMemberCount: node.subordinates.length + 1,
           }
         : null;
     if (entry) managerNodes.push(entry);
-    let size = 0;
-    for (const sub of node.subordinates) size += 1 + walk(sub, depth + 1);
-    if (entry) entry.teamSize = size;
-    return size;
+    let memberCount = 1;
+    for (const sub of node.subordinates) memberCount += walk(sub, depth + 1);
+    if (entry) entry.subtreeMemberCount = memberCount;
+    return memberCount;
   };
   walk(viewerNode, 0);
 
   return {
     pivot,
     roster,
-    reportPeople: reportPeopleInScope(pivot, roster),
     label: personDisplayName(pivot),
-    count: roster?.length ?? 0,
+    rosterCount: roster?.length ?? 0,
+    scopeMemberCount: (roster?.length ?? 0) + 1,
     managerNodes,
     canDirectOnly,
   };
@@ -173,26 +170,30 @@ export function useOrgScope(): ResolvedScope & {
   pivotPersonId: string;
 } {
   const { personId } = useViewer();
-  const viewerQ = useIcPerson(personId ?? "");
   const scope = usePortalScope();
   const { isFlat } = useVisibilityPolicy();
-  const flatRoster = useVisibleRoster(isFlat);
+  const visibleRoster = useVisibleRoster(true);
+  const tree = useMemo(
+    () =>
+      visibleRoster.isPending || !personId
+        ? null
+        : rosterTree(visibleRoster.roster, personId),
+    [visibleRoster.isPending, visibleRoster.roster, personId],
+  );
 
   const resolved = useMemo(
     () =>
       isFlat
-        ? flatOrgScope(flatRoster.isPending ? null : flatRoster.roster)
-        : resolveScopeRoster(viewerQ.data ?? null, personId, scope),
-    [isFlat, flatRoster.isPending, flatRoster.roster, viewerQ.data, personId, scope],
+        ? flatOrgScope(visibleRoster.isPending ? null : visibleRoster.roster)
+        : resolveScopeRoster(tree, personId, scope),
+    [isFlat, visibleRoster.isPending, visibleRoster.roster, tree, personId, scope],
   );
 
-  // Under a flat policy the roster IS the org zones' subject, so its failure is
-  // theirs; the identity tree still answers who the viewer is.
   return {
     ...resolved,
-    isLoading: isFlat ? flatRoster.isPending : viewerQ.isLoading,
-    isError: isFlat ? flatRoster.isError : viewerQ.isError,
-    refetch: () => (isFlat ? flatRoster.retry() : void viewerQ.refetch()),
+    isLoading: visibleRoster.isPending,
+    isError: visibleRoster.isError,
+    refetch: visibleRoster.retry,
     pivotPersonId: resolved.pivot?.person_id ?? personId ?? "",
   };
 }

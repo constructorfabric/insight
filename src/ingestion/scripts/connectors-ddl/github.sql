@@ -38,7 +38,8 @@ CREATE TABLE IF NOT EXISTS bronze_github.commit_authors
     `author_login` Nullable(String),
     `author_id` Nullable(Int64),
     `author_type` Nullable(String),
-    `sample_sha` Nullable(String)
+    `sample_sha` Nullable(String),
+    `last_committed_date` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
@@ -194,6 +195,35 @@ ORDER BY unique_key
 SETTINGS allow_nullable_key = 1, index_granularity = 8192
 ;
 
+CREATE TABLE IF NOT EXISTS bronze_github.issue_links
+(
+    `_airbyte_raw_id` String,
+    `_airbyte_extracted_at` DateTime64(3),
+    `_airbyte_meta` String,
+    `_airbyte_generation_id` UInt32,
+    `unique_key` Nullable(String),
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `data_source` Nullable(String),
+    `collected_at` Nullable(String),
+    `repo_full_name` Nullable(String),
+    `item_number` Nullable(Int64),
+    `updated_at` Nullable(String),
+    `parent_json` Nullable(String),
+    `sub_issues_json` Nullable(String),
+    `blocked_by_json` Nullable(String),
+    `blocking_json` Nullable(String),
+    `closed_by_pull_requests_json` Nullable(String),
+    `sub_issues_total` Nullable(Int64),
+    `blocked_by_total` Nullable(Int64),
+    `blocking_total` Nullable(Int64),
+    `closed_by_pull_requests_total` Nullable(Int64)
+)
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, index_granularity = 8192
+;
+
 CREATE TABLE IF NOT EXISTS bronze_github.issue_timeline_events
 (
     `_airbyte_raw_id` String,
@@ -226,7 +256,11 @@ CREATE TABLE IF NOT EXISTS bronze_github.issue_timeline_events
     `new_options_json` Nullable(String),
     `project_id` Nullable(String),
     `project_number` Nullable(Int64),
-    `was_automated` Nullable(Bool)
+    `was_automated` Nullable(Bool),
+    `link_target_type` Nullable(String),
+    `link_target_number` Nullable(Int64),
+    `link_target_repo_full_name` Nullable(String),
+    `is_cross_repository` Nullable(Bool)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
@@ -310,7 +344,6 @@ CREATE TABLE IF NOT EXISTS bronze_github.project_fields
     `source_id` Nullable(String),
     `data_source` Nullable(String),
     `collected_at` Nullable(String),
-    `snapshot_date` Nullable(String),
     `project_id` Nullable(String),
     `project_number` Nullable(Int64),
     `field_id` Nullable(String),

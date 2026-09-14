@@ -3,7 +3,7 @@
 //! The mechanism is the pure `access_by_lua` exchange, **not** the stock
 //! `auth_request` directive: the two do not compose (an `auth_request` cannot be
 //! skipped on a `lua_shared_dict` hit), so the miss-path subrequest is issued
-//! from Lua. Every generated `/api/` location gets the full hygiene block by
+//! from Lua. Every generated location gets the full hygiene block by
 //! construction -- there is no hand-written location to forget it in.
 
 use std::fmt::Write as _;
@@ -11,7 +11,10 @@ use std::fmt::Write as _;
 use anyhow::Context as _;
 use url::Url;
 
-use crate::schema::{ResolvedRoute, RouteConfig};
+use crate::schema::{Authentication, ResolvedRoute, RouteConfig};
+
+// INVARIANT: the gateway chart's exporter scrape URI must match this address.
+const STUB_STATUS_LISTEN: &str = "127.0.0.1:8090";
 
 /// Deployment settings that are not part of the route table itself (upstream
 /// authorities, timeouts, trusted proxies). The CLI fills them from env at
@@ -22,6 +25,7 @@ pub struct Settings {
     pub authenticator_url: String,
     pub authz_path: String,
     pub front_url: String,
+    pub mcp_public_url: Option<String>,
     pub jwt_cache_size: String,
     pub authz_connect_timeout_ms: u32,
     pub authz_read_timeout_ms: u32,
@@ -38,6 +42,7 @@ impl Default for Settings {
             authenticator_url: "http://authenticator.insight.svc.cluster.local:8083".to_owned(),
             authz_path: "/internal/authz".to_owned(),
             front_url: "http://insight-front.insight.svc.cluster.local:8080".to_owned(),
+            mcp_public_url: None,
             jwt_cache_size: "64m".to_owned(),
             authz_connect_timeout_ms: 2000,
             authz_read_timeout_ms: 2000,
@@ -67,6 +72,39 @@ fn authority_of(raw: &str, what: &str) -> anyhow::Result<(String, String)> {
         .port_or_known_default()
         .with_context(|| format!("{what}: '{raw}' has no port"))?;
     Ok((url.scheme().to_owned(), format!("{host}:{port}")))
+}
+
+#[derive(Debug, thiserror::Error)]
+enum McpPublicUrlError {
+    #[error("MCP public URL is invalid: {0}")]
+    Parse(#[from] url::ParseError),
+    #[error("MCP public URL must be an HTTP(S) origin")]
+    InvalidOrigin,
+}
+
+fn mcp_resource_metadata_url(
+    raw: Option<&str>,
+    path: &str,
+) -> Result<Option<String>, McpPublicUrlError> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let url = Url::parse(raw)?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || url.path() != "/"
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return Err(McpPublicUrlError::InvalidOrigin);
+    }
+
+    Ok(Some(format!(
+        "{}/.well-known/oauth-protected-resource{path}",
+        url.as_str().trim_end_matches('/')
+    )))
 }
 
 /// A stable, nginx-safe upstream identifier derived from the authority.
@@ -146,6 +184,8 @@ pub fn emit(config: &RouteConfig, settings: &Settings) -> anyhow::Result<String>
         settings.authenticator_url.trim_end_matches('/'),
         settings.authz_path
     );
+    let mcp_resource_metadata_url =
+        mcp_resource_metadata_url(settings.mcp_public_url.as_deref(), "/mcp")?;
 
     let mut c = String::new();
 
@@ -171,7 +211,12 @@ pub fn emit(config: &RouteConfig, settings: &Settings) -> anyhow::Result<String>
     writeln!(c, "    server_tokens off;")?;
     c.push('\n');
 
-    emit_http_runtime(&mut c, settings, &authz_url)?;
+    emit_http_runtime(
+        &mut c,
+        settings,
+        &authz_url,
+        mcp_resource_metadata_url.as_deref(),
+    )?;
 
     // Upstreams (keepalive-pooled).
     c.push_str("    # --- upstreams (keepalive-pooled) ---\n");
@@ -207,6 +252,8 @@ pub fn emit(config: &RouteConfig, settings: &Settings) -> anyhow::Result<String>
         &upstreams,
     )?;
 
+    emit_stub_status(&mut c)?;
+
     writeln!(c, "}}")?;
 
     Ok(c)
@@ -214,7 +261,12 @@ pub fn emit(config: &RouteConfig, settings: &Settings) -> anyhow::Result<String>
 
 /// Emit the http-block runtime: the Lua runtime + exchange config, the JSON
 /// access log, and the client-IP trust chain.
-fn emit_http_runtime(c: &mut String, settings: &Settings, authz_url: &str) -> anyhow::Result<()> {
+fn emit_http_runtime(
+    c: &mut String,
+    settings: &Settings,
+    authz_url: &str,
+    mcp_resource_metadata_url: Option<&str>,
+) -> anyhow::Result<()> {
     // OpenResty Lua runtime (ADR-0001 Option A).
     c.push_str("    # --- OpenResty Lua runtime (DESIGN 3.11; ADR-0001 Option A) ---\n");
     writeln!(c, "    lua_package_path \"/etc/nginx/lua/?.lua;;\";")?;
@@ -230,6 +282,10 @@ fn emit_http_runtime(c: &mut String, settings: &Settings, authz_url: &str) -> an
     c.push_str("    init_by_lua_block {\n");
     c.push_str("        require(\"gateway\").init({\n");
     writeln!(c, "            authz_url = \"{authz_url}\",")?;
+    match mcp_resource_metadata_url {
+        Some(url) => writeln!(c, "            mcp_resource_metadata_url = \"{url}\",")?,
+        None => c.push_str("            mcp_resource_metadata_url = nil,\n"),
+    }
     writeln!(
         c,
         "            authz_connect_timeout_ms = {},",
@@ -285,7 +341,7 @@ fn emit_http_runtime(c: &mut String, settings: &Settings, authz_url: &str) -> an
 }
 
 /// Emit the `server { ... }` block: health, the fixed unauthenticated surface,
-/// every generated `/api/` route, and the SPA fallthrough.
+/// every generated route, and the SPA fallthrough.
 fn emit_server(
     c: &mut String,
     config: &RouteConfig,
@@ -328,10 +384,36 @@ fn emit_server(
     c.push_str("            proxy_set_header X-Forwarded-Proto $scheme;\n");
     c.push_str("        }\n\n");
 
-    // Generated /api routes.
+    let mut well_known = vec![
+        "/.well-known/oauth-authorization-server".to_owned(),
+        "/.well-known/oauth-protected-resource".to_owned(),
+        "/.well-known/oauth-protected-resource/mcp".to_owned(),
+        "/.well-known/jwks.json".to_owned(),
+    ];
+    for route in routes {
+        if route.auth != Authentication::Bearer {
+            continue;
+        }
+        let path = format!("/.well-known/oauth-protected-resource{}", route.prefix);
+        if !well_known.contains(&path) {
+            well_known.push(path);
+        }
+    }
+
+    for path in &well_known {
+        writeln!(c, "        location = {path} {{")?;
+        c.push_str("            limit_req zone=auth_per_ip burst=120 nodelay;\n");
+        c.push_str("            proxy_pass http://authenticator;\n");
+        c.push_str("            proxy_set_header Connection \"\";\n");
+        c.push_str("            proxy_set_header Host $host;\n");
+        c.push_str("            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n");
+        c.push_str("            proxy_set_header X-Forwarded-Proto $scheme;\n");
+        c.push_str("        }\n\n");
+    }
+
     c.push_str("        # --- generated /api routes: full auth + hygiene block per location ---\n");
     for (route, ident) in routes.iter().zip(route_upstream) {
-        emit_api_location(c, route, ident, upstreams, config)?;
+        emit_api_location(c, route, ident, upstreams, config, settings)?;
     }
 
     // Unmatched /api, /internal, SPA.
@@ -368,23 +450,105 @@ fn emit_server(
     Ok(())
 }
 
-/// Emit one `/api/` location with the complete hygiene block (DESIGN 3.9).
+/// SAFETY: a dedicated loopback listener — a main-port allow/deny check could
+/// be spoofed, since `remote_addr` there is rewritten from X-Forwarded-For.
+fn emit_stub_status(c: &mut String) -> anyhow::Result<()> {
+    c.push('\n');
+    c.push_str("    # --- nginx counters for the metrics exporter sidecar: loopback-only ---\n");
+    writeln!(c, "    server {{")?;
+    writeln!(c, "        listen {STUB_STATUS_LISTEN};")?;
+    c.push('\n');
+    c.push_str("        location = /stub_status {\n");
+    c.push_str("            access_log off;\n");
+    c.push_str("            stub_status;\n");
+    c.push_str("        }\n");
+    writeln!(c, "    }}")?;
+    Ok(())
+}
+
+/// Emit one configured location with the complete hygiene block.
+/// What every generated `location` block needs, so the emitters pass one
+/// borrow instead of six.
+struct LocationContext<'a> {
+    route: &'a ResolvedRoute,
+    ident: &'a str,
+    scheme: &'a str,
+    config: &'a RouteConfig,
+    settings: &'a Settings,
+}
+
 fn emit_api_location(
     c: &mut String,
     route: &ResolvedRoute,
     ident: &str,
     upstreams: &[Upstream],
     config: &RouteConfig,
+    settings: &Settings,
 ) -> anyhow::Result<()> {
     let scheme = upstreams
         .iter()
         .find(|u| u.ident == *ident)
         .map_or("http", |u| u.scheme.as_str());
+    let ctx = LocationContext {
+        route,
+        ident,
+        scheme,
+        config,
+        settings,
+    };
 
     writeln!(c, "        # route: {} -> {}", route.prefix, route.upstream)?;
-    writeln!(c, "        location {} {{", route.prefix)?;
-    // 1. auth exchange (Authorization inject, cookie strip, UUIDv7 -- all in Lua)
-    c.push_str("            access_by_lua_block { require(\"gateway\").exchange() }\n");
+    match route.auth {
+        Authentication::Session => {
+            emit_api_location_block(c, &ctx, "", "")?;
+        }
+        Authentication::InstanceToken if route.strip_prefix => {
+            emit_api_location_block(c, &ctx, "= ", "")?;
+            emit_api_location_block(c, &ctx, "^~ ", "/")?;
+        }
+        Authentication::Bearer | Authentication::InstanceToken => {
+            emit_api_location_block(c, &ctx, "= ", "")?;
+        }
+    }
+
+    Ok(())
+}
+
+fn emit_api_location_block(
+    c: &mut String,
+    ctx: &LocationContext<'_>,
+    modifier: &str,
+    suffix: &str,
+) -> anyhow::Result<()> {
+    let LocationContext {
+        route,
+        ident,
+        scheme,
+        config,
+        settings,
+    } = ctx;
+    writeln!(c, "        location {modifier}{}{suffix} {{", route.prefix)?;
+    match route.auth {
+        Authentication::Session => {
+            c.push_str("            access_by_lua_block { require(\"gateway\").exchange() }\n");
+        }
+        Authentication::Bearer => {
+            let metadata =
+                mcp_resource_metadata_url(settings.mcp_public_url.as_deref(), &route.prefix)
+                    .map_err(|error| anyhow::anyhow!("route '{}': {error}", route.prefix))?
+                    .map_or_else(|| "nil".to_owned(), |url| format!("\"{url}\""));
+            writeln!(
+                c,
+                "            access_by_lua_block {{ require(\"gateway\").pass_bearer({metadata}, \"{}\") }}",
+                route.mcp_scope
+            )?;
+        }
+        Authentication::InstanceToken => {
+            c.push_str(
+                "            access_by_lua_block { require(\"gateway\").pass_instance_token() }\n",
+            );
+        }
+    }
     if route.strip_prefix {
         writeln!(
             c,
@@ -393,7 +557,12 @@ fn emit_api_location(
         )?;
     }
     writeln!(c, "            proxy_pass {scheme}://{ident};")?;
-    c.push_str("            proxy_set_header Host $host;\n");
+    match route.auth {
+        Authentication::Session | Authentication::InstanceToken => {
+            c.push_str("            proxy_set_header Host $host;\n");
+        }
+        Authentication::Bearer => c.push_str("            proxy_set_header Host localhost;\n"),
+    }
     // 5. gateway-authored forwarding headers (client-supplied are cleared in Lua)
     if route.websocket {
         c.push_str("            proxy_set_header Upgrade $http_upgrade;\n");

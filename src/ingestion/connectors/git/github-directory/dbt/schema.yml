@@ -23,17 +23,38 @@ models:
   - name: github_directory__org_members_fields_history
     description: "Field-level change log of the GitHub member profile, derived from github_directory__org_members_snapshot. entity_id is the member's immutable numeric GitHub id, stringified. Input to github_directory__identity_inputs."
   - name: github_directory__identity_inputs
-    description: "Identity-resolution inputs from the GitHub member roster (id binding on the numeric member id; username, display_name and email observations). Unioned into silver.identity_inputs via the silver:identity_inputs tag; source_type is 'github'."
+    description: "Identity-resolution inputs from the GitHub member roster (membership, canonical person profile, id binding on the numeric member id, username, display_name and email observations). Unioned into silver.identity_inputs via the silver:identity_inputs tag; source_type is 'github'."
     columns:
       - name: unique_key
+        description: "Stable identity-observation event key."
         tests:
           - not_null
           - unique
+      - name: insight_tenant_id
+        description: "Insight tenant receiving the observation."
+      - name: insight_source_id
+        description: "Connector instance that produced the observation."
       - name: insight_source_type
+        description: "Account provider used for identity binding."
         tests:
           - accepted_values:
-              values: ['github']
+              arguments:
+                values: ['github']
+      - name: source_account_id
+        description: "Provider-native account identifier."
       - name: value_type
+        description: "Identity, roster-membership, or canonical-profile claim type."
         tests:
           - accepted_values:
-              values: ['id', 'email', 'username', 'display_name']
+              arguments:
+                values: ['id', 'email', 'username', 'display_name', 'roster_membership', 'person_email', 'person_username', 'person_display_name']
+      - name: value
+        description: "Claim value, or an empty string for a deletion."
+      - name: value_field_name
+        description: "Source field that produced the claim."
+      - name: operation_type
+        description: "Whether the claim is added or removed."
+      - name: _synced_at
+        description: "Timestamp assigned to the identity observation."
+      - name: _version
+        description: "ReplacingMergeTree version derived from the observation timestamp."

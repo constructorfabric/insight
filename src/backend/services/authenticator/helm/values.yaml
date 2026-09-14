@@ -1,5 +1,13 @@
 replicaCount: 1
 
+global:
+  mcp:
+    enabled: false
+    publicUrl: ""
+    # An http:// publicUrl on a private address, for a cluster with no TLS at
+    # its edge. The service refuses one otherwise.
+    allowInsecurePrivateNetwork: false
+
 podAnnotations: {}
 
 image:
@@ -14,6 +22,17 @@ service:
   # Exposed as a second port on the same Service; network-scoped separately
   # from the main port (see networkPolicy.tokenPort below).
   tokenPort: 8093
+
+# OpenTelemetry export. Off by default; the umbrella overrides these via
+# APP__opentelemetry__* env vars when `global.observability.otlp.endpoint` is set.
+opentelemetry:
+  metrics:
+    enabled: false
+  tracing:
+    enabled: false
+  exporter:
+    kind: otlp_grpc # otlp_grpc | otlp_http
+    endpoint: "" # e.g. http://alloy.insight-infra.svc.cluster.local:4317
 
 # Service tokens (§10 G1 / DD-AUTH-05). The registry holds only PUBLIC keys, so
 # it is gitops-reviewable config: onboarding a service is a PR adding its key.

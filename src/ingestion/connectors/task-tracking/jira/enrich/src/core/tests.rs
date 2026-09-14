@@ -74,6 +74,7 @@ fn snap(current: HashMap<String, FieldValue>, created: DateTime<Utc>) -> IssueSn
         insight_source_id: "jira-alpha".into(),
         issue_id: "10042".into(),
         id_readable: "PROJ-123".into(),
+        title: Some("Widget renders twice".into()),
         created_at: created,
         reporter_id: Some("acc-1".into()),
         current_fields: current,
@@ -474,6 +475,89 @@ fn incremental_emits_only_new_events() {
     assert_eq!(out[1].value_ids, vec!["3".to_string()]);
     for row in &out {
         assert_eq!(row.event_kind, EventKind::Changelog);
+    }
+}
+
+#[test]
+fn every_emitted_row_carries_the_issue_summary() {
+    let meta = meta_map();
+    let status = meta_status();
+
+    let snapshot = snap(
+        HashMap::from([(
+            "status".to_string(),
+            FieldValue {
+                ids: vec!["2".into()],
+                displays: vec!["In Progress".into()],
+            },
+        )]),
+        ts(2026, 1, 1, 10),
+    );
+    let events = vec![ev(
+        "cl-1",
+        ts(2026, 1, 2, 9),
+        &status,
+        set(Some("1"), Some("2")),
+    )];
+
+    let bootstrap = process_issue(&meta, &snapshot, &events, None);
+    let existing = HashMap::from([(
+        "status".to_string(),
+        LastState {
+            value: FieldValue {
+                ids: vec!["1".into()],
+                displays: vec!["To Do".into()],
+            },
+            last_event_at: ts(2026, 1, 1, 10),
+        },
+    )]);
+    let incremental = process_issue(&meta, &snapshot, &events, Some(&existing));
+
+    assert!(!bootstrap.is_empty());
+    assert!(!incremental.is_empty());
+    for row in bootstrap.iter().chain(&incremental) {
+        assert_eq!(
+            row.title.as_deref(),
+            Some("Widget renders twice"),
+            "should carry the summary: {:?}/{}",
+            row.event_kind,
+            row.field_id
+        );
+    }
+}
+
+#[test]
+fn an_issue_without_a_summary_leaves_the_title_empty() {
+    let meta = meta_map();
+    let status = meta_status();
+
+    let mut snapshot = snap(
+        HashMap::from([(
+            "status".to_string(),
+            FieldValue {
+                ids: vec!["2".into()],
+                displays: vec!["In Progress".into()],
+            },
+        )]),
+        ts(2026, 1, 1, 10),
+    );
+    snapshot.title = None;
+
+    let events = vec![ev(
+        "cl-1",
+        ts(2026, 1, 2, 9),
+        &status,
+        set(Some("1"), Some("2")),
+    )];
+    let out = process_issue(&meta, &snapshot, &events, None);
+
+    assert!(!out.is_empty());
+    for row in &out {
+        assert_eq!(
+            row.title, None,
+            "should not fall back to an identifier: {}",
+            row.id_readable
+        );
     }
 }
 

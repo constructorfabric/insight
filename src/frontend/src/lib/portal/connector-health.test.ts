@@ -18,11 +18,14 @@ import {
   UNMEASURED,
   describeAge,
   describeConnector,
+  describeDuration,
+  describeInstance,
   describeRecording,
   describeSync,
   formatDuration,
   formatRecords,
   formatStarted,
+  instanceKey,
 } from "@/lib/portal/connector-health";
 
 const MINUTE = 60_000;
@@ -46,6 +49,60 @@ function row(over: Partial<ConnectorHealth> = {}): ConnectorHealth {
     ...over,
   };
 }
+
+describe("which installation of a connector a row is", () => {
+  it("names both halves, because a source id is unique only within a tenant", () => {
+    expect(
+      describeInstance({ tenant_id: "acme", source_id: "claude-team-second" }),
+    ).toBe("acme / claude-team-second");
+  });
+
+  it("prints absence as absence rather than naming an instance nobody recorded", () => {
+    // History recorded before the ledger carried the identity that no single
+    // installation could be shown to own.
+    expect(describeInstance({})).toBe(UNMEASURED);
+    expect(describeInstance({ tenant_id: null, source_id: null })).toBe(UNMEASURED);
+  });
+
+  it("does not hide the half it does have", () => {
+    expect(describeInstance({ tenant_id: "acme" })).toBe(`acme / ${UNMEASURED}`);
+  });
+
+  it("keys two installations of one connector apart", () => {
+    // Keyed on the name alone they collide: React reuses one row's node for
+    // the other, and opening one row opens the other's history.
+    const first = instanceKey({
+      connector: "claude-team",
+      tenant_id: "acme",
+      source_id: "main",
+    });
+    const second = instanceKey({
+      connector: "claude-team",
+      tenant_id: "acme",
+      source_id: "second",
+    });
+
+    expect(first).not.toBe(second);
+  });
+
+  it("keys an unidentified row apart from an identified one", () => {
+    expect(instanceKey({ connector: "alpha" })).not.toBe(
+      instanceKey({ connector: "alpha", tenant_id: "acme", source_id: "main" }),
+    );
+  });
+
+  it("keys two identities apart when one carries the separator", () => {
+    // Nothing constrains what the ledger recorded: the tenant comes from a
+    // chart value and the source id from an annotation, and neither is parsed
+    // on the way in. Joined raw, these two are one key — the rows would share a
+    // React node, a cache entry and a disclosure.
+    expect(
+      instanceKey({ connector: "alpha", tenant_id: "acme/main", source_id: "" }),
+    ).not.toBe(
+      instanceKey({ connector: "alpha", tenant_id: "acme", source_id: "main" }),
+    );
+  });
+});
 
 describe("what a row says", () => {
   it("gives every recorded status its own word", () => {
@@ -134,6 +191,73 @@ describe("what a row says", () => {
     for (const status of statuses) {
       expect(describeSync(sync({ status })).label.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("how long a sync has been going", () => {
+  const AS_OF = "2026-01-15T09:22:00.000Z";
+
+  it("a finished sync states what it took", () => {
+    const view = describeDuration(sync({ duration_ms: 142_000 }), AS_OF);
+    expect(view).toEqual({ text: "2m 22s", inFlight: false });
+  });
+
+  it("a running sync states how long it has been going, worded as unfinished", () => {
+    const view = describeDuration(
+      sync({ status: "running", started_at: "2026-01-15T09:00:00.000Z" }),
+      AS_OF,
+    );
+    expect(view).toEqual({ text: "22m 0s so far", inFlight: true });
+  });
+
+  it("a running sync ignores a recorded duration rather than printing it", () => {
+    // Rows written before the recorder stopped storing one still hold the
+    // mover's zero here, and printing it says a running sync took no time.
+    const view = describeDuration(
+      sync({
+        status: "running",
+        started_at: "2026-01-15T09:00:00.000Z",
+        duration_ms: 0,
+      }),
+      AS_OF,
+    );
+    expect(view.text).toBe("22m 0s so far");
+  });
+
+  it("a queued sync has no start to measure from, so it prints absence", () => {
+    // Not "0 s so far": nothing has begun, and a span from nothing is invented.
+    const view = describeDuration(
+      sync({ status: "pending", started_at: null, duration_ms: null }),
+      AS_OF,
+    );
+    expect(view).toEqual({ text: UNMEASURED, inFlight: false });
+  });
+
+  it("a start the page cannot date prints absence rather than an epoch span", () => {
+    const view = describeDuration(sync({ status: "running", started_at: "nonsense" }), AS_OF);
+    expect(view.text).toBe(UNMEASURED);
+  });
+
+  it("a start ahead of the answer's own clock prints absence", () => {
+    // Two clocks that disagree can date nothing, and "0 s so far" would be the
+    // page asserting a measurement neither of them supports.
+    const view = describeDuration(
+      sync({ status: "running", started_at: "2026-01-15T10:00:00.000Z" }),
+      AS_OF,
+    );
+    expect(view.text).toBe(UNMEASURED);
+  });
+
+  it("a status this build cannot read is not treated as running", () => {
+    // An unreadable word may well name a finished sync, and the measurement it
+    // carries is the only account of it there is.
+    const view = describeDuration(sync({ status: "borked", duration_ms: 142_000 }), AS_OF);
+    expect(view).toEqual({ text: "2m 22s", inFlight: false });
+  });
+
+  it("a connector that has never synced prints absence", () => {
+    expect(describeDuration(null, AS_OF)).toEqual({ text: UNMEASURED, inFlight: false });
+    expect(describeDuration(undefined, AS_OF)).toEqual({ text: UNMEASURED, inFlight: false });
   });
 });
 

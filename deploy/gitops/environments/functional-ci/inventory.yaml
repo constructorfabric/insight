@@ -11,6 +11,9 @@ protected: false
 namespaces:
   services: insight
   infra: insight-infra
+  # Preview experiments (#1981): substituted into gateway.yaml's
+  # allowedRoutes and set as previews.experiments.namespace on deploy.
+  previews: insight-previews
 
 release: insight
 
@@ -41,8 +44,12 @@ system:
   redpandaConsole: false
   airbyte: false
   argoWorkflows: false
+  victoriametrics: false
   loki: false
+  tempo: false
   alloy: false
+  kubeStateMetrics: false
+  alloyMetrics: false
   grafana: false
 
 secrets:
@@ -52,6 +59,7 @@ secrets:
     - {name: redis-creds, enabled: true}
   services:
     - {name: insight-db-creds, enabled: true}
+    - {name: insight-v3-core-token, enabled: true}
     # Minted per job by the workflow's sealing step — the chart supplies no
     # signing key and the authenticator will not start without one.
     - {name: insight-authenticator-signing-keys, enabled: true}

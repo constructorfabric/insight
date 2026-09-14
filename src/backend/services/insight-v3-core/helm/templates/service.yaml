@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "insight-v3-core.fullname" . }}
+  labels:
+    {{- include "insight-v3-core.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+    {{- if ((.Values.global).mcp).enabled }}
+    - name: mcp
+      port: {{ .Values.mcp.port }}
+      targetPort: mcp
+      protocol: TCP
+    {{- end }}
+  selector:
+    {{- include "insight-v3-core.selectorLabels" . | nindent 4 }}

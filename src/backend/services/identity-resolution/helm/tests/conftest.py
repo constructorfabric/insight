@@ -27,6 +27,8 @@ UMBRELLA_BASE = [
     "--set",
     "identityResolution.deploy=true",
     "--set",
+    "global.insightV3Core.deploy=true",
+    "--set",
     "clickhouse.host=ch",
     "--set",
     "clickhouse.username=u",

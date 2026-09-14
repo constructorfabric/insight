@@ -659,9 +659,12 @@ class WriterNamespaceParityTests(unittest.TestCase):
     not an error."""
 
     def test_every_scratch_constant_matches_the_stand_suite_s_own(self) -> None:
-        scratch = _find_upwards("tests", "stand", "api", "scratch.py")
+        # The literals live in the shared package, not in the API suite's
+        # `scratch.py`, which imports them: both stand suites file corrections
+        # under one pair, so there is one place to read.
+        scratch = _find_upwards("tests", "lib", "insight_stand", "scratch_identity.py")
         if scratch is None:
-            self.skipTest("tests/stand/api/scratch.py is not in this tree")
+            self.skipTest("tests/lib/insight_stand/scratch_identity.py is not in this tree")
 
         for mine, theirs in (
             (config.STAND_SCRATCH_PREFIX, "SCRATCH_PREFIX"),

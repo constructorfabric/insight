@@ -12,6 +12,10 @@ gitCliProxy:
 global:
   storageClass: local-path
   tenantDefaultId: "00000000-df51-5b42-9538-d2b56b7ee953"
+  # functional-k3s.yml drives v3's raw-data flow end to end, so this
+  # environment opts in.
+  insightV3Core:
+    deploy: true
 
 clickhouse:
   host: clickhouse.insight-infra.svc.cluster.local
@@ -97,6 +101,10 @@ keycloakConfig:
 
 analytics:
   replicaCount: 1
+
+insightV3Core:
+  replicaCount: 1
+  existingSecret: insight-v3-core-config
 
 # The authenticator's login-bootstrap resolve (GET /internal/persons/
 # by-external-id / by-email-override) lives on identity-resolution

@@ -44,6 +44,58 @@ fn an_unusable_connector_name_is_a_bad_request_not_a_not_found()
     Ok(())
 }
 
+fn scope(tenant: Option<&str>, source: Option<&str>) -> SyncScopeQuery {
+    SyncScopeQuery {
+        tenant_id: tenant.map(str::to_owned),
+        source_id: source.map(str::to_owned),
+    }
+}
+
+#[test]
+fn naming_neither_half_asks_about_every_installation() -> Result<(), Box<dyn std::error::Error>> {
+    assert!(parse_scope(&scope(None, None))?.is_none());
+    Ok(())
+}
+
+#[test]
+fn naming_both_halves_narrows_to_one_installation() -> Result<(), Box<dyn std::error::Error>> {
+    let (tenant, source) =
+        parse_scope(&scope(Some("acme"), Some("claude-team-main")))?.ok_or("must narrow")?;
+    assert_eq!(tenant.as_str(), "acme");
+    assert_eq!(source.as_str(), "claude-team-main");
+    Ok(())
+}
+
+#[test]
+fn half_an_identity_is_refused_rather_than_quietly_widened()
+-> Result<(), Box<dyn std::error::Error>> {
+    // Widening back to the connector would answer a question about one
+    // installation with rows from all of them, and the answer would look right.
+    for (tenant, source, missing) in [
+        (Some("acme"), None, "source_id"),
+        (None, Some("claude-team-main"), "tenant_id"),
+    ] {
+        let refusal = parse_scope(&scope(tenant, source))
+            .err()
+            .ok_or("half an identity must be refused")?;
+        let p = problem(refusal)?;
+        assert_eq!(p["status"], 400);
+        assert_eq!(p["context"]["field_violations"][0]["field"], missing);
+    }
+    Ok(())
+}
+
+#[test]
+fn an_identity_outside_the_vocabulary_is_a_bad_request() -> Result<(), Box<dyn std::error::Error>> {
+    let refusal = parse_scope(&scope(Some("Acme"), Some("main")))
+        .err()
+        .ok_or("an unusable identity must be refused")?;
+    let p = problem(refusal)?;
+    assert_eq!(p["status"], 400);
+    assert_eq!(p["context"]["field_violations"][0]["field"], "tenant_id");
+    Ok(())
+}
+
 #[test]
 fn a_read_failure_does_not_repeat_the_warehouse_to_the_caller()
 -> Result<(), Box<dyn std::error::Error>> {

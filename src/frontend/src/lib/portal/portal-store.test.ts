@@ -70,22 +70,12 @@ describe("the retired opt-out", () => {
     }
   });
 
-  it("leaves the test-only legacy-shell hatch as the only way back", async () => {
+  it("keeps no door back to the shell the portal replaced", async () => {
     window.localStorage.setItem("insight.legacyShell", "true");
     vi.resetModules();
     const store = await import("./portal-store");
 
-    // Read once, at load: the stand's UI journeys set it before any app code
-    // runs, and nothing in the product writes it at all.
-    expect(store.readLegacyShell()).toBe(true);
-    expect(window.localStorage.getItem("insight.legacyShell")).toBe("true");
-  });
-
-  it("stays off for a reader who was never told to use it", async () => {
-    vi.resetModules();
-    const store = await import("./portal-store");
-
-    expect(store.readLegacyShell()).toBe(false);
+    expect(store).not.toHaveProperty("readLegacyShell");
   });
 
   it("survives a throwing localStorage", async () => {

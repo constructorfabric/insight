@@ -4,7 +4,7 @@
 //! per-account bindings (classified by binding author) instead of collapsing
 //! onto the first binding.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use sea_orm::prelude::DateTime;
 use uuid::Uuid;
@@ -37,15 +37,22 @@ pub struct IdentityInputRow {
     pub is_delete: bool,
 }
 
-/// One account folded from the raw input stream: its current email, whether it
-/// is closed (latest observation is a tombstone), and the upsert observations
-/// to persist once the group's `person_id` is resolved.
+/// One account folded from the raw input stream: its current email, whether its
+/// binding is closed, and the current upsert observations to persist once the
+/// group's `person_id` is resolved.
 #[derive(Debug, Clone)]
 pub struct SeedProfile {
     pub account: SourceAccountKey,
     pub latest_email: Option<String>,
     pub is_closed: bool,
+    pub roster_membership: Option<RosterMembership>,
     pub observations: Vec<IdentityInputRow>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RosterMembership {
+    pub active: bool,
+    pub observed_at: DateTime,
 }
 
 /// A resolved observation ready to append to `persons` — stamped with the
@@ -431,11 +438,10 @@ fn record_addressless_group(
     mint: &mut impl FnMut() -> Uuid,
     out: &mut ResolveOutcome,
 ) {
-    let vouched_for = roster.is_some_and(|roster| {
-        group
-            .profiles
-            .iter()
-            .all(|p| roster.speaks_for(&p.account.source_type) && states_a_bindable_id(p))
+    let vouched_for = group.profiles.iter().all(|profile| {
+        states_a_bindable_id(profile)
+            && profile.roster_membership.is_some()
+            && roster.is_some_and(|roster| roster.speaks_for(&profile.account.source_type))
     });
     if !vouched_for {
         out.skipped_no_email += group.profiles.len();
@@ -443,7 +449,12 @@ fn record_addressless_group(
     }
 
     // Deactivated at its source: the roster lists no human to add.
-    if !group.profiles.iter().any(|p| !p.is_closed) {
+    if !group.profiles.iter().any(|profile| {
+        !profile.is_closed
+            && profile
+                .roster_membership
+                .is_some_and(|membership| membership.active)
+    }) {
         out.skipped_closed += group.profiles.len();
         return;
     }
@@ -500,14 +511,15 @@ pub fn route_value(
         "status",
     ];
 
+    let classified_type = value_type.strip_prefix("person_").unwrap_or(value_type);
     let len = value.chars().count();
-    if VALUE_ID_TYPES.contains(&value_type) {
+    if VALUE_ID_TYPES.contains(&classified_type) {
         if len > MAX_VALUE_ID_LEN {
             return (None, None, None);
         }
         return (Some(value.to_owned()), None, None);
     }
-    if VALUE_FULL_TEXT_TYPES.contains(&value_type) {
+    if VALUE_FULL_TEXT_TYPES.contains(&classified_type) {
         if len > MAX_VALUE_FULL_TEXT_LEN {
             return (None, None, None);
         }
@@ -517,15 +529,18 @@ pub fn route_value(
 }
 
 /// Fold the raw input stream (delivered **latest-first per account**) into one
-/// [`SeedProfile`] per source account: the first row seen marks the account
-/// closed (tombstone latest), the first email row's value is the current email,
-/// and tombstone rows are signal-only (never persisted).
+/// [`SeedProfile`] per source account: the latest row for each value type is
+/// current, the current id row determines whether the account is closed when
+/// present, and tombstone rows are signal-only (never persisted).
 #[must_use]
 pub fn build_profiles(rows: Vec<IdentityInputRow>) -> Vec<SeedProfile> {
     struct Acc {
         latest_email: Option<String>,
-        is_closed: bool,
+        latest_event_is_delete: bool,
+        id_is_closed: Option<bool>,
+        roster_membership: Option<RosterMembership>,
         saw_any: bool,
+        seen_value_types: HashSet<String>,
         upserts: Vec<IdentityInputRow>,
     }
 
@@ -538,16 +553,31 @@ pub fn build_profiles(rows: Vec<IdentityInputRow>) -> Vec<SeedProfile> {
         };
         let acc = by_account.entry(key).or_insert_with(|| Acc {
             latest_email: None,
-            is_closed: false,
+            latest_event_is_delete: false,
+            id_is_closed: None,
+            roster_membership: None,
             saw_any: false,
+            seen_value_types: HashSet::new(),
             upserts: Vec::new(),
         });
         if !acc.saw_any {
-            acc.is_closed = row.is_delete; // first row = latest observation
+            acc.latest_event_is_delete = row.is_delete;
             acc.saw_any = true;
+        }
+        if !acc.seen_value_types.insert(row.value_type.clone()) {
+            continue;
+        }
+        if row.value_type == BINDING_VALUE_TYPE {
+            acc.id_is_closed = Some(row.is_delete);
         }
         if row.value_type == "email" && acc.latest_email.is_none() && !row.value.trim().is_empty() {
             acc.latest_email = Some(row.value.clone()); // stored as-is (ADR-0011)
+        }
+        if row.value_type == "roster_membership" && acc.roster_membership.is_none() {
+            acc.roster_membership = Some(RosterMembership {
+                active: !row.is_delete && row.value == "active",
+                observed_at: row.synced_at,
+            });
         }
         if !row.is_delete {
             acc.upserts.push(row);
@@ -559,7 +589,8 @@ pub fn build_profiles(rows: Vec<IdentityInputRow>) -> Vec<SeedProfile> {
         .map(|(account, acc)| SeedProfile {
             account,
             latest_email: acc.latest_email,
-            is_closed: acc.is_closed,
+            is_closed: acc.id_is_closed.unwrap_or(acc.latest_event_is_delete),
+            roster_membership: acc.roster_membership,
             observations: acc.upserts,
         })
         .collect()
@@ -650,6 +681,7 @@ mod tests {
             },
             latest_email: email.map(str::to_owned),
             is_closed: closed,
+            roster_membership: None,
             observations: vec![input(
                 source_type,
                 account_id,
@@ -1065,6 +1097,10 @@ mod tests {
             (None, Some("Ann Smith".to_owned()), None)
         );
         assert_eq!(
+            route_value("person_department", "Engineering"),
+            (None, Some("Engineering".to_owned()), None)
+        );
+        assert_eq!(
             route_value("custom", "whatever"),
             (None, None, Some("whatever".to_owned()))
         );
@@ -1089,7 +1125,11 @@ mod tests {
         let p = &profiles[0];
         assert_eq!(p.latest_email.as_deref(), Some("new@corp.com"));
         assert!(!p.is_closed);
-        assert_eq!(p.observations.len(), 3, "tombstone is not persisted");
+        assert_eq!(
+            p.observations.len(),
+            2,
+            "only the latest current value per type is persisted"
+        );
         Ok(())
     }
 
@@ -1108,6 +1148,59 @@ mod tests {
     }
 
     #[test]
+    fn build_profiles_applies_tombstones_per_value_type() -> anyhow::Result<()> {
+        let older: DateTime = "2026-01-01T00:00:00".parse()?;
+        let newer: DateTime = "2026-02-01T00:00:00".parse()?;
+        let profiles = build_profiles(vec![
+            input("directory", "U1", "person_display_name", "", true, newer),
+            input("directory", "U1", "id", "U1", false, newer),
+            input(
+                "directory",
+                "U1",
+                "person_display_name",
+                "Old Name",
+                false,
+                older,
+            ),
+        ]);
+
+        assert!(!profiles[0].is_closed);
+        assert!(
+            profiles[0]
+                .observations
+                .iter()
+                .all(|row| row.value_type != "person_display_name")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn build_profiles_keeps_the_latest_roster_membership_state() -> anyhow::Result<()> {
+        let older: DateTime = "2026-01-01T00:00:00".parse()?;
+        let newer: DateTime = "2026-02-01T00:00:00".parse()?;
+        let profiles = build_profiles(vec![
+            input("directory", "U1", "roster_membership", "", true, newer),
+            input(
+                "directory",
+                "U1",
+                "roster_membership",
+                "active",
+                false,
+                older,
+            ),
+        ]);
+
+        assert_eq!(
+            profiles[0].roster_membership,
+            Some(RosterMembership {
+                active: false,
+                observed_at: newer,
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
     fn assignments_to_rows_stamps_person_routes_and_reason() -> anyhow::Result<()> {
         let t: DateTime = "2026-01-01T00:00:00".parse()?;
         let profile = SeedProfile {
@@ -1118,6 +1211,7 @@ mod tests {
             },
             latest_email: Some("a@b.com".to_owned()),
             is_closed: false,
+            roster_membership: None,
             observations: vec![
                 input("bamboohr", "5001", "email", "a@b.com", false, t),
                 input("bamboohr", "5001", "display_name", "Ann Smith", false, t),
@@ -1205,6 +1299,15 @@ mod tests {
         prof(source_type, account_id, None, closed)
     }
 
+    fn member(source_type: &str, account_id: &str, active: bool) -> SeedProfile {
+        let mut profile = rostered(source_type, account_id, !active);
+        profile.roster_membership = Some(RosterMembership {
+            active,
+            observed_at: epoch(),
+        });
+        profile
+    }
+
     #[test]
     fn a_blank_roster_setting_names_no_source() {
         for (case, configured) in [("unset", ""), ("spaces", "   "), ("a tab", "\t")] {
@@ -1228,7 +1331,7 @@ mod tests {
 
     #[test]
     fn the_roster_mints_a_person_for_an_account_with_no_address() {
-        let groups = group_by_email(vec![rostered("bamboohr", "e-1", false)]);
+        let groups = group_by_email(vec![member("bamboohr", "e-1", true)]);
 
         let out = resolve_assignments(
             groups,
@@ -1248,14 +1351,43 @@ mod tests {
     }
 
     #[test]
+    fn membership_without_roster_configuration_cannot_mint_a_person() {
+        let out = resolve_without_roster(
+            group_by_email(vec![member("directory", "e-1", true)]),
+            &HashMap::new(),
+            &HashMap::new(),
+            counter(),
+        );
+
+        assert_eq!(out.minted_from_roster, 0);
+        assert_eq!(out.skipped_no_email, 1);
+        assert!(out.assignments.is_empty());
+    }
+
+    #[test]
+    fn configured_source_without_membership_cannot_mint_a_person() {
+        let out = resolve_assignments(
+            group_by_email(vec![rostered("bamboohr", "e-1", false)]),
+            &HashMap::new(),
+            &HashMap::new(),
+            RosterSource::parse("bamboohr").as_ref(),
+            counter(),
+        );
+
+        assert_eq!(out.minted_from_roster, 0);
+        assert_eq!(out.skipped_no_email, 1);
+        assert!(out.assignments.is_empty());
+    }
+
+    #[test]
     fn only_the_configured_source_mints_without_an_address() {
         // Two independent singletons, not a mixed group — an addressless profile
         // is always its own group. Every other source keeps needing an address:
         // minting from two rosters gives one addressless human two persons, and
         // nothing joins them after.
         let groups = group_by_email(vec![
-            rostered("bamboohr", "e-1", false),
-            rostered("zoom", "Z1", false),
+            member("bamboohr", "e-1", true),
+            member("zoom", "Z1", true),
         ]);
 
         let out = resolve_assignments(
@@ -1284,7 +1416,7 @@ mod tests {
     #[test]
     fn a_closed_roster_account_is_not_minted() {
         // The source has deactivated it, so there is no human to add.
-        let groups = group_by_email(vec![rostered("bamboohr", "e-1", true)]);
+        let groups = group_by_email(vec![member("bamboohr", "e-1", false)]);
 
         let out = resolve_assignments(
             groups,

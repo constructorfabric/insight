@@ -56,12 +56,17 @@ pub(crate) async fn require_admin(
     ctx: &SecurityContext,
 ) -> Result<Uuid, CanonicalError> {
     let caller = require_caller(ctx)?;
-    let is_admin = roles_repo::has_active_admin(db, ctx.subject_tenant_id(), caller)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, "admin role check failed");
-            CanonicalError::internal("failed to verify caller permissions").create()
-        })?;
+    let is_admin = roles_repo::has_active_role(
+        db,
+        ctx.subject_tenant_id(),
+        caller,
+        roles_repo::ADMIN_ROLE_ID,
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!(error = %e, "admin role check failed");
+        CanonicalError::internal("failed to verify caller permissions").create()
+    })?;
     if !is_admin {
         tracing::warn!(
             caller = %caller,

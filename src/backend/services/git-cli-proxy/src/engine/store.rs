@@ -1,11 +1,11 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
-use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, Semaphore, watch};
+use tokio::sync::{Mutex, Notify, OwnedRwLockReadGuard, RwLock, Semaphore, SemaphorePermit, watch};
 
 use super::disk::{Budget, Candidate, Reclaim, dir_size, needs_consolidation};
 use super::key::CacheKey;
@@ -13,8 +13,34 @@ use super::meta::{RepoMeta, now_epoch_s};
 use super::metrics::{self, DiskGauges, EvictionTier, FetchResult};
 use super::runner::{GitCredentials, GitError, GitRunner};
 
-const INLINE_WAIT: Duration = Duration::from_secs(15);
-const COLD_RETRY_AFTER: Duration = Duration::from_secs(30);
+/// How long a request waits in-connection for the entry to become readable —
+/// through a fetch queue, a cold clone, or a purge holding the write side.
+///
+/// The connectors set no client timeout and their retry ceiling (600 s of
+/// wall clock once the first failure lands) cannot be raised, so a held
+/// connection is the only side that can absorb a long preparation: waiting
+/// burns none of the caller's retry budget, a 429 answer starts the clock.
+/// INVARIANT: must stay under `api::HANDLER_BUDGET`, or the typed `Busy`
+/// answer below loses to the blanket 503.
+pub(crate) const PREPARATION_WAIT: Duration = Duration::from_mins(55);
+/// How long a heavy operation waits for cache headroom before giving up. A
+/// caller that reaches this point has already waited for a clone slot, so a
+/// refusal here means the disk stayed full for the whole wait, and the
+/// connector's `429` retry loop is the right place to carry on from.
+/// INVARIANT: under `PREPARATION_WAIT`, or the waiter in `await_refresh` times
+/// out first and the typed `Busy` never reaches it.
+const ADMISSION_WAIT: Duration = Duration::from_mins(50);
+const _: () = assert!(ADMISSION_WAIT.as_secs() < PREPARATION_WAIT.as_secs());
+/// Backstop cadence for re-checking headroom when no release woke the waiter.
+const ADMISSION_POLL: Duration = Duration::from_secs(15);
+/// Floor for a size-hinted reservation: a hint below it is not to be trusted
+/// to cover the pack overhead of even a tiny clone.
+const MIN_HINTED_RESERVATION: u64 = 64 * 1024 * 1024;
+/// A repository packs larger than the size its host reports for it.
+const HINT_OVERHEAD_FACTOR: u64 = 2;
+pub(crate) const COLD_RETRY_AFTER: Duration = Duration::from_secs(30);
+/// Probe wait for opportunistic work that a concurrent writer makes moot.
+const MEASURE_WAIT: Duration = Duration::from_secs(15);
 const REPROOF_ATTEMPTS: usize = 2;
 const BARE_REFSPEC: &str = "+refs/heads/*:refs/heads/*";
 /// How often one entry's on-disk size is re-measured after being served.
@@ -22,6 +48,17 @@ const DRIFT_CHECK_INTERVAL: Duration = Duration::from_mins(1);
 /// Consecutive drift checks that may find the entry busy and over threshold
 /// before the repack stops being opportunistic and takes a real write lock.
 const PURGE_ESCALATION_AFTER: u32 = 3;
+/// Consecutive post-serve purges that may fail before the entry is evicted
+/// outright. A repack that cannot finish inside the heavy budget will not
+/// finish next time either, and every window served in between makes the
+/// pack bigger — retried in place it leaves the entry over its cap and
+/// unservable for good. The skeleton re-clones in seconds; blobs come back
+/// per window.
+const PURGE_FAILURES_BEFORE_EVICTION: u32 = 2;
+/// Fraction of the per-repository cap past which a purge stops yielding to
+/// readers: the repack has to run while the pack can still finish inside the
+/// heavy budget, not once the entry is already at the cap.
+const PURGE_PRESSURE_CAP_DIVISOR: u64 = 2;
 
 /// Why a refresh failed, in a form that survives being broadcast to every
 /// waiter (`GitError` is not `Clone`).
@@ -113,8 +150,6 @@ pub(crate) enum BlobPurge {
     Purged,
     /// Nothing to purge, or the entry has readers right now.
     Skipped,
-    /// The heavy permit is busy with a clone or fetch.
-    PermitBusy,
 }
 
 /// How a caller wants the snapshot resolved.
@@ -171,6 +206,7 @@ type RefreshResult = Result<u64, RefreshFailure>;
 #[derive(Debug)]
 pub struct Reservation<'a> {
     reserved: &'a AtomicU64,
+    freed: &'a Notify,
     bytes: u64,
 }
 
@@ -179,6 +215,7 @@ impl Drop for Reservation<'_> {
         // `fetch_sub` cannot underflow here: every reservation subtracts
         // exactly what it added, once.
         self.reserved.fetch_sub(self.bytes, Ordering::Relaxed);
+        self.freed.notify_waiters();
     }
 }
 
@@ -188,6 +225,7 @@ impl Drop for Reservation<'_> {
 struct DriftState {
     checked: Instant,
     losses: u32,
+    purge_failures: u32,
 }
 
 /// What a background flight is supposed to do to the entry.
@@ -228,6 +266,9 @@ pub struct RepoStore {
     /// Serialises decide-and-reserve. Two callers that each read usage before
     /// either reserved would both be admitted against the same headroom.
     admission: Mutex<()>,
+    /// Woken whenever headroom may have appeared: a reservation released, an
+    /// entry evicted or its blobs purged. Waiters in `admit_within` re-check.
+    space_freed: Notify,
 }
 
 impl RepoStore {
@@ -244,6 +285,17 @@ impl RepoStore {
             },
             u64::MAX,
         )
+    }
+
+    /// A store whose heavy git budget is `heavy` — the seam that makes "the
+    /// repack cannot finish" reproducible.
+    #[cfg(test)]
+    pub(crate) fn with_heavy_timeout(mut self, heavy: Duration) -> Self {
+        self.runner = self.runner.with_timeouts(super::runner::Timeouts {
+            heavy,
+            ..super::runner::Timeouts::default()
+        });
+        self
     }
 
     /// # Errors
@@ -302,6 +354,7 @@ impl RepoStore {
             drift: Mutex::new(HashMap::new()),
             reserved_bytes: AtomicU64::new(0),
             admission: Mutex::new(()),
+            space_freed: Notify::new(),
         })
     }
 
@@ -377,6 +430,23 @@ impl RepoStore {
         creds: &GitCredentials,
         freshness: Freshness,
     ) -> Result<RepoGuard, StoreError> {
+        self.open_with_size_hint(key, creds, freshness, None).await
+    }
+
+    /// [`Self::open`] with the size the repository's host reports for it, in
+    /// bytes. A cold clone reserves cache headroom from the hint instead of the
+    /// per-repository cap, so many small repositories can be admitted at once.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::open`].
+    pub async fn open_with_size_hint(
+        self: &Arc<Self>,
+        key: &CacheKey,
+        creds: &GitCredentials,
+        freshness: Freshness,
+        size_hint: Option<u64>,
+    ) -> Result<RepoGuard, StoreError> {
         let lock = self.entry_lock(key).await;
         let entry_dir = self.entry_dir(key);
         let git_dir = entry_dir.join("repo.git");
@@ -387,7 +457,7 @@ impl RepoStore {
                 generation,
                 incarnation,
             } => {
-                let read = read_within(&lock, INLINE_WAIT).await?;
+                let read = read_within(&lock, PREPARATION_WAIT).await?;
                 let meta = usable_meta(&entry_dir, &fingerprint)
                     .ok_or(StoreError::SnapshotChanged { current: 0 })?;
                 // INVARIANT: both must match. An entry evicted and re-cloned
@@ -409,7 +479,7 @@ impl RepoStore {
             }
             Freshness::Refresh { max_staleness } => {
                 {
-                    let read = read_within(&lock, INLINE_WAIT).await?;
+                    let read = read_within(&lock, PREPARATION_WAIT).await?;
                     if let Some(meta) = fresh_meta(&entry_dir, &fingerprint, max_staleness) {
                         let generation = meta.generation;
                         let incarnation = meta.incarnation.clone();
@@ -429,10 +499,10 @@ impl RepoStore {
                 // caller may read the entry. Re-check the fingerprint under
                 // the read guard and refresh again on a mismatch.
                 for _ in 0..REPROOF_ATTEMPTS {
-                    self.await_refresh(key, creds, max_staleness, RefreshKind::Sync)
+                    self.await_refresh(key, creds, max_staleness, RefreshKind::Sync, size_hint)
                         .await?;
 
-                    let read = read_within(&lock, INLINE_WAIT).await?;
+                    let read = read_within(&lock, PREPARATION_WAIT).await?;
                     if let Some(meta) = usable_meta(&entry_dir, &fingerprint) {
                         return Ok(RepoGuard {
                             git_dir,
@@ -453,21 +523,26 @@ impl RepoStore {
         }
     }
 
-    /// Join (or start) the background refresh for `key` and wait a bounded
-    /// slice of time for it. A cold clone outlives the request: the caller
-    /// gets `Busy` and the task keeps running, so no HTTP request ever hangs
-    /// for the length of a clone and no clone is cancelled by a client giving
-    /// up.
+    /// Join (or start) the background refresh for `key` and wait
+    /// [`PREPARATION_WAIT`] for it — long enough to ride out a cold clone
+    /// in-connection, because the callers' retry budget cannot absorb one
+    /// (see the constant). The task owns the work either way: a caller
+    /// giving up cancels nothing, and `Busy` past the ceiling is the
+    /// backstop for a preparation that outlives even this wait.
     async fn await_refresh(
         self: &Arc<Self>,
         key: &CacheKey,
         creds: &GitCredentials,
         max_staleness: Duration,
         kind: RefreshKind,
+        size_hint: Option<u64>,
     ) -> Result<u64, StoreError> {
-        let mut receiver = self.refresh_task(key, creds, max_staleness, kind).await;
+        let mut receiver = self
+            .refresh_task(key, creds, max_staleness, kind, size_hint)
+            .await;
 
-        let waited = tokio::time::timeout(INLINE_WAIT, receiver.wait_for(Option::is_some)).await;
+        let waited =
+            tokio::time::timeout(PREPARATION_WAIT, receiver.wait_for(Option::is_some)).await;
         match waited {
             Ok(Ok(seen)) => match seen.clone() {
                 Some(Ok(generation)) => Ok(generation),
@@ -495,6 +570,7 @@ impl RepoStore {
         creds: &GitCredentials,
         max_staleness: Duration,
         kind: RefreshKind,
+        size_hint: Option<u64>,
     ) -> watch::Receiver<Option<RefreshResult>> {
         let flight = FlightKey {
             dir_name: key.dir_name(),
@@ -526,7 +602,9 @@ impl RepoStore {
                 let creds = creds.clone();
                 async move {
                     match kind {
-                        RefreshKind::Sync => store.refresh(&key, &creds, max_staleness).await,
+                        RefreshKind::Sync => {
+                            store.refresh(&key, &creds, max_staleness, size_hint).await
+                        }
                         RefreshKind::Promote => store.promote(&key, &creds).await,
                     }
                 }
@@ -563,6 +641,7 @@ impl RepoStore {
         key: &CacheKey,
         creds: &GitCredentials,
         max_staleness: Duration,
+        size_hint: Option<u64>,
     ) -> Result<u64, GitError> {
         let lock = self.entry_lock(key).await;
         let entry_dir = self.entry_dir(key);
@@ -576,10 +655,25 @@ impl RepoStore {
         if let Some(meta) = fresh_meta(&entry_dir, &fingerprint, max_staleness) {
             return Ok(meta.generation);
         }
+        // INVARIANT: meta.json is the publish marker — an entry without it was
+        // never published and must read as absent, or a fetch runs forever
+        // against whatever a crash left in repo.git and every request 500s.
+        if git_dir.is_dir() && RepoMeta::load(&entry_dir).is_none() {
+            match std::fs::remove_dir_all(&entry_dir) {
+                Ok(()) => {
+                    self.drift.lock().await.remove(&key.dir_name());
+                    tracing::warn!(dir = %key.dir_name(), "removed an entry without readable metadata; re-cloning");
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, dir = %key.dir_name(), "could not remove a metadata-less entry; it stays unserveable");
+                }
+            }
+        }
         if git_dir.is_dir() {
             self.fetch(key, &entry_dir, &git_dir, creds).await
         } else {
-            self.clone(key, &entry_dir, &git_dir, creds).await
+            self.clone(key, &entry_dir, &git_dir, creds, size_hint)
+                .await
         }
     }
 
@@ -589,19 +683,13 @@ impl RepoStore {
         entry_dir: &Path,
         git_dir: &Path,
         creds: &GitCredentials,
+        size_hint: Option<u64>,
     ) -> Result<u64, GitError> {
-        // Reclaim BEFORE taking disk, not after: an admission check that runs
-        // post-clone has already overshot the budget.
-        // INVARIANT: the reservation lives as long as the operation does. Drop
-        // it early and a concurrent caller is admitted against headroom this
-        // one has not finished consuming.
-        let Some(_reserved) = self.admit(entry_dir).await else {
-            return Err(GitError::AdmissionRejected);
-        };
-
-        // INVARIANT: the permit spans the whole clone — the semaphore IS the
-        // global heavy-ops cap.
-        let _permit = self.heavy_permit().await;
+        // INVARIANT: the permit and the reservation both span the whole clone —
+        // the semaphore IS the global heavy-ops cap, and a reservation dropped
+        // early admits a concurrent caller against headroom this one has not
+        // finished consuming.
+        let (_permit, _reserved) = self.admit_within(entry_dir, size_hint).await?;
 
         let tmp = self.data_dir.join("tmp").join(format!(
             "clone-{}-{}",
@@ -646,6 +734,14 @@ impl RepoStore {
         }
 
         std::fs::create_dir_all(entry_dir).map_err(GitError::Io)?;
+        // INVARIANT: the write lock is held and `refresh` found no usable entry,
+        // so anything at git_dir now is debris a killed operation left behind.
+        if git_dir.is_dir() {
+            tracing::warn!(dir = %git_dir.display(), "removing a leftover repository before installing the clone");
+            remove_tree_off_reactor(git_dir.to_path_buf())
+                .await
+                .map_err(GitError::Io)?;
+        }
         std::fs::rename(&tmp, git_dir).map_err(GitError::Io)?;
 
         self.build_page_index(git_dir, 1, creds).await;
@@ -663,6 +759,7 @@ impl RepoStore {
             last_accessed_at_epoch_s: now,
             size_bytes: cloned_bytes,
             skeleton_bytes: cloned_bytes,
+            skeleton_packs: pack_names(git_dir).into_iter().collect(),
             generation: 1,
             incarnation: self.mint_incarnation(),
             cred_fingerprints: vec![creds.fingerprint()],
@@ -688,16 +785,11 @@ impl RepoStore {
         git_dir: &Path,
         creds: &GitCredentials,
     ) -> Result<u64, GitError> {
-        // INVARIANT: the reservation lives as long as the operation does. Drop
-        // it early and a concurrent caller is admitted against headroom this
-        // one has not finished consuming.
-        let Some(_reserved) = self.admit(entry_dir).await else {
-            return Err(GitError::AdmissionRejected);
-        };
-
-        // INVARIANT: the permit spans the whole fetch — the semaphore IS the
-        // global heavy-ops cap.
-        let permit = self.heavy_permit().await;
+        // INVARIANT: the permit and the reservation both span the whole fetch —
+        // the semaphore IS the global heavy-ops cap, and a reservation dropped
+        // early admits a concurrent caller against headroom this one has not
+        // finished consuming.
+        let (permit, _reserved) = self.admit_within(entry_dir, None).await?;
 
         // Shed the last window's blobs FIRST, while this task holds the write
         // side. The cap judges what the entry persistently costs; transient
@@ -712,6 +804,7 @@ impl RepoStore {
 
         let before = self.ref_digest(git_dir).await;
         let previous = RepoMeta::load(entry_dir);
+        let packs_before = pack_names(git_dir);
 
         // Park the metadata before the refs can move. A crash between the
         // `--atomic` fetch and the meta publish would otherwise leave the OLD
@@ -802,6 +895,13 @@ impl RepoStore {
             cred_fingerprints: RepoMeta::proofs_with(previous.as_ref(), creds.fingerprint()),
             // A plain fetch never changes the entry's clone shape.
             full_clone: previous.as_ref().is_some_and(|m| m.full_clone),
+            skeleton_packs: skeleton_packs_after_fetch(
+                previous
+                    .as_ref()
+                    .map_or(&[], |m| m.skeleton_packs.as_slice()),
+                &packs_before,
+                &pack_names(git_dir),
+            ),
         };
         publish_meta(&meta, entry_dir)?;
         discard_parked_meta(entry_dir);
@@ -825,7 +925,7 @@ impl RepoStore {
         key: &CacheKey,
         creds: &GitCredentials,
     ) -> Result<u64, StoreError> {
-        self.await_refresh(key, creds, Duration::ZERO, RefreshKind::Promote)
+        self.await_refresh(key, creds, Duration::ZERO, RefreshKind::Promote, None)
             .await
     }
 
@@ -847,16 +947,11 @@ impl RepoStore {
         }
 
         // A full clone is much larger than the skeleton it replaces.
-        // INVARIANT: the reservation lives as long as the operation does. Drop
-        // it early and a concurrent caller is admitted against headroom this
-        // one has not finished consuming.
-        let Some(_reserved) = self.admit(&entry_dir).await else {
-            return Err(GitError::AdmissionRejected);
-        };
-
-        // INVARIANT: the permit spans the whole promotion — the semaphore IS
-        // the global heavy-ops cap.
-        let _permit = self.heavy_permit().await;
+        // INVARIANT: the permit and the reservation both span the whole
+        // promotion — the semaphore IS the global heavy-ops cap, and a
+        // reservation dropped early admits a concurrent caller against headroom
+        // this one has not finished consuming.
+        let (_permit, _reserved) = self.admit_within(&entry_dir, None).await?;
 
         // Park the metadata before the first mutation. Unlike fetch there is
         // no restore on failure: the refetch below is not `--atomic`, so a
@@ -931,6 +1026,7 @@ impl RepoStore {
                 .map_or_else(|| self.mint_incarnation(), |m| m.incarnation.clone()),
             cred_fingerprints: RepoMeta::proofs_with(previous.as_ref(), creds.fingerprint()),
             full_clone: true,
+            skeleton_packs: pack_names(&git_dir).into_iter().collect(),
         };
         publish_meta(&meta, &entry_dir)?;
         discard_parked_meta(&entry_dir);
@@ -993,9 +1089,12 @@ impl RepoStore {
     /// every entry is skeleton-sized, never plans the cheap purge tier, and
     /// evicts whole warm repositories instead.
     ///
-    /// Best-effort throughout: a reader holding the entry, unreadable metadata
-    /// or a failed repack all leave the entry as it is. The reclaim path is
-    /// the backstop.
+    /// Best-effort for one round: a reader holding the entry, unreadable
+    /// metadata or a failed repack leave the entry as it is. A repack that
+    /// fails [`PURGE_FAILURES_BEFORE_EVICTION`] times in a row is a different
+    /// thing — that pack will never shed in place, so the entry is evicted
+    /// and the next open re-clones the skeleton. The reclaim path is the
+    /// backstop for everything else.
     pub async fn purge_if_drifted(&self, key: &CacheKey) {
         if !self.drift_check_due(&key.dir_name()).await {
             return;
@@ -1018,8 +1117,9 @@ impl RepoStore {
         // validated. A concurrent `touch_access` can still lose one LRU bump
         // to this write; that is the documented best-effort trade.
         let (measured, meta) = {
-            let Ok(_read) = read_within(&lock, INLINE_WAIT).await else {
-                // A writer holds the entry; it publishes fresh sizes itself.
+            // Opportunistic: a writer publishes fresh sizes itself, so give
+            // up quickly rather than queueing a measurement behind it.
+            let Ok(_read) = read_within(&lock, MEASURE_WAIT).await else {
                 return;
             };
             let Some(mut meta) = RepoMeta::load(&entry_dir) else {
@@ -1052,25 +1152,77 @@ impl RepoStore {
         // NEVER wins, so after enough losses it queues for the lock like a
         // fetch would. Readers wait out one repack; the alternative is an
         // entry that grows for as long as anyone keeps reading it.
+        // Past half the cap the probe stops yielding: every window served
+        // while it loses is more pack for a repack that has to finish inside
+        // the heavy budget, and a pack that outgrows that budget can never
+        // be shed in place.
+        let under_pressure = measured >= self.max_repo_bytes / PURGE_PRESSURE_CAP_DIVISOR;
         let _write = if let Ok(guard) = lock.try_write() {
             guard
         } else {
-            if !self.purge_debt_due(&key.dir_name()).await {
+            if !under_pressure && !self.purge_debt_due(&key.dir_name()).await {
                 return;
             }
             metrics::record_purge_escalation();
-            tracing::info!(dir = %key.dir_name(), "purge starved by readers; queueing for the entry lock");
+            tracing::info!(dir = %key.dir_name(), under_pressure, "purge starved by readers; queueing for the entry lock");
             lock.write().await
         };
         self.settle_purge_debt(&key.dir_name()).await;
 
+        let shed = match self.shed_window_packs(&entry_dir).await {
+            WindowShed::Settled { freed: 0 } => {
+                self.settle_purge_failures(&key.dir_name()).await;
+                tracing::debug!(dir = %key.dir_name(), "no window to shed; skeleton size re-baselined");
+                return;
+            }
+            WindowShed::Settled { freed } => {
+                self.settle_purge_failures(&key.dir_name()).await;
+                metrics::record_eviction(EvictionTier::Blob);
+                tracing::info!(dir = %key.dir_name(), freed_bytes = freed, "purged a served window");
+                return;
+            }
+            WindowShed::RepackDue { freed } => freed,
+        };
+
         let permit = self.heavy_permit().await;
         match self.repack_blobless(&entry_dir, &permit).await {
             Ok(freed) => {
+                self.settle_purge_failures(&key.dir_name()).await;
                 metrics::record_eviction(EvictionTier::Blob);
-                tracing::info!(dir = %key.dir_name(), freed_bytes = freed, "purged a served window");
+                tracing::info!(dir = %key.dir_name(), freed_bytes = shed + freed, "purged a served window and consolidated the skeleton");
             }
-            Err(e) => tracing::warn!(error = %e, dir = %key.dir_name(), "post-serve purge failed"),
+            Err(e) => {
+                let failures = self.record_purge_failure(&key.dir_name()).await;
+                if failures < PURGE_FAILURES_BEFORE_EVICTION {
+                    tracing::warn!(error = %e, dir = %key.dir_name(), failures, "post-serve purge failed");
+                    return;
+                }
+                tracing::warn!(error = %e, dir = %key.dir_name(), failures, "purge cannot shed this entry; evicting it so the next open re-clones the skeleton");
+                self.evict_locked(
+                    &key.dir_name(),
+                    entry_dir,
+                    measured,
+                    EvictionTier::PurgeExhausted,
+                )
+                .await;
+            }
+        }
+    }
+
+    async fn record_purge_failure(&self, dir_name: &str) -> u32 {
+        let mut drift = self.drift.lock().await;
+        match drift.get_mut(dir_name) {
+            Some(state) => {
+                state.purge_failures += 1;
+                state.purge_failures
+            }
+            None => 1,
+        }
+    }
+
+    async fn settle_purge_failures(&self, dir_name: &str) {
+        if let Some(state) = self.drift.lock().await.get_mut(dir_name) {
+            state.purge_failures = 0;
         }
     }
 
@@ -1156,6 +1308,7 @@ impl RepoStore {
                 let state = drift.entry(key.dir_name()).or_insert_with(|| DriftState {
                     checked: Instant::now(),
                     losses: 0,
+                    purge_failures: 0,
                 });
                 if let Some(due) = Instant::now().checked_sub(DRIFT_CHECK_INTERVAL) {
                     state.checked = due;
@@ -1206,6 +1359,9 @@ impl RepoStore {
         {
             return Ok(());
         }
+        if let WindowShed::Settled { .. } = self.shed_window_packs(entry_dir).await {
+            return Ok(());
+        }
         self.repack_blobless(entry_dir, permit).await.map(|_| ())
     }
 
@@ -1225,6 +1381,7 @@ impl RepoStore {
                     DriftState {
                         checked: now,
                         losses: 0,
+                        purge_failures: 0,
                     },
                 );
                 true
@@ -1270,7 +1427,10 @@ impl RepoStore {
             self.tmp_counter.fetch_add(1, Ordering::Relaxed)
         ));
         std::fs::create_dir_all(&evicted)?;
-        let filter_to = format!("--filter-to={}", evicted.display());
+        // WORKAROUND: git uses --filter-to as a pack base name, not a
+        // directory — packs land as `<value>-<sha>.pack` siblings of it.
+        // Pointing the base inside the directory keeps them collectable.
+        let filter_to = format!("--filter-to={}", evicted.join("pack").display());
 
         remove_promisor_markers(&git_dir);
         let repacked = self
@@ -1296,6 +1456,7 @@ impl RepoStore {
         if let Some(mut meta) = RepoMeta::load(entry_dir) {
             meta.size_bytes = purged;
             meta.skeleton_bytes = purged;
+            meta.skeleton_packs = pack_names(&git_dir).into_iter().collect();
             if let Err(e) = meta.store(entry_dir) {
                 tracing::warn!(error = %e, "could not record the purged size; the planner will overstate this entry");
             }
@@ -1315,12 +1476,54 @@ impl RepoStore {
     /// what the cache published; `statvfs` knows what the VOLUME holds —
     /// including a clone still staging under `tmp/` and anything else sharing
     /// the mount. Neither alone is sufficient.
-    async fn admit(&self, entry_dir: &Path) -> Option<Reservation<'_>> {
+    /// A clone slot together with the headroom the operation needs, waiting
+    /// in-connection for both. The slot comes first: a reservation held while
+    /// queued for a slot would count against every other caller's admission,
+    /// so a few queued clones could refuse the whole cache while nothing was
+    /// being written. Refused for space, the caller releases the slot and
+    /// waits for headroom to appear rather than bouncing the connector.
+    async fn admit_within(
+        &self,
+        entry_dir: &Path,
+        size_hint: Option<u64>,
+    ) -> Result<(SemaphorePermit<'_>, Reservation<'_>), GitError> {
+        // tokio's clock, not std's: the wait must obey a paused test clock
+        // the same way the timeouts around it do.
+        let deadline = tokio::time::Instant::now() + ADMISSION_WAIT;
+        loop {
+            // Registered before the check so a release between the check and
+            // the wait is not missed.
+            let freed = self.space_freed.notified();
+            tokio::pin!(freed);
+            freed.as_mut().enable();
+
+            let permit = self.heavy_permit().await;
+            if let Some(reserved) = self.admit(entry_dir, size_hint, &permit).await {
+                return Ok((permit, reserved));
+            }
+            drop(permit);
+
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return Err(GitError::AdmissionRejected);
+            }
+            let _ = tokio::time::timeout(remaining.min(ADMISSION_POLL), freed).await;
+        }
+    }
+
+    /// The caller's heavy permit is what a reclaim repack runs under: the
+    /// purge must not take a second one while the caller's slot is occupied.
+    async fn admit(
+        &self,
+        entry_dir: &Path,
+        size_hint: Option<u64>,
+        permit: &SemaphorePermit<'_>,
+    ) -> Option<Reservation<'_>> {
         // INVARIANT: deciding and reserving must be one step. Two callers that
         // both read usage before either reserved would both be admitted
         // against the same headroom.
         let _decision = self.admission.lock().await;
-        let want = self.headroom_for(entry_dir).await;
+        let want = self.headroom_for(entry_dir, size_hint).await;
 
         let candidates = self.candidates().await;
         let accounted: u64 = candidates.iter().map(|c| c.size_bytes).sum();
@@ -1345,16 +1548,12 @@ impl RepoStore {
                 // A purge that cannot run or cannot finish must not leave the
                 // space unreclaimed: eviction frees it with no git involved.
                 Reclaim::PurgeBlobs { dir_name, frees } => {
-                    match self.purge_blobs_by_dir(&dir_name).await {
+                    match self.purge_blobs_by_dir(&dir_name, permit).await {
                         Ok(BlobPurge::Purged) => {
                             metrics::record_eviction(EvictionTier::Blob);
                             tracing::info!(dir = %dir_name, freed_bytes = frees, "purged blobs");
                         }
                         Ok(BlobPurge::Skipped) => {}
-                        Ok(BlobPurge::PermitBusy) => {
-                            tracing::info!(dir = %dir_name, "blob purge would wait for the heavy permit; evicting instead");
-                            self.evict_dir(&dir_name, frees).await;
-                        }
                         Err(e) => {
                             tracing::warn!(error = %e, dir = %dir_name, "blob purge failed; evicting instead");
                             self.evict_dir(&dir_name, frees).await;
@@ -1397,13 +1596,20 @@ impl RepoStore {
         let Ok(_write) = lock.try_write() else {
             return;
         };
+        self.evict_locked(dir_name, path, frees, EvictionTier::Full)
+            .await;
+    }
+
+    /// Delete an entry whose write lock the caller already holds.
+    async fn evict_locked(&self, dir_name: &str, path: PathBuf, frees: u64, tier: EvictionTier) {
         match remove_tree_off_reactor(path).await {
             Ok(()) => {
                 // A re-clone must not inherit the evicted entry's drift
-                // throttle or escalation losses.
+                // throttle, escalation losses or purge failures.
                 self.drift.lock().await.remove(dir_name);
-                metrics::record_eviction(EvictionTier::Full);
-                tracing::info!(dir = %dir_name, freed_bytes = frees, "evicted repo");
+                metrics::record_eviction(tier);
+                self.space_freed.notify_waiters();
+                tracing::info!(dir = %dir_name, freed_bytes = frees, tier = tier.as_str(), "evicted repo");
             }
             Err(e) => tracing::warn!(error = %e, dir = %dir_name, "eviction failed"),
         }
@@ -1415,11 +1621,17 @@ impl RepoStore {
     ///
     /// Zero when either figure is unbounded — the test constructor uses
     /// `u64::MAX` for both, and reserving against it would refuse everything.
-    async fn headroom_for(&self, entry_dir: &Path) -> u64 {
+    async fn headroom_for(&self, entry_dir: &Path, size_hint: Option<u64>) -> u64 {
         if !self.budget.is_bounded() || self.max_repo_bytes == u64::MAX {
             return 0;
         }
-        let measured = dir_size_off_reactor(entry_dir.join("repo.git")).await;
+        let git_dir = entry_dir.join("repo.git");
+        if !git_dir.is_dir()
+            && let Some(hint) = size_hint
+        {
+            return hinted_reservation(hint, self.max_repo_bytes);
+        }
+        let measured = dir_size_off_reactor(git_dir).await;
         self.max_repo_bytes.saturating_sub(measured)
     }
 
@@ -1427,6 +1639,7 @@ impl RepoStore {
         self.reserved_bytes.fetch_add(bytes, Ordering::Relaxed);
         Reservation {
             reserved: &self.reserved_bytes,
+            freed: &self.space_freed,
             bytes,
         }
     }
@@ -1587,7 +1800,13 @@ impl RepoStore {
         entries.entry(dir_name.to_owned()).or_default().clone()
     }
 
-    pub(crate) async fn purge_blobs_by_dir(&self, dir_name: &str) -> Result<BlobPurge, StoreError> {
+    /// Shed an entry's served windows and, if the skeleton still needs it,
+    /// repack under the caller's heavy `permit`.
+    pub(crate) async fn purge_blobs_by_dir(
+        &self,
+        dir_name: &str,
+        permit: &SemaphorePermit<'_>,
+    ) -> Result<BlobPurge, StoreError> {
         let entry_dir = self.data_dir.join("repos").join(dir_name);
         if !entry_dir.join("repo.git").is_dir() {
             return Ok(BlobPurge::Skipped);
@@ -1605,12 +1824,15 @@ impl RepoStore {
             return Ok(BlobPurge::Skipped);
         };
 
-        // Never wait: the only caller holds the admission lock, and a permit
-        // held by a clone would stall every admission behind that clone.
-        let Ok(permit) = self.heavy.try_acquire() else {
-            return Ok(BlobPurge::PermitBusy);
-        };
-        self.repack_blobless(&entry_dir, &permit)
+        match self.shed_window_packs(&entry_dir).await {
+            WindowShed::Settled { freed: 0 } => return Ok(BlobPurge::Skipped),
+            WindowShed::Settled { .. } => {
+                self.space_freed.notify_waiters();
+                return Ok(BlobPurge::Purged);
+            }
+            WindowShed::RepackDue { .. } => {}
+        }
+        self.repack_blobless(&entry_dir, permit)
             .await
             .map(|_| BlobPurge::Purged)
     }
@@ -1649,12 +1871,10 @@ async fn remove_tree_off_reactor(path: PathBuf) -> std::io::Result<()> {
 
 /// Take the entry's read side, or give up and ask the caller back.
 ///
-/// A clone or fetch holds the WRITE side for its whole heavy budget — up to
-/// half an hour. Waiting on that unbounded turns the documented `429` +
-/// `Retry-After` into an HTTP request that hangs until the connector's own
-/// socket timeout fires, which is the failure mode the bounded wait exists to
-/// avoid (§3.2). The first caller already gets its `429` from `INLINE_WAIT`;
-/// this is what gives every later one the same answer.
+/// The budget is generous by design — readers ride out a clone or fetch
+/// in-connection (see [`PREPARATION_WAIT`]) — but never infinite: a hold
+/// that outlives it is a leaked guard or a wedged permit holder, and the
+/// documented `429` + `Retry-After` is the bounded answer for that.
 async fn read_within(
     lock: &Arc<RwLock<()>>,
     budget: Duration,
@@ -1708,13 +1928,118 @@ fn discard_parked_meta(entry_dir: &Path) {
 
 /// How many packs the entry's object store currently holds. Cheap: one
 /// directory listing, no tree walk.
+/// What deleting an entry's window packs left behind.
+#[derive(Debug)]
+enum WindowShed {
+    /// The skeleton alone remains, in few enough packs.
+    Settled { freed: u64 },
+    /// The windows are gone (or could not be told apart), and the skeleton
+    /// itself still needs a repack.
+    RepackDue { freed: u64 },
+}
+
+impl RepoStore {
+    /// Shed every served window by deleting its packs. A promisor fetch
+    /// always indexes what it receives into a pack of its own, so the blobs
+    /// of a window never share a file with the skeleton, and dropping them is
+    /// a few unlinks whatever the size of the history — unlike a repack.
+    /// INVARIANT: the caller holds the entry's write lock.
+    async fn shed_window_packs(&self, entry_dir: &Path) -> WindowShed {
+        let Some(mut meta) = RepoMeta::load(entry_dir) else {
+            return WindowShed::RepackDue { freed: 0 };
+        };
+        if meta.skeleton_packs.is_empty() {
+            return WindowShed::RepackDue { freed: 0 };
+        }
+
+        let git_dir = entry_dir.join("repo.git");
+        let before = dir_size_off_reactor(git_dir.clone()).await;
+        let doomed = window_pack_files(&git_dir, &meta.skeleton_packs);
+        let remaining = {
+            let git_dir = git_dir.clone();
+            tokio::task::spawn_blocking(move || {
+                for path in doomed {
+                    let _ = std::fs::remove_file(path);
+                }
+                dir_size(&git_dir)
+            })
+            .await
+            .unwrap_or(before)
+        };
+
+        // INVARIANT: with every window pack gone, the remaining bytes are the skeleton.
+        meta.size_bytes = remaining;
+        meta.skeleton_bytes = remaining;
+        if let Err(e) = meta.store(entry_dir) {
+            tracing::warn!(error = %e, "could not record the shed size; the planner will overstate this entry");
+        }
+
+        let freed = before.saturating_sub(remaining);
+        if needs_consolidation(remaining, remaining, pack_count(&git_dir)) {
+            WindowShed::RepackDue { freed }
+        } else {
+            WindowShed::Settled { freed }
+        }
+    }
+}
+
+/// The skeleton packs after a fetch: those recorded before plus whatever the
+/// fetch wrote. An entry with no recorded skeleton keeps none — its packs
+/// cannot be told apart after the fact, and a shed must never guess.
+fn skeleton_packs_after_fetch(
+    recorded: &[String],
+    before: &BTreeSet<String>,
+    after: &BTreeSet<String>,
+) -> Vec<String> {
+    if recorded.is_empty() {
+        return Vec::new();
+    }
+    recorded
+        .iter()
+        .cloned()
+        .chain(after.difference(before).cloned())
+        .collect()
+}
+
+/// Every file of every pack that is not part of the skeleton: the served
+/// windows with their `.idx`, `.rev` and `.promisor` siblings.
+fn window_pack_files(git_dir: &Path, skeleton_packs: &[String]) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(git_dir.join("objects").join("pack")) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                return false;
+            };
+            let stem = name.split('.').next().unwrap_or(name);
+            stem.starts_with("pack-") && !skeleton_packs.iter().any(|kept| kept == stem)
+        })
+        .collect()
+}
+
+/// Stems (`pack-<hash>`) of every pack in the object store.
+fn pack_names(git_dir: &Path) -> BTreeSet<String> {
+    std::fs::read_dir(git_dir.join("objects").join("pack")).map_or_else(
+        |_| BTreeSet::new(),
+        |entries| {
+            entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .filter(|path| path.extension().is_some_and(|ext| ext == "pack"))
+                .filter_map(|path| {
+                    path.file_stem()
+                        .map(|stem| stem.to_string_lossy().into_owned())
+                })
+                .collect()
+        },
+    )
+}
+
 fn pack_count(git_dir: &Path) -> usize {
-    std::fs::read_dir(git_dir.join("objects").join("pack")).map_or(0, |entries| {
-        entries
-            .filter_map(Result::ok)
-            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "pack"))
-            .count()
-    })
+    pack_names(git_dir).len()
 }
 
 fn publish_meta(meta: &RepoMeta, entry_dir: &Path) -> Result<(), GitError> {
@@ -1816,6 +2141,16 @@ fn fresh_meta(entry_dir: &Path, fingerprint: &str, max_staleness: Duration) -> O
 fn touch_access(entry_dir: &Path, mut meta: RepoMeta) {
     meta.last_accessed_at_epoch_s = now_epoch_s();
     let _ = meta.store(entry_dir);
+}
+
+/// Headroom to reserve for a cold clone of a repository its host says is
+/// `hint` bytes: the hint with pack overhead, floored so a tiny hint still
+/// covers a real clone, and never above the per-repository cap that the
+/// post-clone check enforces regardless.
+fn hinted_reservation(hint: u64, cap_bytes: u64) -> u64 {
+    hint.saturating_mul(HINT_OVERHEAD_FACTOR)
+        .max(MIN_HINTED_RESERVATION)
+        .min(cap_bytes)
 }
 
 #[cfg(test)]
@@ -2012,7 +2347,10 @@ pub(crate) mod tests {
         key: &CacheKey,
         freshness: Freshness,
     ) -> RepoGuard {
-        for _ in 0..100u32 {
+        // 60s, not the 5s this waited before: the clone races 200-odd other
+        // tests for a core, and under `llvm-cov` it loses often enough to fail
+        // the suite on timing alone.
+        for _ in 0..1200u32 {
             let freshness = freshness.clone();
             match fixture.store.open(key, &creds(), freshness).await {
                 Ok(guard) => return guard,
@@ -2065,12 +2403,84 @@ pub(crate) mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn a_clone_publishes_over_a_leftover_at_its_destination() {
+        let f = fixture("leftover-destination");
+        let k = key(&f);
+        let entry_dir = f.store.entry_dir(&k);
+        let git_dir = entry_dir.join("repo.git");
+        let pack_dir = git_dir.join("objects/pack");
+        if let Err(e) = std::fs::create_dir_all(&pack_dir)
+            .and_then(|()| std::fs::write(pack_dir.join("tmp_pack_stray"), b"x"))
+        {
+            panic!("stage the leftover: {e}");
+        }
+
+        let store: &RepoStore = &f.store;
+        let published = RepoStore::clone(store, &k, &entry_dir, &git_dir, &creds(), None).await;
+
+        match published {
+            Ok(generation) => assert_eq!(generation, 1, "a clone publishes generation 1"),
+            Err(e) => panic!("the clone could not publish over the leftover: {e}"),
+        }
+        assert!(
+            git_dir.join("HEAD").is_file(),
+            "the clone must be the entry now"
+        );
+        assert!(
+            !pack_dir.join("tmp_pack_stray").exists(),
+            "the leftover must be gone, not merged into the published entry"
+        );
+    }
+
     /// Grow the origin by a blob big enough that pulling it dwarfs the
     /// blobless skeleton, so drift is unambiguous rather than noise.
     /// Incompressible on purpose: zeros pack down to nothing, and the entry
     /// would never look as though it had drifted.
     async fn entry_with_fetched_blobs(tag: &str) -> (Fixture, CacheKey, u64) {
-        let f = fixture(tag);
+        fetch_blobs_into(fixture(tag)).await
+    }
+
+    /// Rewinding the drift throttle stands in for waiting out the interval.
+    async fn rewind_drift_throttle(store: &RepoStore) {
+        for state in store.drift.lock().await.values_mut() {
+            if let Some(rewound) = Instant::now().checked_sub(DRIFT_CHECK_INTERVAL) {
+                state.checked = rewound;
+            }
+        }
+    }
+
+    /// Commit a large blob at origin, clone it into `f`, and prefetch the
+    /// blob so the entry carries window weight above its skeleton.
+    /// A second store over the fixture's cache whose heavy budget no repack
+    /// can meet — the failure the exhaustion rules are about, made certain.
+    fn store_whose_repack_cannot_finish(f: &Fixture) -> Arc<RepoStore> {
+        match RepoStore::open_cache(
+            &f.root.join("cache"),
+            2,
+            None,
+            Budget {
+                total_bytes: u64::MAX,
+            },
+            u64::MAX,
+        ) {
+            Ok(s) => Arc::new(s.with_heavy_timeout(Duration::from_millis(1))),
+            Err(e) => panic!("second store: {e}"),
+        }
+    }
+
+    /// Make an entry look like one written before its packs were tracked.
+    fn forget_skeleton_packs(entry_dir: &Path) {
+        let Some(mut meta) = RepoMeta::load(entry_dir) else {
+            panic!("meta must exist")
+        };
+        meta.skeleton_packs.clear();
+        if let Err(e) = meta.store(entry_dir) {
+            panic!("meta store: {e}");
+        }
+    }
+
+    async fn fetch_blobs_into(f: Fixture) -> (Fixture, CacheKey, u64) {
         sh(
             &f.root.join("origin"),
             "dd if=/dev/urandom of=big.bin bs=1024 count=4096 status=none && \
@@ -2199,29 +2609,159 @@ pub(crate) mod tests {
         // Without reservations both callers see an empty cache, are both
         // admitted, and together overrun the budget.
         let f = fixture_with_budget("reserve", 1_000_000, 500_000);
+        let permit = f.store.heavy_permit().await;
         let entry_dir = f.store.entry_dir(&key(&f));
 
-        let Some(first) = f.store.admit(&entry_dir).await else {
+        let Some(first) = f.store.admit(&entry_dir, None, &permit).await else {
             panic!("an empty cache must admit the first caller")
         };
         assert!(
-            f.store.admit(&entry_dir).await.is_none(),
+            f.store.admit(&entry_dir, None, &permit).await.is_none(),
             "the second caller must be refused against the first's reservation"
         );
 
         drop(first);
         assert!(
-            f.store.admit(&entry_dir).await.is_some(),
+            f.store.admit(&entry_dir, None, &permit).await.is_some(),
             "and admitted again once that reservation is released"
         );
     }
 
     #[tokio::test]
+    async fn a_size_hint_reserves_the_hinted_size_not_the_cap() {
+        // High watermark 850 MB. The cap-sized reservation (500 MB) is held;
+        // a second cap-sized one does not fit, a hinted one (floored at 64 MiB)
+        // does.
+        let f = fixture_with_budget("hint", 1_000_000_000, 500_000_000);
+        let permit = f.store.heavy_permit().await;
+        let cold = f
+            .root
+            .join("cache-bounded")
+            .join("repos")
+            .join("cold-entry");
+        let Some(_held) = f.store.admit(&cold, None, &permit).await else {
+            panic!("an empty cache must admit the first caller")
+        };
+        assert!(
+            f.store.admit(&cold, None, &permit).await.is_none(),
+            "a second cap-sized reservation must not fit"
+        );
+        let hinted = f.store.admit(&cold, Some(1_000), &permit).await;
+        assert!(
+            hinted.is_some(),
+            "a hinted reservation is the floor, not the cap, and fits beside the first"
+        );
+    }
+
+    #[test]
+    fn a_hinted_reservation_carries_overhead_and_stays_inside_the_cap() {
+        let cases = [
+            (1_000, 10_u64.pow(9), MIN_HINTED_RESERVATION),
+            (200 * 1024 * 1024, 10_u64.pow(9), 400 * 1024 * 1024),
+            (900 * 1024 * 1024, 10_u64.pow(9), 10_u64.pow(9)),
+            (u64::MAX, 10_u64.pow(9), 10_u64.pow(9)),
+        ];
+        for (hint, cap, expected) in cases {
+            assert_eq!(
+                hinted_reservation(hint, cap),
+                expected,
+                "should reserve {expected} for hint {hint} under cap {cap}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_cold_clone_waits_for_headroom_instead_of_being_refused() {
+        // One cap-sized reservation fills the watermark. A cold open must not
+        // answer Busy while it is held; it must clone once it is released.
+        // Real time: a paused clock would fire git's own timeout under the
+        // clone before the subprocess finishes.
+        let f = fixture_with_budget("wait-headroom", 1_000_000, 500_000);
+        let permit = f.store.heavy_permit().await;
+        let elsewhere = f
+            .root
+            .join("cache-bounded")
+            .join("repos")
+            .join("other-entry");
+        let Some(held) = f.store.admit(&elsewhere, None, &permit).await else {
+            panic!("an empty cache must admit the first caller")
+        };
+
+        let store = Arc::clone(&f.store);
+        let k = key(&f);
+        let opening = tokio::spawn(async move { store.open(&k, &creds(), refresh()).await });
+
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(
+            !opening.is_finished(),
+            "the caller must wait for headroom, not be bounced with Busy"
+        );
+
+        drop(held);
+        match opening.await {
+            Ok(Ok(guard)) => assert!(
+                guard.git_dir().is_dir(),
+                "the clone landed once room appeared"
+            ),
+            Ok(Err(e)) => panic!("the waiting caller must be served, got {e}"),
+            Err(e) => panic!("open task died: {e}"),
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn headroom_that_never_appears_ends_in_busy_after_the_wait() {
+        let f = fixture_with_budget("wait-exhausted", 1_000_000, 500_000);
+        let permit = f.store.heavy_permit().await;
+        let elsewhere = f
+            .root
+            .join("cache-bounded")
+            .join("repos")
+            .join("other-entry");
+        let Some(_held) = f.store.admit(&elsewhere, None, &permit).await else {
+            panic!("an empty cache must admit the first caller")
+        };
+
+        let started = tokio::time::Instant::now();
+        match f.store.open(&key(&f), &creds(), refresh()).await {
+            Err(StoreError::Busy { retry_after }) => assert_eq!(retry_after, COLD_RETRY_AFTER),
+            Ok(_) => panic!("nothing freed the space, so the open cannot have been served"),
+            Err(e) => panic!("expected Busy once the admission wait is spent, got {e}"),
+        }
+        let waited = started.elapsed();
+        assert!(
+            waited >= ADMISSION_WAIT && waited < PREPARATION_WAIT,
+            "the admission wait must be what ends it, not the caller's own timeout: {waited:?}"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_reader_outwaits_a_long_preparation_instead_of_being_bounced() {
+        // The callers' retry budget cannot absorb a cold clone, so the reader
+        // must ride out a preparation far longer than any polite inline wait
+        // and be served the moment the writer finishes.
+        let lock: Arc<RwLock<()>> = Arc::new(RwLock::new(()));
+        let writer = lock.clone().write_owned().await;
+
+        let handle = tokio::spawn({
+            let lock = lock.clone();
+            async move { read_within(&lock, PREPARATION_WAIT).await }
+        });
+        tokio::time::sleep(Duration::from_mins(20)).await;
+        drop(writer);
+
+        match handle.await {
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => panic!("a reader must outlast a 20-minute preparation: {e}"),
+            Err(e) => panic!("reader task died: {e}"),
+        }
+    }
+
+    #[tokio::test]
     async fn a_reader_behind_a_writer_is_asked_back_rather_than_left_hanging() {
-        // A clone or fetch holds the write side for its whole heavy budget —
-        // up to half an hour. Waiting on that unbounded turns the documented
-        // 429 into a request that hangs until the connector's socket timeout
-        // fires. Every read path in `open` goes through this one function.
+        // Past the preparation wait the reader is answered 429 rather than
+        // left on a hold that will never end — the backstop for a leaked
+        // guard or a wedged permit holder. Every read path in `open` goes
+        // through this one function.
         let lock: Arc<RwLock<()>> = Arc::new(RwLock::new(()));
         let writer = lock.clone().write_owned().await;
 
@@ -2405,6 +2945,39 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn a_metadata_less_entry_is_recloned_not_fetched() {
+        // meta.json is written last, so an entry without it was never
+        // published. Routing it to fetch runs git against whatever a crash
+        // left in repo.git and answers 500 on every request until a restart
+        // sweeps the entry; refresh must apply the startup sweep's rule.
+        let f = fixture("meta-less-heal");
+        let k = key(&f);
+        drop(open_until_ready(&f, &k, refresh()).await);
+
+        let entry_dir = f.store.entry_dir(&k);
+        let git_dir = entry_dir.join("repo.git");
+        if let Err(e) = std::fs::remove_file(entry_dir.join("meta.json")) {
+            panic!("stage: {e}");
+        }
+        if let Err(e) = std::fs::remove_dir_all(&git_dir) {
+            panic!("stage: {e}");
+        }
+        if let Err(e) = std::fs::create_dir_all(git_dir.join("objects")) {
+            panic!("stage: {e}");
+        }
+
+        let guard = open_until_ready(&f, &k, refresh()).await;
+        assert!(
+            guard.git_dir().join("HEAD").is_file(),
+            "the entry must come back as a working clone"
+        );
+        assert!(
+            RepoMeta::load(&entry_dir).is_some(),
+            "the re-clone must publish fresh metadata"
+        );
+    }
+
+    #[tokio::test]
     async fn the_index_is_counted_by_the_entry_accounting() {
         let f = fixture("index-accounting");
         let k = key(&f);
@@ -2467,6 +3040,30 @@ pub(crate) mod tests {
             after.size_bytes,
             dir_size(&entry_dir.join("repo.git")),
             "accounting must match the disk after a purge"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_purge_leaves_nothing_behind_in_the_staging_dir() {
+        // The evicted pack must land inside the per-purge directory the
+        // repack deletes. Left beside it, the packs accumulate in tmp/ until
+        // the next restart — invisible to the reclaim planner, which only
+        // walks repos/, so the budget never sees the loss.
+        let (f, k, _) = entry_with_fetched_blobs("purge-staging").await;
+        f.store.purge_if_drifted(&k).await;
+
+        let tmp = f.root.join("cache").join("tmp");
+        let leftovers: Vec<String> = std::fs::read_dir(&tmp)
+            .map(|entries| {
+                entries
+                    .filter_map(Result::ok)
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert!(
+            leftovers.is_empty(),
+            "a purge must collect everything it staged: {leftovers:?}"
         );
     }
 
@@ -2542,15 +3139,7 @@ pub(crate) mod tests {
         // grows for as long as anyone keeps reading it. After enough losses
         // the repack must queue for the write side like a fetch would.
         //
-        // Rewinding the throttle stands in for waiting out the interval;
-        // losses must survive the rewind.
-        async fn rewind_throttle(store: &RepoStore) {
-            for state in store.drift.lock().await.values_mut() {
-                if let Some(rewound) = Instant::now().checked_sub(DRIFT_CHECK_INTERVAL) {
-                    state.checked = rewound;
-                }
-            }
-        }
+        // Losses must survive the throttle rewind.
 
         let (f, k, skeleton) = entry_with_fetched_blobs("drift-escalate").await;
         let entry_dir = f.store.entry_dir(&k);
@@ -2564,7 +3153,7 @@ pub(crate) mod tests {
         // Drive the real entry point, not the counter: each round is one page
         // served under the held guard, with only the throttle stepped forward.
         for lost in 1..PURGE_ESCALATION_AFTER {
-            rewind_throttle(&f.store).await;
+            rewind_drift_throttle(&f.store).await;
             f.store.purge_if_drifted(&k).await;
             assert_eq!(
                 dir_size(&entry_dir.join("repo.git")),
@@ -2573,7 +3162,7 @@ pub(crate) mod tests {
             );
         }
 
-        rewind_throttle(&f.store).await;
+        rewind_drift_throttle(&f.store).await;
         let escalated = tokio::spawn({
             let store = Arc::clone(&f.store);
             let k = k.clone();
@@ -2600,7 +3189,7 @@ pub(crate) mod tests {
         };
         assert!(
             meta.size_bytes < skeleton * 2,
-            "the repack must have run: {} vs skeleton {skeleton}",
+            "the purge must have run: {} vs skeleton {skeleton}",
             meta.size_bytes
         );
         assert!(
@@ -2704,6 +3293,307 @@ pub(crate) mod tests {
             Ok(count) => assert_eq!(count, 0, "every blob of this window is already local"),
             Err(e) => panic!("presence filtering must not fail the prefetch: {e}"),
         }
+    }
+
+    #[tokio::test]
+    async fn a_purge_that_keeps_failing_evicts_the_entry_instead_of_looping() {
+        // An entry whose packs were never recorded can only be purged by a
+        // repack. One that cannot finish inside the heavy budget will not
+        // finish next time either, and every window served meanwhile makes
+        // the pack bigger: retried in place it leaves the entry over its cap
+        // and unservable for good. The second failure evicts, and the next
+        // open re-clones the skeleton.
+        let (f, k, _) = entry_with_fetched_blobs("purge-exhausted").await;
+        let entry_dir = f.store.entry_dir(&k);
+        assert!(
+            entry_dir.join("repo.git").is_dir(),
+            "the fixture must hold a clone"
+        );
+        forget_skeleton_packs(&entry_dir);
+
+        let failing = store_whose_repack_cannot_finish(&f);
+
+        failing.purge_if_drifted(&k).await;
+        assert!(
+            entry_dir.join("repo.git").is_dir(),
+            "one failed purge is a retry, not an eviction"
+        );
+
+        rewind_drift_throttle(&failing).await;
+        failing.purge_if_drifted(&k).await;
+        assert!(
+            !entry_dir.exists(),
+            "the second consecutive failure must evict the entry"
+        );
+
+        let guard = open_until_ready(&f, &k, refresh()).await;
+        assert_eq!(
+            guard.generation(),
+            1,
+            "the next open re-clones from scratch"
+        );
+        assert!(
+            RepoMeta::load(&entry_dir).is_some(),
+            "and publishes fresh metadata for the skeleton"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_purge_sheds_the_window_by_deleting_its_packs_and_never_repacks_the_skeleton() {
+        // The blobs of a served window arrive in packs of their own, so
+        // shedding them is unlinking files. A skeleton too large to repack
+        // inside the heavy budget must still purge — and stay.
+        let (f, k, skeleton) = entry_with_fetched_blobs("shed-by-deletion").await;
+        let entry_dir = f.store.entry_dir(&k);
+        let git_dir = entry_dir.join("repo.git");
+        let Some(before) = RepoMeta::load(&entry_dir) else {
+            panic!("meta must exist")
+        };
+        assert!(
+            !before.skeleton_packs.is_empty(),
+            "a clone must record its skeleton packs"
+        );
+        assert!(
+            pack_count(&git_dir) > before.skeleton_packs.len(),
+            "the prefetch must have added a window pack"
+        );
+
+        store_whose_repack_cannot_finish(&f)
+            .purge_if_drifted(&k)
+            .await;
+
+        assert!(git_dir.is_dir(), "a shed is not an eviction");
+        let skeleton_packs: BTreeSet<String> = before.skeleton_packs.iter().cloned().collect();
+        assert_eq!(
+            pack_names(&git_dir),
+            skeleton_packs,
+            "only the skeleton packs may remain"
+        );
+        let Some(after) = RepoMeta::load(&entry_dir) else {
+            panic!("meta must survive a shed")
+        };
+        assert!(
+            after.size_bytes < skeleton * 2,
+            "the window's weight must be gone: {} vs skeleton {skeleton}",
+            after.size_bytes
+        );
+        assert_eq!(
+            after.size_bytes,
+            dir_size(&git_dir),
+            "accounting must match the disk"
+        );
+        assert_eq!(
+            after.generation, before.generation,
+            "a shed changes no snapshot"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_fetched_pack_joins_the_skeleton_and_survives_the_shed() {
+        let (f, k, _) = entry_with_fetched_blobs("shed-keeps-fetch").await;
+        let entry_dir = f.store.entry_dir(&k);
+        let git_dir = entry_dir.join("repo.git");
+
+        sh(
+            &f.root.join("origin"),
+            "dd if=/dev/urandom of=later.bin bs=1024 count=4096 status=none && \
+             git add later.bin && \
+             GIT_AUTHOR_DATE='2026-08-03T10:00:00+0000' \
+             GIT_COMMITTER_DATE='2026-08-03T10:00:00+0000' git commit -qm later",
+        );
+        let guard = match f.store.open(&k, &creds(), always_fetch()).await {
+            Ok(g) => g,
+            Err(e) => panic!("fetch: {e}"),
+        };
+        let head = head_of(guard.git_dir());
+        if let Err(e) = crate::engine::read::blobs::prefetch(
+            f.store.runner(),
+            guard.git_dir(),
+            std::slice::from_ref(&head),
+            &creds(),
+            u64::MAX,
+        )
+        .await
+        {
+            panic!("prefetch: {e}");
+        }
+        drop(guard);
+        let Some(meta) = RepoMeta::load(&entry_dir) else {
+            panic!("meta must exist")
+        };
+        assert_eq!(
+            meta.skeleton_packs.len(),
+            2,
+            "the fetch's pack must join the skeleton: {:?}",
+            meta.skeleton_packs
+        );
+
+        store_whose_repack_cannot_finish(&f)
+            .purge_if_drifted(&k)
+            .await;
+
+        assert_eq!(
+            pack_names(&git_dir).len(),
+            2,
+            "the clone's and the fetch's packs stay; the windows go"
+        );
+        sh(&git_dir, &format!("git cat-file -e {head}^{{tree}}"));
+    }
+
+    #[tokio::test]
+    async fn an_entry_that_predates_pack_tracking_is_never_shed_by_guesswork() {
+        // Without a recorded skeleton no pack can be told from a window: the
+        // repack is the only purge such an entry gets, and a failed one
+        // leaves every pack in place.
+        let (f, k, _) = entry_with_fetched_blobs("shed-legacy").await;
+        let entry_dir = f.store.entry_dir(&k);
+        let git_dir = entry_dir.join("repo.git");
+        forget_skeleton_packs(&entry_dir);
+        let packs = pack_names(&git_dir);
+
+        store_whose_repack_cannot_finish(&f)
+            .purge_if_drifted(&k)
+            .await;
+
+        assert!(git_dir.is_dir(), "one failed purge is a retry");
+        assert_eq!(
+            pack_names(&git_dir),
+            packs,
+            "no pack may be deleted on a guess"
+        );
+    }
+
+    #[test]
+    fn a_fetch_extends_a_recorded_skeleton_and_leaves_an_unrecorded_one_alone() {
+        struct Case {
+            rule: &'static str,
+            recorded: &'static [&'static str],
+            before: &'static [&'static str],
+            after: &'static [&'static str],
+            expected: &'static [&'static str],
+        }
+        let owned =
+            |names: &[&str]| -> Vec<String> { names.iter().map(|n| (*n).to_owned()).collect() };
+        let cases = [
+            Case {
+                rule: "unrecorded stays unrecorded",
+                recorded: &[],
+                before: &["pack-a"],
+                after: &["pack-a", "pack-f"],
+                expected: &[],
+            },
+            Case {
+                rule: "the fetch's pack is added",
+                recorded: &["pack-a"],
+                before: &["pack-a"],
+                after: &["pack-a", "pack-f"],
+                expected: &["pack-a", "pack-f"],
+            },
+            Case {
+                rule: "a window present throughout is not",
+                recorded: &["pack-a"],
+                before: &["pack-a", "pack-w"],
+                after: &["pack-a", "pack-w", "pack-f"],
+                expected: &["pack-a", "pack-f"],
+            },
+            Case {
+                rule: "a fetch that wrote nothing adds nothing",
+                recorded: &["pack-a"],
+                before: &["pack-a"],
+                after: &["pack-a"],
+                expected: &["pack-a"],
+            },
+        ];
+        for case in cases {
+            let before: BTreeSet<String> = owned(case.before).into_iter().collect();
+            let after: BTreeSet<String> = owned(case.after).into_iter().collect();
+            assert_eq!(
+                skeleton_packs_after_fetch(&owned(case.recorded), &before, &after),
+                owned(case.expected),
+                "{}",
+                case.rule
+            );
+        }
+    }
+
+    #[test]
+    fn a_window_pack_is_doomed_with_all_its_siblings_and_nothing_else() {
+        let f = fixture("window-files");
+        let git_dir = f.root.join("packs");
+        let pack_dir = git_dir.join("objects").join("pack");
+        if let Err(e) = std::fs::create_dir_all(&pack_dir) {
+            panic!("pack dir: {e}");
+        }
+        for name in [
+            "pack-a.pack",
+            "pack-a.idx",
+            "pack-a.promisor",
+            "pack-w.pack",
+            "pack-w.idx",
+            "pack-w.rev",
+            "pack-w.promisor",
+            "multi-pack-index",
+        ] {
+            if let Err(e) = std::fs::write(pack_dir.join(name), b"x") {
+                panic!("write {name}: {e}");
+            }
+        }
+
+        let mut doomed: Vec<String> = window_pack_files(&git_dir, &["pack-a".to_owned()])
+            .iter()
+            .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .collect();
+        doomed.sort();
+
+        assert_eq!(
+            doomed,
+            ["pack-w.idx", "pack-w.pack", "pack-w.promisor", "pack-w.rev"],
+            "every file of the window pack and only those"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_entry_past_half_its_cap_queues_its_purge_at_once() {
+        // Yielding to readers is right while an entry is small: three lost
+        // probes cost nothing. Past half the cap every window served during
+        // those losses is more pack for a repack that has to finish inside
+        // the heavy budget, so the purge queues for the lock on its first
+        // losing probe instead.
+        let cap = 6_000_000;
+        let (f, k, skeleton) = fetch_blobs_into(fixture_with_budget(
+            "purge-pressure-half",
+            1_000_000_000,
+            cap,
+        ))
+        .await;
+        let entry_dir = f.store.entry_dir(&k);
+        let inflated = dir_size(&entry_dir.join("repo.git"));
+        assert!(
+            inflated >= cap / PURGE_PRESSURE_CAP_DIVISOR && inflated < cap,
+            "the fixture must sit between half the cap and the cap: {inflated}"
+        );
+
+        let reader = match f.store.open(&k, &creds(), pinned(&f, &k, 1)).await {
+            Ok(g) => g,
+            Err(e) => panic!("pinned open: {e}"),
+        };
+        let purge = tokio::spawn({
+            let store = Arc::clone(&f.store);
+            let k = k.clone();
+            async move { store.purge_if_drifted(&k).await }
+        });
+        // Let the purge measure and reach its lock decision while the reader
+        // still holds the entry; an opportunistic probe would have given up.
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        drop(reader);
+        if let Err(e) = purge.await {
+            panic!("the purge task must not panic: {e}");
+        }
+
+        assert!(
+            dir_size(&entry_dir.join("repo.git")) < skeleton * 2,
+            "past half the cap the first probe must queue and reclaim, not yield"
+        );
     }
 
     #[tokio::test]
@@ -2952,11 +3842,11 @@ pub(crate) mod tests {
 
         let mine = f
             .store
-            .refresh_task(&k, &creds(), Duration::ZERO, RefreshKind::Sync)
+            .refresh_task(&k, &creds(), Duration::ZERO, RefreshKind::Sync, None)
             .await;
         let mine_again = f
             .store
-            .refresh_task(&k, &creds(), Duration::ZERO, RefreshKind::Sync)
+            .refresh_task(&k, &creds(), Duration::ZERO, RefreshKind::Sync, None)
             .await;
         assert_eq!(
             f.store.inflight.lock().await.len(),
@@ -2966,7 +3856,7 @@ pub(crate) mod tests {
 
         let theirs = f
             .store
-            .refresh_task(&k, &intruder, Duration::ZERO, RefreshKind::Sync)
+            .refresh_task(&k, &intruder, Duration::ZERO, RefreshKind::Sync, None)
             .await;
         assert_eq!(
             f.store.inflight.lock().await.len(),
@@ -3235,6 +4125,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn a_pinned_repository_survives_reclaim() {
         let f = fixture_with_budget("pinned-reclaim", 1, u64::MAX);
+        let permit = f.store.heavy_permit().await;
         let k = key(&f);
 
         // INVARIANT: holding the guard pins the entry; reclaim must skip it.
@@ -3247,7 +4138,10 @@ pub(crate) mod tests {
         )
         .await;
 
-        let _ = f.store.admit(&f.store.entry_dir(&key(&f))).await;
+        let _ = f
+            .store
+            .admit(&f.store.entry_dir(&key(&f)), None, &permit)
+            .await;
         assert!(
             guard.git_dir().is_dir(),
             "a repository with a live reader must never be deleted"
@@ -3255,20 +4149,23 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn a_reclaim_purge_never_waits_for_the_heavy_permit() {
+    async fn a_reclaim_purge_repacks_under_the_callers_permit() {
         let f = fixture("permit-busy-purge");
         let k = key(&f);
         let guard = open_until_ready(&f, &k, refresh()).await;
         drop(guard);
+        forget_skeleton_packs(&f.store.entry_dir(&k));
 
-        // Clones or fetches elsewhere hold every heavy permit.
-        let Ok(_held) = f.store.heavy.try_acquire_many(2) else {
-            panic!("the fixture's heavy permits must be free")
+        // The caller holds one slot; clones or fetches elsewhere hold the rest.
+        let permit = f.store.heavy_permit().await;
+        let Ok(_others) = f.store.heavy.try_acquire_many(1) else {
+            panic!("the fixture's remaining heavy permit must be free")
         };
+        assert_eq!(f.store.heavy.available_permits(), 0);
 
-        match f.store.purge_blobs_by_dir(&k.dir_name()).await {
-            Ok(BlobPurge::PermitBusy) => {}
-            other => panic!("a busy permit must be reported, not waited on: {other:?}"),
+        match f.store.purge_blobs_by_dir(&k.dir_name(), &permit).await {
+            Ok(BlobPurge::Purged) => {}
+            other => panic!("the purge must repack under the permit it was given: {other:?}"),
         }
     }
 
@@ -3283,7 +4180,8 @@ pub(crate) mod tests {
         // Bitmap writing on + `--filter` is exactly the combination that fails
         // without `--no-write-bitmap-index`.
         sh(&git_dir, "git config repack.writeBitmaps true");
-        if let Err(e) = f.store.purge_blobs_by_dir(&k.dir_name()).await {
+        let permit = f.store.heavy_permit().await;
+        if let Err(e) = f.store.purge_blobs_by_dir(&k.dir_name(), &permit).await {
             panic!("purge must survive repack.writeBitmaps=true: {e}");
         }
     }

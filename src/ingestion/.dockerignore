@@ -21,3 +21,4 @@ workflows/*/
 !workflows/schedules/
 dbt/target/
 dbt/logs/
+tools/seed/manifest*.json

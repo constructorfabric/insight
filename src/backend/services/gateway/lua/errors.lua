@@ -52,6 +52,23 @@ function _M.unauthorized()
     )
 end
 
+function _M.bearer_unauthorized(resource_metadata_url, scope)
+    local required_scope = scope or "mcp:query"
+    local challenge = 'Bearer scope="' .. required_scope .. '"'
+    if resource_metadata_url then
+        challenge = 'Bearer resource_metadata="' .. resource_metadata_url
+            .. '", scope="' .. required_scope .. '"'
+    end
+    ngx.header["WWW-Authenticate"] = challenge
+    return problem(
+        401,
+        TYPE_UNAUTHENTICATED,
+        "Unauthenticated",
+        "A valid bearer token is required.",
+        { reason = "invalid_bearer" }
+    )
+end
+
 --- 503 Service Unavailable: authenticator unreachable, timed out, or 5xx --
 --- fail closed, shaped, with Retry-After.
 function _M.unavailable(detail)

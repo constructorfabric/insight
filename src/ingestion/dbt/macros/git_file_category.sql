@@ -71,3 +71,18 @@ multiIf(
     {{ source_expr }}
 )
 {% endmacro %}
+
+{# The two-hour block a timestamp falls in, as the value a dimension carries.
+   Shared with the CI evidence model so one heatmap component reads both. #}
+{% macro hour_block_value(ts_expr) %}
+leftPad(toString(intDiv(toHour({{ ts_expr }}), 2) * 2), 2, '0')
+{% endmacro %}
+
+{# The same block, as the reader sees it: "08–10". #}
+{% macro hour_block_label(ts_expr) %}
+concat(
+    leftPad(toString(intDiv(toHour({{ ts_expr }}), 2) * 2), 2, '0'),
+    '–',
+    leftPad(toString(intDiv(toHour({{ ts_expr }}), 2) * 2 + 2), 2, '0')
+)
+{% endmacro %}

@@ -1,24 +1,13 @@
-import { useMemo, useRef, useState } from "react";
-import { Download, FileSpreadsheet, FileText, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-import { Button } from "@/components/ui/button";
+import type {
+  ReportGranularity,
+  ReportPreviewResponse,
+  ReportRecipe,
+} from "@/api/reports-client";
+import { MAX_REPORT_PEOPLE } from "@/api/reports-client";
 import { Card, CardContent } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Spinner } from "@/components/ui/spinner";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   Tooltip,
@@ -27,34 +16,30 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { ComingSoon } from "@/components/widgets/coming-soon";
+import { ReportBuilderActions } from "@/components/portal/report-builder-actions";
+import {
+  ReportMetricPicker,
+  type OfferedReportMetric,
+} from "@/components/portal/report-builder-metrics";
+import { ReportPreviewDialog } from "@/components/portal/report-builder-preview";
 import { usePortalPeriod } from "@/hooks/use-portal-period";
-import { downloadMatrixCsv, downloadMatrixXlsx } from "@/lib/export/matrix";
-import { formatMetricNumber } from "@/lib/format";
 import { metricVisible } from "@/lib/portal/nav-policy";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import { useOrgScope } from "@/lib/portal/use-org-scope";
-import { unavailableReason } from "@/lib/reports/availability";
 import { byFamily } from "@/lib/reports/families";
 import {
   clampGranularity,
   periodTooShortReason,
 } from "@/lib/reports/granularity-for-period";
-import { buildReportTable, type ReportTable } from "@/lib/reports/report-table";
-import { ROW_MODES, type ReportRows } from "@/lib/reports/rows";
-import { recordUsageEvent } from "@/telemetry";
-import {
-  bucketsInRange,
-  needsRollup,
-  requestBucket,
-  type ReportGranularity,
-} from "@/lib/reports/rollup";
-import { runReport } from "@/lib/reports/run-report";
-import { cn } from "@/lib/utils";
-import { TEXT_EYEBROW, TEXT_LABEL, TEXT_TITLE } from "@/lib/type-scale";
-import { useMetricComputations } from "@/queries/report-catalogue";
+import { TEXT_LABEL } from "@/lib/type-scale";
 import { useMetricDefinitionsResponse } from "@/queries/metric-definitions";
+import { useReportExport, useReportPreview } from "@/queries/reports";
+import { recordUsageEvent } from "@/telemetry";
 
-const GRANULARITIES: ReadonlyArray<{ value: ReportGranularity; label: string }> = [
+const GRANULARITIES: ReadonlyArray<{
+  value: ReportGranularity;
+  label: string;
+}> = [
   { value: "day", label: "Daily" },
   { value: "week", label: "Weekly" },
   { value: "month", label: "Monthly" },
@@ -62,510 +47,293 @@ const GRANULARITIES: ReadonlyArray<{ value: ReportGranularity; label: string }> 
   { value: "year", label: "Yearly" },
 ];
 
-/** Enough to see the shape of the file without rendering the whole of it. */
-const PREVIEW_ROWS = 20;
+type ReportSubjectKind = "people" | "tenant";
+
+interface PreviewState {
+  recipe: string;
+  response: ReportPreviewResponse;
+}
 
 export function ReportBuilderView() {
   const { dateRange } = usePortalPeriod();
   const scope = useOrgScope();
   const definitions = useMetricDefinitionsResponse();
-  const computations = useMetricComputations();
-
-  const [selected, setSelected] = useState<string[]>([]);
-  const [pickedGranularity, setPickedGranularity] =
-    useState<ReportGranularity>("month");
-  const [rows, setRows] = useState<ReportRows>("people");
-  const granularity = clampGranularity(pickedGranularity, dateRange);
-  const [progress, setProgress] = useState<{ done: number; total: number } | null>(
-    null,
-  );
-  const [table, setTable] = useState<ReportTable | null>(null);
-  const [builtFor, setBuiltFor] = useState<string | null>(null);
-  const [builtAt, setBuiltAt] = useState<string | null>(null);
-  const [failure, setFailure] = useState<string | null>(null);
-  const [previewOpen, setPreviewOpen] = useState(false);
+  const previewRequest = useReportPreview();
+  const exportRequest = useReportExport();
+  const showPlanned = usePortalShowPlanned();
   const abort = useRef<AbortController | null>(null);
 
-  // Everything enabled is listed; what this installation cannot serve is shown
-  // unavailable rather than omitted. The results endpoint rejects an
-  // unreachable key outright, so it must not be selectable — but dropping it
-  // silently takes whole families off the screen and leaves the reader hunting
-  // for a section that is simply not measured here.
-  //
-  // A metric the INSTALL gates is different, and is dropped: it is not offered
-  // anywhere else on the screen either, so listing it here as unavailable would
-  // advertise the one place a reader could still name it.
-  const showPlanned = usePortalShowPlanned();
+  const [selected, setSelected] = useState<string[]>([]);
+  const [subject, setSubject] = useState<ReportSubjectKind>("people");
+  const [pickedGranularity, setPickedGranularity] =
+    useState<ReportGranularity>("month");
+  const granularity = clampGranularity(pickedGranularity, dateRange);
+  const [preview, setPreview] = useState<PreviewState | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+
+  const people = useMemo(() => scope.roster ?? [], [scope.roster]);
   const catalogue = useMemo(
     () =>
       (definitions.data?.metrics ?? []).filter(
         (metric) =>
-          metric.is_enabled && metricVisible(metric.metric_key, showPlanned),
+          metric.is_enabled && metricVisible(metric.metric_key, showPlanned)
       ),
-    [definitions.data, showPlanned],
+    [definitions.data, showPlanned]
   );
-  // The additivity restriction belongs to the rollup, not to the report. At a
-  // bucket the server has, it computed each value itself — a ratio is that
-  // bucket's own ratio — so the whole catalogue is fair game. Only a quarter
-  // and a year are months added together, and only there does the question
-  // "may this be added" arise.
-  // Nothing is dropped from the list. A metric that cannot go in this report
-  // is shown with the reason, because a metric that simply vanishes leaves the
-  // reader unable to tell "not measured here" from "I misremembered the name".
-  const offered = useMemo(
+  const offered = useMemo<OfferedReportMetric[]>(
     () =>
-      catalogue.map((metric) => ({
-        ...metric,
-        reason: unavailableReason(
-          metric,
-          granularity,
-          computations.data ?? new Map(),
-          rows,
-        ),
-      })),
-    [catalogue, computations.data, granularity, rows],
+      catalogue
+        .filter(
+          (metric) =>
+            metric.entity_type === (subject === "people" ? "person" : "tenant")
+        )
+        .map((metric) => ({
+          ...metric,
+          reason: metricReason(metric),
+        })),
+    [catalogue, subject]
   );
-
-  const people = scope.reportPeople ?? [];
-
+  const families = useMemo(() => byFamily(offered), [offered]);
   const selectedMetrics = useMemo(
     () =>
-      selected.flatMap((key) => {
-        const metric = offered.find((m) => m.metric_key === key && !m.reason);
-        return metric ? [{ metric_key: key, label: metric.label }] : [];
-      }),
-    [selected, offered],
+      selected.filter((key) =>
+        offered.some(
+          (metric) => metric.metric_key === key && metric.reason == null
+        )
+      ),
+    [offered, selected]
+  );
+  const recipe = useMemo<ReportRecipe>(
+    () => ({
+      subject:
+        subject === "people"
+          ? { type: "people", ids: people.map((person) => person.person_id) }
+          : { type: "tenant" },
+      period: dateRange,
+      granularity,
+      metric_keys: selectedMetrics,
+    }),
+    [dateRange, granularity, people, selectedMetrics, subject]
+  );
+  const recipeKey = JSON.stringify(recipe);
+  const currentPreview =
+    preview?.recipe === recipeKey ? preview.response : null;
+  const running = previewRequest.isPending || exportRequest.isPending;
+  const blocker = reportBlocker(
+    subject,
+    people.length,
+    selected,
+    selectedMetrics
   );
 
-  // What the table on hand was built from. A report is not stored anywhere —
-  // it lives here until something it depends on changes, and then it is wrong
-  // rather than merely old: build it monthly, switch to yearly, and the button
-  // would still offer the monthly file under the new heading.
-  const recipe = [
-    rows,
-    granularity,
-    dateRange.from,
-    dateRange.to,
-    // The people themselves, not how many: two different rosters of equal size
-    // would otherwise look like the same report, and a table built for one
-    // scope would stay downloadable under another.
-    ...people.map((person) => person.entityId),
-    "|",
-    ...selectedMetrics.map((metric) => metric.metric_key),
-  ].join(" ");
-  if (table && builtFor !== recipe) {
-    setTable(null);
-    setBuiltFor(null);
-    setBuiltAt(null);
-    setPreviewOpen(false);
-  }
+  useEffect(() => () => abort.current?.abort(), [recipeKey]);
 
-  const running = progress != null;
-  const blocker = selectedMetrics.length
-    ? people.length
-      ? null
-      : "This scope has no people"
-    : "Pick at least one metric";
-  const canBuild = blocker == null && !running;
-
-  async function build(): Promise<void> {
+  async function buildPreview(): Promise<void> {
     const controller = new AbortController();
     abort.current = controller;
     setFailure(null);
-    setTable(null);
+    setPreview(null);
+    setPreviewOpen(false);
+
     try {
-      const results = await runReport({
-        metricKeys: selectedMetrics.map((m) => m.metric_key),
-        entityIds: people.map((person) => person.entityId),
-        range: dateRange,
-        granularity,
-        bucketCount: bucketsInRange(
-          dateRange.from,
-          dateRange.to,
-          requestBucket(granularity),
-        ).length,
-        rows,
-        onProgress: (done, total) => setProgress({ done, total }),
+      const response = await previewRequest.mutateAsync({
+        recipe,
         signal: controller.signal,
       });
-      setBuiltFor(recipe);
-      setBuiltAt(
-        new Date().toLocaleString(undefined, {
-          dateStyle: "medium",
-          timeStyle: "short",
-        }),
-      );
-      for (const metric of selectedMetrics) {
-        recordUsageEvent("report_column", metric.metric_key);
-      }
+      setPreview({ recipe: recipeKey, response });
       setPreviewOpen(true);
-      setTable(
-        buildReportTable({
-          people,
-          metrics: selectedMetrics,
-          results,
-          range: dateRange,
-          granularity,
-          rows,
-        }),
-      );
+      for (const key of selectedMetrics) recordUsageEvent("report_column", key);
     } catch (error) {
-      // A run that stopped early produces nothing: a file missing a few
-      // batches reads as a complete one once it is open.
-      setTable(null);
       setFailure(
         controller.signal.aborted
-          ? "Cancelled — nothing was downloaded."
-          : `Could not build the report: ${(error as Error).message}`,
+          ? "Cancelled — no report was generated."
+          : `Could not preview the report: ${(error as Error).message}`
       );
     } finally {
-      setProgress(null);
-      abort.current = null;
+      if (abort.current === controller) abort.current = null;
     }
   }
 
-  // What the rows ARE and the granularity are both in the name: two files for
-  // the same period that differ only in their buckets — or in whether a row is
-  // a person or a repository — would otherwise overwrite each other in a
-  // downloads folder.
-  const filename = `insight-report_${rows}_${granularity}_${dateRange.from}_${dateRange.to}`;
+  async function exportReport(format: "csv" | "xlsx"): Promise<void> {
+    const controller = new AbortController();
+    abort.current = controller;
+    setFailure(null);
 
-  if (computations.isError || definitions.isError) {
+    try {
+      await exportRequest.mutateAsync({
+        recipe,
+        format,
+        signal: controller.signal,
+      });
+      recordUsageEvent("export", `report:${format}`);
+    } catch (error) {
+      setFailure(
+        controller.signal.aborted
+          ? "Cancelled — no report was downloaded."
+          : `Could not export the report: ${(error as Error).message}`
+      );
+    } finally {
+      if (abort.current === controller) abort.current = null;
+    }
+  }
+
+  if (definitions.isError) {
     return (
       <div className="mx-auto w-full max-w-md p-8">
-        <ComingSoon variant="card" state="error" label="Unable to load the metric catalogue" />
+        <ComingSoon
+          variant="card"
+          state="error"
+          label="Unable to load the metric catalogue"
+        />
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col gap-4 p-4 md:p-6">
-      <div className="flex flex-col gap-1">
-        <h1 className={TEXT_TITLE}>Report builder</h1>
-        <p className="text-sm text-muted-foreground">
-          {scope.label ? `${scope.label} · ` : ""}
-          {people.length} {people.length === 1 ? "person" : "people"} ·{" "}
-          {rows === "people"
-            ? "one row per person per period"
-            : "one row per repository per period"}
-        </p>
-      </div>
-
-      <Card>
-        <CardContent className="flex flex-col gap-4 p-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <span className={TEXT_LABEL}>Rows</span>
-            <ToggleGroup
-              value={[rows]}
-              onValueChange={(value) => {
-                const next = Array.isArray(value) ? value[0] : value;
-                if (next) setRows(next as ReportRows);
-              }}
-              variant="outline"
-              size="sm"
-            >
-              {ROW_MODES.map((option) => (
-                <ToggleGroupItem key={option.value} value={option.value}>
-                  {option.label}
-                </ToggleGroupItem>
-              ))}
-            </ToggleGroup>
-            <span className="text-xs text-muted-foreground">
-              {rows === "people"
-                ? "Each person's own values."
-                : "Everyone's work added up per repository — totals only."}
-            </span>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-3">
-            <span className={TEXT_LABEL}>Granularity</span>
-            <TooltipProvider delay={300}>
+    <div className="flex flex-col gap-4 p-4 pb-24 md:p-6 md:pb-24">
+      <Card className="gap-0 py-0">
+        <CardContent className="flex flex-col p-0">
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-3 border-b p-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className={TEXT_LABEL}>Scope</span>
               <ToggleGroup
-                value={[granularity]}
+                value={[subject]}
                 onValueChange={(value) => {
                   const next = Array.isArray(value) ? value[0] : value;
-                  if (next) setPickedGranularity(next as ReportGranularity);
+                  if (next === "people" || next === "tenant") setSubject(next);
                 }}
                 variant="outline"
                 size="sm"
               >
-                {GRANULARITIES.map((option) => {
-                  const reason = periodTooShortReason(option.value, dateRange);
-                  return (
-                    <Tooltip key={option.value}>
-                      <TooltipTrigger
-                        render={
-                          <ToggleGroupItem
-                            value={option.value}
-                            disabled={Boolean(reason)}
-                            title={reason ?? undefined}
-                          >
-                            {option.label}
-                          </ToggleGroupItem>
-                        }
-                      />
-                      {reason ? (
-                        <TooltipContent
-                          side="top"
-                          className="max-w-xs text-xs leading-relaxed"
-                        >
-                          {reason}
-                        </TooltipContent>
-                      ) : null}
-                    </Tooltip>
-                  );
-                })}
+                <ToggleGroupItem value="people">People</ToggleGroupItem>
+                <ToggleGroupItem value="tenant">Tenant</ToggleGroupItem>
               </ToggleGroup>
-            </TooltipProvider>
-            <span className="text-xs text-muted-foreground">
-              The period comes from the bar above.
-            </span>
-          </div>
+            </div>
 
-          <div className="flex flex-col gap-2">
-            <span className={TEXT_LABEL}>
-              {rows !== "people"
-                ? "Metrics that can be totalled — a repository is its people added up"
-                : needsRollup(granularity)
-                  ? "Metrics that can be totalled — a quarter is its months added up"
-                  : "Metrics"}
-            </span>
-            {(rows !== "people" || needsRollup(granularity)) &&
-            computations.isPending ? (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Spinner className="size-4" /> Reading the catalogue…
-              </div>
-            ) : (
+            <div className="hidden h-6 border-l md:block" />
+
+            <div className="flex flex-wrap items-center gap-3">
+              <span className={TEXT_LABEL}>Granularity</span>
               <TooltipProvider delay={300}>
-              <div className="flex flex-col gap-4">
-                {byFamily(offered).map((group) => {
-                  const keys = group.metrics
-                    .filter((m) => !m.reason)
-                    .map((m) => m.metric_key);
-                  const allPicked =
-                    keys.length > 0 &&
-                    keys.every((key) => selected.includes(key));
-                  return (
-                    <div key={group.family} className="flex flex-col gap-1">
-                      <div className="flex items-center gap-2">
-                        <span className={TEXT_EYEBROW}>{group.name}</span>
-                        {keys.length > 0 ? (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="xs"
-                            onClick={() =>
-                              setSelected((current) =>
-                                allPicked
-                                  ? current.filter((key) => !keys.includes(key))
-                                  : [...new Set([...current, ...keys])],
-                              )
-                            }
-                          >
-                            {allPicked ? "None" : "All"}
-                          </Button>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">
-                            nothing measured here yet
-                          </span>
-                        )}
-                      </div>
-                      <div className="grid grid-cols-1 gap-1 sm:grid-cols-2 lg:grid-cols-3">
-                        {group.metrics.map((metric) => {
-                          const checked = selected.includes(metric.metric_key);
-                          return (
-                            <Tooltip key={metric.metric_key}>
-                              <TooltipTrigger
-                                render={
-                            <label
-                              htmlFor={`report-${metric.metric_key}`}
-                              // A native title as well as the tooltip: the
-                              // reason a metric cannot be picked is the one
-                              // thing here that must reach the reader, and a
-                              // tooltip trigger on a label wrapping a disabled
-                              // control is not something to bet it on.
-                              title={metric.reason ?? undefined}
-                              className={cn(
-                                "flex items-center gap-2 rounded-sm px-1 py-1 text-start text-sm",
-                                metric.reason
-                                  ? "text-muted-foreground"
-                                  : "cursor-pointer hover:bg-muted",
-                              )}
-                            >
-                              <Checkbox
-                                id={`report-${metric.metric_key}`}
-                                checked={checked}
-                                disabled={Boolean(metric.reason)}
-                                onCheckedChange={() =>
-                                  setSelected((current) =>
-                                    checked
-                                      ? current.filter(
-                                          (key) => key !== metric.metric_key,
-                                        )
-                                      : [...current, metric.metric_key],
-                                  )
-                                }
-                              />
-                              {metric.label}
-                            </label>
-                                }
-                              />
-                              <TooltipContent
-                                side="top"
-                                className="max-w-xs text-xs leading-relaxed"
-                              >
-                                {metric.reason ? (
-                                  <>
-                                    <span className="font-medium">
-                                      Not available here.
-                                    </span>{" "}
-                                    {metric.reason}
-                                  </>
-                                ) : (
-                                  metric.description ??
-                                  metric.explanation ??
-                                  metric.label
-                                )}
-                              </TooltipContent>
-                            </Tooltip>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-              </TooltipProvider>
-            )}
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <Button type="button" disabled={!canBuild} onClick={() => void build()}>
-              Build report
-            </Button>
-            {blocker && !running ? (
-              <span className="text-sm text-muted-foreground">{blocker}</span>
-            ) : null}
-            {running ? (
-              <>
-                <span className="text-sm text-muted-foreground">
-                  {progress.done} of {progress.total} batches
-                </span>
-                <Button
-                  type="button"
+                <ToggleGroup
+                  value={[granularity]}
+                  onValueChange={(value) => {
+                    const next = Array.isArray(value) ? value[0] : value;
+                    if (isReportGranularity(next)) setPickedGranularity(next);
+                  }}
                   variant="outline"
                   size="sm"
-                  onClick={() => abort.current?.abort()}
                 >
-                  <X className="size-4" />
-                  Cancel
-                </Button>
-              </>
-            ) : null}
-            {selected.length > 0 && !running ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => setSelected([])}
-              >
-                Clear selection
-              </Button>
-            ) : null}
+                  {GRANULARITIES.map((option) => {
+                    const reason = periodTooShortReason(option.value, dateRange);
+                    return (
+                      <Tooltip key={option.value}>
+                        <TooltipTrigger
+                          render={
+                            <ToggleGroupItem
+                              value={option.value}
+                              disabled={reason != null}
+                              title={reason ?? undefined}
+                            >
+                              {option.label}
+                            </ToggleGroupItem>
+                          }
+                        />
+                        {reason ? (
+                          <TooltipContent
+                            side="top"
+                            className="max-w-xs text-xs leading-relaxed"
+                          >
+                            {reason}
+                          </TooltipContent>
+                        ) : null}
+                      </Tooltip>
+                    );
+                  })}
+                </ToggleGroup>
+              </TooltipProvider>
+            </div>
           </div>
 
-          {failure ? (
-            <p className="text-sm text-destructive">{failure}</p>
-          ) : null}
+          {definitions.isPending ? (
+            <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
+              <Spinner className="size-4" /> Reading the catalogue…
+            </div>
+          ) : (
+            <ReportMetricPicker
+              families={families}
+              selected={selected}
+              setSelected={setSelected}
+            />
+          )}
         </CardContent>
       </Card>
 
-      {table ? (
-        <Button
-          type="button"
-          variant="outline"
-          className="self-start"
-          onClick={() => setPreviewOpen(true)}
-        >
-          <Download className="size-4" />
-          {table.rows.length} rows ·{" "}
-          {GRANULARITIES.find((g) => g.value === granularity)?.label} ·{" "}
-          {dateRange.from} to {dateRange.to}
-          {builtAt ? ` · built ${builtAt}` : ""}
-        </Button>
-            ) : null}
+      <ReportPreviewDialog
+        response={currentPreview}
+        open={previewOpen}
+        period={dateRange}
+        granularity={granularity}
+        running={running}
+        onOpenChange={setPreviewOpen}
+        onExport={(format) => void exportReport(format)}
+      />
 
-      <Dialog open={previewOpen && table != null} onOpenChange={setPreviewOpen}>
-        <DialogContent className="flex max-h-[85vh] flex-col gap-3 sm:max-w-[min(96vw,1200px)]">
-          <DialogHeader>
-            <DialogTitle>
-              {table?.rows.length ?? 0} rows · showing the first{" "}
-              {Math.min(PREVIEW_ROWS, table?.rows.length ?? 0)}
-            </DialogTitle>
-            <p className="text-xs text-muted-foreground">
-              {GRANULARITIES.find((g) => g.value === granularity)?.label} ·{" "}
-              {dateRange.from} to {dateRange.to} · {people.length} people
-              {builtAt ? ` · built ${builtAt}` : ""}
-            </p>
-          </DialogHeader>
-          {table ? (
-            <>
-              <Table className="text-xs" containerClassName="overflow-auto">
-                <TableHeader>
-                  <TableRow>
-                    {table.columns.map((column) => (
-                      <TableHead key={column} className="whitespace-nowrap">
-                        {column}
-                      </TableHead>
-                    ))}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {table.rows.slice(0, PREVIEW_ROWS).map((row, index) => (
-                    <TableRow key={index}>
-                      {row.map((cell, cellIndex) => (
-                        <TableCell
-                          key={cellIndex}
-                          className="whitespace-nowrap tabular-nums"
-                        >
-                          {typeof cell === "number" && table.formats[cellIndex]
-                            ? formatMetricNumber(cell, table.formats[cellIndex])
-                            : cell ?? "—"}
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-              <div className="flex items-center justify-end gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    recordUsageEvent("export", "report:csv");
-                    downloadMatrixCsv(`${filename}.csv`, table);
-                  }}
-                >
-                  <FileText className="size-4" />
-                  CSV
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  onClick={() =>
-                    void (recordUsageEvent("export", "report:xlsx"),
-                    downloadMatrixXlsx(`${filename}.xlsx`, "Report", table))
-                  }
-                >
-                  <FileSpreadsheet className="size-4" />
-                  Excel
-                </Button>
-              </div>
-            </>
-          ) : null}
-        </DialogContent>
-      </Dialog>
+      <ReportBuilderActions
+        selectedCount={selectedMetrics.length}
+        hasSelection={selected.length > 0}
+        blocker={blocker}
+        running={running}
+        failure={failure}
+        onClear={() => setSelected([])}
+        onCancel={() => abort.current?.abort()}
+        onPreview={() => void buildPreview()}
+      />
     </div>
+  );
+}
+
+function metricReason(metric: {
+  schema_status: string;
+  last_observed_date: string | null;
+  origin: string;
+}): string | null {
+  if (metric.schema_status === "error")
+    return "This metric is not computing on this installation";
+  if (metric.origin !== "custom" && metric.last_observed_date == null) {
+    return "No data source is connected for this metric yet";
+  }
+  return null;
+}
+
+function reportBlocker(
+  subject: ReportSubjectKind,
+  peopleCount: number,
+  selected: string[],
+  selectedMetrics: string[]
+): string | null {
+  if (selectedMetrics.length === 0) {
+    return selected.length > 0
+      ? "Selected metrics are not available for this subject"
+      : "Pick at least one metric";
+  }
+  if (subject === "people" && peopleCount === 0)
+    return "This scope has no people";
+  if (subject === "people" && peopleCount > MAX_REPORT_PEOPLE) {
+    return `This scope has ${peopleCount.toLocaleString()} people; reports support up to ${MAX_REPORT_PEOPLE.toLocaleString()}. Narrow the scope`;
+  }
+  return null;
+}
+
+function isReportGranularity(
+  value: string | undefined
+): value is ReportGranularity {
+  return (
+    value === "day" ||
+    value === "week" ||
+    value === "month" ||
+    value === "quarter" ||
+    value === "year"
   );
 }

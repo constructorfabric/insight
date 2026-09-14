@@ -70,7 +70,96 @@
         "summary": "Public JWKS for gateway-JWT verification",
         "tags": [
           "internal"
-        ]
+        ],
+        "x-toolkit-visibility": "exposed"
+      }
+    },
+    "/.well-known/oauth-authorization-server": {
+      "get": {
+        "operationId": "authenticator.mcp_oauth.metadata",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authorization server metadata"
+          }
+        },
+        "summary": "OAuth authorization server metadata for MCP clients",
+        "tags": [
+          "mcp-oauth"
+        ],
+        "x-toolkit-visibility": "exposed"
+      }
+    },
+    "/.well-known/oauth-protected-resource": {
+      "get": {
+        "operationId": "authenticator.mcp_oauth.protected_resource",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Protected resource metadata"
+          }
+        },
+        "summary": "Protected resource metadata for the MCP endpoint",
+        "tags": [
+          "mcp-oauth"
+        ],
+        "x-toolkit-visibility": "exposed"
+      }
+    },
+    "/.well-known/oauth-protected-resource/mcp": {
+      "get": {
+        "operationId": "authenticator.mcp_oauth.protected_resource_mcp",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Protected resource metadata"
+          }
+        },
+        "summary": "Path-specific protected resource metadata for the MCP endpoint",
+        "tags": [
+          "mcp-oauth"
+        ],
+        "x-toolkit-visibility": "exposed"
+      }
+    },
+    "/.well-known/oauth-protected-resource/mcp/v3": {
+      "get": {
+        "operationId": "authenticator.mcp_oauth.protected_resource_mcp_v3",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Protected resource metadata"
+          }
+        },
+        "summary": "Protected resource metadata for the custom-surface MCP endpoint",
+        "tags": [
+          "mcp-oauth"
+        ],
+        "x-toolkit-visibility": "exposed"
       }
     },
     "/.well-known/openid-configuration": {
@@ -91,7 +180,8 @@
         "summary": "OIDC discovery document (issuer + jwks_uri) for downstream verifiers",
         "tags": [
           "internal"
-        ]
+        ],
+        "x-toolkit-visibility": "exposed"
       }
     },
     "/auth/admin/users/{person_id}/sessions": {
@@ -151,7 +241,8 @@
         "summary": "Complete login: exchange the code and set the session cookie",
         "tags": [
           "auth"
-        ]
+        ],
+        "x-toolkit-visibility": "exposed"
       }
     },
     "/auth/csrf": {
@@ -182,7 +273,8 @@
         "summary": "Issue the CSRF token bound to the current session",
         "tags": [
           "auth"
-        ]
+        ],
+        "x-toolkit-visibility": "exposed"
       }
     },
     "/auth/login": {
@@ -206,7 +298,8 @@
         "summary": "Start the OIDC code+PKCE login flow (the request Host selects the issuer)",
         "tags": [
           "auth"
-        ]
+        ],
+        "x-toolkit-visibility": "exposed"
       }
     },
     "/auth/logout": {
@@ -227,7 +320,8 @@
         "summary": "Revoke the session, clear the cookie, return the RP-logout URL",
         "tags": [
           "auth"
-        ]
+        ],
+        "x-toolkit-visibility": "exposed"
       }
     },
     "/auth/me": {
@@ -258,7 +352,112 @@
         "summary": "Current session summary for the SPA",
         "tags": [
           "auth"
-        ]
+        ],
+        "x-toolkit-visibility": "exposed"
+      }
+    },
+    "/auth/oauth/authorize": {
+      "get": {
+        "operationId": "authenticator.mcp_oauth.authorize",
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "format": "text/html",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Authorization confirmation"
+          }
+        },
+        "summary": "Authorize an MCP client with code and PKCE",
+        "tags": [
+          "mcp-oauth"
+        ],
+        "x-toolkit-visibility": "exposed"
+      }
+    },
+    "/auth/oauth/decision": {
+      "post": {
+        "operationId": "authenticator.mcp_oauth.decision",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Client redirect"
+          }
+        },
+        "summary": "Approve or deny a pending MCP authorization",
+        "tags": [
+          "mcp-oauth"
+        ],
+        "x-toolkit-visibility": "exposed"
+      }
+    },
+    "/auth/oauth/register": {
+      "post": {
+        "operationId": "authenticator.mcp_oauth.register",
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Registered client"
+          }
+        },
+        "summary": "Register a public MCP OAuth client",
+        "tags": [
+          "mcp-oauth"
+        ],
+        "x-toolkit-visibility": "exposed"
+      }
+    },
+    "/auth/oauth/revoke": {
+      "post": {
+        "operationId": "authenticator.mcp_oauth.revoke",
+        "responses": {
+          "200": {
+            "description": "Token revoked"
+          }
+        },
+        "summary": "Revoke an MCP refresh token",
+        "tags": [
+          "mcp-oauth"
+        ],
+        "x-toolkit-visibility": "exposed"
+      }
+    },
+    "/auth/oauth/token": {
+      "post": {
+        "operationId": "authenticator.mcp_oauth.token",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OAuth token response"
+          }
+        },
+        "summary": "Exchange an authorization code or refresh token",
+        "tags": [
+          "mcp-oauth"
+        ],
+        "x-toolkit-visibility": "exposed"
       }
     },
     "/auth/oidc/back-channel-logout": {
@@ -282,7 +481,8 @@
         "summary": "Receive IdP back-channel logout tokens (OIDC BCL 1.0)",
         "tags": [
           "auth"
-        ]
+        ],
+        "x-toolkit-visibility": "exposed"
       }
     },
     "/auth/refresh": {
@@ -313,7 +513,8 @@
         "summary": "Rotate the session cookie and extend the session (grace-tolerant)",
         "tags": [
           "auth"
-        ]
+        ],
+        "x-toolkit-visibility": "exposed"
       }
     },
     "/auth/sessions": {
@@ -344,7 +545,8 @@
         "summary": "Revoke all sessions of the current user (log out everywhere)",
         "tags": [
           "auth"
-        ]
+        ],
+        "x-toolkit-visibility": "exposed"
       },
       "get": {
         "operationId": "authenticator.sessions.list",
@@ -373,7 +575,8 @@
         "summary": "List the current user's active sessions",
         "tags": [
           "auth"
-        ]
+        ],
+        "x-toolkit-visibility": "exposed"
       }
     },
     "/auth/sessions/{session_id}": {
@@ -414,7 +617,8 @@
         "summary": "Revoke one of the current user's sessions",
         "tags": [
           "auth"
-        ]
+        ],
+        "x-toolkit-visibility": "exposed"
       }
     },
     "/internal/authz": {
@@ -438,8 +642,10 @@
         "summary": "Exchange the session cookie for the linked gateway JWT",
         "tags": [
           "internal"
-        ]
+        ],
+        "x-toolkit-visibility": "exposed"
       }
     }
-  }
+  },
+  "x-toolkit-spec-scope": "minimum-conformance"
 }

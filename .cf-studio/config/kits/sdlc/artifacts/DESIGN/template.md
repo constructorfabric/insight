@@ -32,6 +32,12 @@ This table maps non-functional requirements from PRD to specific design/architec
 |--------|-------------|--------------|-----------------|----------------------|
 | `cpt-{system}-nfr-{slug}` | {Brief NFR description} | {Component/layer/mechanism} | {How this design element realizes the NFR} | {How compliance is verified} |
 
+{For shared obligations, use the allocation and verification cells to name the
+contribution scope, responsible FEATURE/scenarios and role assessing the complete
+requirement. Include measurement boundaries and any allocated budgets where
+relevant. See the [quality-vector guide](../../guides/quality-vectors.md) and its
+worked example; these are authoring prompts, not additional required columns.}
+
 ### 1.3 Architecture Layers
 
 {Add architecture diagram here: Mermaid or ASCII}

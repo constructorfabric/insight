@@ -120,6 +120,17 @@ update_env_var() {
   fi
 }
 
+# dockerd retries layer downloads but not manifest or token requests, and
+# compose retries nothing, so one 5xx from a registry fails a pull outright.
+with_retries() {
+  local attempt
+  for attempt in 1 2 3; do
+    "$@" && return 0
+    (( attempt < 3 )) && sleep $(( attempt * 5 ))
+  done
+  return 1
+}
+
 # ──────────────────────────────────────────────────────────────────────
 # up
 # ──────────────────────────────────────────────────────────────────────
@@ -154,6 +165,9 @@ Options:
                             Full instances cannot run concurrently because
                             published host ports are shared.
   --env-file=PATH           Alternate dotenv file. Default: .env.compose.
+  --seed-target=T           What the first-run seed populates: identity,
+                            silver or all. Default: derived from which
+                            datastore volumes are fresh.
 
 Out-of-scope:
   --start-airbyte / --start-argo
@@ -344,6 +358,7 @@ write_watch_override() {
     build:
       context: deploy/compose
       dockerfile: rust-watch.Dockerfile
+      target: !reset null
     entrypoint: !reset null
     working_dir: /workspace
     environment:
@@ -373,6 +388,7 @@ write_watch_override() {
     build:
       context: deploy/compose
       dockerfile: rust-watch.Dockerfile
+      target: !reset null
     entrypoint: !reset null
     working_dir: /workspace
     environment:
@@ -404,6 +420,7 @@ YML
 
 cmd_up() {
   local env_file=".env.compose"
+  local seed_target_override=""
   local from_ghcr_csv=""
   local watch_csv=""
   local watch_option_set=false
@@ -419,6 +436,10 @@ cmd_up() {
     case "$1" in
       --env-file=*)      env_file="${1#*=}"; shift ;;
       --env-file)        env_file="$2"; shift 2 ;;
+      --seed-target=*)   seed_target_override="${1#*=}"; shift ;;
+      --seed-target)
+        [[ $# -ge 2 ]] || { echo "ERROR: --seed-target requires a value." >&2; return 2; }
+        seed_target_override="$2"; shift 2 ;;
       --from-ghcr=*)     from_ghcr_csv="${1#*=}"; shift ;;
       --from-ghcr)       from_ghcr_csv="$2"; shift 2 ;;
       --watch=*)         watch_csv="${1#*=}"; watch_option_set=true; shift ;;
@@ -642,7 +663,20 @@ YML
   fi
   local kc_base="http://${kc_ip:-localhost}:${KEYCLOAK_PORT:-8085}/kc"
 
-  echo "=== Generating Keycloak realm import (deploy/compose/keycloak/realm-insight.generated.json) ==="
+  if [[ "${MCP_ENABLED:-false}" == "true" ]]; then
+    : "${CLICKHOUSE_MCP_PASSWORD:?CLICKHOUSE_MCP_PASSWORD must be set when MCP_ENABLED=true}"
+    if [[ -z "${MCP_PUBLIC_URL:-}" && -z "$kc_ip" ]]; then
+      echo "ERROR: no host IP detected — MCP_PUBLIC_URL cannot be derived." >&2
+      echo "       Pin MCP_PUBLIC_URL in $env_file and re-run." >&2
+      return 1
+    fi
+    export MCP_PUBLIC_URL="${MCP_PUBLIC_URL:-http://${kc_ip}:${GATEWAY_PORT:-8080}}"
+    echo "MCP endpoint → ${MCP_PUBLIC_URL}/mcp"
+  fi
+
+  local realm_out="${KEYCLOAK_REALM_FILE:-deploy/compose/keycloak/realm-insight.generated.json}"
+  realm_out="${realm_out#./}"
+  echo "=== Generating Keycloak realm import ($realm_out) ==="
   # The generator's own --authenticator-redirect REPLACES its defaults rather
   # than appending, so whenever we pass any URI we must re-state the two
   # defaults too — dropping them would deregister the human login origins
@@ -666,10 +700,10 @@ YML
     echo "       Install it (brew install uv) and re-run; see CONTRIBUTING.md." >&2
     return 1; }
   # shellcheck disable=SC2086  # redirect_args is a deliberately word-split flag list
-  uv run --project "$ROOT_DIR/src/ingestion/tools/seed" insight-seed-realm \
+  uv run --project "$ROOT_DIR/src/ingestion/tools/seed" --frozen insight-seed-realm \
     --dev-email "$dev_lead_email" \
     $redirect_args \
-    --out "$ROOT_DIR/deploy/compose/keycloak/realm-insight.generated.json"
+    --out "$ROOT_DIR/$realm_out"
 
   # NGINX_BFF: the AUTHENTICATOR (not the frontend) logs in against Keycloak,
   # server-side, as the pre-seeded `insight-authenticator` confidential client.
@@ -746,7 +780,7 @@ YML
           set -eux
           apt-get update && apt-get install -y --no-install-recommends \
             protobuf-compiler libprotobuf-dev pkg-config libssl-dev cmake > /dev/null
-          cargo build --release$bin_flags
+          cargo build --profile e2e$bin_flags
           mkdir -p /out/analytics /out/authenticator /out/identity-resolution
           # Publish with cat + cmp, NOT cp or install. /out is a macOS bind
           # mount; cp there fails with \"error deallocating ...: Invalid
@@ -756,23 +790,23 @@ YML
           # bash exempts every command in an && list but the last -- so the
           # build stayed green and shipped a truncated binary that segfaults
           # the instant it is exec'd. cmp makes a bad copy fatal, here.
-          if [ -f /target/release/analytics ]; then
+          if [ -f /target/e2e/analytics ]; then
             rm -rf /out/analytics/analytics
-            cat /target/release/analytics > /out/analytics/analytics
+            cat /target/e2e/analytics > /out/analytics/analytics
             chmod 0755 /out/analytics/analytics
-            cmp -s /target/release/analytics /out/analytics/analytics || { echo 'ERROR: /out/analytics/analytics copied corrupt' >&2; exit 1; }
+            cmp -s /target/e2e/analytics /out/analytics/analytics || { echo 'ERROR: /out/analytics/analytics copied corrupt' >&2; exit 1; }
           fi
-          if [ -f /target/release/authenticator ]; then
+          if [ -f /target/e2e/authenticator ]; then
             rm -rf /out/authenticator/authenticator
-            cat /target/release/authenticator > /out/authenticator/authenticator
+            cat /target/e2e/authenticator > /out/authenticator/authenticator
             chmod 0755 /out/authenticator/authenticator
-            cmp -s /target/release/authenticator /out/authenticator/authenticator || { echo 'ERROR: /out/authenticator/authenticator copied corrupt' >&2; exit 1; }
+            cmp -s /target/e2e/authenticator /out/authenticator/authenticator || { echo 'ERROR: /out/authenticator/authenticator copied corrupt' >&2; exit 1; }
           fi
-          if [ -f /target/release/identity-resolution ]; then
+          if [ -f /target/e2e/identity-resolution ]; then
             rm -rf /out/identity-resolution/identity-resolution
-            cat /target/release/identity-resolution > /out/identity-resolution/identity-resolution
+            cat /target/e2e/identity-resolution > /out/identity-resolution/identity-resolution
             chmod 0755 /out/identity-resolution/identity-resolution
-            cmp -s /target/release/identity-resolution /out/identity-resolution/identity-resolution || { echo 'ERROR: /out/identity-resolution/identity-resolution copied corrupt' >&2; exit 1; }
+            cmp -s /target/e2e/identity-resolution /out/identity-resolution/identity-resolution || { echo 'ERROR: /out/identity-resolution/identity-resolution copied corrupt' >&2; exit 1; }
           fi
         "
     fi
@@ -806,6 +840,10 @@ YML
       docker rm -f "$front_ctr" >/dev/null 2>&1 || true
     fi
   fi
+
+  echo "=== docker compose pull ==="
+  with_retries "${compose_cmd[@]}" ${profiles[@]+"${profiles[@]}"} pull --quiet --ignore-buildable ||
+    echo "WARNING: pulling images failed three times; up will try once more." >&2
 
   echo "=== docker compose up ==="
   if ! "${compose_cmd[@]}" ${profiles[@]+"${profiles[@]}"} up -d --remove-orphans; then
@@ -851,6 +889,7 @@ YML
     elif [[ "$need_maria" == "true" ]]; then                          seed_target=identity
     else                                                              seed_target=silver
     fi
+    [[ -n "$seed_target_override" ]] && seed_target="$seed_target_override"
     echo "=== First-run seed ($seed_target) ==="
     if cmd_seed --env-file "$env_file" "$seed_target"; then
       if [[ -z "$instance" ]]; then
@@ -902,6 +941,19 @@ report_service_urls() {
   printf '  %-18s %s\n' "Analytics API"   "http://$h:${ANALYTICS_PORT:-8081}"
   printf '  %-18s %s\n' "Identity API"    "http://$h:${IDENTITY_RESOLUTION_PORT:-8086}"
   printf '  %-18s %s\n' "Authenticator"   "http://$h:${AUTHENTICATOR_PORT:-8083}"
+  if [[ "${MCP_ENABLED:-false}" == "true" ]]; then
+    local mcp_url="${MCP_PUBLIC_URL:-}"
+    if [[ -z "$mcp_url" ]]; then
+      local mcp_ip
+      mcp_ip="$(detect_host_ip || true)"
+      [[ -n "$mcp_ip" ]] && mcp_url="http://${mcp_ip}:${GATEWAY_PORT:-8080}"
+    fi
+    if [[ -n "$mcp_url" ]]; then
+      printf '  %-18s %s\n' "MCP SQL explorer" "${mcp_url}/mcp"
+    else
+      printf '  %-18s %s\n' "MCP SQL explorer" "unavailable: set MCP_PUBLIC_URL"
+    fi
+  fi
   printf '  %-18s %s\n' "Keycloak" \
     "http://$h:${KEYCLOAK_PORT:-8085}/kc/admin/  (admin console: admin/admin)"  # RULE-DEFAULTS-OK: display-only port default, mirrors the pre-existing per-service *_PORT lines above
   if [[ "${CLICKHOUSE_EXTERNAL:-false}" != "true" ]]; then
@@ -1039,6 +1091,8 @@ Targets:
   analytics            Rust analytics binary only.
   authenticator        Rust authenticator binary only.
   identity-resolution  Rust identity-resolution binary only.
+  insight-v3-core      insight-v3-core image (it runs from an image, not a
+                       bind-mounted binary like the three above).
   frontend             pnpm build → dist/.
   rust                 All Rust services.
   all                  Everything (Rust + frontend).
@@ -1073,49 +1127,53 @@ cmd_build() {
       set -eux
       apt-get update && apt-get install -y --no-install-recommends \
         protobuf-compiler libprotobuf-dev pkg-config libssl-dev cmake > /dev/null
-      cargo build --release$bin_flags
+      cargo build --profile e2e$bin_flags
       mkdir -p /out/analytics /out/authenticator /out/identity-resolution
       # cat + cmp, not cp/install -- see the identical block in cmd_up for why
       # a plain cp here silently ships a truncated, instantly-segfaulting
       # binary.
-      if [ -f /target/release/analytics ]; then
+      if [ -f /target/e2e/analytics ]; then
         rm -rf /out/analytics/analytics
-        cat /target/release/analytics > /out/analytics/analytics
+        cat /target/e2e/analytics > /out/analytics/analytics
         chmod 0755 /out/analytics/analytics
-        cmp -s /target/release/analytics /out/analytics/analytics || { echo 'ERROR: /out/analytics/analytics copied corrupt' >&2; exit 1; }
+        cmp -s /target/e2e/analytics /out/analytics/analytics || { echo 'ERROR: /out/analytics/analytics copied corrupt' >&2; exit 1; }
       fi
-      if [ -f /target/release/authenticator ]; then
+      if [ -f /target/e2e/authenticator ]; then
         rm -rf /out/authenticator/authenticator
-        cat /target/release/authenticator > /out/authenticator/authenticator
+        cat /target/e2e/authenticator > /out/authenticator/authenticator
         chmod 0755 /out/authenticator/authenticator
-        cmp -s /target/release/authenticator /out/authenticator/authenticator || { echo 'ERROR: /out/authenticator/authenticator copied corrupt' >&2; exit 1; }
+        cmp -s /target/e2e/authenticator /out/authenticator/authenticator || { echo 'ERROR: /out/authenticator/authenticator copied corrupt' >&2; exit 1; }
       fi
-      if [ -f /target/release/identity-resolution ]; then
+      if [ -f /target/e2e/identity-resolution ]; then
         rm -rf /out/identity-resolution/identity-resolution
-        cat /target/release/identity-resolution > /out/identity-resolution/identity-resolution
+        cat /target/e2e/identity-resolution > /out/identity-resolution/identity-resolution
         chmod 0755 /out/identity-resolution/identity-resolution
-        cmp -s /target/release/identity-resolution /out/identity-resolution/identity-resolution || { echo 'ERROR: /out/identity-resolution/identity-resolution copied corrupt' >&2; exit 1; }
+        cmp -s /target/e2e/identity-resolution /out/identity-resolution/identity-resolution || { echo 'ERROR: /out/identity-resolution/identity-resolution copied corrupt' >&2; exit 1; }
       fi
     "
   }
 
   # Accept MULTIPLE targets, e.g. `build authenticator identity-resolution`.
   # Rust bins are batched into one build; frontend runs once if requested.
-  local rust_bins="" want_frontend=false t
+  local rust_bins="" want_frontend=false want_v3_image=false t
   for t in "$@"; do
     case "$t" in
       analytics)           rust_bins="$rust_bins analytics" ;;
       authenticator)       rust_bins="$rust_bins authenticator" ;;
       identity-resolution) rust_bins="$rust_bins identity-resolution" ;;
-      rust)                rust_bins="$rust_bins analytics authenticator identity-resolution" ;;
+      insight-v3-core)     want_v3_image=true ;;
+      rust)                rust_bins="$rust_bins analytics authenticator identity-resolution"; want_v3_image=true ;;
       frontend)            want_frontend=true ;;
-      all)                 rust_bins="$rust_bins analytics authenticator identity-resolution"; want_frontend=true ;;
+      all)                 rust_bins="$rust_bins analytics authenticator identity-resolution"; want_v3_image=true; want_frontend=true ;;
       *) echo "ERROR: unknown target: $t" >&2; cmd_build_help; return 2 ;;
     esac
   done
   rust_bins="$(trim "$rust_bins")"
   # shellcheck disable=SC2086 # word-split the bin list intentionally
   [[ -n "$rust_bins" ]] && build_rust_bins $rust_bins
+  # insight-v3-core runs from its image (unlike the bind-mounted binaries
+  # above), so rebuilding it is a compose image build.
+  [[ "$want_v3_image" == true ]] && "${compose_cmd[@]}" build insight-v3-core
   [[ "$want_frontend" == true ]] && "${compose_cmd[@]}" run --rm build-frontend
   echo "Done. If a runtime container has ENABLE_AUTO_RELOAD=true it will restart automatically."
 }
@@ -1217,7 +1275,8 @@ cmd_seed() {
   # the wrong directory — it surfaces as an EACCES on /app/manifest.json after
   # the whole seed has run. The source is bind-mounted anyway, so the rebuild
   # is layer-cached and only refreshes entrypoint/WORKDIR/deps.
-  "${compose_cmd[@]}" --profile seed run --build --rm seed-sample "${args[@]}"
+  # --no-deps: --build would otherwise also rebake every depends_on image.
+  "${compose_cmd[@]}" --profile seed run --build --no-deps --rm seed-sample "${args[@]}"
   local seed_status=$?
   if [[ $seed_status -ne 0 ]]; then
     return $seed_status
@@ -1231,7 +1290,7 @@ cmd_seed() {
       seed_identity_projection "$env_file" "${compose_cmd[@]}" || return $?
       echo
       echo "=== rebuilding gold over the refreshed identity map ==="
-      "${compose_cmd[@]}" --profile seed run --rm seed-sample gold || return $?
+      "${compose_cmd[@]}" --profile seed run --no-deps --rm seed-sample gold || return $?
 
       # Restart analytics when ClickHouse data was touched. Its schema
       # validator caches schema_status at startup and never re-checks; without
@@ -1417,6 +1476,91 @@ EOF
 # so `./dev-compose.sh up` keeps behaving exactly as it did.
 
 TEST_STAND_ENV_FILE=".env.compose.test-stand"
+TEST_STAND_REALM_FILE="deploy/compose/keycloak/realm-insight.generated.json"
+TEST_STAND_MANIFEST_FILE="src/ingestion/tools/seed/manifest.json"
+TEST_STAND_DEFAULT_TREE="tests/stand"
+TEST_STAND_TREES=()
+TEST_STAND_INSTANCE=""
+TEST_STAND_PORT_OFFSET=0
+
+# Every published host port, with the base each service falls back to.
+# INVARIANT: each default must equal that service's `${VAR:-N}` in
+# docker-compose.yml. An instance shifts from the base named here, so a stale
+# entry publishes a port the stack never binds.
+TEST_STAND_PUBLISHED_PORTS=(
+  GATEWAY_PORT=8080
+  ANALYTICS_PORT=8081
+  AUTHENTICATOR_PORT=8083
+  AUTHENTICATOR_TOKEN_PORT=8093
+  KEYCLOAK_PORT=8085
+  IDENTITY_RESOLUTION_PORT=8086
+  FRONTEND_PORT=3000
+  MARIADB_PORT=3306
+  REDIS_PORT=6379
+  CLICKHOUSE_HTTP_PORT=8123
+  CLICKHOUSE_NATIVE_PORT=9000
+  REDPANDA_SCHEMA_PORT=18081
+  REDPANDA_PROXY_PORT=18082
+  REDPANDA_KAFKA_PORT=19092
+  REDPANDA_ADMIN_PORT=19644
+)
+
+# Same name, same ports, every bring-up: an instance keeps its address so a
+# suite can be re-aimed at a stand that is already running.
+test_stand_derive_port_offset() {
+  local sum
+  sum="$(printf '%s' "$1" | cksum | cut -d' ' -f1)"
+  printf '%d' "$(( 100 + (sum % 90) * 100 ))"
+}
+
+test_stand_select_instance() {
+  local requested="${1:-}" offset="${2:-}" project
+  project="$(compose_project_name "$requested")" || return $?
+  if [[ "$project" == "insight" ]]; then
+    TEST_STAND_INSTANCE=""
+  else
+    TEST_STAND_INSTANCE="${project#insight-}"
+  fi
+  COMPOSE_INSTANCE="$TEST_STAND_INSTANCE"
+  TEST_STAND_GATEWAY_CONTAINER="${project}-gateway"
+
+  if [[ -z "$TEST_STAND_INSTANCE" ]]; then
+    if [[ -n "$offset" ]]; then
+      echo "ERROR: --port-offset applies to --instance=NAME only." >&2
+      return 2
+    fi
+    TEST_STAND_PORT_OFFSET=0
+    return 0
+  fi
+
+  TEST_STAND_ENV_FILE=".env.compose.test-stand-${TEST_STAND_INSTANCE}"
+  TEST_STAND_REALM_FILE="deploy/compose/keycloak/realm-insight.generated-${TEST_STAND_INSTANCE}.json"
+  TEST_STAND_MANIFEST_FILE="src/ingestion/tools/seed/manifest-${TEST_STAND_INSTANCE}.json"
+
+  if [[ -z "$offset" ]]; then
+    TEST_STAND_PORT_OFFSET="$(test_stand_derive_port_offset "$TEST_STAND_INSTANCE")"
+    return 0
+  fi
+  case "$offset" in
+    ''|*[!0-9]*) echo "ERROR: --port-offset must be a non-negative integer." >&2; return 2 ;;
+  esac
+  TEST_STAND_PORT_OFFSET="$offset"
+}
+
+# Container-side ports (*_INTERNAL_PORT) never move: they name a port inside a
+# namespace of their own, which no other instance shares.
+test_stand_shift_ports() {
+  local entry var base current
+  (( TEST_STAND_PORT_OFFSET == 0 )) && return 0
+  for entry in "${TEST_STAND_PUBLISHED_PORTS[@]}"; do
+    var="${entry%%=*}"
+    base="${entry#*=}"
+    current="$(grep -E "^[[:space:]]*${var}=" "$TEST_STAND_ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2)"
+    current="$(trim "${current:-$base}")"
+    [[ "$current" =~ ^[0-9]+$ ]] || current="$base"
+    update_env_var "$TEST_STAND_ENV_FILE" "$var" "$(( current + TEST_STAND_PORT_OFFSET ))"
+  done
+}
 # The origin the app is driven at, by a browser runner and by a human alike.
 #
 # Two things are load-bearing here.
@@ -1448,7 +1592,7 @@ TEST_STAND_READY_INTERVAL=5
 
 cmd_test_stand_help() {
   cat <<'EOF'
-usage: dev-compose.sh test-stand <up|seed|test|down> [args]
+usage: dev-compose.sh test-stand <up|minimal|env|seed|test|down> [args]
 
 The stack in test configuration: pinned ghcr images for the frontend and all
 four backend services, real Keycloak login, and a readiness gate that waits
@@ -1458,25 +1602,40 @@ for dbt-built gold data rather than for containers to report healthy.
           block until EVERY gold observation table the seed populates proves
           dbt rebuilt it for this run and left a positive observation in it.
 
-          The four backend services (analytics, authenticator,
-          identity-resolution, gateway) and the frontend are PULLED, each
-          pinned to its own chart's appVersion — never :latest.
+          The backend services (analytics, authenticator,
+          identity-resolution, gateway, insight-v3-core) and the frontend are
+          PULLED, each pinned to its own chart's appVersion — never :latest.
 
           An appVersion names what main released, so pass the flag for whatever
           tree this checkout changes, or the stand will not run it:
 
           --build-backend    Compile the Rust services from this tree. Adds
                              ~28 min (measured across CI's build-path runs).
-          --prebuilt-backend Use backend images already loaded under the four
+          --prebuilt-backend Use backend images already loaded under the
                              *_IMAGE environment variables. Never builds or
                              pulls a fallback image.
           --build-frontend   Build the SPA from this tree with pnpm, served by
                              the front-built nginx. Backend stays pinned.
           --build            Both.
+          --skip-build       With --build-backend: mount binaries already in
+                             deploy/compose/build/ instead of compiling, over
+                             runtime images taken from the chart pins. The
+                             gateway and insight-v3-core run a locally loaded
+                             image named by GATEWAY_IMAGE / INSIGHT_V3_CORE_IMAGE,
+                             or bake from this tree when those are unset. The
+                             caller owns the binaries' and images' freshness.
 
           `up` refuses to pin a tree that differs from origin/main and names
           the flag to pass — but only when origin/main is in the checkout. A
           shallow clone says so on stderr and defers to its caller.
+  minimal Bring the stand up seeded with identity and the Keycloak realm
+          only, and gate on the services answering rather than on gold
+          holding rows. For a suite that writes its own bronze: the silver
+          generators do not run, so nothing is seeded that such a run would
+          immediately delete. Takes up's build flags.
+  env     Write this instance's env file and stop. Takes up's build flags.
+          Nothing is started, pulled or seeded — use it to see the ports,
+          paths and callback an instance resolves to.
   seed    Re-seed the running stand (default target: all).
   test    Run the stand suite against an already-up stand. Passes extra
           arguments through to pytest — no `--` separator.
@@ -1484,6 +1643,10 @@ for dbt-built gold data rather than for containers to report healthy.
           --base-url <url> and --stand-manifest <path> when pointing it
           somewhere else.
 
+          --tree <path>  Which tree to run. Repeatable. Default tests/stand.
+                         pytest UNIONS path arguments, so a bare path widens
+                         the run rather than narrowing it — name the tree here
+                         and use -k / --ignore to select within it.
           --image <ref>  Run inside an already-pulled suite image instead
                          of on the host, sharing the gateway's network
                          namespace. Never builds: no suite image is published
@@ -1494,8 +1657,21 @@ for dbt-built gold data rather than for containers to report healthy.
   down    Stop the stand and REMOVE its volumes, so the next `up` starts
           from empty databases.
 
+Every verb accepts:
+
+  --instance=NAME     Raise this stand beside the default one instead of
+                      replacing it. Containers, networks and volumes are
+                      isolated as insight-NAME, and so are the env file, the
+                      generated realm, the seed manifest and every published
+                      host port. `worktree` derives NAME from the checkout.
+  --port-offset=N     Override the offset added to every published host port.
+                      Derived from NAME by default, so an instance keeps the
+                      same address across bring-ups; pass this when two names
+                      happen to derive the same offset.
+
 Isolation: reads and writes .env.compose.test-stand only — never your own
-.env.compose. Airbyte and Argo are never started.
+.env.compose. With --instance=NAME the file is .env.compose.test-stand-NAME.
+Airbyte and Argo are never started.
 EOF
 }
 
@@ -1518,14 +1694,16 @@ test_stand_frontend_image() {
 # The backend services the stand runs from published images rather than from
 # source, as "<compose env var>|<chart path>|<image name>".
 #
-# Building these four compiles the Rust workspace twice — once on the host for
-# the bind-mounted binaries, then again inside each service image — which is
-# where the stand's wall-clock went.
+# Building these compiles the Rust workspace inside each service image (and
+# once more on the host for the bind-mounted binaries) — which is where the
+# stand's wall-clock went. test_stand_assert_no_source_bakes catches a backend
+# service missing from this list before `up` starts compiling it.
 TEST_STAND_PINNED_BACKENDS=(
   "ANALYTICS_IMAGE|src/backend/services/analytics/helm/Chart.yaml|analytics"
   "AUTHENTICATOR_IMAGE|src/backend/services/authenticator/helm/Chart.yaml|authenticator"
   "IDENTITY_RESOLUTION_IMAGE|src/backend/services/identity-resolution/helm/Chart.yaml|identity-resolution"
   "GATEWAY_IMAGE|src/backend/services/gateway/helm/Chart.yaml|gateway"
+  "INSIGHT_V3_CORE_IMAGE|src/backend/services/insight-v3-core/helm/Chart.yaml|v3-core"
 )
 
 # Pin and pull every backend image, or fail.
@@ -1539,13 +1717,57 @@ test_stand_pull_backends() {
     IFS='|' read -r var chart name <<<"$entry"
     image="$(test_stand_pinned_image "$chart" "$name")" || return 1
     echo "    ${name}: ${image}"
-    docker pull --quiet "$image" >/dev/null || {
+    with_retries docker pull --quiet "$image" >/dev/null || {
       echo "ERROR: cannot pull $image (pinned by $chart's appVersion)." >&2
       echo "       Not falling back to a source build — that would report a pass" >&2
       echo "       for an image this run never ran. Check ghcr access, or pass" >&2
       echo "       --build to build from source deliberately." >&2
       return 1; }
     update_env_var "$TEST_STAND_ENV_FILE" "$var" "$image"
+    # WORKAROUND: compose lets the process environment override --env-file,
+    # and a set-but-empty var counts as set — CI exports these as '' outside
+    # the prebuilt path, dropping every service to its :dev fallback. Export
+    # the pin so compose resolves the image the env file records.
+    export "$var=$image"
+  done
+}
+
+# With --skip-build the caller supplies the binaries, and compose must not
+# bake the dev images just to produce a compiled-in binary the bind-mount
+# shadows. Tag the chart-pinned images under the compose default names so
+# `up` finds them and skips the build. Gateway and insight-v3-core run from
+# their images rather than bind-mounted binaries, so a source change to either
+# is only exercised by an image built from this tree: they take a caller-loaded
+# image named by GATEWAY_IMAGE / INSIGHT_V3_CORE_IMAGE, or bake from source.
+test_stand_prime_dev_images() {
+  local entry var chart name image local_tag
+  for entry in "${TEST_STAND_PINNED_BACKENDS[@]}"; do
+    IFS='|' read -r var chart name <<<"$entry"
+    case "$name" in
+      gateway|v3-core)
+        # INVARIANT: cmd_up sources the env file over the process env, so a
+        # caller-supplied image only reaches compose written into the file.
+        image="${!var:-}"
+        [[ -n "$image" ]] || continue
+        docker image inspect "$image" >/dev/null 2>&1 || {
+          echo "ERROR: $var=$image is not loaded locally." >&2
+          echo "       Load it (docker load), or unset $var to bake ${name} from source." >&2
+          return 1
+        }
+        echo "    ${name}: ${image} (pre-built from this tree)"
+        update_env_var "$TEST_STAND_ENV_FILE" "$var" "$image"
+        continue
+        ;;
+    esac
+    local_tag="insight-${name}:dev"
+    docker image inspect "$local_tag" >/dev/null 2>&1 && continue
+    image="$(test_stand_pinned_image "$chart" "$name")" || return 1
+    echo "    ${local_tag} <- ${image} (runtime layers only; the binary is bind-mounted)"
+    with_retries docker pull --quiet "$image" >/dev/null || {
+      echo "ERROR: cannot pull $image to stand in for $local_tag under --skip-build." >&2
+      return 1
+    }
+    docker tag "$image" "$local_tag"
   done
 }
 
@@ -1567,6 +1789,40 @@ test_stand_use_prebuilt_backends() {
   echo "=== the backend uses pre-built images from this ref ==="
 }
 
+# When no source build was asked for, no service `up` raises may be about to
+# be built from source. Asks compose itself — every service in the up set that
+# still carries a build: section must resolve to an image that already exists
+# locally, so a backend service missing from TEST_STAND_PINNED_BACKENDS (the
+# way a newly added compose service lands) fails loudly here instead of
+# silently compiling the Rust workspace inside `docker compose up`.
+test_stand_assert_no_source_bakes() {
+  local buildable offenders="" svc image
+  buildable="$(docker compose --env-file "$TEST_STAND_ENV_FILE" -f docker-compose.yml config --format json |
+    python3 -c '
+import json, sys
+services = json.load(sys.stdin)["services"]
+for name, svc in sorted(services.items()):
+    if "build" in svc:
+        print(name, svc.get("image", "<no-image-tag>"))
+')" || { echo "ERROR: cannot resolve the compose up set to check for source builds." >&2; return 1; }
+
+  while read -r svc image; do
+    [[ -n "$svc" ]] || continue
+    docker image inspect "$image" >/dev/null 2>&1 && continue
+    offenders+="         ${svc} -> ${image}"$'\n'
+  done <<<"$buildable"
+  [[ -z "$offenders" ]] && return 0
+
+  echo "ERROR: \`up\` would compile these services from source, in a run that did" >&2
+  echo "       not ask for a source build:" >&2
+  printf '%s' "$offenders" >&2
+  echo "       Every backend service must run a published image here. Add the" >&2
+  echo "       service's \"<VAR>|<chart path>|<name>\" entry to" >&2
+  echo "       TEST_STAND_PINNED_BACKENDS, or pass --build to build from source" >&2
+  echo "       deliberately." >&2
+  return 1
+}
+
 # Refuse to pin when the working tree differs from what a chart describes.
 #
 # The appVersions track main. A branch that edits the given source tree and
@@ -1583,8 +1839,11 @@ test_stand_tree_matches_charts() {
     echo "NOTE: no origin/main here — ${subtree}/ unchecked, ${flag} is the caller's call." >&2
     return 0; }
 
+  # A service's own test tree is compiled by `cargo test`, never by the image
+  # build, so a change there cannot make the published image describe this tree
+  # any less well.
   local changed
-  changed="$(git diff --name-only origin/main -- "$subtree" 2>/dev/null | head -5)"
+  changed="$(git diff --name-only origin/main -- "$subtree" ":(exclude)$subtree/services/*/tests/**" 2>/dev/null | head -5)"
   [[ -z "$changed" ]] && return 0
 
   echo "ERROR: this tree changes ${subtree}/ relative to origin/main:" >&2
@@ -1607,10 +1866,29 @@ test_stand_frontend_matches_chart() {
 # knobs the test path forces. SEEDED_LOCAL_* are blanked so every `up` seeds.
 # `mode` is ghcr (image required) or built (image empty — the front-built
 # profile serves the pnpm build from src/frontend/dist).
+test_stand_prepare_env() {
+  local build_frontend="$1" image
+  if [[ "$build_frontend" == true ]]; then
+    test_stand_write_env built || return 1
+    echo "=== the frontend is built from this tree (pnpm), not pulled ==="
+    return 0
+  fi
+  test_stand_frontend_matches_chart || return 1
+  image="$(test_stand_frontend_image)" || return 1
+  test_stand_write_env ghcr "$image"
+}
+
 test_stand_write_env() {
   local mode="$1" image="${2:-}"
   [[ -f .env.compose.example ]] || { echo "ERROR: .env.compose.example not found." >&2; return 1; }
   cp .env.compose.example "$TEST_STAND_ENV_FILE"
+  test_stand_shift_ports || return 1
+  # Both are read by docker-compose.yml. The realm has to exist before `up`:
+  # Docker creates a DIRECTORY at a missing bind-mount source, and Keycloak
+  # then imports nothing without failing.
+  update_env_var "$TEST_STAND_ENV_FILE" KEYCLOAK_REALM_FILE "./$TEST_STAND_REALM_FILE"
+  update_env_var "$TEST_STAND_ENV_FILE" SEED_MANIFEST_PATH \
+    "/ingestion/${TEST_STAND_MANIFEST_FILE#src/ingestion/}"
   update_env_var "$TEST_STAND_ENV_FILE" FRONTEND_MODE   "$mode"
   update_env_var "$TEST_STAND_ENV_FILE" FRONTEND_IMAGE  "$image"
   update_env_var "$TEST_STAND_ENV_FILE" SEEDED_LOCAL_MARIA ""
@@ -1624,6 +1902,10 @@ test_stand_write_env() {
   update_env_var "$TEST_STAND_ENV_FILE" AUTHENTICATOR_REDIRECT_URI "$(test_stand_origin)/auth/callback"
   echo "=== test-stand env → $TEST_STAND_ENV_FILE (frontend: ${image:-built from src/frontend}) ==="
   echo "    app origin: $(test_stand_origin)  callback: $(test_stand_origin)/auth/callback"
+  if [[ -n "$TEST_STAND_INSTANCE" ]]; then
+    echo "    instance: $TEST_STAND_INSTANCE  ports +${TEST_STAND_PORT_OFFSET}"
+    echo "    realm: $TEST_STAND_REALM_FILE  manifest: $TEST_STAND_MANIFEST_FILE"
+  fi
 }
 
 # Every gold observation table this seed is expected to populate. The gate
@@ -1698,6 +1980,69 @@ test_stand_table_ready() {
 # Requiring the whole set rather than one canary is what stops a stand where a
 # single generator family produced nothing from being reported ready — that
 # failure otherwise surfaces much later, as tests failing on absent rows.
+# Every service the data path is read through. All four answer the framework's
+# /health, so one path covers them.
+TEST_STAND_SERVICE_PROBES=(
+  "gateway|GATEWAY_PORT"
+  "analytics|ANALYTICS_PORT"
+  "authenticator|AUTHENTICATOR_PORT"
+  "identity-resolution|IDENTITY_RESOLUTION_PORT"
+)
+
+# A published port as the running stand has it: the env file where it names one,
+# else the base docker-compose.yml falls back to. `test_stand_write_env` only
+# writes the keys it overrides, so a default stand's file omits most of them.
+test_stand_published_port() {
+  local key="$1" entry value
+  value="$(env_file_value "$TEST_STAND_ENV_FILE" "$key")"
+  if [[ -n "$value" ]]; then
+    printf '%s' "$value"
+    return 0
+  fi
+  for entry in "${TEST_STAND_PUBLISHED_PORTS[@]}"; do
+    [[ "${entry%%=*}" == "$key" ]] && { printf '%s' "${entry#*=}"; return 0; }
+  done
+  return 1
+}
+
+# Readiness for a stand whose data its caller will write itself. The gold gate
+# below certifies rows a data-path run deletes as its first act, so waiting on
+# them would mean waiting for something about to be destroyed.
+test_stand_wait_services() {
+  local elapsed=0 probe name var port pending=() kc_port
+
+  echo "=== Readiness gate: waiting for $(( ${#TEST_STAND_SERVICE_PROBES[@]} + 1 )) services ==="
+  while [[ "$elapsed" -lt "$TEST_STAND_READY_TIMEOUT" ]]; do
+    pending=()
+    for probe in "${TEST_STAND_SERVICE_PROBES[@]}"; do
+      name="${probe%%|*}"
+      var="${probe##*|}"
+      port="$(test_stand_published_port "$var")"
+      curl -sf -o /dev/null --max-time 5 "http://localhost:${port:-0}/health" \
+        || pending+=("${name} (:${port:-unset})")
+    done
+    # Keycloak serves no /health on the app port, and the suite's first act is a
+    # real login: the realm document proves the import finished, not just the JVM.
+    kc_port="$(test_stand_published_port KEYCLOAK_PORT)"
+    curl -sf -o /dev/null --max-time 5 \
+      "http://localhost:${kc_port:-0}/kc/realms/insight/.well-known/openid-configuration" \
+      || pending+=("keycloak realm (:${kc_port:-unset})")
+
+    if [[ ${#pending[@]} -eq 0 ]]; then
+      echo "Readiness gate: every service answered after ${elapsed}s."
+      return 0
+    fi
+
+    sleep "$TEST_STAND_READY_INTERVAL"
+    elapsed=$((elapsed + TEST_STAND_READY_INTERVAL))
+  done
+
+  echo "ERROR: readiness gate timed out after ${TEST_STAND_READY_TIMEOUT}s." >&2
+  echo "       ${#pending[@]} service(s) never answered /health:" >&2
+  printf '         %s\n' "${pending[@]}" >&2
+  return 1
+}
+
 test_stand_wait_ready() {
   local run_started_at="$1"
   local elapsed=0 table reason
@@ -1776,7 +2121,7 @@ test_stand_test_in_image() {
     return 1
   fi
 
-  local manifest="src/ingestion/tools/seed/manifest.json"
+  local manifest="$TEST_STAND_MANIFEST_FILE"
   [[ -f "$manifest" ]] || {
     echo "ERROR: $manifest not found — seed the stand first: ./dev-compose.sh test-stand seed" >&2
     return 1; }
@@ -1823,7 +2168,7 @@ test_stand_test_in_image() {
   # readable, and from the environment otherwise. Mounting the realm keeps a
   # keycloak stand working with no secret to distribute; the env var stays the
   # path for a stand whose realm this checkout cannot see.
-  local realm="deploy/compose/keycloak/realm-insight.generated.json"
+  local realm="$TEST_STAND_REALM_FILE"
   [[ -f "$realm" ]] && run_args+=(-v "$PWD/${realm}:/workspace/${realm}:ro")
   [[ -n "${INSIGHT_STAND_PERSONA_PASSWORD:-}" ]] && run_args+=(-e INSIGHT_STAND_PERSONA_PASSWORD)
 
@@ -1844,51 +2189,70 @@ test_stand_test_in_image() {
     run_args+=(-e "INSIGHT_STAND_IDENTITY_URL=http://identity-resolution:8082")
   fi
 
+  # The selected trees, image-side. They lead the pytest arguments so the
+  # caller's own flags and node ids follow them exactly as on the host.
+  local tree image_trees=()
+  for tree in "${TEST_STAND_TREES[@]}"; do
+    image_trees+=("/workspace/${tree}")
+  done
+
   echo "=== running the suite in ${image} (namespace: ${TEST_STAND_GATEWAY_CONTAINER}) ==="
   docker run "${run_args[@]}" "$image" sh -ceu '
     python -m pip install --user --no-cache-dir "uv==0.12.0"
     export PATH="$HOME/.local/bin:$PATH"
     uv sync --project /workspace/tests --frozen --no-dev --no-install-project
     export PYTHONPATH="/workspace/tests/lib${PYTHONPATH:+:$PYTHONPATH}"
-    uv run --project /workspace/tests --no-sync \
-      pytest /workspace/tests/stand "$@"
-  ' sh "$@"
+    uv run --project /workspace/tests --no-sync pytest "$@"
+  ' sh "${image_trees[@]}" "$@"
 }
 
 cmd_test_stand() {
   local verb="${1:-help}"
   [[ $# -gt 0 ]] && shift
 
+  # `main` already stripped --instance into COMPOSE_INSTANCE, for every
+  # subcommand alike; only the offset is ours to read. Resolving here rather
+  # than per verb keeps every verb pointed at the same stand.
+  local offset="" rest=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --port-offset=*) offset="${1#*=}"; shift ;;
+      --port-offset)
+        [[ $# -ge 2 ]] || { echo "ERROR: --port-offset requires a value." >&2; return 2; }
+        offset="$2"; shift 2 ;;
+      *) rest+=("$1"); shift ;;
+    esac
+  done
+  set -- ${rest[@]+"${rest[@]}"}
+  test_stand_select_instance "$COMPOSE_INSTANCE" "$offset" || return $?
+
   case "$verb" in
     up)
       # Each tree is pinned to its chart's appVersion or built from this one,
       # asked separately: --build is the both-axes alias.
-      local image backend_mode=pinned build_frontend=false
+      local backend_mode=pinned build_frontend=false skip_build=false
       while [[ $# -gt 0 ]]; do
         case "$1" in
           --build)          backend_mode=source; build_frontend=true; shift ;;
           --build-backend)  backend_mode=source; shift ;;
           --prebuilt-backend) backend_mode=prebuilt; shift ;;
           --build-frontend) build_frontend=true; shift ;;
+          --skip-build)     skip_build=true; shift ;;
           -h|--help) cmd_test_stand_help; return 0 ;;
           *) echo "ERROR: unknown test-stand up option: $1" >&2; return 2 ;;
         esac
       done
 
-      if [[ "$build_frontend" == true ]]; then
-        test_stand_write_env built || return 1
-        echo "=== the frontend is built from this tree (pnpm), not pulled ==="
-      else
-        test_stand_frontend_matches_chart || return 1
-        image="$(test_stand_frontend_image)" || return 1
-        test_stand_write_env ghcr "$image" || return 1
-      fi
+      test_stand_prepare_env "$build_frontend" || return 1
 
       # INVARIANT: pinning writes the *_IMAGE vars, and that is the only thing
       # keeping cmd_up off the compiler — so it has to run before cmd_up reads
       # the env file.
       case "$backend_mode" in
         source)
+          if [[ "$skip_build" == "true" ]]; then
+            test_stand_prime_dev_images || return 1
+          fi
           echo "=== the backend is compiled from this tree, not pulled ==="
           ;;
         prebuilt)
@@ -1899,9 +2263,13 @@ cmd_test_stand() {
           test_stand_pull_backends || return 1
           ;;
       esac
+      if [[ "$backend_mode" != "source" ]]; then
+        test_stand_assert_no_source_bakes || return 1
+      fi
 
       local up_args=(--env-file "$TEST_STAND_ENV_FILE"
                      --authenticator-redirect "$(test_stand_origin)/auth/callback")
+      [[ "$skip_build" == "true" ]] && up_args+=(--skip-build)
       cmd_up "${up_args[@]}" || return 1
 
       # cmd_up resolved and exported the issuer for this run; persist what it
@@ -1924,6 +2292,69 @@ cmd_test_stand() {
       echo "=== test-stand is ready ==="
       ;;
 
+    env)
+      local build_frontend=false
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --build|--build-frontend) build_frontend=true; shift ;;
+          --build-backend|--prebuilt-backend) shift ;;
+          -h|--help) cmd_test_stand_help; return 0 ;;
+          *) echo "ERROR: unknown test-stand env option: $1" >&2; return 2 ;;
+        esac
+      done
+      test_stand_prepare_env "$build_frontend"
+      ;;
+
+    minimal)
+      # The stand a suite writes its own bronze into: identity and the realm,
+      # and nothing the suite is about to delete. Its silver generators do not
+      # run, so gold is empty and the gold gate would never pass -- readiness
+      # is the services answering instead.
+      local mbackend_mode=pinned mbuild_frontend=false mskip_build=false
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --build)          mbackend_mode=source; mbuild_frontend=true; shift ;;
+          --build-backend)  mbackend_mode=source; shift ;;
+          --prebuilt-backend) mbackend_mode=prebuilt; shift ;;
+          --build-frontend) mbuild_frontend=true; shift ;;
+          --skip-build)     mskip_build=true; shift ;;
+          -h|--help) cmd_test_stand_help; return 0 ;;
+          *) echo "ERROR: unknown test-stand minimal option: $1" >&2; return 2 ;;
+        esac
+      done
+
+      test_stand_prepare_env "$mbuild_frontend" || return 1
+      case "$mbackend_mode" in
+        source)
+          if [[ "$mskip_build" == "true" ]]; then
+            test_stand_prime_dev_images || return 1
+          fi
+          echo "=== the backend is compiled from this tree, not pulled ==="
+          ;;
+        prebuilt) test_stand_use_prebuilt_backends || return 1 ;;
+        pinned)   test_stand_backend_matches_charts || return 1
+                  test_stand_pull_backends || return 1 ;;
+      esac
+      if [[ "$mbackend_mode" != "source" ]]; then
+        test_stand_assert_no_source_bakes || return 1
+      fi
+
+      local mup_args=(--env-file "$TEST_STAND_ENV_FILE" --seed-target identity
+                      --authenticator-redirect "$(test_stand_origin)/auth/callback")
+      [[ "$mskip_build" == "true" ]] && mup_args+=(--skip-build)
+      cmd_up "${mup_args[@]}" || return 1
+
+      update_env_var "$TEST_STAND_ENV_FILE" AUTHENTICATOR_OIDC_ISSUER "${AUTHENTICATOR_OIDC_ISSUER:-}"
+      echo "=== persisted AUTHENTICATOR_OIDC_ISSUER=${AUTHENTICATOR_OIDC_ISSUER:-<empty>} ==="
+
+      # cmd_up's first-run seed ran before the issuer was persisted, so its
+      # manifest would name the wrong IdP. Same reason `up` re-seeds.
+      cmd_seed --env-file "$TEST_STAND_ENV_FILE" identity || return 1
+
+      test_stand_wait_services || return 1
+      echo "=== test-stand is ready (identity only; bronze is yours to write) ==="
+      ;;
+
     seed)
       [[ -f "$TEST_STAND_ENV_FILE" ]] || {
         echo "ERROR: $TEST_STAND_ENV_FILE not found — run: ./dev-compose.sh test-stand up" >&2; return 1; }
@@ -1937,17 +2368,41 @@ cmd_test_stand() {
       # Two runners, one verb. On the host (default) the suite runs from
       # tests/ with uv. With --image, it runs the checkout's test source in a
       # browser runner image instead.
-      local image=""
+      local image="" trees=()
       while [[ $# -gt 0 ]]; do
         case "$1" in
           --image=*) image="${1#*=}"; shift ;;
           --image)
             [[ $# -ge 2 ]] || { echo "ERROR: --image requires a value." >&2; return 2; }
             image="$2"; shift 2 ;;
-          # Only a LEADING --image is ours; everything from here on is pytest's.
+          --tree=*) trees+=("${1#*=}"); shift ;;
+          --tree)
+            [[ $# -ge 2 ]] || { echo "ERROR: --tree requires a value." >&2; return 2; }
+            trees+=("$2"); shift 2 ;;
+          # Only LEADING options are ours; everything from here on is pytest's.
           *) break ;;
         esac
       done
+      [[ ${#trees[@]} -gt 0 ]] || trees=("$TEST_STAND_DEFAULT_TREE")
+      TEST_STAND_TREES=("${trees[@]}")
+
+      # An in-namespace runner reaches the gateway at its CONTAINER port, but a
+      # named instance pins the authenticator's redirect to its shifted HOST
+      # port, so the login would come back to an address nothing in that
+      # namespace answers. Not a limitation worth engineering around: --image
+      # exists for a locally built runner against the default stand.
+      if [[ -n "$image" && -n "$TEST_STAND_INSTANCE" ]]; then
+        echo "ERROR: --image cannot be aimed at --instance=$TEST_STAND_INSTANCE." >&2
+        echo "       The authenticator redirects the login to the instance's shifted HOST port," >&2
+        echo "       which a runner inside the gateway's namespace cannot reach. Run host-side instead:" >&2
+        echo "         ./dev-compose.sh test-stand test --instance=$TEST_STAND_INSTANCE" >&2
+        return 2
+      fi
+
+      [[ -f "$TEST_STAND_ENV_FILE" ]] || {
+        echo "ERROR: $TEST_STAND_ENV_FILE not found — this stand was never brought up." >&2
+        echo "       Run: ./dev-compose.sh test-stand up${TEST_STAND_INSTANCE:+ --instance=$TEST_STAND_INSTANCE}" >&2
+        return 1; }
 
       # Read the port from the stand's own env file rather than the ambient
       # shell, so a stand on a non-default GATEWAY_PORT is probed where it
@@ -1960,14 +2415,35 @@ cmd_test_stand() {
         echo "       Bring the stand up first: ./dev-compose.sh test-stand up" >&2
         return 1; }
 
+      local datapath=0 other=0 tree
+      for tree in "${trees[@]}"; do
+        case "$tree" in
+          tests/datapath|tests/datapath/*) datapath=1 ;;
+          *) other=1 ;;
+        esac
+      done
+      if (( datapath && other )); then
+        echo "ERROR: tests/datapath cannot share a run with another tree." >&2
+        echo "       Its dbt dependency conflicts with the default group. Run it alone:" >&2
+        echo "         ./dev-compose.sh test-stand test --tree=tests/datapath" >&2
+        return 2
+      fi
+
       if [[ -n "$image" ]]; then
+        if (( datapath )); then
+          echo "ERROR: tests/datapath cannot run from a runner image." >&2
+          echo "       The image installs the default dependency group and skips the sync" >&2
+          echo "       that would replace it. Run it host-side instead." >&2
+          return 2
+        fi
         test_stand_test_in_image "$image" "$gw_port" "$@"
         return $?
       fi
 
-      [[ -d tests/stand ]] || {
-        echo "ERROR: tests/stand does not exist yet (it is created in a later phase)." >&2
-        return 1; }
+      local tree
+      for tree in "${trees[@]}"; do
+        [[ -d "$tree" ]] || { echo "ERROR: test tree does not exist: $tree" >&2; return 1; }
+      done
       [[ -f tests/pyproject.toml ]] || {
         echo "ERROR: tests/pyproject.toml not found — the suite has no dependency set." >&2
         return 1; }
@@ -1978,7 +2454,19 @@ cmd_test_stand() {
         return 1; }
       # --frozen: run exactly the locked dependency set, never re-resolve
       # silently, so every runner stays identical.
-      uv run --project tests --frozen pytest tests/stand "$@"
+      #
+      # The instance is handed over as environment rather than as pytest flags:
+      # --stand-manifest is registered by tests/stand/conftest.py alone, so a
+      # run over any other tree would die on an unrecognised argument. Each of
+      # the three sits below an explicit flag in the suite's own precedence, so
+      # --base-url / --stand-manifest still win.
+      local uv_args=(--project tests --frozen)
+      (( datapath )) && uv_args+=(--group datapath --no-group dev)
+
+      INSIGHT_STAND_ENV_FILE="$TEST_STAND_ENV_FILE" \
+      INSIGHT_STAND_MANIFEST="$TEST_STAND_MANIFEST_FILE" \
+      INSIGHT_STAND_REALM_EXPORT="$TEST_STAND_REALM_FILE" \
+      uv run "${uv_args[@]}" pytest "${trees[@]}" "$@"
       ;;
 
     down)

@@ -37,6 +37,7 @@ by hand rather than generated.
 |---|---|---|---|
 | **L-1** | Cluster: nodes, CNI, OpenStack Cinder CSI driver, public DNS record | the cloud platform | assumed; deploy scripts hard-fail without the CSI driver, Insight is gated on DNS |
 | **L0** | Edge + PKI: Envoy Gateway (`GatewayClass`/`Gateway`/`EnvoyProxy`), cert-manager + the two-step `ClusterIssuer` chain, the `cinder` StorageClass | the deployment repository | named in `values.yaml`; never created here |
+| **L0** | The `insight-previews` namespace — where the release binds its experiments RBAC | the deployment repository | named in `inventory.yaml` (`namespaces.previews`); granted over by `ci-deployer-rbac.yaml`, never created here |
 | **L2** | Datastores under their operators (ClickHouse, MariaDB, Redis, Redpanda), plus Airbyte and Argo — each in its own namespace | the deployment repository | addressed by in-cluster Service DNS; never created here |
 | **L2** | Generate-once Secrets + the realm ConfigMap the release consumes by name | the deployment repository | referenced by name; `enabled: false` in `inventory.yaml` |
 | **L3** | **The umbrella release `insight` — every value in `values.yaml`** | **this directory** | **owned; changed by CI on every merge to `main`** |

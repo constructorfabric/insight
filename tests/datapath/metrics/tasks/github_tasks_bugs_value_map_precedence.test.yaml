@@ -1,0 +1,68 @@
+spec_version: 1
+description: >
+  Task Delivery - `tasks.bugs_fixed` for GITHUB, and the exact conditions under
+  which an operator's value-map row is allowed to beat the shared name lists.
+
+  Bronze issue types flow through `github__task_issuetypes` into
+  `silver.class_task_issuetypes`, where `issue_kind` prefers the operator's
+  live map row and only then falls back to the name lists; gold counts a
+  closure as a fixed bug when that kind says `bug`. The map row wins only
+  while it is alive: `is_deleted = 0` and `valid_from` not in the future.
+
+  Carol closes four issues, one per branch of that matrix. `Bug` carries a
+  live map row saying `other`, so the map overrules the name list and the
+  issue counts as a non-bug. `Defect` has no row at all, so the name list
+  claims it as a bug. `Regression` has a row saying `other`, but the row is
+  deleted, so the fallback claims it as a bug too. `Incident` has a row
+  saying `bug`, but the row starts in 2030, so it is ignored and no list
+  knows the name — the issue stays `unknown`, claimed by neither side.
+
+  Two bugs out of four closures, with one non-bug, is the only total all four
+  branches produce together, and each wrong branch moves it in a distinct
+  direction: a name list beating the live row makes it three, a dead or
+  future row honoured makes it one or three, and a lost fallback makes it
+  one.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/alice
+    - $ref: ../templates/people.yaml#/templates/bob
+    - $ref: ../templates/people.yaml#/templates/carol
+
+  bronze_github.commit_authors:
+    - { $ref: ../templates/github_task.yaml#/templates/commit_author, unique_key: gh-author-1003, _airbyte_raw_id: gh-author-1003, author_id: 1003, author_login: carol, author_email: carol@example.com }
+
+  config.task_field_roles:
+    - $ref: ../templates/github_task.yaml#/templates/role_state
+    - $ref: ../templates/github_task.yaml#/templates/role_assignees
+    - $ref: ../templates/github_task.yaml#/templates/role_type
+
+  config.task_value_map:
+    - $ref: ../templates/github_task.yaml#/templates/value_open
+    - $ref: ../templates/github_task.yaml#/templates/value_closed_completed
+    # Live row overruling the bug-name list; `Defect` deliberately has no row.
+    - { $ref: ../templates/github_task.yaml#/templates/value_open, field_id: type, value_id: IT_bug, unique_key: gh-value-type-bug, canonical_value: other, value_display: Bug }
+    # Deleted row: says `other`, must be ignored in favour of the name list.
+    - { $ref: ../templates/github_task.yaml#/templates/value_open, field_id: type, value_id: IT_regression, unique_key: gh-value-type-regression, canonical_value: other, value_display: Regression, is_deleted: 1 }
+    # Future row: says `bug`, must be ignored; no list knows `Incident`.
+    - { $ref: ../templates/github_task.yaml#/templates/value_open, field_id: type, value_id: IT_incident, unique_key: gh-value-type-incident, canonical_value: bug, value_display: Incident, valid_from: "2030-01-01 00:00:00.000" }
+
+  bronze_github.issue_types:
+    - $ref: ../templates/github_task.yaml#/templates/issue_type_bug
+    - $ref: ../templates/github_task.yaml#/templates/issue_type_defect
+    - { $ref: ../templates/github_task.yaml#/templates/issue_type_task, unique_key: gh-type-regression, _airbyte_raw_id: gh-type-regression, issue_type_id: IT_regression, issue_type_name: Regression, description: A previously working behaviour broke }
+    - { $ref: ../templates/github_task.yaml#/templates/issue_type_task, unique_key: gh-type-incident, _airbyte_raw_id: gh-type-incident, issue_type_id: IT_incident, issue_type_name: Incident, description: An unplanned interruption }
+
+  bronze_github.issue_fields: []
+
+  bronze_github.issues:
+    - { $ref: ../templates/github_task.yaml#/templates/issue, id: 1, number: 1, unique_key: gh-issue-1, assignee_logins: carol, assignee_ids: "1003", author_id: 1003, issue_type: Bug, issue_type_id: IT_bug }
+    - { $ref: ../templates/github_task.yaml#/templates/issue, id: 2, number: 2, unique_key: gh-issue-2, assignee_logins: carol, assignee_ids: "1003", author_id: 1003, issue_type: Defect, issue_type_id: IT_defect }
+    - { $ref: ../templates/github_task.yaml#/templates/issue, id: 3, number: 3, unique_key: gh-issue-3, assignee_logins: carol, assignee_ids: "1003", author_id: 1003, issue_type: Regression, issue_type_id: IT_regression }
+    - { $ref: ../templates/github_task.yaml#/templates/issue, id: 4, number: 4, unique_key: gh-issue-4, assignee_logins: carol, assignee_ids: "1003", author_id: 1003, issue_type: Incident, issue_type_id: IT_incident }
+
+  bronze_github.issue_timeline_events:
+    - { $ref: ../templates/github_task.yaml#/templates/closed_event, unique_key: gh-ev-1, event_id: CE_1, item_number: 1, actor_id: 1003 }
+    - { $ref: ../templates/github_task.yaml#/templates/closed_event, unique_key: gh-ev-2, event_id: CE_2, item_number: 2, actor_id: 1003 }
+    - { $ref: ../templates/github_task.yaml#/templates/closed_event, unique_key: gh-ev-3, event_id: CE_3, item_number: 3, actor_id: 1003 }
+    - { $ref: ../templates/github_task.yaml#/templates/closed_event, unique_key: gh-ev-4, event_id: CE_4, item_number: 4, actor_id: 1003 }

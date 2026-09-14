@@ -174,6 +174,7 @@ struct IssueHeaderRow {
     insight_source_id: String,
     jira_id: String,
     id_readable: String,
+    title: Option<String>,
     created_ms: i64,
     reporter_id: Option<String>,
 }
@@ -202,9 +203,13 @@ pub async fn fetch_all_snapshots(
             // FINAL forces ReplacingMergeTree merges on read. Bronze `jira_issue` is
             // append-only (Airbyte destinationSyncMode='append'); without FINAL the reader
             // can see multiple unmerged rows per issue when syncs overlap with merges.
+            // INVARIANT: despite its name, `custom_fields_json` holds the issue's WHOLE
+            // `fields` object (connector.yaml promotes `record['fields'] | tojson`), so the
+            // summary is a plain member of it and needs no promoted bronze column.
             "SELECT COALESCE(source_id, '')                 AS insight_source_id, \
                     COALESCE(toString(jira_id), '')         AS jira_id, \
                     COALESCE(toString(id_readable), '')     AS id_readable, \
+                    nullIf(JSONExtractString(COALESCE(custom_fields_json, ''), 'summary'), '') AS title, \
                     COALESCE(toInt64(toUnixTimestamp64Milli(parseDateTime64BestEffortOrNull(created, 3))), 0) AS created_ms, \
                     reporter_id \
              FROM bronze_jira.jira_issue AS ji FINAL \
@@ -225,6 +230,7 @@ pub async fn fetch_all_snapshots(
                 insight_source_id: h.insight_source_id,
                 issue_id: h.jira_id,
                 id_readable: h.id_readable,
+                title: h.title,
                 created_at: created,
                 reporter_id: h.reporter_id,
                 current_fields: HashMap::new(),
@@ -284,6 +290,43 @@ pub struct ChangelogRow {
     pub value_from_string: Option<String>,
     pub value_to: Option<String>,
     pub value_to_string: Option<String>,
+}
+
+#[derive(Row, Deserialize, Debug)]
+struct IssueKeyRow {
+    id_readable: String,
+}
+
+/// Issues the cursor below will actually stream — i.e. those carrying at least one event
+/// past their high-water mark.
+///
+/// INVARIANT: the predicate here must stay identical to `open_events_cursor`'s. It scopes
+/// `fetch_last_state_for`, and an issue the cursor streams but this misses would be diffed
+/// against an absent last state and re-emit values it already has.
+pub async fn issues_with_new_events(
+    cfg: &ChConfig,
+    insight_source_id: &str,
+) -> Result<Vec<String>, IoError> {
+    let client = cfg.client();
+    let rows: Vec<IssueKeyRow> = client
+        .query(
+            "SELECT DISTINCT e.id_readable AS id_readable \
+             FROM staging.jira_changelog_items e \
+             LEFT JOIN ( \
+                 SELECT id_readable, max(event_at) AS hwm \
+                 FROM staging.jira__task_field_history \
+                 WHERE data_source = 'jira' AND insight_source_id = ? \
+                 GROUP BY id_readable \
+             ) c ON e.id_readable = c.id_readable \
+             WHERE e.insight_source_id = ? \
+               AND (c.hwm IS NULL OR e.created_at > c.hwm)",
+        )
+        .bind(insight_source_id)
+        .bind(insight_source_id)
+        .fetch_all()
+        .await?;
+
+    Ok(rows.into_iter().map(|r| r.id_readable).collect())
 }
 
 /// Open a streaming cursor over new events — ordered by `(id_readable, event_at)` so callers

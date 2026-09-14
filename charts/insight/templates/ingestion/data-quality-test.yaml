@@ -2,8 +2,8 @@
 {{- /* Runs the data-quality check catalog — the dbt tests behind the
        `data_quality` selector (selectors.yml). Purpose-specific on purpose:
        no test selector to pass or forget, a bare submit is always a correct
-       DQ run. Each check emits one JSON DQ_FINDING line to stdout for the
-       central log store. */}}
+       DQ run. Each check emits one structured finding line through the
+       shared logger (stderr) for the central log store. */}}
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:
@@ -49,35 +49,18 @@ spec:
             value: {{ `"{{inputs.parameters.clickhouse_port}}"` }}
           - name: CLICKHOUSE_USER
             value: {{ `"{{inputs.parameters.clickhouse_user}}"` }}
+          # Install-wide log level knob from the platform ConfigMap (#3191).
+          - name: INSIGHT_LOG_LEVEL
+            valueFrom:
+              configMapKeyRef:
+                name: {{ .Release.Name }}-platform
+                key: INSIGHT_LOG_LEVEL
         source: |
           set -euo pipefail
           cd /ingestion/dbt
-          # Write profiles.yml from env vars via python so no user input is ever
-          # spliced into YAML or shell text (same sink-closing pattern as dbt-run).
-          python3 - <<'PY'
-          import os, yaml
-          profile = {
-              "ingestion": {
-                  "target": "k8s",
-                  "outputs": {
-                      "k8s": {
-                          "type": "clickhouse",
-                          "host": os.environ["CLICKHOUSE_HOST"],
-                          "port": int(os.environ["CLICKHOUSE_PORT"]),
-                          "schema": "silver",
-                          "user": os.environ["CLICKHOUSE_USER"],
-                          "password": os.environ["CLICKHOUSE_PASSWORD"],
-                          "secure": False,
-                          "send_receive_timeout": 1500,
-                          "query_limit": 0,
-                          "connect_timeout": 30,
-                      }
-                  }
-              }
-          }
-          with open("profiles.yml", "w") as f:
-              yaml.safe_dump(profile, f)
-          PY
+          # Writes profiles.yml from env vars so no user input is ever spliced
+          # into YAML or shell text (same sink-closing pattern as dbt-run).
+          python3 /ingestion/scripts/dbt_profiles.py
           # Data-quality checks are non-blocking: each carries severity=warn and
           # store_failures=true in its own config, so findings exit 0 (only an
           # operational error such as ClickHouse unreachable fails this step) and
@@ -85,40 +68,12 @@ spec:
           # dbt-run convention so the log collector parses dbt's events uniformly.
           # The `|| RC=$?` keeps the finding emitter below alive under `set -e`.
           RC=0
-          dbt test --profiles-dir . --selector data_quality --log-format json || RC=$?
-          # Emit one structured JSON data-quality finding per check to stdout for
-          # the log collector. Built from dbt's own artifacts (not its logger),
-          # so each line is a top-level JSON object — queryable as
-          # `| json | event="data_quality_finding"`. python3 reading files keeps
-          # the step free of any shell/text interpolation.
-          python3 - <<'PY'
-          import json
-          rr = json.load(open("target/run_results.json"))
-          nodes = json.load(open("target/manifest.json"))["nodes"]
-          run_id = rr["metadata"].get("invocation_id")
-          for r in rr["results"]:
-              n = nodes.get(r["unique_id"])
-              if not n or n.get("resource_type") != "test":
-                  continue
-              if "data_quality" not in (n.get("tags") or []):
-                  continue
-              cfg = n.get("config") or {}
-              meta = cfg.get("meta") or {}
-              print(json.dumps({
-                  "event": "data_quality_finding",
-                  "run_id": run_id,
-                  "check_id": n.get("name"),
-                  "title": meta.get("title", n.get("name")),
-                  "domain": meta.get("domain", "unknown"),
-                  "category": meta.get("category", "uncategorized"),
-                  "gate": cfg.get("severity"),
-                  "tier": meta.get("tier", "warn"),
-                  "status": r.get("status"),
-                  "rows_violating": r.get("failures") or 0,
-                  "duration_ms": round((r.get("execution_time") or 0) * 1000),
-                  "audit_relation": r.get("relation_name"),
-                  "remediation": meta.get("remediation"),
-              }))
-          PY
+          dbt test --profiles-dir . --selector data_quality --log-format json --log-level "${INSIGHT_LOG_LEVEL:-info}" || RC=$?
+          # Emit one finding per check through the shared logger (stderr, agreed
+          # line shape, #3191) — queryable as
+          # `| json | fields_event="data_quality_finding"` (Loki flattens nested
+          # keys with `fields_`). Built from dbt's own artifacts (not its logger);
+          # python3 reading files keeps the step free of shell/text interpolation.
+          python3 /ingestion/scripts/data_quality_findings.py
           exit "$RC"
 {{- end }}

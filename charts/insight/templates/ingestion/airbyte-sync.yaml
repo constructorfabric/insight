@@ -7,11 +7,11 @@ unescaped: they use `include` helpers and .Values references directly.
 
 SECURITY:
   Argo substitutes parameter refs as LITERAL TEXT. Splicing them
-  directly into Python source enables arbitrary code execution by any
+  directly into script source enables arbitrary code execution by any
   submitter — e.g. a crafted connection_id can become valid Python.
-  Mitigation: every workflow-time parameter is exposed to the Python
-  script via env vars (os.environ[...]); the Python source is a static,
-  parameter-free string.
+  Mitigation: every workflow-time parameter is exposed via env vars
+  (os.environ[...]); the trigger/poll entrypoints are static files baked
+  into the toolbox image (src/ingestion/scripts/airbyte_sync_*.py).
 */}}
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
@@ -144,9 +144,12 @@ spec:
         parameters:
           - name: connection_id
           - name: airbyte_url
-      script:
-        image: python:3.12-alpine
-        command: [python3]
+      container:
+        image: {{ required "ingestion.toolboxImage is required when ingestion.templates.enabled=true" .Values.ingestion.toolboxImage | quote }}
+        # IfNotPresent so dev clusters use the locally-built toolbox image loaded
+        # into Kind via `kind load docker-image` (same convention as dbt-run.yaml).
+        imagePullPolicy: IfNotPresent
+        command: [python3, /ingestion/scripts/airbyte_sync_trigger.py]
         env:
           # OAuth client_credentials against /api/v1/applications/token. The
           # legacy self-minted HMAC JWT is rejected by Airbyte 1.7+ (the
@@ -171,78 +174,12 @@ spec:
             value: {{ `"{{inputs.parameters.connection_id}}"` }}
           - name: AIRBYTE_URL
             value: {{ `"{{inputs.parameters.airbyte_url}}"` }}
-        source: |
-          import urllib.request, urllib.error, json, sys, os, ssl, base64, time
-          class FatalError(Exception):
-              # Permanent credential-read failure (RBAC missing, wrong
-              # airbyte.namespace, Secret deleted) — no point retrying.
-              pass
-          def airbyte_creds():
-              sa = "/var/run/secrets/kubernetes.io/serviceaccount"
-              with open(f"{sa}/token") as f:
-                  sa_token = f.read().strip()
-              ctx = ssl.create_default_context(cafile=f"{sa}/ca.crt")
-              ns, name = os.environ["AIRBYTE_AUTH_SECRET_NAMESPACE"], os.environ["AIRBYTE_AUTH_SECRET_NAME"]
-              req = urllib.request.Request(
-                  f"https://kubernetes.default.svc/api/v1/namespaces/{ns}/secrets/{name}",
-                  headers={"Authorization": f"Bearer {sa_token}"})
-              try:
-                  data = json.load(urllib.request.urlopen(req, timeout=30, context=ctx))["data"]
-              except urllib.error.HTTPError as e:
-                  if e.code in (401, 403, 404):
-                      raise FatalError(
-                          f"cannot read Secret {ns}/{name} via the K8s API: HTTP {e.code} "
-                          "(RBAC missing? wrong airbyte.namespace? Secret deleted?)") from None
-                  raise
-              return (base64.b64decode(data[os.environ["AIRBYTE_CLIENT_ID_KEY"]]).decode(),
-                      base64.b64decode(data[os.environ["AIRBYTE_CLIENT_SECRET_KEY"]]).decode())
-          def oauth_token():
-              client_id, client_secret = airbyte_creds()
-              body = json.dumps({
-                  "client_id":     client_id,
-                  "client_secret": client_secret,
-                  "grant_type":    "client_credentials",
-              }).encode()
-              req = urllib.request.Request(
-                  f"{os.environ['AIRBYTE_URL']}/api/v1/applications/token",
-                  data=body, headers={"Content-Type": "application/json"})
-              return json.load(urllib.request.urlopen(req, timeout=30))["access_token"]
-          # retryPolicy OnError only re-runs pod-level errors, not script
-          # exits, so transient token-mint blips (K8s apiserver or Airbyte
-          # hiccup) are retried here; FatalError aborts immediately.
-          for attempt in range(3):
-              try:
-                  token = oauth_token()
-                  break
-              except FatalError as e:
-                  print(f"FATAL: {e}", file=sys.stderr)
-                  sys.exit(1)
-              except Exception as e:
-                  if attempt == 2:
-                      raise
-                  print(f"transient error minting token: {e!r}; retrying in 10s", file=sys.stderr, flush=True)
-                  time.sleep(10)
-          headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
-          data = json.dumps({"connectionId": os.environ["CONNECTION_ID"]}).encode()
-          req = urllib.request.Request(f"{os.environ['AIRBYTE_URL']}/api/v1/connections/sync", data=data, headers=headers)
-          try:
-              resp = json.load(urllib.request.urlopen(req, timeout=120))
-          except urllib.error.HTTPError as e:
-              body = e.read().decode()
-              print(f"Airbyte API error {e.code}: {body}", file=sys.stderr)
-              sys.exit(1)
-          # Lifecycle event goes to STDERR: stdout is this step's Argo
-          # outputs.result (the bare job id consumed by poll-job) and must
-          # stay single-line. The collector ingests both streams alike.
-          print(json.dumps({
-              "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-              "level": "info",
-              "component": "airbyte-sync",
-              "event": "sync.triggered",
-              "connection_id": os.environ["CONNECTION_ID"],
-              "job_id": resp["job"]["id"],
-          }), file=sys.stderr, flush=True)
-          print(resp["job"]["id"])
+          # Install-wide log level knob from the platform ConfigMap (#3191).
+          - name: INSIGHT_LOG_LEVEL
+            valueFrom:
+              configMapKeyRef:
+                name: {{ .Release.Name }}-platform
+                key: INSIGHT_LOG_LEVEL
 
     - name: poll-job
       retryStrategy:
@@ -256,7 +193,7 @@ spec:
         parameters:
           - name: job_id
           - name: airbyte_url
-      # 48h absolute backstop only — the script below enforces a
+      # 48h absolute backstop only — the poll entrypoint enforces a
       # progress-based (idle) timeout, so a legitimate long sync
       # (youtrack issue_history initial full-refresh, hubspot archived
       # streams) can run as long as it is actually emitting records
@@ -264,9 +201,12 @@ spec:
       # ceiling: if the polling logic itself wedges or Airbyte returns
       # bytes-emitting churn forever, k8s still kills the pod.
       activeDeadlineSeconds: 172800
-      script:
-        image: python:3.12-alpine
-        command: [python3]
+      container:
+        image: {{ required "ingestion.toolboxImage is required when ingestion.templates.enabled=true" .Values.ingestion.toolboxImage | quote }}
+        # IfNotPresent so dev clusters use the locally-built toolbox image loaded
+        # into Kind via `kind load docker-image` (same convention as dbt-run.yaml).
+        imagePullPolicy: IfNotPresent
+        command: [python3, /ingestion/scripts/airbyte_sync_poll.py]
         env:
           # Same K8s-API credential read as trigger-sync (see the comment
           # there): the auth Secret may live in Airbyte's own namespace.
@@ -296,132 +236,10 @@ spec:
             value: {{ default 30  .Values.ingestion.airbyteSync.pollIntervalSeconds | quote }}
           - name: IDLE_THRESHOLD_SECONDS
             value: {{ default 1800 .Values.ingestion.airbyteSync.idleThresholdSeconds | quote }}
-        source: |
-          import urllib.request, urllib.error, json, time, sys, os, ssl, base64
-          class FatalError(Exception):
-              # Permanent credential-read failure (RBAC missing, wrong
-              # airbyte.namespace, Secret deleted). Distinguished from
-              # transient blips so the poll loop fails fast instead of
-              # logging "transient error" until activeDeadlineSeconds.
-              pass
-          def airbyte_creds():
-              sa = "/var/run/secrets/kubernetes.io/serviceaccount"
-              with open(f"{sa}/token") as f:
-                  sa_token = f.read().strip()
-              ctx = ssl.create_default_context(cafile=f"{sa}/ca.crt")
-              ns, name = os.environ["AIRBYTE_AUTH_SECRET_NAMESPACE"], os.environ["AIRBYTE_AUTH_SECRET_NAME"]
-              req = urllib.request.Request(
-                  f"https://kubernetes.default.svc/api/v1/namespaces/{ns}/secrets/{name}",
-                  headers={"Authorization": f"Bearer {sa_token}"})
-              try:
-                  data = json.load(urllib.request.urlopen(req, timeout=30, context=ctx))["data"]
-              except urllib.error.HTTPError as e:
-                  if e.code in (401, 403, 404):
-                      raise FatalError(
-                          f"cannot read Secret {ns}/{name} via the K8s API: HTTP {e.code} "
-                          "(RBAC missing? wrong airbyte.namespace? Secret deleted?)") from None
-                  raise
-              return (base64.b64decode(data[os.environ["AIRBYTE_CLIENT_ID_KEY"]]).decode(),
-                      base64.b64decode(data[os.environ["AIRBYTE_CLIENT_SECRET_KEY"]]).decode())
-          def oauth_token():
-              client_id, client_secret = airbyte_creds()
-              body = json.dumps({
-                  "client_id":     client_id,
-                  "client_secret": client_secret,
-                  "grant_type":    "client_credentials",
-              }).encode()
-              req = urllib.request.Request(
-                  f"{os.environ['AIRBYTE_URL']}/api/v1/applications/token",
-                  data=body, headers={"Content-Type": "application/json"})
-              return json.load(urllib.request.urlopen(req, timeout=30))["access_token"]
-
-          def attempt_progress(resp):
-              # Latest attempt's totalStats — emitted-by-source counters
-              # tick on every record/state message Airbyte sees, so they
-              # are the cheapest reliable progress signal (cheaper than
-              # streamStats, which is per-stream and grows).
-              attempts = resp.get("attempts") or []
-              if not attempts:
-                  return None
-              a = attempts[-1].get("attempt", {})
-              ts = a.get("totalStats") or {}
-              return (
-                  a.get("status"),
-                  int(ts.get("bytesEmitted")        or a.get("bytesSynced")   or 0),
-                  int(ts.get("recordsEmitted")      or a.get("recordsSynced") or 0),
-                  int(ts.get("stateMessagesEmitted") or 0),
-              )
-
-          job_id = int(os.environ["JOB_ID"])
-          airbyte_url = os.environ["AIRBYTE_URL"]
-          poll_interval = int(os.environ["POLL_INTERVAL_SECONDS"])
-          idle_threshold = int(os.environ["IDLE_THRESHOLD_SECONDS"])
-
-          t0 = time.time()
-          def emit_completed(status, exit_code):
-              # One structured terminal event per sync for the high-level
-              # "sync finished after N minutes, success/failed" view.
-              # duration_ms counts from poll start — the trigger step runs
-              # seconds earlier, so this tracks the sync wall-clock closely.
-              p = last_progress or (None, 0, 0, 0)
-              print(json.dumps({
-                  "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                  "level": "info" if exit_code == 0 else "error",
-                  "component": "airbyte-sync",
-                  "event": "sync.completed",
-                  "job_id": job_id,
-                  "status": status,
-                  "duration_ms": int((time.time() - t0) * 1000),
-                  "bytes": p[1],
-                  "records": p[2],
-              }), flush=True)
-
-          last_progress = None
-          last_progress_at = time.time()
-          while True:
-              # Token TTL is short (~minutes); re-mint per loop iteration.
-              # Wrap the network calls (token mint + jobs/get): a transient blip
-              # (token endpoint hiccup, timeout, 5xx) must retry the loop, not
-              # crash the watchdog. Previously an unhandled exception here exited
-              # 1 and killed the poll — so the idle-stuck-job detector below never
-              # ran, and a hung Airbyte job sat "running" indefinitely.
-              try:
-                  token = oauth_token()
-                  headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
-                  req = urllib.request.Request(
-                      f"{airbyte_url}/api/v1/jobs/get",
-                      data=json.dumps({"id": job_id}).encode(),
-                      headers=headers)
-                  resp = json.load(urllib.request.urlopen(req, timeout=30))
-              except FatalError as e:
-                  print(f"FAIL: {e}", flush=True)
-                  emit_completed("error", 1)
-                  sys.exit(1)
-              except Exception as e:
-                  print(f"poll: transient error fetching job status: {e!r}; retrying in {poll_interval}s", flush=True)
-                  time.sleep(poll_interval)
-                  continue
-              status = resp["job"]["status"]
-              progress = attempt_progress(resp)
-              now = time.time()
-              if progress is not None and progress != last_progress:
-                  last_progress = progress
-                  last_progress_at = now
-                  print(f"Job {job_id} status={status} bytes={progress[1]} records={progress[2]} states={progress[3]}", flush=True)
-              else:
-                  idle_for = int(now - last_progress_at)
-                  print(f"Job {job_id} status={status} no-progress-for={idle_for}s threshold={idle_threshold}s", flush=True)
-                  if idle_for > idle_threshold:
-                      print(f"FAIL: Airbyte job has not emitted any record/byte/state for {idle_for}s (threshold {idle_threshold}s). Treating as stuck.", flush=True)
-                      emit_completed("stuck", 2)
-                      sys.exit(2)
-              if status == "succeeded":
-                  print("Sync complete")
-                  emit_completed("succeeded", 0)
-                  sys.exit(0)
-              elif status in ("failed", "cancelled"):
-                  print(f"Sync failed: {status}")
-                  emit_completed(status, 1)
-                  sys.exit(1)
-              time.sleep(poll_interval)
+          # Install-wide log level knob from the platform ConfigMap (#3191).
+          - name: INSIGHT_LOG_LEVEL
+            valueFrom:
+              configMapKeyRef:
+                name: {{ .Release.Name }}-platform
+                key: INSIGHT_LOG_LEVEL
 {{- end }}

@@ -13,6 +13,12 @@
 -- merge_commit_hash resolves to a commit row), falling back to the PR
 -- closed_on week. This avoids commit-week vs PR-close-week drift.
 --
+-- WORKAROUND: Bitbucket Cloud reports `merge_commit.hash` as a 12-character
+-- prefix, so the equality below resolves nothing and every Bitbucket row takes
+-- the fallback week. The gold path resolves it with
+-- `git_merge_result_match`; here the join feeds an aggregate, so the same
+-- change needs a form that cannot match two commits at once.
+--
 -- Why anchor + LEFT JOINs instead of FULL OUTER JOIN ... USING:
 -- ClickHouse 25.3 fills unmatched per-side columns with the column's default
 -- value (empty string for non-Nullable String, 1970-01-01 for Date) instead

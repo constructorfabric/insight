@@ -19,7 +19,11 @@ name: chatgpt-team
 # 2.1.0: emits the new class-contract column seat_status, constant NULL — this
 #   source reports no seat lifecycle state. MINOR per ADR-0015: a full refresh
 #   would reproduce the same NULLs, so there is nothing to re-materialize.
-version: "2.1.0"
+# 2.2.0: the shared day cursor loses its end bound, so its final request window
+#   stays inside one day and a day's rows stop landing under the previous date.
+#   MINOR per ADR-0015: the manifest has to reach Airbyte, and a full refresh
+#   would not undo the rows already stored under the wrong date.
+version: "2.2.0"
 # Daily at 04:00 UTC — off-peak. The customer's proxy runs a single browser
 # instance, so we avoid scheduling chatgpt-team next to anything else that
 # may also hit it (same rationale as claude-team).

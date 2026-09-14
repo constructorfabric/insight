@@ -60,9 +60,10 @@ const SUMMARY = {
   since: "2026-08-01",
   until: "2026-08-03",
   totals: { visits: 5, visitors: 2, page_views: 9 },
+  // A day nobody opened the product is ABSENT: the server groups by the days it
+  // has rows for and fills nothing, so a zero row is a shape it cannot emit.
   by_day: [
     { day: "2026-08-01", visits: 3, visitors: 2 },
-    { day: "2026-08-02", visits: 0, visitors: 0 },
     { day: "2026-08-03", visits: 2, visitors: 1 },
   ],
   by_person: [],
@@ -224,6 +225,19 @@ describe("PlatformUsage", () => {
       "2026-08-02",
       "2026-08-03",
     ]);
+  });
+
+  // #2573 scenario 5 — the server omits a quiet day entirely, so this zero is
+  // the component's own doing.
+  it("draws a day nobody used the product as a zero", () => {
+    render(<PlatformUsage />);
+
+    const rows = JSON.parse(
+      screen.getByTestId("plot").getAttribute("data-rows") ?? "[]",
+    ) as Array<{ day: string; visits: number }>;
+    const quiet = rows.find((row) => row.day === "2026-08-02");
+
+    expect(quiet).toEqual({ day: "2026-08-02", visits: 0, visitors: 0 });
   });
 
   it("reads feedback over the very window the numbers above it cover", () => {

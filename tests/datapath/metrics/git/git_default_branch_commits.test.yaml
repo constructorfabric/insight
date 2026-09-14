@@ -1,0 +1,87 @@
+spec_version: 1
+description: >
+  Metric: git.default_branch_commits — authored commits that reached the
+  repository's default branch, #3047.
+
+  How it's computed (bronze → silver → gold):
+    • bronze: the commits each connector collected, the requests the
+      repository merged, and the commit list each request reports
+    • silver: one class row per commit, per request and per request-commit link
+    • gold:   a commit counts unless it is DERIVED, and its scope is the
+      connector's flag OR membership of the default-branch set, which a merged
+      request into the default branch confers on every commit it links
+
+  The derived rule itself already has owners: `git_commit_work_identity`,
+  `git_squash_content_identity` and `git_squash_result_bitbucket` all assert it
+  on the unscoped `git.commits`. None of their fixtures carries a
+  default-branch flag or a branches row, so none can say how the rule and the
+  branch scope COMPOSE — which is the whole question here, because dropping a
+  squash removes a commit that was on the default branch, and the count only
+  survives that if the links it stood on were promoted in its place.
+
+  Cases: the composition, over four repositories that differ only in what the
+  merged request reports; the repository split that separates them; and an
+  empty window.
+
+  The API rejects a metric that requests the same view twice, so the split
+  needs its own case.
+
+  Fixture — erin only. Every branch commit's flag says it did not land, every
+  squash's flag says it did, and every request merged into `main`.
+    * acme/full    — both linked commits collected. The squash is derived and
+                     drops, and the count survives only because the request
+                     promoted the two originals in its place. Reads 2.
+    * acme/partial — one of three linked commits collected. The squash still
+                     stands for the two that are missing, so it stays beside
+                     the promoted original. Reads 2.
+    * acme/none    — the request links two commits and neither was collected.
+                     The squash is all that survives of them. Reads 1. This is
+                     the control: its value is the one that does not depend on
+                     the heal, so it holds when the other three move.
+    * acme/nolist  — a merged request that reports NO commit list at all. A
+                     rule reading "every linked commit was collected" over an
+                     empty list answers yes, and would drop a squash that
+                     stands for work nothing else records. Reads 1: a guard,
+                     not a state.
+
+  So the metric reads 2 + 2 + 1 + 1 = 6. Never dropping a squash reads 7;
+  dropping one whenever its request merged reads 4; and losing the request
+  heal reads 3 — no single wrong rule produces 6.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/erin
+
+  bronze_github.branches:
+    - {$ref: ../templates/git_activity.yaml#/templates/base, unique_key: dbc-br-full, repository: "https://github.com/acme/full.git", name: main, is_default: true}
+    - {$ref: ../templates/git_activity.yaml#/templates/base, unique_key: dbc-br-partial, repository: "https://github.com/acme/partial.git", name: main, is_default: true}
+    - {$ref: ../templates/git_activity.yaml#/templates/base, unique_key: dbc-br-none, repository: "https://github.com/acme/none.git", name: main, is_default: true}
+    - {$ref: ../templates/git_activity.yaml#/templates/base, unique_key: dbc-br-nolist, repository: "https://github.com/acme/nolist.git", name: main, is_default: true}
+
+  bronze_github.commits:
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: dbc-f1, repository: "https://github.com/acme/full.git", sha: dbc-f1, authored_date: "2026-10-01T09:00:00Z", committed_date: "2026-10-01T09:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, is_in_default_branch: false}
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: dbc-f2, repository: "https://github.com/acme/full.git", sha: dbc-f2, authored_date: "2026-10-01T09:10:00Z", committed_date: "2026-10-01T09:10:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, is_in_default_branch: false}
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: dbc-fs, repository: "https://github.com/acme/full.git", sha: dbc-fs, authored_date: "2026-10-01T09:20:00Z", committed_date: "2026-10-01T09:20:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, is_in_default_branch: true}
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: dbc-p1, repository: "https://github.com/acme/partial.git", sha: dbc-p1, authored_date: "2026-10-01T09:30:00Z", committed_date: "2026-10-01T09:30:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, is_in_default_branch: false}
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: dbc-ps, repository: "https://github.com/acme/partial.git", sha: dbc-ps, authored_date: "2026-10-01T09:40:00Z", committed_date: "2026-10-01T09:40:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, is_in_default_branch: true}
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: dbc-ns, repository: "https://github.com/acme/none.git", sha: dbc-ns, authored_date: "2026-10-01T09:50:00Z", committed_date: "2026-10-01T09:50:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, is_in_default_branch: true}
+    - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: dbc-xs, repository: "https://github.com/acme/nolist.git", sha: dbc-xs, authored_date: "2026-10-01T10:00:00Z", committed_date: "2026-10-01T10:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, is_in_default_branch: true}
+
+  bronze_github.pull_requests:
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: dbc-pr-full, repo_full_name: acme/full, number: 81, author_login: erin, base_ref: main, closed_at: "2026-10-01T11:00:00Z", merged_at: "2026-10-01T11:00:00Z", merge_commit_sha: dbc-fs}
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: dbc-pr-partial, repo_full_name: acme/partial, number: 82, author_login: erin, base_ref: main, closed_at: "2026-10-01T11:10:00Z", merged_at: "2026-10-01T11:10:00Z", merge_commit_sha: dbc-ps}
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: dbc-pr-none, repo_full_name: acme/none, number: 83, author_login: erin, base_ref: main, closed_at: "2026-10-01T11:20:00Z", merged_at: "2026-10-01T11:20:00Z", merge_commit_sha: dbc-ns}
+    # Merged like the others, and reports no commit list at all.
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: dbc-pr-nolist, repo_full_name: acme/nolist, number: 84, author_login: erin, base_ref: main, closed_at: "2026-10-01T11:30:00Z", merged_at: "2026-10-01T11:30:00Z", merge_commit_sha: dbc-xs}
+
+  bronze_github.pull_request_commits:
+    - {$ref: ../templates/git_activity.yaml#/templates/base, unique_key: dbc-lnk-f1, sha: dbc-f1, pull_number: 81, repo_full_name: acme/full}
+    - {$ref: ../templates/git_activity.yaml#/templates/base, unique_key: dbc-lnk-f2, sha: dbc-f2, pull_number: 81, repo_full_name: acme/full}
+    - {$ref: ../templates/git_activity.yaml#/templates/base, unique_key: dbc-lnk-p1, sha: dbc-p1, pull_number: 82, repo_full_name: acme/partial}
+    # Two shas that name no collected commit: the branch they came from was
+    # gone before the connector reached it.
+    - {$ref: ../templates/git_activity.yaml#/templates/base, unique_key: dbc-lnk-p2, sha: dbc-p2, pull_number: 82, repo_full_name: acme/partial}
+    - {$ref: ../templates/git_activity.yaml#/templates/base, unique_key: dbc-lnk-p3, sha: dbc-p3, pull_number: 82, repo_full_name: acme/partial}
+    - {$ref: ../templates/git_activity.yaml#/templates/base, unique_key: dbc-lnk-n1, sha: dbc-n1, pull_number: 83, repo_full_name: acme/none}
+    - {$ref: ../templates/git_activity.yaml#/templates/base, unique_key: dbc-lnk-n2, sha: dbc-n2, pull_number: 83, repo_full_name: acme/none}
+

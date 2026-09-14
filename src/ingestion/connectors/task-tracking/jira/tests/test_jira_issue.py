@@ -68,7 +68,11 @@ def test_full_record_read(http_mocker: HttpMocker) -> None:
     assert len(output.records) == 1
     assert not output.errors
     rec = output.records[0].record.data
-    assert rec["unique_key"] == (f"{config['insight_tenant_id']}-{config['insight_source_id']}-PROJ1-1")
+    # Keyed on the issue's immutable id, never on its key: Jira renames the key
+    # when an issue moves between projects, and bronze replaces rows by this
+    # column — a renamed issue keyed on "PROJ1-1" would insert a second row
+    # instead of replacing its own.
+    assert rec["unique_key"] == (f"{config['insight_tenant_id']}-{config['insight_source_id']}-10001")
     assert rec["jira_id"] == 10001
     assert rec["id_readable"] == "PROJ1-1"
     assert rec["project_key"] == "PROJ1"

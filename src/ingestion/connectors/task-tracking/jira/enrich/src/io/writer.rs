@@ -19,7 +19,7 @@ use serde::Serialize;
 #[derive(Row, Serialize, Debug)]
 pub struct FieldHistoryInsert {
     /// Project-wide convention key for ReplacingMergeTree dedup. Synthesized from
-    /// (insight_source_id, data_source, id_readable, field_id, event_id) — these
+    /// (insight_source_id, data_source, issue_id, field_id, event_id) — these
     /// five components together uniquely identify one (issue × field × event)
     /// per ADR-005. Same formula as connector AddFields would produce if the
     /// staging table were Airbyte-managed.
@@ -28,6 +28,7 @@ pub struct FieldHistoryInsert {
     pub data_source: String,
     pub issue_id: String,
     pub id_readable: String,
+    pub title: Option<String>,
     pub event_id: String,
     #[serde(with = "clickhouse::serde::chrono::datetime64::millis")]
     pub event_at: DateTime<Utc>,
@@ -58,7 +59,7 @@ impl From<FieldHistoryRecord> for FieldHistoryInsert {
         let data_source = data_source_str(r.data_source);
         let unique_key = format!(
             "{}-{}-{}-{}-{}",
-            r.insight_source_id, data_source, r.id_readable, r.field_id, r.event_id
+            r.insight_source_id, data_source, r.issue_id, r.field_id, r.event_id
         );
         Self {
             unique_key,
@@ -66,6 +67,7 @@ impl From<FieldHistoryRecord> for FieldHistoryInsert {
             data_source: data_source.into(),
             issue_id: r.issue_id,
             id_readable: r.id_readable,
+            title: r.title,
             event_id: r.event_id,
             event_at: r.event_at,
             event_kind: event_kind_enum(r.event_kind),

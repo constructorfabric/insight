@@ -7,7 +7,9 @@
 //! statement. Defense in depth: the `presentation_ro` grants (#1963) are the
 //! real boundary, except for the databases named in [`ADMIN_ONLY_DATABASES`].
 
-use sqlparser::ast::Statement;
+use std::ops::ControlFlow;
+
+use sqlparser::ast::{Query, Statement, Visit as _, Visitor};
 use sqlparser::dialect::ClickHouseDialect;
 use sqlparser::keywords::Keyword;
 use sqlparser::parser::Parser;
@@ -61,6 +63,20 @@ const DENIED_TABLE_FUNCTIONS: &[&str] = &[
 /// reader to check.
 const ADMIN_ONLY_DATABASES: &[&str] = &["product_usage"];
 
+/// Admin-only database FAMILIES, matched by prefix.
+///
+/// Bronze holds raw, untransformed connector payloads. `presentation_ro` was
+/// deliberately granted silver and up — until the ingestion-intensity ops view
+/// (`src/ingestion/gold/bronze_insert_events.sql`) required bronze SELECT, which
+/// `provision-presentation-access.sh` now grants per database. That grant is
+/// what makes the ops surface work, and it also means the grants no longer keep
+/// caller-authored SQL out of bronze. This does.
+///
+/// A prefix rather than a name because bronze databases are created per
+/// connector: any static list would go stale the next time one is deployed, in
+/// the direction that silently permits.
+const ADMIN_ONLY_DATABASE_PREFIXES: &[&str] = &["bronze_"];
+
 /// Reject anything that is not a single read statement (`SELECT`/`WITH`).
 /// Returns a short, user-facing reason on rejection.
 pub fn validate_single_select(sql: &str) -> Result<(), String> {
@@ -73,6 +89,62 @@ pub fn validate_single_select(sql: &str) -> Result<(), String> {
             _ => Err("query must be a single SELECT or WITH statement".to_owned()),
         },
         _ => Err("only one statement is allowed on the query path".to_owned()),
+    }
+}
+
+/// Gate SQL submitted through the MCP explorer.
+pub fn validate_mcp_sql(sql: &str) -> Result<(), String> {
+    let statements = parse_read_statements(sql)?;
+
+    let query = match statements.as_slice() {
+        [] => return Err("query is empty".to_owned()),
+        [Statement::Query(query)] => query,
+        [_] => return Err("query must be a single SELECT or WITH statement".to_owned()),
+        _ => return Err("only one statement is allowed on the query path".to_owned()),
+    };
+
+    match query_output_control(query) {
+        Some(QueryOutputControl::Settings) => {
+            return Err("query-level SETTINGS are not allowed".to_owned());
+        }
+        Some(QueryOutputControl::Format) => {
+            return Err("query-level FORMAT is not allowed".to_owned());
+        }
+        None => {}
+    }
+    if let Some(name) = first_denied_table_function(sql) {
+        return Err(format!("table function `{name}` is not allowed"));
+    }
+
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy)]
+enum QueryOutputControl {
+    Settings,
+    Format,
+}
+
+struct QueryOutputControlVisitor;
+
+impl Visitor for QueryOutputControlVisitor {
+    type Break = QueryOutputControl;
+
+    fn pre_visit_query(&mut self, query: &Query) -> ControlFlow<Self::Break> {
+        if query.settings.is_some() {
+            return ControlFlow::Break(QueryOutputControl::Settings);
+        }
+        if query.format_clause.is_some() {
+            return ControlFlow::Break(QueryOutputControl::Format);
+        }
+        ControlFlow::Continue(())
+    }
+}
+
+fn query_output_control(query: &Query) -> Option<QueryOutputControl> {
+    match query.visit(&mut QueryOutputControlVisitor) {
+        ControlFlow::Break(control) => Some(control),
+        ControlFlow::Continue(()) => None,
     }
 }
 
@@ -166,13 +238,52 @@ fn ends_table_factor(token: &Token) -> bool {
 /// Return the first admin-only database `sql` names, if any. Matched wherever
 /// the name appears, not only in qualified-name position: a table function takes
 /// its database as a string argument.
-pub fn admin_only_database(sql: &str) -> Option<&'static str> {
+pub fn admin_only_database(sql: &str) -> Option<String> {
     let lowered = sql.to_ascii_lowercase();
 
-    ADMIN_ONLY_DATABASES
+    if let Some(database) = ADMIN_ONLY_DATABASES
         .iter()
         .copied()
         .find(|database| names(&lowered, database))
+    {
+        return Some(database.to_owned());
+    }
+
+    admin_only_prefixed_database(&lowered)
+}
+
+/// The first database from an admin-only prefix family that `lowered` names.
+///
+/// Scanned like [`names`] — anywhere, not only in qualified-name position — then
+/// extended forward over the rest of the identifier, so the refusal can name the
+/// database the caller actually wrote rather than the prefix it matched.
+///
+/// Unlike [`names`], a hit preceded by `.` is skipped: a qualified table name
+/// is always in that position and a database name never is, so
+/// `silver.bronze_backed_events` is a silver table and not a bronze database.
+/// Every way of writing the database itself — bare, quoted, back-quoted, or as a
+/// table function's string argument — leaves something other than `.` in front.
+///
+/// Errs toward refusing otherwise: a column or alias merely *named*
+/// `bronze_something` trips this too. That is the same trade [`names`] already
+/// makes, and the safe direction for a gate standing in for a grant.
+fn admin_only_prefixed_database(lowered: &str) -> Option<String> {
+    let bytes = lowered.as_bytes();
+
+    ADMIN_ONLY_DATABASE_PREFIXES.iter().find_map(|prefix| {
+        lowered.match_indices(prefix).find_map(|(at, hit)| {
+            let before = at.checked_sub(1).map(|index| bytes[index]);
+            if before.is_some_and(|byte| continues_identifier(byte) || byte == b'.') {
+                return None;
+            }
+            let mut end = at + hit.len();
+            while bytes.get(end).copied().is_some_and(continues_identifier) {
+                end += 1;
+            }
+            // The bare prefix is not a database name.
+            (end > at + hit.len()).then(|| lowered[at..end].to_owned())
+        })
+    })
 }
 
 /// Whether `lowered` carries `name` as a whole identifier — a longer name that
@@ -222,7 +333,55 @@ fn first_denied_table_function(sql: &str) -> Option<String> {
 mod tests {
     use super::admin_only_database as admin_only;
     use super::validate_custom_observation_sql as custom;
+    use super::validate_mcp_sql as mcp;
     use super::validate_single_select as check;
+
+    #[test]
+    fn mcp_gate_rejects_query_output_controls() {
+        assert_eq!(
+            mcp("SELECT * FROM system.one SETTINGS max_threads = 1"),
+            Err("query-level SETTINGS are not allowed".to_owned())
+        );
+        assert_eq!(
+            mcp("SELECT * FROM system.one FORMAT JSON"),
+            Err("query-level FORMAT is not allowed".to_owned())
+        );
+    }
+
+    #[test]
+    fn mcp_gate_rejects_settings_in_nested_queries() {
+        for sql in [
+            "WITH rows AS (SELECT id FROM silver.events SETTINGS max_threads = 1) SELECT * FROM rows",
+            "SELECT * FROM (SELECT id FROM silver.events SETTINGS max_threads = 1)",
+        ] {
+            assert_eq!(
+                mcp(sql),
+                Err("query-level SETTINGS are not allowed".to_owned()),
+                "should reject: {sql}"
+            );
+        }
+    }
+
+    #[test]
+    fn mcp_gate_rejects_external_functions_and_non_queries() {
+        assert_eq!(
+            mcp("SELECT * FROM file('/etc/passwd', CSV)"),
+            Err("table function `file` is not allowed".to_owned())
+        );
+        assert!(mcp("DROP TABLE silver.events").is_err());
+        assert!(mcp("SELECT 1; SELECT 2").is_err());
+    }
+
+    #[test]
+    fn mcp_gate_accepts_nested_read_queries() {
+        for sql in [
+            "SELECT name FROM system.tables LIMIT 5",
+            "WITH rows AS (SELECT id FROM silver.events) SELECT * FROM rows",
+            "SELECT * FROM (SELECT 1 AS value)",
+        ] {
+            assert!(mcp(sql).is_ok(), "should accept: {sql}");
+        }
+    }
 
     #[test]
     fn a_read_of_the_usage_event_store_is_admin_only() {
@@ -234,10 +393,51 @@ mod tests {
         ] {
             assert_eq!(
                 admin_only(sql),
-                Some("product_usage"),
+                Some("product_usage".to_owned()),
                 "should be admin-only: {sql:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_read_of_raw_bronze_is_admin_only() {
+        // `presentation_ro` can read bronze now (the ingestion ops view needs
+        // it), so the grants no longer refuse this and the gate must.
+        for (sql, expected) in [
+            ("SELECT * FROM bronze_jira.issues", "bronze_jira"),
+            ("SELECT * FROM Bronze_Jira.Issues", "bronze_jira"),
+            ("SELECT * FROM `bronze_slack.messages`", "bronze_slack"),
+            // A connector nobody has deployed yet is covered too — that is why
+            // the family is a prefix and not a list.
+            (
+                "SELECT * FROM bronze_not_yet_invented.things",
+                "bronze_not_yet_invented",
+            ),
+        ] {
+            assert_eq!(
+                admin_only(sql),
+                Some(expected.to_owned()),
+                "should be admin-only: {sql:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_bare_bronze_prefix_is_not_a_database() {
+        // Nothing to refuse: `bronze_` names no relation.
+        assert_eq!(admin_only("SELECT bronze_ FROM silver.events"), None);
+    }
+
+    #[test]
+    fn a_custom_observation_source_may_not_read_raw_bronze() {
+        // The custom-source path has no reader to check, so it refuses outright.
+        let refusal = custom("SELECT ts FROM bronze_jira.issues").err();
+        assert!(
+            refusal
+                .as_deref()
+                .is_some_and(|reason| reason.contains("bronze_jira")),
+            "a bronze read should be refused, naming the database: {refusal:?}"
+        );
     }
 
     #[test]
@@ -248,6 +448,9 @@ mod tests {
             "SELECT person_id FROM identity.identity_persons",
             "SELECT usage_events FROM silver.events",
             "SELECT product_usage_score FROM silver.events",
+            // Silver is where a bronze stream lands after transformation; the
+            // prefix must not reach across into it.
+            "SELECT * FROM silver.bronze_backed_events",
         ] {
             assert_eq!(admin_only(sql), None, "should need no role: {sql:?}");
         }

@@ -9,7 +9,6 @@ import type { PortalSearch } from "@/lib/portal/portal-search";
 
 let currentPath = "/";
 let currentSearch: PortalSearch = {};
-let legacyShell = false;
 
 vi.mock("@tanstack/react-router", () => ({
   Link: ({
@@ -56,10 +55,6 @@ vi.mock("@/components/sidebar-settings", () => ({
 
 vi.mock("@/components/theme-switcher", () => ({
   ThemeSwitcher: () => null,
-}));
-
-vi.mock("@/lib/portal/portal-store", () => ({
-  readLegacyShell: () => legacyShell,
 }));
 
 const mocks = vi.hoisted(() => ({ openFeedback: vi.fn() }));
@@ -125,12 +120,11 @@ function linkOf(label: string): HTMLElement {
 beforeEach(() => {
   currentPath = "/";
   currentSearch = {};
-  legacyShell = false;
   mocks.openFeedback.mockClear();
 });
 
 describe("AppSidebarFooter", () => {
-  it("names the portal's Manage surfaces while the portal is on", () => {
+  it("names the portal's Manage surfaces", () => {
     render(<AppSidebarFooter />);
 
     expect(linkOf("Metric catalog")).toHaveAttribute("data-to", "/portal");
@@ -143,14 +137,6 @@ describe("AppSidebarFooter", () => {
       "data-search",
       "zone=manage&item=whats-new&acct=undefined"
     );
-  });
-
-  it("names the standalone screens under the legacy-shell hatch", () => {
-    legacyShell = true;
-    render(<AppSidebarFooter />);
-
-    expect(linkOf("Metric catalog")).toHaveAttribute("data-to", "/metrics");
-    expect(linkOf("What's new")).toHaveAttribute("data-to", "/whats-new");
   });
 
   it("marks the Manage surface the portal is showing", () => {
@@ -174,15 +160,6 @@ describe("AppSidebarFooter", () => {
     currentSearch = { zone: "manage", item: "whats-new" };
     render(<AppSidebarFooter />);
 
-    expect(entry("What's new")).toHaveAttribute("data-active", "false");
-  });
-
-  it("marks the standalone screen it is standing on under the hatch", () => {
-    legacyShell = true;
-    currentPath = "/metrics";
-    render(<AppSidebarFooter />);
-
-    expect(entry("Metric catalog")).toHaveAttribute("data-active", "true");
     expect(entry("What's new")).toHaveAttribute("data-active", "false");
   });
 

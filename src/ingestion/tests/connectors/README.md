@@ -81,8 +81,8 @@ written to the GitHub job summary on CI).
   `load_fixture(__file__, "name.json", **overrides)` and override only the
   fields the case exercises. Shapes come from real API payloads, values are
   synthetic — never commit real customer data, tokens, or hostnames.
-- The `airbyte-cdk` pin must match the `version:` header of the nocode
-  manifests (currently the 6.60.x line); bump them in lockstep.
+- The `airbyte-cdk` pin tracks the `airbyte/source-declarative-manifest` image
+  line the deployed nocode connectors run on; bump it with the runtime.
 - CDK interpolation literal-evals rendered Jinja values: a numeric-string id in
   `{{ record['id'] }}` becomes an `int` in the emitted record (and in the
   generated schema — cf. `jira_projects.project_id: number`).

@@ -54,7 +54,15 @@ async fn main() -> Result<()> {
     let load_config = || AppConfig::load_or_default(cli.config.as_ref());
 
     match command {
-        Commands::Run => run_server(load_config()?).await,
+        Commands::Run => {
+            let config = load_config()?;
+            let resource = &config.opentelemetry.resource;
+            insight_log_context::init_identity_from_resource(
+                &resource.service_name,
+                &resource.attributes,
+            );
+            run_server(config).await
+        }
         Commands::Openapi => print_openapi(),
     }
 }
@@ -63,6 +71,16 @@ async fn main() -> Result<()> {
 /// on this path, so stdout stays pure JSON for the drift gate to consume.
 fn print_openapi() -> Result<()> {
     let doc = git_cli_proxy::api::openapi_document()?;
-    println!("{}", serde_json::to_string_pretty(&doc)?);
+    print!("{}", insight_openapi::canonical_json(&doc)?);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn committed_openapi_document_is_current() -> anyhow::Result<()> {
+        let doc = git_cli_proxy::api::openapi_document()?;
+        insight_openapi::check_committed(&doc, env!("CARGO_MANIFEST_DIR"), env!("CARGO_PKG_NAME"))?;
+        Ok(())
+    }
 }

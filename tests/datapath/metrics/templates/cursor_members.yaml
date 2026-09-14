@@ -1,0 +1,23 @@
+# Reusable Cursor team-member records (bronze_cursor.cursor_members).
+# A record is a plain field map; an optional `$ref` inherits from another record
+# and sibling keys override it. Carry ONLY the boilerplate; the fields under test
+# (id, email, unique_key) are set in each test's `bronze`.
+#
+# This is the stream identity learns a Cursor account from: `seed_identity_inputs
+# _from_cursor` reads members, never usage. A spec whose accounts must be
+# resolvable — bound to a person, or collapsed with another account — seeds a
+# member row for each of them.
+templates:
+  cursor_member:
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-01-05T00:00:00Z"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+    tenant_id: "{{ tenant }}"
+    source_id: "cursor-test"
+    unique_key: null
+    id: null
+    name: null
+    email: null
+    role: member
+    isRemoved: false

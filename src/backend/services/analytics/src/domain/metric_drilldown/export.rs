@@ -3,6 +3,8 @@ use std::io::{Cursor, Seek, SeekFrom, Write};
 use rust_xlsxwriter::{ExcelDateTime, Format, Table, TableStyle, Workbook};
 use toolkit_canonical_errors::CanonicalError;
 
+use crate::domain::spreadsheet::csv_safe_cell;
+
 use super::dto::{
     MetricDrilldownColumn, MetricDrilldownColumnType, MetricDrilldownExportFormat,
     MetricDrilldownRow,
@@ -267,19 +269,6 @@ fn input_too_large() -> CanonicalError {
     export_limit("Export input exceeds the byte limit.")
 }
 
-fn csv_safe_cell(value: String) -> String {
-    if value.as_bytes().first().is_some_and(|first| {
-        matches!(
-            first,
-            b'=' | b'+' | b'-' | b'@' | b'\t' | b'\r' | b'\n' | b' '
-        )
-    }) {
-        format!("'{value}")
-    } else {
-        value
-    }
-}
-
 #[derive(Debug)]
 struct LimitedBuffer {
     inner: Cursor<Vec<u8>>,
@@ -382,21 +371,25 @@ mod tests {
                 key: "ref".to_owned(),
                 label: "Ref".to_owned(),
                 r#type: MetricDrilldownColumnType::String,
+                sortable: true,
             },
             MetricDrilldownColumn {
                 key: "date".to_owned(),
                 label: "Date".to_owned(),
                 r#type: MetricDrilldownColumnType::Date,
+                sortable: true,
             },
             MetricDrilldownColumn {
                 key: "value".to_owned(),
                 label: "Value".to_owned(),
                 r#type: MetricDrilldownColumnType::Number,
+                sortable: true,
             },
             MetricDrilldownColumn {
                 key: "active".to_owned(),
                 label: "Active".to_owned(),
                 r#type: MetricDrilldownColumnType::String,
+                sortable: true,
             },
         ]
     }
@@ -432,30 +425,12 @@ mod tests {
     }
 
     #[test]
-    fn every_spreadsheet_formula_prefix_is_neutralized() {
-        for prefix in ['=', '+', '-', '@', '\t', '\r', '\n', ' '] {
-            let cell = format!("{prefix}cmd");
-            assert_eq!(
-                csv_safe_cell(cell.clone()),
-                format!("'{cell}"),
-                "dangerous prefix {prefix:?} must be quoted"
-            );
-        }
-        for safe in ["plain", "12.5", "", "a=b"] {
-            assert_eq!(
-                csv_safe_cell(safe.to_owned()),
-                safe,
-                "safe value {safe:?} must pass through"
-            );
-        }
-    }
-
-    #[test]
     fn export_input_over_the_byte_limit_is_rejected() {
         let columns = vec![MetricDrilldownColumn {
             key: "value".to_owned(),
             label: "Value".to_owned(),
             r#type: MetricDrilldownColumnType::String,
+            sortable: true,
         }];
         let row = vec!["x".repeat(MAX_CELL_BYTES)];
 
@@ -495,11 +470,13 @@ mod tests {
                 key: "missing".to_owned(),
                 label: "Missing".to_owned(),
                 r#type: MetricDrilldownColumnType::String,
+                sortable: true,
             },
             MetricDrilldownColumn {
                 key: "object".to_owned(),
                 label: "Object".to_owned(),
                 r#type: MetricDrilldownColumnType::String,
+                sortable: true,
             },
         ];
         let row = MetricDrilldownRow {
@@ -519,6 +496,7 @@ mod tests {
             key: "value".to_owned(),
             label: "Value".to_owned(),
             r#type: MetricDrilldownColumnType::String,
+            sortable: true,
         }];
         let row = MetricDrilldownRow {
             values: BTreeMap::from([("value".to_owned(), json!("x".repeat(MAX_CELL_BYTES + 1)))]),
@@ -565,46 +543,55 @@ mod tests {
                 key: "number".to_owned(),
                 label: "Number".to_owned(),
                 r#type: MetricDrilldownColumnType::Number,
+                sortable: true,
             },
             MetricDrilldownColumn {
                 key: "unnumeric".to_owned(),
                 label: "Not a number".to_owned(),
                 r#type: MetricDrilldownColumnType::Number,
+                sortable: true,
             },
             MetricDrilldownColumn {
                 key: "date".to_owned(),
                 label: "Date".to_owned(),
                 r#type: MetricDrilldownColumnType::Date,
+                sortable: true,
             },
             MetricDrilldownColumn {
                 key: "text".to_owned(),
                 label: "Text".to_owned(),
                 r#type: MetricDrilldownColumnType::String,
+                sortable: true,
             },
             MetricDrilldownColumn {
                 key: "flag".to_owned(),
                 label: "Flag".to_owned(),
                 r#type: MetricDrilldownColumnType::String,
+                sortable: true,
             },
             MetricDrilldownColumn {
                 key: "nested".to_owned(),
                 label: "Nested".to_owned(),
                 r#type: MetricDrilldownColumnType::String,
+                sortable: true,
             },
             MetricDrilldownColumn {
                 key: "absent".to_owned(),
                 label: "Absent".to_owned(),
                 r#type: MetricDrilldownColumnType::String,
+                sortable: true,
             },
             MetricDrilldownColumn {
                 key: "numeric_date".to_owned(),
                 label: "Numeric date".to_owned(),
                 r#type: MetricDrilldownColumnType::Date,
+                sortable: true,
             },
             MetricDrilldownColumn {
                 key: "numeric_text".to_owned(),
                 label: "Numeric text".to_owned(),
                 r#type: MetricDrilldownColumnType::String,
+                sortable: true,
             },
         ];
         let row = MetricDrilldownRow {
@@ -632,6 +619,7 @@ mod tests {
             key: "date".to_owned(),
             label: "Date".to_owned(),
             r#type: MetricDrilldownColumnType::Date,
+            sortable: true,
         }];
         let row = MetricDrilldownRow {
             values: BTreeMap::from([("date".to_owned(), json!("not-a-date"))]),
@@ -649,6 +637,7 @@ mod tests {
             key: "count".to_owned(),
             label: "Count".to_owned(),
             r#type: MetricDrilldownColumnType::Number,
+            sortable: true,
         }];
         let value = json!("not numeric");
         assert_eq!(

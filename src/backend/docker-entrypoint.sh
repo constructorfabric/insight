@@ -1,8 +1,8 @@
 #!/usr/bin/env sh
 # Shared entrypoint for the Insight backend service containers.
 #
-# Copied into the image by each service Dockerfile (api-gateway,
-# analytics, identity). Behaviour switches on ENABLE_AUTO_RELOAD:
+# Copied into every service image by src/backend/Dockerfile. Behaviour
+# switches on ENABLE_AUTO_RELOAD:
 #
 #   unset / anything else  : exec the command directly (prod default)
 #   true | 1               : wrap the command in `watchexec` so that a

@@ -34,12 +34,24 @@ pub(crate) async fn lookup(
     tenant: Uuid,
     ids: &[Uuid],
 ) -> HashMap<Uuid, PersonName> {
+    lookup_bounded(ch, tenant, ids, |query| query).await
+}
+
+/// The same lookup under the caller's own resource limits.
+///
+/// A read that names rows on a bounded surface has to be bounded too: the
+/// aggregate scans the identity journal, which carries no index on the tenant.
+pub(crate) async fn lookup_bounded(
+    ch: &insight_clickhouse::Client,
+    tenant: Uuid,
+    ids: &[Uuid],
+    bound: impl FnOnce(clickhouse::query::Query) -> clickhouse::query::Query,
+) -> HashMap<Uuid, PersonName> {
     if ids.is_empty() {
         return HashMap::new();
     }
 
-    match ch
-        .query(&aggregate(" AND person_id IN ?"))
+    match bound(ch.query(&aggregate(" AND person_id IN ?")))
         .bind(tenant.to_string())
         .bind(ids)
         .fetch_all::<PersonName>()

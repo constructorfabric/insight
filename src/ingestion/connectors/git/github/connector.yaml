@@ -205,16 +205,29 @@ definitions:
 
   proxy_error_handler: &proxy_error_handler
     type: DefaultErrorHandler
-    # Generous on purpose: a cold blobless clone of a large repository runs
-    # for many Retry-After cycles before the first page can be served.
-    max_retries: 100
+    # The proxy holds a cold request in-connection while it clones, so a 429
+    # is the exception: cache headroom that stayed exhausted for the whole
+    # in-connection wait. 200 x the 30 s the proxy asks for outlasts a cold
+    # clone queue on a large installation.
+    max_retries: 200
     backoff_strategies:
       - type: WaitTimeFromHeader
         header: Retry-After
         max_waiting_time_in_seconds: 600
+      # Fallback for failures that carry no response and so no header — a
+      # connection refused or reset while the proxy restarts during a deploy.
+      # Without it the request dies after two immediate tries; the ladder
+      # rides out any restart shorter than the CDK's overall retry ceiling.
+      - type: ExponentialBackoffStrategy
+        factor: 5
     response_filters:
       # The repository is being cloned or purged in the background: the proxy
       # is working, the caller waits.
+      - type: HttpResponseFilter
+        http_codes: [401]
+        action: FAIL
+        failure_type: config_error
+        error_message: The git-cli-proxy rejected git_proxy_token; it must match the token the proxy was started with
       - type: HttpResponseFilter
         http_codes: [429]
         action: RETRY
@@ -228,13 +241,15 @@ definitions:
         error_message: >-
           Skipping this repository: gone or refused at origin (404), or
           larger than cache.maxRepoBytes (413). Other repositories continue.
-      # The pinned snapshot was superseded mid-walk. RETRY would replay the
-      # same dead page token and 409 again; rerunning the sync resumes each
-      # partition from its own stored cursor against a fresh snapshot.
+      # The pinned snapshot was superseded mid-walk: a refresh or an eviction
+      # bumped the generation, so the page token is dead. RETRY would replay
+      # it and 409 again; RESET_PAGINATION restarts the partition's walk from
+      # its first page, and the retriever's `pagination_reset` narrows that
+      # restart to the last cursor value already seen.
       - type: HttpResponseFilter
         http_codes: [409]
-        action: FAIL
-        error_message: Proxy snapshot changed mid-walk; rerun the sync to resume from the stored cursor
+        action: RESET_PAGINATION
+        error_message: Proxy snapshot changed mid-walk; restarting the walk from the last record already seen
       - type: HttpResponseFilter
         http_codes: [500, 502, 503, 504]
         action: RETRY
@@ -252,6 +267,9 @@ definitions:
       X-Source-Id: "{{ config['insight_source_id'] }}"
       X-Git-Username: x-access-token
       X-Git-Token: "{{ config['github_token'] }}"
+      # GitHub reports `size` in kilobytes; the proxy reserves cache headroom
+      # from this instead of its per-repository cap.
+      X-Repo-Size-Hint: "{{ ((stream_slice.extra_fields.get('size') or 0) * 1024) or '' }}"
     error_handler: *proxy_error_handler
 
   standard_fields: &standard_fields
@@ -293,6 +311,7 @@ definitions:
           full_name: {type: [string, "null"]}
           clone_url: {type: [string, "null"]}
           pushed_at: {type: [string, "null"]}
+          size: {type: [integer, "null"]}
         additionalProperties: true
     retriever:
       type: SimpleRetriever
@@ -641,12 +660,17 @@ streams:
           type: RequestOption
           field_name: page_token
           inject_into: request_parameter
+      pagination_reset:
+        type: PaginationReset
+        action: SPLIT_USING_CURSOR
       partition_router:
         type: SubstreamPartitionRouter
         parent_stream_configs:
           - type: ParentStreamConfig
             parent_key: clone_url
             partition_field: repo_clone_url
+            extra_fields:
+              - [size]
             # `incremental_dependency` keeps the sync proportional to
             # activity: parent state persists only because this child is
             # itself incremental.
@@ -656,6 +680,10 @@ streams:
       type: DatetimeBasedCursor
       cursor_field: committed_date
       datetime_format: "%Y-%m-%dT%H:%M:%S%z"
+      # A future-dated commit would otherwise become the cursor and silence the
+      # stream: a `since` past now yields no slice on every later sync. Bounding
+      # records client-side drops such a row before the cursor observes it.
+      is_client_side_incremental: true
       # `git log --since` is a traversal cutoff: after a rebase the
       # replacement commits can carry dates BELOW the stored cursor and would
       # never be visited again. Re-enumerating one window each sync recovers
@@ -753,12 +781,17 @@ streams:
           type: RequestOption
           field_name: page_token
           inject_into: request_parameter
+      pagination_reset:
+        type: PaginationReset
+        action: SPLIT_USING_CURSOR
       partition_router:
         type: SubstreamPartitionRouter
         parent_stream_configs:
           - type: ParentStreamConfig
             parent_key: clone_url
             partition_field: repo_clone_url
+            extra_fields:
+              - [size]
             # `incremental_dependency` keeps the sync proportional to
             # activity: parent state persists only because this child is
             # itself incremental.
@@ -768,6 +801,10 @@ streams:
       type: DatetimeBasedCursor
       cursor_field: committed_date
       datetime_format: "%Y-%m-%dT%H:%M:%S%z"
+      # A future-dated commit would otherwise become the cursor and silence the
+      # stream: a `since` past now yields no slice on every later sync. Bounding
+      # records client-side drops such a row before the cursor observes it.
+      is_client_side_incremental: true
       # `git log --since` is a traversal cutoff: after a rebase the
       # replacement commits can carry dates BELOW the stored cursor and would
       # never be visited again. Re-enumerating one window each sync recovers
@@ -846,12 +883,17 @@ streams:
           type: RequestOption
           field_name: page_token
           inject_into: request_parameter
+      pagination_reset:
+        type: PaginationReset
+        action: RESET
       partition_router:
         type: SubstreamPartitionRouter
         parent_stream_configs:
           - type: ParentStreamConfig
             parent_key: clone_url
             partition_field: repo_clone_url
+            extra_fields:
+              - [size]
             # Full-refresh child: parent state would not persist, so no
             # incremental_dependency.
             incremental_dependency: false
@@ -902,6 +944,7 @@ streams:
           author_id: {type: [integer, "null"]}
           author_type: {type: [string, "null"]}
           sample_sha: {type: [string, "null"]}
+          last_committed_date: {type: [string, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -929,9 +972,14 @@ streams:
           - type: ParentStreamConfig
             parent_key: sample_sha
             partition_field: commit_sha
+            # `incremental_dependency` keeps the sync proportional to activity:
+            # the author list's `since` persists only because this child is
+            # itself incremental.
+            incremental_dependency: true
             extra_fields:
               - [repo_full_name]
               - [author_email]
+              - [last_committed_date]
             stream:
               type: DeclarativeStream
               name: repository_authors
@@ -973,6 +1021,9 @@ streams:
                     type: RequestOption
                     field_name: page_token
                     inject_into: request_parameter
+                pagination_reset:
+                  type: PaginationReset
+                  action: RESET
                 partition_router:
                   type: SubstreamPartitionRouter
                   parent_stream_configs:
@@ -981,6 +1032,7 @@ streams:
                       partition_field: repo_clone_url
                       extra_fields:
                         - [full_name]
+                        - [size]
                       incremental_dependency: true
                       stream: *repositories_pushed_parent
               incremental_sync:
@@ -990,6 +1042,14 @@ streams:
                 cursor_datetime_formats:
                   - "%Y-%m-%dT%H:%M:%S%z"
                   - "%Y-%m-%dT%H:%M:%SZ"
+                # A future-dated commit would otherwise become the cursor and silence the
+                # stream: a `since` past now yields no slice on every later sync. Bounding
+                # records client-side drops such a row before the cursor observes it.
+                is_client_side_incremental: true
+                # An author's last commit can predate its push by days, and another
+                # author's push moves `since` past it in the meantime. Re-listing one
+                # window each sync recovers them; bronze dedups the re-read rows.
+                lookback_window: "P1M"
                 # An author already resolved keeps their claim, so a later sync
                 # only needs the ones who have committed since — which is what
                 # keeps this O(active authors) rather than O(authors).
@@ -1008,6 +1068,22 @@ streams:
                       path: [repo_full_name]
                       value: "{{ stream_slice.extra_fields['full_name'] }}"
                       value_type: string
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: last_committed_date
+      datetime_format: "%Y-%m-%dT%H:%M:%S%z"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S%z"
+        - "%Y-%m-%dT%H:%M:%SZ"
+      # The partition is one author's sample commit and changes with every
+      # commit, so per-partition state would grow by one entry per (repository,
+      # author) and never shrink. Nothing reads this cursor's value; it exists so
+      # the parent's `since` persists.
+      global_substream_cursor: true
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['github_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
     transformations:
       - type: AddFields
         fields: *standard_fields
@@ -1027,6 +1103,10 @@ streams:
           - type: AddedFieldDefinition
             path: [sample_sha]
             value: "{{ stream_partition.commit_sha }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [last_committed_date]
+            value: "{{ stream_slice.extra_fields['last_committed_date'] }}"
             value_type: string
           - type: AddedFieldDefinition
             path: [author_login]
@@ -1151,12 +1231,11 @@ streams:
       datetime_format: "%Y-%m-%dT%H:%M:%SZ"
       cursor_datetime_formats:
         - "%Y-%m-%dT%H:%M:%S%z"
-      # VERIFIED against the CDK: the data-feed stop halts pagination at the
-      # first record older than the slice start, but the boundary PAGE's tail
-      # still emits — up to one page of pre-start_date rows per partition
-      # lands in bronze. Do NOT "fix" this with a record_filter: the stop
-      # condition evaluates POST-filter records, so filtering the old tail
-      # away would keep pagination walking through all history instead.
+      # The data-feed stop halts pagination at the first record older than
+      # the slice start, and the cursor's own window check drops the boundary
+      # page's older tail. Do NOT add a record_filter for that tail: the stop
+      # condition evaluates POST-filter records, so filtering would keep
+      # pagination walking through all history instead.
       is_data_feed: true
       lookback_window: P1D
       start_datetime:
@@ -1392,12 +1471,11 @@ streams:
                 # sets `incremental_dependency`, which is what makes the bound
                 # affordable: this walk is paid once, and later syncs resume
                 # from the stored state rather than re-reading the window.
-                # VERIFIED against the CDK: the data-feed stop halts pagination at the
-                # first record older than the slice start, but the boundary PAGE's tail
-                # still emits — up to one page of pre-start_date rows per partition
-                # lands in bronze. Do NOT "fix" this with a record_filter: the stop
-                # condition evaluates POST-filter records, so filtering the old tail
-                # away would keep pagination walking through all history instead.
+                # The data-feed stop halts pagination at the first record older than
+                # the slice start, and the cursor's own window check drops the boundary
+                # page's older tail. Do NOT add a record_filter for that tail: the stop
+                # condition evaluates POST-filter records, so filtering would keep
+                # pagination walking through all history instead.
                 is_data_feed: true
                 start_datetime:
                   type: MinMaxDatetime
@@ -1549,6 +1627,10 @@ streams:
       type: DatetimeBasedCursor
       cursor_field: committed_date
       datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      # A future-dated commit would otherwise become the cursor and silence the
+      # stream: a `since` past now yields no slice on every later sync. Bounding
+      # records client-side drops such a row before the cursor observes it.
+      is_client_side_incremental: true
       cursor_datetime_formats:
         - "%Y-%m-%dT%H:%M:%S%z"
         - "%Y-%m-%dT%H:%M:%SZ"
@@ -1751,12 +1833,11 @@ streams:
         type: MinMaxDatetime
         datetime: "{{ config['github_start_date'] }}"
         datetime_format: "%Y-%m-%d"
-      # VERIFIED against the CDK: the data-feed stop halts pagination at the
-      # first record older than the slice start, but the boundary PAGE's tail
-      # still emits — up to one page of pre-start_date rows per partition
-      # lands in bronze. Do NOT "fix" this with a record_filter: the stop
-      # condition evaluates POST-filter records, so filtering the old tail
-      # away would keep pagination walking through all history instead.
+      # The data-feed stop halts pagination at the first record older than
+      # the slice start, and the cursor's own window check drops the boundary
+      # page's older tail. Do NOT add a record_filter for that tail: the stop
+      # condition evaluates POST-filter records, so filtering would keep
+      # pagination walking through all history instead.
       is_data_feed: true
     transformations:
       - type: AddFields
@@ -2436,6 +2517,196 @@ streams:
             value: >-
               {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.org | replace(':', '%3A') }}:project:{{ (record.get('id') or '') | replace(':', '%3A') }}
 
+  # ── Issue links, current state (GitHub GraphQL) ─────────────────────────
+  # One row per issue carrying every link it holds right now, each set as JSON.
+  #
+  # This exists because the timeline is NOT sufficient for every link kind.
+  # Hierarchy and dependency links emit a matching add/remove pair, so their
+  # history folds exactly. A pull request that closes an issue does not: the
+  # link is stated by `closedByPullRequestsReferences`, and the timeline may
+  # carry a ConnectedEvent for it, a CrossReferencedEvent that even reports
+  # `willCloseTarget: false`, or nothing at all. Observation is the only
+  # reliable source for that kind, so both sources feed one interval model and
+  # each interval records which evidence produced it.
+  #
+  # Repository-scoped rather than per issue: the timeline stream already spends
+  # one call per issue, and this needs no such precision — one page carries
+  # fifty issues with all their link sets.
+  - type: DeclarativeStream
+    name: issue_links
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          repo_full_name: {type: [string, "null"]}
+          item_number: {type: [integer, "null"]}
+          updated_at: {type: [string, "null"]}
+          parent_json: {type: [string, "null"]}
+          sub_issues_json: {type: [string, "null"]}
+          blocked_by_json: {type: [string, "null"]}
+          blocking_json: {type: [string, "null"]}
+          closed_by_pull_requests_json: {type: [string, "null"]}
+          sub_issues_total: {type: [integer, "null"]}
+          blocked_by_total: {type: [integer, "null"]}
+          blocking_total: {type: [integer, "null"]}
+          closed_by_pull_requests_total: {type: [integer, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *rest_requester
+        error_handler: *graphql_error_handler_repo_scoped
+        path: /graphql
+        http_method: POST
+        request_body_json:
+          query: |
+            query($owner: String!, $name: String!, $cursor: String) {
+              repository(owner: $owner, name: $name) {
+                issues(first: 50, after: $cursor, orderBy: {field: UPDATED_AT, direction: DESC}) {
+                  pageInfo { hasNextPage endCursor }
+                  nodes {
+                    number updatedAt
+                    parent { number repository { nameWithOwner } }
+                    subIssues(first: 50) { totalCount nodes { number repository { nameWithOwner } } }
+                    blockedBy(first: 50) { totalCount nodes { number repository { nameWithOwner } } }
+                    blocking(first: 50) { totalCount nodes { number repository { nameWithOwner } } }
+                    closedByPullRequestsReferences(first: 20) { totalCount nodes { number repository { nameWithOwner } } }
+                  }
+                }
+              }
+            }
+          variables:
+            owner: "{{ stream_partition.repo_full_name.split('/')[0] }}"
+            name: "{{ stream_partition.repo_full_name.split('/')[1] }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [data, repository, issues, nodes]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ ((((response.get('data') or {}).get('repository') or {}).get('issues') or {}).get('pageInfo') or {}).get('endCursor') }}"
+          stop_condition: "{{ not ((((response.get('data') or {}).get('repository') or {}).get('issues') or {}).get('pageInfo') or {}).get('hasNextPage') }}"
+        page_token_option:
+          type: RequestOption
+          inject_into: body_json
+          field_path: [variables, cursor]
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: full_name
+            partition_field: repo_full_name
+            stream: *repositories_all_parent
+    # Newest-first data feed on the issue's own `updated_at`: a sweep of every
+    # issue in every repository on every sync would be the most expensive query
+    # this connector makes, and the GraphQL point budget does not have room for
+    # it — one page here carries fifty issues with five connections each.
+    #
+    # The cost is that a link removed WITHOUT otherwise touching the issue is
+    # observed late. That is survivable because it only affects the link kinds
+    # observed rather than folded: hierarchy and dependency changes emit
+    # timeline events, which this stream is not the source for.
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: updated_at
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%SZ"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['github_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
+      is_data_feed: true
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [repo_full_name]
+            value: "{{ stream_partition.repo_full_name }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [item_number]
+            value: "{{ record.get('number') or 0 }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path: [updated_at]
+            value: "{{ record.get('updatedAt') or '' }}"
+            value_type: string
+          # Each set is kept as the vendor states it. Exploding into rows is the
+          # staging model's job, and a JSON column keeps the stream one row per
+          # issue however many links it holds.
+          - type: AddedFieldDefinition
+            path: [parent_json]
+            value: "{{ (record.get('parent') or {}) | tojson }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [sub_issues_json]
+            value: "{{ ((record.get('subIssues') or {}).get('nodes') or []) | tojson }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [blocked_by_json]
+            value: "{{ ((record.get('blockedBy') or {}).get('nodes') or []) | tojson }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [blocking_json]
+            value: "{{ ((record.get('blocking') or {}).get('nodes') or []) | tojson }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [closed_by_pull_requests_json]
+            value: "{{ ((record.get('closedByPullRequestsReferences') or {}).get('nodes') or []) | tojson }}"
+            value_type: string
+          # The vendor's own count for each set, kept beside the nodes. A
+          # nested connection cannot be paginated from a declarative manifest,
+          # so a set larger than its page silently loses its tail — storing
+          # the count is what lets `assert_issue_link_sets_are_complete` say
+          # so out loud instead.
+          - type: AddedFieldDefinition
+            path: [sub_issues_total]
+            value: "{{ (record.get('subIssues') or {}).get('totalCount') or 0 }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path: [blocked_by_total]
+            value: "{{ (record.get('blockedBy') or {}).get('totalCount') or 0 }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path: [blocking_total]
+            value: "{{ (record.get('blocking') or {}).get('totalCount') or 0 }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path: [closed_by_pull_requests_total]
+            value: "{{ (record.get('closedByPullRequestsReferences') or {}).get('totalCount') or 0 }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:issue_links:{{ record.get('number') }}
+      - type: RemoveFields
+        # Hoisted above; the camelCase and nested originals stay out of bronze.
+        field_pointers:
+          - [number]
+          - [updatedAt]
+          - [parent]
+          - [subIssues]
+          - [blockedBy]
+          - [blocking]
+          - [closedByPullRequestsReferences]
+
   # ── Projects V2 field catalogue (GitHub GraphQL) ─────────────────────────
   # Every board's own field definitions. A board field is NOT shared: two
   # projects' same-named `Status` are different fields with different ids, and
@@ -2447,10 +2718,11 @@ streams:
   # by display name only, so resolving that name to an option id happens
   # through the options of the board's own field.
   #
-  # `snapshot_date` is part of the key on purpose. GitHub keeps no history of a
-  # field or an option rename, so the only record of one is a succession of
-  # snapshots — a re-collection inside one day replaces its row, a new day adds
-  # one. Without it a rename erases the name every earlier event carries.
+  # Keyed on (board, field) so bronze holds the CURRENT catalogue and the
+  # ReplacingMergeTree collapses each re-collection onto it. GitHub keeps no
+  # history of a field or an option rename, and the record of one is built
+  # downstream by `github__project_fields_snapshot` — the shared SCD2 macro,
+  # which appends a version only when a tracked column actually changes.
   - type: DeclarativeStream
     name: project_fields
     primary_key:
@@ -2466,7 +2738,6 @@ streams:
           source_id: {type: [string, "null"]}
           data_source: {type: [string, "null"]}
           collected_at: {type: [string, "null"]}
-          snapshot_date: {type: [string, "null"]}
           project_id: {type: [string, "null"]}
           project_number: {type: [integer, "null"]}
           field_id: {type: [string, "null"]}
@@ -2548,10 +2819,6 @@ streams:
       - type: AddFields
         fields:
           - type: AddedFieldDefinition
-            path: [snapshot_date]
-            value: "{{ now_utc().strftime('%Y-%m-%d') }}"
-            value_type: string
-          - type: AddedFieldDefinition
             path: [project_id]
             value: "{{ stream_partition.project_id }}"
             value_type: string
@@ -2606,7 +2873,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:project:{{ (stream_partition.project_id or '') | replace(':', '%3A') }}:field:{{ (record.get('id') or '') | replace(':', '%3A') }}:{{ now_utc().strftime('%Y-%m-%d') }}
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:project:{{ (stream_partition.project_id or '') | replace(':', '%3A') }}:field:{{ (record.get('id') or '') | replace(':', '%3A') }}
       - type: RemoveFields
         # Hoisted above; the camelCase and nested originals stay out of bronze.
         field_pointers:
@@ -2622,19 +2889,19 @@ streams:
           - [configuration]
 
   # ── Projects V2 cards (GitHub GraphQL) ──────────────────────────────────
-  # One row per (card x day the card changed), carrying the card's current
-  # field values. Two reasons this stream exists rather than riding the issue
-  # streams:
+  # One row per card, carrying its current field values. Two reasons this
+  # stream exists rather than riding the issue streams:
   #
   # 1. Moving a card does NOT bump the issue's `updated_at`, and the timeline
   #    stream is a substream of an issue window cursored on exactly that. Board
   #    movement on an otherwise untouched issue is invisible without a
   #    board-side cursor.
   # 2. No API exposes the history of a non-status board field. `updatedAt` says
-  #    when a value was last touched, never what it was before, so the only
-  #    record is a succession of snapshots — hence the day in the key. The day
-  #    comes from the card's own `updatedAt`, so re-reading an unchanged card
-  #    inside the overlap window rewrites its row instead of adding one.
+  #    when a value was last touched, never what it was before, so the record
+  #    has to be built from successive observations — which is
+  #    `github__project_items_snapshot`'s job, not this stream's. Here the key
+  #    is the card, so bronze holds its current state and a re-read inside the
+  #    overlap window collapses onto it.
   #
   # INVARIANT: the incremental filter is built from a DATE and nothing else.
   # `items(query:)` filters server-side on the card's update date, but its
@@ -2761,8 +3028,8 @@ streams:
         - "%Y-%m-%dT%H:%M:%SZ"
         - "%Y-%m-%dT%H:%M:%S%z"
       # The server filter is coarser than the cursor, so a day is re-read on
-      # every sync. That is deliberate rather than tolerated: the row key
-      # carries the day the card changed, so a re-read rewrites the same row.
+      # every sync. That is free: the row key is the card, so a re-read
+      # collapses onto the row already there.
       #
       # A client-side cut is NOT used here. The CDK applies it in the record
       # selector, before the transformations that rename `updatedAt` to
@@ -2837,7 +3104,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:project:{{ (stream_partition.project_id or '') | replace(':', '%3A') }}:item:{{ (record.get('id') or '') | replace(':', '%3A') }}:{{ (record.get('updatedAt') or '')[:10] }}
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:project:{{ (stream_partition.project_id or '') | replace(':', '%3A') }}:item:{{ (record.get('id') or '') | replace(':', '%3A') }}
       - type: RemoveFields
         # Hoisted above; the camelCase and nested originals stay out of bronze.
         field_pointers:
@@ -3328,12 +3595,11 @@ streams:
         - "%Y-%m-%dT%H:%M:%S%z"
       # created_at is immutable: no lookback; the data-feed stop is what
       # bounds newest-first pagination at the stored state.
-      # VERIFIED against the CDK: the data-feed stop halts pagination at the
-      # first record older than the slice start, but the boundary PAGE's tail
-      # still emits — up to one page of pre-start_date rows per partition
-      # lands in bronze. Do NOT "fix" this with a record_filter: the stop
-      # condition evaluates POST-filter records, so filtering the old tail
-      # away would keep pagination walking through all history instead.
+      # The data-feed stop halts pagination at the first record older than
+      # the slice start, and the cursor's own window check drops the boundary
+      # page's older tail. Do NOT add a record_filter for that tail: the stop
+      # condition evaluates POST-filter records, so filtering would keep
+      # pagination walking through all history instead.
       is_data_feed: true
       start_datetime:
         type: MinMaxDatetime
@@ -3510,12 +3776,11 @@ streams:
                 # period the deployment does. The child carries a cursor and
                 # sets `incremental_dependency`, so this walk is paid once and
                 # later syncs resume from the stored state.
-                # VERIFIED against the CDK: the data-feed stop halts pagination at the
-                # first record older than the slice start, but the boundary PAGE's tail
-                # still emits — up to one page of pre-start_date rows per partition
-                # lands in bronze. Do NOT "fix" this with a record_filter: the stop
-                # condition evaluates POST-filter records, so filtering the old tail
-                # away would keep pagination walking through all history instead.
+                # The data-feed stop halts pagination at the first record older than
+                # the slice start, and the cursor's own window check drops the boundary
+                # page's older tail. Do NOT add a record_filter for that tail: the stop
+                # condition evaluates POST-filter records, so filtering would keep
+                # pagination walking through all history instead.
                 is_data_feed: true
                 start_datetime:
                   type: MinMaxDatetime
@@ -3822,6 +4087,10 @@ streams:
           project_id: {type: [string, "null"]}
           project_number: {type: [integer, "null"]}
           was_automated: {type: [boolean, "null"]}
+          link_target_type: {type: [string, "null"]}
+          link_target_number: {type: [integer, "null"]}
+          link_target_repo_full_name: {type: [string, "null"]}
+          is_cross_repository: {type: [boolean, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -3837,7 +4106,7 @@ streams:
             query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
               repository(owner: $owner, name: $name) {
                 issue(number: $number) {
-                  timelineItems(first: 100, after: $cursor, itemTypes: [ASSIGNED_EVENT, UNASSIGNED_EVENT, LABELED_EVENT, UNLABELED_EVENT, CLOSED_EVENT, REOPENED_EVENT, ISSUE_TYPE_CHANGED_EVENT, ISSUE_FIELD_CHANGED_EVENT, PROJECT_V2_ITEM_STATUS_CHANGED_EVENT, ADDED_TO_PROJECT_V2_EVENT, REMOVED_FROM_PROJECT_V2_EVENT]) {
+                  timelineItems(first: 100, after: $cursor, itemTypes: [ASSIGNED_EVENT, UNASSIGNED_EVENT, LABELED_EVENT, UNLABELED_EVENT, CLOSED_EVENT, REOPENED_EVENT, ISSUE_TYPE_CHANGED_EVENT, ISSUE_FIELD_CHANGED_EVENT, PROJECT_V2_ITEM_STATUS_CHANGED_EVENT, ADDED_TO_PROJECT_V2_EVENT, REMOVED_FROM_PROJECT_V2_EVENT, SUB_ISSUE_ADDED_EVENT, SUB_ISSUE_REMOVED_EVENT, PARENT_ISSUE_ADDED_EVENT, PARENT_ISSUE_REMOVED_EVENT, BLOCKED_BY_ADDED_EVENT, BLOCKED_BY_REMOVED_EVENT, BLOCKING_ADDED_EVENT, BLOCKING_REMOVED_EVENT, CONNECTED_EVENT, DISCONNECTED_EVENT, MARKED_AS_DUPLICATE_EVENT, UNMARKED_AS_DUPLICATE_EVENT]) {
                     pageInfo { hasNextPage endCursor }
                     nodes {
                       __typename
@@ -3869,6 +4138,24 @@ streams:
                       # when. The card snapshot states only the present.
                       ... on AddedToProjectV2Event { id createdAt actor { login ... on User { databaseId } } project { id number } wasAutomated }
                       ... on RemovedFromProjectV2Event { id createdAt actor { login ... on User { databaseId } } project { id number } wasAutomated }
+                      # Links between work items. Each is a pure DELTA — the
+                      # event names the link that appeared or disappeared and
+                      # never the set that resulted, so the set at any moment
+                      # is a fold. Both ends of one link emit their own event
+                      # with the same timestamp: a parent records SubIssue*,
+                      # its child records ParentIssue*.
+                      ... on SubIssueAddedEvent { id createdAt actor { login ... on User { databaseId } } subIssue { number repository { nameWithOwner } } }
+                      ... on SubIssueRemovedEvent { id createdAt actor { login ... on User { databaseId } } subIssue { number repository { nameWithOwner } } }
+                      ... on ParentIssueAddedEvent { id createdAt actor { login ... on User { databaseId } } parent { number repository { nameWithOwner } } }
+                      ... on ParentIssueRemovedEvent { id createdAt actor { login ... on User { databaseId } } parent { number repository { nameWithOwner } } }
+                      ... on BlockedByAddedEvent { id createdAt actor { login ... on User { databaseId } } blockingIssue { number repository { nameWithOwner } } }
+                      ... on BlockedByRemovedEvent { id createdAt actor { login ... on User { databaseId } } blockingIssue { number repository { nameWithOwner } } }
+                      ... on BlockingAddedEvent { id createdAt actor { login ... on User { databaseId } } blockedIssue { number repository { nameWithOwner } } }
+                      ... on BlockingRemovedEvent { id createdAt actor { login ... on User { databaseId } } blockedIssue { number repository { nameWithOwner } } }
+                      ... on ConnectedEvent { id createdAt actor { login ... on User { databaseId } } isCrossRepository subject { __typename ... on Issue { number repository { nameWithOwner } } ... on PullRequest { number repository { nameWithOwner } } } }
+                      ... on DisconnectedEvent { id createdAt actor { login ... on User { databaseId } } isCrossRepository subject { __typename ... on Issue { number repository { nameWithOwner } } ... on PullRequest { number repository { nameWithOwner } } } }
+                      ... on MarkedAsDuplicateEvent { id createdAt actor { login ... on User { databaseId } } isCrossRepository canonical { __typename ... on Issue { number repository { nameWithOwner } } ... on PullRequest { number repository { nameWithOwner } } } }
+                      ... on UnmarkedAsDuplicateEvent { id createdAt actor { login ... on User { databaseId } } isCrossRepository canonical { __typename ... on Issue { number repository { nameWithOwner } } ... on PullRequest { number repository { nameWithOwner } } } }
                     }
                   }
                 }
@@ -4086,6 +4373,30 @@ streams:
             path: [was_automated]
             value: "{{ record.get('wasAutomated') or false }}"
             value_type: boolean
+          # The other end of a link. Every link event names it under its own
+          # key — `subIssue`, `parent`, `blockingIssue`, `blockedIssue`,
+          # `subject`, `canonical` — so the target collapses into one set of
+          # columns here, and which link it was stays the event type's job.
+          - type: AddedFieldDefinition
+            path: [link_target_number]
+            value: "{{ (record.get('subIssue') or record.get('parent') or record.get('blockingIssue') or record.get('blockedIssue') or record.get('subject') or record.get('canonical') or {}).get('number') or 0 }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path: [link_target_repo_full_name]
+            value: "{{ ((record.get('subIssue') or record.get('parent') or record.get('blockingIssue') or record.get('blockedIssue') or record.get('subject') or record.get('canonical') or {}).get('repository') or {}).get('nameWithOwner') or '' }}"
+            value_type: string
+          # Only the connect and duplicate pairs can point at a pull request.
+          # Hierarchy and dependency links are issue-to-issue by construction
+          # and state no __typename of their own.
+          - type: AddedFieldDefinition
+            path: [link_target_type]
+            value: >-
+              {{ (record.get('subIssue') or record.get('parent') or record.get('blockingIssue') or record.get('blockedIssue') or record.get('subject') or record.get('canonical') or {}).get('__typename') or ('Issue' if (record.get('subIssue') or record.get('parent') or record.get('blockingIssue') or record.get('blockedIssue') or record.get('subject') or record.get('canonical') or {}) else '') }}
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [is_cross_repository]
+            value: "{{ record.get('isCrossRepository') or false }}"
+            value_type: boolean
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
@@ -4109,6 +4420,15 @@ streams:
           - [newOptions]
           - [previousStatus]
           - [status]
+          - [project]
+          - [wasAutomated]
+          - [subIssue]
+          - [parent]
+          - [blockingIssue]
+          - [blockedIssue]
+          - [subject]
+          - [canonical]
+          - [isCrossRepository]
     # Formal cursor: no request option is injected and nothing is filtered, so
     # every enumerated issue's timeline is always emitted in full. It exists to
     # make the stream stateful, which is what lets incremental_dependency carry
@@ -4213,6 +4533,7 @@ metadata:
     pull_request_commits: false
     pull_request_diff_stats: false
     issues: false
+    issue_links: false
     projects_v2: false
     project_fields: false
     project_items: false

@@ -23,6 +23,7 @@ describe("zone item defaults", () => {
       aicost: "overview",
       scorecard: "fixed",
       reports: "delivery-trend",
+      custom: null,
       manage: "metric-catalog",
     });
   });
@@ -77,16 +78,58 @@ describe("resolveZoneItem", () => {
  * The non-admin list must stay a strict subset — dropping a shared item or
  * reordering would silently reshape the pane every operator already knows.
  */
-describe("manageItemsFor", () => {
-  it("gives an admin the full pane", () => {
-    expect(manageItemsFor(true)).toEqual(MANAGE_ITEMS);
+describe("the ingestion lens", () => {
+  it("is admin-only: bronze rows carry no tenant to scope it by", () => {
+    const item = MANAGE_ITEMS.find((i) => i.id === "ingestion");
+    expect(item?.adminOnly).toBe(true);
+    const shows = (isAdmin: boolean) =>
+      manageItemsFor({ isAdmin, canManagePreviews: false }).some(
+        (i) => i.id === "ingestion",
+      );
+    expect(shows(false)).toBe(false);
+    expect(shows(true)).toBe(true);
   });
 
-  it("drops exactly the admin-only surfaces for everyone else", () => {
-    const visible = manageItemsFor(false);
+  it("is its own lens, beside connector health rather than inside it", () => {
+    // The two read different things and must not be conflated: connector
+    // health reports what the mover says about its syncs, this reports the rows
+    // that actually landed in bronze. A sync the mover calls successful and one
+    // that wrote rows are not the same claim.
+    const ids = MANAGE_ITEMS.map((i) => i.id);
+    expect(ids).toContain("connector-health");
+    expect(ids).toContain("ingestion");
+    expect(ids.indexOf("ingestion")).not.toBe(ids.indexOf("connector-health"));
+  });
+});
+
+describe("manageItemsFor", () => {
+  it("gives a viewer passing every gate the full pane", () => {
+    expect(
+      manageItemsFor({ isAdmin: true, canManagePreviews: true }),
+    ).toEqual(MANAGE_ITEMS);
+  });
+
+  it("drops exactly the gated surfaces for everyone else", () => {
+    const visible = manageItemsFor({
+      isAdmin: false,
+      canManagePreviews: false,
+    });
 
     expect(visible.map((i) => i.id)).not.toContain("identities");
-    expect(visible).toEqual(MANAGE_ITEMS.filter((i) => !i.adminOnly));
+    expect(visible.map((i) => i.id)).not.toContain("previews");
+    expect(visible).toEqual(
+      MANAGE_ITEMS.filter((i) => !i.adminOnly && !i.previewsGated),
+    );
+  });
+
+  it("gates previews independently of admin-ness", () => {
+    const previewsOnly = manageItemsFor({
+      isAdmin: false,
+      canManagePreviews: true,
+    });
+
+    expect(previewsOnly.map((i) => i.id)).toContain("previews");
+    expect(previewsOnly.map((i) => i.id)).not.toContain("identities");
   });
 });
 
@@ -111,5 +154,13 @@ describe("peopleItemsFor", () => {
     expect(peopleItemsFor(true).map((item) => item.id)).not.toContain(
       "median-by-role",
     );
+  });
+});
+
+describe("the consoles the legacy shell used to own", () => {
+  it("lists both in Manage, so removing their routes loses nothing", () => {
+    const ids = MANAGE_ITEMS.map((i) => i.id);
+    expect(ids).toContain("custom-metrics");
+    expect(ids).toContain("query-console");
   });
 });

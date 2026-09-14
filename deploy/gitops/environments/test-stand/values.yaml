@@ -269,7 +269,7 @@ global:
   # cluster rather than taking a flag, so a drift here silently seeds a
   # tenant nobody can log into).
   tenantDefaultId: "3f1d8f4e-6c2a-4a9b-91d7-8e5c0b2a7f36"
-  # Not set, and worth knowing why: `observability.otlp.endpoint` is left at
+  # Not set, and worth knowing why: `global.observability.otlp.endpoint` is left at
   # the chart's empty default, which means every service emits structured
   # JSON to stdout and exports no OTLP. There is no collector on this stand
   # to export to (all `system.*` toggles in inventory.yaml are false), and a
@@ -420,6 +420,8 @@ airbyte:
 
 analytics:
   replicaCount: 1 # chart default is 2; one is enough for a test stand
+  metricCatalog:
+    tenantMetricsEnabled: true
   resources:
     requests: {cpu: 100m, memory: 128Mi}
     limits: {cpu: 500m, memory: 512Mi}
@@ -429,6 +431,14 @@ gitCliProxy:
   # nocode git connectors and this stand runs none. While it is off reconcile
   # skips any connector whose descriptor sets `platform_config.git_proxy`.
   deploy: false
+
+previews:
+  # Stays deployed (the chart default, `global.previews.enabled`); the stand
+  # only opts out of namespace management below.
+  experiments:
+    # Off, against the chart default: the namespace is L0 here. `create
+    # namespaces` takes no resourceNames, so CI must never hold it.
+    manageNamespace: false
 
 frontend: # the web UI (dashboard)
   replicaCount: 1
