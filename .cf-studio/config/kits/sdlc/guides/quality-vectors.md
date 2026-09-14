@@ -26,6 +26,18 @@ it is not itself a measure of product reliability. Resource examples do not
 imply that storage or operator time is negligible. A shorter build pipeline is
 relevant to Efficiency when tied to a product delivery cost or requirement.
 
+### Relation to the checklist's expertise domains
+
+The five vectors are a generation lens, eliciting requirements; the
+checklist's thirteen expertise domains (BIZ, ARCH, SEC, SAFE, PERF, REL, UX,
+MAINT, COMPL, DATA, INT, OPS, TEST) — most grounded in ISO/IEC 25010:2023,
+the rest in domain-specific standards — are a review lens, checking
+completeness. The two sets are deliberately not a partition of each other:
+Performance, Security and Reliability name both a vector here and a domain
+there; Efficiency, read here as total cost of ownership, collides in name
+with ISO's Performance Efficiency; Versatility names no ISO domain at all.
+A vector is kit-local framing, not an ISO/IEC 25010 characteristic set.
+
 ## Help improve a PRD
 
 Start with the module's real quality concerns and their consequences. Consider
@@ -50,14 +62,22 @@ Keep one authoritative FR/NFR definition and ID. An NFR carries `**Threshold**` 
 `**Rationale**`; the threshold may be an absolute invariant rather than a number.
 
 A vector qualifies a **claim**, not a requirement and not a section. The same
-requirement is often verified under different vectors depending on what a scenario
-asserts about it — that a resolver returns the right person is Reliability, that it
-covers every source is Versatility. So a requirement carries `**Vector**` only where
-one vector is intrinsic to it, such as a latency budget or an isolation property.
-Where scenarios span vectors, the requirement carries none and each scenario names
-its own. Preserve agreed targets and clearly label
-proposed targets and open decisions with an owner or source of input. Missing
-conditions invite clarification, not a fabricated metric or an exclusion.
+requirement is often verified under different vectors depending on what a
+scenario asserts about it — that a resolver returns the right person is
+Reliability, that it covers every source is Versatility. So a requirement
+carries `**Vector**` only where one vector is intrinsic to it, such as a
+latency budget or an isolation property. Where scenarios span vectors, the
+requirement carries none and each scenario names its own.
+
+Before that tag is written, the same word names a different thing: the
+vector as an elicitation lens run over the module. It is generative — a
+material vector produces a non-functional requirement in PRD section 6.2,
+or the analysis records why it produced none; the vector itself is never a
+requirement. The tag above then marks which lens produced the requirement
+it is attached to. Whichever produced it, preserve agreed targets and
+clearly label proposed targets and open decisions with an owner or source
+of input. Missing conditions invite clarification, not a fabricated metric
+or an exclusion.
 
 Reference an unchanged upstream obligation with `**Inherits**` and its NFR ID.
 Record the responsible role and intended shared verification in `**Verification**`;
@@ -68,16 +88,24 @@ A wholly inapplicable vector is a separate, explicit scope decision.
 PRD section 6.1 Quality Vector Analysis is not optional: where a row is
 materially relevant, its Show-Stopper Requirement or Rationale should
 reference the corresponding NFR's ID from 6.2 and explain business
-consequences, without introducing a second definition or target. The
-Show-Stopper cell takes one of four forms: a show-stopper requirement citing
-its NFR; if the vector is material and its 6.2 obligations are covered but
-none of them makes the module unviable, `None — no show-stopper; obligations
-covered by {NFR IDs}`; where the vector cannot break the module at all,
-`None — not material because {reason}`; or, where the vector is material and
-6.2 carries no obligation covering it at all, `None — no obligation; {vector}
-is material and 6.2 carries no covering NFR (gap)` — an admission of a real
-gap for the PRD's owner to close, not a shortcut around the analysis. A row
-marked `None — not material` has no NFR to reference. A tag groups a
+consequences, without introducing a second definition or target. Every row
+applies the same generative rule, and each of the four cell forms is one of
+its outcomes:
+
+- Material, and the module is unviable without it: once its NFR is written
+  into 6.2, the rule produces a MUST-strength show-stopper requirement
+  citing that NFR.
+- Material, and its 6.2 obligations are covered, none of them
+  unviability-making: the rule produces `None — no show-stopper; obligations
+  covered by {NFR IDs}`.
+- Not material, and cannot break the module at all: the rule produces
+  `None — not material because {reason}`.
+- Material, and 6.2 carries no obligation covering it because the gap is
+  knowingly left open for the PRD's owner instead of writing the NFR now:
+  the rule produces `None — no obligation; {vector} is material and 6.2
+  carries no covering NFR (gap)`, not a shortcut around the analysis.
+
+A row marked `None — not material` has no NFR to reference. A tag groups a
 requirement under a vector; it says nothing about adequacy or results.
 
 ## Carry the obligation into DESIGN and FEATURE
