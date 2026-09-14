@@ -701,11 +701,15 @@ def test_a_resumed_commit_authors_sync_lists_from_one_window_before_the_saved_da
     """The start date is a floor paid once. A run carrying state asks the proxy
     for the authors who committed since one lookback window before the saved
     date — a commit can be pushed days after it was made — so the Bitbucket
-    lookups it spends follow recent activity rather than the whole history."""
+    lookups it spends follow recent activity rather than the whole history.
+    The repository listing that fans the walk out is bounded the same way, by
+    the newest repository update the run saw, so a repository nobody pushed to
+    since is not walked for authors at all."""
     config = BitbucketCloudConfigBuilder().build()
     # Far enough back that one window before the saved date is not clamped to it.
     config["bitbucket_start_date"] = "2026-01-01"
-    one_window_before = "2026-05-15T10:00:00+00:00"
+    one_window_before = "2026-06-08T10:00:00+00:00"
+    repo_window_before = "2026-06-19T10:00:00+00:00"
     http_mocker.get(
         HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS),
         HttpResponse(body=json.dumps({"values": [_repo_with_clone()]}), status_code=200),
@@ -748,6 +752,9 @@ def test_a_resumed_commit_authors_sync_lists_from_one_window_before_the_saved_da
         ]
         assert since, "the resumed run must list authors"
         assert all(_instant(value) == _instant(one_window_before) for value in since), since
+        bounds = _repository_listing_bounds(resume_mocker)
+        assert bounds, "the resumed run must list repositories"
+        assert all(_instant(b) == _instant(repo_window_before) for b in bounds), bounds
         lookups = [r.url for r in resume_mocker._mocker.request_history if "/commit/" in r.url]
         assert len(lookups) == 1, f"one author listed, one lookup: {lookups}"
 
@@ -1141,11 +1148,13 @@ def test_a_superseded_snapshot_restarts_the_walk_from_the_last_commit_seen(
 def _repository_listing_bounds(mocker: HttpMocker) -> list[str]:
     """The `updated_on >= "<bound>"` value of every repository listing request."""
     bounds = []
+    listing_path = urlparse(_REPOS_URL).path
     for request in mocker._mocker.request_history:
-        if not request.url.startswith(_REPOS_URL):
+        parsed = urlparse(request.url)
+        if parsed.path.rstrip("/") != listing_path:
             continue
-        q = parse_qs(urlparse(request.url).query)["q"][0]
-        bounds.append(q.split('"')[1])
+        q = parse_qs(parsed.query).get("q", [""])[0]
+        bounds.append(q.split('"')[1] if '"' in q else f"<unbounded: {request.url}>")
     return bounds
 
 
