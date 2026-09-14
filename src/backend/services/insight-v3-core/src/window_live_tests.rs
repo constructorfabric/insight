@@ -171,7 +171,10 @@ fn pairs(result: &RunResult) -> Vec<(String, String)> {
 /// A `VALUES` row holding one instant, in the second precision a `DateTime`
 /// column keeps.
 fn stamp(instant: chrono::DateTime<Utc>) -> String {
-    format!("('{}')", instant.format("%Y-%m-%d %H:%M:%S"))
+    format!(
+        "(toDateTime('{}', 'UTC'))",
+        instant.format("%Y-%m-%d %H:%M:%S")
+    )
 }
 
 fn totals(result: &RunResult) -> Vec<String> {
