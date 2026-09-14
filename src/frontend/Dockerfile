@@ -1,4 +1,4 @@
-FROM node:24-bookworm-slim AS builder
+FROM node:24-bookworm-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553 AS builder
 
 WORKDIR /app
 
@@ -21,7 +21,7 @@ RUN pnpm run build
 # fixable OS CVEs that no code change could clear (insight#2021). Floating minor
 # tag on purpose — Docker Official Images rebuild it when Alpine ships package
 # updates, so routine rebuilds pick the fixes up.
-FROM nginxinc/nginx-unprivileged:1.31-alpine
+FROM nginxinc/nginx-unprivileged:1.31-alpine@sha256:19c132c9ab02d3b783f478743dafc7a7f42e27aa7d2bdcbec1bb1128ca8f2a07
 
 # The base image already drops to an unprivileged user; the build steps below
 # need to write under /etc/nginx, so root is restored for them and dropped again
