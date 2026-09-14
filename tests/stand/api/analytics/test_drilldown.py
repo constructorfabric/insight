@@ -592,17 +592,15 @@ def _assert_shape(walk: _Walk, expectation: Expectation, person_id: str) -> None
 
 
 def _assert_median(period: float | None, values: Sequence[float], metric_key: str) -> None:
-    """`quantileExact(0.5)` returns a stored element, so this is an identity.
+    """The median of the evidence, both middle values averaged on an even count.
 
-    Both middle elements are accepted rather than one: which of them the server
-    returns for an even count is its own tie rule, and pinning it here would test
-    ClickHouse rather than the evidence.
+    An exact identity, not a membership test: the server serves
+    `quantileExactInclusive(0.5)`, which is the textbook median, so there is no
+    tie rule left to guess at. #3362
     """
-    ordered = sorted(values)
-    middle = {ordered[(len(ordered) - 1) // 2], ordered[len(ordered) // 2]}
-    assert period in middle, (
-        f"{metric_key}: period {period} is neither middle value of {len(ordered)} "
-        f"evidence rows {sorted(middle)}"
+    expected = statistics.median(values)
+    assert period is not None and period == pytest.approx(expected), (
+        f"{metric_key}: period {period} is not the median {expected} of {len(values)} evidence rows"
     )
 
 
@@ -611,10 +609,11 @@ def _assert_percentile(
 ) -> None:
     """`quantileExact(p)` returns a stored element, so this is an identity too.
 
-    The element sits at index `floor(p x n)` of the sorted values. Its
-    neighbour below is accepted as well, for the same reason `_assert_median`
-    accepts both middle values: which side of a tie the server takes is its own
-    rule, and pinning it here would test ClickHouse rather than the evidence.
+    The element sits at index `floor(p x n)` of the sorted values, and its
+    neighbour below is accepted too: which side of a tie the server takes is its
+    own rule, and pinning it here would test ClickHouse rather than the
+    evidence. A percentile keeps `quantileExact` where the median does not —
+    unlike the median it has no second definition to match. #3362
     """
     ordered = sorted(values)
     index = min(len(ordered) - 1, int(quantile * len(ordered)))
