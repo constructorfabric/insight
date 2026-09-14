@@ -748,10 +748,6 @@ describe("the admin role control", () => {
     ).toBeInTheDocument();
   });
 
-  // The service's own sentence beats ours whenever it sent one, the way every
-  // other verb in this window reports a refusal.
-  // Failing closed is right; saying nothing is not. A real admin whose own
-  // check failed would otherwise go asking for a role they already hold.
   it("offers a retry when the viewer's own role could not be checked", async () => {
     hooks.me.isAdmin = false;
     hooks.me.isError = true;

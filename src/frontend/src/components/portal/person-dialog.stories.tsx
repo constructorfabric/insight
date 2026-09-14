@@ -1,14 +1,4 @@
-/**
- * The admin role control in the person window, driven against a stubbed
- * identity service rather than stubbed hooks.
- *
- * The handlers below hold the assignment, so a grant changes what the next read
- * returns and the badge follows — the client, the query layer and the component
- * are all exercised over HTTP. The jsdom suite in `person-dialog.test.tsx`
- * covers the same states with the hooks replaced; this is the round trip.
- *
- * See docs/testing/storybook-component-tests.md.
- */
+/** See docs/testing/storybook-component-tests.md. */
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { http, HttpResponse } from "msw";
 import { expect, userEvent, within } from "storybook/test";
@@ -45,8 +35,6 @@ function identity({
   read?: "ok" | "error";
   revoke?: "ok" | "last-admin";
 } = {}) {
-  // The stub's own state: a grant has to change what the next read answers, or
-  // the badge would only ever reflect the fixture.
   let held = start;
 
   return [
@@ -106,9 +94,8 @@ const meta: Meta<typeof PersonDialog> = {
     layout: "fullscreen",
     msw: { handlers: identity() },
   },
-  // The preview resets `authStore` before every story, and `useMe` is keyed on
-  // the session scope — without one the role read never fires and the control
-  // renders as "not an admin".
+  // The preview resets `authStore`, and `useMe` is keyed on the session scope:
+  // without one the role read never fires and the control renders as non-admin.
   beforeEach: () => {
     authStore.setAuthenticated(makeSession());
   },
@@ -117,20 +104,16 @@ export default meta;
 
 type Story = StoryObj<typeof PersonDialog>;
 
-/** The subject holds nothing yet — the window offers the grant. */
 export const NotAdmin: Story = {};
 
-/** The subject holds the role — badge, and the withdrawing verb. */
 export const IsAdmin: Story = {
   parameters: { msw: { handlers: identity({ start: true }) } },
 };
 
-/** The viewer holds admin but the read failed: "unknown", and no verb. */
 export const RolesUnreadable: Story = {
   parameters: { msw: { handlers: identity({ read: "error" }) } },
 };
 
-/** A viewer who is not an admin sees no role control at all. */
 export const ViewerNotAdmin: Story = {
   parameters: { msw: { handlers: identity({ viewer: "none" }) } },
 };
@@ -174,8 +157,7 @@ export const TestRefusedReadOffersNoVerb: Story = {
   play: async () => {
     const canvas = body();
 
-    // Anchor on the window first: without it every queryBy below passes on an
-    // empty document, which is how this case passed while querying the canvas.
+    // Anchor on the window, or every queryBy below passes on an empty document.
     await canvas.findByRole("dialog");
     await expect(
       await canvas.findByText("Admin status could not be read.")
@@ -215,9 +197,7 @@ export const TestNonAdminViewerSeesNothing: Story = {
   play: async () => {
     const canvas = body();
 
-    // The viewer gate short-circuits ahead of the read, so this is silence
-    // rather than the "unknown" wording — the subject holds the role, and a
-    // viewer who may not manage roles is told nothing about it either way.
+    // The viewer gate short-circuits ahead of the read: silence, not "unknown".
     await canvas.findByRole("dialog");
     await expect(
       canvas.queryByText("Admin status could not be read.")

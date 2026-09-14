@@ -167,9 +167,8 @@ export function PersonDialog({
           </DialogTitle>
           <DialogDescription render={<div className="flex items-center gap-1" />}>
             {person ? <PersonId id={person.person_id} /> : null}
-            {/* Keyed for the same reason the body below is: the window swaps
-                subject without unmounting, and a pending verb or a refusal
-                would otherwise follow the reader onto the next person. */}
+            {/* Keyed: the window swaps subject without unmounting, so verb
+                state would follow onto the next person. */}
             {person ? (
               <AdminRoleControl
                 key={person.person_id}
@@ -222,9 +221,7 @@ function AdminRoleControl({ personId }: { personId: string }) {
   const grant = useGrantAdmin(personId);
   const revoke = useRevokeAdmin(personId);
 
-  // "Could not check" is not "not an admin": a real admin told nothing would go
-  // asking for a role they already hold, so the refusal says so and offers the
-  // re-ask instead.
+  // `isError` is not "not an admin": fail closed, but say so.
   if (viewer.isError) {
     return (
       <Button

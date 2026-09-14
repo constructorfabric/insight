@@ -59,9 +59,7 @@ export function useGrantAdmin(
   return useMutation({
     mutationFn: () =>
       grantPersonRole({ person_id: personId, role_id: ADMIN_ROLE_ID }),
-    // Returned, not fired and forgotten: the mutation stays pending until the
-    // re-read lands, so the verb cannot re-enable showing the state it just
-    // changed.
+    // Returned: keeps the mutation pending until the re-read lands.
     onSuccess: () =>
       client.invalidateQueries({ queryKey: personRolesKey(personId) }),
   });
@@ -73,9 +71,8 @@ export function useRevokeAdmin(
   const client = useQueryClient();
   return useMutation({
     mutationFn: (personRoleId: string) => revokePersonRole(personRoleId),
-    // The viewer's OWN roles too: revoking yourself leaves `useMe` holding the
-    // grant that draws this control, and it would keep drawing until that query
-    // went stale on its own.
+    // The viewer's own roles too: revoking yourself must drop the grant that
+    // draws this control.
     onSuccess: () =>
       Promise.all([
         client.invalidateQueries({ queryKey: personRolesKey(personId) }),

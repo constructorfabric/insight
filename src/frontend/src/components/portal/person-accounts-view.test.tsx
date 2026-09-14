@@ -78,7 +78,6 @@ vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
   useDetachAccount: () => hooks.detach,
   useExcludeAccount: () => hooks.exclude,
 }));
-// Stubbed for the same reason the verbs above are: no query client here.
 vi.mock("@/queries/identity-me", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/queries/identity-me")>()),
   useIsAdmin: () => ({

@@ -31,8 +31,7 @@ interface MockPersonRole {
   created_at: string;
 }
 
-/** Seeded with the viewer's own grant, so the tenant is never admin-less and
- *  the window opens on a person who already holds the role. */
+/** Seeded so the tenant is never admin-less. */
 const ADMIN_ASSIGNMENTS = new Map<string, MockPersonRole>(
   defaultPerson
     ? [
@@ -828,8 +827,6 @@ export const handlers = [
           { status: 404 }
         );
   }),
-  // Role assignments, held in memory so a grant changes what the next read
-  // answers and the badge follows the verb pressed.
   http.get("/api/identity/v1/person-roles", ({ request }) => {
     const personId = new URL(request.url).searchParams.get("person") ?? "";
     const assignment = ADMIN_ASSIGNMENTS.get(personId.toLowerCase());
@@ -843,9 +840,6 @@ export const handlers = [
       person_id: string;
       role_id: string;
     };
-    // Not derived from `size`: a revoke shrinks the map, and the next grant
-    // would then mint an id another assignment still holds — the delete below
-    // matches by id and would revoke the wrong person.
     const assignment = {
       person_role_id: crypto.randomUUID(),
       insight_tenant_id: "00000000-0000-4000-8000-00000000c0de",
@@ -864,8 +858,7 @@ export const handlers = [
     const id = String(params.personRoleId);
     for (const [person, assignment] of ADMIN_ASSIGNMENTS) {
       if (assignment.person_role_id !== id) continue;
-      // The service refuses a tenant's last active admin; mock mode keeps one
-      // back so that refusal is reachable without editing fixtures.
+      // Keeps one back so the last-admin refusal is reachable here.
       if (ADMIN_ASSIGNMENTS.size === 1) {
         return HttpResponse.json(
           { context: { reason: "last_admin_protected" } },

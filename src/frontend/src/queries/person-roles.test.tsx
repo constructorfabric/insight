@@ -1,11 +1,4 @@
 // @vitest-environment jsdom
-/**
- * A subject's admin role, as the person window reads and writes it. What
- * matters: "holds nothing" and "may not ask" are different answers, so a
- * refused read never renders as "not an admin"; the query stays idle until a
- * person is named; and a grant or revoke invalidates the read that drew the
- * badge, so the window reflects the write without a reload.
- */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderHook, waitFor } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
