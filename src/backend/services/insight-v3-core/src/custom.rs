@@ -1,5 +1,6 @@
 //! The metric, widget and dashboard operations, over the stores they need.
 
+use chrono::Utc;
 use serde_json::Value;
 use thiserror::Error;
 
@@ -200,7 +201,8 @@ impl<'a> Surfaces<'a> {
     }
 
     /// Runs a stored metric over the window the caller asked for, resolved
-    /// against the newest clock its own rows carry — which is read first.
+    /// against the wall clock, so a named range means the period it is named
+    /// after whether or not the data reaches that far.
     pub(crate) async fn run_metric(
         &self,
         name: &DefinitionName,
@@ -218,7 +220,7 @@ impl<'a> Surfaces<'a> {
         let engine = self.engine_of(&metric).await?;
         let anchor = self.anchor_of(&metric, request, engine).await?;
         let window = request
-            .resolve(anchor.newest())
+            .resolve(Utc::now())
             .map_err(|error| CustomError::Compile(error.into()))?;
 
         let compiled = metric

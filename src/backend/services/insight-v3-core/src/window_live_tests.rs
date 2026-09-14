@@ -11,6 +11,7 @@
 //! because this crate's CI runs plain `cargo test`, which would never reach an
 //! ignored test.
 
+use chrono::Utc;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -110,7 +111,7 @@ impl Stand {
         };
 
         let window = request
-            .resolve(anchor.newest())
+            .resolve(Utc::now())
             .unwrap_or_else(|error| panic!("the window resolves: {error}"));
         let compiled = metric
             .compile_window(self.runner.people(), &window, engine)
@@ -166,6 +167,12 @@ fn pairs(result: &RunResult) -> Vec<(String, String)> {
             (cell(0), cell(1))
         })
         .collect()
+}
+
+/// A `VALUES` row holding one instant, in the second precision a `DateTime`
+/// column keeps.
+fn stamp(instant: chrono::DateTime<Utc>) -> String {
+    format!("('{}')", instant.format("%Y-%m-%d %H:%M:%S"))
 }
 
 fn totals(result: &RunResult) -> Vec<String> {
@@ -297,11 +304,10 @@ async fn an_empty_source_answers_no_rows_rather_than_a_window_at_the_epoch() {
     };
 
     let metric = stand.metric(&counted(&json!({ "time": { "column": "occurred_at" } })));
-    let (result, anchor) = stand
+    let (result, _) = stand
         .answer(&metric, &request("P7D", None), TableEngine::MergeTree)
         .await;
 
-    assert_eq!(anchor.newest(), None);
     assert!(result.rows.is_empty(), "{:?}", result.rows);
 
     stand.drop_table().await;
@@ -377,7 +383,7 @@ async fn a_millisecond_short_of_the_end_is_still_inside_the_window() {
         .await;
 
     let metric = stand.metric(&counted(&json!({ "time": { "column": "occurred_at" } })));
-    let (result, anchor) = stand
+    let (result, _) = stand
         .answer(
             &metric,
             &request("2026-09-01/2026-09-02", Some(false)),
@@ -386,10 +392,6 @@ async fn a_millisecond_short_of_the_end_is_still_inside_the_window() {
         .await;
 
     assert_eq!(totals(&result), vec!["1".to_owned()]);
-    assert_eq!(
-        anchor.newest().map(|newest| newest.to_rfc3339()),
-        Some("2026-09-02T00:00:00+00:00".to_owned())
-    );
 
     stand.drop_table().await;
 }
@@ -427,52 +429,17 @@ async fn a_clock_inside_an_ingested_payload_windows_the_same_way() {
 }
 
 #[tokio::test]
-async fn a_filtered_metric_anchors_to_the_rows_it_actually_reads() {
-    let Some(stand) = stand_or_skip(
-        "(repo String, occurred_at DateTime) ENGINE = MergeTree ORDER BY occurred_at",
-    )
-    .await
-    else {
-        return;
-    };
-    stand
-        .insert(
-            "repo, occurred_at",
-            &[
-                "('one', '2026-09-01 10:00:00')",
-                "('two', '2026-09-20 10:00:00')",
-            ],
-        )
-        .await;
-
-    let metric = stand.metric(&counted(&json!({
-        "time": { "column": "occurred_at" },
-        "filters": [{ "column": "repo", "type": "string", "op": "eq", "value": "one" }]
-    })));
-    let (_, anchor) = stand
-        .answer(&metric, &request("P7D", None), TableEngine::MergeTree)
-        .await;
-
-    assert_eq!(
-        anchor.newest().map(|newest| newest.to_rfc3339()),
-        Some("2026-09-01T10:00:00+00:00".to_owned())
-    );
-
-    stand.drop_table().await;
-}
-
-#[tokio::test]
-async fn a_rolling_window_counts_the_newest_row_it_anchors_to() {
+async fn a_rolling_window_holds_what_happened_since_and_drops_what_did_not() {
     let Some(stand) =
         stand_or_skip("(occurred_at DateTime) ENGINE = MergeTree ORDER BY occurred_at").await
     else {
         return;
     };
+    let now = Utc::now();
+    let inside = stamp(now - chrono::TimeDelta::hours(1));
+    let older = stamp(now - chrono::TimeDelta::days(20));
     stand
-        .insert(
-            "occurred_at",
-            &["('2026-09-01 10:00:00')", "('2026-09-07 15:45:00')"],
-        )
+        .insert("occurred_at", &[inside.as_str(), older.as_str()])
         .await;
 
     let metric = stand.metric(&counted(&json!({ "time": { "column": "occurred_at" } })));
@@ -484,9 +451,9 @@ async fn a_rolling_window_counts_the_newest_row_it_anchors_to() {
         )
         .await;
 
-    // The anchor IS a row. A window that ends strictly before it never counts
-    // the newest thing that happened, which is the row a reader came for.
-    assert_eq!(totals(&result), vec!["2".to_owned()]);
+    // The window ends at the clock, so a row written an hour ago is inside it
+    // and one from three weeks back is not.
+    assert_eq!(totals(&result), vec!["1".to_owned()]);
 
     stand.drop_table().await;
 }

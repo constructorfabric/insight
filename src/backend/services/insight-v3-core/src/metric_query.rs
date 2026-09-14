@@ -908,9 +908,8 @@ impl MetricQuery {
         from
     }
 
-    /// Where a relative window counts back from, and how many rows carry no
-    /// clock — one read of the same rows the metric itself reads. A metric
-    /// with no clock has neither, and answers `None`.
+    /// How many of the rows a metric reads carry no clock — one read of the
+    /// same rows. A metric with no clock has none, and answers `None`.
     pub(crate) fn anchor_query(
         &self,
         engine: TableEngine,
@@ -928,7 +927,7 @@ impl MetricQuery {
         self.add_filters(None, &mut where_parts, &mut binds)?;
 
         let mut sql = format!(
-            "SELECT toUnixTimestamp64Milli(toDateTime64(maxOrNull({clock}), 3, 'UTC')) AS newest, countIf(isNull({clock})) AS undated FROM {}",
+            "SELECT countIf(isNull({clock})) AS undated FROM {}",
             self.table_source(None, engine)
         );
         if !where_parts.is_empty() {
@@ -985,7 +984,6 @@ fn add_window_predicates(
             binds.push(FilterBind::Int(from.timestamp_millis()));
             binds.push(FilterBind::Int(to.timestamp_millis()));
         }
-        Bounds::Empty => where_parts.push("0".to_owned()),
         Bounds::Unbounded => where_parts.push(format!("{clock} IS NOT NULL")),
     }
 
@@ -1200,11 +1198,11 @@ mod tests {
     }
 
     fn window(token: &str, bucketed: bool) -> crate::time_window::Window {
-        let anchor = chrono::DateTime::parse_from_rfc3339("2026-09-10T15:00:00Z")
-            .unwrap_or_else(|error| panic!("the synthetic anchor parses: {error}"))
+        let now = chrono::DateTime::parse_from_rfc3339("2026-09-10T15:00:00Z")
+            .unwrap_or_else(|error| panic!("the synthetic clock parses: {error}"))
             .to_utc();
         let resolved = RequestedRange::parse(token)
-            .and_then(|range| range.resolve(Some(anchor)))
+            .and_then(|range| range.resolve(now))
             .unwrap_or_else(|error| panic!("`{token}` resolves: {error}"));
 
         if bucketed {
@@ -1451,7 +1449,7 @@ mod tests {
 
         assert_eq!(
             anchor.sql,
-            "SELECT toUnixTimestamp64Milli(toDateTime64(maxOrNull(`occurred_at`), 3, 'UTC')) AS newest, countIf(isNull(`occurred_at`)) AS undated FROM `events`"
+            "SELECT countIf(isNull(`occurred_at`)) AS undated FROM `events`"
         );
     }
 

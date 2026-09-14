@@ -125,10 +125,10 @@ async fn recording_upstream() -> (String, tokio::task::JoinHandle<()>, Seen) {
         post(move |sql: String| {
             let recorded = recorded.clone();
             async move {
-                if sql.contains("maxOrNull") {
+                if sql.contains("undated") {
                     return Json(json!({
                         "meta": [],
-                        "data": [{"newest": "1757516400000", "undated": "4"}]
+                        "data": [{"undated": "4"}]
                     }));
                 }
 
@@ -387,8 +387,11 @@ async fn a_range_asked_of_a_metric_with_no_clock_is_a_bad_request() -> R {
     Ok(())
 }
 
+/// The upstream here reports a newest row in September 2025. A previous-day
+/// run must still read yesterday: a window counted back from the data drew
+/// whatever day the source happened to stop on and labelled it "Yesterday".
 #[tokio::test]
-async fn yesterday_is_the_day_before_the_newest_row_not_the_day_before_now() -> R {
+async fn yesterday_is_the_day_before_now_however_old_the_newest_row_is() -> R {
     let (address, server, seen) = recording_upstream().await;
     let harness = TestHarness::new(&address).await;
 
@@ -401,9 +404,23 @@ async fn yesterday_is_the_day_before_the_newest_row_not_the_day_before_now() -> 
         .await;
     assert_eq!(response.status(), StatusCode::OK);
 
+    let today = chrono::Utc::now().date_naive();
+    let yesterday = today
+        .pred_opt()
+        .unwrap_or_else(|| panic!("{today} has a day before it"));
     let sql = only_read(&seen);
-    assert!(sql.contains("1757376000"), "{sql}");
-    assert!(sql.contains("1757462400"), "{sql}");
+    for edge in [yesterday, today] {
+        let millis = edge
+            .and_hms_opt(0, 0, 0)
+            .unwrap_or_else(|| panic!("midnight exists on {edge}"))
+            .and_utc()
+            .timestamp_millis();
+        assert!(sql.contains(&millis.to_string()), "{millis} missing: {sql}");
+    }
+    assert!(
+        !sql.contains("1757462400000"),
+        "the newest row's day must not bound the window: {sql}"
+    );
 
     server.abort();
     Ok(())
