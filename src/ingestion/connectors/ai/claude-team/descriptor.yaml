@@ -83,7 +83,19 @@ name: claude-team
 #   both streams are written by the same job but not at the same instant, so on
 #   the first sync after the upgrade the per-user rows can land just before the
 #   envelope that judges them.
-version: "3.3.0"
+# 3.4.0: closes #3396. The connector becomes an identity observer. A flattened
+#   members projection feeds an SCD2 snapshot, a fields-history and an
+#   identity_inputs model tagged silver:identity_inputs, contributing `email`
+#   and `display_name` plus the ADR-0002 `id` binding row under source_type
+#   `claude-team`. Until now an account was attributable only when another
+#   connector happened to report the same address; now the account itself is
+#   bindable, so an operator can attach one whose address no directory source
+#   carries. Not a roster emitter — it observes accounts, it does not assert
+#   who exists.
+#   MINOR per ADR-0015 — purely additive. No Bronze change, no existing dbt
+#   output changes, nothing re-materializes; the new staging relations are
+#   created by dbt rather than altered, so no migration ships with it.
+version: "3.4.0"
 # Daily at 23:50 UTC, as late in the day as the boundary allows. The seat
 # endpoint reports the billing month in progress and carries no history, so a
 # month's spend is frozen at the last read INSIDE it and whatever follows is
