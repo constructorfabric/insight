@@ -796,6 +796,122 @@ mod tests {
     }
 
     #[test]
+    fn vendor_banners_classify_without_the_transport_line() {
+        let cases: Vec<(&str, Check)> = vec![
+            (
+                "remote: A repository for this project does not exist yet.",
+                |e| matches!(e, GitError::NotFound),
+            ),
+            (
+                "remote: The project you were looking for could not be found or you don't have permission to view it.",
+                |e| matches!(e, GitError::NotFound),
+            ),
+            (
+                "remote: You may not have access to this repository or it no longer exists in this workspace.",
+                |e| matches!(e, GitError::NotFound),
+            ),
+            ("remote: This repository is currently not available.", |e| {
+                matches!(e, GitError::OriginUnavailable)
+            }),
+            (
+                "remote: Access to this repository has been disabled by GitHub staff.",
+                |e| matches!(e, GitError::OriginUnavailable),
+            ),
+            (
+                "remote: You are not allowed to download code from this project.",
+                |e| matches!(e, GitError::OriginUnavailable),
+            ),
+            ("remote: You are not allowed to download code.", |e| {
+                matches!(e, GitError::AuthRejected)
+            }),
+            (
+                "remote: The `acme` organization has enabled or enforced SAML SSO.",
+                |e| matches!(e, GitError::AuthRejected),
+            ),
+            (
+                "remote: the `acme` organization has an IP allow list enabled, and your IP address is not permitted to access this resource.",
+                |e| matches!(e, GitError::AuthRejected),
+            ),
+            ("remote: Pulling over HTTP is not allowed.", |e| {
+                matches!(e, GitError::AuthRejected)
+            }),
+            // Near misses of git's 404 line: a different prefix, a suffix past
+            // the closing quote, or a missing ref rather than a missing
+            // repository. None of these is a 404.
+            ("error: repository 'https://x/g/p.git/' not found", |e| {
+                matches!(e, GitError::Failed(_))
+            }),
+            (
+                "fatal: repository 'https://x/g/p.git/' not found in the local cache",
+                |e| matches!(e, GitError::Failed(_)),
+            ),
+            ("fatal: couldn't find remote ref 'refs/heads/main'", |e| {
+                matches!(e, GitError::Failed(_))
+            }),
+        ];
+        for (stderr, check) in cases {
+            let err = classify_failure(&failed_output(stderr));
+            assert!(check(&err), "stderr {stderr:?} classified as {err:?}");
+        }
+    }
+
+    #[test]
+    fn earlier_fingerprints_win_over_later_ones() {
+        let cases: Vec<(&str, Check)> = vec![
+            // throttled > unavailable, throttled > auth
+            (
+                "remote: This repository is currently not available.\n\
+                 remote: rate limit exceeded",
+                |e| matches!(e, GitError::Throttled),
+            ),
+            (
+                "fatal: Authentication failed for 'https://x/'\n\
+                 remote: too many requests",
+                |e| matches!(e, GitError::Throttled),
+            ),
+            // unavailable > auth, in either line order
+            (
+                "remote: You are not allowed to download code from this project.\n\
+                 fatal: Authentication failed for 'https://x/'",
+                |e| matches!(e, GitError::OriginUnavailable),
+            ),
+            (
+                "fatal: Authentication failed for 'https://x/'\n\
+                 remote: Access to this repository has been disabled by GitHub staff.",
+                |e| matches!(e, GitError::OriginUnavailable),
+            ),
+            // auth banner > bare 403, with the 403 line first
+            (
+                "fatal: unable to access 'https://x/': The requested URL returned error: 403\n\
+                 remote: The `acme` organization has enabled or enforced SAML SSO.",
+                |e| matches!(e, GitError::AuthRejected),
+            ),
+            // bare 403 > promisor
+            (
+                "error: https://x/a.git did not send all necessary objects\n\
+                 fatal: unable to access 'https://x/': The requested URL returned error: 403",
+                |e| matches!(e, GitError::OriginUnavailable),
+            ),
+            // promisor > missing
+            (
+                "error: https://x/a.git did not send all necessary objects\n\
+                 fatal: repository 'https://x/a.git/' not found",
+                |e| matches!(e, GitError::PromisorRefused),
+            ),
+            // auth > missing
+            (
+                "remote: Repository not found.\n\
+                 fatal: Authentication failed for 'https://x/'",
+                |e| matches!(e, GitError::AuthRejected),
+            ),
+        ];
+        for (stderr, check) in cases {
+            let err = classify_failure(&failed_output(stderr));
+            assert!(check(&err), "stderr {stderr:?} classified as {err:?}");
+        }
+    }
+
+    #[test]
     fn failed_keeps_only_the_stderr_tail() {
         let noise = "x".repeat(10_000);
         let err = classify_failure(&failed_output(&noise));
