@@ -434,6 +434,18 @@ pub(crate) fn period_compare_alias(item_index: usize) -> String {
     format!("m{item_index}_compare")
 }
 
+/// The alias carrying whether one item's source observed the entity at all in
+/// the primary period — the coverage that tells a zero from a gap.
+pub(crate) fn period_coverage_alias(item_index: usize) -> String {
+    format!("m{item_index}_covered")
+}
+
+/// The same over the comparison window. Its own column, because the scan spans
+/// both windows and coverage in one says nothing about the other.
+pub(crate) fn period_compare_coverage_alias(item_index: usize) -> String {
+    format!("m{item_index}_compare_covered")
+}
+
 pub(crate) struct PeerAliases {
     pub target: String,
     pub p25: String,
@@ -479,13 +491,25 @@ pub fn demux_period_rows(
     for row in rows {
         for (item_index, item_rows) in per_item.iter_mut().enumerate() {
             let value = wide_field(&row.extra, &period_alias(item_index))?;
-            let compare_to = if compared {
-                Some(wide_field(&row.extra, &period_compare_alias(item_index))?)
+            let covered = optional_wide_field(&row.extra, &period_coverage_alias(item_index));
+            let (compare_to, covered_compare) = if compared {
+                (
+                    Some(wide_field(&row.extra, &period_compare_alias(item_index))?),
+                    Some(optional_wide_field(
+                        &row.extra,
+                        &period_compare_coverage_alias(item_index),
+                    )),
+                )
             } else {
-                None
+                (None, None)
             };
-            let narrow =
-                json!({ "entity_id": row.entity_id, "value": value, "compare_to": compare_to });
+            let narrow = json!({
+                "entity_id": row.entity_id,
+                "value": value,
+                "compare_to": compare_to,
+                "covered": covered,
+                "covered_compare": covered_compare,
+            });
             item_rows.push(decode_narrow_row(narrow)?);
         }
     }
@@ -528,6 +552,17 @@ fn wide_field<'a>(
         tracing::error!(alias = %alias, "batched metric result row missing item alias");
         CanonicalError::internal("metric result shape mismatch").create()
     })
+}
+
+/// A column whose absence is an answer rather than a shape error: coverage
+/// missing reads as "no coverage stated", which keeps the value NULL. A reader
+/// that never selected it therefore behaves exactly as it did before coverage
+/// existed, instead of failing the whole result.
+fn optional_wide_field<'a>(
+    extra: &'a HashMap<String, serde_json::Value>,
+    alias: &str,
+) -> &'a serde_json::Value {
+    extra.get(alias).unwrap_or(&serde_json::Value::Null)
 }
 
 fn decode_narrow_row<T: serde::de::DeserializeOwned>(

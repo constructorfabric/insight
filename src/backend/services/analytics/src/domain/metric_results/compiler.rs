@@ -5,6 +5,7 @@ use serde::Deserialize;
 
 use super::batch::{
     PeerPopulation, ResolvedGroupLimit, peer_aliases, period_alias, period_compare_alias,
+    period_compare_coverage_alias, period_coverage_alias,
 };
 use super::validation::{
     DateWindow, HISTOGRAM_BINS, ValidatedDimensionFilter, ValidatedEntitySelection,
@@ -79,6 +80,31 @@ pub struct PeriodQueryRow {
     /// for.
     #[serde(default)]
     pub compare_to: Option<f64>,
+    /// Whether the metric's own source observed this entity at all in the
+    /// period. It is what separates "the source covers this person and recorded
+    /// no such event" — a zero — from "the source says nothing about them" — a
+    /// gap. Absent means not-covered, so a reader that never selected the
+    /// column reports NULL rather than a fabricated zero.
+    #[serde(default)]
+    pub covered: Option<u8>,
+    /// The same, over the comparison window.
+    #[serde(default)]
+    pub covered_compare: Option<u8>,
+}
+
+impl PeriodQueryRow {
+    /// `0`/`1` off the wire; anything absent or null is "no coverage stated".
+    fn covers(flag: Option<u8>) -> bool {
+        flag.is_some_and(|covered| covered != 0)
+    }
+
+    pub fn is_covered(&self) -> bool {
+        Self::covers(self.covered)
+    }
+
+    pub fn is_covered_over_comparison(&self) -> bool {
+        Self::covers(self.covered_compare)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -181,7 +207,23 @@ pub(crate) fn compile_period_batch_query(
     // With a comparison window the outer WHERE spans both, so each aggregate —
     // the primary one included — carries its own window term. Without one the
     // outer WHERE alone scopes the dates and the SQL is unchanged.
+    // Only a computation that reads absence as a zero needs to know whether the
+    // source covered the entity, and only that question needs the wider scan. A
+    // batch of medians alone compiles exactly as it did before.
+    let measures = if defs.iter().any(|def| def.zero_fills_absence()) {
+        MeasureScope::WholeSource
+    } else {
+        MeasureScope::ExactMeasures
+    };
     let mut selects = item_value_selects(defs, &mut params, period_alias, primary_window(req));
+    if measures == MeasureScope::WholeSource {
+        selects.push_str(&item_coverage_selects(
+            defs,
+            &mut params,
+            period_coverage_alias,
+            primary_window(req),
+        ));
+    }
     if let Some(compare_to) = req.compare_to {
         selects.push_str(&item_value_selects(
             defs,
@@ -189,10 +231,28 @@ pub(crate) fn compile_period_batch_query(
             period_compare_alias,
             Some(compare_to),
         ));
+        if measures == MeasureScope::WholeSource {
+            selects.push_str(&item_coverage_selects(
+                defs,
+                &mut params,
+                period_compare_coverage_alias,
+                Some(compare_to),
+            ));
+        }
     }
     let read = batch_resolved_observation_from(defs, req, ScanScope::WithComparison, &mut params);
-    let metric_scope =
-        shared_observation_where_within(defs, req, filters, ScanScope::WithComparison, &mut params);
+    // Scoped to the batch's SOURCES, not its measure pairs, whenever coverage is
+    // asked for: the evidence that a source spoke at all lives in the measures
+    // the batch did NOT request. Every aggregate names its own
+    // `(source_key, measure_key)` inside its `If`, so no value changes with it.
+    let metric_scope = shared_observation_where_within(
+        defs,
+        req,
+        filters,
+        ScanScope::WithComparison,
+        measures,
+        &mut params,
+    );
     let entity_scope = read.entity_scope(req, &mut params);
     let observation_table = &read.from;
     let limit = query_row_limit();
@@ -1136,8 +1196,14 @@ fn compile_declared_cohort_peer_batch_query(
         &mut params,
     )
     .from;
-    let metric_scope =
-        shared_observation_where_within(defs, req, filters, ScanScope::PrimaryOnly, &mut params);
+    let metric_scope = shared_observation_where_within(
+        defs,
+        req,
+        filters,
+        ScanScope::PrimaryOnly,
+        MeasureScope::ExactMeasures,
+        &mut params,
+    );
 
     let entity_id_params = placeholders(req.entity.len());
     let cohort_table = cohort_table(CohortSource::MetricEntityCohortsCurrent);
@@ -1212,8 +1278,14 @@ fn compile_tenant_peer_batch_query(
         &mut params,
     )
     .from;
-    let metric_scope =
-        shared_observation_where_within(defs, req, filters, ScanScope::PrimaryOnly, &mut params);
+    let metric_scope = shared_observation_where_within(
+        defs,
+        req,
+        filters,
+        ScanScope::PrimaryOnly,
+        MeasureScope::ExactMeasures,
+        &mut params,
+    );
 
     let entity_id_params = placeholders(req.entity.len());
     let limit = query_row_limit();
@@ -1382,6 +1454,36 @@ fn item_value_selects(
             selects,
             ",
                 {expr} AS {alias}",
+            alias = alias(item_index)
+        );
+    }
+    selects
+}
+
+/// One column per item saying whether that item's source observed the entity in
+/// the window at all — the coverage half of the zero-versus-gap question the
+/// value column alone cannot answer.
+///
+/// Read off the source, never off the batch, so a metric's answer does not
+/// change with the company its request keeps. Emitted only for the items that
+/// read absence as a zero — nothing else has a use for the answer.
+fn item_coverage_selects(
+    defs: &[&MetricDefinition],
+    params: &mut Vec<String>,
+    alias: impl Fn(usize) -> String,
+    window: Option<DateWindow>,
+) -> String {
+    let mut selects = String::new();
+    for (item_index, def) in defs.iter().enumerate() {
+        if !def.zero_fills_absence() {
+            continue;
+        }
+        params.push(def.source_key().to_owned());
+        let window = window_term(window, params);
+        let _ = write!(
+            selects,
+            ",
+                countIf(source_key = ?{window}) > 0 AS {alias}",
             alias = alias(item_index)
         );
     }
@@ -1573,6 +1675,20 @@ fn transformed_batch(defs: &[&MetricDefinition], inner: String, compared: bool) 
             let expr = transformed(def, value.clone());
             let _ = write!(selects, ", {expr} AS {value}");
         }
+        // Coverage says whether the source spoke, not what it said: a value
+        // transform has nothing to apply to it, and dropping it here would
+        // silently disable zero-filling for every transformed metric.
+        if def.zero_fills_absence() {
+            for covered in [
+                Some(period_coverage_alias(item_index)),
+                compared.then(|| period_compare_coverage_alias(item_index)),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                let _ = write!(selects, ", {covered}");
+            }
+        }
     }
     format!(
         r"
@@ -1598,28 +1714,57 @@ fn push_cohort_scope(
 /// `shared_observation_where` over an explicit scan range: a windowed batch
 /// scans the union of its windows once and lets each conditional aggregate
 /// pick its own out of it.
+/// How much of a source a scan admits.
+///
+/// `ExactMeasures` reads only the pairs the batch computes — the least work. A
+/// batch that also answers "did this source observe the entity at all" needs
+/// `WholeSource`, because the evidence for that lives in the measures it did
+/// NOT ask for. Widening changes no value: every aggregate carries its own
+/// `(source_key, measure_key)` predicate.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MeasureScope {
+    ExactMeasures,
+    WholeSource,
+}
+
 fn shared_observation_where_within(
     defs: &[&MetricDefinition],
     req: &ValidatedMetricResultsRequest,
     filters: &[ValidatedDimensionFilter],
     scope: ScanScope,
+    measures: MeasureScope,
     params: &mut Vec<String>,
 ) -> String {
     params.push(req.tenant_id.to_string());
     params.push(req.entity.entity_type().to_owned());
     let scan = scan_window_predicate(req, "metric_date", " ", scope, params);
-    let pairs = measure_pairs(defs);
-    for (source_key, measure_key) in &pairs {
-        params.push(source_key.clone());
-        params.push(measure_key.clone());
-    }
-    let pair_placeholders = vec!["(?, ?)"; pairs.len()].join(", ");
+    let measure_clause = match measures {
+        MeasureScope::ExactMeasures => {
+            let pairs = measure_pairs(defs);
+            for (source_key, measure_key) in &pairs {
+                params.push(source_key.clone());
+                params.push(measure_key.clone());
+            }
+            let placeholders = vec!["(?, ?)"; pairs.len()].join(", ");
+            format!("(source_key, measure_key) IN ({placeholders})")
+        }
+        MeasureScope::WholeSource => {
+            let sources = source_keys(defs);
+            for source_key in &sources {
+                params.push(source_key.clone());
+            }
+            let placeholders = placeholders(sources.len());
+            format!("source_key IN ({placeholders})")
+        }
+    };
     let tenant = tenant_predicate(req.enforce_tenant_scope);
-    let mut where_clause = format!(
-        "{tenant} AND entity_type = ? AND {scan} AND (source_key, measure_key) IN ({pair_placeholders})"
-    );
+    let mut where_clause = format!("{tenant} AND entity_type = ? AND {scan} AND {measure_clause}");
     where_clause.push_str(&dimension_filter_where(filters, params));
     where_clause
+}
+
+fn source_keys(defs: &[&MetricDefinition]) -> BTreeSet<String> {
+    defs.iter().map(|def| def.source_key().to_owned()).collect()
 }
 
 fn dimension_filter_where(
@@ -2449,7 +2594,7 @@ mod tests {
     }
 
     #[test]
-    fn period_batch_binds_item_params_then_resolution_then_scope_and_pairs() {
+    fn period_batch_binds_item_params_then_coverage_then_resolution_then_source_scope() {
         let (sum, ratio) = (sum_metric(), ratio_metric());
         let query = compile_period_batch_query(&[&sum, &ratio], &request(), &[]);
         assert!(query.sql.contains("FROM insight.ai_metric_observations"));
@@ -2467,11 +2612,17 @@ mod tests {
         );
         assert!(query.sql.contains("nullIf"));
         assert!(query.sql.contains("100 *"));
+        // Scoped to the source, not to the batch's pairs: the coverage columns
+        // read the rows a sibling measure produced, and a metric's answer must
+        // not change with the company its request keeps.
+        assert!(query.sql.contains("source_key IN (?)"));
         assert!(
             query
                 .sql
-                .contains("(source_key, measure_key) IN ((?, ?), (?, ?), (?, ?))")
+                .contains("countIf(source_key = ?) > 0 AS m0_covered")
         );
+        // The ratio reads absence as "unknown", so it asks for no coverage.
+        assert!(!query.sql.contains("m1_covered"));
         assert!(query.sql.contains("GROUP BY entity_id"));
         assert_eq!(
             query.params,
@@ -2483,6 +2634,8 @@ mod tests {
                 "accepted_edit_actions",
                 "ai_usage",
                 "tool_use_offered",
+                // the sum's coverage column; the ratio asks for none
+                "ai_usage",
                 // identity resolution renders in the FROM, ahead of the WHERE:
                 // the people asked about (the email prune), the date range it
                 // narrows to, then the same people for the resolved filter
@@ -2497,13 +2650,8 @@ mod tests {
                 "person",
                 "2026-01-01",
                 "2026-01-31",
-                // deduped (source_key, measure_key) pairs, BTreeSet order
+                // deduped source keys, BTreeSet order
                 "ai_usage",
-                "accepted_edit_actions",
-                "ai_usage",
-                "accepted_lines",
-                "ai_usage",
-                "tool_use_offered",
             ]
         );
     }
@@ -2539,9 +2687,18 @@ mod tests {
                 "accepted_lines",
                 "2026-01-01",
                 "2026-01-31",
+                // its coverage, over the same window
+                "ai_usage",
+                "2026-01-01",
+                "2026-01-31",
                 // extra window column
                 "ai_usage",
                 "accepted_lines",
+                "2025-12-01",
+                "2025-12-31",
+                // and its own coverage: the scan spans both ranges, so one
+                // window's coverage says nothing about the other
+                "ai_usage",
                 "2025-12-01",
                 "2025-12-31",
                 // the identity-resolving read: it filters observations BEFORE
@@ -2563,7 +2720,6 @@ mod tests {
                 "2025-12-01",
                 "2025-12-31",
                 "ai_usage",
-                "accepted_lines",
             ]
         );
     }
@@ -2885,6 +3041,7 @@ mod tests {
                 "person",
                 "2026-01-01",
                 "2026-01-31",
+                // a ratio zero-fills nothing, so the scan stays on the pairs
                 "ai_usage",
                 "accepted_edit_actions",
                 "ai_usage",

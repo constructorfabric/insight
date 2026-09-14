@@ -305,8 +305,8 @@ pub enum ComputationSpec {
     /// Count of distinct `subject_key` values over the entity's observations
     /// (e.g. distinct active dates, distinct tools). The measure emits one row
     /// per subject with the subject stamped on `subject_key`; the aggregate is
-    /// `uniqExact(subject_key)`. Zero-filled like `Sum` — no subjects is a
-    /// genuine zero, not unknown.
+    /// `uniqExact(subject_key)`. Zero-filled like `Sum` where the source covers
+    /// the entity — no subjects is then a genuine zero, not unknown.
     DistinctCount {
         value: MetricInput,
     },
@@ -368,6 +368,31 @@ impl MetricDefinition {
             | ComputationSpec::DistinctCount { value } => &value.observation,
             ComputationSpec::Ratio { numerator, .. } => &numerator.observation,
         }
+    }
+
+    /// The source that answers this metric. A ratio's two sides share one
+    /// (enforced at load), so the numerator names it for both.
+    pub fn source_key(&self) -> &str {
+        match &self.spec {
+            ComputationSpec::Sum { value }
+            | ComputationSpec::Median { value }
+            | ComputationSpec::Percentile { value, .. }
+            | ComputationSpec::Stddev { value }
+            | ComputationSpec::DistinctCount { value } => value.source_key.as_str(),
+            ComputationSpec::Ratio { numerator, .. } => numerator.source_key.as_str(),
+        }
+    }
+
+    /// Whether an absence of observations is a genuine zero for this metric.
+    ///
+    /// A count and a distinct count over no events are 0. A median, percentile,
+    /// standard deviation or ratio over no events is not a number at all, and
+    /// reporting 0 would invent an observation nobody made.
+    pub fn zero_fills_absence(&self) -> bool {
+        matches!(
+            self.spec,
+            ComputationSpec::Sum { .. } | ComputationSpec::DistinctCount { .. }
+        )
     }
 }
 

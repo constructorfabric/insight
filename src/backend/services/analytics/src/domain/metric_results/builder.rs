@@ -55,17 +55,38 @@ impl SeriesData {
     }
 }
 
+/// A reading the source covered but never observed. `sum` and `distinct_count`
+/// read that as 0 — the events were counted and there were none. Every other
+/// computation stays NULL: a median or a ratio of nothing is not a number, and
+/// a 0 there would be an observation nobody made.
+///
+/// Without coverage the absence is an evidence gap, and the product rule is
+/// that a gap is shown, never filled with a zero. The SQL keeps the aggregate
+/// NULL for both cases so a fabricated zero can never reach a peer pool; the
+/// entity's OWN value is where the two part company.
+fn observed_or_zero(value: Option<f64>, covered: bool, zero_fills: bool) -> Option<f64> {
+    match value {
+        Some(value) => Some(value),
+        None if zero_fills && covered => Some(0.0),
+        None => None,
+    }
+}
+
 pub fn build_period_view(
-    _def: &MetricDefinition,
+    def: &MetricDefinition,
     req: &ValidatedMetricResultsRequest,
     rows: Vec<PeriodQueryRow>,
 ) -> MetricResultViewDto {
+    let zero_fills = def.zero_fills_absence();
     let values_by_entity: HashMap<String, (Option<f64>, Option<f64>)> = rows
         .into_iter()
         .map(|row| {
+            let value = observed_or_zero(row.value, row.is_covered(), zero_fills);
+            let compare_to =
+                observed_or_zero(row.compare_to, row.is_covered_over_comparison(), zero_fills);
             (
                 req.entity.canonicalize_entity_id(row.entity_id),
-                (row.value, row.compare_to),
+                (value, compare_to),
             )
         })
         .collect();
@@ -660,6 +681,16 @@ mod tests {
         }
     }
 
+    fn stddev_metric() -> MetricDefinition {
+        MetricDefinition {
+            transform: None,
+            base: base(),
+            spec: ComputationSpec::Stddev {
+                value: input(MetricInputRole::Value, "pr_cycle_hours"),
+            },
+        }
+    }
+
     fn percentile_metric() -> MetricDefinition {
         MetricDefinition {
             transform: None,
@@ -668,6 +699,30 @@ mod tests {
                 value: input(MetricInputRole::Value, "pr_cycle_hours"),
                 q: 0.75,
             },
+        }
+    }
+
+    /// A row the scan produced for an entity its source covers — the shape that
+    /// carries a value. Use [`uncovered_period_row`] for the other one.
+    fn period_row(entity_id: &str, value: Option<f64>, compare_to: Option<f64>) -> PeriodQueryRow {
+        PeriodQueryRow {
+            entity_id: entity_id.to_owned(),
+            value,
+            compare_to,
+            covered: Some(1),
+            covered_compare: Some(1),
+        }
+    }
+
+    /// A row for an entity the scan saw under some other source, whose own
+    /// source said nothing in the window.
+    fn uncovered_period_row(entity_id: &str) -> PeriodQueryRow {
+        PeriodQueryRow {
+            entity_id: entity_id.to_owned(),
+            value: None,
+            compare_to: None,
+            covered: Some(0),
+            covered_compare: Some(0),
         }
     }
 
@@ -723,11 +778,11 @@ mod tests {
             "2026-01-01",
             "2026-01-31",
         );
-        let rows = vec![PeriodQueryRow {
-            entity_id: "00000000-0000-0000-0000-00000000000a".to_owned(),
-            value: Some(5.0),
-            compare_to: None,
-        }];
+        let rows = vec![period_row(
+            "00000000-0000-0000-0000-00000000000a",
+            Some(5.0),
+            None,
+        )];
         let MetricResultViewDto::Period { values } = build_period_view(&sum_metric(), &req, rows)
         else {
             panic!("expected period view");
@@ -736,6 +791,158 @@ mod tests {
         assert_eq!(values[0].value, None);
         assert_eq!(values[1].entity_id, "00000000-0000-0000-0000-00000000000a");
         assert_eq!(values[1].value, Some(5.0));
+    }
+
+    #[test]
+    fn a_covered_entity_with_no_events_of_a_sum_metric_reads_zero() {
+        // The reproduction this rule exists for: the source covers the person
+        // for the period and recorded no event of this kind. Counting them
+        // gives 0, and NULL would read as "we do not know".
+        let req = request(
+            vec!["00000000-0000-0000-0000-00000000000a"],
+            "2026-01-01",
+            "2026-01-31",
+        );
+        let rows = vec![period_row(
+            "00000000-0000-0000-0000-00000000000a",
+            None,
+            None,
+        )];
+
+        let MetricResultViewDto::Period { values } = build_period_view(&sum_metric(), &req, rows)
+        else {
+            panic!("expected period view");
+        };
+
+        assert_eq!(values[0].value, Some(0.0));
+    }
+
+    #[test]
+    fn a_distinct_count_zero_fills_on_coverage_exactly_as_a_sum_does() {
+        let req = request(
+            vec!["00000000-0000-0000-0000-00000000000a"],
+            "2026-01-01",
+            "2026-01-31",
+        );
+        let rows = vec![period_row(
+            "00000000-0000-0000-0000-00000000000a",
+            None,
+            None,
+        )];
+
+        let MetricResultViewDto::Period { values } =
+            build_period_view(&distinct_count_metric(), &req, rows)
+        else {
+            panic!("expected period view");
+        };
+
+        assert_eq!(values[0].value, Some(0.0));
+    }
+
+    #[test]
+    fn an_uncovered_entity_keeps_null_because_the_gap_is_the_answer() {
+        // The scan saw the entity under another source; its own said nothing.
+        // A zero here would claim a measurement nobody took.
+        let req = request(
+            vec!["00000000-0000-0000-0000-00000000000a"],
+            "2026-01-01",
+            "2026-01-31",
+        );
+        let rows = vec![uncovered_period_row("00000000-0000-0000-0000-00000000000a")];
+
+        let MetricResultViewDto::Period { values } = build_period_view(&sum_metric(), &req, rows)
+        else {
+            panic!("expected period view");
+        };
+
+        assert_eq!(values[0].value, None);
+    }
+
+    #[test]
+    fn coverage_never_turns_a_distribution_metric_into_a_zero() {
+        // A median, a percentile, a standard deviation and a ratio of no
+        // observations are not numbers — coverage changes nothing for them.
+        let req = request(
+            vec!["00000000-0000-0000-0000-00000000000a"],
+            "2026-01-01",
+            "2026-01-31",
+        );
+        for def in [
+            median_metric(),
+            percentile_metric(),
+            ratio_metric(),
+            stddev_metric(),
+        ] {
+            let rows = vec![period_row(
+                "00000000-0000-0000-0000-00000000000a",
+                None,
+                None,
+            )];
+            let MetricResultViewDto::Period { values } = build_period_view(&def, &req, rows) else {
+                panic!("expected period view");
+            };
+            assert_eq!(
+                values[0].value,
+                None,
+                "{} must stay null on no observations",
+                def.key()
+            );
+        }
+    }
+
+    #[test]
+    fn a_measured_zero_is_untouched_by_the_zero_fill() {
+        // Distinguishable from the filled zero only by provenance, so the rule
+        // must not depend on the value: a 0 that came from the scan is served
+        // for every computation, distributions included.
+        let req = request(
+            vec!["00000000-0000-0000-0000-00000000000a"],
+            "2026-01-01",
+            "2026-01-31",
+        );
+        let rows = vec![period_row(
+            "00000000-0000-0000-0000-00000000000a",
+            Some(0.0),
+            None,
+        )];
+
+        let MetricResultViewDto::Period { values } =
+            build_period_view(&median_metric(), &req, rows)
+        else {
+            panic!("expected period view");
+        };
+
+        assert_eq!(values[0].value, Some(0.0));
+    }
+
+    #[test]
+    fn the_comparison_window_carries_its_own_coverage() {
+        // The scan spans both windows, so coverage in one says nothing about
+        // the other: a person who joined mid-way has no comparison-window zero.
+        let mut req = request(
+            vec!["00000000-0000-0000-0000-00000000000a"],
+            "2026-02-01",
+            "2026-02-28",
+        );
+        req.compare_to = Some(super::super::validation::DateWindow {
+            from: NaiveDate::from_ymd_opt(2026, 1, 1).unwrap_or_default(),
+            to: NaiveDate::from_ymd_opt(2026, 1, 31).unwrap_or_default(),
+        });
+        let rows = vec![PeriodQueryRow {
+            entity_id: "00000000-0000-0000-0000-00000000000a".to_owned(),
+            value: None,
+            compare_to: None,
+            covered: Some(1),
+            covered_compare: Some(0),
+        }];
+
+        let MetricResultViewDto::Period { values } = build_period_view(&sum_metric(), &req, rows)
+        else {
+            panic!("expected period view");
+        };
+
+        assert_eq!(values[0].value, Some(0.0));
+        assert_eq!(values[0].compare_to, None);
     }
 
     #[test]
@@ -752,11 +959,11 @@ mod tests {
             from: NaiveDate::from_ymd_opt(2026, 1, 1).unwrap_or_default(),
             to: NaiveDate::from_ymd_opt(2026, 1, 31).unwrap_or_default(),
         });
-        let rows = vec![PeriodQueryRow {
-            entity_id: "00000000-0000-0000-0000-00000000000a".to_owned(),
-            value: Some(5.0),
-            compare_to: Some(3.0),
-        }];
+        let rows = vec![period_row(
+            "00000000-0000-0000-0000-00000000000a",
+            Some(5.0),
+            Some(3.0),
+        )];
 
         let MetricResultViewDto::Period { values } = build_period_view(&sum_metric(), &req, rows)
         else {
@@ -772,11 +979,7 @@ mod tests {
         let tenant_id = Uuid::from_u128(0x1967);
         let mut req = request(Vec::new(), "2026-01-01", "2026-01-31");
         req.entity = ValidatedEntitySelection::Tenant { id: tenant_id };
-        let rows = vec![PeriodQueryRow {
-            entity_id: "default".to_owned(),
-            value: Some(5.0),
-            compare_to: None,
-        }];
+        let rows = vec![period_row("default", Some(5.0), None)];
 
         let MetricResultViewDto::Period { values } = build_period_view(&sum_metric(), &req, rows)
         else {
