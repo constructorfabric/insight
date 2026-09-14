@@ -572,22 +572,49 @@ newest_from_events AS (
 --
 -- An ABSENT key is a different thing and belongs to `retired_pairs` — the field
 -- left the issue's context, rather than the issue dropping its value.
-cleared_pairs AS (
+-- Pairs whose events end on a value the snapshot does not hold. Resolved
+-- BEFORE the issue JSON is consulted, so the JSON is probed for these pairs
+-- only.
+missing_from_snapshot AS (
     SELECT
         n.insight_source_id                               AS insight_source_id,
         n.issue_id                                        AS issue_id,
-        n.field_id                                        AS field_id,
-        j.observed_at                                     AS event_at
+        n.field_id                                        AS field_id
     FROM newest_from_events AS n
-    INNER JOIN issue_json AS j
-        ON j.insight_source_id = n.insight_source_id
-       AND j.issue_id = n.issue_id
     LEFT ANTI JOIN snapshot AS s
         ON s.insight_source_id = n.insight_source_id
        AND s.issue_id = n.issue_id
        AND s.field_id = n.field_id
     WHERE length(n.value_ids) > 0
-      AND JSONHas(j.custom_fields_json, n.field_id)
+),
+
+-- Every key the issue JSON carries, one row each, streamed out of the JSON
+-- column. MEMORY (§13): this is the LEFT side of the join below on purpose.
+-- The JSON column is gigabytes wide, and a join that puts `issue_json` on the
+-- right builds a hash table holding every issue's payload — the shape that
+-- can exceed a server's memory budget on its own. Streaming the keys and
+-- hashing the small pair set instead keeps the join to the pair set's size.
+present_keys AS (
+    SELECT
+        j.insight_source_id                               AS insight_source_id,
+        j.issue_id                                        AS issue_id,
+        k                                                 AS field_id,
+        j.observed_at                                     AS observed_at
+    FROM issue_json AS j
+    ARRAY JOIN JSONExtractKeys(j.custom_fields_json) AS k
+),
+
+cleared_pairs AS (
+    SELECT
+        m.insight_source_id                               AS insight_source_id,
+        m.issue_id                                        AS issue_id,
+        m.field_id                                        AS field_id,
+        p.observed_at                                     AS event_at
+    FROM present_keys AS p
+    INNER JOIN missing_from_snapshot AS m
+        ON m.insight_source_id = p.insight_source_id
+       AND m.issue_id = p.issue_id
+       AND m.field_id = p.field_id
 ),
 
 -- ── the value of every modelled field at issue creation ─────────────────────
