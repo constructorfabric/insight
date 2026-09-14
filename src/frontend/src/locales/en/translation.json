@@ -475,8 +475,8 @@
       "admin_grant": "Make admin",
       "admin_revoke": "Remove admin",
       "admin_unknown": "Admin status could not be read.",
-      "admin_last": "This is the last admin in the tenant — grant another before removing this one.",
-      "admin_failed": "The role could not be changed."
+      "admin_last": "The tenant's last admin cannot be removed.",
+      "admin_failed": "The role was not changed. Try again."
     },
     "history": {
       "bind": "Bound",

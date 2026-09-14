@@ -18,6 +18,7 @@ import type {
   CorrectionResponse,
   PersonAccountEntry,
 } from "@/api/identity-client";
+import { IdentityApiError } from "@/api/identity-client";
 
 const hooks = vi.hoisted(() => {
   const verb = () => ({
@@ -742,9 +743,33 @@ describe("the admin role control", () => {
     open();
 
     expect(
-      screen.getByText(
-        "This is the last admin in the tenant — grant another before removing this one.",
-      ),
+      screen.getByText("The tenant's last admin cannot be removed."),
+    ).toBeInTheDocument();
+  });
+
+  // The service's own sentence beats ours whenever it sent one, the way every
+  // other verb in this window reports a refusal.
+  it("shows the service's reason when a grant fails for some other cause", () => {
+    hooks.grantAdmin.isError = true;
+    hooks.grantAdmin.error = new IdentityApiError(403, {
+      context: { reason: "admin role required for this operation" },
+    });
+
+    open();
+
+    expect(
+      screen.getByText("admin role required for this operation"),
+    ).toBeInTheDocument();
+  });
+
+  it("falls back to its own wording when the failure carries no reason", () => {
+    hooks.grantAdmin.isError = true;
+    hooks.grantAdmin.error = new IdentityApiError(500, null);
+
+    open();
+
+    expect(
+      screen.getByText("The role was not changed. Try again."),
     ).toBeInTheDocument();
   });
 });

@@ -259,7 +259,10 @@ function AdminRoleControl({ personId }: { personId: string }) {
         </span>
       ) : failed ? (
         <span className="text-destructive text-xs">
-          {t("identities.person.admin_failed")}
+          {apiErrorReason(
+            grant.error ?? revoke.error,
+            t("identities.person.admin_failed")
+          )}
         </span>
       ) : null}
     </>
