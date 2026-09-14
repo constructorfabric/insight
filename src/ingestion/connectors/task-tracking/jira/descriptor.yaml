@@ -61,7 +61,7 @@ name: jira
 # that no longer matched. MINOR: a new column, nothing re-derived; rows written
 # before this are filled by `heal_jira_substream_issue_id` from the two issue
 # streams.
-version: "6.1.0"
+version: "6.2.0"
 schedule: "0 3 * * *"
 workflow: sync
 # CI build metadata + runtime image refs (ADR-0016). The `images:` block is
@@ -76,7 +76,7 @@ images:
     name: insight-jira-enrich
     dockerfile: ./enrich/Dockerfile
     context: ./enrich
-    image: "ghcr.io/constructorfabric/insight-jira-enrich:2026.09.08.13.10-fabb7db.release-2026.09"
+    image: "ghcr.io/constructorfabric/insight-jira-enrich:2026.09.14.08.42-415d3a8.release-2026.09"
 # Silver routing (class_task_*) is delivered by the task-tracking Silver layer
 # package, not by this connector. The pipeline runs the jira-rust path:
 # dbt(tag:jira) → tt-enrich-jira-run → dbt(<selector below>). The selector is
