@@ -95,7 +95,7 @@ events AS (
             -- the event says "on board X, status went A to B" and names no
             -- field object. Deriving which ProjectV2 field object it was would
             -- mean guessing; the board is stated and sufficient.
-            e.event_type = 'ProjectV2ItemStatusChangedEvent',
+            e.event_type IN ('ProjectV2ItemStatusChangedEvent', 'RemovedFromProjectV2Event'),
                 if(COALESCE(e.project_id, '') = '', '', concat('project_status:', e.project_id)),
             ''
         )                                                       AS field_id,
@@ -118,6 +118,12 @@ events AS (
             e.event_type = 'ProjectV2ItemStatusChangedEvent',
                 if(COALESCE(e.new_value, '') = '', '',
                    concat(COALESCE(e.project_id, ''), ':', lower(e.new_value))),
+            -- The card left the board, so the board's status column holds
+            -- nothing for this issue any more. Without this row the last
+            -- status stands open forever and the issue reads as still sitting
+            -- in it — on a board it is no longer on. Empty is the same way
+            -- `UnassignedEvent` states "no owner remains".
+            e.event_type = 'RemovedFromProjectV2Event', '',
             ''
         )                                                       AS value_id,
         multiIf(
@@ -142,7 +148,7 @@ events AS (
     WHERE e.event_type IN (
         'ClosedEvent', 'ReopenedEvent', 'AssignedEvent', 'UnassignedEvent',
         'IssueTypeChangedEvent', 'IssueFieldChangedEvent',
-        'ProjectV2ItemStatusChangedEvent'
+        'ProjectV2ItemStatusChangedEvent', 'RemovedFromProjectV2Event'
     )
 ),
 

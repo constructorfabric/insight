@@ -21,7 +21,7 @@ from urllib.parse import parse_qs, urlparse
 
 import freezegun
 import pytest
-from airbyte_cdk.models import FailureType, SyncMode
+from airbyte_cdk.models import FailureType
 from config import GH_URL, PROXY_URL, GithubConfigBuilder
 from connector_tests import ANY_QUERY_PARAMS, HttpMocker, HttpRequest, HttpResponse, assert_records_conform, read_stream
 from connector_tests.source import load_manifest
@@ -559,6 +559,30 @@ def test_pr_timeline_flattens_every_event_type(http_mocker: HttpMocker) -> None:
                                             "stateReason": "COMPLETED",
                                         },
                                         {
+                                            "__typename": "ConnectedEvent",
+                                            "id": "CE_1",
+                                            "createdAt": "2026-06-14T00:00:00Z",
+                                            "actor": {"login": "alice", "databaseId": 1001},
+                                            "isCrossRepository": True,
+                                            "subject": {
+                                                "__typename": "Issue",
+                                                "number": 7,
+                                                "repository": {"nameWithOwner": "acme/other"},
+                                            },
+                                        },
+                                        {
+                                            "__typename": "DisconnectedEvent",
+                                            "id": "DE_1",
+                                            "createdAt": "2026-06-15T00:00:00Z",
+                                            "actor": {"login": "alice", "databaseId": 1001},
+                                            "isCrossRepository": False,
+                                            "subject": {
+                                                "__typename": "Issue",
+                                                "number": 7,
+                                                "repository": {"nameWithOwner": "acme/other"},
+                                            },
+                                        },
+                                        {
                                             "__typename": "MergedEvent",
                                             "id": "ME_1",
                                             "createdAt": "2026-06-15T00:00:00Z",
@@ -589,6 +613,16 @@ def test_pr_timeline_flattens_every_event_type(http_mocker: HttpMocker) -> None:
         assert rec["repo_full_name"] == "acme/app"
         assert "__typename" not in rec and "createdAt" not in rec
     assert by_type["MergedEvent"]["unique_key"].endswith(":pull_request:31:ME_1")
+    # A link made from the pull-request side is an event on the PULL REQUEST and
+    # exists nowhere else, so the pair has to be requested here as well as on the
+    # issue timeline — and as a PAIR, or an interval opened here never closes.
+    for event_type in ("ConnectedEvent", "DisconnectedEvent"):
+        assert by_type[event_type]["link_target_number"] == 7, event_type
+        assert by_type[event_type]["link_target_repo_full_name"] == "acme/other", event_type
+        assert by_type[event_type]["link_target_type"] == "Issue", event_type
+    assert by_type["ConnectedEvent"]["is_cross_repository"] is True
+    assert by_type["DisconnectedEvent"]["is_cross_repository"] is False
+    assert by_type["MergedEvent"]["link_target_number"] == 0, "a non-link event carries no target"
     _no_literal_none(output.records)
     assert_records_conform(output.records, _CONNECTOR, "pull_request_timeline_events", strict=True)
 
@@ -599,6 +633,7 @@ def test_issue_timeline_carries_board_and_field_changes(http_mocker: HttpMocker)
     either, and both sides of the change are kept; the issues parent drops the
     pull requests its endpoint also answers for."""
     config = GithubConfigBuilder().build()
+    _mock_no_boards(http_mocker)
     http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
     http_mocker.get(
         HttpRequest(f"{GH_URL}/repos/acme/app/issues", query_params=ANY_QUERY_PARAMS),
@@ -1241,6 +1276,7 @@ def test_issue_timeline_multi_select_keeps_both_option_sets(http_mocker: HttpMoc
     leaves previousValue/newValue null. Reading only the scalars would record
     the event with an empty before and after — a change that says nothing."""
     config = GithubConfigBuilder().build()
+    _mock_no_boards(http_mocker)
     http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
     http_mocker.get(
         HttpRequest(f"{GH_URL}/repos/acme/app/issues", query_params=ANY_QUERY_PARAMS),
@@ -1539,12 +1575,31 @@ def _mock_projects_parent(http_mocker: HttpMocker, nodes: list[dict]) -> None:
     )
 
 
+def _project_card_issues_body(project_id: str, cursor: str | None = None) -> dict:
+    """The board-card parent of the issue timeline also lives in `definitions`."""
+    manifest = load_manifest(_CONNECTOR)
+    parent = manifest["definitions"]["project_card_issues_parent"]
+    body = dict(parent["retriever"]["requester"]["request_body_json"])
+    body["query"] = body["query"].rstrip("\n")
+    body["variables"] = {"project": project_id}
+    if cursor is not None:
+        body["variables"]["cursor"] = cursor
+    return body
+
+
+def _mock_no_boards(http_mocker: HttpMocker) -> None:
+    """The issue timeline has a board-side parent as well as the issue window.
+    A test that is not about boards declares the org has none, so only the
+    window produces partitions."""
+    _mock_projects_parent(http_mocker, [])
+
+
 def _project_fields_body(project_id: str, cursor: str | None = None) -> dict:
     return _graphql_body("project_fields", {"project": project_id}, cursor)
 
 
-def _project_items_body(project_id: str, q: str, cursor: str | None = None) -> dict:
-    return _graphql_body("project_items", {"project": project_id, "q": q}, cursor)
+def _project_items_body(project_id: str, cursor: str | None = None) -> dict:
+    return _graphql_body("project_items", {"project": project_id}, cursor)
 
 
 @freezegun.freeze_time(_FROZEN)
@@ -1690,45 +1745,6 @@ def test_project_fields_key_is_the_field_so_bronze_holds_the_present(http_mocker
     assert "snapshot_date" not in output.records[0].record.data
 
 
-@freezegun.freeze_time(_FROZEN)
-def test_project_items_filter_is_a_bare_date(http_mocker: HttpMocker) -> None:
-    """`items(query:)` filters on a DAY. A full timestamp returns zero rows and
-    an unparseable qualifier returns zero rows with no GraphQL error — a green
-    sync with no data, indistinguishable from a quiet one. The mock matches the
-    exact body, so a rendered timestamp fails this test instead of production.
-    """
-    config = GithubConfigBuilder().build()
-    _mock_projects_parent(http_mocker, [{"id": "PVT_1", "number": 40}])
-    body = _project_items_body("PVT_1", "updated:>=2026-06-01")
-    assert body["variables"]["q"] == "updated:>=2026-06-01", "the start date must render date-only"
-    http_mocker.post(
-        HttpRequest(f"{GH_URL}/graphql", body=body),
-        HttpResponse(
-            body=json.dumps(
-                {
-                    "data": {
-                        "node": {
-                            "items": {
-                                "totalCount": 1,
-                                "pageInfo": {"hasNextPage": False, "endCursor": None},
-                                "nodes": [_card("PVTI_1", "2026-06-20T10:00:00Z")],
-                            }
-                        }
-                    }
-                }
-            ),
-            status_code=200,
-        ),
-    )
-
-    output = read_stream(_CONNECTOR, "project_items", config)
-
-    assert not output.errors
-    assert len(output.records) == 1
-    assert output.records[0].record.data["item_id"] == "PVTI_1"
-    assert_records_conform(output.records, _CONNECTOR, "project_items", strict=True)
-
-
 def _card(item_id: str, updated_at: str, content: dict | None = None) -> dict:
     return {
         "id": item_id,
@@ -1771,7 +1787,7 @@ def test_project_items_drop_a_draft_card_but_keep_an_unreadable_one(http_mocker:
     # `None` content is a card whose issue the token cannot see, not a draft.
     nodes[2]["content"] = None
     http_mocker.post(
-        HttpRequest(f"{GH_URL}/graphql", body=_project_items_body("PVT_1", "updated:>=2026-06-01")),
+        HttpRequest(f"{GH_URL}/graphql", body=_project_items_body("PVT_1")),
         HttpResponse(
             body=json.dumps(
                 {
@@ -1809,7 +1825,7 @@ def test_project_item_key_is_the_card_so_a_re_read_collapses(http_mocker: HttpMo
     config = GithubConfigBuilder().build()
     _mock_projects_parent(http_mocker, [{"id": "PVT_1", "number": 40}])
     http_mocker.post(
-        HttpRequest(f"{GH_URL}/graphql", body=_project_items_body("PVT_1", "updated:>=2026-06-01")),
+        HttpRequest(f"{GH_URL}/graphql", body=_project_items_body("PVT_1")),
         HttpResponse(
             body=json.dumps(
                 {
@@ -1844,22 +1860,52 @@ def test_project_item_key_is_the_card_so_a_re_read_collapses(http_mocker: HttpMo
 
 
 @freezegun.freeze_time(_FROZEN)
-def test_project_items_state_stays_day_granular(http_mocker: HttpMocker) -> None:
-    """The cursor is stored in the format the filter needs. A stored timestamp
-    would render into the query and silently return nothing."""
+def test_project_items_sweep_the_whole_board_with_no_filter(http_mocker: HttpMocker) -> None:
+    """Board membership is a snapshot, so the cards are swept rather than
+    windowed: a card untouched since the last sync is still collected, and the
+    request carries no `updated:>=` qualifier that could leave it behind."""
     config = GithubConfigBuilder().build()
     _mock_projects_parent(http_mocker, [{"id": "PVT_1", "number": 40}])
+
+    body = _project_items_body("PVT_1")
+    assert "query" not in body["variables"], "the sweep must not send a filter variable"
+    assert "$q" not in body["query"], "the sweep must not declare a filter argument"
+
+    # A card long untouched shares the page with a fresh one, and the page after
+    # it is reached only by following the cursor to exhaustion.
     http_mocker.post(
-        HttpRequest(f"{GH_URL}/graphql", body=_project_items_body("PVT_1", "updated:>=2026-06-01")),
+        HttpRequest(f"{GH_URL}/graphql", body=body),
         HttpResponse(
             body=json.dumps(
                 {
                     "data": {
                         "node": {
                             "items": {
-                                "totalCount": 1,
+                                "totalCount": 3,
+                                "pageInfo": {"hasNextPage": True, "endCursor": "CUR1"},
+                                "nodes": [
+                                    _card("PVTI_old", "2019-01-01T00:00:00Z"),
+                                    _card("PVTI_new", "2026-06-30T00:00:00Z"),
+                                ],
+                            }
+                        }
+                    }
+                }
+            ),
+            status_code=200,
+        ),
+    )
+    http_mocker.post(
+        HttpRequest(f"{GH_URL}/graphql", body=_project_items_body("PVT_1", "CUR1")),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "data": {
+                        "node": {
+                            "items": {
+                                "totalCount": 3,
                                 "pageInfo": {"hasNextPage": False, "endCursor": None},
-                                "nodes": [_card("PVTI_1", "2026-06-20T10:00:00Z")],
+                                "nodes": [_card("PVTI_last", "2018-05-05T00:00:00Z")],
                             }
                         }
                     }
@@ -1869,12 +1915,56 @@ def test_project_items_state_stays_day_granular(http_mocker: HttpMocker) -> None
         ),
     )
 
-    output = read_stream(_CONNECTOR, "project_items", config, sync_mode=SyncMode.incremental)
+    output = read_stream(_CONNECTOR, "project_items", config)
 
     assert not output.errors
-    assert output.state_messages, "an incremental read must emit state"
-    blob = json.dumps([sm.state.stream.stream_state.__dict__ for sm in output.state_messages])
-    assert "2026-06-01T" not in blob and "T00:00:00" not in blob, f"state must not carry a time: {blob}"
+    assert [r.record.data["item_id"] for r in output.records] == ["PVTI_old", "PVTI_new", "PVTI_last"]
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_a_board_reports_the_card_count_a_sweep_is_checked_against(http_mocker: HttpMocker) -> None:
+    """The cards a sweep keeps are every card except the drafts it drops, so
+    the board has to state both numbers for the sweep to be checkable at all."""
+    config = GithubConfigBuilder().build()
+    http_mocker.post(
+        HttpRequest(f"{GH_URL}/graphql", body=_graphql_body("projects_v2", {"org": "acme"})),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "data": {
+                        "organization": {
+                            "projectsV2": {
+                                "pageInfo": {"hasNextPage": False, "endCursor": None},
+                                "nodes": [
+                                    {
+                                        "id": "PVT_1",
+                                        "number": 40,
+                                        "title": "Board",
+                                        "shortDescription": None,
+                                        "public": True,
+                                        "closed": False,
+                                        "createdAt": "2020-01-01T00:00:00Z",
+                                        "updatedAt": "2026-06-30T00:00:00Z",
+                                        "all_items": {"totalCount": 730},
+                                        "draft_items": {"totalCount": 6},
+                                    }
+                                ],
+                            }
+                        }
+                    }
+                }
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "projects_v2", config)
+
+    assert not output.errors
+    row = output.records[0].record.data
+    assert row["total_items"] == 730
+    assert row["draft_items"] == 6
+    assert "all_items" not in row, "the nested count shape must not reach bronze"
 
 
 @freezegun.freeze_time(_FROZEN)
@@ -1883,6 +1973,7 @@ def test_status_change_names_the_board_it_happened_on(http_mocker: HttpMocker) -
     board cannot be resolved. An issue on several boards interleaves all their
     events in this one timeline."""
     config = GithubConfigBuilder().build()
+    _mock_no_boards(http_mocker)
     http_mocker.get(
         HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS),
         HttpResponse(body=json.dumps([_repo()]), status_code=200),
@@ -1971,12 +2062,94 @@ def _issue_links_body(cursor: str | None = None) -> dict:
 
 
 @freezegun.freeze_time(_FROZEN)
+def test_a_moved_card_brings_its_issue_back_into_the_timeline_walk(http_mocker: HttpMocker) -> None:
+    """Moving a card leaves the issue's own `updated_at` alone, so the issue
+    window never yields it again. The board-card parent is the second way in,
+    and without it the status change behind the move is unreachable for good."""
+    config = GithubConfigBuilder().build()
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    # The issue itself was not touched, so its own window answers with nothing.
+    http_mocker.get(
+        HttpRequest(f"{GH_URL}/repos/acme/app/issues", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps([]), status_code=200),
+    )
+    _mock_projects_parent(http_mocker, [{"id": "PVT_1", "number": 5}])
+    http_mocker.post(
+        HttpRequest(f"{GH_URL}/graphql", body=_project_card_issues_body("PVT_1")),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "data": {
+                        "node": {
+                            "items": {
+                                "pageInfo": {"hasNextPage": False, "endCursor": None},
+                                "nodes": [
+                                    {
+                                        "updated_at": "2026-06-25T00:00:00Z",
+                                        "content": {
+                                            "__typename": "Issue",
+                                            "number": 7,
+                                            "repository": {"nameWithOwner": "acme/app"},
+                                        },
+                                    },
+                                    # A draft card has no issue to walk.
+                                    {"updated_at": "2026-06-25T00:00:00Z", "content": {"__typename": "DraftIssue"}},
+                                ],
+                            }
+                        }
+                    }
+                }
+            ),
+            status_code=200,
+        ),
+    )
+    http_mocker.post(
+        HttpRequest(f"{GH_URL}/graphql", body=_issue_timeline_body()),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "data": {
+                        "repository": {
+                            "issue": {
+                                "timelineItems": {
+                                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                                    "nodes": [
+                                        {
+                                            "__typename": "ProjectV2ItemStatusChangedEvent",
+                                            "id": "PS_9",
+                                            "createdAt": "2026-06-25T00:00:00Z",
+                                            "actor": {"login": "alice"},
+                                            "previousStatus": "In Progress",
+                                            "status": "Done",
+                                            "projectV2": {"id": "PVT_1", "number": 5},
+                                        }
+                                    ],
+                                }
+                            }
+                        }
+                    }
+                }
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "issue_timeline_events", config)
+
+    assert not output.errors
+    assert [r.record.data["event_id"] for r in output.records] == ["PS_9"]
+    assert output.records[0].record.data["item_number"] == 7
+    assert output.records[0].record.data["repo_full_name"] == "acme/app"
+
+
+@freezegun.freeze_time(_FROZEN)
 def test_link_events_collapse_six_payload_shapes_into_one_target(http_mocker: HttpMocker) -> None:
     """Each link event names the other end under its own key — subIssue,
     parent, blockingIssue, blockedIssue, subject, canonical. Downstream has to
     fold adds against removes, which it cannot do while the target's location
     depends on which of the twelve types carried it."""
     config = GithubConfigBuilder().build()
+    _mock_no_boards(http_mocker)
     http_mocker.get(
         HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS),
         HttpResponse(body=json.dumps([_repo()]), status_code=200),

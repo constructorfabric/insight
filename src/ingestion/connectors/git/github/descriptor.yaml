@@ -55,7 +55,38 @@ name: github
 #   future-dated commit cannot become the saved cursor. MINOR: one additive
 #   bronze column the reconciler adds at sync time; no downstream model reads
 #   it.
-version: "8.1.0"
+# 8.2.0: the task-tracker collection gaps. Five changes, all additive:
+#   - `issue_timeline_events` gains a SECOND parent, the issues behind board
+#     cards (`project_card_issues`, a private parent that lands no table).
+#     Moving a card does not bump the issue's `updated_at`, so the issue window
+#     never yielded it again and its board status changes were unreachable
+#     rather than merely late.
+#   - `project_items` becomes a SWEEP: the `items(query: "updated:>=…")` filter
+#     and the cursor are gone, because board membership is a snapshot and an
+#     untouched card sits in no window. Sync mode moves incremental ->
+#     full_refresh; the destination stays `append` (normalize_catalog_to_append
+#     always appends), so bronze is added to rather than replaced and the
+#     ReplacingMergeTree collapses the sweep onto the card key.
+#   - `projects_v2` gains `total_items` and `draft_items`, the two numbers a
+#     sweep can be checked against: the cards the stream keeps are every card
+#     except the drafts it drops by design.
+#   - `pull_request_timeline_events` gains CONNECTED_EVENT / DISCONNECTED_EVENT
+#     and four link-target columns. A link made from the pull-request side is
+#     an event on the pull request, and it was never requested there.
+#   - `github__task_field_history` reads RemovedFromProjectV2Event, which was
+#     collected and read by nothing. A status span runs to the next event and
+#     the last runs to `now()`, so a card taken off a board left its final
+#     column running forever; the removal now closes it with an empty value,
+#     the same shape UnassignedEvent already uses.
+#   MINOR, not MAJOR: nothing needs the scoped full refresh a major dispatches.
+#   The model that reads the new pull-request columns is a view, and its
+#   consumer `github__task_links` is a table — both re-read Bronze every run.
+#   ROLLOUT, not part of the version: the new columns and the board-side walk
+#   populate only for what is collected AFTER this version. Recovering history
+#   means clearing the cursors of `pull_request_timeline_events` (for the link
+#   columns) and `issue_timeline_events` (for the board status changes already
+#   missed) and re-walking; without that both heal forward only.
+version: "8.2.0"
 schedule: "0 */4 * * *"
 workflow: sync
 
