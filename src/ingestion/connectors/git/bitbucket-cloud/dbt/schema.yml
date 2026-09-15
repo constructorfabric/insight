@@ -61,7 +61,7 @@ models:
         description: "Most recent commit authored under this address"
 
   - name: bitbucket_cloud__identity_inputs
-    description: "E-mail claims and roster display names against Bitbucket accounts -> staging, feeds silver.identity_inputs"
+    description: "Account bindings, e-mail claims and display names against Bitbucket accounts -> staging, feeds silver.identity_inputs"
     columns:
       - name: unique_key
         description: "One claim per (tenant, source, account, value_type, operation, value)"
@@ -73,10 +73,15 @@ models:
         data_tests:
           - accepted_values:
               values: ["bitbucket", "bitbucket-commit-email"]
+      - name: value_type
+        description: "`id` binds a workspace participant's account_id, `email` claims an address for an account, `display_name` names it"
+        data_tests:
+          - accepted_values:
+              values: ["id", "email", "display_name"]
       - name: source_account_id
         description: "The Bitbucket account_id, or the e-mail itself when no account claims it"
       - name: value
-        description: "The claimed e-mail address, or the git author name for a display_name row"
+        description: "The account_id itself for an id row, the claimed e-mail address, or the display name"
 
   - name: bitbucket_cloud__bronze_promoted
     description: "Promotes every Bitbucket bronze table to ReplacingMergeTree keyed on unique_key"
