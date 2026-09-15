@@ -1,6 +1,6 @@
 # Querying: Pagination, Filtering, Sorting & Field Projection
 
-> Source: [cyberfabric/DNA — REST/QUERYING.md](https://github.com/cyberfabric/DNA/blob/main/REST/QUERYING.md)
+> Source: [constructorfabric/DNA — REST/QUERYING.md](https://github.com/constructorfabric/DNA/blob/main/REST/QUERYING.md)
 
 This document defines the full contract for cursor-based pagination, OData filtering/sorting, and field projection (`$select`) used across all Insight REST APIs.
 

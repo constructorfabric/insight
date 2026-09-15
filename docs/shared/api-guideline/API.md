@@ -1,6 +1,6 @@
 # REST API Guideline
 
-> Source: [cyberfabric/DNA — REST/API.md](https://github.com/cyberfabric/DNA/blob/main/REST/API.md)
+> Source: [constructorfabric/DNA — REST/API.md](https://github.com/constructorfabric/DNA/blob/main/REST/API.md)
 
 This document is an actionable playbook for building consistent, evolvable REST APIs across all Insight components.
 
