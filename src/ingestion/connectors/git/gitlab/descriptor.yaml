@@ -4,7 +4,7 @@
 # staging models; bronze tables the CDK connector wrote carry a different
 # contract and are dropped before the first sync.
 name: gitlab
-version: "4.0.0"
+version: "4.0.1"
 schedule: "0 2 * * *"
 workflow: sync
 
