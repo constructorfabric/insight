@@ -8,7 +8,7 @@ draw order, same dimension tables) and counts what gold will count:
 * `tasks_closed`   — issues whose close event lands inside the window,
 * `bugs_fixed`     — the closed ones whose type reconciles to `issue_kind='bug'`
                      via `_ISSUE_TYPE_DIM`,
-* `closed_non_bug` — the closed ones reconciling to `issue_kind='other'`.
+* `closed_non_bug` — the closed ones reconciling to `issue_kind='task'`.
 
 Grain is per assignee email — the strongest oracle the plan supports, since the
 generator assigns every issue to the person whose rng drew it and gold
@@ -95,7 +95,7 @@ def task_totals(
                 closed += 1
                 if plan.issue_kind == "bug":
                     bugs += 1
-                elif plan.issue_kind == "other":
+                elif plan.issue_kind == "task":
                     non_bug += 1
         totals[person.email] = TaskTotals(
             tasks_closed=closed, bugs_fixed=bugs, closed_non_bug=non_bug

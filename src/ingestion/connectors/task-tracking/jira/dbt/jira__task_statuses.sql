@@ -12,8 +12,8 @@
 -- localized status display names. See docs task-tracking silver DESIGN
 -- (`cpt-insightspec-dbtable-tt-silver-statuses`) and issue #1541.
 --
--- View, not table: bronze `jira_statuses` is MergeTree (full_refresh + overwrite),
--- so the current state of bronze is the current state of staging. FINAL not needed.
+-- View, not table: the current state of bronze is the current state of
+-- staging. Bronze is promoted to RMT, so the read carries FINAL.
 --
 -- Jira statusCategory is stable and locale-independent:
 --   key='new'          (id 2) -> new
@@ -47,5 +47,4 @@ SELECT
     )                                                       AS status_category,
     toDateTime64(s._airbyte_extracted_at, 3)                AS collected_at,
     toUnixTimestamp64Milli(s._airbyte_extracted_at)         AS _version
-FROM {{ source('bronze_jira', 'jira_statuses') }} s
--- `jira_statuses` bronze = MergeTree (full_refresh + overwrite), FINAL not supported.
+FROM {{ source('bronze_jira', 'jira_statuses') }} s FINAL

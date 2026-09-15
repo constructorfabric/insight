@@ -1,10 +1,10 @@
-"""Task Delivery bug split for GitHub, and the two ways an issue type acquires a kind.
+"""Task Delivery bug split for GitHub, and how an issue type acquires a kind.
 
 GitHub names an issue's type without lifecycle meaning, so `issue_kind` comes from the
-operator's value map, which wins, or the shared name lists, which catch what the map
-omits. Carol closes a Bug (mapped to `bug`), a Task (mapped to `other`) and an
-Incident mapped by nobody, which stays `unknown`: counted among closures, claimed by
-neither side, and visible as a third group in the type breakdown.
+operator's `config.field_value_map` row and nothing else. Carol closes a Bug (decided
+`bug`), a Task (decided `task`) and an Incident decided by nobody, which stays
+`unknown`: counted among closures, claimed by neither subset, and visible as a third
+group in the type breakdown.
 """
 
 from __future__ import annotations

@@ -77,6 +77,7 @@ def refresh_requests(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
 def offline_silver_step(monkeypatch: pytest.MonkeyPatch) -> None:
     """Everything `silver.run` touches besides the migration script."""
     monkeypatch.setattr(silver, "apply_create_bronze_placeholders", lambda: None)
+    monkeypatch.setattr(silver, "ensure_task_config_tables", lambda: None)
     monkeypatch.setattr(silver, "_ch_client", _StubClient)
     monkeypatch.setattr(silver, "generate_rows", lambda client: None)
 
@@ -146,6 +147,32 @@ def test_silver_step_full_refreshes_the_identity_feeders(
         "to be rebuilt from it rather than appended to"
     )
     assert silver.IDENTITY_INPUTS_SELECT in request["dbt_select"]
+
+
+def test_config_tables_exist_before_the_generators_write_them(
+    monkeypatch: pytest.MonkeyPatch, refresh_requests: list[dict[str, Any]]
+) -> None:
+    """The generators INSERT into config.field_value_map; on a fresh stand dbt
+    has never run, so run() must invoke the owning macro before generating."""
+    order: list[str] = []
+    monkeypatch.setattr(
+        silver, "apply_create_bronze_placeholders", lambda: order.append("placeholders")
+    )
+    monkeypatch.setattr(silver, "ensure_task_config_tables", lambda: order.append("config_tables"))
+    monkeypatch.setattr(silver, "_ch_client", _StubClient)
+    monkeypatch.setattr(silver, "generate_rows", lambda client: order.append("generate"))
+
+    silver.run()
+
+    assert order == ["placeholders", "config_tables", "generate"]
+
+
+def test_config_tables_come_from_the_owning_dbt_macro(script_runs: list[ScriptRun]) -> None:
+    """No DDL copy: the seed runs the same macro dbt's on-run-start owns."""
+    silver.ensure_task_config_tables()
+
+    argv, _ = _only(script_runs, "dbt invocation")
+    assert argv[:3] == ["dbt", "run-operation", "create_task_config_tables"]
 
 
 def test_gold_step_does_not_full_refresh(refresh_requests: list[dict[str, Any]]) -> None:

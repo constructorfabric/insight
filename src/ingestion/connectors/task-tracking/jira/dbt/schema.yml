@@ -74,7 +74,7 @@ models:
   - name: jira__task_statuses
     description: "Per-source status dimension: Jira status_id → status_category (via statusCategory). Unioned into silver.class_task_statuses. See issue #1541."
   - name: jira__task_issuetypes
-    description: "Per-source issue-type dimension: Jira issue type id → issue_kind (classified from untranslatedName). Unioned into silver.class_task_issuetypes."
+    description: "Per-source issue-type dimension: the raw Jira type catalogue (id, display name, untranslatedName). Unioned into silver.class_task_issuetypes; gold resolves the kind from config.field_value_map."
   - name: jira__identity_inputs
     description: "Identity-resolution inputs from the Jira user profile history (email, display_name, id binding). Unioned into silver.identity_inputs via the silver:identity_inputs tag."
   - name: jira__project_visibility_state
