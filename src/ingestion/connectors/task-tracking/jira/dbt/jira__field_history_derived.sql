@@ -71,7 +71,8 @@ issues AS (
         COALESCE(toString(i.id_readable), '')             AS id_readable,
         COALESCE(parseDateTime64BestEffortOrNull(i.created, 3),
                  toDateTime64(0, 3))                      AS created_at,
-        i.reporter_id                                     AS reporter_id
+        i.reporter_id                                     AS reporter_id,
+        toDateTime64(i._airbyte_extracted_at, 3)          AS observed_at
     FROM {{ source('bronze_jira', 'jira_issue') }} AS i
     INNER JOIN issue_winner AS w ON i._airbyte_raw_id = w.raw_id
 ),
@@ -102,6 +103,25 @@ changelog_items AS (
         assumeNotNull(ci.jira_id)                         AS issue_id
     FROM {{ ref('jira__changelog_items') }} AS ci
     WHERE ci.jira_id IS NOT NULL
+),
+
+-- The newest moment bronze received anything about an issue: its own row or
+-- any of its changelog entries. Every journal row of the issue carries it as
+-- `_version`, so a rebuild over unchanged bronze reproduces the same versions
+-- and the class's incremental filter leaves the issue alone; an issue that
+-- received anything has all its rows re-emitted under the new version. Every
+-- row's issue is in one of the two inputs, so no row is left without one.
+issue_freshness AS (
+    SELECT
+        insight_source_id,
+        issue_id,
+        max(observed_at)                                  AS fresh_at
+    FROM (
+        SELECT insight_source_id, issue_id, observed_at FROM issues
+        UNION ALL
+        SELECT insight_source_id, issue_id, extracted_at AS observed_at FROM changelog_items
+    )
+    GROUP BY insight_source_id, issue_id
 ),
 
 -- Every changelog item that belongs to a field we model, with its delta already
@@ -709,8 +729,7 @@ SELECT
     CAST([] AS Array(String))                             AS value_ids,
     CAST([] AS Array(String))                             AS value_displays,
     CAST('none' AS String)                                AS value_id_type,
-    now64(3)                                              AS collected_at,
-    toUnixTimestamp64Milli(now64(3))                      AS _version
+    now64(3)                                              AS collected_at
 FROM issues
 
 UNION ALL
@@ -737,8 +756,7 @@ SELECT
     CAST({{ jira_distinct_arrays_by_id('e.sides.3', 'e.sides.4', 'ids') }} AS Array(String))      AS value_ids,
     CAST({{ jira_distinct_arrays_by_id('e.sides.3', 'e.sides.4', 'displays') }} AS Array(String)) AS value_displays,
     {{ jira_field_id_type('e.field_kind') }}              AS value_id_type,
-    now64(3)                                              AS collected_at,
-    toUnixTimestamp64Milli(now64(3))                      AS _version
+    now64(3)                                              AS collected_at
 FROM live_events AS e
 LEFT JOIN issues AS i
     ON i.insight_source_id = e.insight_source_id
@@ -778,8 +796,7 @@ SELECT
     CAST(arrayMap(x -> splitByChar('\x1f', x)[2],
                   argMax(a.state_pairs, a.ops_seq)) AS Array(String))  AS value_displays,
     {{ jira_field_id_type('any(a.field_kind)') }}         AS value_id_type,
-    now64(3)                                              AS collected_at,
-    toUnixTimestamp64Milli(now64(3))                      AS _version
+    now64(3)                                              AS collected_at
 FROM element_wise_state AS a
 LEFT JOIN issues AS i
     ON i.insight_source_id = a.insight_source_id
@@ -809,8 +826,7 @@ SELECT
     CAST({{ jira_distinct_arrays_by_id('s.value_ids', 's.value_displays', 'ids') }} AS Array(String))      AS value_ids,
     CAST({{ jira_distinct_arrays_by_id('s.value_ids', 's.value_displays', 'displays') }} AS Array(String)) AS value_displays,
     {{ jira_field_id_type('s.field_kind') }}              AS value_id_type,
-    now64(3)                                              AS collected_at,
-    toUnixTimestamp64Milli(now64(3))                      AS _version
+    now64(3)                                              AS collected_at
 FROM initial_seq AS s
 INNER JOIN issues AS i
     ON i.insight_source_id = s.insight_source_id
@@ -849,8 +865,7 @@ SELECT
     -- stable per (source, field), so a row of that field may not carry a
     -- different one just because its arrays are empty.
     {{ jira_field_id_type('k.field_kind') }}              AS value_id_type,
-    now64(3)                                              AS collected_at,
-    toUnixTimestamp64Milli(now64(3))                      AS _version
+    now64(3)                                              AS collected_at
 FROM retired_pairs AS r
 INNER JOIN kinds AS k
     ON k.insight_source_id = r.insight_source_id
@@ -891,8 +906,7 @@ SELECT
     CAST([] AS Array(String))                             AS value_ids,
     CAST([] AS Array(String))                             AS value_displays,
     {{ jira_field_id_type('k.field_kind') }}              AS value_id_type,
-    now64(3)                                              AS collected_at,
-    toUnixTimestamp64Milli(now64(3))                      AS _version
+    now64(3)                                              AS collected_at
 FROM cleared_pairs AS c
 INNER JOIN kinds AS k
     ON k.insight_source_id = c.insight_source_id
@@ -929,8 +943,7 @@ SELECT
     CAST(if(u.last_display = '', [], [u.last_display]) AS Array(String)) AS value_displays,
     -- Not `opaque_id`: nothing here establishes that the value IS an id.
     CAST('none' AS String)                                AS value_id_type,
-    now64(3)                                              AS collected_at,
-    toUnixTimestamp64Milli(now64(3))                      AS _version
+    now64(3)                                              AS collected_at
 FROM unclassified_events AS u
 LEFT JOIN issues AS i
     ON i.insight_source_id = u.insight_source_id
@@ -940,25 +953,36 @@ LEFT JOIN issues AS i
 -- The class contract's column order and types. The discriminators are
 -- `LowCardinality(String)`, not enums: every source contributes its own arm to
 -- the class, and an enum would make each of them name the values of all the
--- others. `_version` is UInt64 because the class and the other arms say so.
+-- others.
+--
+-- `_version` is the issue's input freshness (`issue_freshness`), not the build
+-- time. A build-time stamp would make every rebuild of this table look new to
+-- `class_task_field_history`, whose incremental filter admits rows above its
+-- newest version, and the class would rewrite the whole Jira journal on every
+-- run. A change to the models or to the field catalogue alone does not bump a
+-- version; it reaches the class through a full refresh, which a major
+-- descriptor bump dispatches.
 SELECT
-    unique_key,
-    insight_source_id,
-    data_source,
-    issue_id,
-    id_readable,
-    event_id,
-    event_at,
-    CAST(event_kind AS LowCardinality(String))          AS event_kind,
-    _seq,
-    author_id,
-    field_id,
-    field_name,
-    CAST(field_cardinality AS LowCardinality(String))   AS field_cardinality,
-    CAST(delta_action AS LowCardinality(String))        AS delta_action,
-    value_ids,
-    value_displays,
-    CAST(value_id_type AS LowCardinality(String))       AS value_id_type,
-    collected_at,
-    toUInt64(_version)                                  AS _version
-FROM journal
+    j.unique_key,
+    j.insight_source_id,
+    j.data_source,
+    j.issue_id,
+    j.id_readable,
+    j.event_id,
+    j.event_at,
+    CAST(j.event_kind AS LowCardinality(String))        AS event_kind,
+    j._seq,
+    j.author_id,
+    j.field_id,
+    j.field_name,
+    CAST(j.field_cardinality AS LowCardinality(String)) AS field_cardinality,
+    CAST(j.delta_action AS LowCardinality(String))      AS delta_action,
+    j.value_ids,
+    j.value_displays,
+    CAST(j.value_id_type AS LowCardinality(String))     AS value_id_type,
+    j.collected_at,
+    toUInt64(toUnixTimestamp64Milli(f.fresh_at))        AS _version
+FROM journal AS j
+INNER JOIN issue_freshness AS f
+    ON f.insight_source_id = j.insight_source_id
+   AND f.issue_id = j.issue_id

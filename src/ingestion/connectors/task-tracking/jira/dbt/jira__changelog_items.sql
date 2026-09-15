@@ -37,7 +37,8 @@ WITH winner AS (
     SELECT
         source_id,
         changelog_id,
-        argMax(_airbyte_raw_id, _airbyte_extracted_at) AS raw_id
+        argMax(_airbyte_raw_id, _airbyte_extracted_at) AS raw_id,
+        max(_airbyte_extracted_at)                     AS extracted_at
     FROM {{ source('bronze_jira', 'jira_issue_history') }}
     GROUP BY source_id, changelog_id
 ),
@@ -51,6 +52,7 @@ exploded AS (
         COALESCE(toString(h.changelog_id), '')                   AS changelog_id,
         COALESCE(parseDateTime64BestEffortOrNull(h.created_at, 3), toDateTime64(0, 3)) AS created_at,
         h.author_account_id                                      AS author_account_id,
+        toDateTime64(w.extracted_at, 3)                          AS extracted_at,
         arrayJoin(JSONExtractArrayRaw(COALESCE(h.items, '[]')))  AS item_raw
     FROM {{ source('bronze_jira', 'jira_issue_history') }} AS h
     INNER JOIN winner AS w ON h._airbyte_raw_id = w.raw_id
@@ -65,6 +67,7 @@ parsed AS (
         changelog_id,
         created_at,
         author_account_id,
+        extracted_at,
         JSONExtractString(item_raw, 'fieldId')                 AS field_id,
         JSONExtractString(item_raw, 'field')                   AS field_name,
         nullIf(JSONExtractString(item_raw, 'from'), '')        AS value_from,
@@ -104,6 +107,9 @@ SELECT
     value_from_string,
     value_to,
     value_to_string,
+    -- When bronze received this entry: the journal versions an issue's rows by
+    -- the newest extraction among its inputs, so unchanged issues stay put.
+    max(extracted_at)       AS extracted_at,
     toUnixTimestamp64Milli(now64(3))                           AS _version
 FROM parsed
 GROUP BY
