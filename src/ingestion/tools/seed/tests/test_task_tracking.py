@@ -130,10 +130,10 @@ def test_every_issue_opens_with_an_issuetype_event_that_carries_a_value_id(
         typed = _issuetype_initial(events)
         assert len(typed) == 1, f"issue {issue_id} has {len(typed)} issuetype initials"
         event = typed[0]
-        assert event["delta_value_id"], f"issue {issue_id}: issuetype event has no value_id"
-        assert event["value_ids"] == [event["delta_value_id"]], (
-            f"issue {issue_id}: value_ids diverges from delta_value_id"
+        assert len(event["value_ids"]) == 1, (
+            f"issue {issue_id}: issuetype event carries {event['value_ids']}"
         )
+        assert event["value_ids"][0], f"issue {issue_id}: issuetype event has no value_id"
         assert event["value_id_type"] == "string_literal", issue_id
 
 
@@ -153,9 +153,9 @@ def test_a_close_event_flips_status_to_a_done_status_with_its_dimension_id(
     for issue_id, events in issues.items():
         for event in _close_events(events):
             assert event["field_id"] == "status", f"issue {issue_id} changelog is not a status"
-            display = event["delta_value_display"]
+            display = event["value_displays"][0]
             assert display in task._CLOSE_STATUSES, f"issue {issue_id} closes to {display!r}"
-            assert event["delta_value_id"] == task._STATUS_DIM[display][0], (
+            assert event["value_ids"][0] == task._STATUS_DIM[display][0], (
                 f"issue {issue_id}: close value_id does not match the {display!r} dimension row"
             )
             assert event["event_at"].date() < _ANCHOR, f"issue {issue_id} closes after the anchor"
@@ -184,7 +184,7 @@ def test_roughly_the_configured_share_of_old_enough_issues_is_closed(
 
 def _issue_types(issues: Issues) -> dict[str, str]:
     return {
-        issue_id: _issuetype_initial(events)[0]["delta_value_id"]
+        issue_id: _issuetype_initial(events)[0]["value_ids"][0]
         for issue_id, events in issues.items()
     }
 
@@ -258,7 +258,7 @@ def test_every_issuetype_value_id_in_history_exists_in_the_dimension(
     for event in history:
         if event["field_id"] != "issuetype":
             continue
-        key = (event["insight_source_id"], event["delta_value_id"])
+        key = (event["insight_source_id"], event["value_ids"][0])
         assert key in dimension, f"issue {event['issue_id']} references unseeded type {key}"
 
 
@@ -273,5 +273,5 @@ def test_every_status_value_id_in_history_exists_in_the_status_dimension(
     for event in history:
         if event["field_id"] != "status":
             continue
-        key = (event["insight_source_id"], event["delta_value_id"])
+        key = (event["insight_source_id"], event["value_ids"][0])
         assert key in dimension, f"issue {event['issue_id']} references unseeded status {key}"
