@@ -749,6 +749,25 @@ never delivered; it is left out of the journal and counted by
 place the formula lives, and `assert_jira_field_history_key_is_issue_keyed`
 recomputes it over every row.
 
+### 7.1 What a rebuild changes downstream
+
+The model is materialized as a table and recomputed in full on every run; the
+class it feeds is incremental and admits rows whose `_version` exceeds the
+newest it holds. A build-time `_version` would therefore make every rebuild
+look entirely new to the class, and the class would delete and re-insert the
+whole Jira journal on every run.
+
+`_version` is instead the issue's *input freshness*: the newest
+`_airbyte_extracted_at` among the issue's own bronze row and its changelog
+entries, stamped on every row of that issue. Unchanged bronze reproduces the
+same versions, so the class leaves the issue alone; an issue that received
+anything has all its rows re-emitted under the new version, and `delete+insert`
+on `unique_key` replaces them. The GitHub arm versions its rows the same way.
+
+The corollary is that a change to the models or to the field catalogue alone
+moves no version: it reaches the class through a full refresh, which a major
+descriptor bump dispatches (ADR-0015).
+
 ## 8. Long text in a side table
 
 Status: implemented (`jira__task_field_text`). §5's normalizers
