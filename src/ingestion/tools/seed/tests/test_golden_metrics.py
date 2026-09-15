@@ -161,7 +161,7 @@ def test_golden_totals_equal_the_rows_the_generator_writes(
     field = cols.index("field_id")
     issue = cols.index("issue_id")
     author = cols.index("author_id")
-    display = cols.index("delta_value_display")
+    display = cols.index("value_displays")
 
     issue_type: dict[str, str] = {}
     issue_author: dict[str, str] = {}
@@ -170,7 +170,7 @@ def test_golden_totals_equal_the_rows_the_generator_writes(
     assert isinstance(rows, list) and rows
     for row in rows:
         if row[kind] == "synthetic_initial" and row[field] == "issuetype":
-            issue_type[row[issue]] = row[display]
+            issue_type[row[issue]] = row[display][0]
             issue_author[row[issue]] = row[author]
         elif row[kind] == "changelog" and row[field] == "status":
             closed.add(row[issue])
