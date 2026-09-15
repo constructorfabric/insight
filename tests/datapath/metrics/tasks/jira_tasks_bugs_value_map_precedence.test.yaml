@@ -66,44 +66,44 @@ bronze:
 
   bronze_jira.jira_issue:
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue
-      id: JVM-1
-      jira_id: JVM-1
+      id: "10003"
+      jira_id: "10003"
       unique_key: jira-test-JVM-1
       id_readable: JVM1
       created: "2026-03-01T09:00:00"
       custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10000","name":"Bug"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue
-      id: JVM-2
-      jira_id: JVM-2
+      id: "10004"
+      jira_id: "10004"
       unique_key: jira-test-JVM-2
       id_readable: JVM2
       created: "2026-03-01T09:00:00"
       custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10011","name":"Mapped Custom"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue
-      id: JVM-3
-      jira_id: JVM-3
+      id: "10005"
+      jira_id: "10005"
       unique_key: jira-test-JVM-3
       id_readable: JVM3
       created: "2026-03-01T09:00:00"
       custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10003","name":"Regression"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue
-      id: JVM-4
-      jira_id: JVM-4
+      id: "10006"
+      jira_id: "10006"
       unique_key: jira-test-JVM-4
       id_readable: JVM4
       created: "2026-03-01T09:00:00"
       custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10012","name":"Unmapped Custom"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue
-      id: JVM-5
-      jira_id: JVM-5
+      id: "10007"
+      jira_id: "10007"
       unique_key: jira-test-JVM-5
       id_readable: JVM5
       created: "2026-03-01T09:00:00"
       custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10013","name":"Future Custom"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
 
   bronze_jira.jira_issue_history:
-    - { $ref: ../templates/jira_task.yaml#/templates/closed_hist, id_readable: JVM1, jira_id: JVM-1, changelog_id: "51000", unique_key: jira-test-JVM1-51000, created_at: "2026-03-25T14:00:00.000+0000", author_account_id: carol-jira-acct }
-    - { $ref: ../templates/jira_task.yaml#/templates/closed_hist, id_readable: JVM2, jira_id: JVM-2, changelog_id: "51001", unique_key: jira-test-JVM2-51001, created_at: "2026-03-25T14:00:00.000+0000", author_account_id: carol-jira-acct }
-    - { $ref: ../templates/jira_task.yaml#/templates/closed_hist, id_readable: JVM3, jira_id: JVM-3, changelog_id: "51002", unique_key: jira-test-JVM3-51002, created_at: "2026-03-25T14:00:00.000+0000", author_account_id: carol-jira-acct }
-    - { $ref: ../templates/jira_task.yaml#/templates/closed_hist, id_readable: JVM4, jira_id: JVM-4, changelog_id: "51003", unique_key: jira-test-JVM4-51003, created_at: "2026-03-25T14:00:00.000+0000", author_account_id: carol-jira-acct }
-    - { $ref: ../templates/jira_task.yaml#/templates/closed_hist, id_readable: JVM5, jira_id: JVM-5, changelog_id: "51004", unique_key: jira-test-JVM5-51004, created_at: "2026-03-25T14:00:00.000+0000", author_account_id: carol-jira-acct }
+    - { $ref: ../templates/jira_task.yaml#/templates/closed_hist, id_readable: JVM1, jira_id: "10003", changelog_id: "51000", unique_key: jira-test-JVM1-51000, created_at: "2026-03-25T14:00:00.000+0000", author_account_id: carol-jira-acct }
+    - { $ref: ../templates/jira_task.yaml#/templates/closed_hist, id_readable: JVM2, jira_id: "10004", changelog_id: "51001", unique_key: jira-test-JVM2-51001, created_at: "2026-03-25T14:00:00.000+0000", author_account_id: carol-jira-acct }
+    - { $ref: ../templates/jira_task.yaml#/templates/closed_hist, id_readable: JVM3, jira_id: "10005", changelog_id: "51002", unique_key: jira-test-JVM3-51002, created_at: "2026-03-25T14:00:00.000+0000", author_account_id: carol-jira-acct }
+    - { $ref: ../templates/jira_task.yaml#/templates/closed_hist, id_readable: JVM4, jira_id: "10006", changelog_id: "51003", unique_key: jira-test-JVM4-51003, created_at: "2026-03-25T14:00:00.000+0000", author_account_id: carol-jira-acct }
+    - { $ref: ../templates/jira_task.yaml#/templates/closed_hist, id_readable: JVM5, jira_id: "10007", changelog_id: "51004", unique_key: jira-test-JVM5-51004, created_at: "2026-03-25T14:00:00.000+0000", author_account_id: carol-jira-acct }
