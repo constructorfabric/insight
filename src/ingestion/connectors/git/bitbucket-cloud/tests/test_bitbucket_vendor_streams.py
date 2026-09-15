@@ -14,7 +14,7 @@ error_ignore (403), error_retry (429), transformations (None-guard).
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import datetime
 from typing import Any
 from urllib.parse import parse_qs, unquote_plus, urlparse
@@ -23,7 +23,6 @@ import freezegun
 import pytest
 from airbyte_cdk.models import AirbyteMessage, SyncMode
 from config import BB_URL, PROXY_URL, BitbucketCloudConfigBuilder
-
 from connector_tests import (
     ANY_QUERY_PARAMS,
     HttpMocker,
@@ -1299,3 +1298,269 @@ def test_a_deployment_stamped_with_nine_fractional_digits_is_kept_and_advances_t
     saved = json.dumps(output.state_messages[-1].state.stream.stream_state.__dict__)
     assert "2026-06-25T10:00:00" in saved, f"the deployment's date must become the cursor: {saved}"
     assert_records_conform(output.records, _CONNECTOR, "deployments", strict=True)
+
+
+def _listing_requests(mocker: HttpMocker, url_prefix: str) -> list[dict[str, list[str]]]:
+    """The decoded query of every request to a listing, in the order they were made."""
+    return [
+        parse_qs(urlparse(r.url).query)
+        for r in mocker._mocker.request_history
+        if r.url.startswith(url_prefix) and "/pullrequests/" not in r.url[len(url_prefix) :]
+    ]
+
+
+def _keyset_bound(query: dict[str, list[str]], key: str) -> str:
+    """The value the page asks to start past, for the immutable key the listing walks by."""
+    clauses = [c.strip() for c in query["q"][0].split(" AND ")]
+    bounds = [c for c in clauses if c.startswith(f"{key} >")]
+    assert len(bounds) == 1, f"one {key} bound per page: {clauses}"
+    return bounds[0].split(">", 1)[1].strip().strip('"')
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_the_repository_listing_walks_by_created_on_not_by_page_number(http_mocker: HttpMocker) -> None:
+    """The vendor pages by number over an order the walk itself can move: a
+    repository updated after its page was fetched slides the rest back one
+    position and the first item of the next page is never fetched. Ordered by
+    the immutable created_on and bounded by the previous page's last value, no
+    position can move. The bound comes from the raw page, so a page whose last
+    item the exclusion pattern drops still advances; an empty page ends the
+    walk even when the vendor still offers a next link."""
+    config = BitbucketCloudConfigBuilder().build()
+    config["bitbucket_exclude_repositories"] = [r"\.rospecs$"]
+    listing = f"{_REPOS_URL}?pagelen=100&sort=created_on"
+    http_mocker.get(
+        HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS),
+        [
+            HttpResponse(
+                body=json.dumps(
+                    {
+                        "next": f"{listing}&page=2",
+                        "values": [
+                            _repo_named("app") | {"created_on": "2026-01-01T00:00:00.000000+00:00"},
+                            _repo_named("plocate.rospecs") | {"created_on": "2026-02-01T00:00:00.000000+00:00"},
+                        ],
+                    }
+                ),
+                status_code=200,
+            ),
+            HttpResponse(
+                body=json.dumps(
+                    {
+                        "next": f"{listing}&page=3",
+                        "values": [_repo_named("lib") | {"created_on": "2026-03-01T00:00:00.000000+00:00"}],
+                    }
+                ),
+                status_code=200,
+            ),
+            HttpResponse(body=json.dumps({"next": f"{listing}&page=4", "values": []}), status_code=200),
+        ],
+    )
+
+    output = read_stream(_CONNECTOR, "repositories", config)
+
+    assert not output.errors
+    assert sorted(r.record.data["slug"] for r in output.records) == ["app", "lib"]
+    requests = _listing_requests(http_mocker, _REPOS_URL)
+    assert len(requests) == 3, f"three pages asked, the empty one ending the walk: {requests}"
+    assert all(q["sort"] == ["created_on"] for q in requests), requests
+    assert all("page" not in q for q in requests), f"no page number may reach the vendor: {requests}"
+    assert [_keyset_bound(q, "created_on") for q in requests] == [
+        "1970-01-01T00:00:00+00:00",
+        "2026-02-01T00:00:00.000000+00:00",
+        "2026-03-01T00:00:00.000000+00:00",
+    ], requests
+    assert all('updated_on >= "2026-06-01' in q["q"][0] for q in requests), requests
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_the_pull_request_listing_walks_by_id_inside_the_slice(http_mocker: HttpMocker) -> None:
+    """Same walk for the requests of one repository, on the integer id the
+    vendor assigns once, with the slice end as the upper bound: a request
+    updated while the walk runs leaves this walk's set instead of moving inside
+    it, and the next sync lists it because the cursor never rises past what
+    this walk asked for."""
+    config = BitbucketCloudConfigBuilder().build()
+    prs_url = f"{BB_URL}/repositories/acme/app/pullrequests"
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(prs_url, query_params=ANY_QUERY_PARAMS),
+        [
+            HttpResponse(
+                body=json.dumps({"next": f"{prs_url}?page=2", "values": [_pr(1, author=None), _pr(2, author=None)]}),
+                status_code=200,
+            ),
+            HttpResponse(body=json.dumps({"values": [_pr(3, author=None)]}), status_code=200),
+        ],
+    )
+
+    output = read_stream(_CONNECTOR, "pull_requests", config, sync_mode=SyncMode.incremental)
+
+    assert not output.errors
+    assert sorted(r.record.data["id"] for r in output.records) == [1, 2, 3]
+    requests = _listing_requests(http_mocker, prs_url)
+    assert len(requests) == 2, requests
+    assert all(q["sort"] == ["id"] for q in requests), requests
+    assert all("page" not in q for q in requests), requests
+    assert [_keyset_bound(q, "id") for q in requests] == ["0", "2"], requests
+    for q in requests:
+        clauses = [c.strip() for c in q["q"][0].split(" AND ")]
+        assert any(c.startswith('updated_on >= "2026-06-01') for c in clauses), clauses
+        assert any(c.startswith('updated_on < "2026-07-01T00:00:00') for c in clauses), (
+            f"the slice end bounds the walk: {clauses}"
+        )
+
+
+class _KeysetVendor:
+    """A listing that answers what the request actually asked: it filters on the
+    bounds carried in `q`, orders by the requested `sort`, cuts one page and
+    rejects a page number. `on_page` runs after each page is served, so a test
+    can move an item under the walk the way a push does."""
+
+    def __init__(
+        self, items: list[dict[str, Any]], *, key: str, pagelen: int, on_page: Callable[[int], None] | None = None
+    ) -> None:
+        self.items = items
+        self.key = key
+        self.pagelen = pagelen
+        self.on_page = on_page
+        self.served: list[list[Any]] = []
+
+    def __call__(self, request: Any, context: Any) -> dict[str, Any]:
+        query = parse_qs(urlparse(request.url).query)
+        assert "page" not in query, f"a keyset walk may not ask for a page number: {query}"
+        bound = _keyset_bound(query, self.key)
+        lower, upper = _updated_on_window(query)
+
+        eligible = [item for item in self.items if self._in_window(item, lower, upper) and self._past(item, bound)]
+        eligible.sort(key=lambda item: item[query["sort"][0]])
+        page, rest = eligible[: self.pagelen], eligible[self.pagelen :]
+
+        self.served.append([item[self.key] for item in page])
+        if self.on_page is not None:
+            self.on_page(len(self.served))
+
+        body: dict[str, Any] = {"values": page}
+        if rest:
+            body["next"] = f"{request.url}&page={len(self.served) + 1}"
+        return body
+
+    def _in_window(self, item: dict[str, Any], lower: str, upper: str | None) -> bool:
+        updated = _instant(item["updated_on"])
+        return updated >= _bound(lower) and (upper is None or updated < _bound(upper))
+
+    def _past(self, item: dict[str, Any], bound: str) -> bool:
+        if self.key == "id":
+            return item["id"] > int(bound)
+        return _instant(item[self.key]) > _instant(bound)
+
+
+def _bound(stamp: str) -> datetime:
+    """A bound as the vendor receives it: the configured start date carries no
+    time of day, every other bound is a full instant."""
+    if len(stamp) == len("2026-01-01"):
+        return _instant(f"{stamp}T00:00:00+00:00")
+    return _instant(stamp)
+
+
+def _updated_on_window(query: dict[str, list[str]]) -> tuple[str, str | None]:
+    """The window a listing asked for, as the `q` filter expresses it."""
+    clauses = [c.strip() for c in query["q"][0].split(" AND ")]
+    lower = next(c for c in clauses if c.startswith("updated_on >=")).split('"')[1]
+    upper = [c for c in clauses if c.startswith("updated_on <")]
+    return lower, (upper[0].split('"')[1] if upper else None)
+
+
+def _repos_created_hourly(count: int) -> list[dict[str, Any]]:
+    return [
+        _repo_named(f"r{i:03d}") | {"created_on": f"2026-01-{1 + i // 24:02d}T{i % 24:02d}:00:00.000000+00:00"}
+        for i in range(count)
+    ]
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_a_repository_pushed_mid_walk_cannot_hide_another_repository(http_mocker: HttpMocker) -> None:
+    """The loss a page-number walk suffers: a repository pushed after its page
+    was fetched moves to the end of an updated_on order, every repository behind
+    it slides back one position, and the first of the next page is never
+    fetched. The bound is created_on, which a push does not move, so the second
+    page is answered from the bound alone and every repository is listed once."""
+    config = BitbucketCloudConfigBuilder().build()
+    repos = _repos_created_hourly(250)
+
+    def push_a_listed_repository(pages_served: int) -> None:
+        if pages_served == 1:
+            repos[3]["updated_on"] = "2026-06-30T12:00:00.000000+00:00"
+
+    vendor = _KeysetVendor(repos, key="created_on", pagelen=100, on_page=push_a_listed_repository)
+    http_mocker._mocker.get(_REPOS_URL, json=vendor)
+
+    output = read_stream(_CONNECTOR, "repositories", config)
+
+    assert not output.errors
+    listed = sorted(r.record.data["slug"] for r in output.records)
+    assert listed == sorted(r["slug"] for r in repos), "every repository once, none lost, none twice"
+    assert [len(page) for page in vendor.served] == [100, 100, 50]
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_a_created_on_tie_across_a_page_edge_drops_the_second_repository(http_mocker: HttpMocker) -> None:
+    """The accepted cost of the strict bound: two repositories created in the
+    same microsecond and split by a page edge leave the second past the bound
+    the first set. `>=` would trade this for a walk that cannot leave a page of
+    ties."""
+    config = BitbucketCloudConfigBuilder().build()
+    repos = _repos_created_hourly(101)
+    repos[100]["created_on"] = repos[99]["created_on"]
+
+    vendor = _KeysetVendor(repos, key="created_on", pagelen=100)
+    http_mocker._mocker.get(_REPOS_URL, json=vendor)
+
+    output = read_stream(_CONNECTOR, "repositories", config)
+
+    assert not output.errors
+    listed = sorted(r.record.data["slug"] for r in output.records)
+    assert listed == sorted(r["slug"] for r in repos[:100]), "the tied repository past the page edge is not listed"
+
+
+def test_the_next_sync_lists_a_pull_request_updated_after_the_walk_began(http_mocker: HttpMocker) -> None:
+    """A request updated while the walk runs falls outside the slice end, so it
+    leaves this walk's set instead of moving inside it. The cursor closes at the
+    newest updated_on the walk did see, below that end, so the next sync's
+    window opens below the update and lists it."""
+    config = BitbucketCloudConfigBuilder().build()
+    prs_url = f"{BB_URL}/repositories/acme/app/pullrequests"
+    prs = [
+        _pr(i, author=None) | {"updated_on": f"2026-06-{10 + i // 10:02d}T{i % 10:02d}:00:00.000000+00:00"}
+        for i in range(1, 121)
+    ]
+
+    def edit_an_unlisted_request(pages_served: int) -> None:
+        if pages_served == 1:
+            prs[99]["updated_on"] = "2026-07-01T05:00:00.000000+00:00"
+
+    vendor = _KeysetVendor(prs, key="id", pagelen=50, on_page=edit_an_unlisted_request)
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker._mocker.get(prs_url, json=vendor)
+
+    with freezegun.freeze_time("2026-07-01T00:00:00Z"):
+        first = read_stream(_CONNECTOR, "pull_requests", config, sync_mode=SyncMode.incremental)
+
+    assert not first.errors
+    assert sorted(r.record.data["id"] for r in first.records) == [i for i in range(1, 121) if i != 100], (
+        "the request edited mid-walk left this walk's set"
+    )
+
+    pages_of_the_first_sync = len(vendor.served)
+    state = [m.state for m in first.state_messages][-1:]
+    with freezegun.freeze_time("2026-07-02T00:00:00Z"):
+        second = read_stream(_CONNECTOR, "pull_requests", config, state=state, sync_mode=SyncMode.incremental)
+
+    assert not second.errors
+    assert 100 in [r.record.data["id"] for r in second.records], "the next sync must list it"
+
+    resumed = _listing_requests(http_mocker, prs_url)[pages_of_the_first_sync]
+    lower, upper = _updated_on_window(resumed)
+    assert _instant(lower) == _instant("2026-06-21T00:00:00Z"), f"the cursor minus the P1D lookback: {lower}"
+    assert upper is not None and _instant(upper) == _instant("2026-07-02T00:00:00Z"), upper
+    assert _keyset_bound(resumed, "id") == "0", "the resumed walk still opens at the bottom of the id range"

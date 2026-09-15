@@ -120,9 +120,15 @@ collapses to current state and a head move is a tracked-column change.
   consumed via `RequestPath`.
 - **`fields=`** trims the response to the used properties; the full repository
   object is large and most of it is unused here.
-- **No server-side "updated after" filter** exists on `/repositories`, so the
-  cursor filters client-side. The listing is requested `sort=updated_on`
-  (ascending) so the cursor still advances monotonically across pages.
+- **The "updated after" bound is server-side**, expressed as
+  `q=updated_on >= <bound>`: `repos_since_start` uses the configured start,
+  while the commit, file-change, and author parents use their saved cursor
+  through `repos_since_cursor`. The listing is requested `sort=created_on`
+  with a `created_on > <last seen>` bound in `q` instead of the vendor's page
+  numbers (the `repository_keyset_paginator` anchor): a repository pushed
+  while a long walk runs would otherwise shift the pages under the reader and
+  hide a neighbour. The cursor takes the newest `updated_on` seen, whatever
+  the order.
 
 ### Cold repositories
 
