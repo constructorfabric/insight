@@ -337,7 +337,7 @@ templates:
     name: Incident
     untranslatedName: Incident
 
-  # Bug-kind aliases from the configured task_bug_type_names list.
+  # Extra bug-kind types; `value_type_defect` / `value_type_regression` bind them.
   issuetype_defect:
     $ref: "#/templates/jira_issuetype"
     unique_key: jira-test-issuetype-10002
@@ -352,8 +352,8 @@ templates:
     name: Regression
     untranslatedName: Regression
 
-  # Empty untranslatedName forces the nullIf fallback to the padded display
-  # name; classification survives only via lower+trim in task_issue_kind.
+  # Empty untranslatedName and a padded display name: neither reaches
+  # classification, which keys on the id alone.
   issuetype_defect_padded:
     $ref: "#/templates/jira_issuetype"
     unique_key: jira-test-issuetype-10004
@@ -361,8 +361,8 @@ templates:
     name: "  DEFECT  "
     untranslatedName: ""
 
-  # Localized display name; coalesce(nullIf(untranslatedName,''), name) must
-  # pick the stable untranslated name.
+  # Localized display name; the untranslated name is what `display_name`
+  # records, so the drift check stays quiet.
   issuetype_bug_translated:
     $ref: "#/templates/jira_issuetype"
     unique_key: jira-test-issuetype-10005
@@ -370,25 +370,85 @@ templates:
     name: "Ошибка"
     untranslatedName: Bug
 
-  # ── Operator value map (config.task_value_map) ───────────────────────────
-  # Binds a type NAME to a canonical issue kind. Jira mints a distinct type id
-  # per project, so the map keys on the normalized name — lower/trim of
-  # lower(trimBoth(coalesce(nullIf(untranslatedName, ''), name))) — the form jira__task_issuetypes joins on.
-  jira_value_type:
+  # ── Operator issue-type decisions (config.field_value_map) ────────────────
+  # Binds a type ID to an issue kind under field=issue_type; gold resolves
+  # `issue_kind` from these rows at its own build. An id with no live row falls
+  # to the tenant's config.field_value_defaults row, then `unknown`, so every
+  # spec seeding an issue type it expects classified must seed the decision
+  # too. `display_name` records the name the decision was made against.
+  jira_issue_type:
     tenant_id: "{{ tenant }}"
     insight_source_id: jira-test
     data_source: jira
-    field_id: type
-    value_id: null
+    field: issue_type
+    source_key: null
     valid_from: "1970-01-01 00:00:00.000"
     recorded_at: "2026-01-01 00:00:00.000"
     unique_key: null
-    canonical_value: null
-    value_display: ""
+    target_value: null
+    display_name: ""
     is_deleted: 0
     note: ""
     recorded_by: fixture
     _version: "2026-01-01 00:00:00.000"
+
+  # Per-tenant fallback for type ids with no decision (config.field_value_defaults).
+  jira_issue_type_default:
+    tenant_id: "{{ tenant }}"
+    insight_source_id: jira-test
+    field: issue_type
+    valid_from: "1970-01-01 00:00:00.000"
+    recorded_at: "2026-01-01 00:00:00.000"
+    unique_key: jira-issue-type-default
+    default_value: task
+    is_deleted: 0
+    note: ""
+    recorded_by: fixture
+    _version: "2026-01-01 00:00:00.000"
+
+  # One row per issue type above, keyed by its id. `issuetype_unclassified`
+  # (10099) deliberately has none: it is the unmapped-stays-unknown case.
+  value_type_task:
+    $ref: "#/templates/jira_issue_type"
+    source_key: "10001"
+    unique_key: jira-type-10001
+    target_value: task
+    display_name: Task
+
+  value_type_bug:
+    $ref: "#/templates/jira_issue_type"
+    source_key: "10000"
+    unique_key: jira-type-10000
+    target_value: bug
+    display_name: Bug
+
+  value_type_defect:
+    $ref: "#/templates/jira_issue_type"
+    source_key: "10002"
+    unique_key: jira-type-10002
+    target_value: bug
+    display_name: Defect
+
+  value_type_regression:
+    $ref: "#/templates/jira_issue_type"
+    source_key: "10003"
+    unique_key: jira-type-10003
+    target_value: bug
+    display_name: Regression
+
+  value_type_defect_padded:
+    $ref: "#/templates/jira_issue_type"
+    source_key: "10004"
+    unique_key: jira-type-10004
+    target_value: bug
+    display_name: "  DEFECT  "
+
+  value_type_bug_translated:
+    $ref: "#/templates/jira_issue_type"
+    source_key: "10005"
+    unique_key: jira-type-10005
+    target_value: bug
+    display_name: Bug
 
   # ── Deletion / visibility censuses (specs/DELETION-AND-VISIBILITY.md) ────
   # jira_census: one row per issue observed alive by the id-only sweep. An

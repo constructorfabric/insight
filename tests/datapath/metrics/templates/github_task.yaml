@@ -68,6 +68,42 @@ templates:
     canonical_value: done
     value_display: Not planned
 
+  # ── Operator issue-type decisions (config.field_value_map) ──────────────
+  # Binds a type ID to an issue kind under field=issue_type; gold resolves
+  # `issue_kind` from these rows at its own build. An id with no live row
+  # falls to the tenant's config.field_value_defaults row, then `unknown`, so
+  # a spec expecting a type classified must seed the decision too.
+  # `display_name` records the name it was made against.
+  github_issue_type:
+    tenant_id: "{{ tenant }}"
+    insight_source_id: github-test
+    data_source: github
+    field: issue_type
+    source_key: null
+    valid_from: "1970-01-01 00:00:00.000"
+    recorded_at: "2026-01-01 00:00:00.000"
+    unique_key: null
+    display_name: ""
+    target_value: null
+    is_deleted: 0
+    note: ""
+    recorded_by: fixture
+    _version: "2026-01-01 00:00:00.000"
+
+  issue_type_kind_task:
+    $ref: "#/templates/github_issue_type"
+    source_key: IT_task
+    unique_key: gh-type-kind-task
+    target_value: task
+    display_name: Task
+
+  issue_type_kind_bug:
+    $ref: "#/templates/github_issue_type"
+    source_key: IT_bug
+    unique_key: gh-type-kind-bug
+    target_value: bug
+    display_name: Bug
+
   # A Projects V2 board's status is its OWN field, one per board, never the
   # issue's `state`. The field identity is the board, because a status event
   # names the board and no field object; the value key carries the board too,

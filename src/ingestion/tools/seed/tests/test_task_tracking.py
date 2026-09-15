@@ -1,10 +1,10 @@
 """Tests for the task-tracking generator (`generators/task.py`).
 
 The trap these tests pin: `task_issue_state` gold classifies an issue by
-joining its issuetype field-history value_id against the
-`class_task_issuetypes` dimension. A missing dimension row — or a
-history event without a value_id — leaves the bug / non-bug measures
-empty while every row still "looks" seeded.
+joining its issuetype field-history value_id against the operator's
+`config.field_value_map` rows (the `class_task_issuetypes` dimension carries
+the names). A missing mapping row — or a history event without a value_id —
+leaves the bug / non-bug measures empty while every row still "looks" seeded.
 """
 
 from __future__ import annotations
@@ -36,6 +36,7 @@ _TABLES = (
     "silver.class_task_field_history",
     "silver.class_task_statuses",
     "silver.class_task_issuetypes",
+    "config.field_value_map",
 )
 
 _INITIAL_FIELDS = {
@@ -220,29 +221,48 @@ def test_closed_bugs_exist_so_bugs_fixed_is_non_zero(issues: Issues) -> None:
 def test_the_issuetype_dimension_emits_exactly_the_declared_rows_per_source(
     rows: Rows,
 ) -> None:
-    by_source: dict[str, dict[str, tuple[str, str]]] = {}
+    by_source: dict[str, dict[str, str]] = {}
     for row in rows["silver.class_task_issuetypes"]:
         per_source = by_source.setdefault(row["insight_source_id"], {})
         assert row["issue_type_id"] not in per_source, (
             f"source {row['insight_source_id']} duplicates type {row['issue_type_id']}"
         )
-        per_source[row["issue_type_id"]] = (row["issue_type_name"], row["issue_kind"])
+        per_source[row["issue_type_id"]] = row["issue_type_name"]
+
+    declared = {type_id: name for name, (type_id, _kind) in task._ISSUE_TYPE_DIM.items()}
+    for source_id, per_source in by_source.items():
+        assert per_source == declared, f"source {source_id} diverges from _ISSUE_TYPE_DIM"
+
+
+def test_the_value_map_emits_exactly_the_declared_decisions_per_source(
+    rows: Rows,
+) -> None:
+    by_source: dict[str, dict[str, tuple[str, str]]] = {}
+    for row in rows["config.field_value_map"]:
+        assert row["tenant_id"] == _TENANT
+        assert row["field"] == "issue_type"
+        assert row["is_deleted"] == 0
+        per_source = by_source.setdefault(row["insight_source_id"], {})
+        assert row["source_key"] not in per_source, (
+            f"source {row['insight_source_id']} duplicates decision {row['source_key']}"
+        )
+        per_source[row["source_key"]] = (row["display_name"], row["target_value"])
 
     declared = {type_id: (name, kind) for name, (type_id, kind) in task._ISSUE_TYPE_DIM.items()}
     for source_id, per_source in by_source.items():
         assert per_source == declared, f"source {source_id} diverges from _ISSUE_TYPE_DIM"
 
 
-def test_the_dimension_carries_a_bug_kind_row_keyed_by_the_history_value_id(
+def test_the_value_map_carries_a_bug_decision_keyed_by_the_history_value_id(
     rows: Rows,
 ) -> None:
-    bug_rows = [r for r in rows["silver.class_task_issuetypes"] if r["issue_kind"] == "bug"]
-    assert bug_rows, "no bug-kind dimension row — gold cannot classify any bug"
+    bug_rows = [r for r in rows["config.field_value_map"] if r["target_value"] == "bug"]
+    assert bug_rows, "no bug decision — gold cannot classify any bug"
     for row in bug_rows:
-        assert row["issue_type_id"] == _BUG_TYPE_ID, (
-            f"bug row keyed {row['issue_type_id']!r}, history events use {_BUG_TYPE_ID!r}"
+        assert row["source_key"] == _BUG_TYPE_ID, (
+            f"bug decision keyed {row['source_key']!r}, history events use {_BUG_TYPE_ID!r}"
         )
-        assert row["issue_type_name"] == "Bug"
+        assert row["display_name"] == "Bug"
 
 
 # ─── Referential integrity of the seed itself ────────────────────────────

@@ -6,7 +6,7 @@ description: >
   bronze -> silver -> gold: jira_issue + jira_issue_history (Status->Closed event
   = metric_date) + jira_user + jira_issuetypes. The issue's type id lives in
   custom_fields_json (issuetype.id) and resolves through the issue-type dimension
-  to a kind: bug / other / unknown. Per (person, close-day):
+  to a kind: bug / task / unknown. Per (person, close-day):
     tasks_closed   = every closed issue, bugs included;
     bugs_fixed     = the bug-kind ones;
     closed_non_bug = the known non-bug ones (an unknown kind joins neither subset).
@@ -48,6 +48,10 @@ bronze:
   bronze_jira.jira_issuetypes:
     - $ref: ../templates/jira_task.yaml#/templates/issuetype_task
     - $ref: ../templates/jira_task.yaml#/templates/issuetype_bug
+
+  config.field_value_map:
+    - $ref: ../templates/jira_task.yaml#/templates/value_type_task
+    - $ref: ../templates/jira_task.yaml#/templates/value_type_bug
 
   bronze_jira.jira_fields:
     - $ref: ../templates/jira_task.yaml#/templates/field_status

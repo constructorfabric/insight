@@ -11,7 +11,7 @@ close day, and the kind of a closed issue follows its CURRENT type.
 from __future__ import annotations
 
 import pytest
-from insight_datapath.metric_expect import approx, one
+from insight_datapath.metric_expect import approx, one, some
 from insight_datapath.spec_runner import SpecRun
 
 pytestmark = pytest.mark.fixture
@@ -26,7 +26,7 @@ DAVE = "dave@example.com"
 def test_bug_closes_sum_across_sources_for_one_person(spec: SpecRun) -> None:
     """Bob closes one Jira Bug and one GitHub Bug on 2026-06-25: the person aggregate
     carries no source dimension, so bugs_fixed and tasks.closed are each 2 and
-    bugs_ratio is 100."""
+    bugs_ratio is 100; the source breakdown says which close came from where."""
     r = spec.call(
         {
             "url": "/v1/metric-results",
@@ -36,7 +36,13 @@ def test_bug_closes_sum_across_sources_for_one_person(spec: SpecRun) -> None:
                 "period": {"from": "2026-06-20", "to": "2026-06-30"},
                 "metrics": [
                     {"metric_key": "tasks.bugs_fixed", "views": [{"view": "period"}]},
-                    {"metric_key": "tasks.closed", "views": [{"view": "period"}]},
+                    {
+                        "metric_key": "tasks.closed",
+                        "views": [
+                            {"view": "period"},
+                            {"view": "breakdown", "dimensions": ["source"]},
+                        ],
+                    },
                     {"metric_key": "tasks.bugs_ratio", "views": [{"view": "period"}]},
                 ],
             },
@@ -46,6 +52,18 @@ def test_bug_closes_sum_across_sources_for_one_person(spec: SpecRun) -> None:
 
     r.row("tasks.bugs_fixed", "period", entity_id=BOB).equals(value=2)
     r.row("tasks.closed", "period", entity_id=BOB).equals(value=2)
+    by_source = r.breakdown("tasks.closed")
+    assert (
+        float(one(by_source, entity_id=BOB, dimensions={"key": "source", "value": "jira"})["value"])
+        == 1.0
+    )
+    assert (
+        float(
+            one(by_source, entity_id=BOB, dimensions={"key": "source", "value": "github"})["value"]
+        )
+        == 1.0
+    )
+    assert len(some(by_source, entity_id=BOB)) == 2
     r.row("tasks.bugs_ratio", "period", entity_id=BOB).equals(value=100)
 
 
