@@ -129,7 +129,11 @@ bronze:
   config.task_value_map:
     - $ref: ../templates/github_task.yaml#/templates/value_open
     - $ref: ../templates/github_task.yaml#/templates/value_closed_completed
-    - { $ref: ../templates/github_task.yaml#/templates/value_open, field_id: type, value_id: IT_bug, unique_key: gh-value-type-bug, canonical_value: bug, value_display: Bug }
+
+  config.field_value_map:
+    - $ref: ../templates/github_task.yaml#/templates/issue_type_kind_bug
+    - $ref: ../templates/jira_task.yaml#/templates/value_type_task
+    - $ref: ../templates/jira_task.yaml#/templates/value_type_bug
 
   bronze_github.issue_types:
     - $ref: ../templates/github_task.yaml#/templates/issue_type_bug

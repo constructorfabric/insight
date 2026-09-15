@@ -2,7 +2,7 @@
 
 Bronze: jira_issue, jira_issue_history (the Status -> Closed event dates the close),
 jira_user and jira_issuetypes; the issue-type dimension resolves each issue to a bug,
-other or unknown kind. Gold serves bugs_fixed, closed_non_bug and bugs_ratio, a share
+task or unknown kind. Gold serves bugs_fixed, closed_non_bug and bugs_ratio, a share
 of closed issues with a ceiling of 100. Five department members each close four
 issues on one day, (r-1) bugs and (5-r) tasks, so the shares spread {0,25,50,75,100}.
 """

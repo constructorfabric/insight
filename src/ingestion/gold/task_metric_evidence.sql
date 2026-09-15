@@ -119,7 +119,7 @@ issue_item_evidence AS (
     ARRAY JOIN arrayConcat(
         [tuple('tasks_closed', toFloat64(1))],
         if(issue_kind = 'bug', [tuple('bugs_fixed', toFloat64(1))], []),
-        if(issue_kind = 'other', [tuple('closed_non_bug', toFloat64(1))], []),
+        if(issue_kind = 'task', [tuple('closed_non_bug', toFloat64(1))], []),
         if(
             due_date IS NOT NULL AND toDate(final_close_at) <= due_date,
             [tuple('due_date_on_time', toFloat64(1))],

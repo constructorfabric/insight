@@ -18,6 +18,20 @@ WHERE is_deleted = 0 AND valid_from > now64(3) + INTERVAL 1 DAY
 
 UNION ALL
 
+SELECT 'future_valid_from', insight_source_id, data_source,
+       concat(field, ':', source_key), toString(valid_from)
+FROM config.field_value_map FINAL
+WHERE is_deleted = 0 AND valid_from > now64(3) + INTERVAL 1 DAY
+
+UNION ALL
+
+-- `field_value_defaults` names no data_source; the field stands alone.
+SELECT 'future_valid_from', insight_source_id, '', field, toString(valid_from)
+FROM config.field_value_defaults FINAL
+WHERE is_deleted = 0 AND valid_from > now64(3) + INTERVAL 1 DAY
+
+UNION ALL
+
 SELECT 'colliding_decision', insight_source_id, data_source, field_id, unique_key
 FROM (
     SELECT insight_source_id, data_source, field_id, unique_key, count() AS c
@@ -33,6 +47,27 @@ FROM (
     SELECT insight_source_id, data_source, field_id, unique_key, count() AS c
     FROM config.task_value_map FINAL
     GROUP BY insight_source_id, data_source, field_id, unique_key
+    HAVING c > 1
+)
+
+UNION ALL
+
+SELECT 'colliding_decision', insight_source_id, data_source,
+       concat(field, ':', source_key), unique_key
+FROM (
+    SELECT insight_source_id, data_source, field, source_key, unique_key, count() AS c
+    FROM config.field_value_map FINAL
+    GROUP BY insight_source_id, data_source, field, source_key, unique_key
+    HAVING c > 1
+)
+
+UNION ALL
+
+SELECT 'colliding_decision', insight_source_id, '', field, unique_key
+FROM (
+    SELECT insight_source_id, field, unique_key, count() AS c
+    FROM config.field_value_defaults FINAL
+    GROUP BY insight_source_id, field, unique_key
     HAVING c > 1
 )
 
