@@ -10,19 +10,59 @@
 
 -- Bitbucket carries no diff totals on the pull request itself, so the per-file
 -- diffstat rows are the only source of line counts and are summed here.
-WITH diff_stats AS (
+--
+-- INVARIANT: the row key is the file path, so a ReplacingMergeTree replaces a
+-- file's row and never removes one — a file a rebase dropped out of the diff
+-- keeps its row for ever. The parent's update stamp is the only thing saying
+-- which rows belong to the diff the request has NOW, so the newest stamp's rows
+-- are taken WHOLE. Resolving each file to its own newest row keeps the dropped
+-- file instead, because nothing newer exists to displace it. #3362
+--
+-- A row with no usable stamp sorts to the epoch, so a request whose rows all
+-- predate the stamp is summed entire, as it was before this rule. #3362
+WITH diffstat_rows AS (
     SELECT
         tenant_id,
         source_id,
         repo_full_name,
         pr_id,
-        count() AS files_changed,
-        sum(lines_added) AS lines_added,
-        sum(lines_removed) AS lines_removed,
-        max(_airbyte_extracted_at) AS _airbyte_extracted_at,
-        1 AS matched
+        COALESCE(parseDateTimeBestEffortOrNull(pr_updated_on), toDateTime(0)) AS generation,
+        lines_added,
+        lines_removed,
+        _airbyte_extracted_at
     FROM {{ source('bronze_bitbucket_cloud', 'pull_request_diffstat') }} FINAL
+),
+
+diffstat_newest_generation AS (
+    SELECT
+        tenant_id,
+        source_id,
+        repo_full_name,
+        pr_id,
+        max(generation) AS generation
+    FROM diffstat_rows
     GROUP BY tenant_id, source_id, repo_full_name, pr_id
+),
+
+diff_stats AS (
+    SELECT
+        stat.tenant_id AS tenant_id,
+        stat.source_id AS source_id,
+        stat.repo_full_name AS repo_full_name,
+        stat.pr_id AS pr_id,
+        count() AS files_changed,
+        sum(stat.lines_added) AS lines_added,
+        sum(stat.lines_removed) AS lines_removed,
+        max(stat._airbyte_extracted_at) AS _airbyte_extracted_at,
+        1 AS matched
+    FROM diffstat_rows AS stat
+    INNER JOIN diffstat_newest_generation AS newest
+        ON newest.tenant_id = stat.tenant_id
+        AND newest.source_id = stat.source_id
+        AND newest.repo_full_name = stat.repo_full_name
+        AND newest.pr_id = stat.pr_id
+    WHERE stat.generation = newest.generation
+    GROUP BY stat.tenant_id, stat.source_id, stat.repo_full_name, stat.pr_id
 ),
 
 -- A pull request records no close time of its own; the terminal update event
@@ -177,6 +217,17 @@ SELECT
             AND COALESCE(updated_on >= created_on, 1), updated_on,
         CAST(NULL AS Nullable(DateTime))
     ) AS closed_on,
+    -- The close time as the SOURCE stated it: the terminal entry in the
+    -- request's activity, never a recovered candidate. The recovery above
+    -- corroborates WHICH DAY a merge landed on, which is what a count needs; a
+    -- duration measured to it would report an interval nobody observed, so the
+    -- duration measures read this column and drop the request when it is null.
+    -- #3362
+    if(
+        COALESCE(pr.state, '') IN ('MERGED', 'DECLINED', 'SUPERSEDED'),
+        parseDateTimeBestEffortOrNull(activity.closed_on),
+        CAST(NULL AS Nullable(DateTime))
+    ) AS closed_on_reported,
     COALESCE(pr.merge_commit_sha, '') AS merge_commit_hash,
     -- An unmatched join partner and a genuinely empty pull request both read
     -- as 0 through COALESCE; only the marker separates "not collected yet"

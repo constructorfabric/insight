@@ -84,6 +84,9 @@ SELECT
     parseDateTimeBestEffortOrNull(mr.created_at) AS created_on,
     parseDateTimeBestEffortOrNull(mr.updated_at) AS updated_on,
     parseDateTimeBestEffortOrNull(COALESCE(NULLIF(mr.merged_at, ''), mr.closed_at)) AS closed_on,
+    -- GitLab states the close time itself, so the reported column carries the
+    -- same value: there is nothing derived here for a duration to read past.
+    parseDateTimeBestEffortOrNull(COALESCE(NULLIF(mr.merged_at, ''), mr.closed_at)) AS closed_on_reported,
     -- A squash merge lands as squash_commit_sha and leaves merge_commit_sha
     -- empty; either is the commit the target branch received.
     COALESCE(NULLIF(mr.merge_commit_sha, ''), mr.squash_commit_sha, '') AS merge_commit_hash,

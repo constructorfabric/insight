@@ -30,6 +30,21 @@ templates:
     changed_files: 0
     is_in_default_branch: true
 
+  # The address an account has committed under. A pull request names its author
+  # by account id alone, so this row is the edge the persons-seed walks to reach
+  # the person the roster already knows — see #3423.
+  commit_author:
+    $ref: "#/templates/base"
+    repo_full_name: acme/platform
+    collected_at: "2026-10-02T00:00:00Z"
+    author_email: null
+    author_account_id: null
+    author_uuid: null
+    author_nickname: null
+    author_display_name: null
+    sample_sha: "0000000000000000000000000000000000000000"
+    last_committed_date: "2026-10-01T09:00:00Z"
+
   file_change:
     $ref: "#/templates/base"
     repository: https://bitbucket.org/acme/platform.git

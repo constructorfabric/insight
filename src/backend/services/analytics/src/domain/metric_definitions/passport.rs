@@ -19,6 +19,10 @@ const HEADER: &str = "\
 Generated from `registry.yaml` by `analytics passports`. Do not edit by hand —
 regenerate and commit. A drift test (`metric_definitions::passport`) fails when
 this file and the registry disagree.
+
+`median(x)` is the textbook median: on an even sample the two middle values are
+averaged, so the answer need not be a value any observation took. A percentile
+is an order statistic instead, and always answers with one that did.
 ";
 
 /// Render the passport document from the builtin registry. Deterministic:

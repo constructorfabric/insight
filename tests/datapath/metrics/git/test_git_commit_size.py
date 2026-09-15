@@ -51,7 +51,7 @@ def test_the_period_value_is_the_exact_median_of_the_per_commit_sizes(spec: Spec
         points={"bucket_start": "2026-10-01", "value": 30}
     )
     r.row("git.commit_size", "timeseries", entity_id=ERIN).contains(
-        points={"bucket_start": "2026-10-02", "value": 6}
+        points={"bucket_start": "2026-10-02", "value": 5}
     )
     r.row(
         "git.commit_size",
@@ -64,7 +64,7 @@ def test_the_period_value_is_the_exact_median_of_the_per_commit_sizes(spec: Spec
         "breakdown",
         entity_id=ERIN,
         dimensions={"key": "repository", "value": "git-test:acme/web"},
-    ).equals(value=6)
+    ).equals(value=5)
     r.row("git.commit_size", "histogram", entity_id=ERIN).contains(bins={"lo": 4, "count": 3})
     r.row("git.commit_size", "histogram", entity_id=ERIN).contains(bins={"hi": 204, "count": 1})
 

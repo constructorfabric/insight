@@ -143,15 +143,17 @@ def test_a_merge_with_no_usable_evidence_is_dropped_not_dated_at_the_epoch(
     r.row("git.non_default_branch_prs_merged", "period", entity_id=HEIDI).equals(value=None)
 
 
-def test_a_recovered_close_time_is_usable_and_not_merely_countable(spec: SpecRun) -> None:
-    """A recovered close time has to survive the guards every duration measure applies —
-    a close before the opening yields no value at all — so the cycle time is what proves
-    the recovery produced a coherent interval and not just a countable row.
+def test_a_recovered_close_time_counts_the_merge_but_yields_no_duration(
+    spec: SpecRun,
+) -> None:
+    """Six requests count as merged (asserted above); exactly one of them has a cycle.
 
-    Of the five requests that landed, the four the recovery dated span 77, 26, 77 and 2
-    hours from opening to close; the one the terminal entry dated spans 97. The median of
-    those five is 77 — a value only reachable if the recovered closes are both present and
-    ordered after their openings.
+    A recovered close time settles which DAY a merge landed on, and that is all a count
+    needs. An interval measured to it would be one nobody observed, so the class contract
+    keeps the SOURCE-stated close apart and every duration measure reads only that. Of
+    the requests whose opening is usable, the four the recovery dated would have spanned
+    77, 26, 77 and 2 hours and contribute nothing; the one a terminal activity entry
+    dated spans 97, and is the whole of the median. #3362
     """
     r = spec.call(
         {
@@ -166,7 +168,7 @@ def test_a_recovered_close_time_is_usable_and_not_merely_countable(spec: SpecRun
     )
     assert r.status == 200
 
-    r.row("git.pr_cycle_time_h", "period", entity_id=HEIDI).equals(value=77)
+    r.row("git.pr_cycle_time_h", "period", entity_id=HEIDI).equals(value=97)
 
 
 def test_a_declined_request_carrying_a_merge_hash_gains_no_close_time(spec: SpecRun) -> None:
