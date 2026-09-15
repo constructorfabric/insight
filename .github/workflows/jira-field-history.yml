@@ -51,7 +51,10 @@ jobs:
   transformations:
     name: transformations + dbt tests
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # The lane grows by a scenario with most changes and a runner varies by a
+    # third between runs; 74 scenarios took 31 to 42 minutes, so 45 was the
+    # edge, and a timeout reads as `cancelled` rather than as a failing test.
+    timeout-minutes: 75
     env:
       CLICKHOUSE_CONTAINER: jira-field-history-clickhouse
       CLICKHOUSE_USER: insight
