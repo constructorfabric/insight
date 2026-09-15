@@ -154,7 +154,7 @@ fails loudly on a value of the wrong shape.
 
 Service *names* stay literal on purpose — `fullnameOverride` in each
 producer's values pins them, so the name is the contract and only the
-namespace moves. Substitution replaces only these two exact braced
+namespace moves. Substitution replaces only these exact braced
 tokens: every other `$` construct — Grafana
 provisioning `$VAR` / `$$VAR` escapes, `$__auto` in dashboards,
 `${…}`-shaped strings in Alloy configs — passes through byte-identical,
