@@ -1154,7 +1154,7 @@ def _repository_listing_bounds(mocker: HttpMocker) -> list[str]:
         if parsed.path.rstrip("/") != listing_path:
             continue
         q = parse_qs(parsed.query).get("q", [""])[0]
-        bounds.append(q.split('"')[1] if '"' in q else f"<unbounded: {request.url}>")
+        bounds.append(q.split('"')[1] if '"' in q else "<unbounded>")
     return bounds
 
 
