@@ -19,6 +19,7 @@ schemas:
       status: { type: [string, "null"] }
       lines_added: { type: [integer, "null"] }
       lines_removed: { type: [integer, "null"] }
+      pr_updated_on: { type: [string, "null"] }
       _airbyte_raw_id: { type: string }
       _airbyte_extracted_at: { type: string, format: date-time }
       _airbyte_meta: { type: string }

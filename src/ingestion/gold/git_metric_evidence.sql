@@ -328,6 +328,12 @@ pull_requests_source AS (
         prs.state AS state,
         prs.created_on AS created_on,
         prs.closed_on AS closed_on,
+        -- INVARIANT: the close time the SOURCE stated, which is not always the
+        -- one the class row settles on — Bitbucket recovers a merge the vendor
+        -- recorded without an activity entry. A count wants the settled day; a
+        -- duration wants an instant somebody observed, so every interval below
+        -- reads this column and drops the request where it is null. #3362
+        prs.closed_on_reported AS closed_on_reported,
         coalesce(pr_commit_counts.linked_commit_count, 0) AS linked_commit_count,
         coalesce(review_summary.reviewer_count, 0) AS reviewer_count,
         coalesce(review_summary.has_approval, 0) AS has_approval,
@@ -336,10 +342,10 @@ pull_requests_source AS (
         prs.lines_added + prs.lines_removed AS change_size,
         if(
             prs.state = 'MERGED'
-                AND prs.closed_on IS NOT NULL
+                AND prs.closed_on_reported IS NOT NULL
                 AND prs.created_on IS NOT NULL
-                AND prs.closed_on >= prs.created_on,
-            dateDiff('second', prs.created_on, prs.closed_on) / 3600.0,
+                AND prs.closed_on_reported >= prs.created_on,
+            dateDiff('second', prs.created_on, prs.closed_on_reported) / 3600.0,
             CAST(NULL AS Nullable(Float64))
         ) AS cycle_hours,
         if(
@@ -351,18 +357,18 @@ pull_requests_source AS (
         ) AS first_review_hours,
         if(
             prs.state = 'MERGED'
-                AND prs.closed_on IS NOT NULL
+                AND prs.closed_on_reported IS NOT NULL
                 AND review_summary.first_reviewed_at IS NOT NULL
-                AND prs.closed_on >= review_summary.first_reviewed_at,
-            dateDiff('second', review_summary.first_reviewed_at, prs.closed_on) / 3600.0,
+                AND prs.closed_on_reported >= review_summary.first_reviewed_at,
+            dateDiff('second', review_summary.first_reviewed_at, prs.closed_on_reported) / 3600.0,
             CAST(NULL AS Nullable(Float64))
         ) AS review_to_merge_hours,
         if(
             prs.state = 'MERGED'
-                AND prs.closed_on IS NOT NULL
+                AND prs.closed_on_reported IS NOT NULL
                 AND review_summary.last_approved_at IS NOT NULL
-                AND prs.closed_on >= review_summary.last_approved_at,
-            dateDiff('second', review_summary.last_approved_at, prs.closed_on) / 3600.0,
+                AND prs.closed_on_reported >= review_summary.last_approved_at,
+            dateDiff('second', review_summary.last_approved_at, prs.closed_on_reported) / 3600.0,
             CAST(NULL AS Nullable(Float64))
         ) AS approval_to_merge_hours,
         if(coalesce(prs.project_key, '') = '', '__unknown__', concat(coalesce(toString(prs.source_id), ''), ':', prs.project_key)) AS project_value,
@@ -490,9 +496,14 @@ pull_request_measures AS (
             [tuple('pr_multi_reviewed', toFloat64(reviewer_count > 1), toDateTime64(assumeNotNull(created_on), 3))],
             []
         ),
+        -- A source that never reported line counts leaves them null and
+        -- contributes nothing; a source that reported zero of each observed a
+        -- diff of no lines — a rename or a mode change — and that zero is a
+        -- value. Only the null separates the two, which is why the class
+        -- columns are nullable. #3362
         if(
-            created_on IS NOT NULL AND ifNull(change_size, 0) > 0,
-            [tuple('pr_change_size', toFloat64(ifNull(change_size, 0)), toDateTime64(assumeNotNull(created_on), 3))],
+            created_on IS NOT NULL AND change_size IS NOT NULL,
+            [tuple('pr_change_size', toFloat64(assumeNotNull(change_size)), toDateTime64(assumeNotNull(created_on), 3))],
             []
         ),
         if(
@@ -523,8 +534,8 @@ pull_request_measures AS (
             []
         ),
         if(
-            cycle_hours IS NOT NULL AND closed_on IS NOT NULL,
-            [tuple('pr_cycle_hours', toFloat64(assumeNotNull(cycle_hours)), toDateTime64(assumeNotNull(closed_on), 3))],
+            cycle_hours IS NOT NULL AND closed_on_reported IS NOT NULL,
+            [tuple('pr_cycle_hours', toFloat64(assumeNotNull(cycle_hours)), toDateTime64(assumeNotNull(closed_on_reported), 3))],
             []
         ),
         if(
@@ -533,13 +544,13 @@ pull_request_measures AS (
             []
         ),
         if(
-            review_to_merge_hours IS NOT NULL AND closed_on IS NOT NULL,
-            [tuple('pr_review_to_merge_hours', toFloat64(assumeNotNull(review_to_merge_hours)), toDateTime64(assumeNotNull(closed_on), 3))],
+            review_to_merge_hours IS NOT NULL AND closed_on_reported IS NOT NULL,
+            [tuple('pr_review_to_merge_hours', toFloat64(assumeNotNull(review_to_merge_hours)), toDateTime64(assumeNotNull(closed_on_reported), 3))],
             []
         ),
         if(
-            approval_to_merge_hours IS NOT NULL AND closed_on IS NOT NULL,
-            [tuple('pr_approval_to_merge_hours', toFloat64(assumeNotNull(approval_to_merge_hours)), toDateTime64(assumeNotNull(closed_on), 3))],
+            approval_to_merge_hours IS NOT NULL AND closed_on_reported IS NOT NULL,
+            [tuple('pr_approval_to_merge_hours', toFloat64(assumeNotNull(approval_to_merge_hours)), toDateTime64(assumeNotNull(closed_on_reported), 3))],
             []
         ),
         if(
@@ -547,8 +558,8 @@ pull_request_measures AS (
                 AND review_to_merge_hours IS NOT NULL
                 AND cycle_hours IS NOT NULL
                 AND cycle_hours > 0
-                AND closed_on IS NOT NULL,
-            [tuple('pr_review_wait_share', 100.0 * toFloat64(assumeNotNull(first_review_hours)) / toFloat64(assumeNotNull(cycle_hours)), toDateTime64(assumeNotNull(closed_on), 3))],
+                AND closed_on_reported IS NOT NULL,
+            [tuple('pr_review_wait_share', 100.0 * toFloat64(assumeNotNull(first_review_hours)) / toFloat64(assumeNotNull(cycle_hours)), toDateTime64(assumeNotNull(closed_on_reported), 3))],
             []
         )
     ) AS Array(Tuple(measure_key String, contribution Float64, observed_at DateTime64(3)))) AS pr_measure

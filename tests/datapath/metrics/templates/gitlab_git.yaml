@@ -125,6 +125,18 @@ templates:
     detailed_merge_status: not_open
     user_notes_count: 0
 
+  # The merge request's diff summary, its own stream. A request GitLab has not
+  # computed the summary for yet has no row here at all.
+  diff_stats:
+    $ref: "#/templates/base"
+    project_id: 101
+    repo_path: acme/platform
+    mr_iid: null
+    updated_at: "2026-10-01T13:00:00.000+00:00"
+    additions: 0
+    deletions: 0
+    files_changed: 0
+
   # A merge-request note. `system: true` rows are GitLab's own log of the
   # request; the review verdicts among them are recognised by body.
   note:

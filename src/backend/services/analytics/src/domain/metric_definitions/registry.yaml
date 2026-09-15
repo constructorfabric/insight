@@ -1690,7 +1690,7 @@ metrics:
       - distribution
     label: PR size
     description: Typical diff size per pull request
-    explanation: Median diff size of authored pull requests (lines added plus removed). Smaller requests are easier to review. Sources that do not report line counts contribute no values.
+    explanation: Median diff size of authored pull requests (lines added plus removed), dated by the day the request was OPENED in UTC and counted whatever state the request reached. Smaller requests are easier to review. A source that never reported line counts contributes no value; a request whose counts were reported as zero — a rename or a mode change — contributes a zero, which is an observed diff of no lines rather than an absence.
     unit: lines
     format: integer
     direction: lower_is_better
@@ -1739,10 +1739,10 @@ metrics:
     label: PR cycle time
     short_label: PR cycle
     description: Typical hours from open to merge
-    explanation: Median hours from opening a pull request to merging it, over requests merged in the period.
+    explanation: Median hours from opening a pull request to merging it, dated by the merge in UTC, over requests merged in the period. Mostly waiting — for a reviewer, for a build, for someone to press merge — so it describes the path a change travels rather than the person who opened it. A source that does not report a merge time contributes no duration.
     unit: h
     format: decimal
-    direction: lower_is_better
+    direction: neutral
     entity_type: person
     computation: median
     peer_cohort_key: org_unit
@@ -1764,10 +1764,10 @@ metrics:
     label: PR cycle time (p75)
     short_label: Cycle p75
     description: Slow-end hours from open to merge
-    explanation: 75th percentile of hours from opening a pull request to merging it, over requests merged in the period.
+    explanation: 75th percentile of hours from opening a pull request to merging it, dated by the merge in UTC, over requests merged in the period. Reads the same waiting as the median and describes the same path, so it too is not a statement about the person who opened the request.
     unit: h
     format: decimal
-    direction: lower_is_better
+    direction: neutral
     entity_type: person
     computation: !percentile
       q: 0.75

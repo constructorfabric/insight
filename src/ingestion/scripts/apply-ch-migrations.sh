@@ -605,6 +605,177 @@ for _git_source in github gitlab bitbucket_cloud; do
   heal_git_pr_author_account "${_git_source}__pull_requests"
 done
 
+echo "=== Healing git pull-request reported close-time column ==="
+# Same positional invariant: every projection feeding class_git_pull_requests
+# gained closed_on_reported after closed_on — the close time as the source
+# stated it, which the duration measures read so a recovered one cannot pose as
+# a measurement (#3362). Staging heals here because these tables exist only
+# after a connector has run; the silver column is added in migrations/*.sql.
+# Idempotent.
+heal_git_pr_close_time_reported() {
+  local table="$1"
+  ch_table_is_real staging "${table}" || return 0
+  echo "  staging.${table}"
+  run_ch <<SQL
+ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS closed_on_reported Nullable(DateTime) AFTER closed_on;
+ALTER TABLE staging.${table} MODIFY COLUMN closed_on_reported Nullable(DateTime) AFTER closed_on;
+SQL
+}
+
+for _git_source in github gitlab bitbucket_cloud; do
+  heal_git_pr_close_time_reported "${_git_source}__pull_requests"
+done
+
+echo "=== Backfilling git pull-request reported close time from the sources ==="
+# The rows a warm warehouse already holds must be filled from the SOURCE
+# timestamps, never from this table's own `closed_on`.
+#
+# `closed_on` is the SETTLED close, and the contract that settled it changed
+# here: both projections used to prefer `closed_at`, so a request CLOSED,
+# reopened and later MERGED settled on the earlier close. Copying that into
+# `closed_on_reported` would hand every duration measure an interval that ended
+# before the merge — the very reading this change corrects — and it would do so
+# invisibly, because the value is a real instant the source once reported.
+#
+# So the reported close is recomputed from bronze under the new contract:
+# `merged_at` when the source states one, else `closed_at`. `unique_key` reaches
+# bronze unchanged through both projections, which is what makes the lookup a
+# key equality rather than a guess. A mutation cannot join a subquery, so the
+# pairs go through a Join-engine table and joinGet, the same way the jira issue
+# identity heal above does.
+#
+# Three relations feed it. `bronze_gitlab.merge_requests` is the pre-#3250
+# stream: it is absent from the DDL snapshot and from any fresh cluster, and
+# holds the GitLab history of an installation that has not yet re-synced on the
+# rebuilt connector — which is exactly the installation this backfill is for.
+#
+# A row bronze cannot answer for falls back only where the STATE itself proves
+# what `closed_on` holds. `CLOSED` is such a state: it is terminal and it never
+# merged, so the settled close can only be the reported `closed_at`. `MERGED`
+# is not — `closed_on` there may be a merge or the stale close this change
+# corrects, and guessing is what went wrong. Nor is `OPEN` or `LOCKED`, which
+# have no close to report. Those keep NULL.
+#
+# Bitbucket is excluded throughout: its `closed_on` may be RECOVERED, and
+# promoting a recovered time to a reported one is the error this column exists
+# to prevent.
+_git_pr_reported_close_lookup='staging._git_pr_reported_close_by_key'
+
+# The relations that carry the column, as "<db> <table> <extra predicate>". The
+# class holds all three connectors in one table, so it alone needs the filter
+# that keeps Bitbucket out; the staging projections are per connector already.
+_GIT_PR_REPORTED_CLOSE_TARGETS=(
+  "silver|class_git_pull_requests| AND data_source IN ('insight_github', 'insight_gitlab')"
+  "staging|github__pull_requests|"
+  "staging|gitlab__pull_requests|"
+)
+
+# Rows this backfill would actually CHANGE. `fillable` is the same expression
+# the UPDATE below uses, so a converged warehouse counts zero and issues no
+# mutation at all — the rows that stay NULL for ever (a merge bronze cannot
+# answer for, a request still open) must not re-trigger it on every deploy.
+_git_pr_rows_needing_reported_close() {
+  local db="$1" table="$2" predicate="$3" fillable="$4"
+  printf "SELECT count() FROM %s.%s WHERE closed_on_reported IS NULL AND unique_key IS NOT NULL AND tenant_id IS NOT NULL AND source_id IS NOT NULL AND (%s)%s" \
+    "${db}" "${table}" "${fillable}" "${predicate}" |
+    _ch_http_query | tr -d '[:space:]'
+}
+
+# One branch of the lookup's UNION: the reported close as the source states it.
+#
+# `stream_rank` settles which relation wins when a GitLab installation holds
+# both the pre-#3250 stream and its replacement. The current stream ranks above
+# the legacy one by DECLARATION, not by whichever happened to be extracted
+# later — a clock is not a contract.
+_git_pr_reported_close_branch() {
+  local relation="$1" stream_rank="$2"
+  cat <<SQL
+    SELECT assumeNotNull(tenant_id) AS tenant_id,
+           assumeNotNull(source_id) AS source_id,
+           assumeNotNull(unique_key) AS unique_key,
+           COALESCE(nullIf(merged_at, ''), nullIf(closed_at, ''), '') AS reported_close,
+           toUInt8(${stream_rank}) AS stream_rank,
+           _airbyte_extracted_at AS extracted_at
+    FROM ${relation}
+    WHERE tenant_id IS NOT NULL AND source_id IS NOT NULL AND unique_key IS NOT NULL
+SQL
+}
+
+backfill_git_pr_reported_close() {
+  local sources=() source relation rank branches spec db table predicate n candidates=0
+  # "<relation> <stream_rank>": the current streams outrank the legacy one.
+  for source in "bronze_github.pull_requests 1" "bronze_gitlab.pull_requests 1" \
+                "bronze_gitlab.merge_requests 0"; do
+    relation="${source%% *}"
+    ch_table_is_real "${relation%%.*}" "${relation##*.}" && sources+=("${source}")
+  done
+  [[ "${#sources[@]}" -gt 0 ]] || { echo "  no git pull-request bronze to read — skipping"; return 0; }
+
+  branches=""
+  for source in "${sources[@]}"; do
+    relation="${source%% *}"; rank="${source##* }"
+    [[ -n "${branches}" ]] && branches+="    UNION ALL"$'\n'
+    branches+="$(_git_pr_reported_close_branch "${relation}" "${rank}")"$'\n'
+  done
+
+  run_ch <<SQL
+DROP TABLE IF EXISTS ${_git_pr_reported_close_lookup};
+CREATE TABLE ${_git_pr_reported_close_lookup}
+(
+    tenant_id String,
+    source_id String,
+    unique_key String,
+    reported_close String
+)
+ENGINE = Join(ANY, LEFT, tenant_id, source_id, unique_key);
+INSERT INTO ${_git_pr_reported_close_lookup}
+-- The GROUP BY leaves exactly one row per key, so Join(ANY) never chooses and
+-- the insert order is not a contract. The ordering tuple is total: the current
+-- stream outranks the legacy one, a later extraction outranks an earlier one,
+-- and the value itself breaks a remaining tie — so the answer is a function of
+-- the data alone, not of which part a merge happened to leave behind.
+SELECT tenant_id, source_id, unique_key,
+       argMax(reported_close, (stream_rank, extracted_at, reported_close)) AS reported_close
+FROM
+(
+${branches})
+GROUP BY tenant_id, source_id, unique_key;
+SQL
+
+  local lookup="joinGet('${_git_pr_reported_close_lookup}', 'reported_close', assumeNotNull(tenant_id), assumeNotNull(source_id), assumeNotNull(unique_key))"
+  # The one expression that decides whether a row can be answered at all; the
+  # count and the UPDATE share it so they cannot drift apart.
+  local fillable="${lookup} != '' OR (state = 'CLOSED' AND closed_on IS NOT NULL)"
+
+  for spec in "${_GIT_PR_REPORTED_CLOSE_TARGETS[@]}"; do
+    IFS='|' read -r db table predicate <<<"${spec}"
+    ch_table_is_real "${db}" "${table}" || continue
+    n="$(_git_pr_rows_needing_reported_close "${db}" "${table}" "${predicate}" "${fillable}")"
+    [[ "${n}" =~ ^[0-9]+$ && "${n}" -gt 0 ]] || continue
+    candidates=$((candidates + n))
+    echo "  ${db}.${table}: ${n} row(s)"
+    run_ch <<SQL
+ALTER TABLE ${db}.${table}
+    UPDATE closed_on_reported = if(
+        ${lookup} != '',
+        parseDateTimeBestEffortOrNull(${lookup}),
+        if(state = 'CLOSED', closed_on, CAST(NULL AS Nullable(DateTime)))
+    )
+    WHERE closed_on_reported IS NULL
+      AND unique_key IS NOT NULL AND tenant_id IS NOT NULL AND source_id IS NOT NULL
+      AND (${fillable})${predicate}
+    SETTINGS mutations_sync = 1;
+SQL
+  done
+  [[ "${candidates}" -gt 0 ]] || echo "  every row a source can answer for already carries its reported close"
+
+  run_ch <<SQL
+DROP TABLE IF EXISTS ${_git_pr_reported_close_lookup};
+SQL
+}
+
+backfill_git_pr_reported_close
+
 echo "=== Healing git repository default-branch column ==="
 # class_git_repositories gained `default_branch` at the projection tail; the
 # silver side heals in migrations/*.sql, the staging members heal here because

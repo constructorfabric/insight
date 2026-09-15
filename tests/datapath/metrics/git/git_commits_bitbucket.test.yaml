@@ -12,7 +12,7 @@ description: >
     * pull-request line totals are summed from the per-file diffstat rows, and
       closed_on comes from the terminal MERGED activity event;
     * commit size reads the commits' own stats — {12, 0} with the merge commit
-      contributing nothing — and the even-count median takes the upper middle.
+      contributing nothing — and the even-count median is their average, 6.
 
 bronze:
   bronze_bamboohr.employees:
