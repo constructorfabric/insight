@@ -16,7 +16,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { usePortalPeriod } from "@/hooks/use-portal-period";
-import { formatMetricValue } from "@/lib/format";
+import { formatDate, formatMetricValue, NO_METRIC_VALUE } from "@/lib/format";
 import { GROUPS } from "@/lib/insight/groups";
 import {
   availableSlices,
@@ -48,6 +48,11 @@ const COST_KEY = "ai.cost";
 // INVARIANT: the per-day metric. The cumulative one is anchored to the first day
 // of its billing month and returns nothing for a window inside a month.
 const ACTUAL_COST_KEY = "ai.daily_approximate_extra_usage_cost";
+// INVARIANT: month-grain billing facts, each anchored to the first day of the
+// month it bills for. They are read at month buckets in their own section — a
+// row that totals a window would drop any month whose first day it misses.
+const SEAT_COST_KEY = "ai.seat_cost";
+const BILLED_MONTH_KEY = "ai.extra_usage_cost";
 const LINES_KEY = "ai.accepted_lines";
 const DAYS_KEY = "ai.active_days";
 /** Grid columns for the cost-leaders scan. */
@@ -87,6 +92,15 @@ interface ToolRow {
   actualTracked: boolean;
 }
 
+/** One "Billed by month" row: two billing facts of one month, never summed. */
+interface MonthlyBillRow {
+  month: string;
+  seatCost: number;
+  seatCostSeen: boolean;
+  billed: number;
+  billedSeen: boolean;
+}
+
 /** A person's reading of a metric, or null where they have none. */
 function reading(
   r: NormalizedMetricResult | undefined,
@@ -111,6 +125,28 @@ function aggregateByTool(
       bucket.sum += row.value;
       if (row.value > 0) bucket.users.add(id);
       out.set(tool, bucket);
+    }
+  }
+  return out;
+}
+
+/**
+ * Sum a month-bucketed metric across members, keyed by the bucket's first day.
+ * A month absent from the map had no reading, which is what lets the renderer
+ * print "—" instead of a $0 nobody measured.
+ */
+function aggregateByMonth(
+  result: NormalizedMetricResult | undefined,
+  memberIds: readonly string[],
+): Map<string, number> {
+  const out = new Map<string, number>();
+  if (!result) return out;
+  for (const id of memberIds) {
+    for (const series of forEntity(result, id).series) {
+      for (const point of series.points) {
+        if (point.value == null) continue;
+        out.set(point.bucket_start, (out.get(point.bucket_start) ?? 0) + point.value);
+      }
     }
   }
   return out;
@@ -175,6 +211,15 @@ export function AiCostView({ item }: { item: string | null }) {
     }),
     [],
   );
+  const monthlyCollection = useMemo<MetricCollectionConfig>(
+    () => ({
+      metrics: [SEAT_COST_KEY, BILLED_MONTH_KEY].map((key) => ({
+        key,
+        views: [{ view: "timeseries" as const, bucket: "month" as const }],
+      })),
+    }),
+    [],
+  );
 
   const grid = useMemberGridData(
     memberIds.length ? gridCollection : EMPTY_COLLECTION,
@@ -184,6 +229,11 @@ export function AiCostView({ item }: { item: string | null }) {
   );
   const toolData = useMetricCollection(
     memberIds.length ? toolCollection : EMPTY_COLLECTION,
+    { type: "person", ids: memberIds },
+    dateRange,
+  );
+  const monthlyData = useMetricCollection(
+    memberIds.length ? monthlyCollection : EMPTY_COLLECTION,
     { type: "person", ids: memberIds },
     dateRange,
   );
@@ -237,6 +287,24 @@ export function AiCostView({ item }: { item: string | null }) {
       })
       .sort((a, b) => b.lines - a.lines);
   }, [toolData.byKey, memberIds]);
+
+  const monthlyRows = useMemo<MonthlyBillRow[]>(() => {
+    const seat = aggregateByMonth(monthlyData.byKey.get(SEAT_COST_KEY), memberIds);
+    const billed = aggregateByMonth(
+      monthlyData.byKey.get(BILLED_MONTH_KEY),
+      memberIds,
+    );
+    const months = new Set([...seat.keys(), ...billed.keys()]);
+    return [...months]
+      .sort((a, b) => b.localeCompare(a))
+      .map((month) => ({
+        month,
+        seatCost: seat.get(month) ?? 0,
+        seatCostSeen: seat.has(month),
+        billed: billed.get(month) ?? 0,
+        billedSeen: billed.has(month),
+      }));
+  }, [monthlyData.byKey, memberIds]);
 
   // Data-driven slice options + the active slice's cohort accessor. The slice
   // is global (portal-store) so it re-cohorts every view at once.
@@ -481,6 +549,14 @@ export function AiCostView({ item }: { item: string | null }) {
         </p>
       </section>
 
+      <BilledMonthsSection
+        rows={monthlyRows}
+        seatR={monthlyData.byKey.get(SEAT_COST_KEY)}
+        billedR={monthlyData.byKey.get(BILLED_MONTH_KEY)}
+        isPending={monthlyData.isPending}
+        isError={monthlyData.isError}
+      />
+
       {/* Cost leaders */}
       <section className="flex flex-col gap-3">
         <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
@@ -541,6 +617,91 @@ function FunnelSection({ funnel }: { funnel: { label: string; n: number }[] }) {
       <p className="text-xs text-muted-foreground">
         Stages from AI active-days; “active”/“heavy” cuts are the median and
         top-quartile day counts among people who used AI this period.
+      </p>
+    </section>
+  );
+}
+
+/**
+ * Billed by month — the two facts the vendor bills a month for, side by side:
+ * the seat fee taken from the invoice, and the usage billed on top of it. There
+ * is deliberately no total column: the two answer different questions and
+ * adding them would report a figure the vendor never charged.
+ */
+function BilledMonthsSection({
+  rows,
+  seatR,
+  billedR,
+  isPending,
+  isError,
+}: {
+  rows: MonthlyBillRow[];
+  seatR: NormalizedMetricResult | undefined;
+  billedR: NormalizedMetricResult | undefined;
+  isPending: boolean;
+  isError: boolean;
+}) {
+  const money = (
+    value: number,
+    seen: boolean,
+    r: NormalizedMetricResult | undefined,
+  ) =>
+    seen
+      ? formatMetricValue(value, r?.format ?? "currency", r?.unit ?? "USD")
+      : NO_METRIC_VALUE;
+
+  return (
+    <section className="flex flex-col gap-3">
+      <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+        Billed by month
+      </p>
+      {isError ? (
+        <ComingSoon
+          state="error"
+          label="Unable to load the monthly billing figures"
+        />
+      ) : isPending ? (
+        <CenteredSpinner className="min-h-32" />
+      ) : rows.length ? (
+        <div className="overflow-x-auto rounded-lg border">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Billing month</TableHead>
+                <TableHead className="text-right">Seat cost</TableHead>
+                <TableHead className="text-right">Extra usage billed</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((r) => (
+                <TableRow key={r.month}>
+                  <TableCell className="font-medium">
+                    {formatDate(r.month, "MMM yyyy")}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {money(r.seatCost, r.seatCostSeen, seatR)}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {money(r.billed, r.billedSeen, billedR)}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      ) : (
+        <ComingSoon
+          variant="card"
+          state="empty"
+          label="No invoiced months in this period. Seat cost and extra usage are facts of a whole billing month, so a window that misses a month's first day returns neither."
+        />
+      )}
+      <p className="text-xs text-muted-foreground">
+        Subscription and overusage, side by side and never added: the seat fee is
+        what a seat costs before any usage, and the billed extra usage is what
+        the vendor charged on top of it once the usage that fee included ran out.
+        Each is a fact of the whole month rather than a rate sliced to the
+        selected window. A tier the invoice does not price reads “—”, not $0.
       </p>
     </section>
   );
