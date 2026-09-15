@@ -17,7 +17,6 @@ import re
 
 import yaml
 from config import BitbucketCloudConfigBuilder  # noqa: F401  (keeps the suite's import shape)
-
 from connector_tests import connector_dir
 
 _CONNECTOR = "git/bitbucket-cloud"
@@ -224,6 +223,102 @@ def test_every_requester_declares_an_error_handler() -> None:
         if "error_handler" not in requester
     ]
     assert not bare, f"requesters relying on the CDK default error handler: {bare}"
+
+
+def _parent_configs(node, out=None):
+    """Every ParentStreamConfig mapping anywhere in the manifest tree."""
+    if out is None:
+        out = []
+    if isinstance(node, dict):
+        if node.get("type") == "ParentStreamConfig":
+            out.append(node)
+        for value in node.values():
+            _parent_configs(value, out)
+    elif isinstance(node, list):
+        for item in node:
+            _parent_configs(item, out)
+    return out
+
+
+_CURSOR_BOUNDED_PARENTS = {"repositories_for_commits", "repositories_for_files", "repositories_for_authors"}
+
+
+def test_a_parent_that_carries_state_lists_repositories_from_its_cursor() -> None:
+    """A repository listing bounded by the start date returns every repository
+    on every run, and each one becomes a proxy walk. A parent whose state the
+    child persists bounds the listing by its own cursor instead, one lookback
+    window back, so only repositories pushed to since the last sync are walked.
+    The vendor moves a repository's updated_on on commit activity only, so the
+    bound is exact for commits, file changes and commit authors, and for nothing
+    else."""
+    manifest = yaml.safe_load((connector_dir(_CONNECTOR) / "connector.yaml").read_text())
+    seen = set()
+    for parent_config in _parent_configs(manifest["streams"]):
+        parent = parent_config["stream"]
+        name = parent["name"]
+        bound = (parent["retriever"]["requester"].get("request_parameters") or {}).get("q", "")
+        if name not in _CURSOR_BOUNDED_PARENTS:
+            if name.startswith("repositories_for"):
+                assert "stream_interval" not in bound, f"{name}: updated_on does not track this stream's activity"
+            continue
+        seen.add(name)
+        assert parent_config.get("incremental_dependency") is True, f"{name}: state must persist"
+        assert "stream_interval.start_time" in bound, f"{name}: {bound}"
+        cursor = parent["incremental_sync"]
+        assert cursor["cursor_field"] == "updated_on", name
+        assert cursor.get("lookback_window") == "P1D", f"{name}: a push lands after its commit"
+    assert seen == _CURSOR_BOUNDED_PARENTS
+
+
+_LISTING_PATH_MARKERS = ("/repositories/{{ stream_partition.workspace }}", "/pullrequests?state=")
+
+
+def _vendor_retrievers(node: object, out: list[dict] | None = None) -> list[dict]:
+    """Every SimpleRetriever whose requester targets Bitbucket itself."""
+    if out is None:
+        out = []
+    if isinstance(node, dict):
+        requester = node.get("requester", {})
+        if node.get("type") == "SimpleRetriever" and "bitbucket_api_base_url" in str(requester.get("url_base", "")):
+            out.append(node)
+        for value in node.values():
+            _vendor_retrievers(value, out)
+    elif isinstance(node, list):
+        for item in node:
+            _vendor_retrievers(item, out)
+    return out
+
+
+def test_every_fan_out_listing_walks_by_created_on_instead_of_page_number() -> None:
+    """The vendor pages by number over an order the walk itself can move; the
+    repository and pull-request listings fan out into children over hours, so
+    they order by the immutable created_on, bound each page below by the
+    previous page's last value read off the raw response, and never send a page
+    number. Per-request children are fetched in one go and keep page links."""
+    manifest = yaml.safe_load((connector_dir(_CONNECTOR) / "connector.yaml").read_text())
+    keyset: list[str] = []
+    paged: list[str] = []
+    for retriever in _vendor_retrievers(manifest["streams"]):
+        requester = retriever["requester"]
+        paginator = retriever.get("paginator")
+        if paginator is None:
+            continue
+        path = requester.get("path", "")
+        params = requester.get("request_parameters") or {}
+        if any(marker in path for marker in _LISTING_PATH_MARKERS):
+            keyset.append(path)
+            key = "id" if "/pullrequests?state=" in path else "created_on"
+            assert "page_token_option" not in paginator, f"{path}: a page number must never reach the vendor"
+            strategy = paginator["pagination_strategy"]
+            assert f"response['values'][-1]['{key}']" in strategy["cursor_value"], f"{path}: {strategy}"
+            assert params.get("sort") == key, f"{path}: {params.get('sort')}"
+            assert f"{key} > " in params["q"] and "next_page_token" in params["q"], f"{path}: {params['q']}"
+            assert f"values.{key}" in params["fields"].split(","), f"{path}: {params['fields']}"
+        else:
+            paged.append(path)
+            assert paginator.get("page_token_option") == {"type": "RequestPath"}, f"{path}: {paginator}"
+    assert len(keyset) == 17, keyset
+    assert len(paged) == 7, paged
 
 
 _PROXY_RESET_ACTIONS = {

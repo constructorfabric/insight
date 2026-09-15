@@ -1,0 +1,24 @@
+# Derived from the bronze_bitbucket_cloud DDL snapshot.
+schemas:
+  bronze_bitbucket_cloud.commit_authors:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      unique_key: { type: [string, "null"] }
+      tenant_id: { type: [string, "null"] }
+      source_id: { type: [string, "null"] }
+      data_source: { type: [string, "null"] }
+      collected_at: { type: [string, "null"] }
+      repo_full_name: { type: [string, "null"] }
+      author_email: { type: [string, "null"] }
+      author_account_id: { type: [string, "null"] }
+      author_uuid: { type: [string, "null"] }
+      author_nickname: { type: [string, "null"] }
+      author_display_name: { type: [string, "null"] }
+      sample_sha: { type: [string, "null"] }
+      last_committed_date: { type: [string, "null"] }
+      _airbyte_raw_id: { type: string }
+      _airbyte_extracted_at: { type: string, format: date-time }
+      _airbyte_meta: { type: string }
+      _airbyte_generation_id: { type: integer }

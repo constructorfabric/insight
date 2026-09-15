@@ -29,16 +29,17 @@
 --                              (source_type, external_id) space the account
 --                              lookup treats as unique.
 --
--- Two value types, from two different questions:
+-- Three value types, from three different questions:
+--   `id`           — that the account exists as a workspace participant, the
+--                    ADR-0002 binding row the persons-seed writes a person onto
+--                    and the account lookup resolves through. Stated for every
+--                    account that acted on a pull request or sits on the
+--                    roster; an account seen only through a commit e-mail is a
+--                    claim, not a participant, and states none.
 --   `email`        — which addresses an account has committed under, the edge
 --                    that lets an e-mail-keyed commit fact reach a person
 --   `display_name` — who the account is, so an operator reviewing an unbound
 --                    account can recognise it
---
--- No `value_type='id'` binding: what an account means is the persons-seed's
--- decision, not this model's. The seed attaches a claimed e-mail to whichever
--- person its roster binding or e-mail match names, and mints a new person for
--- an unmatched active account.
 --
 -- Hand-rolled rather than built with identity_inputs_from_history: that macro
 -- keys a row on (account, value_type, instant) without the value, which holds
@@ -48,7 +49,62 @@
 -- Column order matches the macro's output — silver.identity_inputs is a
 -- positional UNION ALL, and check-field-parity.py audits the shape.
 
-WITH observations AS (
+WITH workspace_accounts AS (
+    SELECT
+        tenant_id,
+        source_id,
+        lower(trimBoth(COALESCE(account_id, ''))) AS account_id,
+        observed_in
+    FROM (
+        SELECT tenant_id, source_id, author_account_id AS account_id,
+               'bronze_bitbucket_cloud.pull_requests.author_account_id' AS observed_in
+        FROM {{ source('bronze_bitbucket_cloud', 'pull_requests') }} FINAL
+
+        UNION ALL
+
+        SELECT tenant_id, source_id, closed_by_account_id AS account_id,
+               'bronze_bitbucket_cloud.pull_requests.closed_by_account_id' AS observed_in
+        FROM {{ source('bronze_bitbucket_cloud', 'pull_requests') }} FINAL
+
+        UNION ALL
+
+        SELECT tenant_id, source_id, actor_account_id AS account_id,
+               'bronze_bitbucket_cloud.pull_request_activity.actor_account_id' AS observed_in
+        FROM {{ source('bronze_bitbucket_cloud', 'pull_request_activity') }} FINAL
+
+        UNION ALL
+
+        SELECT tenant_id, source_id, author_account_id AS account_id,
+               'bronze_bitbucket_cloud.pull_request_commits.author_account_id' AS observed_in
+        FROM {{ source('bronze_bitbucket_cloud', 'pull_request_commits') }} FINAL
+
+        UNION ALL
+
+        SELECT tenant_id, source_id, account_id,
+               'bronze_bitbucket_cloud.workspace_members.account_id' AS observed_in
+        FROM {{ source('bronze_bitbucket_cloud', 'workspace_members') }} FINAL
+    )
+    WHERE COALESCE(account_id, '') != ''
+    -- One row per account; the first column to name it is its provenance.
+    ORDER BY tenant_id, source_id, account_id, observed_in
+    LIMIT 1 BY tenant_id, source_id, account_id
+),
+
+observations AS (
+    SELECT
+        toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, '')))) AS insight_tenant_id,
+        toUUID(UUIDNumToString(sipHash128(coalesce(source_id, '')))) AS insight_source_id,
+        'bitbucket' AS insight_source_type,
+        account_id AS source_account_id,
+        'id' AS value_type,
+        account_id AS value,
+        observed_in AS value_field_name,
+        'UPSERT' AS operation_type,
+        now64(3) AS _synced_at
+    FROM workspace_accounts
+
+    UNION ALL
+
     SELECT
         toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, '')))) AS insight_tenant_id,
         toUUID(UUIDNumToString(sipHash128(coalesce(source_id, '')))) AS insight_source_id,

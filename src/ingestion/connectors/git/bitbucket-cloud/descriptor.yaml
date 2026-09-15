@@ -23,7 +23,7 @@ name: bitbucket-cloud
 #   scoped `dbt --full-refresh` a major bump dispatches re-materializes them.
 #   Safe: both dates have been in Bronze all along, and the author date falls
 #   back to the committer date where a source left it empty. #3153
-version: "6.1.0"
+version: "6.2.0"
 # A slot of its own: replication pods sharing a slot with other connector
 # syncs can be starved of workers, which surfaces as startup and activity
 # timeouts rather than as a connector error.
