@@ -50,16 +50,16 @@ bronze:
   bronze_jira.jira_issue:
     # ── Bob Beta: the Jira half of the cross-source pair ──
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue
-      id: LFB-1
-      jira_id: LFB-1
+      id: "10028"
+      jira_id: "10028"
       unique_key: jira-test-LFB-1
       id_readable: LFB1
       created: "2026-06-01T09:00:00"
       custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10000","name":"Bug"},"assignee":{"accountId":"bob-jira-acct","displayName":"Bob Beta"}}'
     # ── Carol Gamma: reopened and re-closed; the snapshot is the final Closed ──
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue
-      id: LFC-1
-      jira_id: LFC-1
+      id: "10029"
+      jira_id: "10029"
       unique_key: jira-test-LFC-1
       id_readable: LFC1
       created: "2026-06-01T09:00:00"
@@ -67,8 +67,8 @@ bronze:
     # ── Dave Delta: closed as a Bug, retyped to Task the next day — the CURRENT
     #    snapshot says Task, and that is the type the kind resolves through ──
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue
-      id: LFD-1
-      jira_id: LFD-1
+      id: "10030"
+      jira_id: "10030"
       unique_key: jira-test-LFD-1
       id_readable: LFD1
       created: "2026-06-01T09:00:00"
@@ -78,7 +78,7 @@ bronze:
     # ── Bob: one clean close in the window ──
     - $ref: ../templates/jira_task.yaml#/templates/closed_hist
       id_readable: LFB1
-      jira_id: LFB-1
+      jira_id: "10028"
       changelog_id: "51001"
       unique_key: jira-test-LFB1-51001
       created_at: "2026-06-25T14:00:00.000+0000"
@@ -86,14 +86,14 @@ bronze:
     # ── Carol: close, reopen, re-close — only the LAST close may score ──
     - $ref: ../templates/jira_task.yaml#/templates/closed_hist
       id_readable: LFC1
-      jira_id: LFC-1
+      jira_id: "10029"
       changelog_id: "51002"
       unique_key: jira-test-LFC1-51002
       created_at: "2026-06-20T10:00:00.000+0000"
       author_account_id: carol-jira-acct
     - $ref: ../templates/jira_task.yaml#/templates/jira_history
       id_readable: LFC1
-      jira_id: LFC-1
+      jira_id: "10029"
       changelog_id: "51003"
       unique_key: jira-test-LFC1-51003
       created_at: "2026-06-22T10:00:00.000+0000"
@@ -101,7 +101,7 @@ bronze:
       items: '[{"field":"Status","fieldId":"status","fromString":"Closed","from":"6","toString":"In Progress","to":"3"}]'
     - $ref: ../templates/jira_task.yaml#/templates/closed_hist
       id_readable: LFC1
-      jira_id: LFC-1
+      jira_id: "10029"
       changelog_id: "51004"
       unique_key: jira-test-LFC1-51004
       created_at: "2026-06-27T10:00:00.000+0000"
@@ -109,14 +109,14 @@ bronze:
     # ── Dave: the close, then the retype the day after ──
     - $ref: ../templates/jira_task.yaml#/templates/closed_hist
       id_readable: LFD1
-      jira_id: LFD-1
+      jira_id: "10030"
       changelog_id: "51005"
       unique_key: jira-test-LFD1-51005
       created_at: "2026-06-25T14:00:00.000+0000"
       author_account_id: dave-jira-acct
     - $ref: ../templates/jira_task.yaml#/templates/jira_history
       id_readable: LFD1
-      jira_id: LFD-1
+      jira_id: "10030"
       changelog_id: "51006"
       unique_key: jira-test-LFD1-51006
       created_at: "2026-06-26T10:00:00.000+0000"
