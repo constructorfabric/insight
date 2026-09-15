@@ -53,6 +53,12 @@ initChownData:
 plugins:
   - grafana-clickhouse-datasource@4.21.1
 
+# Grafana 13.2's preinstall auto-update deregisters each bundled plugin before
+# reinstalling it, then fails on the read-only dir — loki never comes back.
+grafana.ini:
+  plugins:
+    preinstall_auto_update: false
+
 # Password for the SELECT-only `grafana` ClickHouse user (#2888), provisioned
 # by the app deploy hook (apply-ch-migrations -> provision-grafana-access.sh)
 # from the insight-db-creds key `clickhouse-grafana-password`. Seal the SAME
