@@ -302,28 +302,42 @@ SQL
   run_ch <<SQL
 EXCHANGE TABLES bronze_jira.${table} AND bronze_jira.${table}__rekey;
 SQL
-  # From the EXCHANGE on, writers land in the rebuilt table by name. Rows a sync
-  # committed into the old table while the copy ran are carried over before it
-  # is dropped; the hour of slack covers an extraction stamp older than the
-  # write, and a row copied twice collapses on its key.
-  run_ch <<SQL
+  # From here on the rebuilt table is live and the original sits under the
+  # `__rekey` name. Every step until the DROP is checked explicitly, and any
+  # failure swaps the original back: under `set -e` a bare failing statement
+  # would end the script with the unverified table still live.
+  #
+  # Rows a sync committed into the original while the copy ran are carried
+  # over; the hour of slack covers an extraction stamp older than the write,
+  # and a row copied twice collapses on its key.
+  if ! run_ch <<SQL
 INSERT INTO bronze_jira.${table}
 SELECT * REPLACE (concat(tenant_id, '-', source_id, '-', jira_id) AS unique_key)
 FROM bronze_jira.${table}__rekey
 WHERE _airbyte_extracted_at >= fromUnixTimestamp64Milli(${copy_start_ms}) - INTERVAL 1 HOUR;
 SQL
+  then
+    echo "  bronze_jira.${table}: carrying the late rows over failed — swapping the original back" >&2
+    _jira_swap_back "${table}"
+    return 1
+  fi
 
-  live="$(_jira_row_count "${table}")"
-  if [[ "${live}" -lt "${expected}" ]]; then
-    echo "  bronze_jira.${table}: rebuilt table holds ${live} row(s), expected at least ${expected} — swapping the original back" >&2
-    run_ch <<SQL
-EXCHANGE TABLES bronze_jira.${table} AND bronze_jira.${table}__rekey;
-SQL
+  if ! live="$(_jira_row_count "${table}")" || [[ "${live}" -lt "${expected}" ]]; then
+    echo "  bronze_jira.${table}: rebuilt table holds ${live:-?} row(s), expected at least ${expected} — swapping the original back" >&2
+    _jira_swap_back "${table}"
     return 1
   fi
 
   run_ch <<SQL
 DROP TABLE IF EXISTS bronze_jira.${table}__rekey;
+SQL
+}
+
+# The original is under the `__rekey` name after an EXCHANGE; put it back and
+# leave the rejected copy there for inspection (the next run drops it first).
+_jira_swap_back() {
+  run_ch <<SQL
+EXCHANGE TABLES bronze_jira.$1 AND bronze_jira.$1__rekey;
 SQL
 }
 
