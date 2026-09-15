@@ -8,8 +8,9 @@ Coverage matrix rows: full_record_read (field flattening + custom_fields_json),
 story_points_no_default (the hardcoded field-id fallback is gone),
 story_points_operator_override.
 
-The clock is frozen at 2026-07-01 00:00 UTC and jira_start_date is 2026-06-01,
-so each partition gets exactly one 30-day slice.
+The clock is frozen at 2026-06-30 00:00 UTC and jira_start_date is 2026-06-01.
+The JQL ceiling is the clock plus 14h, so the window is 29d14h — still one
+30-day slice per partition.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ _STREAM = "jira_issue"
 _CONNECTOR = "task-tracking/jira"
 _PROJECT_SEARCH_URL = f"{JIRA_URL}/rest/api/3/project/search"
 _JQL_URL = f"{JIRA_URL}/rest/api/3/search/jql"
-_NOW = "2026-07-01T00:00:00Z"
+_NOW = "2026-06-30T00:00:00Z"
 
 
 def _projects_response(keys: list[str]) -> HttpResponse:

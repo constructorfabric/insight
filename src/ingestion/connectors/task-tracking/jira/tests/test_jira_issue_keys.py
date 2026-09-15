@@ -12,13 +12,15 @@ tenant_source_stamping (unique_key from issue key), transformations (cursor
 hoist). schema_conformance is explicitly SKIPPED — the rig found a real
 manifest<->schema type drift (see the skip reason).
 
-The clock is frozen at 2026-07-01 00:00 UTC and jira_start_date is 2026-06-01,
-so each partition gets exactly one 30-day slice.
+The clock is frozen at 2026-06-30 00:00 UTC and jira_start_date is 2026-06-01.
+The JQL ceiling is the clock plus 14h, so the window is 29d14h — still one
+30-day slice per partition.
 """
 
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 
 import freezegun
 import pytest
@@ -29,10 +31,12 @@ _STREAM = "jira_issue_keys"
 _CONNECTOR = "task-tracking/jira"
 _PROJECT_SEARCH_URL = f"{JIRA_URL}/rest/api/3/project/search"
 _JQL_URL = f"{JIRA_URL}/rest/api/3/search/jql"
-_NOW = "2026-07-01T00:00:00Z"
+_NOW = "2026-06-30T00:00:00Z"
 
 _WINDOW_START = "2026-06-01 00:00"
-_WINDOW_END = "2026-07-01 00:00"
+# The ceiling is the clock plus PT14H: a JQL literal carries no timezone and is
+# read in the instance's zone, so it must clear the largest possible offset.
+_WINDOW_END = "2026-06-30 14:00"
 
 
 def _projects_response(keys: list[str]) -> HttpResponse:
@@ -178,3 +182,27 @@ def test_incremental_state_emitted_and_resume_filters(http_mocker: HttpMocker) -
 
         assert len(second.records) == 0
         assert not second.errors
+
+
+@freezegun.freeze_time(_NOW)
+def test_jql_ceiling_clears_the_largest_timezone_offset(http_mocker: HttpMocker) -> None:
+    """A JQL datetime literal carries no timezone — Jira reads it in the
+    instance's own zone, while the bound is rendered from UTC. A ceiling at the
+    bare clock therefore lands early on a positive-offset instance, and an
+    object changing more often than that offset never falls below it. The
+    ceiling must clear the largest possible offset (UTC+14); the exact request
+    matcher fails if it is rendered from the bare clock again."""
+    clock = datetime.strptime(_NOW, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    expected_ceiling = (clock + timedelta(hours=14)).strftime("%Y-%m-%d %H:%M")
+
+    config = JiraConfigBuilder().build()
+    http_mocker.get(HttpRequest(_PROJECT_SEARCH_URL, query_params=ANY_QUERY_PARAMS), _projects_response(["PROJ1"]))
+    http_mocker.get(
+        HttpRequest(_JQL_URL, query_params=_jql_params("PROJ1", _WINDOW_START, expected_ceiling)),
+        _issues_response([("10001", "PROJ1-1", "2026-06-15T10:00:00.000+0000")]),
+    )
+
+    output = read_stream(_CONNECTOR, _STREAM, config)
+
+    assert len(output.records) == 1
+    assert not output.errors
