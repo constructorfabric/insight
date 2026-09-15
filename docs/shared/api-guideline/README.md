@@ -1,6 +1,6 @@
 # REST API Guideline
 
-> Source: [cyberfabric/DNA — REST](https://github.com/cyberfabric/DNA/tree/main/REST)
+> Source: [constructorfabric/DNA — REST](https://github.com/constructorfabric/DNA/tree/main/REST)
 
 This directory contains the canonical REST API guidelines for all Insight components. Every HTTP API — backend endpoints, connector APIs, orchestrator interfaces — **MUST** conform to these rules.
 
