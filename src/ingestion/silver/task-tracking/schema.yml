@@ -1,17 +1,28 @@
 version: 2
 
 sources:
-  # Operator-authored bindings: which vendor field plays which metric role, and
-  # what a vendor value means. dbt guarantees the relations exist via the
-  # `create_task_config_tables` on-run-start hook but owns none of the rows — a
-  # model materializing over them would wipe the decisions they hold. Declared
-  # in the task-tracking domain rather than under one connector, because every
-  # task source and gold itself read them.
+  # Operator-authored bindings: which vendor field plays which metric role, what
+  # a vendor value means, and what an unmapped value falls to. dbt guarantees
+  # the relations exist via the `create_task_config_tables` on-run-start hook but
+  # owns none of the rows — a model materializing over them would wipe the
+  # decisions they hold. Declared in the task-tracking domain rather than under
+  # one connector, because every task source and gold itself read them.
   - name: config
     schema: config
     tables:
       - name: task_field_roles
       - name: task_value_map
+      - name: field_value_map
+        description: >
+          Operator decisions binding a vendor value of a standardized field
+          (`field`, e.g. issue_type; `source_key` the vendor's key) to the
+          canonical `target_value` gold consumes, with the `display_name` the
+          decision was made against so a later rename of the vendor value is
+          detectable.
+      - name: field_value_defaults
+        description: >
+          Per (tenant, source, field) fallback: the `default_value` an unmapped
+          source key resolves to. No row means the hardcoded `unknown` terminal.
 
 models:
   - name: class_task_field_history

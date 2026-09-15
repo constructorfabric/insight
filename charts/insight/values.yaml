@@ -334,6 +334,26 @@ clickhouse:
   # CH migrations out-of-band (e.g. a managed-warehouse change process).
   # The Job also no-ops if an overlay explicitly clears ingestion.toolboxImage.
   runMigrations: true
+  # Operator-authored mapping seed for config.field_value_map (and
+  # config.field_value_defaults from defaults.tsv), applied by a post-install/
+  # post-upgrade Hook Job (weight 300, after clickhouse-migrate) from a TSV
+  # ConfigMap the gitops `field-value-map` target builds out of
+  # environments/<env>/clickhouse/field-value-map/. Insert-only: a key that
+  # already carries a decision is never rewritten, and an empty or absent
+  # bundle is a no-op.
+  fieldValueMap:
+    enabled: false
+    # Pre-created ConfigMap (empty = <insight.fullname>-field-value-map, which
+    # is what the gitops `field-value-map` target creates). Set it explicitly
+    # under a fullnameOverride, as keycloakConfig.realmsConfigMap is set.
+    configMap: ""
+    # `recorded_by` stamp on the rows this loader writes, so a seeded decision
+    # is distinguishable from a hand-authored one.
+    recordedBy: "gitops"
+    # Per-request ClickHouse timeout, seconds. Bounds the hook: a stalled
+    # endpoint fails the Job instead of holding the release open.
+    timeoutSeconds: 30
+    resources: {}
 # ─── MariaDB ─────────────────────────────────────────────────────────────
 mariadb:
   host: "" # MUST be set (external L2 MariaDB host)
