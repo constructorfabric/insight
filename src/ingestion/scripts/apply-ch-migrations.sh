@@ -112,9 +112,7 @@ echo "=== Healing GitHub Projects V2 bronze keys ==="
 heal_github_project_day_keys() {
   local table="$1" stale
   ch_table_exists bronze_github "${table}" || return 0
-  stale="$(printf "SELECT count() FROM bronze_github.%s WHERE match(unique_key, ':[0-9]{4}-[0-9]{2}-[0-9]{2}$')" \
-    "${table}" | _ch_http_query | tr -d '[:space:]')"
-  [[ "${stale}" =~ ^[0-9]+$ ]] || return 0
+  stale="$(ch_scalar "SELECT count() FROM bronze_github.${table} WHERE match(unique_key, ':[0-9]{4}-[0-9]{2}-[0-9]{2}$')")"
   [[ "${stale}" -gt 0 ]] || return 0
   echo "  bronze_github.${table}: ${stale} day-keyed row(s) — dropping, the connector refills them"
   run_ch <<SQL
