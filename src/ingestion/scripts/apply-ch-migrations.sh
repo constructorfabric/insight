@@ -112,9 +112,7 @@ echo "=== Healing GitHub Projects V2 bronze keys ==="
 heal_github_project_day_keys() {
   local table="$1" stale
   ch_table_exists bronze_github "${table}" || return 0
-  stale="$(printf "SELECT count() FROM bronze_github.%s WHERE match(unique_key, ':[0-9]{4}-[0-9]{2}-[0-9]{2}$')" \
-    "${table}" | _ch_http_query | tr -d '[:space:]')"
-  [[ "${stale}" =~ ^[0-9]+$ ]] || return 0
+  stale="$(ch_scalar "SELECT count() FROM bronze_github.${table} WHERE match(unique_key, ':[0-9]{4}-[0-9]{2}-[0-9]{2}$')")"
   [[ "${stale}" -gt 0 ]] || return 0
   echo "  bronze_github.${table}: ${stale} day-keyed row(s) — dropping, the connector refills them"
   run_ch <<SQL
@@ -154,7 +152,7 @@ _jira_issue_id_lookup='staging._jira_issue_id_by_key'
 _jira_rows_needing_issue_id() {
   local table="$1" own="0"
   [[ "${table}" == "jira_worklogs" ]] && own="issueId IS NOT NULL"
-  printf "SELECT count() FROM bronze_jira.%s
+  ch_scalar "$(printf "SELECT count() FROM bronze_jira.%s
           WHERE jira_id IS NULL
             AND (%s
                  OR (id_readable IS NOT NULL AND tenant_id IS NOT NULL AND source_id IS NOT NULL
@@ -166,14 +164,12 @@ _jira_rows_needing_issue_id() {
                    SELECT assumeNotNull(tenant_id), assumeNotNull(source_id), assumeNotNull(id_readable)
                    FROM bronze_jira.jira_issue_keys
                    WHERE tenant_id IS NOT NULL AND source_id IS NOT NULL AND id_readable IS NOT NULL AND jira_id IS NOT NULL)))" \
-    "${table}" "${own}" |
-    _ch_http_query | tr -d '[:space:]'
+    "${table}" "${own}")"
 }
 
 _jira_rows_keyed_by_issue_key() {
   local table="$1"
-  printf "SELECT count() FROM bronze_jira.%s WHERE coalesce(unique_key, '') != concat(coalesce(tenant_id, ''), '-', coalesce(source_id, ''), '-', coalesce(jira_id, ''))" "${table}" |
-    _ch_http_query | tr -d '[:space:]'
+  ch_scalar "SELECT count() FROM bronze_jira.${table} WHERE coalesce(unique_key, '') != concat(coalesce(tenant_id, ''), '-', coalesce(source_id, ''), '-', coalesce(jira_id, ''))"
 }
 
 heal_jira_substream_issue_id() {
@@ -181,7 +177,7 @@ heal_jira_substream_issue_id() {
   for table in jira_issue_history jira_comments jira_worklogs; do
     ch_table_exists bronze_jira "${table}" || continue
     n="$(_jira_rows_needing_issue_id "${table}")"
-    [[ "${n}" =~ ^[0-9]+$ && "${n}" -gt 0 ]] || continue
+    [[ "${n}" -gt 0 ]] || continue
     echo "  bronze_jira.${table}: ${n} row(s) without jira_id — filling from the issue streams"
     pending+=("${table}")
   done
@@ -239,34 +235,46 @@ SQL
 }
 
 _jira_rows_without_identity() {
-  local table="$1"
-  printf "SELECT count() FROM bronze_jira.%s WHERE tenant_id IS NULL OR source_id IS NULL OR jira_id IS NULL" "${table}" |
-    _ch_http_query | tr -d '[:space:]'
+  ch_scalar "SELECT count() FROM bronze_jira.$1 WHERE tenant_id IS NULL OR source_id IS NULL OR jira_id IS NULL"
 }
 
+_jira_issue_count() {
+  ch_scalar "SELECT uniqExact(tenant_id, source_id, jira_id) FROM bronze_jira.$1"
+}
+
+_jira_row_count() {
+  ch_scalar "SELECT count() FROM bronze_jira.$1"
+}
+
+# INVARIANT: no statement that can lose rows runs before the rows it depends
+# on are verified. The copy is counted against the number of issues before
+# the swap; the swapped-in table is counted again before the old one is
+# dropped; any miss leaves the original table live and stops the deploy.
+# `run_ch` stops at the first failed statement, so a failed copy never reaches
+# the EXCHANGE either way.
 heal_jira_issue_key() {
-  local table="$1" n orphans copy_start_ms
+  local table="$1" n orphans expected copied live copy_start_ms
   ch_table_exists bronze_jira "${table}" || return 0
   n="$(_jira_rows_keyed_by_issue_key "${table}")"
-  [[ "${n}" =~ ^[0-9]+$ && "${n}" -gt 0 ]] || return 0
+  [[ "${n}" -gt 0 ]] || return 0
 
   # A row without tenant, source or issue id has no key under the new formula.
   # None can exist — the connector stamps all three on every record — so one
   # is a corrupted table, and the deploy stops here rather than dropping it.
   orphans="$(_jira_rows_without_identity "${table}")"
-  if [[ ! "${orphans}" =~ ^[0-9]+$ || "${orphans}" -gt 0 ]]; then
-    echo "  bronze_jira.${table}: ${orphans:-?} row(s) without tenant_id, source_id or jira_id — refusing to rebuild" >&2
+  if [[ "${orphans}" -gt 0 ]]; then
+    echo "  bronze_jira.${table}: ${orphans} row(s) without tenant_id, source_id or jira_id — refusing to rebuild" >&2
     return 1
   fi
 
-  echo "  bronze_jira.${table}: ${n} row(s) keyed by the issue key — rebuilding on the issue id"
+  expected="$(_jira_issue_count "${table}")"
+  echo "  bronze_jira.${table}: ${n} row(s) keyed by the issue key — rebuilding on the issue id (${expected} issues)"
   # MEMORY: the winner per issue is chosen in an aggregation that carries only
   # the raw id, and the rows are then copied by that id list. `ORDER BY … LIMIT
   # 1 BY` would sort the whole table, JSON payload included, and on a real-size
   # jira_issue that sort alone exceeds a server's memory budget — inside a Helm
   # hook, which fails the upgrade. Same two-pass shape as the snapshot model.
-  copy_start_ms="$(printf "SELECT toUnixTimestamp64Milli(now64(3))" | _ch_http_query | tr -d '[:space:]')"
-  [[ "${copy_start_ms}" =~ ^[0-9]+$ ]] || { echo "  bronze_jira.${table}: could not read the server clock — refusing to rebuild" >&2; return 1; }
+  copy_start_ms="$(ch_scalar "SELECT toUnixTimestamp64Milli(now64(3))")"
   run_ch <<SQL
 DROP TABLE IF EXISTS bronze_jira.${table}__rekey;
 CREATE TABLE bronze_jira.${table}__rekey AS bronze_jira.${table};
@@ -278,24 +286,65 @@ WHERE _airbyte_raw_id IN (
     FROM bronze_jira.${table}
     GROUP BY tenant_id, source_id, jira_id
 );
+SQL
+
+  copied="$(_jira_row_count "${table}__rekey")"
+  if [[ "${copied}" -ne "${expected}" ]]; then
+    echo "  bronze_jira.${table}: copy holds ${copied} row(s), expected ${expected} — leaving the table as it is" >&2
+    run_ch <<SQL
+DROP TABLE IF EXISTS bronze_jira.${table}__rekey;
+SQL
+    return 1
+  fi
+
+  run_ch <<SQL
 EXCHANGE TABLES bronze_jira.${table} AND bronze_jira.${table}__rekey;
 SQL
-  # From the EXCHANGE on, writers land in the rebuilt table by name. Rows a sync
-  # committed into the old table while the copy ran are carried over before it
-  # is dropped; the hour of slack covers an extraction stamp older than the
-  # write, and a row copied twice collapses on its key.
-  run_ch <<SQL
+  # From here on the rebuilt table is live and the original sits under the
+  # `__rekey` name. Every step until the DROP is checked explicitly, and any
+  # failure swaps the original back: under `set -e` a bare failing statement
+  # would end the script with the unverified table still live.
+  #
+  # Rows a sync committed into the original while the copy ran are carried
+  # over; the hour of slack covers an extraction stamp older than the write,
+  # and a row copied twice collapses on its key.
+  if ! run_ch <<SQL
 INSERT INTO bronze_jira.${table}
 SELECT * REPLACE (concat(tenant_id, '-', source_id, '-', jira_id) AS unique_key)
 FROM bronze_jira.${table}__rekey
 WHERE _airbyte_extracted_at >= fromUnixTimestamp64Milli(${copy_start_ms}) - INTERVAL 1 HOUR;
+SQL
+  then
+    echo "  bronze_jira.${table}: carrying the late rows over failed — swapping the original back" >&2
+    _jira_swap_back "${table}"
+    return 1
+  fi
+
+  if ! live="$(_jira_row_count "${table}")" || [[ "${live}" -lt "${expected}" ]]; then
+    echo "  bronze_jira.${table}: rebuilt table holds ${live:-?} row(s), expected at least ${expected} — swapping the original back" >&2
+    _jira_swap_back "${table}"
+    return 1
+  fi
+
+  run_ch <<SQL
 DROP TABLE IF EXISTS bronze_jira.${table}__rekey;
 SQL
 }
 
-heal_jira_substream_issue_id || exit 1
-heal_jira_issue_key jira_issue || exit 1
-heal_jira_issue_key jira_issue_keys || exit 1
+# The original is under the `__rekey` name after an EXCHANGE; put it back and
+# leave the rejected copy there for inspection (the next run drops it first).
+_jira_swap_back() {
+  run_ch <<SQL
+EXCHANGE TABLES bronze_jira.$1 AND bronze_jira.$1__rekey;
+SQL
+}
+
+# Plain calls on purpose: `f || exit 1` would switch `set -e` OFF inside the
+# function, so a failed statement in the middle would not stop it — the
+# following swap and drop would run against an unverified copy.
+heal_jira_substream_issue_id
+heal_jira_issue_key jira_issue
+heal_jira_issue_key jira_issue_keys
 
 echo "=== Healing AI staging contract schemas ==="
 # Physical column order must equal the model's SELECT order (positional
