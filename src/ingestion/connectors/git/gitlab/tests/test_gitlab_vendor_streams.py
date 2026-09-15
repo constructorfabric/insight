@@ -776,7 +776,7 @@ def test_deployments_keep_one_row_per_status(http_mocker: HttpMocker) -> None:
         "alice",
     )
     listing = _urls(http_mocker, "/deployments")[0]
-    assert "order_by=id" in listing and "updated_after=2026-06-01" in listing
+    assert "order_by=updated_at" in listing and "updated_after=2026-06-01" in listing, listing
     _no_literal_none(output.records)
     assert_records_conform(output.records, _CONNECTOR, "deployments", strict=True)
 

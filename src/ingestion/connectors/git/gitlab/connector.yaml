@@ -2237,9 +2237,7 @@ streams:
         <<: *vendor_requester
         path: "/projects/{{ stream_partition.project_id }}/deployments"
         request_parameters:
-          # WORKAROUND: page-numbered listing; a mutable sort key skips the
-          # item at a page boundary when another is updated mid-walk.
-          order_by: id
+          order_by: updated_at
           sort: asc
           per_page: "100"
         error_handler: *project_scoped_error_handler
