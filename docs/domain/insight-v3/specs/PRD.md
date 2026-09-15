@@ -35,8 +35,9 @@ date: 2026-09-07
   - [5.9 Query Optimization](#59-query-optimization)
   - [5.10 Data Access](#510-data-access)
 - [6. Non-Functional Requirements](#6-non-functional-requirements)
-  - [6.1 NFR Inclusions](#61-nfr-inclusions)
-  - [6.2 NFR Exclusions](#62-nfr-exclusions)
+  - [6.1 Quality Vector Analysis](#61-quality-vector-analysis)
+  - [6.2 NFR Inclusions](#62-nfr-inclusions)
+  - [6.3 NFR Exclusions](#63-nfr-exclusions)
 - [7. Public Library Interfaces](#7-public-library-interfaces)
   - [7.1 Public API Surface](#71-public-api-surface)
   - [7.2 External Integration Contracts](#72-external-integration-contracts)
@@ -70,6 +71,9 @@ date: 2026-09-07
 | Quality vector | One of the five axes Constructor Fabric measures quality on: Efficiency, Reliability, Performance, Security, Versatility, in that priority order |
 | North-star metric | The single primary indicator for a quality vector |
 | Reference organization | The synthetic sizing baseline used when measuring against a threshold |
+| Dataset | A named, described set of ingested records at one grain; the only source a custom metric reads |
+| Field role | What a dataset field is for: a dimension (group and filter by it), a measurable (aggregate it) or a time field (window by it) |
+| Row identity | The dataset fields that make two records the same record |
 
 ## 2. Actors
 
@@ -81,6 +85,13 @@ date: 2026-09-07
 
 **Role**: Creates metrics, widgets and dashboards.
 **Needs**: TBD
+
+#### Instance Administrator
+
+**ID**: `cpt-insightspec-v3-actor-administrator`
+
+**Role**: Creates and removes datasets; the only role the custom surfaces are open to.
+**Needs**: To see what data exists on the stand, describe it once, and remove what should not be there.
 
 ### 2.2 System Actors
 
@@ -140,6 +151,38 @@ The system **MUST** support first-class connectors, such as a GitHub mirror.
 
 **Actors**: `cpt-insightspec-v3-actor-external-connector`, `cpt-insightspec-v3-actor-internal-connector`
 
+#### Create a Dataset
+
+- [ ] `p1` - **ID**: `cpt-insightspec-v3-fr-create-dataset`
+
+The system **MUST** let an administrator create a dataset, in the portal and over the API, declaring its name, title, description, fields with their payload key, type and role, its default time field and its row identity.
+
+**Actors**: `cpt-insightspec-v3-actor-administrator`
+
+#### Remove a Dataset
+
+- [ ] `p1` - **ID**: `cpt-insightspec-v3-fr-remove-dataset`
+
+The system **MUST** let an administrator remove a dataset together with its records, in the portal and over the API, and **MUST** refuse while a metric reads it, naming the metrics.
+
+**Actors**: `cpt-insightspec-v3-actor-administrator`
+
+#### View a Dataset
+
+- [ ] `p1` - **ID**: `cpt-insightspec-v3-fr-view-dataset`
+
+The system **MUST** show a dataset's declaration, a preview of its latest records and the metrics that read it in the portal.
+
+**Actors**: `cpt-insightspec-v3-actor-administrator`, `cpt-insightspec-v3-actor-dashboard-author`
+
+#### Ingest Into a Dataset
+
+- [ ] `p1` - **ID**: `cpt-insightspec-v3-fr-ingest-into-dataset`
+
+The system **MUST** accept a record only into a dataset that already exists, store it whole whatever its shape, and refuse a record addressed to a dataset that does not exist without creating anything.
+
+**Actors**: `cpt-insightspec-v3-actor-external-connector`, `cpt-insightspec-v3-actor-internal-connector`
+
 ### 5.2 Identity Resolution
 
 TBD
@@ -182,6 +225,14 @@ The system **MUST** let a dashboard be created in realtime.
 
 **Actors**: `cpt-insightspec-v3-actor-dashboard-author`
 
+#### Metrics Read Datasets
+
+- [ ] `p1` - **ID**: `cpt-insightspec-v3-fr-metrics-over-datasets`
+
+A metric **MUST** name a dataset and refer to its declared fields by name, never a table; the system **MUST** refuse a metric over an unknown dataset or an undeclared field.
+
+**Actors**: `cpt-insightspec-v3-actor-dashboard-author`
+
 ### 5.5 AI
 
 #### Answer a Question
@@ -206,6 +257,14 @@ The chat **MUST** be able to create a metric, a widget, a dashboard or an alert.
 
 The chat **MUST** read context a team writes for itself — what its metrics mean, which tables to
 prefer, the words it uses — and answer in those terms.
+
+**Actors**: `cpt-insightspec-v3-actor-dashboard-author`
+
+#### Read Datasets in the Chat
+
+- [ ] `p1` - **ID**: `cpt-insightspec-v3-fr-assistant-reads-datasets`
+
+The chat and the MCP tools **MUST** be told the datasets — their descriptions and declared fields — and **MUST** answer and build from datasets only.
 
 **Actors**: `cpt-insightspec-v3-actor-dashboard-author`
 
@@ -265,7 +324,17 @@ The system **MUST** let data be downloaded manually, in a report.
 
 ## 6. Non-Functional Requirements
 
-### 6.1 NFR Inclusions
+### 6.1 Quality Vector Analysis
+
+| Vector | What is at stake here | Where it is answered |
+|---|---|---|
+| Efficiency | A stand runs this beside everything else Insight deploys, so a service that stores definitions and reads records must not raise the footprint an installation already budgets for | `cpt-insightspec-v3-nfr-efficiency` |
+| Reliability | Data arrives from senders that cannot retry forever, and a reader who cannot tell a wrong number from a right one stops trusting every number | `cpt-insightspec-v3-nfr-reliability` |
+| Performance | A dashboard nobody waits for is a dashboard nobody opens | `cpt-insightspec-v3-nfr-performance` |
+| Security | The data describes people, and the surfaces that read it are open to whoever the roles say | `cpt-insightspec-v3-nfr-security` |
+| Versatility | The product's claim is that new data, a new metric and a new board arrive without a release | `cpt-insightspec-v3-nfr-versatility` |
+
+### 6.2 NFR Inclusions
 
 One requirement per quality vector, in the priority order the vectors carry.
 
@@ -310,7 +379,7 @@ Adding data, a widget type, a dashboard or an alert **MUST NOT** require changes
 **Threshold**: a new data source lands through the ingest contract alone; a new widget type ships as a schema change alone; a new dashboard and a new alert are created through the product, with no code change.
 
 
-### 6.2 NFR Exclusions
+### 6.3 NFR Exclusions
 
 None. Every project-default NFR applies.
 
@@ -341,6 +410,26 @@ TBD
 
 **Postconditions**:
 - TBD
+
+#### Describe a Dataset and Build a Board Over It
+
+- [ ] `p1` - **ID**: `cpt-insightspec-v3-usecase-dataset-to-dashboard`
+
+**Actor**: `cpt-insightspec-v3-actor-administrator`
+
+**Preconditions**:
+- An external system has records to send and knows the stand's instance token
+- The administrator is signed in to the portal
+
+**Main Flow**:
+1. The administrator creates a dataset in the Custom zone: a title, a description, the fields with their roles, the time field, the row identity
+2. The external system sends its records into the dataset
+3. The administrator opens the dataset page and checks the preview of the latest records
+4. The administrator asks the assistant for a dashboard over the dataset; the assistant builds the metric, the widgets and the dashboard from the declaration
+
+**Postconditions**:
+- The dashboard renders from the dataset's records, re-sent records counted once
+- The dataset cannot be removed while the dashboard's metric reads it
 
 ## 9. Acceptance Criteria
 
