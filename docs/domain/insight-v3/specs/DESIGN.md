@@ -67,7 +67,7 @@ Functional requirements and their IDs are in [PRD §5](./PRD.md#5-functional-req
 |-----|-----------------|
 | `cpt-insightspec-v3-nfr-efficiency` | Definitions are rows read on demand; a record is stored once, whole, and interpreted on read, so a dataset costs one row plus the records it holds |
 | `cpt-insightspec-v3-nfr-reliability` | A dataset's row is the lock and the ownership record: one owner per operation, a lease that expires, an outcome written only by an owner that still owns it, and physical tables named per attempt so a late statement reaches nothing |
-| `cpt-insightspec-v3-nfr-performance` | Unallocated. The two costs this design adds — a payload parsed per record on every run, and a collapsing read over a dataset that declares an identity — are what the deferred column materialization removes |
+| `cpt-insightspec-v3-nfr-performance` | The budget is the dashboard's, measured where a board is opened, and no part of it is apportioned to a single definition. This design adds two costs against it — a payload parsed per record on every run, and a collapsing read over a dataset that declares an identity — and removes neither; the deferred column materialization is what removes them, and is the lever if the budget is missed |
 | `cpt-insightspec-v3-nfr-security` | One admin-gated surface, one database the service owns and nothing outside it, a read-only principal for every query, and a declaration that decides what may be asked |
 | `cpt-insightspec-v3-nfr-versatility` | New data is a declaration, not a release: a dataset, a metric over its fields, a widget and a board are all stored documents |
 

@@ -86,7 +86,7 @@ The feature implements the decision in [ADR-0009](../ADR/0009-a-dataset-is-the-u
 - `cpt-insightspec-v3-fr-accept-data`
 - `cpt-insightspec-v3-nfr-security`
 - `cpt-insightspec-v3-nfr-reliability`
-- `cpt-insightspec-v3-nfr-performance`
+- `cpt-insightspec-v3-nfr-efficiency`
 - `cpt-insightspec-v3-nfr-versatility`
 
 **Principles**:
@@ -487,6 +487,8 @@ The feature implements the decision in [ADR-0009](../ADR/0009-a-dataset-is-the-u
 
 **Output**: whether the service may drop or write that table
 
+> Asked before a drop and before a write, never before a create: a table being created has no declaration naming it yet, and provisioning decides by shape alone.
+
 **Steps**:
 1. [ ] - `p1` - Resolve it in `cpt-insightspec-v3-db-datasets-database` alone; nothing outside that database is ever addressed - `inst-ds-ours-database`
 2. [ ] - `p1` - **IF** no stored declaration names this table - `inst-ds-ours-unclaimed`
@@ -508,12 +510,14 @@ The feature implements the decision in [ADR-0009](../ADR/0009-a-dataset-is-the-u
 
 **Steps**:
 1. [ ] - `p1` - Derive the physical name from the dataset name and the generation, so that two attempts at one dataset never address one table and a name a reader sees is never the name a statement carries - `inst-ds-provision-name`
-2. [ ] - `p1` - Ask `cpt-insightspec-v3-algo-datasets-table-is-ours`; a generation nobody has used answers absent, and anything else means this attempt is repeating itself or the name is taken - `inst-ds-provision-check`
-3. [ ] - `p1` - **IF** the answer is not ours - `inst-ds-provision-foreign`
+2. [ ] - `p1` - ClickHouse: SELECT system.tables for that name in the datasets database — ownership is decided here by shape alone, because the declaration that will name this table is written only once the create finishes - `inst-ds-provision-check`
+3. [ ] - `p1` - **IF** a table of that name exists **AND** its columns and sorting key are not the ingest schema - `inst-ds-provision-foreign`
    1. [ ] - `p1` - **RETURN** a refusal naming the table - `inst-ds-provision-foreign-return`
-4. [ ] - `p1` - ClickHouse: CREATE TABLE IF NOT EXISTS that name in the datasets database, with the ingest schema; the step is repeatable and creates nothing twice - `inst-ds-provision-create`
-5. [ ] - `p1` - DB: record the provisioned table on the claimed row, so that an abandoned create leaves behind the name of the table it made rather than an orphan nothing points at - `inst-ds-provision-record`
-6. [ ] - `p1` - **RETURN** provisioned, or the failure, so the caller finishes nothing - `inst-ds-provision-return`
+4. [ ] - `p1` - ClickHouse: CREATE TABLE IF NOT EXISTS that name in the datasets database, with the ingest schema; an existing table of the right shape is this attempt repeating itself, so the step creates nothing twice - `inst-ds-provision-create`
+5. [ ] - `p1` - DB: record the provisioned table on the row **while this attempt still owns the operation**, as `cpt-insightspec-v3-algo-datasets-finish-operation` does - `inst-ds-provision-record`
+6. [ ] - `p1` - **IF** that write reaches no row, because the operation moved to another attempt - `inst-ds-provision-stale`
+   1. [ ] - `p1` - Drop the table this attempt just made, which nothing points at, and **RETURN** stale - `inst-ds-provision-stale-return`
+7. [ ] - `p1` - **RETURN** provisioned, or the failure, so the caller finishes nothing - `inst-ds-provision-return`
 
 > Because the physical name carries the generation, a drop that arrives long after its attempt lost the dataset names a table that no longer exists, and cannot reach the one a later attempt provisioned. That is what keeps a late statement harmless without making the service guess whether one is still in flight.
 

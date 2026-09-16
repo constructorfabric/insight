@@ -131,7 +131,7 @@ The platform-usage requirements in [PRD §5.7](./PRD.md#57-platform-usage) are n
 
 - **Purpose**: Get data out, to whoever their role says may read it.
 
-- **Depends On**: 2.1, 2.2
+- **Depends On**: 2.1, 2.9
 
 - **Requirements Covered**:
 
@@ -167,7 +167,7 @@ The platform-usage requirements in [PRD §5.7](./PRD.md#57-platform-usage) are n
   - [ ] `p1` - `cpt-insightspec-v3-fr-accept-data`
   - [ ] `p1` - `cpt-insightspec-v3-nfr-reliability`
   - [ ] `p1` - `cpt-insightspec-v3-nfr-security`
-  - [ ] `p1` - `cpt-insightspec-v3-nfr-performance`
+  - [ ] `p1` - `cpt-insightspec-v3-nfr-efficiency`
   - [ ] `p1` - `cpt-insightspec-v3-nfr-versatility`
 
 - **Data**:
@@ -187,9 +187,9 @@ The platform-usage requirements in [PRD §5.7](./PRD.md#57-platform-usage) are n
 ```text
 2.1 Data Ingestion
  |
- +-- 2.7 Data Access
  +-- 2.9 Datasets
       |
+      +-- 2.7 Data Access
       +-- 2.2 Semantic Layer
            |
            +-- 2.5 Alerts
