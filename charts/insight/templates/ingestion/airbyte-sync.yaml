@@ -193,14 +193,7 @@ spec:
         parameters:
           - name: job_id
           - name: airbyte_url
-      # 48h absolute backstop only — the poll entrypoint enforces a
-      # progress-based (idle) timeout, so a legitimate long sync
-      # (youtrack issue_history initial full-refresh, hubspot archived
-      # streams) can run as long as it is actually emitting records
-      # without tripping a wall-clock cap. This number is the runaway
-      # ceiling: if the polling logic itself wedges or Airbyte returns
-      # bytes-emitting churn forever, k8s still kills the pod.
-      activeDeadlineSeconds: 172800
+      # INVARIANT: Airbyte owns job deadlines; stopping this pod does not cancel its job.
       container:
         image: {{ required "ingestion.toolboxImage is required when ingestion.templates.enabled=true" .Values.ingestion.toolboxImage | quote }}
         # IfNotPresent so dev clusters use the locally-built toolbox image loaded
@@ -224,18 +217,10 @@ spec:
             value: {{ `"{{inputs.parameters.job_id}}"` }}
           - name: AIRBYTE_URL
             value: {{ `"{{inputs.parameters.airbyte_url}}"` }}
-          # Progress-watchdog knobs. The poll loop tracks a tuple of
-          # (status, bytesEmitted, recordsEmitted, stateMessagesEmitted)
-          # on the latest attempt. Any change resets the idle timer;
-          # no change for IDLE_THRESHOLD_SECONDS → exit with a clear
-          # "no progress" failure (distinct from the SIGTERM that
-          # activeDeadlineSeconds produces). Override per-env via
-          # Helm values if a tenant has unusually slow paginated
-          # streams (e.g. heavily-rate-limited APIs).
           - name: POLL_INTERVAL_SECONDS
             value: {{ default 30  .Values.ingestion.airbyteSync.pollIntervalSeconds | quote }}
-          - name: IDLE_THRESHOLD_SECONDS
-            value: {{ default 1800 .Values.ingestion.airbyteSync.idleThresholdSeconds | quote }}
+          - name: STATUS_UNREADABLE_THRESHOLD_SECONDS
+            value: {{ default 1800 .Values.ingestion.airbyteSync.statusUnreadableThresholdSeconds | quote }}
           # Install-wide log level knob from the platform ConfigMap (#3191).
           - name: INSIGHT_LOG_LEVEL
             valueFrom:

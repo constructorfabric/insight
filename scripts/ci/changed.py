@@ -65,6 +65,9 @@ def _matrix_entry(comp: dict, *, lint: bool = False, cover: bool = True, test: b
         # another component's coverage), but the gate must not require this
         # component to have measured lines of its own (connector-mock-tests).
         entry["cover"] = comp.get("cover", True)
+        # False ⇒ plain pytest: no report is produced or uploaded at all, so a
+        # suite below the overall minimum still gates on test results (insight-seed).
+        entry["collect"] = comp.get("collect", True)
     return entry
 
 

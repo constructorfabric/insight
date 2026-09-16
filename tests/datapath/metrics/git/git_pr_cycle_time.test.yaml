@@ -1,0 +1,148 @@
+spec_version: 1
+description: >
+  Metric: git.pr_cycle_time_h — typical hours from opening a pull request to
+  merging it, #3065.
+  How it's computed (bronze → silver → gold):
+    • bronze: pull requests carrying the times the source reports — an opening
+      time, a merge time, and for some sources a separate closing time; on
+      Bitbucket the merge time is not on the request at all
+    • silver: one class row per request, carrying an opening time and ONE close
+      time. For a request that merged, the close time is the moment of the
+      MERGE; a closing time the source reports separately belongs to a request
+      that was closed without merging and must not stand in for a merge
+    • gold:   hours from opening to merge, one value per MERGED request, dated
+      by the merge. A request that never merged contributes nothing, and so
+      does one whose interval does not run forwards
+    • serve:  quantileExactInclusive(0.5) over the period's values
+
+  Two source shapes are pinned separately. A source reporting BOTH a closing
+  time and a merge time on a merged request is measured to the merge time: a
+  request closed, reopened and then merged reports the earlier close, and taking
+  it would report a cycle that ended before the merge happened. #3065
+
+  Bitbucket reports no merge time on a request. The terminal entry in its
+  activity states one where there is one; where there is none the close time is
+  RECOVERED from the request's own last update, corroborated by a collected
+  merge commit (#3051, #3328). That recovery answers which DAY a merge landed
+  on, which is what a count needs — a duration measured to it would report an
+  interval nobody observed. So the class contract keeps the stated time apart in
+  its own column and this metric reads only that: a silently merged request
+  counts in git.prs_merged and contributes NO cycle. #3362
+
+  The median is the textbook one — on an even sample both middle values are
+  averaged, so the answer need not be a duration any request took. #3362
+
+  alice merges five requests with cycles [2, 6, 10, 30, 100] h, so her period
+  median is 10 and a mean (29.6) fails it. The 2026-11-01 bucket holds
+  [2, 6, 10] and serves 6.
+  dave's single request was closed 2 h after opening and merged 8 h after that,
+  so its cycle is 10 h, not 2.
+  bob's GitLab requests run 8 h and 9 h, the second reporting a close 1 h in
+  that must not be taken for the merge; his period medians the pair to 8.5.
+  heidi's request with a terminal activity entry runs 12 h; her silently merged
+  one has no stated close time and so no cycle, though it still counts merged.
+  carol's requests never merged and erin's merge is recorded before her opening,
+  so neither contributes — which their created counts prove is not absence of
+  the request.
+
+  heidi is reached the way a real installation reaches her, not by a seeded
+  binding: her requests name her by account id alone, the connector states that
+  account as a workspace participant, and the seed attaches it to the person her
+  collected commit address names (#3423). A Bitbucket assertion here therefore
+  fails if that path breaks, instead of passing over it.
+
+  Cases: the median across views and the merge-day bucketing; a merged request
+  is measured to its merge and not to an earlier close, on GitHub and on GitLab;
+  a Bitbucket request whose close time the source stated against one whose close
+  time was recovered; an unmerged request contributes nothing; an interval that
+  runs backwards is dropped rather than served negative, zero, or dated at the
+  epoch; an empty window.
+
+identity_accounts:
+  # GitLab exposes a user's address only to an admin-scoped token, so its
+  # request reaches a person through the account alone. Bitbucket is NOT bound
+  # here: it walks the real path — the connector states the account as a
+  # workspace participant and the seed attaches it to the person its commit
+  # address names (#3423) — so this spec exercises that path instead of
+  # standing in for it.
+  - {source_type: gitlab, source_id: gitlab-test, account_id: "731", person: bob@example.com}
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/alice
+    - $ref: ../templates/people.yaml#/templates/bob
+    - $ref: ../templates/people.yaml#/templates/carol
+    - $ref: ../templates/people.yaml#/templates/dave
+    - $ref: ../templates/people.yaml#/templates/erin
+    - $ref: ../templates/people.yaml#/templates/heidi
+
+  bronze_github.pull_requests:
+    # alice: all five opened at 2026-11-01T00:00, merging 2, 6, 10, 30 and 100
+    # hours later. Closing time equals the merge, the ordinary GitHub shape.
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: ct-a1, id: 701, number: 701, author_login: alice, created_at: "2026-11-01T00:00:00Z", closed_at: "2026-11-01T02:00:00Z", merged_at: "2026-11-01T02:00:00Z", merge_commit_sha: ct-merge-a1}
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: ct-a2, id: 702, number: 702, author_login: alice, created_at: "2026-11-01T00:00:00Z", closed_at: "2026-11-01T06:00:00Z", merged_at: "2026-11-01T06:00:00Z", merge_commit_sha: ct-merge-a2}
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: ct-a3, id: 703, number: 703, author_login: alice, created_at: "2026-11-01T00:00:00Z", closed_at: "2026-11-01T10:00:00Z", merged_at: "2026-11-01T10:00:00Z", merge_commit_sha: ct-merge-a3}
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: ct-a4, id: 704, number: 704, author_login: alice, created_at: "2026-11-01T00:00:00Z", closed_at: "2026-11-02T06:00:00Z", merged_at: "2026-11-02T06:00:00Z", merge_commit_sha: ct-merge-a4}
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: ct-a5, id: 705, number: 705, author_login: alice, created_at: "2026-11-01T00:00:00Z", closed_at: "2026-11-05T04:00:00Z", merged_at: "2026-11-05T04:00:00Z", merge_commit_sha: ct-merge-a5}
+    # dave: closed 2 h in, then reopened and merged 8 h after that. The source
+    # reports both times and they disagree; the merge is the one that ended the
+    # cycle, so this request ran 10 h.
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: ct-d1, id: 711, number: 711, author_login: dave, created_at: "2026-11-10T00:00:00Z", closed_at: "2026-11-10T02:00:00Z", merged_at: "2026-11-10T10:00:00Z", merge_commit_sha: ct-merge-d1}
+    # carol: one still open, one closed without ever merging. Neither has a
+    # cycle, and neither may be treated as merged at its close.
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: ct-c1, id: 721, number: 721, state: open, author_login: carol, created_at: "2026-11-18T00:00:00Z"}
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: ct-c2, id: 722, number: 722, author_login: carol, created_at: "2026-11-18T01:00:00Z", closed_at: "2026-11-19T00:00:00Z"}
+    # erin: the source records the merge two hours BEFORE the opening. The
+    # interval does not run forwards, so there is no cycle to report.
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: ct-e1, id: 731, number: 731, author_login: erin, created_at: "2026-11-20T10:00:00Z", closed_at: "2026-11-20T08:00:00Z", merged_at: "2026-11-20T08:00:00Z", merge_commit_sha: ct-merge-e1}
+
+  bronze_github.pull_request_diff_stats:
+    # GitHub staging reads a request's author address from here and nowhere else.
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ct-ds-a1, pull_number: 701, additions: 10, author_email: alice@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ct-ds-a2, pull_number: 702, additions: 10, author_email: alice@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ct-ds-a3, pull_number: 703, additions: 10, author_email: alice@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ct-ds-a4, pull_number: 704, additions: 10, author_email: alice@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ct-ds-a5, pull_number: 705, additions: 10, author_email: alice@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ct-ds-d1, pull_number: 711, additions: 10, author_email: dave@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ct-ds-c1, pull_number: 721, additions: 10, author_email: carol@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ct-ds-c2, pull_number: 722, additions: 10, author_email: carol@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ct-ds-e1, pull_number: 731, additions: 10, author_email: erin@example.com}
+
+  bronze_gitlab.repositories:
+    - {$ref: ../templates/gitlab_git.yaml#/templates/project, unique_key: ct-gl-proj-101}
+
+  bronze_gitlab.users:
+    - {$ref: ../templates/gitlab_git.yaml#/templates/user, unique_key: ct-gl-user-bob, id: 731, username: bob-gl-cycle, name: Bob Beta}
+
+  bronze_gitlab.pull_requests:
+    # Merged with no separate closing time: the ordinary GitLab shape, 8 h.
+    - {$ref: ../templates/gitlab_git.yaml#/templates/merge_request, unique_key: ct-gl-mr-621, iid: 621, id: 96621, author_id: 731, author_username: bob-gl-cycle, created_at: "2026-11-15T00:00:00Z", merged_at: "2026-11-15T08:00:00Z", merge_commit_sha: ct-gl-merge-621}
+    # Closed an hour in, reopened, merged 9 h in. Both times are reported and
+    # the merge is the one that ended the cycle.
+    - {$ref: ../templates/gitlab_git.yaml#/templates/merge_request, unique_key: ct-gl-mr-622, iid: 622, id: 96622, author_id: 731, author_username: bob-gl-cycle, created_at: "2026-11-16T00:00:00Z", closed_at: "2026-11-16T01:00:00Z", merged_at: "2026-11-16T09:00:00Z", merge_commit_sha: ct-gl-merge-622}
+
+  bronze_bitbucket_cloud.commit_authors:
+    # The one edge that turns heidi's account into a person: the connector
+    # states the account as a workspace participant, and the seed attaches it
+    # to whoever this verified address names. Nothing else binds her here.
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/commit_author, unique_key: "ct-bb-ca:heidi", repo_full_name: acme/cycle, author_email: heidi@example.com, author_account_id: bb-cycle-01, author_uuid: "{bb-cycle-01}", author_nickname: heidi-bb, author_display_name: Heidi Eta}
+
+  bronze_bitbucket_cloud.commits:
+    # 902's merge commit, collected — the corroboration the recovery needs. It
+    # carries no author address on purpose: it exists to corroborate a merge,
+    # and an addressless commit reaches no commit or line metric.
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/commit, unique_key: "ct:c:902", repository: https://bitbucket.org/acme/cycle.git, sha: aa11bb22cc330000000000000000000000000000, authored_date: "2026-11-26T08:00:00Z", committed_date: "2026-11-26T08:00:00Z", is_merge: true}
+
+  bronze_bitbucket_cloud.pull_requests:
+    # 901 — its activity holds a terminal merge entry, so the close time is the
+    # one the source recorded: 12 h.
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/pull_request, unique_key: "ct-bb-pr:901", repo_full_name: acme/cycle, id: 901, author_display_name: Heidi Eta, author_account_id: bb-cycle-01, created_on: "2026-11-25T00:00:00Z", updated_on: "2026-11-25T14:00:00Z", merge_commit_sha: ct-bb-merge-901}
+    # 902 — merged by pushing the request's head, so there is no merge ACTION
+    # and no activity at all. The recovery dates the merge by the request's own
+    # last update, corroborated by the collected merge commit, so it counts as
+    # merged — but the source stated no close time, so there is no interval to
+    # report and it contributes no cycle.
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/pull_request, unique_key: "ct-bb-pr:902", repo_full_name: acme/cycle, id: 902, author_display_name: Heidi Eta, author_account_id: bb-cycle-01, created_on: "2026-11-26T00:00:00Z", updated_on: "2026-11-26T09:00:00Z", merge_commit_sha: aa11bb22cc33}
+
+  bronze_bitbucket_cloud.pull_request_activity:
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/activity, unique_key: "ct-bb-ac:901", repo_full_name: acme/cycle, pr_id: 901, update_state: MERGED, event_date: "2026-11-25T12:00:00Z"}

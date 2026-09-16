@@ -612,6 +612,7 @@ CREATE TABLE IF NOT EXISTS silver.class_git_pull_requests
     `created_on` Nullable(DateTime),
     `updated_on` Nullable(DateTime),
     `closed_on` Nullable(DateTime),
+    `closed_on_reported` Nullable(DateTime),
     `merge_commit_hash` String,
     `files_changed` Nullable(Int64),
     `lines_added` Nullable(Int64),

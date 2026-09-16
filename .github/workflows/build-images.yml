@@ -40,6 +40,10 @@ on:
         description: "Build and push only the frontend image (skip everything else)"
         type: boolean
         default: false
+      no_cache:
+        description: "Rebuild every layer from scratch, ignoring the registry layer cache"
+        type: boolean
+        default: false
 
 # One in-flight chart-publish per branch. Prevents two merges from racing
 # the auto-commit-back step. PR builds have no publish to protect, and a new
@@ -98,6 +102,10 @@ jobs:
       # about to hold: main/release pushes, dispatches and merge-queue entries.
       # Pull requests only read.
       write_cache: ${{ steps.tag.outputs.should_push == 'true' || github.event_name == 'merge_group' }}
+      # A cached layer is keyed by its command and its parent, so a base-image
+      # package fixed in the distribution archive never reaches an image whose
+      # apt layer still hits cache. This is the only way to re-run those layers.
+      no_cache: ${{ github.event_name == 'workflow_dispatch' && inputs.no_cache || false }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -397,6 +405,7 @@ jobs:
           # discarding the result. Other legs keep the push-by-digest output.
           tags: ${{ needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64' && 'insight-analytics:e2e-prebuilt' || '' }}
           outputs: ${{ needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64' && 'type=docker,dest=/tmp/e2e-prebuilt.tar' || format('type=image,name={0}/insight-analytics,push-by-digest=true,name-canonical=true,push={1}', env.IMAGE_PREFIX, needs.changes.outputs.should_push == 'true') }}
+          no-cache: ${{ needs.changes.outputs.no_cache == 'true' }}
           cache-from: |
             type=registry,ref=${{ env.BUILDCACHE }}:analytics-${{ matrix.arch }}
             type=registry,ref=${{ env.BUILDCACHE }}:backend-deps-${{ matrix.arch }}
@@ -524,6 +533,7 @@ jobs:
           platforms: linux/${{ matrix.arch }}
           tags: ${{ needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64' && 'insight-authenticator:e2e-prebuilt' || '' }}
           outputs: ${{ needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64' && 'type=docker,dest=/tmp/e2e-prebuilt.tar' || format('type=image,name={0}/insight-authenticator,push-by-digest=true,name-canonical=true,push={1}', env.IMAGE_PREFIX, needs.changes.outputs.should_push == 'true') }}
+          no-cache: ${{ needs.changes.outputs.no_cache == 'true' }}
           cache-from: |
             type=registry,ref=${{ env.BUILDCACHE }}:authenticator-${{ matrix.arch }}
             type=registry,ref=${{ env.BUILDCACHE }}:backend-deps-${{ matrix.arch }}
@@ -647,6 +657,7 @@ jobs:
           platforms: linux/${{ matrix.arch }}
           tags: ${{ needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64' && 'insight-gateway:e2e-prebuilt' || '' }}
           outputs: ${{ needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64' && 'type=docker,dest=/tmp/e2e-prebuilt.tar' || format('type=image,name={0}/insight-gateway,push-by-digest=true,name-canonical=true,push={1}', env.IMAGE_PREFIX, needs.changes.outputs.should_push == 'true') }}
+          no-cache: ${{ needs.changes.outputs.no_cache == 'true' }}
           cache-from: type=registry,ref=${{ env.BUILDCACHE }}:gateway-${{ matrix.arch }}
           cache-to: ${{ needs.changes.outputs.write_cache == 'true' && format('type=registry,ref={0}:gateway-{1},mode=max,ignore-error=true', env.BUILDCACHE, matrix.arch) || '' }}
       - name: Upload image for E2E workflows
@@ -771,6 +782,7 @@ jobs:
           # PR amd64 legs feed the e2e rig — see backend-analytics.
           tags: ${{ github.event_name == 'pull_request' && matrix.arch == 'amd64' && 'insight-git-cli-proxy:e2e-prebuilt' || '' }}
           outputs: ${{ github.event_name == 'pull_request' && matrix.arch == 'amd64' && 'type=docker,dest=/tmp/e2e-prebuilt.tar' || format('type=image,name={0}/insight-git-cli-proxy,push-by-digest=true,name-canonical=true,push={1}', env.IMAGE_PREFIX, needs.changes.outputs.should_push == 'true') }}
+          no-cache: ${{ needs.changes.outputs.no_cache == 'true' }}
           cache-from: |
             type=registry,ref=${{ env.BUILDCACHE }}:git-cli-proxy-${{ matrix.arch }}
             type=registry,ref=${{ env.BUILDCACHE }}:backend-deps-${{ matrix.arch }}
@@ -899,6 +911,7 @@ jobs:
           # PR amd64 legs feed the e2e rig — see backend-analytics.
           tags: ${{ needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64' && 'insight-identity-resolution:e2e-prebuilt' || '' }}
           outputs: ${{ needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64' && 'type=docker,dest=/tmp/e2e-prebuilt.tar' || format('type=image,name={0}/insight-identity-resolution,push-by-digest=true,name-canonical=true,push={1}', env.IMAGE_PREFIX, needs.changes.outputs.should_push == 'true') }}
+          no-cache: ${{ needs.changes.outputs.no_cache == 'true' }}
           cache-from: |
             type=registry,ref=${{ env.BUILDCACHE }}:identity-resolution-${{ matrix.arch }}
             type=registry,ref=${{ env.BUILDCACHE }}:backend-deps-${{ matrix.arch }}
@@ -1026,6 +1039,7 @@ jobs:
           target: insight-v3-core
           platforms: linux/${{ matrix.arch }}
           outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-v3-core,push-by-digest=true,name-canonical=true,push=${{ needs.changes.outputs.should_push == 'true' }}
+          no-cache: ${{ needs.changes.outputs.no_cache == 'true' }}
           cache-from: |
             type=registry,ref=${{ env.BUILDCACHE }}:insight-v3-core-${{ matrix.arch }}
             type=registry,ref=${{ env.BUILDCACHE }}:backend-deps-${{ matrix.arch }}
@@ -1143,6 +1157,7 @@ jobs:
           target: previews
           platforms: linux/${{ matrix.arch }}
           outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-previews,push-by-digest=true,name-canonical=true,push=${{ needs.changes.outputs.should_push == 'true' }}
+          no-cache: ${{ needs.changes.outputs.no_cache == 'true' }}
           cache-from: |
             type=registry,ref=${{ env.BUILDCACHE }}:previews-${{ matrix.arch }}
             type=registry,ref=${{ env.BUILDCACHE }}:backend-deps-${{ matrix.arch }}
@@ -1273,6 +1288,7 @@ jobs:
           build-args: |
             VITE_APP_RELEASE=${{ needs.changes.outputs.build_tag }}
           outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-frontend,push-by-digest=true,name-canonical=true,push=${{ needs.changes.outputs.should_push == 'true' }}
+          no-cache: ${{ needs.changes.outputs.no_cache == 'true' }}
           cache-from: type=registry,ref=${{ env.BUILDCACHE }}:frontend-${{ matrix.arch }}
           cache-to: ${{ needs.changes.outputs.write_cache == 'true' && format('type=registry,ref={0}:frontend-{1},mode=max,ignore-error=true', env.BUILDCACHE, matrix.arch) || '' }}
       - name: Export digest
@@ -1412,6 +1428,7 @@ jobs:
           load: true
           push: false
           tags: insight-toolbox:ci-validate
+          no-cache: ${{ needs.changes.outputs.no_cache == 'true' }}
           cache-from: type=registry,ref=${{ env.BUILDCACHE }}:toolbox-amd64
           cache-to: ${{ needs.changes.outputs.write_cache == 'true' && format('type=registry,ref={0}:toolbox-amd64,mode=max,ignore-error=true', env.BUILDCACHE) || '' }}
 
@@ -1452,6 +1469,7 @@ jobs:
           file: src/ingestion/tools/toolbox/Dockerfile
           platforms: linux/${{ matrix.arch }}
           outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-toolbox,push-by-digest=true,name-canonical=true,push=${{ needs.changes.outputs.should_push == 'true' }}
+          no-cache: ${{ needs.changes.outputs.no_cache == 'true' }}
           cache-from: type=registry,ref=${{ env.BUILDCACHE }}:toolbox-${{ matrix.arch }}
           cache-to: ${{ needs.changes.outputs.write_cache == 'true' && format('type=registry,ref={0}:toolbox-{1},mode=max,ignore-error=true', env.BUILDCACHE, matrix.arch) || '' }}
 
@@ -1580,6 +1598,7 @@ jobs:
           load: true
           push: false
           tags: insight-seed:ci-validate
+          no-cache: ${{ needs.changes.outputs.no_cache == 'true' }}
           cache-from: type=registry,ref=${{ env.BUILDCACHE }}:seed-amd64
           cache-to: ${{ needs.changes.outputs.write_cache == 'true' && format('type=registry,ref={0}:seed-amd64,mode=max,ignore-error=true', env.BUILDCACHE) || '' }}
 
@@ -1593,9 +1612,9 @@ jobs:
         # PATH, and `dbt --version` proves the silver step's subprocess
         # environment exists.
         #
-        # The package's own tests run here rather than in ci.yml's Python
-        # matrix: they touch no database, so the shipped image can run them
-        # against exactly what is published. They are pytest-style, and pytest
+        # The package's own tests also run in ci.yml's Python matrix (the
+        # insight-seed component) as the PR gate; this run repeats them against
+        # exactly what is published. They are pytest-style, and pytest
         # deliberately stays out of the image — it is installed into this
         # throwaway container only, so the runner is added on top while the
         # package under test remains the published one.
@@ -1615,6 +1634,7 @@ jobs:
           file: src/ingestion/tools/seed/Dockerfile
           platforms: linux/${{ matrix.arch }}
           outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-seed,push-by-digest=true,name-canonical=true,push=${{ needs.changes.outputs.should_push == 'true' }}
+          no-cache: ${{ needs.changes.outputs.no_cache == 'true' }}
           cache-from: type=registry,ref=${{ env.BUILDCACHE }}:seed-${{ matrix.arch }}
           cache-to: ${{ needs.changes.outputs.write_cache == 'true' && format('type=registry,ref={0}:seed-{1},mode=max,ignore-error=true', env.BUILDCACHE, matrix.arch) || '' }}
 
@@ -1721,6 +1741,7 @@ jobs:
           file: ${{ matrix.entry.connector_dir }}/${{ matrix.entry.dockerfile }}
           platforms: linux/${{ matrix.arch }}
           outputs: ${{ format('type=image,name={0}/{1},push-by-digest=true,name-canonical=true,push={2}', env.IMAGE_PREFIX, matrix.entry.name, needs.changes.outputs.should_push == 'true') }}
+          no-cache: ${{ needs.changes.outputs.no_cache == 'true' }}
           # Scope cache per (image name, arch) so unrelated connectors and
           # cross-arch builds don't evict each other.
           cache-from: type=registry,ref=${{ env.BUILDCACHE }}:${{ matrix.entry.name }}-${{ matrix.arch }}

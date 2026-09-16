@@ -53,6 +53,12 @@ import {
   useExcludeAccount,
   usePersonAccounts,
 } from "@/queries/identity-resolution";
+import { useIsAdmin } from "@/queries/identity-me";
+import {
+  useGrantAdmin,
+  usePersonAdminRole,
+  useRevokeAdmin,
+} from "@/queries/person-roles";
 import { cn } from "@/lib/utils";
 
 type PendingAction =
@@ -161,6 +167,14 @@ export function PersonDialog({
           </DialogTitle>
           <DialogDescription render={<div className="flex items-center gap-1" />}>
             {person ? <PersonId id={person.person_id} /> : null}
+            {/* Keyed: the window swaps subject without unmounting, so verb
+                state would follow onto the next person. */}
+            {person ? (
+              <AdminRoleControl
+                key={person.person_id}
+                personId={person.person_id}
+              />
+            ) : null}
           </DialogDescription>
         </DialogHeader>
         {/* Keyed by the person: the body holds per-person state (a pending verb,
@@ -184,6 +198,95 @@ export function PersonDialog({
         ) : null}
       </DialogContent>
     </Dialog>
+  );
+}
+
+const LAST_ADMIN_REASON = "last_admin_protected";
+
+function isLastAdminRefusal(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const body = (error as { body?: unknown }).body;
+  if (typeof body !== "object" || body === null) return false;
+  const context = (body as { context?: unknown }).context;
+  if (typeof context !== "object" || context === null) return false;
+  return (context as { reason?: unknown }).reason === LAST_ADMIN_REASON;
+}
+
+/** A refused read renders as "unknown", never as "not an admin": a grant
+ *  offered against an unread state claims a role the subject may already hold. */
+function AdminRoleControl({ personId }: { personId: string }) {
+  const { t } = useTranslation();
+  const viewer = useIsAdmin();
+  const held = usePersonAdminRole(viewer.isAdmin ? personId : null);
+  const grant = useGrantAdmin(personId);
+  const revoke = useRevokeAdmin(personId);
+
+  // `isError` is not "not an admin": fail closed, but say so.
+  if (viewer.isError) {
+    return (
+      <Button
+        variant="ghost"
+        size="sm"
+        className="text-muted-foreground"
+        onClick={() => viewer.retry()}
+      >
+        {t("identities.person.admin_viewer_unknown")}
+      </Button>
+    );
+  }
+
+  if (!viewer.isAdmin) return null;
+
+  if (held.isUnknown) {
+    return (
+      <span className="text-muted-foreground text-xs">
+        {t("identities.person.admin_unknown")}
+      </span>
+    );
+  }
+
+  const refusedAsLastAdmin = isLastAdminRefusal(revoke.error);
+  const failed = !refusedAsLastAdmin && (grant.isError || revoke.isError);
+
+  return (
+    <>
+      {held.isAdmin ? (
+        <Badge variant="secondary">{t("identities.person.admin_badge")}</Badge>
+      ) : null}
+      {held.isPending ? null : held.isAdmin ? (
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={revoke.isPending || held.personRoleId == null}
+          onClick={() => {
+            if (held.personRoleId) revoke.mutate(held.personRoleId);
+          }}
+        >
+          {t("identities.person.admin_revoke")}
+        </Button>
+      ) : (
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={grant.isPending}
+          onClick={() => grant.mutate()}
+        >
+          {t("identities.person.admin_grant")}
+        </Button>
+      )}
+      {refusedAsLastAdmin ? (
+        <span className="text-destructive text-xs">
+          {t("identities.person.admin_last")}
+        </span>
+      ) : failed ? (
+        <span className="text-destructive text-xs">
+          {apiErrorReason(
+            grant.error ?? revoke.error,
+            t("identities.person.admin_failed")
+          )}
+        </span>
+      ) : null}
+    </>
   );
 }
 

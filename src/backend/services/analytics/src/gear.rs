@@ -99,6 +99,7 @@ impl Gear for AnalyticsApiGear {
                 db.clone(),
                 ch.clone(),
             );
+        let periodic_validation_enabled = cfg.metric_catalog.periodic_validation_enabled;
 
         let contract_ch = ch.clone();
 
@@ -145,10 +146,9 @@ impl Gear for AnalyticsApiGear {
         tokio::spawn(async move {
             crate::domain::contract_version::run(&contract_ch).await;
         });
-        // Periodic, not one-shot: the managed observation views are
-        // dbt-created after boot on a fresh deploy, and the registry has no
-        // write path that would re-trigger probing.
-        tokio::spawn(metric_definition_validator.run());
+        // INVARIANT: deployments repeat validation because managed views can appear after boot;
+        // the isolated data-path stand runs the startup pass only while replacing fixtures.
+        tokio::spawn(metric_definition_validator.run(periodic_validation_enabled));
 
         Ok(())
     }

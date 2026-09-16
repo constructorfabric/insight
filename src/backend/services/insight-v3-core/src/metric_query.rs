@@ -8,9 +8,9 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::anchor::Anchor;
 use crate::catalog::TableEngine;
 use crate::time_window::{Bounds, Grain, MaximumRange, Window, WindowError};
+use crate::undated::UndatedCount;
 
 const MAX_IDENTIFIER_CHARS: usize = 128;
 const DEFAULT_LIMIT: u32 = 1000;
@@ -81,7 +81,7 @@ fn clock_expression(
     let read = source.sql(FieldType::String, qualifier)?;
 
     Ok(match source {
-        Source::Json(_) => format!("parseDateTimeBestEffortOrNull({read})"),
+        Source::Json { .. } => format!("parseDateTimeBestEffortOrNull({read})"),
         Source::Column(_) => read,
     })
 }
@@ -133,6 +133,10 @@ struct Field {
     /// aggregate carries its own condition rather than the query carrying one.
     #[serde(default)]
     when: Vec<Filter>,
+    /// Which element of an array payload this field reads, when the elements
+    /// are told apart only by a name inside each one.
+    #[serde(default, rename = "where")]
+    r#where: Option<Filter>,
     /// Two of this query's own fields, divided: `[numerator, denominator]`.
     #[serde(default)]
     divide: Option<Vec<String>>,
@@ -262,22 +266,55 @@ impl Field {
         qualifier: Option<&str>,
         binds: &mut Vec<FilterBind>,
     ) -> Result<String, MetricQueryError> {
-        let condition = self.condition(qualifier, binds)?;
-
         if self.agg == Some(Agg::Count) && self.json.is_none() && self.column.is_none() {
-            return Ok(match condition {
+            return Ok(match self.condition(qualifier, binds)? {
                 Some(condition) => format!("countIf({condition})"),
                 None => "count()".to_owned(),
             });
         }
 
-        let read = self.source()?.sql(self.r#type, qualifier)?;
+        // The read binds before the condition does, because it is the read
+        // that SQL states first.
+        let read = self.read(qualifier, binds)?;
+        let condition = self.condition(qualifier, binds)?;
 
         Ok(match (self.agg, condition) {
             (Some(agg), Some(condition)) => format!("{}If({read}, {condition})", agg.sql()),
             (Some(agg), None) => format!("{}({read})", agg.sql()),
             (None, _) => read,
         })
+    }
+
+    fn read(
+        &self,
+        qualifier: Option<&str>,
+        binds: &mut Vec<FilterBind>,
+    ) -> Result<String, MetricQueryError> {
+        let source = self.source()?;
+
+        let Some(selector) = &self.r#where else {
+            return source.sql(self.r#type, qualifier);
+        };
+
+        let Source::Json { path, .. } = source else {
+            return Err(MetricQueryError::Selector(self.as_name.clone()));
+        };
+
+        let selected = selector.source()?;
+        let Source::Json { path: key, .. } = selected else {
+            return Err(MetricQueryError::Selector(self.as_name.clone()));
+        };
+
+        let matched = selector.r#type.extract("x", key)?;
+        binds.push(selector.bind(selected)?);
+
+        let element = format!(
+            "arrayFirst(x -> {matched} {} ?, JSONExtractArrayRaw({}))",
+            selector.op.sql(),
+            source.payload_sql(qualifier)?
+        );
+
+        self.r#type.extract(&element, path)
     }
 
     /// This field's own conditions, as one expression, binding their values.
@@ -345,27 +382,44 @@ impl Field {
     }
 }
 
-/// Where a value is read from: a key inside the `raw_data` payload, or a
-/// typed column of the table itself.
+/// Where a value is read from. A JSON payload is `raw_data` unless the
+/// source names the column holding it.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum Source<'a> {
-    Json(&'a str),
+    Json {
+        payload: Option<&'a str>,
+        path: &'a str,
+    },
     Column(&'a str),
 }
 
 impl<'a> Source<'a> {
     fn resolve(json: Option<&'a str>, column: Option<&'a str>) -> Option<Self> {
         match (json, column) {
-            (Some(json), None) => Some(Self::Json(json)),
+            (Some(path), payload) => Some(Self::Json { payload, path }),
             (None, Some(column)) => Some(Self::Column(column)),
-            (None, None) | (Some(_), Some(_)) => None,
+            (None, None) => None,
         }
     }
 
     fn name(self) -> &'a str {
         match self {
-            Self::Json(name) | Self::Column(name) => name,
+            Self::Json { path: name, .. } | Self::Column(name) => name,
         }
+    }
+
+    fn payload_sql(self, qualifier: Option<&str>) -> Result<String, MetricQueryError> {
+        let Self::Json { payload, .. } = self else {
+            return Err(MetricQueryError::Identifier(self.name().to_owned()));
+        };
+
+        Ok(match payload {
+            Some(column) => qualified(column, qualifier)?,
+            None => match qualifier {
+                Some(alias) => format!("`{alias}`.raw_data"),
+                None => "raw_data".to_owned(),
+            },
+        })
     }
 
     fn sql(
@@ -373,17 +427,25 @@ impl<'a> Source<'a> {
         field_type: FieldType,
         qualifier: Option<&str>,
     ) -> Result<String, MetricQueryError> {
-        if !is_identifier(self.name()) {
-            return Err(MetricQueryError::Identifier(self.name().to_owned()));
+        match self {
+            Self::Json { path, .. } => {
+                let payload = self.payload_sql(qualifier)?;
+                field_type.extract(&payload, path)
+            }
+            Self::Column(column) => qualified(column, qualifier),
         }
-        Ok(match self {
-            Self::Json(json) => field_type.extract(json, qualifier),
-            Self::Column(column) => match qualifier {
-                Some(alias) => format!("`{alias}`.`{column}`"),
-                None => format!("`{column}`"),
-            },
-        })
     }
+}
+
+fn qualified(column: &str, qualifier: Option<&str>) -> Result<String, MetricQueryError> {
+    if !is_identifier(column) {
+        return Err(MetricQueryError::Identifier(column.to_owned()));
+    }
+
+    Ok(match qualifier {
+        Some(alias) => format!("`{alias}`.`{column}`"),
+        None => format!("`{column}`"),
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -395,17 +457,23 @@ pub(crate) enum FieldType {
 }
 
 impl FieldType {
-    fn extract(self, json: &str, qualifier: Option<&str>) -> String {
+    /// `path` is dotted: one key per segment.
+    fn extract(self, payload: &str, path: &str) -> Result<String, MetricQueryError> {
         let function = match self {
             Self::String => "JSONExtractString",
             Self::Int => "JSONExtractInt",
             Self::Float => "JSONExtractFloat",
         };
-        let payload = match qualifier {
-            Some(alias) => format!("`{alias}`.raw_data"),
-            None => "raw_data".to_owned(),
-        };
-        format!("{function}({payload}, '{json}')")
+
+        let mut keys = String::new();
+        for segment in path.split('.') {
+            if !is_identifier(segment) {
+                return Err(MetricQueryError::Identifier(path.to_owned()));
+            }
+            let _ = write!(keys, ", '{segment}'");
+        }
+
+        Ok(format!("{function}({payload}{keys})"))
     }
 }
 
@@ -509,7 +577,7 @@ struct Selection<'a> {
 
 /// The one read that resolves a relative window before the metric runs.
 #[derive(Debug)]
-pub(crate) struct AnchorQuery {
+pub(crate) struct UndatedQuery {
     pub(crate) sql: String,
     pub(crate) binds: Vec<FilterBind>,
 }
@@ -540,8 +608,10 @@ pub(crate) enum MetricQueryError {
     NoFields,
     #[error("filter value for `{0}` does not match its declared type")]
     FilterValue(String),
-    #[error("{0} must name exactly one of `json` or `column`")]
+    #[error("{0} must name `json`, `column`, or both")]
     FieldSource(String),
+    #[error("`{0}` selects an array element, so it and its `where` must read json")]
+    Selector(String),
     #[error("{0}")]
     Ratio(String),
     #[error("time must name exactly one of `json` or `column`")]
@@ -908,13 +978,12 @@ impl MetricQuery {
         from
     }
 
-    /// Where a relative window counts back from, and how many rows carry no
-    /// clock — one read of the same rows the metric itself reads. A metric
-    /// with no clock has neither, and answers `None`.
-    pub(crate) fn anchor_query(
+    /// How many of the rows a metric reads carry no clock — one read of the
+    /// same rows. A metric with no clock has none, and answers `None`.
+    pub(crate) fn undated_query(
         &self,
         engine: TableEngine,
-    ) -> Result<Option<AnchorQuery>, MetricQueryError> {
+    ) -> Result<Option<UndatedQuery>, MetricQueryError> {
         let (_, table) = self.split();
         self.validate_shape(table)?;
 
@@ -928,7 +997,7 @@ impl MetricQuery {
         self.add_filters(None, &mut where_parts, &mut binds)?;
 
         let mut sql = format!(
-            "SELECT toUnixTimestamp64Milli(toDateTime64(maxOrNull({clock}), 3, 'UTC')) AS newest, countIf(isNull({clock})) AS undated FROM {}",
+            "SELECT countIf(isNull({clock})) AS undated FROM {}",
             self.table_source(None, engine)
         );
         if !where_parts.is_empty() {
@@ -936,7 +1005,7 @@ impl MetricQuery {
             sql.push_str(&where_parts.join(" AND "));
         }
 
-        Ok(Some(AnchorQuery { sql, binds }))
+        Ok(Some(UndatedQuery { sql, binds }))
     }
 
     fn validate_shape(&self, table: &str) -> Result<(), MetricQueryError> {
@@ -985,7 +1054,6 @@ fn add_window_predicates(
             binds.push(FilterBind::Int(from.timestamp_millis()));
             binds.push(FilterBind::Int(to.timestamp_millis()));
         }
-        Bounds::Empty => where_parts.push("0".to_owned()),
         Bounds::Unbounded => where_parts.push(format!("{clock} IS NOT NULL")),
     }
 
@@ -1071,10 +1139,13 @@ impl MetricRunner {
         &self.people
     }
 
-    pub(crate) async fn anchor(&self, query: &AnchorQuery) -> Result<Anchor, MetricRunError> {
+    pub(crate) async fn undated(
+        &self,
+        query: &UndatedQuery,
+    ) -> Result<UndatedCount, MetricRunError> {
         let bytes = self.fetch(&query.sql, &query.binds).await?;
 
-        Ok(Anchor::parse(&bytes)?)
+        Ok(UndatedCount::parse(&bytes)?)
     }
 
     pub(crate) async fn run(&self, compiled: &CompiledQuery) -> Result<RunResult, MetricRunError> {
@@ -1200,11 +1271,11 @@ mod tests {
     }
 
     fn window(token: &str, bucketed: bool) -> crate::time_window::Window {
-        let anchor = chrono::DateTime::parse_from_rfc3339("2026-09-10T15:00:00Z")
-            .unwrap_or_else(|error| panic!("the synthetic anchor parses: {error}"))
+        let now = chrono::DateTime::parse_from_rfc3339("2026-09-10T15:00:00Z")
+            .unwrap_or_else(|error| panic!("the synthetic clock parses: {error}"))
             .to_utc();
         let resolved = RequestedRange::parse(token)
-            .and_then(|range| range.resolve(Some(anchor)))
+            .and_then(|range| range.resolve(now))
             .unwrap_or_else(|error| panic!("`{token}` resolves: {error}"));
 
         if bucketed {
@@ -1255,10 +1326,28 @@ mod tests {
     }
 
     #[test]
+    fn a_clock_reads_the_payload_column_it_names() {
+        let metric = timed_metric(&json!({
+            "column": "event_json", "json": "occurred_at", "type": "datetime"
+        }));
+
+        let compiled = metric
+            .compile_window(&people(), &window("P7D", true), TableEngine::MergeTree)
+            .unwrap_or_else(|error| panic!("compiles: {error}"));
+
+        assert!(
+            compiled.sql.contains(
+                "parseDateTimeBestEffortOrNull(JSONExtractString(`event_json`, 'occurred_at'))"
+            ),
+            "{}",
+            compiled.sql
+        );
+    }
+
+    #[test]
     fn malformed_or_non_datetime_clocks_are_refused() {
         for time in [
             json!({}),
-            json!({ "json": "at", "column": "at" }),
             json!({ "column": "not-safe`", "type": "datetime" }),
             json!({ "column": "at", "type": "string" }),
         ] {
@@ -1441,22 +1530,22 @@ mod tests {
     }
 
     #[test]
-    fn an_anchor_query_reads_the_newest_clock_and_the_rows_without_one() {
+    fn an_undated_query_counts_the_rows_without_a_clock() {
         let metric = timed_metric(&json!({ "column": "occurred_at" }));
 
-        let anchor = metric
-            .anchor_query(TableEngine::MergeTree)
-            .unwrap_or_else(|error| panic!("the anchor compiles: {error}"))
-            .unwrap_or_else(|| panic!("a clocked metric has an anchor"));
+        let undated = metric
+            .undated_query(TableEngine::MergeTree)
+            .unwrap_or_else(|error| panic!("the undated count compiles: {error}"))
+            .unwrap_or_else(|| panic!("a clocked metric has an undated count"));
 
         assert_eq!(
-            anchor.sql,
-            "SELECT toUnixTimestamp64Milli(toDateTime64(maxOrNull(`occurred_at`), 3, 'UTC')) AS newest, countIf(isNull(`occurred_at`)) AS undated FROM `events`"
+            undated.sql,
+            "SELECT countIf(isNull(`occurred_at`)) AS undated FROM `events`"
         );
     }
 
     #[test]
-    fn an_anchor_query_reads_the_same_rows_the_metric_does() {
+    fn an_undated_query_reads_the_same_rows_the_metric_does() {
         let metric = query(json!({
             "table": "events",
             "time": { "column": "occurred_at" },
@@ -1464,28 +1553,28 @@ mod tests {
             "filters": [{ "column": "repo", "type": "string", "op": "eq", "value": "one" }]
         }));
 
-        let anchor = metric
-            .anchor_query(TableEngine::ReplacingMergeTree)
-            .unwrap_or_else(|error| panic!("the anchor compiles: {error}"))
-            .unwrap_or_else(|| panic!("a clocked metric has an anchor"));
+        let undated = metric
+            .undated_query(TableEngine::ReplacingMergeTree)
+            .unwrap_or_else(|error| panic!("the undated count compiles: {error}"))
+            .unwrap_or_else(|| panic!("a clocked metric has an undated count"));
 
         assert!(
-            anchor.sql.contains("FROM `events` FINAL WHERE `repo` = ?"),
+            undated.sql.contains("FROM `events` FINAL WHERE `repo` = ?"),
             "{}",
-            anchor.sql
+            undated.sql
         );
-        assert_eq!(anchor.binds.len(), 1);
+        assert_eq!(undated.binds.len(), 1);
     }
 
     #[test]
-    fn a_clockless_metric_has_nothing_to_anchor_to() {
+    fn a_clockless_metric_has_no_undated_count_to_read() {
         let metric = timed_metric(&serde_json::Value::Null);
 
-        let anchor = metric
-            .anchor_query(TableEngine::MergeTree)
+        let undated = metric
+            .undated_query(TableEngine::MergeTree)
             .unwrap_or_else(|error| panic!("a clockless metric is not an error: {error}"));
 
-        assert!(anchor.is_none());
+        assert!(undated.is_none());
     }
 
     #[test]
@@ -2349,17 +2438,20 @@ mod tests {
     }
 
     #[test]
-    fn a_field_naming_both_a_json_key_and_a_column_is_refused() {
+    fn a_where_over_a_plain_column_is_refused() {
         let metric = query(json!({
-            "table": "git_commits",
-            "fields": [
-                { "json": "lines", "column": "lines_changed", "type": "int", "as_name": "lines" }
-            ]
+            "table": "project_items",
+            "fields": [{
+                "column": "milestone_title",
+                "type": "string",
+                "as_name": "milestone",
+                "where": { "json": "field.name", "type": "string", "op": "eq", "value": "Status" }
+            }]
         }));
 
         assert!(matches!(
             metric.compile(&people()),
-            Err(MetricQueryError::FieldSource(_))
+            Err(MetricQueryError::Selector(name)) if name == "milestone"
         ));
     }
 
@@ -2396,6 +2488,100 @@ mod tests {
             "database": "silver`; DROP TABLE git_commits; --",
             "table": "git_commits",
             "fields": [{ "json": "author", "type": "string", "as_name": "author" }]
+        }));
+
+        assert!(matches!(
+            metric.compile(&people()),
+            Err(MetricQueryError::Identifier(_))
+        ));
+    }
+    #[test]
+    fn a_json_field_reads_the_payload_column_it_names() {
+        let metric = query(json!({
+            "table": "project_items",
+            "fields": [
+                { "column": "field_values_json", "json": "status", "type": "string", "as_name": "status" }
+            ],
+            "group_by": [],
+            "filters": []
+        }));
+
+        let compiled = metric
+            .compile(&people())
+            .unwrap_or_else(|error| panic!("compiles: {error}"));
+
+        assert!(
+            compiled
+                .sql
+                .contains("JSONExtractString(`field_values_json`, 'status')"),
+            "{}",
+            compiled.sql
+        );
+    }
+
+    #[test]
+    fn a_dotted_json_path_reads_a_nested_key() {
+        let metric = query(json!({
+            "table": "events",
+            "fields": [
+                { "json": "field.name", "type": "string", "as_name": "field_name" }
+            ],
+            "group_by": [],
+            "filters": []
+        }));
+
+        let compiled = metric
+            .compile(&people())
+            .unwrap_or_else(|error| panic!("compiles: {error}"));
+
+        assert!(
+            compiled
+                .sql
+                .contains("JSONExtractString(raw_data, 'field', 'name')"),
+            "{}",
+            compiled.sql
+        );
+    }
+
+    #[test]
+    fn a_where_picks_the_one_array_element_the_field_means() {
+        let metric = query(json!({
+            "table": "project_items",
+            "fields": [{
+                "column": "field_values_json",
+                "json": "name",
+                "type": "string",
+                "as_name": "status",
+                "where": { "json": "field.name", "type": "string", "op": "eq", "value": "Status" }
+            }],
+            "group_by": [],
+            "filters": []
+        }));
+
+        let compiled = metric
+            .compile(&people())
+            .unwrap_or_else(|error| panic!("compiles: {error}"));
+
+        assert!(
+            compiled.sql.contains(
+                "JSONExtractString(arrayFirst(x -> JSONExtractString(x, 'field', 'name') = ?, \
+                 JSONExtractArrayRaw(`field_values_json`)), 'name')"
+            ),
+            "{}",
+            compiled.sql
+        );
+        assert_eq!(compiled.binds, vec!["Status".to_owned()]);
+    }
+
+    #[test]
+    fn a_json_path_segment_outside_the_charset_is_refused() {
+        let metric = query(json!({
+            "table": "events",
+            "fields": [
+                { "json": "field.name'); DROP TABLE events; --", "type": "string", "as_name": "bad" }
+            ],
+            "group_by": [],
+            "filters": []
         }));
 
         assert!(matches!(

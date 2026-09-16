@@ -10,14 +10,14 @@
 
 # Stage 1: build the routegen CLI. rust:alpine so the musl binary runs on the
 # openresty:alpine runtime without a glibc mismatch.
-FROM rust:1.95-alpine AS routegen
+FROM rust:1.95-alpine@sha256:606fd313a0f49743ee2a7bd49a0914bab7deedb12791f3a846a34a4711db7ed2 AS routegen
 RUN apk add --no-cache musl-dev
 WORKDIR /build
 COPY . .
 RUN cargo build --release -p routegen
 
 # Stage 2: OpenResty runtime.
-FROM openresty/openresty:1.31.1.1-2-alpine
+FROM openresty/openresty:1.31.1.1-2-alpine@sha256:5f621903212ed7194a6bd31de7a76c1cfbe92e7b7a6fdb0f2b38626e97bd38c4
 
 # Runtime deps not bundled in the base image:
 #   - lua-resty-http (ADR-0001): the access-phase exchange cosocket.

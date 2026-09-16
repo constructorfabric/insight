@@ -22,6 +22,6 @@ schemas:
       base_ref: {type: string}
       created_at: {type: string}
       updated_at: {type: string}
-      closed_at: {type: string}
-      merged_at: {type: string}
-      merge_commit_sha: {type: string}
+      closed_at: {type: [string, "null"]}
+      merged_at: {type: [string, "null"]}
+      merge_commit_sha: {type: [string, "null"]}

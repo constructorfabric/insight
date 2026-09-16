@@ -88,6 +88,13 @@ dbt run --select tag:silver
   and nothing is invented: if neither candidate qualifies there is no close
   time. All of this is MERGED-only — a declined or superseded request without a
   terminal entry keeps no close time whatever hash it carries.
+- `closed_on_reported` carries the close time as the SOURCE stated it and
+  nothing derived, so the two readings stay apart. The recovery above answers
+  which DAY a merge landed on, which is what a count needs; a duration measured
+  to a recovered time would report an interval nobody observed, so every
+  interval measure in gold reads `closed_on_reported` and drops the request
+  where it is null. GitHub and GitLab state the time themselves, so for them the
+  two columns agree.
 - `mtr_git_person_weekly` buckets every metric by **commit-date week**,
   including `prs_merged` (week is the PR's merge-commit week when
   `merge_commit_hash` resolves, else `closed_on` week). All CTEs share the
@@ -108,9 +115,12 @@ dbt run --select tag:silver
 
 The unified metrics runtime reads git observations from
 `insight.git_metric_observations` (`src/ingestion/gold/`), which consumes
-the class models directly. PR authors resolve to an email from the PR's
-own field or from the dominant email of its linked commits; PRs that
-resolve to no email are excluded (honest absence). File classification
+the class models directly. PR authors resolve account-first — the account
+the source names, then the request's own address, and never an address
+read off its commits, which belong to whoever wrote them rather than to
+whoever opened the request (#3197). A request the source names neither
+for is excluded, and an account nothing has bound stays unresolved
+rather than reaching some other person (honest absence). File classification
 for unified measures lives in the shared gold macro
 `dbt/macros/git_file_category.sql` (`vendored | code | test | config | docs`),
 computed at read time so taxonomy changes apply retroactively. `vendored`

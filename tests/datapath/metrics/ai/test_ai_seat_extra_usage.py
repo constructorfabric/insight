@@ -20,6 +20,7 @@ SPEC = "ai_seat_extra_usage"
 
 ERIN = "erin@example.com"
 FRANK = "frank@example.com"
+GRACE = "grace@example.com"
 
 
 def test_ai_seat_extra_usage(spec: SpecRun) -> None:
@@ -103,6 +104,32 @@ def test_ai_seat_with_no_ceiling(spec: SpecRun) -> None:
     assert r.status == 200
     r.row("ai.extra_usage_cost", "period", entity_id=FRANK).equals(value=3.0)
     r.row("ai.extra_usage_utilisation", "period", entity_id=FRANK).equals(value=None)
+
+
+def test_ai_seat_stopped_at_its_ceiling(spec: SpecRun) -> None:
+    """A seat that spent its ceiling exactly reads 100%, the point the vendor blocks at.
+
+    Not capped lower and not an error: the ratio is spend against the ceiling, so the
+    cohort's 5..25% and this reading together are the ordering the criterion asks for —
+    lowest, higher, then blocked.
+    """
+    r = spec.call(
+        {
+            "url": "/v1/metric-results",
+            "method": "POST",
+            "body": {
+                "entity": {"type": "person", "ids": [GRACE]},
+                "period": {"from": "2026-11-01", "to": "2026-12-12"},
+                "metrics": [
+                    {"metric_key": "ai.extra_usage_cost", "views": [{"view": "period"}]},
+                    {"metric_key": "ai.extra_usage_utilisation", "views": [{"view": "period"}]},
+                ],
+            },
+        }
+    )
+    assert r.status == 200
+    r.row("ai.extra_usage_cost", "period", entity_id=GRACE).equals(value=10.0)
+    r.row("ai.extra_usage_utilisation", "period", entity_id=GRACE).equals(value=100.0)
 
 
 def test_ai_seat_extra_usage_empty_window(spec: SpecRun) -> None:

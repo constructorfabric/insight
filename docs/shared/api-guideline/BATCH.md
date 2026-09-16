@@ -1,6 +1,6 @@
 # Batch & Bulk Operations
 
-> Source: [cyberfabric/DNA — REST/BATCH.md](https://github.com/cyberfabric/DNA/blob/main/REST/BATCH.md)
+> Source: [constructorfabric/DNA — REST/BATCH.md](https://github.com/constructorfabric/DNA/blob/main/REST/BATCH.md)
 
 This document specifies how to design and implement batch/bulk endpoints in REST APIs for all Insight components.
 

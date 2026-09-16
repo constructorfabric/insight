@@ -4,6 +4,10 @@ Generated from `registry.yaml` by `analytics passports`. Do not edit by hand —
 regenerate and commit. A drift test (`metric_definitions::passport`) fails when
 this file and the registry disagree.
 
+`median(x)` is the textbook median: on an even sample the two middle values are
+averaged, so the answer need not be a value any observation took. A percentile
+is an order statistic instead, and always answers with one that did.
+
 ## ci.runs — CI runs
 
 - Source: ci (ci_metric_observations)
@@ -450,7 +454,7 @@ this file and the registry disagree.
 - Reads: pr_change_size
 - Formula: median(pr_change_size)
 - Shape: integer, lower_is_better, unit lines
-- Notes: Median diff size of authored pull requests (lines added plus removed). Smaller requests are easier to review. Sources that do not report line counts contribute no values.
+- Notes: Median diff size of authored pull requests (lines added plus removed), dated by the day the request was OPENED in UTC and counted whatever state the request reached. Smaller requests are easier to review. A source that never reported line counts contributes no value; a request whose counts were reported as zero — a rename or a mode change — contributes a zero, which is an observed diff of no lines rather than an absence.
 
 ## git.pr_commits — Commits per PR
 
@@ -465,16 +469,16 @@ this file and the registry disagree.
 - Source: git (git_metric_observations)
 - Reads: pr_cycle_hours
 - Formula: median(pr_cycle_hours)
-- Shape: decimal, lower_is_better, unit h
-- Notes: Median hours from opening a pull request to merging it, over requests merged in the period.
+- Shape: decimal, neutral, unit h
+- Notes: Median hours from opening a pull request to merging it, dated by the merge in UTC, over requests merged in the period. Mostly waiting — for a reviewer, for a build, for someone to press merge — so it describes the path a change travels rather than the person who opened it. A source that does not report a merge time contributes no duration.
 
 ## git.pr_cycle_time_p75_h — PR cycle time (p75)
 
 - Source: git (git_metric_observations)
 - Reads: pr_cycle_hours
 - Formula: p75(pr_cycle_hours)
-- Shape: decimal, lower_is_better, unit h
-- Notes: 75th percentile of hours from opening a pull request to merging it, over requests merged in the period.
+- Shape: decimal, neutral, unit h
+- Notes: 75th percentile of hours from opening a pull request to merging it, dated by the merge in UTC, over requests merged in the period. Reads the same waiting as the median and describes the same path, so it too is not a statement about the person who opened the request.
 
 ## git.first_review_time_h — Time to first review
 

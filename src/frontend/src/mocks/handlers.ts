@@ -17,6 +17,42 @@ import { buildIdentityTree, PEOPLE, PEOPLE_BY_EMAIL } from "./registry";
 
 const defaultPerson = PEOPLE[0];
 
+const ADMIN_ROLE_ID = "a4d11000-0000-4000-8000-000000000001";
+
+interface MockPersonRole {
+  person_role_id: string;
+  insight_tenant_id: string;
+  person_id: string;
+  role_id: string;
+  valid_from: string;
+  valid_to: string | null;
+  author_person_id: string;
+  reason: string | null;
+  created_at: string;
+}
+
+/** Seeded so the tenant is never admin-less. */
+const ADMIN_ASSIGNMENTS = new Map<string, MockPersonRole>(
+  defaultPerson
+    ? [
+        [
+          defaultPerson.person_id.toLowerCase(),
+          {
+            person_role_id: "019e27bc-0000-7000-8000-000000000001",
+            insight_tenant_id: "00000000-0000-4000-8000-00000000c0de",
+            person_id: defaultPerson.person_id,
+            role_id: ADMIN_ROLE_ID,
+            valid_from: "2026-09-01T09:00:00Z",
+            valid_to: null,
+            author_person_id: defaultPerson.person_id,
+            reason: null,
+            created_at: "2026-09-01T09:00:00Z",
+          },
+        ],
+      ]
+    : []
+);
+
 function peopleItem(person: (typeof PEOPLE)[number]) {
   const [firstName, ...lastName] = person.name.split(" ");
   return {
@@ -790,6 +826,52 @@ export const handlers = [
           { type: "urn:insight:error:person_not_found" },
           { status: 404 }
         );
+  }),
+  http.get("/api/identity/v1/person-roles", ({ request }) => {
+    const personId = new URL(request.url).searchParams.get("person") ?? "";
+    const assignment = ADMIN_ASSIGNMENTS.get(personId.toLowerCase());
+    return HttpResponse.json({
+      items: assignment ? [assignment] : [],
+      next_cursor: null,
+    });
+  }),
+  http.post("/api/identity/v1/person-roles", async ({ request }) => {
+    const body = (await request.json()) as {
+      person_id: string;
+      role_id: string;
+    };
+    const assignment = {
+      person_role_id: crypto.randomUUID(),
+      insight_tenant_id: "00000000-0000-4000-8000-00000000c0de",
+      person_id: body.person_id,
+      role_id: body.role_id,
+      valid_from: new Date().toISOString(),
+      valid_to: null,
+      author_person_id: "00000000-0000-0000-0000-0000000000bb",
+      reason: null,
+      created_at: new Date().toISOString(),
+    };
+    ADMIN_ASSIGNMENTS.set(body.person_id.toLowerCase(), assignment);
+    return HttpResponse.json(assignment, { status: 201 });
+  }),
+  http.delete("/api/identity/v1/person-roles/:personRoleId", ({ params }) => {
+    const id = String(params.personRoleId);
+    for (const [person, assignment] of ADMIN_ASSIGNMENTS) {
+      if (assignment.person_role_id !== id) continue;
+      // Keeps one back so the last-admin refusal is reachable here.
+      if (ADMIN_ASSIGNMENTS.size === 1) {
+        return HttpResponse.json(
+          { context: { reason: "last_admin_protected" } },
+          { status: 409 }
+        );
+      }
+      ADMIN_ASSIGNMENTS.delete(person);
+      return new HttpResponse(null, { status: 204 });
+    }
+    return HttpResponse.json(
+      { type: "urn:insight:error:person_role_not_found" },
+      { status: 404 }
+    );
   }),
   // The account listing: the same roster seen as accounts; blank lists them all.
   http.get("/api/identity/v1/resolution/accounts", ({ request }) => {

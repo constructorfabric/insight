@@ -1,0 +1,82 @@
+{{/*
+Seeds operator-authored mapping rows into `config.field_value_map` and
+fallbacks from `defaults.tsv` into `config.field_value_defaults`, from the
+per-environment ConfigMap (gitops `field-value-map` target,
+environments/<env>/clickhouse/field-value-map/) via
+src/ingestion/scripts/load_field_value_map.py.
+
+Insert-only: the script anti-joins each file against the live table on the
+business key and writes misses. A stored decision is never overwritten, and an
+empty or absent bundle is a no-op, so the Job is safe on every upgrade.
+
+Hook weight 300 runs it after clickhouse-migrate (200), which is what creates
+both tables (dbt on-run-start). The script skips cleanly if a table is still
+absent.
+*/}}
+{{- if and .Values.clickhouse.fieldValueMap.enabled .Values.ingestion.toolboxImage }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "insight.fullname" . }}-clickhouse-field-value-map
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "300"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+  labels:
+    {{- include "insight.labels" . | nindent 4 }}
+    app.kubernetes.io/component: clickhouse-field-value-map
+spec:
+  # A rejected file or a bad decision is deterministic; retries only delay it.
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "insight.fullname" . }}-clickhouse-field-value-map
+        app.kubernetes.io/component: clickhouse-field-value-map
+    spec:
+      enableServiceLinks: false
+      restartPolicy: OnFailure
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: load-field-value-map
+          image: {{ .Values.ingestion.toolboxImage | quote }}
+          imagePullPolicy: IfNotPresent
+          command: [python3, /ingestion/scripts/load_field_value_map.py]
+          env:
+            - name: CLICKHOUSE_URL
+              value: {{ include "insight.clickhouse.url" . | quote }}
+            - name: CLICKHOUSE_DATABASE
+              value: {{ include "insight.clickhouse.database" . | quote }}
+            - name: CLICKHOUSE_USER
+              value: {{ required "clickhouse.username is required" .Values.clickhouse.username | quote }}
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "clickhouse.passwordSecret.name is required" .Values.clickhouse.passwordSecret.name | quote }}
+                  key:  {{ required "clickhouse.passwordSecret.key is required"  .Values.clickhouse.passwordSecret.key  | quote }}
+            - name: FIELD_VALUE_MAP_DIR
+              value: "/config/field-value-map"
+            - name: FIELD_VALUE_MAP_RECORDED_BY
+              value: {{ .Values.clickhouse.fieldValueMap.recordedBy | quote }}
+            - name: FIELD_VALUE_MAP_TIMEOUT
+              value: {{ default 30 .Values.clickhouse.fieldValueMap.timeoutSeconds | quote }}
+          volumeMounts:
+            - name: field-value-map
+              mountPath: /config/field-value-map
+              readOnly: true
+          {{- with .Values.clickhouse.fieldValueMap.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: field-value-map
+          configMap:
+            name: {{ default (printf "%s-field-value-map" (include "insight.fullname" .)) .Values.clickhouse.fieldValueMap.configMap | quote }}
+            # An environment that enables the feature before its first bundle
+            # lands must not leave the Job unschedulable.
+            optional: true
+{{- end }}

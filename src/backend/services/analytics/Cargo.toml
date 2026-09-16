@@ -91,6 +91,7 @@ clap = { workspace = true }
 
 [dev-dependencies]
 insight-log-context = { workspace = true, features = ["test-support"] }
+sea-orm = { workspace = true, features = ["mock"] }
 # `tower::ServiceExt::oneshot` for driving the Axum router in the HTTP
 # integration tests. Same dev-dep pattern as api-gateway's proxy tests.
 tower = { version = "0.5", features = ["util"] }

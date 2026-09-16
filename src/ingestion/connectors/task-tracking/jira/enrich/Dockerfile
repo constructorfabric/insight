@@ -9,7 +9,7 @@
 # which risked silent musl/glibc ABI mismatches at runtime.
 
 # ---- Build stage ----
-FROM rust:1.92-bookworm AS builder
+FROM rust:1.92-bookworm@sha256:e90e846de4124376164ddfbaab4b0774c7bdeef5e738866295e5a90a34a307a2 AS builder
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -36,7 +36,7 @@ RUN touch src/main.rs src/core/mod.rs src/core/types.rs src/core/jira.rs
 RUN cargo build --release --features io
 
 # ---- Runtime stage ----
-FROM debian:bookworm-slim AS runtime
+FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171 AS runtime
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \

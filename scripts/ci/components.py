@@ -8,7 +8,8 @@ for bucketing), plus per-language extras consumed by the CI producer jobs:
   rust   -> package (cargo package name); all_features (default True);
             drift_test (the crate pins a committed OpenAPI document, so its
             tests also run on a shared backend change)
-  python -> cov_package (the source_* package to measure)
+  python -> cov_package (the source_* package to measure); collect (False ⇒
+            plain pytest, no Cobertura produced or uploaded)
   js     -> none (the package.json scripts under `root` carry the collection)
 
 Nocode (declarative-YAML) connectors are excluded — no first-party code to
@@ -153,6 +154,7 @@ COMPONENTS = [
         "package": "git-cli-proxy",
         "paths": ["src/backend/services/git-cli-proxy", "docs/components/backend/git-cli-proxy/openapi.json"],
         "drift_test": True,
+        "cover_ignore_regex": "src/backend/libs/",
     },
     # routegen is the build-time gateway config compiler (gateway DESIGN
     # DD-GW-02); fmt + clippy + coverage run here. Golden + rejection tests cover
@@ -292,6 +294,21 @@ COMPONENTS = [
             "src/ingestion/connectors/collaboration/zoom",
             "src/ingestion/connectors/dev-portal/compass",
         ],
+    },
+    # The sample-data seeder. Its pytest suite otherwise runs only inside the
+    # seed image build (release-** PRs / main pushes), while dependabot bumps
+    # its pinned deps on ordinary PRs — those need the suite as a PR gate.
+    # collect=False (and cover=False, mirroring the rust no-cover crates): the
+    # CLI/DB shells are exercised by seeding a real stand, not by unit tests,
+    # so a Cobertura upload would gate the component below the overall minimum.
+    {
+        "name": "insight-seed",
+        "lang": "python",
+        "root": "src/ingestion/tools/seed",
+        "cov_package": "insight_seed",
+        "cover": False,
+        "collect": False,
+        "paths": ["src/ingestion/tools/seed"],
     },
     # `src/frontend/helm` falls under this path but has no measured lines, so it
     # never moves the number.
