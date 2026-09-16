@@ -55,7 +55,7 @@ def job(status: str, records: int = 0) -> dict[str, object]:
     }
 
 
-@pytest.mark.parametrize("status", ["pending", "running", "incomplete"])
+@pytest.mark.parametrize("status", ["pending", "queued", "running", "incomplete"])
 def test_readable_nonterminal_jobs_can_wait_beyond_idle_threshold(run_poll: PollRunner, status: str) -> None:
     result, elapsed = run_poll([job(status)] * 4 + [job("succeeded")])
     assert result == 0, f"should keep waiting: {status}"

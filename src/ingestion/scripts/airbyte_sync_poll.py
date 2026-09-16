@@ -17,6 +17,7 @@ Progress = tuple[str | None, int, int, int]
 
 class JobStatus(StrEnum):
     PENDING = "pending"
+    QUEUED = "queued"
     RUNNING = "running"
     INCOMPLETE = "incomplete"
     SUCCEEDED = "succeeded"

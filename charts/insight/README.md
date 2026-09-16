@@ -52,7 +52,7 @@ for the Makefile-driven deployment pipeline.
 ## Airbyte sync monitoring
 
 The sync poller waits for Airbyte to report `succeeded`, `failed`, or `cancelled`.
-Pending jobs, retries (`incomplete`), and running jobs continue to be monitored
+Pending and queued jobs, retries (`incomplete`), and running jobs continue to be monitored
 even when their record counters remain unchanged. Airbyte owns job liveness,
 retry policy, and maximum duration; the poll pod has no independent job deadline.
 
