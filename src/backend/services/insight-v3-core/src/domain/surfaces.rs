@@ -1,6 +1,5 @@
-//! The metric, widget and dashboard operations, over the stores they need.
+//! Storing, reading and renaming definitions, whatever kind they are.
 
-use chrono::Utc;
 use serde_json::Value;
 use thiserror::Error;
 
@@ -12,12 +11,9 @@ use crate::domain::definition::{
 use crate::domain::kinds::dashboard::Item;
 use crate::domain::kinds::widget::WidgetError;
 use crate::domain::kinds::{self, KindError, Reference};
-use crate::domain::query::metric_query::{
-    MetricQuery, MetricQueryError, MetricRunError, MetricRunner, RunResult,
-};
-use crate::domain::query::time_window::{WindowError, WindowRequest};
-use crate::domain::query::undated::UndatedCount;
-use crate::store::catalog::{Catalog, CatalogError, TableEngine, TableSchema};
+use crate::domain::query::metric_query::{MetricQueryError, MetricRunError};
+use crate::domain::query::time_window::WindowError;
+use crate::store::catalog::CatalogError;
 
 #[cfg(test)]
 mod tests;
@@ -75,21 +71,11 @@ impl CustomError {
 #[derive(Debug)]
 pub(crate) struct Surfaces<'a> {
     definitions: &'a dyn Definitions,
-    metrics: &'a MetricRunner,
-    catalog: &'a Catalog,
 }
 
 impl<'a> Surfaces<'a> {
-    pub(crate) fn new(
-        definitions: &'a dyn Definitions,
-        metrics: &'a MetricRunner,
-        catalog: &'a Catalog,
-    ) -> Self {
-        Self {
-            definitions,
-            metrics,
-            catalog,
-        }
+    pub(crate) fn new(definitions: &'a dyn Definitions) -> Self {
+        Self { definitions }
     }
 
     /// One page of the names of this kind matching `needle`, or of all of
@@ -209,75 +195,6 @@ impl<'a> Surfaces<'a> {
             kind,
             name: name.as_str().to_owned(),
         })
-    }
-
-    /// Runs a stored metric over the window the caller asked for, resolved
-    /// against the wall clock, so a named range means the period it is named
-    /// after whether or not the data reaches that far.
-    pub(crate) async fn run_metric(
-        &self,
-        name: &DefinitionName,
-        request: &WindowRequest,
-    ) -> Result<RunResult, CustomError> {
-        let body = self.get(DefinitionKind::Metric, name).await?;
-
-        let metric: MetricQuery = serde_json::from_value(body).map_err(CustomError::Body)?;
-        metric.check().map_err(CustomError::Compile)?;
-
-        if request.is_ranged() && !metric.has_clock().map_err(CustomError::Compile)? {
-            return Err(CustomError::Compile(MetricQueryError::ClocklessWindow));
-        }
-
-        let engine = self.engine_of(&metric).await?;
-        let undated = self.undated_of(&metric, request, engine).await?;
-        let window = request
-            .resolve(Utc::now())
-            .map_err(|error| CustomError::Compile(error.into()))?;
-
-        let compiled = metric
-            .compile_window(self.metrics.people(), &window, engine)
-            .map_err(CustomError::Compile)?;
-
-        let mut result = self
-            .metrics
-            .run(&compiled)
-            .await
-            .map_err(CustomError::Run)?;
-        if request.is_ranged() {
-            result.undated = Some(undated.count());
-        }
-
-        Ok(result)
-    }
-
-    /// Which engine holds the metric's table, so a replacing one is read
-    /// through `FINAL` rather than counted twice.
-    async fn engine_of(&self, metric: &MetricQuery) -> Result<TableEngine, CustomError> {
-        self.catalog
-            .engine_of(&metric.qualified())
-            .await
-            .map_err(CustomError::Catalog)
-    }
-
-    async fn undated_of(
-        &self,
-        metric: &MetricQuery,
-        request: &WindowRequest,
-        engine: TableEngine,
-    ) -> Result<UndatedCount, CustomError> {
-        if !request.is_ranged() {
-            return Ok(UndatedCount::default());
-        }
-
-        let Some(query) = metric.undated_query(engine).map_err(CustomError::Compile)? else {
-            return Ok(UndatedCount::default());
-        };
-
-        self.metrics.undated(&query).await.map_err(CustomError::Run)
-    }
-
-    pub(crate) async fn tables(&self) -> Result<Vec<TableSchema>, CustomError> {
-        self.catalog.tables().await.map_err(CustomError::Catalog)
     }
 
     /// Whether every body in a batch can be stored, before any of it is.

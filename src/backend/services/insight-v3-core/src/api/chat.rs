@@ -1,8 +1,6 @@
 //! The chat endpoint: answers a question from the data, or writes
 //! metric/widget/dashboard definitions.
 
-use std::fmt::Write as _;
-
 use std::sync::Arc;
 
 use axum::extract::Extension;
@@ -16,13 +14,12 @@ use utoipa::ToSchema;
 
 use super::AppState;
 use super::errors::ApiErrors;
-use crate::chat::{Ask, Catalogue, ChatError, KnownTable, Proposal, Schemas, Turn};
+use crate::chat::{Ask, ChatError, Proposal, Turn};
+use crate::domain::assistant::CatalogSchemas;
 use crate::domain::definition::{Change, Definition, DefinitionKind, DefinitionName};
 use crate::domain::query::metric_query::{
     MetricQuery, MetricQueryError, MetricRunError, RunResult,
 };
-use crate::store::catalog::{Catalog, Layer, TableSchema};
-use crate::store::tables::TableName;
 
 #[resource_error("gts.cf.insight.insight_v3_core.chat.v1~")]
 struct ChatApiError;
@@ -112,22 +109,17 @@ async fn handle_chat(
     })
     .await?;
 
-    let tables = known_tables(&state).await;
-    let catalogue = catalogue(&state).await;
-    let map = layer_map(state.catalog()).await;
-    let allowed = queryable_tables(state.catalog(), &tables).await;
-    let schemas = CatalogSchemas {
-        catalog: state.catalog(),
-    };
+    let briefing = state.assistant().briefing().await;
+    let schemas = CatalogSchemas::new(state.catalog());
     let proposal = state
         .chat()
         .propose(&Ask {
             message: &request.message,
             turns: &request.history,
-            tables: &tables,
-            catalogue: &catalogue,
-            map: &map,
-            allowed: &allowed,
+            tables: &briefing.tables,
+            catalogue: &briefing.catalogue,
+            map: &briefing.map,
+            allowed: &briefing.allowed,
             schemas: &schemas,
             people: state.metrics().people(),
         })
@@ -238,187 +230,6 @@ async fn named_by_novelty(
     }
 
     Ok((created, updated))
-}
-
-/// Every table a query may name, as it must name it: `database.table` for a
-/// table in a layer, and the bare name for one ingested here, which a stored
-/// metric has always addressed without a database.
-///
-/// This is what stops the model querying a table it invented - it reached for
-/// `information_schema` when it had nothing else - while letting it reach
-/// every real table on the stand.
-async fn queryable_tables(catalog: &Catalog, ingested: &[KnownTable]) -> Vec<String> {
-    let mut allowed: Vec<String> = ingested.iter().map(|table| table.name.clone()).collect();
-
-    match catalog.tables().await {
-        Ok(tables) => allowed.extend(
-            tables
-                .iter()
-                .map(|table| format!("{}.{}", table.database, table.table)),
-        ),
-        Err(error) => {
-            tracing::warn!(error = ?error, "could not list the stand's tables for the chat");
-        }
-    }
-
-    allowed
-}
-
-/// Every table on the stand, grouped by layer, names only.
-///
-/// The map is what lets the model reach bronze, silver, gold and identity
-/// without a hardcoded list: it is read from the stand each time, so a
-/// database added on another stand appears with no code change. Columns are
-/// left out on purpose - they run to tens of thousands of tokens - and the
-/// model asks for the ones it needs through `look_up`.
-async fn layer_map(catalog: &Catalog) -> String {
-    let tables = match catalog.tables().await {
-        Ok(tables) => tables,
-        Err(error) => {
-            tracing::warn!(error = ?error, "could not map the stand for the chat");
-            return String::new();
-        }
-    };
-
-    let mut rendered = String::new();
-    for (layer, label) in [
-        (Layer::Gold, "Gold (published metrics)"),
-        (Layer::Silver, "Silver (cleaned per-source models)"),
-        (Layer::Identity, "Identity (who people are)"),
-        (Layer::Bronze, "Bronze (raw provider payloads)"),
-        (Layer::Ingest, "Ingested here (one JSON payload column)"),
-    ] {
-        let of_layer: Vec<&TableSchema> =
-            tables.iter().filter(|table| table.layer == layer).collect();
-        if of_layer.is_empty() {
-            continue;
-        }
-
-        rendered.push_str(label);
-        rendered.push('\n');
-        // Grouped by database, because that is what a query has to name.
-        let mut database = "";
-        for table in of_layer {
-            if table.database != database {
-                database = &table.database;
-                let _ = writeln!(rendered, "  {database}:");
-            }
-            let _ = writeln!(rendered, "    {}", table.table);
-        }
-        rendered.push('\n');
-    }
-
-    rendered
-}
-
-/// What is already stored, so the model can name it, reuse it, and replace it
-/// when the reader asks for a change. A listing failure degrades the hint; it
-/// does not fail the chat.
-async fn catalogue(state: &AppState) -> Catalogue {
-    let mut built = Vec::with_capacity(DefinitionKind::ALL.len());
-
-    for kind in DefinitionKind::ALL {
-        built.push((kind, names(state, kind).await));
-    }
-
-    Catalogue::new(built)
-}
-
-async fn names(state: &AppState, kind: DefinitionKind) -> Vec<String> {
-    match state.definitions().list(kind).await {
-        Ok(names) => names,
-        Err(error) => {
-            tracing::warn!(error = ?error, ?kind, "could not list definitions for the chat");
-            Vec::new()
-        }
-    }
-}
-
-/// The tables the reader has data in, each with the field names and types
-/// `TableStore::sample_fields` found in its most recent rows. A table with
-/// nothing in it is left out.
-///
-/// Read from the ingested tables themselves, so a stand with no metrics yet
-/// still tells the model what data exists. A listing failure degrades the
-/// hint; it does not fail the chat.
-async fn known_tables(state: &AppState) -> Vec<KnownTable> {
-    let names = match state.tables().list().await {
-        Ok(names) => names,
-        Err(error) => {
-            tracing::warn!(error = ?error, "could not list tables to seed chat table hints");
-            return Vec::new();
-        }
-    };
-
-    let mut described = Vec::with_capacity(names.len());
-    for name in names {
-        let Ok(table_name) = TableName::parse(&name) else {
-            continue;
-        };
-        let fields = state
-            .tables()
-            .sample_fields(&table_name)
-            .await
-            .unwrap_or_default();
-
-        // Nothing has landed here, so there are no fields to query and
-        // naming it only crowds the list the reader is shown.
-        if fields.is_empty() {
-            continue;
-        }
-
-        described.push(KnownTable {
-            fields: fields
-                .iter()
-                .map(|(field, kind)| format!("{field} ({kind})"))
-                .collect::<Vec<_>>()
-                .join(", "),
-            name,
-        });
-    }
-
-    described
-}
-
-/// The columns of the tables the model asked about, read from the same
-/// listing the map came from.
-#[derive(Debug)]
-struct CatalogSchemas<'a> {
-    catalog: &'a Catalog,
-}
-
-#[async_trait::async_trait]
-impl Schemas for CatalogSchemas<'_> {
-    async fn describe(&self, tables: &[String]) -> String {
-        let found = match self.catalog.describe(tables).await {
-            Ok(found) => found,
-            Err(error) => {
-                tracing::warn!(error = ?error, "a schema lookup failed");
-                return "The schema could not be read. Answer from the map alone.".to_owned();
-            }
-        };
-
-        let mut rendered = String::new();
-        for table in &found {
-            let _ = writeln!(rendered, "{}.{}", table.database, table.table);
-            for (column, kind) in &table.columns {
-                let _ = writeln!(rendered, "  {column} {kind}");
-            }
-        }
-
-        // A name that resolved to nothing is said so rather than left out:
-        // silence reads as "no columns" and the model invents them.
-        for asked in tables {
-            let matched = found.iter().any(|table| {
-                asked == &format!("{}.{}", table.database, table.table) || asked == &table.table
-            });
-            if !matched {
-                let _ = writeln!(rendered, "{asked}: no such table on this stand");
-            }
-        }
-
-        rendered
-    }
 }
 
 /// What an answer says when its query found nothing.

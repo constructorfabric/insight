@@ -134,7 +134,19 @@ impl AppState {
     }
 
     pub(crate) fn surfaces(&self) -> crate::domain::surfaces::Surfaces<'_> {
-        crate::domain::surfaces::Surfaces::new(
+        crate::domain::surfaces::Surfaces::new(self.definitions.as_ref())
+    }
+
+    pub(crate) fn assistant(&self) -> crate::domain::assistant::Assistant<'_> {
+        crate::domain::assistant::Assistant::new(
+            self.definitions.as_ref(),
+            &self.catalog,
+            &self.tables,
+        )
+    }
+
+    pub(crate) fn metric_runs(&self) -> crate::domain::metric_run::MetricRuns<'_> {
+        crate::domain::metric_run::MetricRuns::new(
             self.definitions.as_ref(),
             &self.metrics,
             &self.catalog,

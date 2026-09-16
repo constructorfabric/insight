@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 use crate::api::AppState;
 use crate::domain::definition::{DefinitionKind, DefinitionName, Page};
 use crate::domain::kinds::dashboard::Item;
+use crate::domain::metric_run::MetricRuns;
 use crate::domain::query::time_window::WindowRequest;
 use crate::domain::surfaces::{CustomError, Surfaces};
 use crate::store::catalog::{Layer, TableSchema};
@@ -124,6 +125,10 @@ impl CustomSurfaces {
 
     fn surfaces(&self) -> Surfaces<'_> {
         self.state.surfaces()
+    }
+
+    fn metric_runs(&self) -> MetricRuns<'_> {
+        self.state.metric_runs()
     }
 
     /// One page of names, with how many there are to page through.
@@ -295,7 +300,7 @@ impl CustomSurfaces {
             Err(error) => return refuse(&error.to_string()),
         };
 
-        match self.surfaces().run_metric(&parsed, &requested).await {
+        match self.metric_runs().run(&parsed, &requested).await {
             Ok(result) => match serde_json::to_value(&result) {
                 Ok(value) => CallToolResult::structured(value),
                 Err(error) => {
@@ -312,7 +317,7 @@ impl CustomSurfaces {
         description = "Every database and table this server can see, each with its columns and the layer it belongs to. Call this before writing a metric, so the metric names a table and columns that exist."
     )]
     async fn list_tables(&self) -> CallToolResult {
-        let tables = match self.surfaces().tables().await {
+        let tables = match self.metric_runs().tables().await {
             Ok(tables) => tables,
             Err(error) => return tool_error(&error),
         };

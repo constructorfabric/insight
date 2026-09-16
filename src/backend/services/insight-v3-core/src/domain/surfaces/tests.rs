@@ -31,8 +31,12 @@ impl Fixture {
         }
     }
 
+    fn metric_runs(&self) -> crate::domain::metric_run::MetricRuns<'_> {
+        crate::domain::metric_run::MetricRuns::new(&self.definitions, &self.metrics, &self.catalog)
+    }
+
     fn surfaces(&self) -> Surfaces<'_> {
-        Surfaces::new(&self.definitions, &self.metrics, &self.catalog)
+        Surfaces::new(&self.definitions)
     }
 }
 
@@ -262,11 +266,7 @@ async fn running_a_metric_whose_stored_body_is_not_a_query_reports_the_body() ->
         )
         .await?;
 
-    let Err(error) = fixture
-        .surfaces()
-        .run_metric(&name("broken"), &legacy())
-        .await
-    else {
+    let Err(error) = fixture.metric_runs().run(&name("broken"), &legacy()).await else {
         panic!("a query with no fields does not deserialize");
     };
 
@@ -279,11 +279,7 @@ async fn running_a_metric_whose_stored_body_is_not_a_query_reports_the_body() ->
 async fn running_a_metric_that_was_never_stored_reports_it_missing() {
     let fixture = Fixture::new();
 
-    let Err(error) = fixture
-        .surfaces()
-        .run_metric(&name("absent"), &legacy())
-        .await
-    else {
+    let Err(error) = fixture.metric_runs().run(&name("absent"), &legacy()).await else {
         panic!("there is no such metric to run");
     };
 
@@ -335,8 +331,9 @@ async fn a_range_asked_of_a_metric_with_no_clock_is_refused_before_any_read() ->
         .put(DefinitionKind::Metric, &name("clockless"), &metric_body())
         .await?;
 
-    let Err(error) = surfaces
-        .run_metric(&name("clockless"), &ranged("P7D"))
+    let Err(error) = fixture
+        .metric_runs()
+        .run(&name("clockless"), &ranged("P7D"))
         .await
     else {
         panic!("a clockless metric cannot answer a range");

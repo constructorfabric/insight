@@ -105,8 +105,8 @@ async fn run_metric(
         .map_err(|error| window_error(&error))?;
 
     let result = state
-        .surfaces()
-        .run_metric(&name, &requested)
+        .metric_runs()
+        .run(&name, &requested)
         .await
         .map_err(custom_error)?;
 
