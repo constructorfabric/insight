@@ -21,12 +21,22 @@ from jsonschema import Draft7Validator
 from connector_tests.source import connector_dir, load_manifest
 
 
+def _manifest_streams(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    streams: list[dict[str, Any]] = []
+    for entry in manifest.get("streams", []):
+        if entry.get("type") == "ConditionalStreams":
+            streams.extend(entry["streams"])
+        else:
+            streams.append(entry)
+    return streams
+
+
 def stream_schema(connector_path: str, stream: str) -> dict[str, Any]:
     schema_file = connector_dir(connector_path) / "schemas" / f"{stream}.json"
     if schema_file.is_file():
         with open(schema_file) as f:
             return json.load(f)
-    for s in load_manifest(connector_path).get("streams", []):
+    for s in _manifest_streams(load_manifest(connector_path)):
         if s.get("name") == stream:
             loader = s.get("schema_loader") or {}
             if loader.get("type") == "InlineSchemaLoader":

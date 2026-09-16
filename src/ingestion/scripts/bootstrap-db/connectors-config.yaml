@@ -138,6 +138,8 @@ connectors:
           - fake
       bitbucket_start_date:
         value: '2020-01-01'
+      bitbucket_enable_ci:
+        value: 'true'
       git_proxy_url:
         value: http://fake
       git_proxy_token:
