@@ -70,6 +70,7 @@ repository nobody has touched since it is never listed, so never cloned.
 | `bitbucket_api_base_url` | No | API base URL (default `https://api.bitbucket.org/2.0`) |
 | `bitbucket_exclude_repositories` | No | JSON array of regular expressions matched against a repository slug; a match is never listed, cloned or walked. Matched with `search`, so anchor with `$` for "ends with" (e.g. `["\\.rospecs$"]`). Empty collects everything |
 | `bitbucket_api_calls_per_hour` | No | Requests per hour spent against the Bitbucket API, as a string (default `"1000"`, the documented floor for repository data). Raise it where the token is granted more; proxy calls are not counted |
+| `bitbucket_enable_ci` | No | Set to `"true"` to enable the `pipelines` and `deployments` streams (default `"false"`) |
 | `bitbucket_start_date` | Yes | Earliest date fetched, by every stream (YYYY-MM-DD); bounds the first-sync cost |
 
 ### Automatically injected
@@ -102,8 +103,11 @@ kubectl apply -f src/ingestion/secrets/connectors/bitbucket-cloud.yaml
 | `pull_request_diffstat` | `/pullrequests/{id}/diffstat` | windowed PR parent, full refresh per PR | — |
 | `pull_request_activity` | `/pullrequests/{id}/activity` | windowed PR parent, full refresh per PR | — |
 | `workspace_members` | `/workspaces/{w}/members` | full refresh | — |
-| `pipelines` | `/repositories/{r}/pipelines` | newest-first data feed | `created_on` |
-| `deployments` | `/repositories/{r}/deployments` | newest-first data feed | `created_on` |
+| `pipelines` (optional) | `/repositories/{r}/pipelines` | newest-first data feed | `created_on` |
+| `deployments` (optional) | `/repositories/{r}/deployments` | newest-first data feed | `created_on` |
+
+The optional CI streams are discovered only when `bitbucket_enable_ci` is
+`"true"`. They are disabled by default.
 
 ### How the streams fit together
 

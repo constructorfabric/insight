@@ -2845,466 +2845,469 @@ streams:
         field_pointers:
           - [user]
 
-  # ── CI pipelines (Bitbucket API) ────────────────────────────────────────
-  # No `fields=` projection: partial-response support on this endpoint is
-  # unreliable, so the full object ships.
-  - type: DeclarativeStream
-    name: pipelines
-    primary_key:
-      - unique_key
-    schema_loader:
-      type: InlineSchemaLoader
-      schema:
-        type: object
-        $schema: http://json-schema.org/schema#
-        properties:
-          unique_key: {type: string}
-          tenant_id: {type: [string, "null"]}
-          source_id: {type: [string, "null"]}
-          data_source: {type: [string, "null"]}
-          collected_at: {type: [string, "null"]}
-          uuid: {type: [string, "null"]}
-          build_number: {type: [integer, "null"]}
-          repo_full_name: {type: [string, "null"]}
-          state_name: {type: [string, "null"]}
-          result_name: {type: [string, "null"]}
-          target_ref: {type: [string, "null"]}
-          target_commit_sha: {type: [string, "null"]}
-          trigger_name: {type: [string, "null"]}
-          creator_uuid: {type: [string, "null"]}
-          creator_account_id: {type: [string, "null"]}
-          creator_display_name: {type: [string, "null"]}
-          duration_in_seconds: {type: [integer, "null"]}
-          created_on: {type: [string, "null"]}
-          completed_on: {type: [string, "null"]}
-        required:
+  - type: ConditionalStreams
+    condition: "{{ config.get('bitbucket_enable_ci', 'false') == 'true' }}"
+    streams:
+      # ── CI pipelines (Bitbucket API) ────────────────────────────────────────
+      # No `fields=` projection: partial-response support on this endpoint is
+      # unreliable, so the full object ships.
+      - type: DeclarativeStream
+        name: pipelines
+        primary_key:
           - unique_key
-        additionalProperties: true
-    retriever:
-      type: SimpleRetriever
-      requester:
-        type: HttpRequester
-        url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
-        authenticator:
-          type: ApiKeyAuthenticator
-          inject_into:
-            type: RequestOption
-            inject_into: header
-            field_name: Authorization
-          # Personal API tokens are Basic username:token; workspace, project
-          # and repository access tokens are Bearer and leave it empty.
-          api_token: >-
-            {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
-        # Trailing slash is load-bearing: without it this endpoint 404s.
-        path: "/repositories/{{ stream_partition.repo_full_name }}/pipelines/"
-        http_method: GET
-        request_parameters:
-          pagelen: "100"
-          # Newest first + data-feed stop: `q` is NOT implemented on the
-          # pipelines-module endpoints, so ascending with a server filter is
-          # impossible and plain ascending would rescan all history each sync.
-          sort: -created_on
-        error_handler:
-          type: DefaultErrorHandler
-          max_retries: 5
-          backoff_strategies: *vendor_backoff
-          response_filters:
-            - type: HttpResponseFilter
-              http_codes: [429]
-              action: RATE_LIMITED
-              error_message: Bitbucket hourly rate budget exhausted
-            - type: HttpResponseFilter
-              http_codes: [403, 404]
-              action: IGNORE
-              error_message: >-
-                Pipelines not enabled or not visible for this repository; other repositories continue.
-            - type: HttpResponseFilter
-              http_codes: [401]
-              action: FAIL
-              failure_type: config_error
-              error_message: >-
-                Bitbucket rejected the credentials. Personal API tokens need
-                bitbucket_username set (Basic auth); workspace, project and repository access tokens must
-                NOT set it (Bearer). Mixing the two is the most common cause.
-            - type: HttpResponseFilter
-              http_codes: [500, 502, 503, 504]
-              action: RETRY
-              error_message: Transient Bitbucket error
-      record_selector:
-        type: RecordSelector
-        extractor:
-          type: DpathExtractor
-          field_path: [values]
-      paginator:
-        type: DefaultPaginator
-        pagination_strategy:
-          type: CursorPagination
-          cursor_value: "{{ response.get('next', '') }}"
-          stop_condition: "{{ not response.get('next') }}"
-        page_token_option:
-          type: RequestPath
-      partition_router:
-        type: SubstreamPartitionRouter
-        parent_stream_configs:
-          - type: ParentStreamConfig
-            parent_key: full_name
-            partition_field: repo_full_name
-            stream:
-              type: DeclarativeStream
-              name: repositories_for_pipelines
-              primary_key:
-                - uuid
-              schema_loader:
-                type: InlineSchemaLoader
-                schema:
-                  type: object
-                  $schema: http://json-schema.org/schema#
-                  properties:
-                    uuid: {type: [string, "null"]}
-                    full_name: {type: [string, "null"]}
-                    updated_on: {type: [string, "null"]}
-                  additionalProperties: true
-              retriever:
-                type: SimpleRetriever
-                requester:
-                  type: HttpRequester
-                  url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
-                  authenticator:
-                    type: ApiKeyAuthenticator
-                    inject_into:
-                      type: RequestOption
-                      inject_into: header
-                      field_name: Authorization
-                    # Personal API tokens are Basic username:token; workspace, project
-                    # and repository access tokens are Bearer and leave it empty.
-                    api_token: >-
-                      {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
-                  path: "/repositories/{{ stream_partition.workspace }}"
-                  http_method: GET
-                  request_parameters:
-                    <<: *repos_since_start
-                    fields: next,values.uuid,values.slug,values.full_name,values.updated_on
-                  error_handler: *discovery_error_handler
-                record_selector: *repos_selector
-                paginator:
-                  type: DefaultPaginator
-                  pagination_strategy:
-                    type: CursorPagination
-                    cursor_value: "{{ response.get('next', '') }}"
-                    stop_condition: "{{ not response.get('next') }}"
-                  page_token_option:
-                    type: RequestPath
-                partition_router:
-                  type: ListPartitionRouter
-                  values: "{{ config['bitbucket_workspaces'] }}"
-                  cursor_field: workspace
-    incremental_sync:
-      type: DatetimeBasedCursor
-      cursor_field: created_on
-      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
-      cursor_datetime_formats:
-        - "%Y-%m-%dT%H:%M:%S.%f%z"
-        - "%Y-%m-%dT%H:%M:%S%z"
-      # created_on is immutable, so no lookback; descending order + data-feed
-      # stop is what makes each sync O(new records).
-      # VERIFIED against the CDK: the data-feed stop halts pagination at the
-      # first record older than the slice start, but the boundary PAGE's tail
-      # still emits — up to one page of pre-start_date rows per partition
-      # lands in bronze. Do NOT "fix" this with a record_filter: the stop
-      # condition evaluates POST-filter records, so filtering the old tail
-      # away would keep pagination walking through all history instead.
-      is_data_feed: true
-      start_datetime:
-        type: MinMaxDatetime
-        datetime: "{{ config['bitbucket_start_date'] }}"
-        datetime_format: "%Y-%m-%d"
-    transformations:
-      - type: AddFields
-        fields:
-          - type: AddedFieldDefinition
-            path: [tenant_id]
-            value: "{{ config['insight_tenant_id'] }}"
-          - type: AddedFieldDefinition
-            path: [source_id]
-            value: "{{ config['insight_source_id'] }}"
-          - type: AddedFieldDefinition
-            path: [data_source]
-            value: insight_bitbucket_cloud
-          - type: AddedFieldDefinition
-            path: [collected_at]
-            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
-          - type: AddedFieldDefinition
-            path: [repo_full_name]
-            value: "{{ stream_partition.repo_full_name }}"
-            value_type: string
-          - type: AddedFieldDefinition
-            path: [state_name]
-            value: "{{ (record.get('state') or {}).get('name') or '' }}"
-            value_type: string
-          - type: AddedFieldDefinition
-            path: [result_name]
-            value: "{{ ((record.get('state') or {}).get('result') or {}).get('name') or '' }}"
-            value_type: string
-          - type: AddedFieldDefinition
-            path: [target_ref]
-            value: "{{ (record.get('target') or {}).get('ref_name') or '' }}"
-            value_type: string
-          - type: AddedFieldDefinition
-            path: [target_commit_sha]
-            value: "{{ ((record.get('target') or {}).get('commit') or {}).get('hash') or '' }}"
-            value_type: string
-          - type: AddedFieldDefinition
-            path: [trigger_name]
-            value: "{{ (record.get('trigger') or {}).get('name') or '' }}"
-            value_type: string
-          - type: AddedFieldDefinition
-            path: [creator_uuid]
-            value: "{{ (record.get('creator') or {}).get('uuid') or '' }}"
-            value_type: string
-          - type: AddedFieldDefinition
-            path: [creator_account_id]
-            value: "{{ (record.get('creator') or {}).get('account_id') or '' }}"
-            value_type: string
-          - type: AddedFieldDefinition
-            path: [creator_display_name]
-            value: "{{ (record.get('creator') or {}).get('display_name') or '' }}"
-            value_type: string
-          - type: AddedFieldDefinition
-            path: [unique_key]
-            value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:{{ record['uuid'] | replace(':', '%3A') }}
-      - type: RemoveFields
-        # Hoisted above; the nested originals stay out of bronze.
-        field_pointers:
-          - [state]
-          - [target]
-          - [trigger]
-          - [creator]
+        schema_loader:
+          type: InlineSchemaLoader
+          schema:
+            type: object
+            $schema: http://json-schema.org/schema#
+            properties:
+              unique_key: {type: string}
+              tenant_id: {type: [string, "null"]}
+              source_id: {type: [string, "null"]}
+              data_source: {type: [string, "null"]}
+              collected_at: {type: [string, "null"]}
+              uuid: {type: [string, "null"]}
+              build_number: {type: [integer, "null"]}
+              repo_full_name: {type: [string, "null"]}
+              state_name: {type: [string, "null"]}
+              result_name: {type: [string, "null"]}
+              target_ref: {type: [string, "null"]}
+              target_commit_sha: {type: [string, "null"]}
+              trigger_name: {type: [string, "null"]}
+              creator_uuid: {type: [string, "null"]}
+              creator_account_id: {type: [string, "null"]}
+              creator_display_name: {type: [string, "null"]}
+              duration_in_seconds: {type: [integer, "null"]}
+              created_on: {type: [string, "null"]}
+              completed_on: {type: [string, "null"]}
+            required:
+              - unique_key
+            additionalProperties: true
+        retriever:
+          type: SimpleRetriever
+          requester:
+            type: HttpRequester
+            url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
+            authenticator:
+              type: ApiKeyAuthenticator
+              inject_into:
+                type: RequestOption
+                inject_into: header
+                field_name: Authorization
+              # Personal API tokens are Basic username:token; workspace, project
+              # and repository access tokens are Bearer and leave it empty.
+              api_token: >-
+                {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
+            # Trailing slash is load-bearing: without it this endpoint 404s.
+            path: "/repositories/{{ stream_partition.repo_full_name }}/pipelines/"
+            http_method: GET
+            request_parameters:
+              pagelen: "100"
+              # Newest first + data-feed stop: `q` is NOT implemented on the
+              # pipelines-module endpoints, so ascending with a server filter is
+              # impossible and plain ascending would rescan all history each sync.
+              sort: -created_on
+            error_handler:
+              type: DefaultErrorHandler
+              max_retries: 5
+              backoff_strategies: *vendor_backoff
+              response_filters:
+                - type: HttpResponseFilter
+                  http_codes: [429]
+                  action: RATE_LIMITED
+                  error_message: Bitbucket hourly rate budget exhausted
+                - type: HttpResponseFilter
+                  http_codes: [403, 404]
+                  action: IGNORE
+                  error_message: >-
+                    Pipelines not enabled or not visible for this repository; other repositories continue.
+                - type: HttpResponseFilter
+                  http_codes: [401]
+                  action: FAIL
+                  failure_type: config_error
+                  error_message: >-
+                    Bitbucket rejected the credentials. Personal API tokens need
+                    bitbucket_username set (Basic auth); workspace, project and repository access tokens must
+                    NOT set it (Bearer). Mixing the two is the most common cause.
+                - type: HttpResponseFilter
+                  http_codes: [500, 502, 503, 504]
+                  action: RETRY
+                  error_message: Transient Bitbucket error
+          record_selector:
+            type: RecordSelector
+            extractor:
+              type: DpathExtractor
+              field_path: [values]
+          paginator:
+            type: DefaultPaginator
+            pagination_strategy:
+              type: CursorPagination
+              cursor_value: "{{ response.get('next', '') }}"
+              stop_condition: "{{ not response.get('next') }}"
+            page_token_option:
+              type: RequestPath
+          partition_router:
+            type: SubstreamPartitionRouter
+            parent_stream_configs:
+              - type: ParentStreamConfig
+                parent_key: full_name
+                partition_field: repo_full_name
+                stream:
+                  type: DeclarativeStream
+                  name: repositories_for_pipelines
+                  primary_key:
+                    - uuid
+                  schema_loader:
+                    type: InlineSchemaLoader
+                    schema:
+                      type: object
+                      $schema: http://json-schema.org/schema#
+                      properties:
+                        uuid: {type: [string, "null"]}
+                        full_name: {type: [string, "null"]}
+                        updated_on: {type: [string, "null"]}
+                      additionalProperties: true
+                  retriever:
+                    type: SimpleRetriever
+                    requester:
+                      type: HttpRequester
+                      url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
+                      authenticator:
+                        type: ApiKeyAuthenticator
+                        inject_into:
+                          type: RequestOption
+                          inject_into: header
+                          field_name: Authorization
+                        # Personal API tokens are Basic username:token; workspace, project
+                        # and repository access tokens are Bearer and leave it empty.
+                        api_token: >-
+                          {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
+                      path: "/repositories/{{ stream_partition.workspace }}"
+                      http_method: GET
+                      request_parameters:
+                        <<: *repos_since_start
+                        fields: next,values.uuid,values.slug,values.full_name,values.updated_on
+                      error_handler: *discovery_error_handler
+                    record_selector: *repos_selector
+                    paginator:
+                      type: DefaultPaginator
+                      pagination_strategy:
+                        type: CursorPagination
+                        cursor_value: "{{ response.get('next', '') }}"
+                        stop_condition: "{{ not response.get('next') }}"
+                      page_token_option:
+                        type: RequestPath
+                    partition_router:
+                      type: ListPartitionRouter
+                      values: "{{ config['bitbucket_workspaces'] }}"
+                      cursor_field: workspace
+        incremental_sync:
+          type: DatetimeBasedCursor
+          cursor_field: created_on
+          datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+          cursor_datetime_formats:
+            - "%Y-%m-%dT%H:%M:%S.%f%z"
+            - "%Y-%m-%dT%H:%M:%S%z"
+          # created_on is immutable, so no lookback; descending order + data-feed
+          # stop is what makes each sync O(new records).
+          # VERIFIED against the CDK: the data-feed stop halts pagination at the
+          # first record older than the slice start, but the boundary PAGE's tail
+          # still emits — up to one page of pre-start_date rows per partition
+          # lands in bronze. Do NOT "fix" this with a record_filter: the stop
+          # condition evaluates POST-filter records, so filtering the old tail
+          # away would keep pagination walking through all history instead.
+          is_data_feed: true
+          start_datetime:
+            type: MinMaxDatetime
+            datetime: "{{ config['bitbucket_start_date'] }}"
+            datetime_format: "%Y-%m-%d"
+        transformations:
+          - type: AddFields
+            fields:
+              - type: AddedFieldDefinition
+                path: [tenant_id]
+                value: "{{ config['insight_tenant_id'] }}"
+              - type: AddedFieldDefinition
+                path: [source_id]
+                value: "{{ config['insight_source_id'] }}"
+              - type: AddedFieldDefinition
+                path: [data_source]
+                value: insight_bitbucket_cloud
+              - type: AddedFieldDefinition
+                path: [collected_at]
+                value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+              - type: AddedFieldDefinition
+                path: [repo_full_name]
+                value: "{{ stream_partition.repo_full_name }}"
+                value_type: string
+              - type: AddedFieldDefinition
+                path: [state_name]
+                value: "{{ (record.get('state') or {}).get('name') or '' }}"
+                value_type: string
+              - type: AddedFieldDefinition
+                path: [result_name]
+                value: "{{ ((record.get('state') or {}).get('result') or {}).get('name') or '' }}"
+                value_type: string
+              - type: AddedFieldDefinition
+                path: [target_ref]
+                value: "{{ (record.get('target') or {}).get('ref_name') or '' }}"
+                value_type: string
+              - type: AddedFieldDefinition
+                path: [target_commit_sha]
+                value: "{{ ((record.get('target') or {}).get('commit') or {}).get('hash') or '' }}"
+                value_type: string
+              - type: AddedFieldDefinition
+                path: [trigger_name]
+                value: "{{ (record.get('trigger') or {}).get('name') or '' }}"
+                value_type: string
+              - type: AddedFieldDefinition
+                path: [creator_uuid]
+                value: "{{ (record.get('creator') or {}).get('uuid') or '' }}"
+                value_type: string
+              - type: AddedFieldDefinition
+                path: [creator_account_id]
+                value: "{{ (record.get('creator') or {}).get('account_id') or '' }}"
+                value_type: string
+              - type: AddedFieldDefinition
+                path: [creator_display_name]
+                value: "{{ (record.get('creator') or {}).get('display_name') or '' }}"
+                value_type: string
+              - type: AddedFieldDefinition
+                path: [unique_key]
+                value: >-
+                  {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:{{ record['uuid'] | replace(':', '%3A') }}
+          - type: RemoveFields
+            # Hoisted above; the nested originals stay out of bronze.
+            field_pointers:
+              - [state]
+              - [target]
+              - [trigger]
+              - [creator]
 
-  # ── Deployments (Bitbucket API) ─────────────────────────────────────────
-  # Same pipelines-module shape; outcome (`state`) IS in the list, unlike
-  # GitHub. Sort support here is thinner than on /pipelines/ — verify
-  # `sort=-created_on` on the live smoke; the data-feed stop keeps
-  # correctness either way.
-  - type: DeclarativeStream
-    name: deployments
-    primary_key:
-      - unique_key
-    schema_loader:
-      type: InlineSchemaLoader
-      schema:
-        type: object
-        $schema: http://json-schema.org/schema#
-        properties:
-          unique_key: {type: string}
-          tenant_id: {type: [string, "null"]}
-          source_id: {type: [string, "null"]}
-          data_source: {type: [string, "null"]}
-          collected_at: {type: [string, "null"]}
-          uuid: {type: [string, "null"]}
-          repo_full_name: {type: [string, "null"]}
-          state_name: {type: [string, "null"]}
-          state_status: {type: [string, "null"]}
-          environment_uuid: {type: [string, "null"]}
-          deployable_commit_sha: {type: [string, "null"]}
-          deployable_pipeline_uuid: {type: [string, "null"]}
-          created_on: {type: [string, "null"]}
-          last_update_time: {type: [string, "null"]}
-        required:
+      # ── Deployments (Bitbucket API) ─────────────────────────────────────────
+      # Same pipelines-module shape; outcome (`state`) IS in the list, unlike
+      # GitHub. Sort support here is thinner than on /pipelines/ — verify
+      # `sort=-created_on` on the live smoke; the data-feed stop keeps
+      # correctness either way.
+      - type: DeclarativeStream
+        name: deployments
+        primary_key:
           - unique_key
-        additionalProperties: true
-    retriever:
-      type: SimpleRetriever
-      requester:
-        type: HttpRequester
-        url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
-        authenticator:
-          type: ApiKeyAuthenticator
-          inject_into:
-            type: RequestOption
-            inject_into: header
-            field_name: Authorization
-          # Personal API tokens are Basic username:token; workspace, project
-          # and repository access tokens are Bearer and leave it empty.
-          api_token: >-
-            {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
-        # Trailing slash is load-bearing: without it this endpoint 404s.
-        path: "/repositories/{{ stream_partition.repo_full_name }}/deployments/"
-        http_method: GET
-        request_parameters:
-          # No sort and no q, and neither is an oversight. VERIFIED live:
-          # `sort=created_on` is rejected 400 ("Invalid sort attribute"), and a
-          # `q` on created_on is ACCEPTED AND SILENTLY IGNORED — a cutoff years
-          # in the future still returns every row. The start-date bound cannot
-          # be pushed to this endpoint at all, so it is applied to the records
-          # instead (incremental_sync below): the requests still walk a
-          # repository's whole deploy history, but nothing older than the bound
-          # reaches bronze. Every other stream filters server-side; this one
-          # cannot.
-          pagelen: "100"
-        error_handler:
-          type: DefaultErrorHandler
-          max_retries: 5
-          backoff_strategies: *vendor_backoff
-          response_filters:
-            - type: HttpResponseFilter
-              http_codes: [429]
-              action: RATE_LIMITED
-              error_message: Bitbucket hourly rate budget exhausted
-            - type: HttpResponseFilter
-              http_codes: [403, 404]
-              action: IGNORE
-              error_message: >-
-                Pipelines not enabled or not visible for this repository; other repositories continue.
-            - type: HttpResponseFilter
-              http_codes: [401]
-              action: FAIL
-              failure_type: config_error
-              error_message: >-
-                Bitbucket rejected the credentials. Personal API tokens need
-                bitbucket_username set (Basic auth); workspace, project and repository access tokens must
-                NOT set it (Bearer). Mixing the two is the most common cause.
-            - type: HttpResponseFilter
-              http_codes: [500, 502, 503, 504]
-              action: RETRY
-              error_message: Transient Bitbucket error
-      record_selector:
-        type: RecordSelector
-        extractor:
-          type: DpathExtractor
-          field_path: [values]
-      paginator:
-        type: DefaultPaginator
-        pagination_strategy:
-          type: CursorPagination
-          cursor_value: "{{ response.get('next', '') }}"
-          stop_condition: "{{ not response.get('next') }}"
-        page_token_option:
-          type: RequestPath
-      partition_router:
-        type: SubstreamPartitionRouter
-        parent_stream_configs:
-          - type: ParentStreamConfig
-            parent_key: full_name
-            partition_field: repo_full_name
-            stream:
-              type: DeclarativeStream
-              name: repositories_for_deployments
-              primary_key:
-                - uuid
-              schema_loader:
-                type: InlineSchemaLoader
-                schema:
-                  type: object
-                  $schema: http://json-schema.org/schema#
-                  properties:
-                    uuid: {type: [string, "null"]}
-                    full_name: {type: [string, "null"]}
-                    updated_on: {type: [string, "null"]}
-                  additionalProperties: true
-              retriever:
-                type: SimpleRetriever
-                requester:
-                  type: HttpRequester
-                  url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
-                  authenticator:
-                    type: ApiKeyAuthenticator
-                    inject_into:
-                      type: RequestOption
-                      inject_into: header
-                      field_name: Authorization
-                    # Personal API tokens are Basic username:token; workspace, project
-                    # and repository access tokens are Bearer and leave it empty.
-                    api_token: >-
-                      {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
-                  path: "/repositories/{{ stream_partition.workspace }}"
-                  http_method: GET
-                  request_parameters:
-                    <<: *repos_since_start
-                    fields: next,values.uuid,values.slug,values.full_name,values.updated_on
-                  error_handler: *discovery_error_handler
-                record_selector: *repos_selector
-                paginator:
-                  type: DefaultPaginator
-                  pagination_strategy:
-                    type: CursorPagination
-                    cursor_value: "{{ response.get('next', '') }}"
-                    stop_condition: "{{ not response.get('next') }}"
-                  page_token_option:
-                    type: RequestPath
-                partition_router:
-                  type: ListPartitionRouter
-                  values: "{{ config['bitbucket_workspaces'] }}"
-                  cursor_field: workspace
-    incremental_sync:
-      type: DatetimeBasedCursor
-      cursor_field: created_on
-      datetime_format: "%Y-%m-%dT%H:%M:%S.%f%z"
-      cursor_datetime_formats:
-        - "%Y-%m-%dT%H:%M:%S.%f%z"
-        - "%Y-%m-%dT%H:%M:%S%z"
-      # The endpoint cannot filter or order (see the requester above), so the
-      # bound is enforced on the records after the fetch. This drops
-      # pre-start-date deployments rather than letting a repository's whole
-      # history accumulate in bronze forever.
-      is_client_side_incremental: true
-      start_datetime:
-        type: MinMaxDatetime
-        datetime: "{{ config['bitbucket_start_date'] }}"
-        datetime_format: "%Y-%m-%d"
-    transformations:
-      - type: AddFields
-        fields:
-          - type: AddedFieldDefinition
-            path: [tenant_id]
-            value: "{{ config['insight_tenant_id'] }}"
-          - type: AddedFieldDefinition
-            path: [source_id]
-            value: "{{ config['insight_source_id'] }}"
-          - type: AddedFieldDefinition
-            path: [data_source]
-            value: insight_bitbucket_cloud
-          - type: AddedFieldDefinition
-            path: [collected_at]
-            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
-          - type: AddedFieldDefinition
-            path: [repo_full_name]
-            value: "{{ stream_partition.repo_full_name }}"
-            value_type: string
-          - type: AddedFieldDefinition
-            path: [state_name]
-            value: "{{ (record.get('state') or {}).get('name') or '' }}"
-            value_type: string
-          - type: AddedFieldDefinition
-            path: [state_status]
-            value: "{{ ((record.get('state') or {}).get('status') or {}).get('name') or '' }}"
-            value_type: string
-          - type: AddedFieldDefinition
-            path: [environment_uuid]
-            value: "{{ (record.get('environment') or {}).get('uuid') or '' }}"
-            value_type: string
-          - type: AddedFieldDefinition
-            path: [deployable_commit_sha]
-            value: "{{ ((record.get('deployable') or {}).get('commit') or {}).get('hash') or '' }}"
-            value_type: string
-          - type: AddedFieldDefinition
-            path: [deployable_pipeline_uuid]
-            value: "{{ ((record.get('deployable') or {}).get('pipeline') or {}).get('uuid') or '' }}"
-            value_type: string
-          - type: AddedFieldDefinition
-            path: [created_on]
-            value: "{{ record.get('created_on') or (record.get('deployable') or {}).get('created_on') or '' }}"
-            value_type: string
-          - type: AddedFieldDefinition
-            path: [unique_key]
-            value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:{{ record['uuid'] | replace(':', '%3A') }}
-      - type: RemoveFields
-        # Hoisted above; the nested originals stay out of bronze.
-        field_pointers:
-          - [state]
-          - [environment]
-          - [deployable]
+        schema_loader:
+          type: InlineSchemaLoader
+          schema:
+            type: object
+            $schema: http://json-schema.org/schema#
+            properties:
+              unique_key: {type: string}
+              tenant_id: {type: [string, "null"]}
+              source_id: {type: [string, "null"]}
+              data_source: {type: [string, "null"]}
+              collected_at: {type: [string, "null"]}
+              uuid: {type: [string, "null"]}
+              repo_full_name: {type: [string, "null"]}
+              state_name: {type: [string, "null"]}
+              state_status: {type: [string, "null"]}
+              environment_uuid: {type: [string, "null"]}
+              deployable_commit_sha: {type: [string, "null"]}
+              deployable_pipeline_uuid: {type: [string, "null"]}
+              created_on: {type: [string, "null"]}
+              last_update_time: {type: [string, "null"]}
+            required:
+              - unique_key
+            additionalProperties: true
+        retriever:
+          type: SimpleRetriever
+          requester:
+            type: HttpRequester
+            url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
+            authenticator:
+              type: ApiKeyAuthenticator
+              inject_into:
+                type: RequestOption
+                inject_into: header
+                field_name: Authorization
+              # Personal API tokens are Basic username:token; workspace, project
+              # and repository access tokens are Bearer and leave it empty.
+              api_token: >-
+                {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
+            # Trailing slash is load-bearing: without it this endpoint 404s.
+            path: "/repositories/{{ stream_partition.repo_full_name }}/deployments/"
+            http_method: GET
+            request_parameters:
+              # No sort and no q, and neither is an oversight. VERIFIED live:
+              # `sort=created_on` is rejected 400 ("Invalid sort attribute"), and a
+              # `q` on created_on is ACCEPTED AND SILENTLY IGNORED — a cutoff years
+              # in the future still returns every row. The start-date bound cannot
+              # be pushed to this endpoint at all, so it is applied to the records
+              # instead (incremental_sync below): the requests still walk a
+              # repository's whole deploy history, but nothing older than the bound
+              # reaches bronze. Every other stream filters server-side; this one
+              # cannot.
+              pagelen: "100"
+            error_handler:
+              type: DefaultErrorHandler
+              max_retries: 5
+              backoff_strategies: *vendor_backoff
+              response_filters:
+                - type: HttpResponseFilter
+                  http_codes: [429]
+                  action: RATE_LIMITED
+                  error_message: Bitbucket hourly rate budget exhausted
+                - type: HttpResponseFilter
+                  http_codes: [403, 404]
+                  action: IGNORE
+                  error_message: >-
+                    Pipelines not enabled or not visible for this repository; other repositories continue.
+                - type: HttpResponseFilter
+                  http_codes: [401]
+                  action: FAIL
+                  failure_type: config_error
+                  error_message: >-
+                    Bitbucket rejected the credentials. Personal API tokens need
+                    bitbucket_username set (Basic auth); workspace, project and repository access tokens must
+                    NOT set it (Bearer). Mixing the two is the most common cause.
+                - type: HttpResponseFilter
+                  http_codes: [500, 502, 503, 504]
+                  action: RETRY
+                  error_message: Transient Bitbucket error
+          record_selector:
+            type: RecordSelector
+            extractor:
+              type: DpathExtractor
+              field_path: [values]
+          paginator:
+            type: DefaultPaginator
+            pagination_strategy:
+              type: CursorPagination
+              cursor_value: "{{ response.get('next', '') }}"
+              stop_condition: "{{ not response.get('next') }}"
+            page_token_option:
+              type: RequestPath
+          partition_router:
+            type: SubstreamPartitionRouter
+            parent_stream_configs:
+              - type: ParentStreamConfig
+                parent_key: full_name
+                partition_field: repo_full_name
+                stream:
+                  type: DeclarativeStream
+                  name: repositories_for_deployments
+                  primary_key:
+                    - uuid
+                  schema_loader:
+                    type: InlineSchemaLoader
+                    schema:
+                      type: object
+                      $schema: http://json-schema.org/schema#
+                      properties:
+                        uuid: {type: [string, "null"]}
+                        full_name: {type: [string, "null"]}
+                        updated_on: {type: [string, "null"]}
+                      additionalProperties: true
+                  retriever:
+                    type: SimpleRetriever
+                    requester:
+                      type: HttpRequester
+                      url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
+                      authenticator:
+                        type: ApiKeyAuthenticator
+                        inject_into:
+                          type: RequestOption
+                          inject_into: header
+                          field_name: Authorization
+                        # Personal API tokens are Basic username:token; workspace, project
+                        # and repository access tokens are Bearer and leave it empty.
+                        api_token: >-
+                          {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
+                      path: "/repositories/{{ stream_partition.workspace }}"
+                      http_method: GET
+                      request_parameters:
+                        <<: *repos_since_start
+                        fields: next,values.uuid,values.slug,values.full_name,values.updated_on
+                      error_handler: *discovery_error_handler
+                    record_selector: *repos_selector
+                    paginator:
+                      type: DefaultPaginator
+                      pagination_strategy:
+                        type: CursorPagination
+                        cursor_value: "{{ response.get('next', '') }}"
+                        stop_condition: "{{ not response.get('next') }}"
+                      page_token_option:
+                        type: RequestPath
+                    partition_router:
+                      type: ListPartitionRouter
+                      values: "{{ config['bitbucket_workspaces'] }}"
+                      cursor_field: workspace
+        incremental_sync:
+          type: DatetimeBasedCursor
+          cursor_field: created_on
+          datetime_format: "%Y-%m-%dT%H:%M:%S.%f%z"
+          cursor_datetime_formats:
+            - "%Y-%m-%dT%H:%M:%S.%f%z"
+            - "%Y-%m-%dT%H:%M:%S%z"
+          # The endpoint cannot filter or order (see the requester above), so the
+          # bound is enforced on the records after the fetch. This drops
+          # pre-start-date deployments rather than letting a repository's whole
+          # history accumulate in bronze forever.
+          is_client_side_incremental: true
+          start_datetime:
+            type: MinMaxDatetime
+            datetime: "{{ config['bitbucket_start_date'] }}"
+            datetime_format: "%Y-%m-%d"
+        transformations:
+          - type: AddFields
+            fields:
+              - type: AddedFieldDefinition
+                path: [tenant_id]
+                value: "{{ config['insight_tenant_id'] }}"
+              - type: AddedFieldDefinition
+                path: [source_id]
+                value: "{{ config['insight_source_id'] }}"
+              - type: AddedFieldDefinition
+                path: [data_source]
+                value: insight_bitbucket_cloud
+              - type: AddedFieldDefinition
+                path: [collected_at]
+                value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+              - type: AddedFieldDefinition
+                path: [repo_full_name]
+                value: "{{ stream_partition.repo_full_name }}"
+                value_type: string
+              - type: AddedFieldDefinition
+                path: [state_name]
+                value: "{{ (record.get('state') or {}).get('name') or '' }}"
+                value_type: string
+              - type: AddedFieldDefinition
+                path: [state_status]
+                value: "{{ ((record.get('state') or {}).get('status') or {}).get('name') or '' }}"
+                value_type: string
+              - type: AddedFieldDefinition
+                path: [environment_uuid]
+                value: "{{ (record.get('environment') or {}).get('uuid') or '' }}"
+                value_type: string
+              - type: AddedFieldDefinition
+                path: [deployable_commit_sha]
+                value: "{{ ((record.get('deployable') or {}).get('commit') or {}).get('hash') or '' }}"
+                value_type: string
+              - type: AddedFieldDefinition
+                path: [deployable_pipeline_uuid]
+                value: "{{ ((record.get('deployable') or {}).get('pipeline') or {}).get('uuid') or '' }}"
+                value_type: string
+              - type: AddedFieldDefinition
+                path: [created_on]
+                value: "{{ record.get('created_on') or (record.get('deployable') or {}).get('created_on') or '' }}"
+                value_type: string
+              - type: AddedFieldDefinition
+                path: [unique_key]
+                value: >-
+                  {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:{{ record['uuid'] | replace(':', '%3A') }}
+          - type: RemoveFields
+            # Hoisted above; the nested originals stay out of bronze.
+            field_pointers:
+              - [state]
+              - [environment]
+              - [deployable]
   # ── Commit authors (git-cli-proxy + Bitbucket API) ──────────────────────
   # A commit names an e-mail and no account, so it reaches a person only once
   # something claims that e-mail for one. The proxy enumerates a repository's
@@ -3776,6 +3779,16 @@ spec:
         title: API Calls Per Hour
         default: "1000"
         order: 10
+      bitbucket_enable_ci:
+        type: string
+        enum: ["true", "false"]
+        default: "false"
+        description: >-
+          Enable the pipelines and deployments streams. Disabled by default
+          because these streams consume additional Bitbucket API calls and do
+          not feed a class model.
+        title: Enable CI Streams
+        order: 12
       bitbucket_start_date:
         type: string
         description: >-

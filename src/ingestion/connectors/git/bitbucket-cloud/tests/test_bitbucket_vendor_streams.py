@@ -579,7 +579,7 @@ def test_pipelines_row_conforms_and_an_empty_page_is_not_an_error(
     """A repository with pipelines disabled answers an empty page, which is a
     defined answer rather than a failure — but the declared schema still has to
     hold for a repository that has them."""
-    config = BitbucketCloudConfigBuilder().build()
+    config = BitbucketCloudConfigBuilder().with_field("bitbucket_enable_ci", "true").build()
     http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
     http_mocker.get(
         HttpRequest(f"{BB_URL}/repositories/acme/app/pipelines/", query_params=ANY_QUERY_PARAMS),

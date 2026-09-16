@@ -18,7 +18,7 @@ import re
 import yaml
 from config import BitbucketCloudConfigBuilder  # noqa: F401  (keeps the suite's import shape)
 
-from connector_tests import connector_dir
+from connector_tests import connector_dir, get_source
 
 _CONNECTOR = "git/bitbucket-cloud"
 _GETS = re.compile(r"record\s*\.get\('([^']+)'\)|\.get\('([^']+)'\)")
@@ -30,7 +30,44 @@ _CHAIN = re.compile(
 
 def _streams() -> list[dict]:
     manifest = yaml.safe_load((connector_dir(_CONNECTOR) / "connector.yaml").read_text())
-    return manifest["streams"]
+    streams: list[dict] = []
+    for entry in manifest["streams"]:
+        if entry.get("type") == "ConditionalStreams":
+            streams.extend(entry["streams"])
+        else:
+            streams.append(entry)
+    return streams
+
+
+def _stream_names(config: dict) -> set[str]:
+    return {stream.name for stream in get_source(_CONNECTOR, config).streams(config)}
+
+
+def test_ci_streams_are_disabled_when_the_option_is_missing() -> None:
+    config = BitbucketCloudConfigBuilder().build()
+
+    assert _stream_names(config).isdisjoint({"pipelines", "deployments"})
+
+
+def test_ci_streams_are_disabled_when_the_option_is_false() -> None:
+    config = BitbucketCloudConfigBuilder().with_field("bitbucket_enable_ci", "false").build()
+
+    assert _stream_names(config).isdisjoint({"pipelines", "deployments"})
+
+
+def test_ci_streams_are_enabled_when_the_option_is_true() -> None:
+    config = BitbucketCloudConfigBuilder().with_field("bitbucket_enable_ci", "true").build()
+
+    assert {"pipelines", "deployments"} <= _stream_names(config)
+
+
+def test_ci_option_accepts_secret_string_values_and_defaults_to_false() -> None:
+    manifest = yaml.safe_load((connector_dir(_CONNECTOR) / "connector.yaml").read_text())
+    field = manifest["spec"]["connection_specification"]["properties"]["bitbucket_enable_ci"]
+
+    assert field["type"] == "string"
+    assert field["enum"] == ["true", "false"]
+    assert field["default"] == "false"
 
 
 def _dereferenced_paths(expression: str) -> set[str]:
