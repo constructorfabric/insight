@@ -1,6 +1,6 @@
 name: bamboohr
 type: cdk
-version: "2.5.0"
+version: "2.6.0"
 schedule: 0 * * * *
 dbt_select: tag:bamboohr+
 workflow: sync
@@ -12,7 +12,7 @@ images:
     name: source-bamboohr-insight
     dockerfile: ./Dockerfile
     context: .
-    image: "ghcr.io/constructorfabric/source-bamboohr-insight:2026.09.15.22.53-f836c38"
+    image: "ghcr.io/constructorfabric/source-bamboohr-insight:2026.09.16.16.53-b950851"
 connection:
   namespace: bronze_bamboohr
 secret:
