@@ -7,6 +7,7 @@ fn valid_config() -> GearConfig {
         clickhouse_url: "http://clickhouse.example.test:8123".to_owned(),
         clickhouse_database: "insight".to_owned(),
         identity_database: "identity".to_owned(),
+        datasets_database: "insight_datasets".to_owned(),
         clickhouse_user: None,
         clickhouse_password: None,
         clickhouse_query_user: None,

@@ -6,6 +6,10 @@ use thiserror::Error;
 
 const DEFAULT_CLICKHOUSE_DATABASE: &str = "insight";
 const DEFAULT_IDENTITY_DATABASE: &str = "identity";
+/// Datasets keep their records apart from the warehouse the rest of Insight
+/// builds, so nothing this service creates or drops can reach a table someone
+/// else owns.
+const DEFAULT_DATASETS_DATABASE: &str = "insight_datasets";
 pub(crate) const MIN_INGEST_TOKEN_BYTES: usize = 32;
 pub(crate) const MAX_INGEST_TOKEN_BYTES: usize = 1024;
 const DEFAULT_CHAT_MODEL: &str = "claude-sonnet-5";
@@ -53,6 +57,8 @@ pub(crate) struct GearConfig {
     pub(crate) clickhouse_database: String,
     /// The database identity materialises into.
     pub(crate) identity_database: String,
+    /// The database the datasets' own tables live in.
+    pub(crate) datasets_database: String,
     pub(crate) clickhouse_user: Option<String>,
     pub(crate) clickhouse_password: Option<SecretString>,
     /// The read-only principal the assistant's query path connects as. Blank
@@ -73,6 +79,7 @@ impl Default for GearConfig {
             clickhouse_url: String::new(),
             clickhouse_database: DEFAULT_CLICKHOUSE_DATABASE.to_owned(),
             identity_database: DEFAULT_IDENTITY_DATABASE.to_owned(),
+            datasets_database: DEFAULT_DATASETS_DATABASE.to_owned(),
             clickhouse_user: None,
             clickhouse_password: None,
             clickhouse_query_user: None,
@@ -108,6 +115,7 @@ pub(crate) struct ValidatedConfig {
     clickhouse_url: String,
     clickhouse_database: String,
     identity_database: String,
+    datasets_database: String,
     clickhouse_user: Option<String>,
     clickhouse_password: Option<SecretString>,
     clickhouse_query_user: Option<String>,
@@ -130,6 +138,7 @@ impl fmt::Debug for GearConfig {
             .field("clickhouse_url", &self.clickhouse_url)
             .field("clickhouse_database", &self.clickhouse_database)
             .field("identity_database", &self.identity_database)
+            .field("datasets_database", &self.datasets_database)
             .field("clickhouse_user", &self.clickhouse_user)
             .field("clickhouse_password", &REDACTED)
             .field("clickhouse_query_user", &self.clickhouse_query_user)
@@ -151,6 +160,7 @@ impl fmt::Debug for ValidatedConfig {
             .field("clickhouse_url", &self.clickhouse_url)
             .field("clickhouse_database", &self.clickhouse_database)
             .field("identity_database", &self.identity_database)
+            .field("datasets_database", &self.datasets_database)
             .field("clickhouse_user", &self.clickhouse_user)
             .field("clickhouse_password", &REDACTED)
             .field("clickhouse_query_user", &self.clickhouse_query_user)
@@ -251,6 +261,22 @@ impl ValidatedConfig {
     pub(crate) fn identity_database(&self) -> &str {
         &self.identity_database
     }
+
+    /// A client connected to the database the datasets' tables live in, which
+    /// is the only database this service creates or drops a table in.
+    #[expect(dead_code, reason = "wired up by the dataset flows and API")]
+    pub(crate) fn datasets_client(&self) -> insight_clickhouse::Client {
+        let mut config =
+            insight_clickhouse::Config::new(&self.clickhouse_url, &self.datasets_database);
+        if let (Some(user), Some(password)) = (
+            self.clickhouse_user.as_deref(),
+            self.clickhouse_password.as_ref(),
+        ) {
+            config = config.with_auth(user, password.expose_secret());
+        }
+
+        insight_clickhouse::Client::new(config)
+    }
 }
 
 impl GearConfig {
@@ -290,6 +316,7 @@ impl GearConfig {
         require_non_empty("clickhouse_url", &self.clickhouse_url)?;
         require_non_empty("clickhouse_database", &self.clickhouse_database)?;
         require_non_empty("identity_database", &self.identity_database)?;
+        require_non_empty("datasets_database", &self.datasets_database)?;
         require_non_empty("chat_model", &self.chat_model)?;
         require_non_empty("database_url", &self.database_url)?;
         require_non_empty("identity_url", &self.identity_url)?;
@@ -313,6 +340,7 @@ impl GearConfig {
             clickhouse_url: self.clickhouse_url,
             clickhouse_database: self.clickhouse_database,
             identity_database: self.identity_database,
+            datasets_database: self.datasets_database,
             clickhouse_user: self.clickhouse_user,
             clickhouse_password: self.clickhouse_password,
             clickhouse_query_user,
