@@ -111,7 +111,7 @@ The feature implements the decision in [ADR-0009](../ADR/0009-a-dataset-is-the-u
 
 - **PRD**: [PRD.md](../PRD.md)
 - **Design**: [DESIGN.md](../DESIGN.md)
-- **Decisions**: [ADR-0009](../ADR/0009-a-dataset-is-the-unit-of-ingest-and-query.md) (this feature), [ADR-0006](../ADR/0006-a-table-per-ingest-stream.md) (superseded; the physical table per uploaded dataset stays), [ADR-0002](../ADR/0002-static-ingest-token.md) (the token the API path uses)
+- **Decisions**: [ADR-0009](../ADR/0009-a-dataset-is-the-unit-of-ingest-and-query.md) (this feature), [ADR-0006](../ADR/0006-a-table-per-ingest-stream.md) (superseded; the physical table per uploaded dataset stays), [ADR-0002](../ADR/0002-static-ingest-token.md) (the static-token path both credentials follow)
 - **Dependencies**: `cpt-insightspec-v3-feature-data-ingestion` (the ingest endpoint and the definitions store this feature extends)
 - **Tracking**: constructorfabric/insight#3408
 
@@ -137,12 +137,12 @@ The feature implements the decision in [ADR-0009](../ADR/0009-a-dataset-is-the-u
 - The replacement leaves a stored metric invalid — a field it reads is gone, retyped, or the default clock it inherits has changed
 - The replacement would silently move numbers: a field a metric reads now reads from somewhere else, or the row identity changed
 - The name is held by a removal, or another attempt owns an operation on it, so it is not free
-- The caller is not an administrator (portal) or carries no valid instance token (API)
+- The caller is not an administrator (portal) or carries no valid administration token (API); the ingest token does not open this
 
 **Steps**:
 1. [ ] - `p1` - Administrator submits a declaration: name, title, description, fields, default clock, row identity - `inst-ds-create-submit`
-2. [ ] - `p1` - API: PUT /v1/datasets/{name} (declaration body; portal session with the admin role, or the instance token) - `inst-ds-create-api`
-3. [ ] - `p1` - **IF** the caller holds neither the admin role nor a valid instance token - `inst-ds-create-authz`
+2. [ ] - `p1` - API: PUT /v1/datasets/{name} (declaration body; portal session with the admin role, or the administration token) - `inst-ds-create-api`
+3. [ ] - `p1` - **IF** the caller holds neither the admin role nor a valid administration token — the ingest token is not one, and presenting it here is refused - `inst-ds-create-authz`
    1. [ ] - `p1` - **RETURN** permission denied, nothing written - `inst-ds-create-authz-reject`
 4. [ ] - `p1` - Validate the body per `cpt-insightspec-v3-algo-datasets-validate-declaration` - `inst-ds-create-validate`
 5. [ ] - `p1` - **IF** validation reports violations - `inst-ds-create-invalid`
@@ -178,7 +178,7 @@ The feature implements the decision in [ADR-0009](../ADR/0009-a-dataset-is-the-u
 - A record whose payload lacks a declared field, or carries a key no field declares, is stored the same way
 
 **Error Scenarios**:
-- The instance token is missing or wrong
+- The ingest token is missing, wrong, or is the administration one
 - The dataset is not ready — absent, still being created, or being removed — or the name is misspelled: nothing is created
 - The request names no dataset, or still names a table as earlier releases accepted
 - The dataset was removed between the lookup and the write: the record is refused, not accepted
@@ -186,7 +186,7 @@ The feature implements the decision in [ADR-0009](../ADR/0009-a-dataset-is-the-u
 **Steps**:
 1. [ ] - `p1` - Connector sends one record naming the dataset - `inst-ds-ingest-send`
 2. [ ] - `p1` - API: POST /v1/raw-data ({dataset, raw_data}) - `inst-ds-ingest-api`
-3. [ ] - `p1` - **IF** the instance token does not verify - `inst-ds-ingest-token`
+3. [ ] - `p1` - **IF** the ingest token does not verify — the administration token is not one - `inst-ds-ingest-token`
    1. [ ] - `p1` - **RETURN** unauthenticated - `inst-ds-ingest-token-reject`
 4. [ ] - `p1` - DB: SELECT datasets (the declaration under the given name, and its state) - `inst-ds-ingest-lookup`
 5. [ ] - `p1` - **IF** the dataset is not ready — absent, claimed by an unfinished create, or removing - `inst-ds-ingest-unknown`
@@ -239,8 +239,8 @@ The feature implements the decision in [ADR-0009](../ADR/0009-a-dataset-is-the-u
 
 **Steps**:
 1. [ ] - `p1` - Administrator removes the dataset from its page or over the API - `inst-ds-remove-submit`
-2. [ ] - `p1` - API: DELETE /v1/datasets/{name} (portal session with the admin role, or the instance token) - `inst-ds-remove-api`
-3. [ ] - `p1` - **IF** the caller holds neither the admin role nor a valid instance token - `inst-ds-remove-authz`
+2. [ ] - `p1` - API: DELETE /v1/datasets/{name} (portal session with the admin role, or the administration token) - `inst-ds-remove-api`
+3. [ ] - `p1` - **IF** the caller holds neither the admin role nor a valid administration token — the ingest token is not one, and presenting it here is refused - `inst-ds-remove-authz`
    1. [ ] - `p1` - **RETURN** permission denied - `inst-ds-remove-authz-reject`
 4. [ ] - `p1` - DB: BEGIN and hold the dataset's row per `cpt-insightspec-v3-algo-datasets-serialize` - `inst-ds-remove-lock`
 5. [ ] - `p1` - **IF** no row is stored under the name - `inst-ds-remove-missing`
@@ -669,7 +669,7 @@ The feature implements the decision in [ADR-0009](../ADR/0009-a-dataset-is-the-u
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-dod-datasets-store`
 
-The system **MUST** store dataset declarations as a fourth definition kind in the definitions store, keyed by name and replaced on write like the others, and **MUST** validate every declaration before storing it, reporting all violations together. A field's type **MUST** decide what a metric may do with it; its role **MUST** remain descriptive, so that a numeric identifier can be grouped by. A replacement **MUST** be refused when any dependent metric fails to validate against it, when the clock a dependent inherits would change, when a field a dependent reads would read from a different place in the record, or when the row identity changes — naming each metric and why. The first two break a metric; the last two leave it valid and move every number it has answered, which a reader cannot see happen. Stored records **MUST NOT** be rewritten by any declaration change: a declaration says how records are read, so a change reinterprets what is already stored. Creation and removal **MUST** require the admin role on the portal path and the instance token on the API path.
+The system **MUST** store dataset declarations as a fourth definition kind in the definitions store, keyed by name and replaced on write like the others, and **MUST** validate every declaration before storing it, reporting all violations together. A field's type **MUST** decide what a metric may do with it; its role **MUST** remain descriptive, so that a numeric identifier can be grouped by. A replacement **MUST** be refused when any dependent metric fails to validate against it, when the clock a dependent inherits would change, when a field a dependent reads would read from a different place in the record, or when the row identity changes — naming each metric and why. The first two break a metric; the last two leave it valid and move every number it has answered, which a reader cannot see happen. Stored records **MUST NOT** be rewritten by any declaration change: a declaration says how records are read, so a change reinterprets what is already stored. Creation and removal **MUST** require the admin role on the portal path and an **administration token** on the API path — a credential distinct from the one ingest carries. The ingest token **MUST** be refused on both, so that whoever is trusted to send records cannot declare a dataset or remove one with its records; the two exist to be handed to different parties and rotated apart.
 
 **Implements**:
 - `cpt-insightspec-v3-flow-datasets-create`
@@ -720,7 +720,7 @@ A create or a removal, which must touch a table, **MUST** own a leased operation
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-dod-datasets-operations`
 
-Three values **MUST** be configuration with shipped defaults rather than constants: the datasets database, the operation lease bound, and the record-preview cap. The lease decides how long an abandoned create or removal holds its dataset, so an installation that cannot wait must be able to shorten it.
+Four values **MUST** be configuration rather than constants: the datasets database, the operation lease bound, the record-preview cap, and the administration token, which is a secret an installation sets and rotates apart from the ingest one. The lease decides how long an abandoned create or removal holds its dataset, so an installation that cannot wait must be able to shorten it.
 
 Every write that changes what a dataset is **MUST** record who asked for it: creating, replacing and removing are administrator-only and a removal takes a dataset's records with it, so "who removed this" **MUST** have an answer. The service **MUST** log, at least, an operation it refused because another attempt held it, an attempt that finished stale, and a drop that failed — the three states an operator has to recognise to know whether to wait or to repeat.
 
@@ -875,8 +875,9 @@ The service **MUST** stop creating an ingest-schema landing table in the warehou
 - [ ] An attempt that finishes after losing its operation writes nothing, and the table it had provisioned is left pointing at no dataset
 - [ ] A drop belonging to a lapsed attempt cannot delete the table a later attempt provisioned, because the two tables are named apart
 - [ ] A dataset mid-create is absent from the catalogue, from its own page, from the assistant's context and from MCP, refuses records, and no metric can be stored against it
-- [ ] Shortening the configured lease lets an abandoned create be taken over sooner, and the three values this feature adds are readable from configuration rather than compiled in
+- [ ] Shortening the configured lease lets an abandoned create be taken over sooner, and the four values this feature adds are read from configuration rather than compiled in
 - [ ] A removed dataset leaves a record of who removed it and when
+- [ ] The ingest token cannot declare or remove a dataset, and the administration token cannot send a record
 - [ ] A dataset whose name is held by a table of another shape is refused, and no table outside the datasets database is ever created, read or dropped
 - [ ] A declaration with several problems is refused once, with every problem and its field path
 - [ ] A metric groups by a numeric field and is stored; the same field summed as a string field is refused
@@ -940,7 +941,7 @@ The risks are a silent mismatch between what a declaration says and what a run r
   **Requirements**: `cpt-insightspec-v3-fr-remove-dataset`, `cpt-insightspec-v3-nfr-security`.
   **Covers**: `cpt-insightspec-v3-dod-datasets-database`.
   **Test**: Not implemented.
-- [ ] 11. **Only administrators create and remove datasets** — Security · stand-api — call PUT and DELETE on a dataset as a signed-in non-administrator and with no instance token → refused; as an administrator → accepted.
+- [ ] 11. **Only administrators create and remove datasets, and the ingest token is not one** — Security · stand-api — call PUT and DELETE on a dataset as a signed-in non-administrator, with no credential, and with the ingest token → each refused; as an administrator, and with the administration token → accepted; then send a record with the administration token → refused, because it is not the ingest credential.
   **Requirements**: `cpt-insightspec-v3-fr-create-dataset`, `cpt-insightspec-v3-fr-remove-dataset`, `cpt-insightspec-v3-nfr-security`.
   **Covers**: `cpt-insightspec-v3-dod-datasets-store`.
   **Test**: Not implemented.

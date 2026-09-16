@@ -155,7 +155,7 @@ The system **MUST** support first-class connectors, such as a GitHub mirror.
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-fr-create-dataset`
 
-The system **MUST** let an administrator create a dataset, in the portal and over the API, declaring its name, title, description, fields with their payload key, type and role, its default time field and its row identity.
+The system **MUST** let an administrator create a dataset, in the portal under their role and over the API under an administration credential distinct from the one data is sent with, declaring its name, title, description, fields with their payload key, type and role, its default time field and its row identity.
 
 **Actors**: `cpt-insightspec-v3-actor-administrator`
 
@@ -163,7 +163,7 @@ The system **MUST** let an administrator create a dataset, in the portal and ove
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-fr-remove-dataset`
 
-The system **MUST** let an administrator remove a dataset together with its records, in the portal and over the API, and **MUST** refuse while a metric reads it, naming the metrics.
+The system **MUST** let an administrator remove a dataset together with its records, in the portal under their role and over the API under the same administration credential, and **MUST** refuse while a metric reads it, naming the metrics.
 
 **Actors**: `cpt-insightspec-v3-actor-administrator`
 

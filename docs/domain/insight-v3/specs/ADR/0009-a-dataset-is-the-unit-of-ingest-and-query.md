@@ -92,8 +92,11 @@ The decisions the option carries, taken on 2026-09-15:
   outside it is created, read, written or dropped, and a name held there by a
   table of any other shape is refused rather than adopted.
 * Only an administrator creates or removes a dataset: in the portal under the
-  admin role, over the API under the instance token. Ingest keeps the same
-  token but can no longer create anything.
+  admin role, over the API under an **administration token** that is not the
+  ingest one. Ingest keeps its own token and can no longer create anything,
+  and that token is refused on the lifecycle surfaces — whoever is trusted to
+  send records is not thereby trusted to declare a dataset or to remove one
+  with its records.
 * **The dataset's row is the lock, and a create or a removal owns a lease on
   it.** Every decision that depends on a dataset's state holds that row for the
   whole of the decision; a replacement touches no table and so commits as one
