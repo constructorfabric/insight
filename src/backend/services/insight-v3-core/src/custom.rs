@@ -9,7 +9,9 @@ use crate::dashboard::Item;
 use crate::definitions::{
     DefinitionKind, DefinitionName, DefinitionStoreError, Definitions, NamePage, Page,
 };
-use crate::metric_query::{MetricQuery, MetricQueryError, MetricRunError, MetricRunner, RunResult};
+use crate::metric_query::{
+    MetricQuery, MetricQueryError, MetricRunError, MetricRunner, People, RunResult,
+};
 use crate::time_window::{RequestedRange, WindowError, WindowRequest};
 use crate::undated::UndatedCount;
 use crate::widget::{Widget, WidgetError};
@@ -162,7 +164,7 @@ impl<'a> Surfaces<'a> {
             self.check_widget(body).await?;
         }
         if kind == DefinitionKind::Metric {
-            check_metric(body)?;
+            check_metric(body, self.metrics.people())?;
         }
         if kind == DefinitionKind::Dashboard {
             check_dashboard(body)?;
@@ -337,14 +339,15 @@ impl<'a> Surfaces<'a> {
     }
 }
 
-/// What a stored metric says about time, checked before it is stored. A
-/// body that is not a metric at all is left alone — it is refused when run.
-fn check_metric(body: &Value) -> Result<(), CustomError> {
-    let Ok(metric) = serde_json::from_value::<MetricQuery>(body.clone()) else {
-        return Ok(());
-    };
+/// Everything a metric must satisfy to run, checked before it is stored: a
+/// body kept here that cannot compile answers nothing whenever it is read.
+fn check_metric(body: &Value, people: &People) -> Result<(), CustomError> {
+    let metric = serde_json::from_value::<MetricQuery>(body.clone()).map_err(CustomError::Body)?;
 
-    metric.check_window().map_err(CustomError::Compile)
+    metric.check_window().map_err(CustomError::Compile)?;
+    metric.compile(people).map_err(CustomError::Compile)?;
+
+    Ok(())
 }
 
 /// What a stored dashboard says about time, checked before it is stored: a

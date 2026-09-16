@@ -308,8 +308,10 @@ impl Field {
         let matched = selector.r#type.extract("x", key)?;
         binds.push(selector.bind(selected)?);
 
+        // ClickHouse refuses `Array(String)` inside a `Nullable`, and an
+        // ingested JSON column may be declared `Nullable(String)`.
         let element = format!(
-            "arrayFirst(x -> {matched} {} ?, JSONExtractArrayRaw({}))",
+            "arrayFirst(x -> {matched} {} ?, JSONExtractArrayRaw(assumeNotNull({})))",
             selector.op.sql(),
             source.payload_sql(qualifier)?
         );
@@ -467,10 +469,10 @@ impl FieldType {
 
         let mut keys = String::new();
         for segment in path.split('.') {
-            if !is_identifier(segment) {
-                return Err(MetricQueryError::Identifier(path.to_owned()));
+            if segment.is_empty() || segment.chars().count() > MAX_IDENTIFIER_CHARS {
+                return Err(MetricQueryError::JsonKey(path.to_owned()));
             }
-            let _ = write!(keys, ", '{segment}'");
+            let _ = write!(keys, ", '{}'", escape_literal(segment));
         }
 
         Ok(format!("{function}({payload}{keys})"))
@@ -595,6 +597,8 @@ pub(crate) struct CompiledQuery {
 pub(crate) enum MetricQueryError {
     #[error("`{0}` must be 1-128 characters of letters, digits or underscore")]
     Identifier(String),
+    #[error("`{0}` must name a json key of 1-128 characters between its dots")]
+    JsonKey(String),
     #[error("`{0}` must name one of this query's as_name values")]
     GroupBy(String),
     #[error(
@@ -1064,6 +1068,12 @@ fn is_identifier(value: &str) -> bool {
     !value.is_empty()
         && value.chars().count() <= MAX_IDENTIFIER_CHARS
         && value.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Backslash first: escaping it after the quote would escape the backslash
+/// this adds.
+fn escape_literal(value: &str) -> String {
+    value.replace('\\', r"\\").replace('\'', r"\'")
 }
 
 /// `ClickHouse`'s `JSON` format serialises wide integers as JSON strings;
@@ -2565,7 +2575,7 @@ mod tests {
         assert!(
             compiled.sql.contains(
                 "JSONExtractString(arrayFirst(x -> JSONExtractString(x, 'field', 'name') = ?, \
-                 JSONExtractArrayRaw(`field_values_json`)), 'name')"
+                 JSONExtractArrayRaw(assumeNotNull(`field_values_json`))), 'name')"
             ),
             "{}",
             compiled.sql
@@ -2574,7 +2584,67 @@ mod tests {
     }
 
     #[test]
-    fn a_json_path_segment_outside_the_charset_is_refused() {
+    fn an_array_selector_reads_a_payload_clickhouse_will_not_call_nullable() {
+        let metric = query(json!({
+            "table": "issues",
+            "fields": [{
+                "column": "fields_json",
+                "json": "value.name",
+                "type": "string",
+                "as_name": "state",
+                "where": { "json": "name", "type": "string", "op": "eq", "value": "State" }
+            }],
+            "group_by": [],
+            "filters": []
+        }));
+
+        let compiled = metric
+            .compile(&people())
+            .unwrap_or_else(|error| panic!("compiles: {error}"));
+
+        assert!(
+            compiled
+                .sql
+                .contains("JSONExtractArrayRaw(assumeNotNull(`fields_json`))"),
+            "{}",
+            compiled.sql
+        );
+    }
+
+    #[test]
+    fn a_json_key_may_hold_the_spaces_and_sigils_real_payloads_use() {
+        let metric = query(json!({
+            "table": "launches",
+            "fields": [
+                { "json": "environment.Region Name", "type": "string", "as_name": "stand" },
+                { "json": "$type", "type": "string", "as_name": "kind" }
+            ],
+            "group_by": ["stand", "kind"],
+            "filters": []
+        }));
+
+        let compiled = metric
+            .compile(&people())
+            .unwrap_or_else(|error| panic!("compiles: {error}"));
+
+        assert!(
+            compiled
+                .sql
+                .contains("JSONExtractString(raw_data, 'environment', 'Region Name')"),
+            "{}",
+            compiled.sql
+        );
+        assert!(
+            compiled
+                .sql
+                .contains("JSONExtractString(raw_data, '$type')"),
+            "{}",
+            compiled.sql
+        );
+    }
+
+    #[test]
+    fn a_json_key_cannot_break_out_of_the_literal_that_carries_it() {
         let metric = query(json!({
             "table": "events",
             "fields": [
@@ -2584,9 +2654,48 @@ mod tests {
             "filters": []
         }));
 
+        let compiled = metric
+            .compile(&people())
+            .unwrap_or_else(|error| panic!("compiles: {error}"));
+
+        assert!(
+            compiled.sql.contains(
+                r"JSONExtractString(raw_data, 'field', 'name\'); DROP TABLE events; --')"
+            ),
+            "{}",
+            compiled.sql
+        );
+    }
+
+    #[test]
+    fn a_json_key_longer_than_the_cap_is_refused() {
+        let metric = query(json!({
+            "table": "events",
+            "fields": [
+                { "json": "a".repeat(MAX_IDENTIFIER_CHARS + 1), "type": "string", "as_name": "bad" }
+            ],
+            "group_by": [],
+            "filters": []
+        }));
+
         assert!(matches!(
             metric.compile(&people()),
-            Err(MetricQueryError::Identifier(_))
+            Err(MetricQueryError::JsonKey(_))
+        ));
+    }
+
+    #[test]
+    fn an_empty_json_key_is_refused() {
+        let metric = query(json!({
+            "table": "events",
+            "fields": [{ "json": "field..name", "type": "string", "as_name": "bad" }],
+            "group_by": [],
+            "filters": []
+        }));
+
+        assert!(matches!(
+            metric.compile(&people()),
+            Err(MetricQueryError::JsonKey(_))
         ));
     }
 }
