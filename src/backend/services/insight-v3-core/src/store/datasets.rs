@@ -11,8 +11,8 @@ use sea_orm::{
 use serde_json::Value;
 
 use crate::domain::datasets::{
-    Attempt, Dataset, DatasetStoreError, Datasets, Held, OperationToken, Refused, Taking,
-    lease_until, taking,
+    Attempt, Dataset, DatasetStoreError, Datasets, Finish, Held, OperationToken, Owning, Refused,
+    Taking, finishing, lease_until, taking,
 };
 use crate::domain::definition::DefinitionName;
 use crate::domain::kinds::dataset::lifecycle::{DatasetState, Operation};
@@ -26,7 +26,13 @@ const SELECT_NAMES: &str = "SELECT name FROM datasets ORDER BY name";
 /// one has lapsed.
 const NOW: &str = "SELECT UTC_TIMESTAMP(6) AS now";
 const CLAIM_NAME: &str = "INSERT INTO datasets (name, body, state, operation, operation_token, lease_until, updated_at) VALUES (?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(6))";
-const TAKE_OPERATION: &str = "UPDATE datasets SET state = ?, operation = ?, operation_token = ?, lease_until = ?, updated_at = UTC_TIMESTAMP(6) WHERE name = ?";
+const TAKE_OPERATION: &str = "UPDATE datasets SET body = ?, state = ?, operation = ?, operation_token = ?, lease_until = ?, updated_at = UTC_TIMESTAMP(6) WHERE name = ?";
+/// A removal keeps the declaration it found: it publishes nothing.
+const TAKE_REMOVAL: &str = "UPDATE datasets SET state = ?, operation = ?, operation_token = ?, lease_until = ?, updated_at = UTC_TIMESTAMP(6) WHERE name = ?";
+const RECORD_TABLE: &str =
+    "UPDATE datasets SET physical_table = ?, updated_at = UTC_TIMESTAMP(6) WHERE name = ?";
+const MARK_READY: &str = "UPDATE datasets SET state = ?, operation = NULL, operation_token = NULL, lease_until = NULL, updated_at = UTC_TIMESTAMP(6) WHERE name = ?";
+const DELETE_ROW: &str = "DELETE FROM datasets WHERE name = ?";
 
 pub(crate) struct MariaDatasets {
     db: DatabaseConnection,
@@ -64,11 +70,60 @@ impl Datasets for MariaDatasets {
         Ok(rows.into_iter().map(|row| row.name).collect())
     }
 
-    async fn take_operation(
+    async fn take_create(
+        &self,
+        name: &DefinitionName,
+        declaration: &Value,
+    ) -> Result<Attempt, DatasetStoreError> {
+        self.take(name, Operation::Create, Some(declaration)).await
+    }
+
+    async fn take_remove(&self, name: &DefinitionName) -> Result<Attempt, DatasetStoreError> {
+        self.take(name, Operation::Remove, None).await
+    }
+
+    async fn finish(
+        &self,
+        name: &DefinitionName,
+        token: &OperationToken,
+        finish: Finish,
+    ) -> Result<Owning, DatasetStoreError> {
+        let transaction = self.db.begin().await?;
+
+        let held = held_row(&transaction, name).await?;
+        if finishing(held.as_ref(), token) == Owning::Lost {
+            return Ok(Owning::Lost);
+        }
+
+        let statement = match finish {
+            Finish::Provisioned(table) => Statement::from_sql_and_values(
+                DbBackend::MySql,
+                RECORD_TABLE,
+                [table.into(), name.as_str().into()],
+            ),
+            Finish::Ready => Statement::from_sql_and_values(
+                DbBackend::MySql,
+                MARK_READY,
+                [DatasetState::Ready.as_str().into(), name.as_str().into()],
+            ),
+            Finish::Removed => {
+                Statement::from_sql_and_values(DbBackend::MySql, DELETE_ROW, [name.as_str().into()])
+            }
+        };
+
+        transaction.execute_raw(statement).await?;
+        transaction.commit().await?;
+
+        Ok(Owning::Held)
+    }
+}
+
+impl MariaDatasets {
+    async fn take(
         &self,
         name: &DefinitionName,
         operation: Operation,
-        declaration: &Value,
+        declaration: Option<&Value>,
     ) -> Result<Attempt, DatasetStoreError> {
         let transaction = self.db.begin().await?;
 
@@ -80,15 +135,7 @@ impl Datasets for MariaDatasets {
                 .now
                 .and_utc();
 
-        let held = DatasetRow::find_by_statement(Statement::from_sql_and_values(
-            DbBackend::MySql,
-            SELECT_ROW_HELD,
-            [name.as_str().into()],
-        ))
-        .one(&transaction)
-        .await?
-        .map(DatasetRow::into_dataset)
-        .transpose()?;
+        let held = held_row(&transaction, name).await?;
 
         let token = OperationToken::mint();
         let until = lease_until(now);
@@ -97,15 +144,16 @@ impl Datasets for MariaDatasets {
             Taking::Refuse(refusal) => return Err(refusal.into()),
             Taking::Gone => return Err(Refused::Gone.into()),
             Taking::Claim => {
-                let claimed = DatasetState::Claimed;
+                let body =
+                    declaration.map_or_else(|| Ok(String::from("{}")), serde_json::to_string)?;
                 transaction
                     .execute_raw(Statement::from_sql_and_values(
                         DbBackend::MySql,
                         CLAIM_NAME,
                         [
                             name.as_str().into(),
-                            serde_json::to_string(declaration)?.into(),
-                            claimed.as_str().into(),
+                            body.into(),
+                            DatasetState::Claimed.as_str().into(),
                             operation.as_str().into(),
                             token.as_str().into(),
                             until.naive_utc().into(),
@@ -114,13 +162,25 @@ impl Datasets for MariaDatasets {
                     .await
                     .map_err(taken_or)?;
 
-                claimed
+                DatasetState::Claimed
             }
             Taking::Take(state) => {
-                transaction
-                    .execute_raw(Statement::from_sql_and_values(
+                let statement = match declaration {
+                    Some(declaration) => Statement::from_sql_and_values(
                         DbBackend::MySql,
                         TAKE_OPERATION,
+                        [
+                            serde_json::to_string(declaration)?.into(),
+                            state.as_str().into(),
+                            operation.as_str().into(),
+                            token.as_str().into(),
+                            until.naive_utc().into(),
+                            name.as_str().into(),
+                        ],
+                    ),
+                    None => Statement::from_sql_and_values(
+                        DbBackend::MySql,
+                        TAKE_REMOVAL,
                         [
                             state.as_str().into(),
                             operation.as_str().into(),
@@ -128,8 +188,9 @@ impl Datasets for MariaDatasets {
                             until.naive_utc().into(),
                             name.as_str().into(),
                         ],
-                    ))
-                    .await?;
+                    ),
+                };
+                transaction.execute_raw(statement).await?;
 
                 state
             }
@@ -139,6 +200,22 @@ impl Datasets for MariaDatasets {
 
         Ok(Attempt { token, state })
     }
+}
+
+/// The row, held for the rest of the transaction.
+async fn held_row(
+    transaction: &sea_orm::DatabaseTransaction,
+    name: &DefinitionName,
+) -> Result<Option<Dataset>, DatasetStoreError> {
+    DatasetRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::MySql,
+        SELECT_ROW_HELD,
+        [name.as_str().into()],
+    ))
+    .one(transaction)
+    .await?
+    .map(DatasetRow::into_dataset)
+    .transpose()
 }
 
 /// A name another attempt inserted first is the same refusal as a held

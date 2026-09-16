@@ -24,6 +24,9 @@ pub(crate) const LEASE_SECS: i64 = 60;
 /// The prefix every table this service provisions carries, so a table of its
 /// own is told from anything else in the datasets database at a glance.
 const TABLE_PREFIX: &str = "ds_";
+/// How much of a dataset's name a physical name carries. The generation after
+/// it is what makes the name unique, so this only has to stay readable.
+const TABLE_NAME_CHARS: usize = 64;
 
 /// Proof that an attempt still owns the operation it took.
 ///
@@ -48,8 +51,14 @@ impl OperationToken {
     }
 
     /// The table a create under this token provisions.
-    pub(crate) fn table(&self) -> String {
-        format!("{TABLE_PREFIX}{}", self.0)
+    ///
+    /// It carries the dataset's name so a reader recognises it, and this
+    /// attempt's generation so that two attempts at one dataset never address
+    /// one table.
+    pub(crate) fn table(&self, dataset: &DefinitionName) -> String {
+        let readable: String = dataset.as_str().chars().take(TABLE_NAME_CHARS).collect();
+
+        format!("{TABLE_PREFIX}{readable}_{}", self.0)
     }
 }
 
@@ -150,6 +159,38 @@ pub(crate) struct Attempt {
     pub(crate) state: DatasetState,
 }
 
+/// What an attempt writes when its work is done, or part of it is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Finish {
+    /// The table this attempt provisioned. Recorded before the create is
+    /// finished, so an attempt that has since lost the dataset learns to drop
+    /// what it made.
+    Provisioned(String),
+    /// The dataset is ready: its declaration stands, its records have a home,
+    /// and the operation is released.
+    Ready,
+    /// The dataset is gone, row and all.
+    Removed,
+}
+
+/// Whether an attempt still owned the dataset when it came to write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Owning {
+    Held,
+    /// The dataset moved on while this attempt was working, so its outcome no
+    /// longer counts and is discarded rather than published.
+    Lost,
+}
+
+/// Whether the row still records this attempt as the owner.
+pub(crate) fn finishing(held: Option<&Dataset>, token: &OperationToken) -> Owning {
+    let owns = held
+        .and_then(|held| held.held.as_ref())
+        .is_some_and(|held| held.token == *token);
+
+    if owns { Owning::Held } else { Owning::Lost }
+}
+
 /// Where dataset rows are kept.
 #[async_trait]
 pub(crate) trait Datasets: Send + Sync + fmt::Debug {
@@ -159,14 +200,26 @@ pub(crate) trait Datasets: Send + Sync + fmt::Debug {
     /// Every dataset name, whatever state it is in.
     async fn list(&self) -> Result<Vec<String>, DatasetStoreError>;
 
-    /// Takes `operation` on the dataset for a fresh attempt, holding the row
-    /// for the whole decision.
-    async fn take_operation(
+    /// Takes a create for a fresh attempt, holding the row for the whole
+    /// decision. The declaration is the one this attempt means to publish, so
+    /// taking over an abandoned create does not publish the abandoned body.
+    async fn take_create(
         &self,
         name: &DefinitionName,
-        operation: Operation,
         declaration: &Value,
     ) -> Result<Attempt, DatasetStoreError>;
+
+    /// Takes a removal for a fresh attempt.
+    async fn take_remove(&self, name: &DefinitionName) -> Result<Attempt, DatasetStoreError>;
+
+    /// Writes what this attempt came to write, but only while it still owns
+    /// the dataset.
+    async fn finish(
+        &self,
+        name: &DefinitionName,
+        token: &OperationToken,
+        finish: Finish,
+    ) -> Result<Owning, DatasetStoreError>;
 }
 
 #[derive(Debug, Error)]

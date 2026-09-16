@@ -100,12 +100,42 @@ fn an_abandoned_create_may_be_removed() {
 }
 
 #[test]
-fn a_table_is_named_for_the_attempt_and_never_for_the_dataset() {
+fn a_table_carries_the_dataset_a_reader_knows_and_the_attempt_that_made_it() {
     let token = OperationToken::mint();
+    let table = token.table(&name());
 
-    assert!(token.table().starts_with("ds_"), "{}", token.table());
-    assert!(!token.table().contains("commits"));
-    assert_ne!(OperationToken::mint().table(), token.table());
+    assert!(table.starts_with("ds_commits_"), "{table}");
+    assert_ne!(
+        OperationToken::mint().table(&name()),
+        table,
+        "two attempts at one dataset must never address one table"
+    );
+}
+
+#[test]
+fn an_attempt_writes_only_while_the_row_still_records_it() {
+    let token = OperationToken::mint();
+    let mine = row(
+        DatasetState::Claimed,
+        Some(Held {
+            operation: Operation::Create,
+            token: token.clone(),
+            until: at(30),
+        }),
+    );
+
+    assert_eq!(finishing(Some(&mine), &token), Owning::Held);
+    assert_eq!(
+        finishing(Some(&mine), &OperationToken::mint()),
+        Owning::Lost,
+        "another attempt holds it now"
+    );
+    assert_eq!(finishing(None, &token), Owning::Lost, "the row is gone");
+    assert_eq!(
+        finishing(Some(&row(DatasetState::Ready, None)), &token),
+        Owning::Lost,
+        "the operation was released"
+    );
 }
 
 #[test]

@@ -12,8 +12,8 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 use crate::domain::datasets::{
-    Attempt, Dataset, DatasetStoreError, Datasets, Held, OperationToken, Refused, Taking,
-    lease_until, taking,
+    Attempt, Dataset, DatasetStoreError, Datasets, Finish, Held, OperationToken, Owning, Refused,
+    Taking, finishing, lease_until, taking,
 };
 use crate::domain::definition::DefinitionName;
 use crate::domain::kinds::dataset::lifecycle::{DatasetState, Operation};
@@ -52,28 +52,11 @@ impl MemoryDatasets {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, Dataset>> {
-        self.stored
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-}
-
-#[async_trait]
-impl Datasets for MemoryDatasets {
-    async fn get(&self, name: &DefinitionName) -> Result<Option<Dataset>, DatasetStoreError> {
-        Ok(self.lock().get(name.as_str()).cloned())
-    }
-
-    async fn list(&self) -> Result<Vec<String>, DatasetStoreError> {
-        Ok(self.lock().keys().cloned().collect())
-    }
-
-    async fn take_operation(
+    fn take(
         &self,
         name: &DefinitionName,
         operation: Operation,
-        declaration: &Value,
+        declaration: Option<&Value>,
     ) -> Result<Attempt, DatasetStoreError> {
         let now = self.now();
         let mut stored = self.lock();
@@ -93,7 +76,7 @@ impl Datasets for MemoryDatasets {
                     name.as_str().to_owned(),
                     Dataset {
                         name: name.clone(),
-                        declaration: declaration.clone(),
+                        declaration: declaration.cloned().unwrap_or_default(),
                         state: DatasetState::Claimed,
                         physical_table: None,
                         held: Some(held),
@@ -108,11 +91,75 @@ impl Datasets for MemoryDatasets {
                 };
                 dataset.state = state;
                 dataset.held = Some(held);
+                if let Some(declaration) = declaration {
+                    dataset.declaration = declaration.clone();
+                }
 
                 state
             }
         };
 
         Ok(Attempt { token, state })
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, Dataset>> {
+        self.stored
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+#[async_trait]
+impl Datasets for MemoryDatasets {
+    async fn get(&self, name: &DefinitionName) -> Result<Option<Dataset>, DatasetStoreError> {
+        Ok(self.lock().get(name.as_str()).cloned())
+    }
+
+    async fn list(&self) -> Result<Vec<String>, DatasetStoreError> {
+        Ok(self.lock().keys().cloned().collect())
+    }
+
+    async fn take_create(
+        &self,
+        name: &DefinitionName,
+        declaration: &Value,
+    ) -> Result<Attempt, DatasetStoreError> {
+        self.take(name, Operation::Create, Some(declaration))
+    }
+
+    async fn take_remove(&self, name: &DefinitionName) -> Result<Attempt, DatasetStoreError> {
+        self.take(name, Operation::Remove, None)
+    }
+
+    async fn finish(
+        &self,
+        name: &DefinitionName,
+        token: &OperationToken,
+        finish: Finish,
+    ) -> Result<Owning, DatasetStoreError> {
+        let mut stored = self.lock();
+
+        if finishing(stored.get(name.as_str()), token) == Owning::Lost {
+            return Ok(Owning::Lost);
+        }
+
+        match finish {
+            Finish::Provisioned(table) => {
+                if let Some(dataset) = stored.get_mut(name.as_str()) {
+                    dataset.physical_table = Some(table);
+                }
+            }
+            Finish::Ready => {
+                if let Some(dataset) = stored.get_mut(name.as_str()) {
+                    dataset.state = DatasetState::Ready;
+                    dataset.held = None;
+                }
+            }
+            Finish::Removed => {
+                stored.remove(name.as_str());
+            }
+        }
+
+        Ok(Owning::Held)
     }
 }
