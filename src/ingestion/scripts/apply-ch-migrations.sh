@@ -394,20 +394,23 @@ heal_ai_assistant_staging chatgpt_team__ai_assistant_usage
 heal_ai_invoice_staging claude_team__ai_invoice
 
 echo "=== Healing task field-history staging arms ==="
-# `author_display`, `delta_value_id` and `delta_value_display` left the class
-# contract: nothing reads them, and a consumer needing the detail of one change
-# joins back to the event it came from. The silver side drops in
-# migrations/*.sql; these three drop here because a staging table exists only
-# after dbt has built it, and dbt runs after the migrations.
+# The class contract changed twice and the three incremental Jira arms have to
+# follow: `author_display`, `delta_value_id`, `delta_value_display` and then
+# `title` left it, and the four discriminators became LowCardinality(String).
+# The silver side is in migrations/*.sql; the arms change here because a
+# staging table exists only after dbt has built it, and dbt runs after the
+# migrations.
 #
 # They cannot be skipped. All three models are `incremental`, so their tables
-# survive a run carrying whatever column list they were created with, and
+# survive a run carrying whatever columns they were created with, and
 # `class_task_field_history` unions them with `SELECT *` — an arm still holding
 # a dropped column fails the union with "different number of columns in
-# queries". The GitHub arm needs no heal: it is a `table`, rebuilt every run.
+# queries", and an arm still typed Enum8 fails the field-parity audit. The
+# GitHub arm and the derived Jira journal need no heal: both are `table`,
+# rebuilt every run.
 #
-# `staging.jira__task_field_history` is deliberately absent from this list. It
-# is the Rust binary's output and the binary still writes all four columns.
+# `staging.jira__task_field_history`, the retired producer's output, is left as
+# it is: no model reads it any more.
 heal_task_field_history_arm() {
   local table="$1"
   ch_table_exists staging "${table}" || return 0
@@ -416,6 +419,11 @@ heal_task_field_history_arm() {
 ALTER TABLE staging.${table} DROP COLUMN IF EXISTS author_display;
 ALTER TABLE staging.${table} DROP COLUMN IF EXISTS delta_value_id;
 ALTER TABLE staging.${table} DROP COLUMN IF EXISTS delta_value_display;
+ALTER TABLE staging.${table} DROP COLUMN IF EXISTS title;
+ALTER TABLE staging.${table} MODIFY COLUMN event_kind LowCardinality(String);
+ALTER TABLE staging.${table} MODIFY COLUMN field_cardinality LowCardinality(String);
+ALTER TABLE staging.${table} MODIFY COLUMN delta_action LowCardinality(String);
+ALTER TABLE staging.${table} MODIFY COLUMN value_id_type LowCardinality(String);
 SQL
 }
 
@@ -498,9 +506,9 @@ heal_task_users_table silver class_task_users
 # `title` to class_task_field_history after `id_readable` (#2739) so evidence
 # rows could name the work item; the title is now an ordinary field in the
 # journal, bound to the `title` role, and the column is dropped by
-# migrations/20260903000000_task-field-history-drop-columns.sql. Leaving the
-# heal in place would ADD the column straight back after that migration ran —
-# heals run after the .sql files — and gold would still read it.
+# migrations/20260912000000_task-field-history-cutover.sql. Leaving the heal in
+# place would ADD the column straight back after that migration ran — heals
+# run after the .sql files.
 
 echo "=== Healing git file-change object id columns ==="
 # The file-change object ids arrive at the tail of every projection that feeds

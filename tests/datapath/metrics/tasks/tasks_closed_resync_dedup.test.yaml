@@ -32,16 +32,16 @@ bronze:
   bronze_jira.jira_issue:
     # ── DDP-1: In Progress first, Closed re-extracted LATER → latest wins ──
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue
-      id: DDP-1
-      jira_id: DDP-1
+      id: "10093"
+      jira_id: "10093"
       unique_key: jira-test-DDP-1
       id_readable: DDP1
       created: "2026-12-21T09:00:00"
       _airbyte_extracted_at: "2026-12-26T00:00:00"
       custom_fields_json: '{"status":{"id":"3","name":"In Progress"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue
-      id: DDP-1
-      jira_id: DDP-1
+      id: "10093"
+      jira_id: "10093"
       unique_key: jira-test-DDP-1
       id_readable: DDP1
       created: "2026-12-21T09:00:00"
@@ -50,16 +50,16 @@ bronze:
 
     # ── DDP-2: byte-identical re-sync duplicate → must count ONCE ──
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue
-      id: DDP-2
-      jira_id: DDP-2
+      id: "10094"
+      jira_id: "10094"
       unique_key: jira-test-DDP-2
       id_readable: DDP2
       created: "2026-12-22T09:00:00"
       _airbyte_extracted_at: "2026-12-26T00:00:00"
       custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue
-      id: DDP-2
-      jira_id: DDP-2
+      id: "10094"
+      jira_id: "10094"
       unique_key: jira-test-DDP-2
       id_readable: DDP2
       created: "2026-12-22T09:00:00"
@@ -70,16 +70,16 @@ bronze:
     #    inserted after it → dedup must key on _airbyte_extracted_at, not on
     #    physical insert order ──
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue
-      id: DDP-3
-      jira_id: DDP-3
+      id: "10095"
+      jira_id: "10095"
       unique_key: jira-test-DDP-3
       id_readable: DDP3
       created: "2026-12-23T09:00:00"
       _airbyte_extracted_at: "2026-12-28T00:00:00"
       custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue
-      id: DDP-3
-      jira_id: DDP-3
+      id: "10095"
+      jira_id: "10095"
       unique_key: jira-test-DDP-3
       id_readable: DDP3
       created: "2026-12-23T09:00:00"
@@ -89,16 +89,16 @@ bronze:
     # ── DDP-4: was Closed, the LATEST extraction re-opens it → the stale
     #    Closed row must NOT resurrect a close (min-extraction dedup would) ──
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue
-      id: DDP-4
-      jira_id: DDP-4
+      id: "10096"
+      jira_id: "10096"
       unique_key: jira-test-DDP-4
       id_readable: DDP4
       created: "2026-12-24T09:00:00"
       _airbyte_extracted_at: "2026-12-26T00:00:00"
       custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue
-      id: DDP-4
-      jira_id: DDP-4
+      id: "10096"
+      jira_id: "10096"
       unique_key: jira-test-DDP-4
       id_readable: DDP4
       created: "2026-12-24T09:00:00"
@@ -108,8 +108,8 @@ bronze:
     # ── DDP-5: bob's Bug re-synced whole — the snapshot arrives twice with
     #    fresh raw ids and extraction stamps → bugs_fixed must count it once ──
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue
-      id: DDP-5
-      jira_id: DDP-5
+      id: "10097"
+      jira_id: "10097"
       unique_key: jira-test-DDP-5
       id_readable: DDP5
       created: "2026-12-25T09:00:00"
@@ -117,8 +117,8 @@ bronze:
       _airbyte_extracted_at: "2026-12-27T00:00:00"
       custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10000","name":"Bug"},"assignee":{"accountId":"bob-jira-acct","displayName":"Bob Beta"}}'
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue
-      id: DDP-5
-      jira_id: DDP-5
+      id: "10097"
+      jira_id: "10097"
       unique_key: jira-test-DDP-5
       id_readable: DDP5
       created: "2026-12-25T09:00:00"
@@ -130,6 +130,7 @@ bronze:
     # ── DDP-5's close event, re-synced the same way as its snapshot ──
     - $ref: ../templates/jira_task.yaml#/templates/jira_history
       id_readable: DDP5
+      jira_id: "10097"
       changelog_id: "58001"
       unique_key: jira-test-DDP5-58001
       created_at: "2026-12-26T14:00:00.000+0000"
@@ -139,6 +140,7 @@ bronze:
       items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'
     - $ref: ../templates/jira_task.yaml#/templates/jira_history
       id_readable: DDP5
+      jira_id: "10097"
       changelog_id: "58001"
       unique_key: jira-test-DDP5-58001
       created_at: "2026-12-26T14:00:00.000+0000"

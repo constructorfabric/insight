@@ -41,12 +41,12 @@ WHAT IT CHECKS
 
 LIMITATIONS
   * An ephemeral contributor creates no relation of its own. When it is a plain
-    pass-through over a single `source()`/`ref()` — the shape of
-    `jira__task_field_history`, whose physical table is owned by the `jira-enrich`
-    Rust binary and by the `create_task_field_history_staging` macro rather than
-    by the dbt DAG — the audit follows that dependency and checks the underlying
-    relation instead. An ephemeral model that transforms its input publishes
-    columns no relation holds; it is listed as UNCHECKED and does not fail.
+    pass-through over a single `source()`/`ref()` — a relation the dbt DAG does
+    not own, exposed to a union through a tag — the audit follows that
+    dependency and checks the underlying relation instead. No contributor has
+    that shape today; the Jira field history had it while a Rust binary wrote
+    the table. An ephemeral model that transforms its input publishes columns
+    no relation holds; it is listed as UNCHECKED and does not fail.
   * The audit only sees the connectors that were seeded into this warehouse.
     Check 1 guards the model-level hole, not a connector missing from
     `connectors-config.yaml` altogether.
