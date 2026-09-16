@@ -16,7 +16,8 @@ use crate::definitions::{
     Change, DefinitionError, DefinitionKind, DefinitionName, DefinitionStoreError, MAX_PAGE_LIMIT,
     Page, PageError,
 };
-use crate::domain::surfaces::{CustomError, held_by};
+use crate::domain::kinds;
+use crate::domain::surfaces::CustomError;
 
 /// The query string on a list: what to look for, in a name or in a body, and
 /// which page of the matches to answer with.
@@ -254,27 +255,6 @@ pub(crate) fn custom_error(error: CustomError) -> CanonicalError {
 
 /// The same body, pointed at the new name.
 ///
-/// A dashboard also names its widgets inside its item list, where the order
-/// and the headings live; nothing else has one, so walking it is a no-op for
-/// a widget's metric.
-fn pointed_at(body: serde_json::Value, field: &str, from: &str, to: &str) -> serde_json::Value {
-    let mut body = crate::domain::kinds::dashboard::renamed(body, from, to);
-
-    match body.get_mut(field) {
-        Some(serde_json::Value::String(one)) if one == from => to.clone_into(one),
-        Some(serde_json::Value::Array(many)) => {
-            for entry in many {
-                if entry.as_str() == Some(from) {
-                    *entry = serde_json::Value::String(to.to_owned());
-                }
-            }
-        }
-        _ => {}
-    }
-
-    body
-}
-
 /// Renames a definition, and rewrites whatever drew it under the old name.
 ///
 /// A name is the only handle a widget has on its metric, and a dashboard on
@@ -337,30 +317,27 @@ async fn rename_definition(
         Change::Delete(kind, from.clone()),
     ];
     let mut rewritten = Vec::new();
-    if let Some((holder, field)) = held_by(kind) {
-        for holder_name in state
-            .surfaces()
-            .dependents_of(kind, &from)
-            .await
-            .map_err(custom_error)?
-        {
-            let parsed = DefinitionName::parse(&holder_name).map_err(definition_error)?;
-            let Some(body) = state
-                .definitions()
-                .get(holder, &parsed)
-                .await
-                .map_err(definition_store_error)?
-            else {
-                continue;
-            };
 
-            changes.push(Change::Put(
-                holder,
-                parsed,
-                pointed_at(body, field, from.as_str(), to.as_str()),
-            ));
-            rewritten.push(holder_name);
-        }
+    for holder in state
+        .surfaces()
+        .dependents_of(kind, &from)
+        .await
+        .map_err(custom_error)?
+    {
+        let parsed = DefinitionName::parse(&holder.name).map_err(definition_error)?;
+        let Some(body) = state
+            .definitions()
+            .get(holder.kind, &parsed)
+            .await
+            .map_err(definition_store_error)?
+        else {
+            continue;
+        };
+
+        let rewritten_body = kinds::rename_reference(holder.kind, body, from.as_str(), to.as_str());
+
+        changes.push(Change::Put(holder.kind, parsed, rewritten_body));
+        rewritten.push(holder.name);
     }
 
     state

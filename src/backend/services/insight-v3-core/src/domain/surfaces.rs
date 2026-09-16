@@ -8,16 +8,28 @@ use crate::definitions::{
     DefinitionKind, DefinitionName, DefinitionStoreError, Definitions, NamePage, Page,
 };
 use crate::domain::kinds::dashboard::Item;
-use crate::domain::kinds::widget::{Widget, WidgetError};
+use crate::domain::kinds::widget::WidgetError;
+use crate::domain::kinds::{self, KindError, Reference};
 use crate::domain::query::metric_query::{
     MetricQuery, MetricQueryError, MetricRunError, MetricRunner, RunResult,
 };
-use crate::domain::query::time_window::{RequestedRange, WindowError, WindowRequest};
+use crate::domain::query::time_window::{WindowError, WindowRequest};
 use crate::domain::query::undated::UndatedCount;
 use crate::store::catalog::{Catalog, CatalogError, TableEngine, TableSchema};
 
 #[cfg(test)]
 mod tests;
+
+impl From<KindError> for CustomError {
+    fn from(error: KindError) -> Self {
+        match error {
+            KindError::Widget(source) => Self::Widget(source),
+            KindError::Compile(source) => Self::Compile(source),
+            KindError::Range(source) => Self::Range(source),
+            KindError::Store(source) => Self::Store(source),
+        }
+    }
+}
 
 #[derive(Debug, Error)]
 pub(crate) enum CustomError {
@@ -145,8 +157,7 @@ impl<'a> Surfaces<'a> {
             }
         }
 
-        let body = crate::domain::kinds::dashboard::laid_out(&previous, items)
-            .map_err(CustomError::Body)?;
+        let body = kinds::dashboard::laid_out(&previous, items).map_err(CustomError::Body)?;
         self.definitions
             .put(DefinitionKind::Dashboard, name, &body)
             .await
@@ -161,15 +172,7 @@ impl<'a> Surfaces<'a> {
         name: &DefinitionName,
         body: &Value,
     ) -> Result<(), CustomError> {
-        if kind == DefinitionKind::Widget {
-            self.check_widget(body).await?;
-        }
-        if kind == DefinitionKind::Metric {
-            check_metric(body)?;
-        }
-        if kind == DefinitionKind::Dashboard {
-            check_dashboard(body)?;
-        }
+        kinds::check(kind, body, self.definitions).await?;
 
         self.definitions
             .put(kind, name, body)
@@ -184,7 +187,9 @@ impl<'a> Surfaces<'a> {
     ) -> Result<(), CustomError> {
         let used_by = self.dependents_of(kind, name).await?;
         if !used_by.is_empty() {
-            return Err(CustomError::InUse { used_by });
+            return Err(CustomError::InUse {
+                used_by: used_by.into_iter().map(|holder| holder.name).collect(),
+            });
         }
 
         let removed = self
@@ -272,113 +277,45 @@ impl<'a> Surfaces<'a> {
         self.catalog.tables().await.map_err(CustomError::Catalog)
     }
 
+    /// Whether a widget body can be stored, for a caller that has one in hand
+    /// before it is written — the chat checks a batch before storing any of it.
     pub(crate) async fn check_widget(&self, body: &Value) -> Result<(), CustomError> {
-        let widget: Widget = serde_json::from_value(body.clone())
-            .map_err(|error| CustomError::Widget(error.into()))?;
-
-        let metric_name = DefinitionName::parse(widget.metric())
-            .map_err(|_| CustomError::Widget(WidgetError::NoMetric(widget.metric().to_owned())))?;
-
-        let stored = self
-            .definitions
-            .get(DefinitionKind::Metric, &metric_name)
+        kinds::widget::check(body, self.definitions)
             .await
-            .map_err(CustomError::Store)?
-            .ok_or_else(|| {
-                CustomError::Widget(WidgetError::NoMetric(widget.metric().to_owned()))
-            })?;
-
-        let metric: MetricQuery =
-            serde_json::from_value(stored).map_err(|error| CustomError::Widget(error.into()))?;
-
-        widget.check_against(&metric).map_err(CustomError::Widget)
+            .map_err(CustomError::from)
     }
 
     pub(crate) async fn dependents_of(
         &self,
         kind: DefinitionKind,
         name: &DefinitionName,
-    ) -> Result<Vec<String>, CustomError> {
-        let Some((holder, needle)) = held_by(kind) else {
-            return Ok(Vec::new());
-        };
-
+    ) -> Result<Vec<Reference>, CustomError> {
         let mut used_by = Vec::new();
-        for holder_name in self.list(holder).await? {
-            let Ok(parsed) = DefinitionName::parse(&holder_name) else {
-                continue;
-            };
-            let Some(body) = self
-                .definitions
-                .get(holder, &parsed)
-                .await
-                .map_err(CustomError::Store)?
-            else {
-                continue;
-            };
 
-            let names: Vec<String> = match holder {
-                // A board names its widgets in an item list or in the older
-                // shorthand, and either one is still drawing them.
-                DefinitionKind::Dashboard => crate::domain::kinds::dashboard::widgets(&body),
-                _ => match body.get(needle) {
-                    Some(Value::String(one)) => vec![one.clone()],
-                    Some(Value::Array(many)) => many
-                        .iter()
-                        .filter_map(Value::as_str)
-                        .map(str::to_owned)
-                        .collect(),
-                    _ => Vec::new(),
-                },
-            };
-            if names.iter().any(|held| held == name.as_str()) {
-                used_by.push(holder_name);
+        for holder in kinds::referred_to_by(kind) {
+            for holder_name in self.list(*holder).await? {
+                let Ok(parsed) = DefinitionName::parse(&holder_name) else {
+                    continue;
+                };
+                let Some(body) = self
+                    .definitions
+                    .get(*holder, &parsed)
+                    .await
+                    .map_err(CustomError::Store)?
+                else {
+                    continue;
+                };
+
+                let names_it = kinds::refers_to(*holder, &body)
+                    .into_iter()
+                    .any(|reference| reference.kind == kind && reference.name == name.as_str());
+
+                if names_it {
+                    used_by.push(Reference::new(*holder, holder_name));
+                }
             }
         }
 
         Ok(used_by)
-    }
-}
-
-/// What a stored metric says about time, checked before it is stored. A
-/// body that is not a metric at all is left alone — it is refused when run.
-fn check_metric(body: &Value) -> Result<(), CustomError> {
-    let Ok(metric) = serde_json::from_value::<MetricQuery>(body.clone()) else {
-        return Ok(());
-    };
-
-    metric.check_window().map_err(CustomError::Compile)
-}
-
-/// What a stored dashboard says about time, checked before it is stored: a
-/// board offering a range the server cannot resolve draws a picker whose
-/// buttons refuse every widget behind them.
-fn check_dashboard(body: &Value) -> Result<(), CustomError> {
-    let offered = body
-        .get("time_ranges")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default();
-    let default = body.get("default_range");
-
-    for token in offered.iter().chain(default) {
-        let Some(token) = token.as_str() else {
-            return Err(CustomError::Range(WindowError::Range(token.to_string())));
-        };
-        RequestedRange::parse(token).map_err(CustomError::Range)?;
-    }
-
-    Ok(())
-}
-
-/// Which kind names this one, and under which field.
-///
-/// A widget names its metric; a dashboard names its widgets. Nothing names a
-/// dashboard.
-pub(crate) fn held_by(kind: DefinitionKind) -> Option<(DefinitionKind, &'static str)> {
-    match kind {
-        DefinitionKind::Metric => Some((DefinitionKind::Widget, "metric")),
-        DefinitionKind::Widget => Some((DefinitionKind::Dashboard, "widgets")),
-        DefinitionKind::Dashboard => None,
     }
 }
