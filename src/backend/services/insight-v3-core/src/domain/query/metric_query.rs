@@ -8,9 +8,9 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::catalog::TableEngine;
-use crate::time_window::{Bounds, Grain, MaximumRange, Window, WindowError};
-use crate::undated::UndatedCount;
+use crate::domain::query::time_window::{Bounds, Grain, MaximumRange, Window, WindowError};
+use crate::domain::query::undated::UndatedCount;
+use crate::store::catalog::TableEngine;
 
 const MAX_IDENTIFIER_CHARS: usize = 128;
 const DEFAULT_LIMIT: u32 = 1000;

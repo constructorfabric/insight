@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use thiserror::Error;
 use utoipa::ToSchema;
 
-use crate::metric_query::{MetricQuery, MetricQueryError, People};
+use crate::domain::query::metric_query::{MetricQuery, MetricQueryError, People};
 
 const ANTHROPIC_API_BASE: &str = "https://api.anthropic.com";
 const ANTHROPIC_VERSION: &str = "2023-06-01";

@@ -14,13 +14,13 @@ pub(crate) mod tables;
 
 use admission::IngestAdmission;
 
-use crate::catalog::Catalog;
 use crate::chat::ChatClient;
 use crate::definitions::Definitions;
-use crate::identity::IdentityClient;
-use crate::metric_query::MetricRunner;
-use crate::raw_data::RawDataStore;
-use crate::tables::TableStore;
+use crate::domain::query::metric_query::MetricRunner;
+use crate::store::catalog::Catalog;
+use crate::store::identity::IdentityClient;
+use crate::store::raw_data::RawDataStore;
+use crate::store::tables::TableStore;
 
 /// What a refused surface says.
 pub(crate) const ADMIN_ONLY: &str = "admin role required for this operation";
@@ -132,8 +132,12 @@ impl AppState {
         &self.chat
     }
 
-    pub(crate) fn surfaces(&self) -> crate::custom::Surfaces<'_> {
-        crate::custom::Surfaces::new(self.definitions.as_ref(), &self.metrics, &self.catalog)
+    pub(crate) fn surfaces(&self) -> crate::domain::surfaces::Surfaces<'_> {
+        crate::domain::surfaces::Surfaces::new(
+            self.definitions.as_ref(),
+            &self.metrics,
+            &self.catalog,
+        )
     }
 }
 
@@ -177,7 +181,7 @@ pub(crate) fn openapi_document() -> anyhow::Result<utoipa::openapi::OpenApi> {
         )),
         MetricRunner::new(
             offline.clone(),
-            crate::metric_query::People::new("identity"),
+            crate::domain::query::metric_query::People::new("identity"),
         ),
         ChatClient::keyless(),
         IdentityClient::new("http://identity.invalid")?,

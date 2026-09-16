@@ -9,7 +9,7 @@ use toolkit_canonical_errors::{CanonicalError, resource_error};
 
 use super::AppState;
 use super::admission::{self, IngestAdmission};
-use crate::tables::{TableError, TableName, TableStoreError};
+use crate::store::tables::{TableError, TableName, TableStoreError};
 
 #[resource_error("gts.cf.insight.insight_v3_core.tables.v1~")]
 struct TableApiError;

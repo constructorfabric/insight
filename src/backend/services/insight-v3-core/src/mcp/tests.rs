@@ -10,15 +10,15 @@ use tower::ServiceExt as _;
 
 use super::*;
 use crate::api::AppState;
-use crate::catalog::Catalog;
 use crate::chat::ChatClient;
 use crate::config::McpConfig;
 use crate::definitions::memory::MemoryDefinitions;
-use crate::identity::IdentityClient;
+use crate::domain::query::metric_query::{MetricRunner, People};
 use crate::mcp::test_support::Issuer;
-use crate::metric_query::{MetricRunner, People};
-use crate::raw_data::RawDataStore;
-use crate::tables::TableStore;
+use crate::store::catalog::Catalog;
+use crate::store::identity::IdentityClient;
+use crate::store::raw_data::RawDataStore;
+use crate::store::tables::TableStore;
 
 type R = Result<(), Box<dyn Error>>;
 

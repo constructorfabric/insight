@@ -35,7 +35,7 @@ fn unsafe_table_names_are_rejected() {
         "",
         "   ",
         "synthetic.events",
-        &"x".repeat(crate::tables::MAX_TABLE_NAME_CHARS + 1),
+        &"x".repeat(crate::store::tables::MAX_TABLE_NAME_CHARS + 1),
     ] {
         assert!(
             RawDataRecord::parse(table, &json!(null)).is_err(),

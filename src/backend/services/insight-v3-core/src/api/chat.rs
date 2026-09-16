@@ -14,13 +14,13 @@ use toolkit_canonical_errors::{CanonicalError, resource_error};
 use utoipa::ToSchema;
 
 use super::AppState;
-use crate::catalog::{Catalog, Layer, TableSchema};
 use crate::chat::{Ask, Catalogue, ChatError, KnownTable, Proposal, Schemas, Turn};
 use crate::definitions::{
     Change, DefinitionError, DefinitionKind, DefinitionName, DefinitionStoreError,
 };
-use crate::metric_query::{MetricQuery, MetricQueryError, RunResult};
-use crate::tables::TableName;
+use crate::domain::query::metric_query::{MetricQuery, MetricQueryError, RunResult};
+use crate::store::catalog::{Catalog, Layer, TableSchema};
+use crate::store::tables::TableName;
 
 #[resource_error("gts.cf.insight.insight_v3_core.chat.v1~")]
 struct ChatApiError;
@@ -341,7 +341,7 @@ async fn check_widget_in_batch(
     body: &serde_json::Value,
     batch: &[(DefinitionKind, DefinitionName, serde_json::Value, String)],
 ) -> Result<(), CanonicalError> {
-    let widget: crate::widget::Widget = serde_json::from_value(body.clone())
+    let widget: crate::domain::kinds::widget::Widget = serde_json::from_value(body.clone())
         .map_err(|error| crate::api::definitions::widget_error(&error.into()))?;
 
     let arriving = batch
@@ -350,7 +350,7 @@ async fn check_widget_in_batch(
 
     match arriving {
         Some((_, _, metric_body, _)) => {
-            let metric: crate::metric_query::MetricQuery =
+            let metric: crate::domain::query::metric_query::MetricQuery =
                 serde_json::from_value(metric_body.clone())
                     .map_err(|error| crate::api::definitions::widget_error(&error.into()))?;
             widget
@@ -492,8 +492,8 @@ fn compile_error(error: &MetricQueryError) -> CanonicalError {
         .create()
 }
 
-fn run_error(error: crate::metric_query::MetricRunError) -> CanonicalError {
-    use crate::metric_query::MetricRunError;
+fn run_error(error: crate::domain::query::metric_query::MetricRunError) -> CanonicalError {
+    use crate::domain::query::metric_query::MetricRunError;
 
     match error {
         MetricRunError::Timeout => ChatApiError::deadline_exceeded("query timed out").create(),

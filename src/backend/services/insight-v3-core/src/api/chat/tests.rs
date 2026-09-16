@@ -14,9 +14,9 @@ use crate::api::AppState;
 use crate::chat::{ChatClient, Proposal};
 use crate::definitions::Definitions;
 use crate::definitions::memory::MemoryDefinitions;
-use crate::metric_query::MetricRunner;
-use crate::raw_data::RawDataStore;
-use crate::tables::TableStore;
+use crate::domain::query::metric_query::MetricRunner;
+use crate::store::raw_data::RawDataStore;
+use crate::store::tables::TableStore;
 
 struct TestHarness {
     mock: Mock,
@@ -51,11 +51,11 @@ impl TestHarness {
                     metrics.unwrap_or(url),
                     "insight",
                 )),
-                crate::metric_query::People::new("identity"),
+                crate::domain::query::metric_query::People::new("identity"),
             ),
             chat,
-            crate::identity::IdentityClient::fixed(true),
-            crate::catalog::Catalog::new(
+            crate::store::identity::IdentityClient::fixed(true),
+            crate::store::catalog::Catalog::new(
                 insight_clickhouse::Client::new(insight_clickhouse::Config::new(
                     "http://catalogue.invalid",
                     "insight",

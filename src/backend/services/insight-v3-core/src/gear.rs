@@ -46,16 +46,16 @@ impl Gear for InsightV3CoreGear {
         let admission = crate::api::admission::IngestAdmission::new(config.ingest_token());
         let chat = crate::chat::ChatClient::new(config.anthropic_token(), config.chat_model());
         let app = Arc::new(crate::api::AppState::new(
-            crate::raw_data::RawDataStore::new(config.clickhouse_client()),
-            crate::tables::TableStore::new(config.clickhouse_client()),
+            crate::store::raw_data::RawDataStore::new(config.clickhouse_client()),
+            crate::store::tables::TableStore::new(config.clickhouse_client()),
             definitions,
-            crate::metric_query::MetricRunner::new(
+            crate::domain::query::metric_query::MetricRunner::new(
                 config.clickhouse_query_client(),
-                crate::metric_query::People::new(config.identity_database()),
+                crate::domain::query::metric_query::People::new(config.identity_database()),
             ),
             chat,
-            crate::identity::IdentityClient::new(config.identity_url())?,
-            crate::catalog::Catalog::new(
+            crate::store::identity::IdentityClient::new(config.identity_url())?,
+            crate::store::catalog::Catalog::new(
                 config.clickhouse_query_client(),
                 config.clickhouse_database(),
             ),

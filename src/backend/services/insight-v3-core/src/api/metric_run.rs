@@ -10,10 +10,10 @@ use toolkit::api::{OpenApiRegistry, OperationBuilder, ParamLocation, ParamSpec};
 use toolkit_canonical_errors::{CanonicalError, resource_error};
 
 use super::AppState;
-use crate::custom::CustomError;
 use crate::definitions::{DefinitionError, DefinitionName, DefinitionStoreError};
-use crate::metric_query::{MetricQueryError, MetricRunError};
-use crate::time_window::{WindowError, WindowRequest};
+use crate::domain::query::metric_query::{MetricQueryError, MetricRunError};
+use crate::domain::query::time_window::{WindowError, WindowRequest};
+use crate::domain::surfaces::CustomError;
 
 #[resource_error("gts.cf.insight.insight_v3_core.metric_run.v1~")]
 struct MetricRunApiError;

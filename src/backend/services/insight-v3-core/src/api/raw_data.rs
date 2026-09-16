@@ -13,7 +13,7 @@ use utoipa::ToSchema;
 
 use super::AppState;
 use super::admission::{self, IngestAdmission};
-use crate::raw_data::{RawDataError, RawDataRecord, StoreError};
+use crate::store::raw_data::{RawDataError, RawDataRecord, StoreError};
 
 #[resource_error("gts.cf.insight.insight_v3_core.raw_data.v1~")]
 struct RawDataApiError;

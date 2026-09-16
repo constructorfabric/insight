@@ -12,11 +12,11 @@ use toolkit_canonical_errors::{CanonicalError, resource_error};
 use utoipa::ToSchema;
 
 use super::AppState;
-use crate::custom::{CustomError, held_by};
 use crate::definitions::{
     Change, DefinitionError, DefinitionKind, DefinitionName, DefinitionStoreError, MAX_PAGE_LIMIT,
     Page, PageError,
 };
+use crate::domain::surfaces::{CustomError, held_by};
 
 /// The query string on a list: what to look for, in a name or in a body, and
 /// which page of the matches to answer with.
@@ -258,7 +258,7 @@ pub(crate) fn custom_error(error: CustomError) -> CanonicalError {
 /// and the headings live; nothing else has one, so walking it is a no-op for
 /// a widget's metric.
 fn pointed_at(body: serde_json::Value, field: &str, from: &str, to: &str) -> serde_json::Value {
-    let mut body = crate::dashboard::renamed(body, from, to);
+    let mut body = crate::domain::kinds::dashboard::renamed(body, from, to);
 
     match body.get_mut(field) {
         Some(serde_json::Value::String(one)) if one == from => to.clone_into(one),
@@ -423,7 +423,7 @@ async fn put_definition(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
-pub(crate) fn widget_error(error: &crate::widget::WidgetError) -> CanonicalError {
+pub(crate) fn widget_error(error: &crate::domain::kinds::widget::WidgetError) -> CanonicalError {
     DefinitionApiError::invalid_argument()
         .with_field_violation("body", error.to_string(), "INVALID")
         .create()

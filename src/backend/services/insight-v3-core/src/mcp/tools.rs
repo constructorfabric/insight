@@ -9,11 +9,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::api::AppState;
-use crate::catalog::{Layer, TableSchema};
-use crate::custom::{CustomError, Surfaces};
-use crate::dashboard::Item;
 use crate::definitions::{DefinitionKind, DefinitionName, Page};
-use crate::time_window::WindowRequest;
+use crate::domain::kinds::dashboard::Item;
+use crate::domain::query::time_window::WindowRequest;
+use crate::domain::surfaces::{CustomError, Surfaces};
+use crate::store::catalog::{Layer, TableSchema};
 
 #[cfg(test)]
 mod tests;

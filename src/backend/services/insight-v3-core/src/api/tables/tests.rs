@@ -13,9 +13,9 @@ use crate::api::admission::{INGEST_TOKEN_HEADER, IngestAdmission};
 use crate::chat::ChatClient;
 use crate::definitions::Definitions;
 use crate::definitions::memory::MemoryDefinitions;
-use crate::metric_query::MetricRunner;
-use crate::raw_data::RawDataStore;
-use crate::tables::TableStore;
+use crate::domain::query::metric_query::MetricRunner;
+use crate::store::raw_data::RawDataStore;
+use crate::store::tables::TableStore;
 
 const TEST_TOKEN: &str = "correct-token-0123456789abcdefghi";
 
@@ -32,11 +32,11 @@ fn app(mock: &Mock, openapi: &OpenApiRegistryImpl) -> axum::Router {
         definitions.clone(),
         MetricRunner::new(
             insight_clickhouse::Client::new(insight_clickhouse::Config::new(url, "insight")),
-            crate::metric_query::People::new("identity"),
+            crate::domain::query::metric_query::People::new("identity"),
         ),
         ChatClient::keyless(),
-        crate::identity::IdentityClient::fixed(true),
-        crate::catalog::Catalog::new(
+        crate::store::identity::IdentityClient::fixed(true),
+        crate::store::catalog::Catalog::new(
             insight_clickhouse::Client::new(insight_clickhouse::Config::new(
                 "http://catalogue.invalid",
                 "insight",

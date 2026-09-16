@@ -3,9 +3,9 @@ use std::error::Error;
 use serde_json::json;
 
 use super::*;
-use crate::catalog::Catalog;
 use crate::definitions::memory::MemoryDefinitions;
-use crate::metric_query::{MetricRunner, People};
+use crate::domain::query::metric_query::{MetricRunner, People};
+use crate::store::catalog::Catalog;
 
 type R = Result<(), Box<dyn Error>>;
 
@@ -36,13 +36,13 @@ impl Fixture {
     }
 }
 
-fn legacy() -> crate::time_window::WindowRequest {
-    crate::time_window::WindowRequest::parse(None, None)
+fn legacy() -> crate::domain::query::time_window::WindowRequest {
+    crate::domain::query::time_window::WindowRequest::parse(None, None)
         .unwrap_or_else(|error| panic!("an empty request parses: {error}"))
 }
 
-fn ranged(token: &str) -> crate::time_window::WindowRequest {
-    crate::time_window::WindowRequest::parse(Some(token), None)
+fn ranged(token: &str) -> crate::domain::query::time_window::WindowRequest {
+    crate::domain::query::time_window::WindowRequest::parse(Some(token), None)
         .unwrap_or_else(|error| panic!("`{token}` parses: {error}"))
 }
 
@@ -323,7 +323,9 @@ async fn a_range_asked_of_a_metric_with_no_clock_is_refused_before_any_read() ->
     assert!(
         matches!(
             error,
-            CustomError::Compile(crate::metric_query::MetricQueryError::ClocklessWindow)
+            CustomError::Compile(
+                crate::domain::query::metric_query::MetricQueryError::ClocklessWindow
+            )
         ),
         "{error:?}"
     );

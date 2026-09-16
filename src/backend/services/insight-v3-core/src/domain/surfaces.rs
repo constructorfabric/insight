@@ -4,15 +4,17 @@ use chrono::Utc;
 use serde_json::Value;
 use thiserror::Error;
 
-use crate::catalog::{Catalog, CatalogError, TableEngine, TableSchema};
-use crate::dashboard::Item;
 use crate::definitions::{
     DefinitionKind, DefinitionName, DefinitionStoreError, Definitions, NamePage, Page,
 };
-use crate::metric_query::{MetricQuery, MetricQueryError, MetricRunError, MetricRunner, RunResult};
-use crate::time_window::{RequestedRange, WindowError, WindowRequest};
-use crate::undated::UndatedCount;
-use crate::widget::{Widget, WidgetError};
+use crate::domain::kinds::dashboard::Item;
+use crate::domain::kinds::widget::{Widget, WidgetError};
+use crate::domain::query::metric_query::{
+    MetricQuery, MetricQueryError, MetricRunError, MetricRunner, RunResult,
+};
+use crate::domain::query::time_window::{RequestedRange, WindowError, WindowRequest};
+use crate::domain::query::undated::UndatedCount;
+use crate::store::catalog::{Catalog, CatalogError, TableEngine, TableSchema};
 
 #[cfg(test)]
 mod tests;
@@ -143,7 +145,8 @@ impl<'a> Surfaces<'a> {
             }
         }
 
-        let body = crate::dashboard::laid_out(&previous, items).map_err(CustomError::Body)?;
+        let body = crate::domain::kinds::dashboard::laid_out(&previous, items)
+            .map_err(CustomError::Body)?;
         self.definitions
             .put(DefinitionKind::Dashboard, name, &body)
             .await
@@ -317,7 +320,7 @@ impl<'a> Surfaces<'a> {
             let names: Vec<String> = match holder {
                 // A board names its widgets in an item list or in the older
                 // shorthand, and either one is still drawing them.
-                DefinitionKind::Dashboard => crate::dashboard::widgets(&body),
+                DefinitionKind::Dashboard => crate::domain::kinds::dashboard::widgets(&body),
                 _ => match body.get(needle) {
                     Some(Value::String(one)) => vec![one.clone()],
                     Some(Value::Array(many)) => many

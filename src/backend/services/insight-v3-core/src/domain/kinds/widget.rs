@@ -9,7 +9,7 @@
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::metric_query::MetricQuery;
+use crate::domain::query::metric_query::MetricQuery;
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]

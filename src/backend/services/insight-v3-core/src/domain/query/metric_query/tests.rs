@@ -1,7 +1,7 @@
 use serde_json::json;
 
-use crate::catalog::TableEngine;
-use crate::time_window::RequestedRange;
+use crate::domain::query::time_window::RequestedRange;
+use crate::store::catalog::TableEngine;
 
 use super::*;
 
@@ -33,7 +33,7 @@ fn a_plain_column_selected_beside_an_aggregate_must_be_grouped() {
     );
 }
 
-fn window(token: &str, bucketed: bool) -> crate::time_window::Window {
+fn window(token: &str, bucketed: bool) -> crate::domain::query::time_window::Window {
     let now = chrono::DateTime::parse_from_rfc3339("2026-09-10T15:00:00Z")
         .unwrap_or_else(|error| panic!("the synthetic clock parses: {error}"))
         .to_utc();

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::tables::{TableError, TableName};
+use crate::store::tables::{TableError, TableName};
 
 const INSERT_SEND_TIMEOUT_SECS: u64 = 10;
 const INSERT_END_TIMEOUT_SECS: u64 = 30;
@@ -51,14 +51,14 @@ impl RawDataRecord {
 
 pub(crate) struct RawDataStore {
     client: insight_clickhouse::Client,
-    tables: crate::tables::TableStore,
+    tables: crate::store::tables::TableStore,
     timeouts: InsertTimeouts,
 }
 
 impl RawDataStore {
     pub(crate) fn new(client: insight_clickhouse::Client) -> Self {
         Self {
-            tables: crate::tables::TableStore::new(client.clone()),
+            tables: crate::store::tables::TableStore::new(client.clone()),
             client,
             timeouts: InsertTimeouts::production(),
         }
@@ -67,7 +67,7 @@ impl RawDataStore {
     #[cfg(test)]
     fn with_timeouts(client: insight_clickhouse::Client, timeouts: InsertTimeouts) -> Self {
         Self {
-            tables: crate::tables::TableStore::new(client.clone()),
+            tables: crate::store::tables::TableStore::new(client.clone()),
             client,
             timeouts,
         }
@@ -88,7 +88,8 @@ impl RawDataStore {
             other => return other,
         }
 
-        let name = crate::tables::TableName::parse(&table).map_err(|_| StoreError::NoTable)?;
+        let name =
+            crate::store::tables::TableName::parse(&table).map_err(|_| StoreError::NoTable)?;
         self.tables.create(&name).await?;
 
         self.insert_once(&table, &row).await
@@ -157,7 +158,7 @@ pub(crate) enum StoreError {
     #[error("there is no table for this stream yet")]
     NoTable,
     #[error("the stream's table could not be created")]
-    Create(#[from] crate::tables::TableStoreError),
+    Create(#[from] crate::store::tables::TableStoreError),
 }
 
 /// `ClickHouse` reports a missing relation as error 60 inside a message rather

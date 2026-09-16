@@ -13,9 +13,9 @@ use crate::api::AppState;
 use crate::chat::ChatClient;
 use crate::definitions::Definitions;
 use crate::definitions::memory::MemoryDefinitions;
-use crate::metric_query::MetricRunner;
-use crate::raw_data::RawDataStore;
-use crate::tables::TableStore;
+use crate::domain::query::metric_query::MetricRunner;
+use crate::store::raw_data::RawDataStore;
+use crate::store::tables::TableStore;
 
 type R = Result<(), Box<dyn std::error::Error>>;
 
@@ -47,10 +47,13 @@ impl TestHarness {
                 insight_clickhouse::Config::new(definitions_url, "insight"),
             )),
             definitions.clone(),
-            MetricRunner::new(metrics_client, crate::metric_query::People::new("identity")),
+            MetricRunner::new(
+                metrics_client,
+                crate::domain::query::metric_query::People::new("identity"),
+            ),
             ChatClient::keyless(),
-            crate::identity::IdentityClient::fixed(true),
-            crate::catalog::Catalog::fixed(Vec::new()),
+            crate::store::identity::IdentityClient::fixed(true),
+            crate::store::catalog::Catalog::fixed(Vec::new()),
         ));
         let router = register_routes(Router::new(), &openapi, state);
 
