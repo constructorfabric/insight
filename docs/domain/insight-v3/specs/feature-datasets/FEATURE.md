@@ -825,7 +825,11 @@ The chat's system prompt, its look_up tool and the MCP describe tools **MUST** b
 
 The Custom zone **MUST** gain a Datasets catalogue beside Metrics, Widgets and Dashboards, a dataset page with the declaration, a preview of the latest records and the dependent metrics, and a remove action that shows the dependents when refused.
 
-A dataset **MUST** be declared through a form that edits it field by field — a name, a path, a type, a role, a substitute for an absent value and the person mark on each field; exactly one field marked as the record's main date; the row identity chosen from the fields already declared — rather than a free-text body, so an author is never asked to know the shape by heart. A refusal **MUST** attach each violation to the field of the form it names, so that a declaration with several problems is corrected in one pass. The rail **MUST** list the catalogue for administrators only. The dependent list **MUST** come from an exact dependency lookup, never from a catalogue search over stored bodies.
+A dataset **MUST** be declared through a form that edits it field by field — a name, a path, a type, a role, a substitute for an absent value and the person mark on each field; exactly one field marked as the record's main date; the row identity chosen from the fields already declared — so an author is never asked to know the shape by heart.
+
+The same declaration **MUST** also be editable as its own text, beside the form and holding what would be sent, so that one can be pasted whole or carried from another installation. The two **MUST** show one declaration rather than two copies of it: whichever was edited last is the one that is believed, text that does not parse leaves the form as it stands and blocks sending until it does, and a property the form does not know **MUST** be sent rather than dropped, so that a mistyped one is refused by name instead of disappearing. One action sends what both show.
+
+A refusal **MUST** attach each violation to the field it names, in the form and in the text alike, so that a declaration with several problems is corrected in one pass. The rail **MUST** list the catalogue for administrators only. The dependent list **MUST** come from an exact dependency lookup, never from a catalogue search over stored bodies.
 
 **Implements**:
 - `cpt-insightspec-v3-flow-datasets-browse`
@@ -857,7 +861,9 @@ The service **MUST** stop creating an ingest-schema landing table in the warehou
 - [ ] A record sent to a dataset that does not exist is refused and no table appears, whatever token it carries
 - [ ] A dataset created in the portal is listed in the catalogue, in the rail and in the assistant's context, and its table exists before the first record
 - [ ] The create form offers only what a declaration admits: the types, the roles, one main date, and a row identity chosen from the fields declared
-- [ ] A declaration refused for several reasons shows each one against the field of the form it belongs to, not as one message above it
+- [ ] Editing the form updates the text beside it, and text that parses updates the form; text that does not parse leaves the form alone and blocks sending
+- [ ] A declaration pasted as text, carrying a property the form does not know, is sent as pasted and refused by name rather than silently stripped
+- [ ] A declaration refused for several reasons shows each one against the field it belongs to, not as one message above the form
 - [ ] A create whose table step fails leaves the name claimed and nothing readable, and the request repeated succeeds
 - [ ] A create and a removal of one dataset, issued together, end in one of the two outcomes and never in a ready dataset whose table was dropped
 - [ ] A metric stored while its dataset is being removed either lands before the removal's dependency check, which then refuses, or is refused itself
@@ -948,6 +954,10 @@ The risks are a silent mismatch between what a declaration says and what a run r
   **Test**: Not implemented.
 - [ ] 25. **The create form builds a declaration and shows where it is wrong** — Versatility · fe-component — add fields, mark one as the main date, pick a row identity from them, then submit a declaration the service refuses for two different fields → the form offers only admissible types and roles, sends what was built, and shows each violation against its own field.
   **Requirements**: `cpt-insightspec-v3-fr-create-dataset`, `cpt-insightspec-v3-nfr-versatility`.
+  **Covers**: `cpt-insightspec-v3-dod-datasets-portal`.
+  **Test**: Not implemented.
+- [ ] 26. **Form and text stay one declaration** — Reliability · fe-component — edit the form and read the text, paste a declaration that parses and read the form, type text that does not parse, then paste one carrying an unknown property → the text follows the form, the form follows text that parses, broken text leaves the form untouched and blocks sending, and the unknown property reaches the request.
+  **Requirements**: `cpt-insightspec-v3-fr-create-dataset`, `cpt-insightspec-v3-nfr-reliability`.
   **Covers**: `cpt-insightspec-v3-dod-datasets-portal`.
   **Test**: Not implemented.
 - [ ] 16. **Ingest adds no warehouse round trip** — Efficiency · rust-unit — post a record into an existing dataset → exactly one insert statement reaches ClickHouse and the dataset lookup is answered by the definitions store.
