@@ -12,7 +12,10 @@ pub struct Migrator;
 #[async_trait::async_trait]
 impl MigratorTrait for Migrator {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
-        vec![Box::new(m20260907_000001_definitions::Migration)]
+        vec![
+            Box::new(m20260907_000001_definitions::Migration),
+            Box::new(m20260916_000002_datasets::Migration),
+        ]
     }
 }
 
@@ -53,6 +56,27 @@ mod m20260907_000001_definitions {
     }
 }
 
+mod m20260916_000002_datasets {
+    use super::{DbErr, MigrationTrait, SchemaManager, apply_sql};
+    use sea_orm_migration::prelude::DeriveMigrationName;
+
+    #[derive(DeriveMigrationName)]
+    pub struct Migration;
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            apply_sql(manager, include_str!("sql/002_datasets.sql")).await
+        }
+
+        async fn down(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
+            Err(DbErr::Custom(
+                "dropping the datasets would orphan every record they hold".to_owned(),
+            ))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -74,5 +98,29 @@ mod tests {
             3
         );
         assert!(!script.contains("ReplacingMergeTree"));
+    }
+
+    #[test]
+    fn a_dataset_row_carries_its_state_and_the_table_holding_its_records() {
+        let script = include_str!("sql/002_datasets.sql");
+
+        assert!(
+            script.contains("CREATE TABLE IF NOT EXISTS datasets"),
+            "{script}"
+        );
+        for column in [
+            "name VARCHAR(128) NOT NULL PRIMARY KEY",
+            "body JSON NOT NULL",
+            "state VARCHAR(16) NOT NULL",
+            "physical_table VARCHAR(128) NULL",
+            "operation VARCHAR(16) NULL",
+            "operation_token VARCHAR(64) NULL",
+            "lease_until DATETIME(6) NULL",
+        ] {
+            assert!(
+                script.contains(column),
+                "{column} is missing from the script"
+            );
+        }
     }
 }

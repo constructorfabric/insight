@@ -5,4 +5,5 @@
 //! belongs elsewhere.
 
 pub(crate) mod declaration;
+pub(crate) mod lifecycle;
 pub(crate) mod validate;
