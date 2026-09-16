@@ -13,8 +13,7 @@ use utoipa::ToSchema;
 
 use super::AppState;
 use super::errors::ApiErrors;
-use crate::definitions::{Change, DefinitionKind, DefinitionName, MAX_PAGE_LIMIT, Page, PageError};
-use crate::domain::kinds;
+use crate::definitions::{DefinitionKind, DefinitionName, MAX_PAGE_LIMIT, Page, PageError};
 use crate::domain::surfaces::CustomError;
 
 /// The query string on a list: what to look for, in a name or in a body, and
@@ -54,6 +53,12 @@ impl ApiErrors for DefinitionApiError {
 
     fn timed_out(detail: &str) -> CanonicalError {
         Self::deadline_exceeded(detail).create()
+    }
+
+    fn name_taken(name: &str) -> CanonicalError {
+        Self::already_exists(format!("`{name}` is already taken"))
+            .with_resource(name)
+            .create()
     }
 }
 
@@ -264,11 +269,6 @@ pub(crate) fn custom_error(error: CustomError) -> CanonicalError {
 /// The same body, pointed at the new name.
 ///
 /// Renames a definition, and rewrites whatever drew it under the old name.
-///
-/// A name is the only handle a widget has on its metric, and a dashboard on
-/// its widgets, so renaming one alone would break the others - the same
-/// broken chart the widget check exists to prevent. The new name, the removal
-/// of the old, and every rewritten dependent are one transaction.
 async fn rename_definition(
     Extension(state): Extension<Arc<AppState>>,
     Extension(kind): Extension<DefinitionKind>,
@@ -286,74 +286,11 @@ async fn rename_definition(
     let from = DefinitionName::parse(&name).map_err(DefinitionApiError::definition_error)?;
     let to = DefinitionName::parse(&request.to).map_err(DefinitionApiError::definition_error)?;
 
-    let body = state
-        .definitions()
-        .get(kind, &from)
-        .await
-        .map_err(DefinitionApiError::definition_store_error)?
-        .ok_or_else(|| {
-            DefinitionApiError::not_found(format!("`{}` was not found", from.as_str()))
-                .with_resource(from.as_str())
-                .create()
-        })?;
-
-    if to == from {
-        return Ok(Json(RenameResponse {
-            name: to.as_str().to_owned(),
-            rewritten: Vec::new(),
-        })
-        .into_response());
-    }
-
-    if state
-        .definitions()
-        .get(kind, &to)
-        .await
-        .map_err(DefinitionApiError::definition_store_error)?
-        .is_some()
-    {
-        return Err(DefinitionApiError::already_exists(format!(
-            "`{}` is already taken",
-            to.as_str()
-        ))
-        .with_resource(to.as_str())
-        .create());
-    }
-
-    let mut changes = vec![
-        Change::Put(kind, to.clone(), body),
-        Change::Delete(kind, from.clone()),
-    ];
-    let mut rewritten = Vec::new();
-
-    for holder in state
+    let rewritten = state
         .surfaces()
-        .dependents_of(kind, &from)
+        .rename(kind, &from, &to)
         .await
-        .map_err(custom_error)?
-    {
-        let parsed =
-            DefinitionName::parse(&holder.name).map_err(DefinitionApiError::definition_error)?;
-        let Some(body) = state
-            .definitions()
-            .get(holder.kind, &parsed)
-            .await
-            .map_err(DefinitionApiError::definition_store_error)?
-        else {
-            continue;
-        };
-
-        let rewritten_body = kinds::rename_reference(holder.kind, body, from.as_str(), to.as_str());
-
-        changes.push(Change::Put(holder.kind, parsed, rewritten_body));
-        rewritten.push(holder.name);
-    }
-
-    state
-        .definitions()
-        .apply(&changes)
-        .await
-        .map_err(DefinitionApiError::definition_store_error)?;
+        .map_err(custom_error)?;
 
     Ok(Json(RenameResponse {
         name: to.as_str().to_owned(),

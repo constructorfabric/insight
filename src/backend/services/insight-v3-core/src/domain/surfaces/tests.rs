@@ -561,3 +561,65 @@ async fn one_refused_body_refuses_the_whole_batch() -> R {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn renaming_points_every_widget_that_drew_the_old_name_at_the_new_one() -> R {
+    let fixture = Fixture::new();
+    let surfaces = fixture.surfaces();
+    surfaces
+        .put(DefinitionKind::Metric, &name("per_actor"), &metric_body())
+        .await?;
+    surfaces
+        .put(
+            DefinitionKind::Widget,
+            &name("chart"),
+            &line_widget("per_actor", "total"),
+        )
+        .await?;
+
+    let rewritten = surfaces
+        .rename(
+            DefinitionKind::Metric,
+            &name("per_actor"),
+            &name("by_actor"),
+        )
+        .await?;
+
+    assert_eq!(rewritten, vec!["chart".to_owned()]);
+    let widget = surfaces.get(DefinitionKind::Widget, &name("chart")).await?;
+    assert_eq!(widget["metric"], "by_actor");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_rename_onto_a_name_someone_holds_is_refused_and_writes_nothing() -> R {
+    let fixture = Fixture::new();
+    let surfaces = fixture.surfaces();
+    for held in ["per_actor", "by_actor"] {
+        surfaces
+            .put(DefinitionKind::Metric, &name(held), &metric_body())
+            .await?;
+    }
+
+    let refusal = surfaces
+        .rename(
+            DefinitionKind::Metric,
+            &name("per_actor"),
+            &name("by_actor"),
+        )
+        .await;
+
+    assert!(
+        matches!(
+            refusal,
+            Err(CustomError::Store(DefinitionStoreError::NameTaken(_)))
+        ),
+        "{refusal:?}"
+    );
+    surfaces
+        .get(DefinitionKind::Metric, &name("per_actor"))
+        .await?;
+
+    Ok(())
+}

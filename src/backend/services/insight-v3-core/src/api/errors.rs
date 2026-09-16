@@ -18,6 +18,9 @@ pub(crate) trait ApiErrors {
     /// A wait the server gave up on, which the caller may retry.
     fn timed_out(detail: &str) -> CanonicalError;
 
+    /// A name another definition already holds.
+    fn name_taken(name: &str) -> CanonicalError;
+
     /// A name the store cannot hold.
     fn definition_error(error: DefinitionError) -> CanonicalError {
         Self::invalid_field("name", error.to_string())
@@ -38,6 +41,7 @@ pub(crate) trait ApiErrors {
                 tracing::error!(error = ?source, "definition store operation failed");
                 CanonicalError::internal("definition store operation failed").create()
             }
+            DefinitionStoreError::NameTaken(name) => Self::name_taken(&name),
             DefinitionStoreError::Json(source) => {
                 tracing::error!(error = ?source, "definition body serialization failed");
                 CanonicalError::internal("definition store operation failed").create()

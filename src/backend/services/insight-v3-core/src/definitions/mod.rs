@@ -120,6 +120,12 @@ pub(crate) struct NamePage {
 #[derive(Debug)]
 pub(crate) enum Change {
     Put(DefinitionKind, DefinitionName, serde_json::Value),
+    /// A write that refuses to replace anything.
+    ///
+    /// A rename gives a definition a name nobody else holds. Asking first and
+    /// upserting after leaves a window where another writer takes that name in
+    /// between and the rename overwrites them; the store refuses instead.
+    Create(DefinitionKind, DefinitionName, serde_json::Value),
     Delete(DefinitionKind, DefinitionName),
 }
 
@@ -182,6 +188,9 @@ const UPSERT: &str = "INSERT INTO {table} (name, body, updated_at)
 VALUES (?, ?, UTC_TIMESTAMP(6))
 ON DUPLICATE KEY UPDATE body = VALUES(body), updated_at = VALUES(updated_at)";
 
+const INSERT_NEW: &str = "INSERT INTO {table} (name, body, updated_at)
+VALUES (?, ?, UTC_TIMESTAMP(6))";
+
 const DELETE_ONE: &str = "DELETE FROM {table} WHERE name = ?";
 const SELECT_BODY: &str = "SELECT body FROM {table} WHERE name = ?";
 const SELECT_NAMES: &str = "SELECT name FROM {table} ORDER BY name";
@@ -243,9 +252,18 @@ impl MariaDefinitions {
         name: &DefinitionName,
         body: &serde_json::Value,
     ) -> Result<Statement, DefinitionStoreError> {
+        Self::write(UPSERT, kind, name, body)
+    }
+
+    fn write(
+        template: &str,
+        kind: DefinitionKind,
+        name: &DefinitionName,
+        body: &serde_json::Value,
+    ) -> Result<Statement, DefinitionStoreError> {
         Ok(Statement::from_sql_and_values(
             DbBackend::MySql,
-            sql(UPSERT, kind),
+            sql(template, kind),
             [name.as_str().into(), serde_json::to_string(body)?.into()],
         ))
     }
@@ -349,13 +367,17 @@ impl Definitions for MariaDefinitions {
         for change in changes {
             let statement = match change {
                 Change::Put(kind, name, body) => Self::upsert(*kind, name, body)?,
+                Change::Create(kind, name, body) => Self::write(INSERT_NEW, *kind, name, body)?,
                 Change::Delete(kind, name) => Statement::from_sql_and_values(
                     DbBackend::MySql,
                     sql(DELETE_ONE, *kind),
                     [name.as_str().into()],
                 ),
             };
-            transaction.execute_raw(statement).await?;
+            transaction
+                .execute_raw(statement)
+                .await
+                .map_err(|error| taken_or(error, change))?;
         }
         transaction.commit().await?;
 
@@ -383,10 +405,27 @@ pub(crate) enum PageError {
     Limit(u64),
 }
 
+/// A write that was to create a name someone already holds, told apart from
+/// every other database failure so the caller hears which it was.
+fn taken_or(error: sea_orm::DbErr, change: &Change) -> DefinitionStoreError {
+    let Change::Create(_, name, _) = change else {
+        return DefinitionStoreError::Database(error);
+    };
+
+    match error.sql_err() {
+        Some(sea_orm::SqlErr::UniqueConstraintViolation(_)) => {
+            DefinitionStoreError::NameTaken(name.as_str().to_owned())
+        }
+        _ => DefinitionStoreError::Database(error),
+    }
+}
+
 #[derive(Debug, Error)]
 pub(crate) enum DefinitionStoreError {
     #[error("definition store operation failed")]
     Database(#[from] sea_orm::DbErr),
+    #[error("`{0}` is already taken")]
+    NameTaken(String),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
 }

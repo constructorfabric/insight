@@ -29,6 +29,12 @@ impl ApiErrors for MetricRunApiError {
     fn timed_out(detail: &str) -> CanonicalError {
         Self::deadline_exceeded(detail).create()
     }
+
+    fn name_taken(name: &str) -> CanonicalError {
+        Self::already_exists(format!("`{name}` is already taken"))
+            .with_resource(name)
+            .create()
+    }
 }
 
 pub(crate) fn register_routes(

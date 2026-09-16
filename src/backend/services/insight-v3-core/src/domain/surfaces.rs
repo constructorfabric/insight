@@ -6,7 +6,7 @@ use thiserror::Error;
 
 use crate::definitions::arriving::Arriving;
 use crate::definitions::{
-    DefinitionKind, DefinitionName, DefinitionStoreError, Definitions, NamePage, Page,
+    Change, DefinitionKind, DefinitionName, DefinitionStoreError, Definitions, NamePage, Page,
 };
 use crate::domain::kinds::dashboard::Item;
 use crate::domain::kinds::widget::WidgetError;
@@ -302,7 +302,65 @@ impl<'a> Surfaces<'a> {
         kind: DefinitionKind,
         name: &DefinitionName,
     ) -> Result<Vec<Reference>, CustomError> {
-        let mut used_by = Vec::new();
+        let holders = self.holders_of(kind, name).await?;
+
+        Ok(holders
+            .into_iter()
+            .map(|(holder, holder_name, _)| Reference::new(holder, holder_name.as_str().to_owned()))
+            .collect())
+    }
+
+    /// Gives a definition a name nobody holds, and points everything that drew
+    /// it at the new one.
+    ///
+    /// A name is the only handle a widget has on its metric, and a board on
+    /// its widgets, so the new name, the removal of the old, and every
+    /// rewritten dependent are one transaction. Taking the new name is a write
+    /// that refuses to replace anything, so a name another writer takes while
+    /// this one runs refuses the rename rather than overwriting them.
+    pub(crate) async fn rename(
+        &self,
+        kind: DefinitionKind,
+        from: &DefinitionName,
+        to: &DefinitionName,
+    ) -> Result<Vec<String>, CustomError> {
+        let body = self.get(kind, from).await?;
+
+        if to == from {
+            return Ok(Vec::new());
+        }
+
+        let mut changes = vec![
+            Change::Create(kind, to.clone(), body),
+            Change::Delete(kind, from.clone()),
+        ];
+        let mut rewritten = Vec::new();
+
+        for (holder, holder_name, body) in self.holders_of(kind, from).await? {
+            let pointed_at = kinds::rename_reference(holder, body, from.as_str(), to.as_str());
+
+            rewritten.push(holder_name.as_str().to_owned());
+            changes.push(Change::Put(holder, holder_name, pointed_at));
+        }
+
+        self.definitions
+            .apply(&changes)
+            .await
+            .map_err(CustomError::Store)?;
+
+        Ok(rewritten)
+    }
+
+    /// Every stored definition naming this one, with the body that names it.
+    ///
+    /// The body comes back because both callers need it: one to say what is
+    /// still in use, the other to rewrite it.
+    async fn holders_of(
+        &self,
+        kind: DefinitionKind,
+        name: &DefinitionName,
+    ) -> Result<Vec<(DefinitionKind, DefinitionName, Value)>, CustomError> {
+        let mut holders = Vec::new();
 
         for holder in kinds::referred_to_by(kind) {
             for holder_name in self.list(*holder).await? {
@@ -323,11 +381,11 @@ impl<'a> Surfaces<'a> {
                     .any(|reference| reference.kind == kind && reference.name == name.as_str());
 
                 if names_it {
-                    used_by.push(Reference::new(*holder, holder_name));
+                    holders.push((*holder, parsed, body));
                 }
             }
         }
 
-        Ok(used_by)
+        Ok(holders)
     }
 }

@@ -121,19 +121,31 @@ impl Definitions for MemoryDefinitions {
         if self.failing {
             return Err(Self::refuse());
         }
-        // All or nothing, as the transaction is: the map is held for the whole
-        // batch, so a reader never sees half of it.
+        // All or nothing, as the transaction is: the batch is applied to a
+        // copy and that copy replaces the map, so a refusal partway through
+        // leaves nothing behind and a reader never sees half of it.
         let mut stored = self.lock();
+        let mut applied = stored.clone();
+
         for change in changes {
             match change {
                 Change::Put(kind, name, body) => {
-                    stored.insert(Self::key(*kind, name), body.clone());
+                    applied.insert(Self::key(*kind, name), body.clone());
+                }
+                Change::Create(kind, name, body) => {
+                    let key = Self::key(*kind, name);
+                    if applied.contains_key(&key) {
+                        return Err(DefinitionStoreError::NameTaken(name.as_str().to_owned()));
+                    }
+                    applied.insert(key, body.clone());
                 }
                 Change::Delete(kind, name) => {
-                    stored.remove(&Self::key(*kind, name));
+                    applied.remove(&Self::key(*kind, name));
                 }
             }
         }
+
+        *stored = applied;
 
         Ok(())
     }
