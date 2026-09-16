@@ -289,3 +289,125 @@ async fn an_attempt_that_lost_the_dataset_takes_away_the_table_it_made() -> R {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn removing_a_dataset_takes_its_records_and_its_row_with_it() -> R {
+    let fixture = Fixture::new();
+    fixture.nothing_holds_the_name();
+    let made = fixture.mock.add(handlers::record_ddl());
+    fixture
+        .lifecycle()
+        .declare(&name("commits"), &declaration())
+        .await?;
+    fixture.mock.add(handlers::provide(vec![NoTable {
+        sorting_key: "table_name, received_at, id".to_owned(),
+    }]));
+    let dropping = fixture.mock.add(handlers::record_ddl());
+
+    let removed = fixture.lifecycle().remove(&name("commits")).await?;
+
+    assert_eq!(removed, Removal::Removed);
+    assert!(fixture.datasets.get(&name("commits")).await?.is_none());
+    let dropped = dropping.query().await;
+    assert!(dropped.contains("DROP TABLE"), "{dropped}");
+    let table = made
+        .query()
+        .await
+        .split("IF NOT EXISTS ")
+        .nth(1)
+        .and_then(|rest| rest.split_whitespace().next())
+        .unwrap_or_else(|| panic!("the create names a table"))
+        .trim_matches('`')
+        .to_owned();
+    assert!(
+        dropped.contains(&table),
+        "the table dropped must be the one the row named: {dropped}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn removing_a_dataset_that_was_never_declared_drops_nothing() -> R {
+    let fixture = Fixture::new();
+
+    let refused = fixture.lifecycle().remove(&name("commits")).await;
+
+    assert!(
+        matches!(refused, Err(DatasetChangeError::NotFound)),
+        "{refused:?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_removal_already_under_way_is_this_requests_own_outcome() -> R {
+    let fixture = Fixture::new();
+    fixture.nothing_holds_the_name();
+    fixture.mock.add(handlers::record_ddl());
+    fixture
+        .lifecycle()
+        .declare(&name("commits"), &declaration())
+        .await?;
+    fixture.datasets.take_remove(&name("commits")).await?;
+
+    let second = fixture.lifecycle().remove(&name("commits")).await?;
+
+    assert_eq!(second, Removal::AlreadyUnderWay);
+    assert!(
+        fixture.datasets.get(&name("commits")).await?.is_some(),
+        "the row stays until the removal under way finishes"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_dataset_being_created_is_not_removed_from_under_that_attempt() -> R {
+    let fixture = Fixture::new();
+    fixture
+        .datasets
+        .take_create(&name("commits"), &declaration())
+        .await?;
+
+    let refused = fixture.lifecycle().remove(&name("commits")).await;
+
+    assert!(
+        matches!(
+            refused,
+            Err(DatasetChangeError::Refused(Refused::Busy(
+                Operation::Create
+            )))
+        ),
+        "{refused:?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_table_that_is_no_longer_ours_is_left_where_it_is() -> R {
+    let fixture = Fixture::new();
+    fixture.nothing_holds_the_name();
+    fixture.mock.add(handlers::record_ddl());
+    fixture
+        .lifecycle()
+        .declare(&name("commits"), &declaration())
+        .await?;
+    fixture.mock.add(handlers::provide(vec![NoTable {
+        sorting_key: "event_date, project_id".to_owned(),
+    }]));
+
+    let refused = fixture.lifecycle().remove(&name("commits")).await;
+
+    assert!(
+        matches!(
+            refused,
+            Err(DatasetChangeError::Table(DatasetTableError::NotOurs(_)))
+        ),
+        "{refused:?}"
+    );
+
+    Ok(())
+}

@@ -13,9 +13,9 @@ use super::datasets::{
 };
 use super::definition::DefinitionName;
 use super::kinds::dataset::declaration::Declaration;
-use super::kinds::dataset::state::DatasetState;
+use super::kinds::dataset::state::{DatasetState, Operation};
 use super::kinds::dataset::validate::{Violation, validate};
-use crate::store::dataset_tables::{DatasetTableError, DatasetTables};
+use crate::store::dataset_tables::{DatasetTableError, DatasetTables, Shape};
 
 /// Creating and removing datasets, which only an administrator does.
 #[derive(Debug)]
@@ -87,9 +87,69 @@ impl<'a> DatasetLifecycle<'a> {
                 self.discard(&table).await;
 
                 Err(DatasetChangeError::Refused(Refused::Busy(
-                    super::kinds::dataset::state::Operation::Create,
+                    Operation::Create,
                 )))
             }
+        }
+    }
+
+    /// Takes a dataset away, with the records it holds.
+    ///
+    /// The table dropped is the one the row names and no other, so a drop
+    /// arriving late cannot reach a table some later dataset provisioned.
+    pub(crate) async fn remove(
+        &self,
+        name: &DefinitionName,
+    ) -> Result<Removal, DatasetChangeError> {
+        if self.datasets.get(name).await?.is_none() {
+            return Err(DatasetChangeError::NotFound);
+        }
+
+        let attempt = match self.datasets.take_remove(name).await {
+            Ok(attempt) => attempt,
+            // A removal already under way is this request's own outcome
+            // arriving by another route, not a conflict to report.
+            Err(DatasetStoreError::Refused(Refused::Busy(Operation::Remove))) => {
+                return Ok(Removal::AlreadyUnderWay);
+            }
+            Err(DatasetStoreError::Refused(Refused::Gone)) => {
+                return Err(DatasetChangeError::NotFound);
+            }
+            Err(other) => return Err(other.into()),
+        };
+
+        self.drop_records(name).await?;
+
+        match self
+            .datasets
+            .finish(name, &attempt.token, Finish::Removed)
+            .await?
+        {
+            Owning::Held => Ok(Removal::Removed),
+            Owning::Lost => Err(DatasetChangeError::Refused(Refused::Busy(
+                Operation::Remove,
+            ))),
+        }
+    }
+
+    /// Drops the table this dataset's row names, if it names one and it is
+    /// still a table of this service's own shape.
+    async fn drop_records(&self, name: &DefinitionName) -> Result<(), DatasetChangeError> {
+        let Some(table) = self
+            .datasets
+            .get(name)
+            .await?
+            .and_then(|held| held.physical_table)
+        else {
+            return Ok(());
+        };
+
+        match self.tables.shape_of(&table).await? {
+            Shape::Absent => Ok(()),
+            Shape::Ingest => Ok(self.tables.drop_table(&table).await?),
+            // Something else holds the name now. Dropping it would take a
+            // table this service never made.
+            Shape::Foreign => Err(DatasetChangeError::Table(DatasetTableError::NotOurs(table))),
         }
     }
 
@@ -132,8 +192,18 @@ fn read(body: &Value) -> Result<Declaration, DatasetChangeError> {
     serde_json::from_value(body.clone()).map_err(DatasetChangeError::Unreadable)
 }
 
+/// What became of a removal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Removal {
+    Removed,
+    /// Another attempt is already taking this dataset away.
+    AlreadyUnderWay,
+}
+
 #[derive(Debug, Error)]
 pub(crate) enum DatasetChangeError {
+    #[error("there is no dataset of that name")]
+    NotFound,
     #[error("the declaration is not valid")]
     Invalid(Vec<Violation>),
     #[error("the body is not a declaration: {0}")]
