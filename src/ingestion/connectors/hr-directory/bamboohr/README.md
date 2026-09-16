@@ -1,6 +1,6 @@
 # BambooHR Connector
 
-Employee directory, leave requests, and field metadata from BambooHR via API key
+Employee directory, leave requests, Who's Out, and field metadata from BambooHR via API key
 authentication. Python CDK source.
 
 ## Prerequisites
@@ -33,7 +33,7 @@ stringData:
 |-------|----------|-------------|
 | `bamboohr_api_key` | Yes | BambooHR API key (Account > API Keys) |
 | `bamboohr_domain` | Yes | BambooHR subdomain (e.g. `acme` from `acme.bamboohr.com`) |
-| `bamboohr_start_date` | No | Leave requests history start date, ISO format (default: `2020-01-01`) |
+| `bamboohr_start_date` | No | Leave requests and Who's Out history start date, ISO format (default: `2020-01-01`) |
 
 ### Automatically injected
 
@@ -68,6 +68,35 @@ source-bamboohr discover --config config.json
 | `employees` | Employee directory via the custom report API | Full refresh |
 | `leave_requests` | Time-off requests from `bamboohr_start_date` to today | Full refresh |
 | `meta_fields` | Field metadata (names, types, aliases) | Full refresh |
+| `whos_out` | Employee time off and visible company holidays from `bamboohr_start_date` to today (UTC) | Full refresh |
+
+### Who's Out
+
+The stream calls [`time_off/whos_out`](https://documentation.bamboohr.com/reference/list-whos-out)
+with `filter=off` to bypass the caller's saved employee calendar filter. Holiday
+visibility still depends on BambooHR configuration and the caller's access;
+a holiday entry does not establish which employees observe it.
+
+Each successful fetch emits one snapshot with the full API list serialized in
+`entries_json`, including `[]` for an empty result. `window_start` and `window_end`
+record the requested date range. The stable `unique_key` encodes the tenant and
+source as a JSON pair. Both `timeOff` and `holiday` payloads remain unchanged;
+holidays need not contain an `employeeId`. Entry validation belongs downstream;
+the raw snapshot does not discard entries with missing or unexpected fields.
+
+HTTP 403 skips only this stream with a warning, so an unavailable Who's Out
+feature does not fail the other streams. Other API and transport failures remain
+errors. A skipped fetch emits no snapshot and leaves the last successful one
+available. An empty snapshot means no entries were returned for that window,
+not proof that every employee was available.
+
+This stream collects Bronze data only. It does not feed Silver HR events,
+metrics, comparisons, or attention panels. Full-refresh extraction uses the
+existing append-only destination configuration. Consumers must select the latest
+snapshot per tenant and source before expanding `entries_json`, so removed
+entries and successful empty results do not leave older absences in use. Snapshot
+ordering uses Airbyte extraction metadata; freshness handling and downstream
+availability semantics remain out of scope.
 
 ### Employee fields
 

@@ -15,6 +15,7 @@ from source_bamboohr.client import BambooClient, BambooHrApiError, BambooHrDomai
 from source_bamboohr.streams.employees import EmployeesStream
 from source_bamboohr.streams.leave_requests import DEFAULT_START_DATE, LeaveRequestsStream
 from source_bamboohr.streams.meta_fields import MetaFieldsStream
+from source_bamboohr.streams.whos_out import WhosOutStream
 
 logger = logging.getLogger("airbyte")
 
@@ -64,6 +65,7 @@ class SourceBamboohr(AbstractSource):
         client = _client(config)
         tenant_id = config["insight_tenant_id"]
         source_id = config["insight_source_id"]
+        start_date = config.get("bamboohr_start_date") or DEFAULT_START_DATE
 
         return [
             EmployeesStream(client=client, tenant_id=tenant_id, source_id=source_id),
@@ -71,9 +73,10 @@ class SourceBamboohr(AbstractSource):
                 client=client,
                 tenant_id=tenant_id,
                 source_id=source_id,
-                start_date=config.get("bamboohr_start_date") or DEFAULT_START_DATE,
+                start_date=start_date,
             ),
             MetaFieldsStream(client=client, tenant_id=tenant_id, source_id=source_id),
+            WhosOutStream(client=client, tenant_id=tenant_id, source_id=source_id, start_date=start_date),
         ]
 
 

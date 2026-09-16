@@ -71,10 +71,10 @@ class TestWiring:
         assert set(spec.connectionSpecification["required"]) == set(CONFIG)
         assert "bamboohr_employees_custom_fields" not in properties
 
-    def test_all_three_streams_are_wired(self, probe):
+    def test_all_four_streams_are_wired(self, probe):
         probe(FakeClient({}))
         names = [stream.name for stream in SourceBamboohr().streams(CONFIG)]
-        assert names == ["employees", "leave_requests", "meta_fields"]
+        assert names == ["employees", "leave_requests", "meta_fields", "whos_out"]
 
     def test_every_stream_declares_a_schema_keyed_on_unique_key(self, probe):
         probe(FakeClient({}))
