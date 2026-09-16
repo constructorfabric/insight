@@ -16,7 +16,7 @@ use crate::domain::datasets::{
     Taking, finishing, lease_until, taking,
 };
 use crate::domain::definition::DefinitionName;
-use crate::domain::kinds::dataset::lifecycle::{DatasetState, Operation};
+use crate::domain::kinds::dataset::state::{DatasetState, Operation};
 
 #[cfg(test)]
 mod tests;
@@ -129,6 +129,22 @@ impl Datasets for MemoryDatasets {
 
     async fn take_remove(&self, name: &DefinitionName) -> Result<Attempt, DatasetStoreError> {
         self.take(name, Operation::Remove, None)
+    }
+
+    async fn replace(
+        &self,
+        name: &DefinitionName,
+        declaration: &Value,
+    ) -> Result<(), DatasetStoreError> {
+        let mut stored = self.lock();
+        if let Some(dataset) = stored
+            .get_mut(name.as_str())
+            .filter(|dataset| dataset.state == DatasetState::Ready)
+        {
+            dataset.declaration = declaration.clone();
+        }
+
+        Ok(())
     }
 
     async fn finish(

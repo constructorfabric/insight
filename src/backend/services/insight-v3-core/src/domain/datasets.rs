@@ -13,7 +13,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 use super::definition::DefinitionName;
-use super::kinds::dataset::lifecycle::{DatasetState, Operation};
+use super::kinds::dataset::state::{DatasetState, Operation};
 
 /// How long an attempt owns a dataset before another may take over.
 ///
@@ -211,6 +211,14 @@ pub(crate) trait Datasets: Send + Sync + fmt::Debug {
 
     /// Takes a removal for a fresh attempt.
     async fn take_remove(&self, name: &DefinitionName) -> Result<Attempt, DatasetStoreError>;
+
+    /// Replaces the declaration of a dataset that stands, in one transaction:
+    /// no table changes, so nothing may interleave with it.
+    async fn replace(
+        &self,
+        name: &DefinitionName,
+        declaration: &Value,
+    ) -> Result<(), DatasetStoreError>;
 
     /// Writes what this attempt came to write, but only while it still owns
     /// the dataset.

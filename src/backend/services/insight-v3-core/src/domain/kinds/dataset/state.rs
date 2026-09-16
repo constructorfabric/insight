@@ -1,5 +1,5 @@
 //! Where a dataset is between being named and being usable, and who is
-//! moving it.
+//! moving it there.
 
 use std::fmt;
 

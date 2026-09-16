@@ -15,7 +15,7 @@ use crate::domain::datasets::{
     Taking, finishing, lease_until, taking,
 };
 use crate::domain::definition::DefinitionName;
-use crate::domain::kinds::dataset::lifecycle::{DatasetState, Operation};
+use crate::domain::kinds::dataset::state::{DatasetState, Operation};
 
 const SELECT_ROW: &str = "SELECT name, body, state, physical_table, operation, operation_token, lease_until FROM datasets WHERE name = ?";
 /// The same read, holding the row: a second writer of this dataset waits
@@ -33,6 +33,10 @@ const RECORD_TABLE: &str =
     "UPDATE datasets SET physical_table = ?, updated_at = UTC_TIMESTAMP(6) WHERE name = ?";
 const MARK_READY: &str = "UPDATE datasets SET state = ?, operation = NULL, operation_token = NULL, lease_until = NULL, updated_at = UTC_TIMESTAMP(6) WHERE name = ?";
 const DELETE_ROW: &str = "DELETE FROM datasets WHERE name = ?";
+/// A replacement changes the declaration and nothing else: the table the
+/// records are in stays where it is, and no operation is taken.
+const REPLACE_BODY: &str =
+    "UPDATE datasets SET body = ?, updated_at = UTC_TIMESTAMP(6) WHERE name = ? AND state = ?";
 
 pub(crate) struct MariaDatasets {
     db: DatabaseConnection,
@@ -80,6 +84,26 @@ impl Datasets for MariaDatasets {
 
     async fn take_remove(&self, name: &DefinitionName) -> Result<Attempt, DatasetStoreError> {
         self.take(name, Operation::Remove, None).await
+    }
+
+    async fn replace(
+        &self,
+        name: &DefinitionName,
+        declaration: &Value,
+    ) -> Result<(), DatasetStoreError> {
+        self.db
+            .execute_raw(Statement::from_sql_and_values(
+                DbBackend::MySql,
+                REPLACE_BODY,
+                [
+                    serde_json::to_string(declaration)?.into(),
+                    name.as_str().into(),
+                    DatasetState::Ready.as_str().into(),
+                ],
+            ))
+            .await?;
+
+        Ok(())
     }
 
     async fn finish(
