@@ -45,6 +45,7 @@ def test_tasks_closed(spec: SpecRun) -> None:
                     },
                     {"metric_key": "tasks.bugs_fixed", "views": [{"view": "period"}]},
                     {"metric_key": "tasks.closed_non_bug", "views": [{"view": "period"}]},
+                    {"metric_key": "tasks.bugs_ratio", "views": [{"view": "period"}]},
                 ],
             },
         }
@@ -84,6 +85,11 @@ def test_tasks_closed(spec: SpecRun) -> None:
 
     r.row("tasks.bugs_fixed", "period", entity_id=ERIN).equals(value=1)
     r.row("tasks.closed_non_bug", "period", entity_id=ERIN).equals(value=3)
+    # 1 bug over ALL 6 closes: the unknown-kind and typeless closures stay in
+    # the denominator — a ratio computed over classified closes only reads 25.
+    r.row("tasks.bugs_ratio", "period", entity_id=ERIN).check(
+        "value", lambda v: float(v) == approx(100 / 6), "1 bug of 6 closes"
+    )
 
 
 def test_tasks_closed_empty_window(spec: SpecRun) -> None:

@@ -1,0 +1,69 @@
+spec_version: 1
+description: >
+  Task Delivery - the configured DEFAULT kind for JIRA: where an unmapped type
+  id lands when the tenant authored a `config.field_value_defaults` row.
+
+  Gold resolves `issue_kind` as mapping row -> tenant default -> 'unknown'.
+  This tenant sets the issue_type default to `task`, so an id with no
+  `config.field_value_map` row classifies as a non-bug instead of `unknown` —
+  the operator has stated that unclassified closures at this source are
+  ordinary work. The absent-default case (unmapped stays `unknown`) is pinned
+  by the two *_value_map_precedence specs, which configure no default.
+
+  Carol closes two issues. Type 10000 has a live row saying `bug`, so it counts
+  as a bug — the default never overrides a decision. Type 10099 has no row, so
+  it falls to the default and counts in closed_non_bug. One bug plus one
+  non-bug equals the two closures: nothing lands in the unknown bucket, which
+  is exactly what the default changes — a lost default moves non-bug to zero,
+  a default overriding the mapping moves bugs to zero.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/alice
+    - $ref: ../templates/people.yaml#/templates/bob
+    - $ref: ../templates/people.yaml#/templates/carol
+
+  bronze_jira.jira_user:
+    - $ref: ../templates/jira_task.yaml#/templates/carol_user
+
+  bronze_jira.jira_statuses:
+    - $ref: ../templates/jira_task.yaml#/templates/status_open
+    - $ref: ../templates/jira_task.yaml#/templates/status_in_progress
+    - $ref: ../templates/jira_task.yaml#/templates/status_closed
+
+  bronze_jira.jira_fields:
+    - $ref: ../templates/jira_task.yaml#/templates/field_status
+    - $ref: ../templates/jira_task.yaml#/templates/field_assignee
+    - $ref: ../templates/jira_task.yaml#/templates/field_issuetype
+
+  config.field_value_map:
+    # The one decided type; 10099 (Incident) deliberately has no row.
+    - $ref: ../templates/jira_task.yaml#/templates/value_type_bug
+
+  config.field_value_defaults:
+    # Unmapped issue-type ids at this source fall to `task`.
+    - $ref: ../templates/jira_task.yaml#/templates/jira_issue_type_default
+
+  bronze_jira.jira_issuetypes:
+    - $ref: ../templates/jira_task.yaml#/templates/issuetype_bug
+    - $ref: ../templates/jira_task.yaml#/templates/issuetype_unclassified
+
+  bronze_jira.jira_issue:
+    - $ref: ../templates/jira_task.yaml#/templates/jira_issue
+      id: JDF-1
+      jira_id: JDF-1
+      unique_key: jira-test-JDF-1
+      id_readable: JDF1
+      created: "2026-03-01T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10000","name":"Bug"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
+    - $ref: ../templates/jira_task.yaml#/templates/jira_issue
+      id: JDF-2
+      jira_id: JDF-2
+      unique_key: jira-test-JDF-2
+      id_readable: JDF2
+      created: "2026-03-01T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10099","name":"Incident"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
+
+  bronze_jira.jira_issue_history:
+    - { $ref: ../templates/jira_task.yaml#/templates/closed_hist, id_readable: JDF1, jira_id: JDF-1, changelog_id: "52000", unique_key: jira-test-JDF1-52000, created_at: "2026-03-25T14:00:00.000+0000", author_account_id: carol-jira-acct }
+    - { $ref: ../templates/jira_task.yaml#/templates/closed_hist, id_readable: JDF2, jira_id: JDF-2, changelog_id: "52001", unique_key: jira-test-JDF2-52001, created_at: "2026-03-25T14:00:00.000+0000", author_account_id: carol-jira-acct }

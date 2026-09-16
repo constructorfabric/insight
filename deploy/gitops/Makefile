@@ -490,6 +490,23 @@ keycloak-broker-realms: kube-ctx values-present
 	  kubectl --context $(KUBE_CTX) -n $(NS_APP) apply -f -; \
 	echo "$(C_GRN)applied$(C_RST) configmap $(RELEASE)-keycloak-config-realms → $(NS_APP)"
 
+.PHONY: field-value-map
+# Pack environments/$(ENV)/clickhouse/field-value-map/*.tsv into the ConfigMap
+# the umbrella's clickhouse-field-value-map hook Job seeds into
+# `config.field_value_map` (and `config.field_value_defaults` from defaults.tsv).
+# Insert-only: the loader anti-joins on the business key, so a stored decision
+# is never rewritten and an empty bundle is a no-op.
+# Chained into deploy-insight; no-op unless clickhouse.fieldValueMap.enabled.
+field-value-map: kube-ctx values-present
+	@if [ "$$(yq -r '.clickhouse.fieldValueMap.enabled // false' $(VALUES))" != "true" ]; then \
+	  echo "$(C_YEL)skip$(C_RST) field-value-map (clickhouse.fieldValueMap.enabled != true)"; exit 0; fi; \
+	DIR=environments/$(ENV)/clickhouse/field-value-map; \
+	FILES=""; for f in $$DIR/*.tsv; do [ -e "$$f" ] || continue; FILES="$$FILES --from-file=$$f"; done; \
+	kubectl --context $(KUBE_CTX) -n $(NS_APP) create configmap $(RELEASE)-field-value-map \
+	  $$FILES --dry-run=client -o yaml | \
+	  kubectl --context $(KUBE_CTX) -n $(NS_APP) apply -f -; \
+	echo "$(C_GRN)applied$(C_RST) configmap $(RELEASE)-field-value-map → $(NS_APP)"
+
 .PHONY: deploy-app
 deploy-app: deploy-insight
 
@@ -550,7 +567,7 @@ validate-insight: values-present local-chart-present
 	@kubeconform -strict -summary < $(RENDER_DIR)/validate-render-$(ENV).yaml
 
 .PHONY: deploy-insight
-deploy-insight: sync-clean vpn-up kube-ctx confirm values-present chart-present apply-app-secrets keycloak-broker-realms
+deploy-insight: sync-clean vpn-up kube-ctx confirm values-present chart-present apply-app-secrets keycloak-broker-realms field-value-map
 	@mkdir -p $(RENDER_DIR)
 	@helm template $(RELEASE) $(CHART) --version $(INSIGHT_VERSION) $(HELM_EXTRA_FLAGS) \
 		-n $(NS_APP) -f $(VALUES) \

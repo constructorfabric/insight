@@ -1,12 +1,12 @@
-"""Value-map precedence over the shared name lists for Jira's bug split.
+"""Jira's bug split comes from the operator's issue-type decision, keyed by type id.
 
-An operator's map row beats the name lists only while it is alive, and for Jira it
-keys on the normalized type NAME, not the per-project type id. Carol closes a Bug
-whose live row says `other` (map wins, non-bug), a Mapped Custom whose live row says
-`bug` (map claims a name no list knows), a Regression whose row is deleted (name-list
-fallback, bug), an Unmapped Custom with no row (`unknown`) and a Future Custom whose
-row starts in 2030 (ignored, `unknown` too). Two bugs, one non-bug, five closures —
-and each wrong branch moves the bug count off two in its own direction.
+There is no name-list fallback: an id with no live row is `unknown`. Carol closes a
+type named Bug whose live row says `task` (non-bug), a custom type whose live row
+says `bug`, a type renamed to `Task` since its `bug` decision was recorded (same id,
+still a bug), a Regression whose row is deleted, a Future Custom whose row starts in
+2099 and an Unmapped Custom with no row (the last three `unknown`). Two bugs, one
+non-bug, six closures — and each wrong branch moves the bug count off two in its own
+direction.
 """
 
 from __future__ import annotations
@@ -21,10 +21,10 @@ SPEC = "jira_tasks_bugs_value_map_precedence"
 CAROL = "carol@example.com"
 
 
-def test_live_map_rows_win_by_name_and_dead_or_future_rows_fall_back(spec: SpecRun) -> None:
-    """A live row beats the bug-name list and claims an unlisted name; a deleted or
-    future row is ignored in favour of the fallback; an unmapped unlisted name stays
-    `unknown` and counts in tasks.closed only."""
+def test_live_rows_classify_by_id_and_anything_else_is_unknown(spec: SpecRun) -> None:
+    """A live row keyed on the type id decides the kind whatever the type is named,
+    including after a rename; a deleted, future or absent row leaves the type
+    `unknown`, counting in tasks.closed only."""
     r = spec.call(
         {
             "url": "/v1/metric-results",
@@ -42,6 +42,6 @@ def test_live_map_rows_win_by_name_and_dead_or_future_rows_fall_back(spec: SpecR
     )
     assert r.status == 200
 
-    r.row("tasks.closed", "period", entity_id=CAROL).equals(value=5)
+    r.row("tasks.closed", "period", entity_id=CAROL).equals(value=6)
     r.row("tasks.bugs_fixed", "period", entity_id=CAROL).equals(value=2)
     r.row("tasks.closed_non_bug", "period", entity_id=CAROL).equals(value=1)
