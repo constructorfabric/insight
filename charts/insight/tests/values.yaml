@@ -1,0 +1,29 @@
+global:
+  tenantDefaultId: "00000000-0000-4000-8000-000000000001"
+clickhouse:
+  host: clickhouse.example.test
+  username: test
+  password: test-password
+  database: insight
+mariadb:
+  host: mariadb.example.test
+  username: test
+  password: test-password
+  database: insight
+redis:
+  host: redis.example.test
+  password: test-password
+redpanda:
+  brokers: redpanda.example.test:9092
+ingestion:
+  templates:
+    enabled: true
+  reconcile:
+    tenantId: default
+authenticator:
+  oidc:
+    issuerUrl: https://idp.example.test
+    clientId: test-client
+    clientSecret: test-secret
+    redirectUri: https://app.example.test/callback
+    sourceType: ms-entra
