@@ -6,9 +6,11 @@
 use std::fmt;
 use std::time::Duration;
 
+use chrono::{DateTime, Utc};
 use clickhouse::sql::Identifier;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use uuid::Uuid;
 
 /// The shape every dataset's table has. A table of any other shape in the
 /// datasets database belongs to something else and is never touched.
@@ -28,6 +30,13 @@ WHERE database = currentDatabase() AND name = ?";
 /// wider bound than a read.
 const DDL_TIMEOUT_SECS: u64 = 35;
 const READ_TIMEOUT_SECS: u64 = 10;
+const INSERT_SEND_TIMEOUT_SECS: u64 = 10;
+const INSERT_END_TIMEOUT_SECS: u64 = 30;
+const INSERT_TOTAL_TIMEOUT_SECS: u64 = 35;
+/// `ClickHouse` reports a missing relation as error 60 inside a message rather
+/// than as a variant, and only the code is stable across a real server's text
+/// and a header-only reply.
+const UNKNOWN_TABLE_CODE: &str = "Code: 60";
 
 /// What a table of that name in the datasets database is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,6 +53,14 @@ pub(crate) struct DatasetTables {
     client: insight_clickhouse::Client,
     ddl_timeout: Duration,
     read_timeout: Duration,
+    insert: InsertTimeouts,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct InsertTimeouts {
+    send: Duration,
+    end: Duration,
+    total: Duration,
 }
 
 impl DatasetTables {
@@ -52,7 +69,48 @@ impl DatasetTables {
             client,
             ddl_timeout: Duration::from_secs(DDL_TIMEOUT_SECS),
             read_timeout: Duration::from_secs(READ_TIMEOUT_SECS),
+            insert: InsertTimeouts {
+                send: Duration::from_secs(INSERT_SEND_TIMEOUT_SECS),
+                end: Duration::from_secs(INSERT_END_TIMEOUT_SECS),
+                total: Duration::from_secs(INSERT_TOTAL_TIMEOUT_SECS),
+            },
         }
+    }
+
+    /// Puts one record into a dataset's table, whole and unread.
+    ///
+    /// The table is never created here: a record can only land in a dataset
+    /// somebody declared, and a table that is gone means the dataset went with
+    /// it while this record was in flight.
+    pub(crate) async fn insert(
+        &self,
+        table: &str,
+        dataset: &str,
+        raw_data: &str,
+    ) -> Result<(), DatasetTableError> {
+        let row = RecordRow {
+            id: Uuid::now_v7(),
+            table_name: dataset.to_owned(),
+            raw_data: raw_data.to_owned(),
+            received_at: Utc::now(),
+        };
+
+        tokio::time::timeout(self.insert.total, self.write(table, &row))
+            .await
+            .map_err(|_| DatasetTableError::Timeout)?
+    }
+
+    async fn write(&self, table: &str, row: &RecordRow) -> Result<(), DatasetTableError> {
+        let mut insert = self
+            .client
+            .inner()
+            .insert::<RecordRow>(table)
+            .await?
+            .with_timeouts(Some(self.insert.send), Some(self.insert.end));
+        insert.write(row).await?;
+        insert.end().await?;
+
+        Ok(())
     }
 
     /// What, if anything, holds this name in the datasets database.
@@ -135,15 +193,43 @@ impl fmt::Debug for DatasetTables {
 pub(crate) enum DatasetTableError {
     #[error("`{0}` is held by a table this service does not own")]
     NotOurs(String),
+    #[error("the table a record was to land in is gone")]
+    Vanished,
     #[error("the datasets database did not answer in time")]
     Timeout,
     #[error("the datasets database did not answer")]
-    ClickHouse(#[from] clickhouse::error::Error),
+    ClickHouse(clickhouse::error::Error),
 }
 
 #[derive(Debug, Deserialize, Serialize, clickhouse::Row)]
 struct ShapeRow {
     sorting_key: String,
+}
+
+/// One record as a dataset's table holds it: whole, and stamped with when it
+/// arrived.
+#[derive(Debug, Serialize, Deserialize, clickhouse::Row)]
+struct RecordRow {
+    #[serde(with = "clickhouse::serde::uuid")]
+    id: Uuid,
+    table_name: String,
+    raw_data: String,
+    #[serde(with = "clickhouse::serde::chrono::datetime64::millis")]
+    received_at: DateTime<Utc>,
+}
+
+impl From<clickhouse::error::Error> for DatasetTableError {
+    fn from(error: clickhouse::error::Error) -> Self {
+        match error {
+            clickhouse::error::Error::TimedOut => Self::Timeout,
+            clickhouse::error::Error::BadResponse(ref message)
+                if message.contains(UNKNOWN_TABLE_CODE) =>
+            {
+                Self::Vanished
+            }
+            error => Self::ClickHouse(error),
+        }
+    }
 }
 
 #[cfg(test)]

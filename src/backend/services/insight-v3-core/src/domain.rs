@@ -5,6 +5,8 @@ pub(crate) mod assistant;
 // the steps after this one. `expect` rather than `allow`, so the marker fails
 // once it does.
 #[cfg_attr(not(test), expect(dead_code, reason = "wired up by the dataset API"))]
+pub(crate) mod dataset_ingest;
+#[cfg_attr(not(test), expect(dead_code, reason = "wired up by the dataset API"))]
 pub(crate) mod dataset_lifecycle;
 #[cfg_attr(not(test), expect(dead_code, reason = "wired up by the dataset API"))]
 pub(crate) mod datasets;
