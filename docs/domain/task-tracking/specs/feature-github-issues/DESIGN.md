@@ -464,8 +464,7 @@ when boards arrive and a board column's meaning genuinely changes on a date.
 
 The `config` relations must not be dbt models — dbt would recreate and wipe
 them. They are created by migration alongside the connectors-ddl snapshot and
-declared to dbt as sources, the same arrangement as the Rust-owned
-`staging.jira__task_field_history`.
+declared to dbt as sources.
 
 ## 5. Making Gold Source-Neutral
 
@@ -509,9 +508,9 @@ literals. It describes *what is there*. It deliberately does not say *what
 anything means* — that is the configuration tables' job, and the distinction is
 why the two are separate.
 
-**Who reads it.** Today only `jira-enrich`, which builds a field map to classify
-cardinality and value type per event. Its query filters `data_source = 'jira'`,
-so GitHub rows are invisible to it and no change is needed there.
+**Who reads it.** No model: the Jira journal classifies fields from its own
+catalogue (`jira__task_field_kind`), and the binary that once read this table
+to classify cardinality and value type is retired.
 
 **Why populate it anyway.**
 
@@ -570,10 +569,9 @@ listed in [section 1.3](#13-measures-produced-and-withheld).
 Two properties of the rig make this cheaper than it looks. The seeder keys on
 `<schema>.<table>` and does not care which schema that is, so the configuration
 rows a GitHub fixture needs are seeded the same way the bronze rows are — no rig
-change, provided the migration has created the relations. And because phase 1
-adds no enrich binary, the GitHub path runs bronze to gold entirely inside the
-rig: a fixture exercises the real staging models rather than starting from a
-hand-written silver row.
+change, provided the migration has created the relations. And the GitHub path
+runs bronze to gold entirely inside the rig: a fixture exercises the real
+staging models rather than starting from a hand-written silver row.
 
 Files to add, each asserting one thing the design claims:
 

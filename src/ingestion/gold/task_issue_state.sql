@@ -47,7 +47,6 @@ history AS (
         fh.data_source                                                        AS data_source,
         fh.issue_id                                                           AS issue_id,
         fh.id_readable                                                        AS id_readable,
-        fh.title                                                              AS title,
         fh.event_at                                                           AS event_at,
         fh.event_kind                                                         AS event_kind,
         fh.delta_action                                                       AS delta_action,
@@ -109,24 +108,12 @@ issue_pivot AS (
         -- between projects carries the OLD key on its older rows, and rows written
         -- before the key moved to `issue_id` exist under both. The latest event wins.
         argMax(id_readable, (event_at, {{ task_event_rank('event_kind') }}, _seq, toUInt64OrZero(event_id)))                            AS id_readable,
-        -- The role first, the denormalized column as the fallback.
-        --
-        -- The role is where the title belongs: an ordinary field, so a source
-        -- that renames an issue has rename history. GitHub is served by it
-        -- already. Jira is not yet — while the Rust binary writes the journal,
-        -- a `summary` row exists only for an issue whose summary actually
-        -- changed, because the snapshot model that binary reads does not list
-        -- `summary`. The binary does fill the COLUMN for every row, so the
-        -- fallback is what keeps a never-renamed Jira issue named.
-        --
-        -- Both the column and this fallback go with the binary. `nullIf` keeps
-        -- the result `Nullable(String)`: `argMaxIf` returns '' when nothing
-        -- matches, and this is a serving table whose type the backend reads.
-        coalesce(
-            nullIf(argMaxIf(value_displays[1], (event_at, {{ task_event_rank('event_kind') }}, _seq, toUInt64OrZero(event_id)),
-                            role = 'title'), ''),
-            argMax(title, (event_at, {{ task_event_rank('event_kind') }}, _seq, toUInt64OrZero(event_id)))
-        )                                                                    AS title,
+        -- The title is an ordinary field read through its role, so a source
+        -- that renames an issue has rename history. `nullIf` keeps the result
+        -- `Nullable(String)`: `argMaxIf` returns '' when nothing matches, and
+        -- this is a serving table whose type the backend reads.
+        nullIf(argMaxIf(value_displays[1], (event_at, {{ task_event_rank('event_kind') }}, _seq, toUInt64OrZero(event_id)),
+                        role = 'title'), '')                                 AS title,
         maxIf(event_at, role = 'status' AND delta_action = 'set')        AS last_status_event_at,
         -- Availability lives in the same history as every other field
         -- (synthetic 'availability' events; see the jira deletion spec).

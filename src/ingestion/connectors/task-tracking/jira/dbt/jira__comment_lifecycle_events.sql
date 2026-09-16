@@ -17,7 +17,7 @@
 -- comment id — the lookup key into class_task_comments — not the payload.
 -- add/set are dated by the comment's own updated timestamp (real time);
 -- remove by detection (Jira has no comment-deletion timestamp).
--- Column order must match staging.jira__task_field_history exactly:
+-- Column order must match silver.class_task_field_history exactly:
 -- union_by_tag concatenates the arms positionally.
 
 WITH transitions AS (
@@ -96,22 +96,19 @@ SELECT
     CAST('jira' AS String)                                      AS data_source,
     COALESCE(t.jira_id, '')                                     AS issue_id,
     COALESCE(t.id_readable, '')                                 AS id_readable,
-    CAST(NULL AS Nullable(String))                              AS title,
     concat('comment:', COALESCE(t.comment_id, ''), ':', t.action, ':',
            toString(toUnixTimestamp64Milli(t.event_at)))         AS event_id,
     t.event_at                                                  AS event_at,
-    CAST('lifecycle', 'Enum8(\'changelog\' = 1, \'synthetic_initial\' = 2, \'availability\' = 3, \'lifecycle\' = 4)')
-                                                                AS event_kind,
+    CAST('lifecycle' AS LowCardinality(String))                AS event_kind,
     toUInt32(0)                                                 AS _seq,
     t.author_id                                                 AS author_id,
     CAST('comment' AS String)                                   AS field_id,
     CAST('Comment' AS String)                                   AS field_name,
-    CAST('single', 'Enum8(\'single\' = 1, \'multi\' = 2)')      AS field_cardinality,
-    CAST(t.action, 'Enum8(\'set\' = 1, \'add\' = 2, \'remove\' = 3)') AS delta_action,
+    CAST('single' AS LowCardinality(String))                   AS field_cardinality,
+    CAST(t.action AS LowCardinality(String))                   AS delta_action,
     CAST([COALESCE(t.comment_id, '')] AS Array(String))         AS value_ids,
     CAST([COALESCE(t.comment_id, '')] AS Array(String))         AS value_displays,
-    CAST('opaque_id', 'Enum8(\'opaque_id\' = 1, \'account_id\' = 2, \'string_literal\' = 3, \'path\' = 4, \'none\' = 5)')
-                                                                AS value_id_type,
+    CAST('opaque_id' AS LowCardinality(String))                AS value_id_type,
     toDateTime64(t.detected_at, 3)                              AS collected_at,
     toUInt64(toUnixTimestamp64Milli(now64(3)))                  AS _version
 FROM resolved AS t
