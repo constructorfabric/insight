@@ -10,7 +10,7 @@ ENGINE = MergeTree
 ORDER BY (table_name, received_at, id)";
 
 /// The ingest landing table. The definitions used to be created here too;
-/// they live in `MariaDB` now — see [`crate::definitions`].
+/// they live in `MariaDB` now — see [`crate::domain::definition`].
 pub(crate) async fn migrate(client: &insight_clickhouse::Client) -> Result<(), MigrationError> {
     client
         .inner()

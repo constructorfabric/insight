@@ -8,7 +8,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 use super::{KindError, Reference};
-use crate::definitions::{DefinitionKind, DefinitionName, Definitions};
+use crate::domain::definition::{DefinitionKind, DefinitionName, Definitions};
 use crate::domain::query::metric_query::MetricQuery;
 
 #[derive(Debug, Deserialize)]

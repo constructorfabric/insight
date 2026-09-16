@@ -10,6 +10,21 @@ fn names_reject_anything_outside_the_identifier_charset() {
 }
 
 #[test]
+fn every_kind_there_is_answers_for_itself_everywhere() {
+    for kind in DefinitionKind::ALL {
+        match kind {
+            DefinitionKind::Metric | DefinitionKind::Widget | DefinitionKind::Dashboard => (),
+        }
+    }
+
+    assert_eq!(
+        DefinitionKind::ALL.len(),
+        3,
+        "a kind added to the enum must be added to ALL"
+    );
+}
+
+#[test]
 fn each_kind_has_its_own_table() {
     assert_eq!(DefinitionKind::Metric.table(), "metrics");
     assert_eq!(DefinitionKind::Widget.table(), "widgets");

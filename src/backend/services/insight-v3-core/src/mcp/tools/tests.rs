@@ -8,10 +8,10 @@ use serde_json::{Value, json};
 use super::*;
 use crate::api::AppState;
 use crate::chat::ChatClient;
-use crate::definitions::memory::MemoryDefinitions;
 use crate::domain::kinds::dashboard::{HeadingItem, TextItem, WidgetItem};
 use crate::domain::query::metric_query::{MetricRunner, People};
 use crate::store::catalog::Catalog;
+use crate::store::definitions::memory::MemoryDefinitions;
 use crate::store::identity::IdentityClient;
 use crate::store::raw_data::RawDataStore;
 use crate::store::tables::TableStore;
@@ -61,7 +61,7 @@ fn put(name: &str, body: Value) -> Parameters<PutRequest> {
     })
 }
 
-fn listing(kind: ToolKind) -> Parameters<KindRequest> {
+fn listing(kind: DefinitionKind) -> Parameters<KindRequest> {
     Parameters(KindRequest {
         kind,
         limit: None,
@@ -69,7 +69,7 @@ fn listing(kind: ToolKind) -> Parameters<KindRequest> {
     })
 }
 
-fn finding(kind: ToolKind, query: &str) -> Parameters<SearchRequest> {
+fn finding(kind: DefinitionKind, query: &str) -> Parameters<SearchRequest> {
     Parameters(SearchRequest {
         kind,
         query: query.to_owned(),
@@ -78,7 +78,7 @@ fn finding(kind: ToolKind, query: &str) -> Parameters<SearchRequest> {
     })
 }
 
-fn named(kind: ToolKind, name: &str) -> Parameters<NamedRequest> {
+fn named(kind: DefinitionKind, name: &str) -> Parameters<NamedRequest> {
     Parameters(NamedRequest {
         kind,
         name: name.to_owned(),
@@ -170,12 +170,16 @@ async fn a_stored_metric_is_listed_and_read_back() -> R {
 
     assert_accepted(&surfaces.put_metric(put("per-actor", metric_body())).await);
 
-    let listed = assert_accepted(&surfaces.list_definitions(listing(ToolKind::Metric)).await);
+    let listed = assert_accepted(
+        &surfaces
+            .list_definitions(listing(DefinitionKind::Metric))
+            .await,
+    );
     assert_eq!(listed["names"], json!(["per-actor"]));
 
     let read = assert_accepted(
         &surfaces
-            .get_definition(named(ToolKind::Metric, "per-actor"))
+            .get_definition(named(DefinitionKind::Metric, "per-actor"))
             .await,
     );
     assert_eq!(read, metric_body());
@@ -186,7 +190,7 @@ async fn a_stored_metric_is_listed_and_read_back() -> R {
 #[tokio::test]
 async fn reading_a_definition_that_was_never_stored_says_so() {
     let result = surfaces()
-        .get_definition(named(ToolKind::Dashboard, "absent"))
+        .get_definition(named(DefinitionKind::Dashboard, "absent"))
         .await;
 
     assert_refused(&result, "was not found");
@@ -195,7 +199,7 @@ async fn reading_a_definition_that_was_never_stored_says_so() {
 #[tokio::test]
 async fn a_name_the_store_would_not_accept_is_refused_before_any_read() {
     let result = surfaces()
-        .get_definition(named(ToolKind::Metric, "not a valid name"))
+        .get_definition(named(DefinitionKind::Metric, "not a valid name"))
         .await;
 
     assert_refused(&result, "definition names");
@@ -242,7 +246,7 @@ async fn a_metric_a_widget_still_draws_is_not_deleted() -> R {
         .await;
 
     let result = surfaces
-        .delete_definition(named(ToolKind::Metric, "per-actor"))
+        .delete_definition(named(DefinitionKind::Metric, "per-actor"))
         .await;
 
     assert_refused(&result, "chart");
@@ -264,13 +268,13 @@ async fn a_dashboard_is_stored_and_then_removed() -> R {
 
     assert_accepted(
         &surfaces
-            .delete_definition(named(ToolKind::Dashboard, "board"))
+            .delete_definition(named(DefinitionKind::Dashboard, "board"))
             .await,
     );
 
     let listed = assert_accepted(
         &surfaces
-            .list_definitions(listing(ToolKind::Dashboard))
+            .list_definitions(listing(DefinitionKind::Dashboard))
             .await,
     );
     assert_eq!(listed["names"], json!([]));
@@ -281,7 +285,7 @@ async fn a_dashboard_is_stored_and_then_removed() -> R {
 #[tokio::test]
 async fn deleting_a_definition_that_was_never_stored_says_so() {
     let result = surfaces()
-        .delete_definition(named(ToolKind::Widget, "absent"))
+        .delete_definition(named(DefinitionKind::Widget, "absent"))
         .await;
 
     assert_refused(&result, "was not found");
@@ -395,14 +399,14 @@ async fn search_definitions_matches_a_name_and_a_body() {
 
     let by_body = assert_accepted(
         &surfaces
-            .search_definitions(finding(ToolKind::Metric, "class_git_commits"))
+            .search_definitions(finding(DefinitionKind::Metric, "class_git_commits"))
             .await,
     );
     assert_eq!(by_body["names"], json!(["lines_per_day"]));
 
     let by_name = assert_accepted(
         &surfaces
-            .search_definitions(finding(ToolKind::Metric, "actors"))
+            .search_definitions(finding(DefinitionKind::Metric, "actors"))
             .await,
     );
     assert_eq!(by_name["names"], json!(["actors"]));
@@ -415,7 +419,7 @@ async fn an_empty_search_returns_everything_of_that_kind() {
 
     let all = assert_accepted(
         &surfaces
-            .search_definitions(finding(ToolKind::Metric, "   "))
+            .search_definitions(finding(DefinitionKind::Metric, "   "))
             .await,
     );
 
@@ -432,7 +436,7 @@ async fn a_page_answers_its_own_slice_and_the_whole_count() {
     let first = assert_accepted(
         &surfaces
             .list_definitions(Parameters(KindRequest {
-                kind: ToolKind::Metric,
+                kind: DefinitionKind::Metric,
                 limit: Some(2),
                 offset: None,
             }))
@@ -444,7 +448,7 @@ async fn a_page_answers_its_own_slice_and_the_whole_count() {
     let second = assert_accepted(
         &surfaces
             .list_definitions(Parameters(KindRequest {
-                kind: ToolKind::Metric,
+                kind: DefinitionKind::Metric,
                 limit: Some(2),
                 offset: Some(2),
             }))
@@ -464,7 +468,7 @@ async fn a_search_pages_the_matches_and_counts_all_of_them() {
     let page = assert_accepted(
         &surfaces
             .search_definitions(Parameters(SearchRequest {
-                kind: ToolKind::Metric,
+                kind: DefinitionKind::Metric,
                 query: "git_".to_owned(),
                 limit: Some(1),
                 offset: Some(1),
@@ -483,7 +487,7 @@ async fn a_page_beyond_the_cap_is_refused_rather_than_served() {
     assert_refused(
         &surfaces
             .list_definitions(Parameters(KindRequest {
-                kind: ToolKind::Metric,
+                kind: DefinitionKind::Metric,
                 limit: Some(5_000),
                 offset: None,
             }))

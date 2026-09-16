@@ -11,9 +11,9 @@ use tower::ServiceExt as _;
 use super::*;
 use crate::api::AppState;
 use crate::chat::ChatClient;
-use crate::definitions::Definitions;
-use crate::definitions::memory::MemoryDefinitions;
+use crate::domain::definition::Definitions;
 use crate::domain::query::metric_query::MetricRunner;
+use crate::store::definitions::memory::MemoryDefinitions;
 use crate::store::raw_data::RawDataStore;
 use crate::store::tables::TableStore;
 
@@ -74,7 +74,7 @@ impl TestHarness {
                 "insight".to_owned(),
             ),
         ));
-        let router = register_routes(Router::new(), &openapi, state);
+        let router = register_routes(Router::new(), &openapi, &state);
 
         Self {
             _clickhouse: mock,

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::api::AppState;
-use crate::definitions::{DefinitionKind, DefinitionName, Page};
+use crate::domain::definition::{DefinitionKind, DefinitionName, Page};
 use crate::domain::kinds::dashboard::Item;
 use crate::domain::query::time_window::WindowRequest;
 use crate::domain::surfaces::{CustomError, Surfaces};
@@ -18,28 +18,10 @@ use crate::store::catalog::{Layer, TableSchema};
 #[cfg(test)]
 mod tests;
 
-#[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum ToolKind {
-    Metric,
-    Widget,
-    Dashboard,
-}
-
-impl ToolKind {
-    fn kind(self) -> DefinitionKind {
-        match self {
-            Self::Metric => DefinitionKind::Metric,
-            Self::Widget => DefinitionKind::Widget,
-            Self::Dashboard => DefinitionKind::Dashboard,
-        }
-    }
-}
-
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct KindRequest {
     /// Which kind of definition to list.
-    pub(crate) kind: ToolKind,
+    pub(crate) kind: DefinitionKind,
     /// How many names to answer with: 1 to 200, 50 by default.
     pub(crate) limit: Option<u64>,
     /// How many names to skip, for the page after the first.
@@ -49,7 +31,7 @@ pub(crate) struct KindRequest {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct SearchRequest {
     /// Which kind of definition to look through.
-    pub(crate) kind: ToolKind,
+    pub(crate) kind: DefinitionKind,
     /// Text to look for in a name or in a stored body — a table name finds
     /// every metric that reads it. Blank returns everything of that kind.
     pub(crate) query: String,
@@ -62,7 +44,7 @@ pub(crate) struct SearchRequest {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct NamedRequest {
     /// Which kind of definition the name belongs to.
-    pub(crate) kind: ToolKind,
+    pub(crate) kind: DefinitionKind,
     /// Letters, digits, underscore and dash, up to 128 characters.
     pub(crate) name: String,
 }
@@ -147,7 +129,7 @@ impl CustomSurfaces {
     /// One page of names, with how many there are to page through.
     async fn read_page(
         &self,
-        kind: ToolKind,
+        kind: DefinitionKind,
         needle: &str,
         limit: Option<u64>,
         offset: Option<u64>,
@@ -157,7 +139,7 @@ impl CustomSurfaces {
             Err(error) => return refuse(&error.to_string()),
         };
 
-        match self.surfaces().page(kind.kind(), needle, page).await {
+        match self.surfaces().page(kind, needle, page).await {
             Ok(found) => CallToolResult::structured(json!({
                 "names": found.names,
                 "total": found.total,
@@ -168,13 +150,13 @@ impl CustomSurfaces {
         }
     }
 
-    async fn write(&self, kind: ToolKind, request: PutRequest) -> CallToolResult {
+    async fn write(&self, kind: DefinitionKind, request: PutRequest) -> CallToolResult {
         let name = match parse_name(&request.name) {
             Ok(name) => name,
             Err(refusal) => return refusal,
         };
 
-        match self.surfaces().put(kind.kind(), &name, &request.body).await {
+        match self.surfaces().put(kind, &name, &request.body).await {
             Ok(()) => CallToolResult::structured(json!({"stored": request.name})),
             Err(error) => tool_error(&error),
         }
@@ -242,7 +224,7 @@ impl CustomSurfaces {
             Err(refusal) => return refusal,
         };
 
-        match self.surfaces().get(kind.kind(), &parsed).await {
+        match self.surfaces().get(kind, &parsed).await {
             Ok(body) => CallToolResult::structured(body),
             Err(error) => tool_error(&error),
         }
@@ -253,7 +235,7 @@ impl CustomSurfaces {
         description = "Creates or replaces a metric: a declarative query over an ingested table. The body names the table and the fields to read, for example {\"table\": \"events\", \"fields\": [{\"json\": \"actor\", \"type\": \"string\", \"as_name\": \"actor\"}, {\"json\": \"actor\", \"type\": \"string\", \"agg\": \"count\", \"as_name\": \"total\"}], \"group_by\": [\"actor\"]}. A field reads a typed column of the table (`column`), a key inside the row's `raw_data` payload (`json`), or a key inside any JSON column the table carries (`column` and `json` together, as in {\"column\": \"field_values_json\", \"json\": \"name\"}). A `json` key may be a dotted path into nested objects, such as \"field.name\". When the payload is an array of objects, add `where` - one filter, shaped like the others - to say which element the field means: {\"column\": \"field_values_json\", \"json\": \"name\", \"type\": \"string\", \"as_name\": \"status\", \"where\": {\"json\": \"field.name\", \"type\": \"string\", \"op\": \"eq\", \"value\": \"Status\"}}. `type` is string, int or float; `agg` is count, sum, avg, min or max. Add `time` to say which timestamp a reader may window by - {\"time\": {\"column\": \"occurred_at\"}} for a date column, or {\"json\": \"committed_at\"} for one inside the payload - and the run gains a `bucket` column ordered oldest first. `max_range` caps the widest window it will answer, as an ISO duration such as \"P1Y\". Optional `database`, `filters`, `order_by` and `limit`. Call list_tables first so the table and columns exist."
     )]
     async fn put_metric(&self, Parameters(request): Parameters<PutRequest>) -> CallToolResult {
-        self.write(ToolKind::Metric, request).await
+        self.write(DefinitionKind::Metric, request).await
     }
 
     #[tool(
@@ -261,7 +243,7 @@ impl CustomSurfaces {
         description = "Creates or replaces a widget, which draws one metric's columns by the `as_name` that metric gives them: {\"type\": \"table\", \"metric\": \"per-actor\", \"columns\": [\"actor\", \"total\"]} or {\"type\": \"line\", \"metric\": \"per-actor\", \"x\": \"actor\", \"y\": \"total\"}. A widget naming a column its metric does not produce is refused, so run_metric first if unsure what it yields."
     )]
     async fn put_widget(&self, Parameters(request): Parameters<PutRequest>) -> CallToolResult {
-        self.write(ToolKind::Widget, request).await
+        self.write(DefinitionKind::Widget, request).await
     }
 
     #[tool(
@@ -269,7 +251,7 @@ impl CustomSurfaces {
         description = "Creates or replaces a dashboard: a title, and what it draws top to bottom: {\"title\": \"Example board\", \"items\": [{\"heading\": \"Commits\"}, {\"widget\": \"chart\"}, {\"text\": \"Merge commits excluded.\"}]}. Each item names exactly one of `widget`, `heading` or `text`. Add `time_ranges` to let a reader pick the window the whole board is read over - any of `PDC`, `P7D`, `P30D`, `PMC`, `PQC`, `P1Y`, `inf` - and `default_range` for the one it opens on; a board declaring neither is read unbounded. `widgets: [\"chart\"]` is the older shorthand for a list of nothing but widgets, and is still read. To reorder or caption a board that exists, call arrange_dashboard instead."
     )]
     async fn put_dashboard(&self, Parameters(request): Parameters<PutRequest>) -> CallToolResult {
-        self.write(ToolKind::Dashboard, request).await
+        self.write(DefinitionKind::Dashboard, request).await
     }
 
     #[tool(
@@ -285,7 +267,7 @@ impl CustomSurfaces {
             Err(refusal) => return refusal,
         };
 
-        match self.surfaces().delete(kind.kind(), &parsed).await {
+        match self.surfaces().delete(kind, &parsed).await {
             Ok(()) => CallToolResult::structured(json!({"deleted": name})),
             Err(error) => tool_error(&error),
         }

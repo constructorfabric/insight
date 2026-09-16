@@ -11,9 +11,9 @@ use super::*;
 use crate::api::AppState;
 use crate::api::admission::{INGEST_TOKEN_HEADER, IngestAdmission};
 use crate::chat::ChatClient;
-use crate::definitions::Definitions;
-use crate::definitions::memory::MemoryDefinitions;
+use crate::domain::definition::Definitions;
 use crate::domain::query::metric_query::MetricRunner;
+use crate::store::definitions::memory::MemoryDefinitions;
 use crate::store::raw_data::RawDataStore;
 use crate::store::tables::TableStore;
 

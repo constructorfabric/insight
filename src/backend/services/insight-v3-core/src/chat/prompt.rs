@@ -55,9 +55,9 @@ pub(super) fn system_prompt(tables: &[KnownTable], catalogue: &Catalogue, map: &
     if catalogue.is_empty() {
         prompt.push_str("\nNothing is built yet.\n");
     } else {
-        push_catalogue(&mut prompt, "Metrics", &catalogue.metrics);
-        push_catalogue(&mut prompt, "Widgets", &catalogue.widgets);
-        push_catalogue(&mut prompt, "Dashboards", &catalogue.dashboards);
+        for (kind, names) in catalogue.built() {
+            push_catalogue(&mut prompt, kind.plural(), names);
+        }
         prompt.push_str(
             "\nReusing a name replaces what is stored under it, which is how a \
              dashboard is changed: build it again with the widgets it should \
@@ -68,13 +68,23 @@ pub(super) fn system_prompt(tables: &[KnownTable], catalogue: &Catalogue, map: &
     prompt
 }
 
+/// The label as a heading: the kinds name themselves in lower case.
+fn capitalized(word: &str) -> String {
+    let mut letters = word.chars();
+
+    match letters.next() {
+        Some(first) => first.to_uppercase().chain(letters).collect(),
+        None => String::new(),
+    }
+}
+
 fn push_catalogue(prompt: &mut String, label: &str, names: &[String]) {
     if names.is_empty() {
         return;
     }
 
     prompt.push('\n');
-    prompt.push_str(label);
+    prompt.push_str(&capitalized(label));
     prompt.push_str(" already built: ");
     prompt.push_str(&names.join(", "));
     prompt.push('\n');

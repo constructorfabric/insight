@@ -4,8 +4,8 @@ use chrono::Utc;
 use serde_json::Value;
 use thiserror::Error;
 
-use crate::definitions::arriving::Arriving;
-use crate::definitions::{
+use crate::domain::definition::arriving::Arriving;
+use crate::domain::definition::{
     Change, DefinitionKind, DefinitionName, DefinitionStoreError, Definitions, NamePage, Page,
 };
 use crate::domain::kinds::dashboard::Item;

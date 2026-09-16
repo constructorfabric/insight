@@ -19,6 +19,7 @@ use conversation::{converse, thread};
 use prompt::system_prompt;
 pub(crate) use proposal::Proposal;
 
+use crate::domain::definition::DefinitionKind;
 use crate::domain::query::metric_query::{MetricQueryError, People};
 
 const CHAT_TIMEOUT_SECS: u64 = 30;
@@ -35,14 +36,20 @@ pub(crate) struct Turn {
 /// What is already stored, so the model can name it, reuse it and replace it.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Catalogue {
-    pub(crate) metrics: Vec<String>,
-    pub(crate) widgets: Vec<String>,
-    pub(crate) dashboards: Vec<String>,
+    built: Vec<(DefinitionKind, Vec<String>)>,
 }
 
 impl Catalogue {
+    pub(crate) fn new(built: Vec<(DefinitionKind, Vec<String>)>) -> Self {
+        Self { built }
+    }
+
     fn is_empty(&self) -> bool {
-        self.metrics.is_empty() && self.widgets.is_empty() && self.dashboards.is_empty()
+        self.built.iter().all(|(_, names)| names.is_empty())
+    }
+
+    fn built(&self) -> &[(DefinitionKind, Vec<String>)] {
+        &self.built
     }
 }
 

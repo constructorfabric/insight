@@ -1,7 +1,6 @@
 mod api;
 mod chat;
 mod config;
-mod definitions;
 mod domain;
 mod gear;
 mod mcp;

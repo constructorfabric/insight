@@ -11,7 +11,7 @@ use toolkit_canonical_errors::{CanonicalError, resource_error};
 
 use super::AppState;
 use super::errors::ApiErrors;
-use crate::definitions::DefinitionName;
+use crate::domain::definition::DefinitionName;
 use crate::domain::query::metric_query::{MetricQueryError, MetricRunError};
 use crate::domain::query::time_window::{WindowError, WindowRequest};
 use crate::domain::surfaces::CustomError;

@@ -3,9 +3,9 @@ use std::error::Error;
 use serde_json::json;
 
 use super::*;
-use crate::definitions::memory::MemoryDefinitions;
 use crate::domain::query::metric_query::{MetricRunner, People};
 use crate::store::catalog::Catalog;
+use crate::store::definitions::memory::MemoryDefinitions;
 
 type R = Result<(), Box<dyn Error>>;
 

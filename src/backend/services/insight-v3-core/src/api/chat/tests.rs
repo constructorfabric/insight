@@ -12,9 +12,9 @@ use tower::ServiceExt as _;
 use super::*;
 use crate::api::AppState;
 use crate::chat::{ChatClient, Proposal};
-use crate::definitions::Definitions;
-use crate::definitions::memory::MemoryDefinitions;
+use crate::domain::definition::Definitions;
 use crate::domain::query::metric_query::MetricRunner;
+use crate::store::definitions::memory::MemoryDefinitions;
 use crate::store::raw_data::RawDataStore;
 use crate::store::tables::TableStore;
 
@@ -63,8 +63,7 @@ impl TestHarness {
                 "insight".to_owned(),
             ),
         ));
-        let router =
-            crate::api::definitions::register_routes(Router::new(), &openapi, state.clone());
+        let router = crate::api::definitions::register_routes(Router::new(), &openapi, &state);
         let router = register_routes(router, &openapi, state);
 
         Self {
@@ -103,7 +102,7 @@ impl TestHarness {
 
     /// Whether the store holds anything under `name`.
     async fn holds(&self, kind: DefinitionKind, name: &str) -> bool {
-        let name = crate::definitions::DefinitionName::parse(name)
+        let name = crate::domain::definition::DefinitionName::parse(name)
             .unwrap_or_else(|error| panic!("test name must parse: {error}"));
 
         self.definitions
@@ -116,7 +115,7 @@ impl TestHarness {
     /// What the store holds under `name`, for the cases about what a request
     /// wrote rather than what it answered.
     async fn stored(&self, kind: DefinitionKind, name: &str) -> serde_json::Value {
-        let name = crate::definitions::DefinitionName::parse(name)
+        let name = crate::domain::definition::DefinitionName::parse(name)
             .unwrap_or_else(|error| panic!("test name must parse: {error}"));
 
         self.definitions

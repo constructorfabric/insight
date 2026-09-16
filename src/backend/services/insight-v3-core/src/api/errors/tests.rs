@@ -5,7 +5,7 @@ use sea_orm::{ConnAcquireErr, DbErr};
 
 use super::ApiErrors;
 use crate::api::definitions::DefinitionApiError;
-use crate::definitions::{DefinitionError, DefinitionStoreError};
+use crate::domain::definition::{DefinitionError, DefinitionStoreError};
 
 const BODY_LIMIT_BYTES: usize = 64 * 1024;
 

@@ -9,17 +9,18 @@
 //! behind with nothing to roll it back with.
 
 pub(crate) mod arriving;
-pub(crate) mod maria;
-pub(crate) mod migration;
 
 use std::fmt;
 
 use async_trait::async_trait;
+use schemars::JsonSchema;
+use serde::Deserialize;
 use thiserror::Error;
 
 const MAX_NAME_CHARS: usize = 128;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
 pub(crate) enum DefinitionKind {
     Metric,
     Widget,
@@ -27,6 +28,23 @@ pub(crate) enum DefinitionKind {
 }
 
 impl DefinitionKind {
+    /// Every kind there is, for the places that must answer for all of them:
+    /// the routes, the tools, and what the assistant is told exists.
+    ///
+    /// INVARIANT: a kind missing here is a kind with no endpoint and no name
+    /// the assistant can reuse.
+    pub(crate) const ALL: [Self; 3] = [Self::Metric, Self::Widget, Self::Dashboard];
+
+    /// What a group of them is called: the path segment, and the heading the
+    /// assistant reads.
+    pub(crate) fn plural(self) -> &'static str {
+        match self {
+            Self::Metric => "metrics",
+            Self::Widget => "widgets",
+            Self::Dashboard => "dashboards",
+        }
+    }
+
     pub(crate) fn table(self) -> &'static str {
         match self {
             Self::Metric => "metrics",
@@ -208,9 +226,6 @@ pub(crate) enum DefinitionStoreError {
     #[error(transparent)]
     Json(#[from] serde_json::Error),
 }
-
-#[cfg(test)]
-pub(crate) mod memory;
 
 #[cfg(test)]
 mod tests;

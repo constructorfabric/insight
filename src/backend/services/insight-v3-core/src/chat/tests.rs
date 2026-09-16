@@ -183,11 +183,11 @@ fn the_prompt_names_what_is_already_built() {
             name: "events".to_owned(),
             fields: "day (string)".to_owned(),
         }],
-        &Catalogue {
-            metrics: vec!["lines_per_day".to_owned()],
-            widgets: vec!["lines_chart".to_owned()],
-            dashboards: vec!["engineering".to_owned()],
-        },
+        &Catalogue::new(vec![
+            (DefinitionKind::Metric, vec!["lines_per_day".to_owned()]),
+            (DefinitionKind::Widget, vec!["lines_chart".to_owned()]),
+            (DefinitionKind::Dashboard, vec!["engineering".to_owned()]),
+        ]),
         "",
     );
 

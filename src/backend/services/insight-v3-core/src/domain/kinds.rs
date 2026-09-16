@@ -14,7 +14,7 @@ use thiserror::Error;
 
 use widget::WidgetError;
 
-use crate::definitions::{DefinitionKind, DefinitionStoreError, Definitions};
+use crate::domain::definition::{DefinitionKind, DefinitionStoreError, Definitions};
 use crate::domain::query::metric_query::MetricQueryError;
 use crate::domain::query::time_window::WindowError;
 

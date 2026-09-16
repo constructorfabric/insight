@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{KindError, Reference};
-use crate::definitions::DefinitionKind;
+use crate::domain::definition::DefinitionKind;
 use crate::domain::query::time_window::{RequestedRange, WindowError};
 
 /// A stored widget, by name.

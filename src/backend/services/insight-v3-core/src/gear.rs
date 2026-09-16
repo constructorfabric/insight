@@ -39,8 +39,8 @@ impl Gear for InsightV3CoreGear {
         let config = config.validate()?;
         // The definitions are rows read by name and edited in place, so they
         // live in MariaDB rather than beside the data they describe.
-        let definitions: Arc<dyn crate::definitions::Definitions> =
-            Arc::new(crate::definitions::maria::MariaDefinitions::new(
+        let definitions: Arc<dyn crate::domain::definition::Definitions> =
+            Arc::new(crate::store::definitions::MariaDefinitions::new(
                 sea_orm::Database::connect(config.database_url()).await?,
             ));
         let admission = crate::api::admission::IngestAdmission::new(config.ingest_token());
@@ -107,8 +107,10 @@ pub(crate) async fn run_migrate(app: &toolkit::bootstrap::AppConfig) -> anyhow::
     tracing::info!("raw_data migration complete");
 
     let db = sea_orm::Database::connect(config.database_url()).await?;
-    <crate::definitions::migration::Migrator as sea_orm_migration::MigratorTrait>::up(&db, None)
-        .await?;
+    <crate::store::definitions::migration::Migrator as sea_orm_migration::MigratorTrait>::up(
+        &db, None,
+    )
+    .await?;
     tracing::info!("definitions migration complete");
 
     Ok(())

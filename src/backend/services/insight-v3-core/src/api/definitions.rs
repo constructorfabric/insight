@@ -13,7 +13,7 @@ use utoipa::ToSchema;
 
 use super::AppState;
 use super::errors::ApiErrors;
-use crate::definitions::{DefinitionKind, DefinitionName, MAX_PAGE_LIMIT, Page, PageError};
+use crate::domain::definition::{DefinitionKind, DefinitionName, MAX_PAGE_LIMIT, Page, PageError};
 use crate::domain::surfaces::CustomError;
 
 /// The query string on a list: what to look for, in a name or in a body, and
@@ -68,30 +68,13 @@ impl ApiErrors for DefinitionApiError {
 pub(crate) fn register_routes(
     router: Router,
     openapi: &dyn OpenApiRegistry,
-    state: Arc<AppState>,
+    state: &Arc<AppState>,
 ) -> Router {
-    let router = register_kind(
-        router,
-        openapi,
-        state.clone(),
-        DefinitionKind::Metric,
-        "metrics",
-    );
-    let router = register_kind(
-        router,
-        openapi,
-        state.clone(),
-        DefinitionKind::Widget,
-        "widgets",
-    );
-
-    register_kind(
-        router,
-        openapi,
-        state,
-        DefinitionKind::Dashboard,
-        "dashboards",
-    )
+    DefinitionKind::ALL
+        .into_iter()
+        .fold(router, |router, kind| {
+            register_kind(router, openapi, state.clone(), kind)
+        })
 }
 
 fn query_param(name: &str, param_type: &str, description: &str) -> ParamSpec {
@@ -142,8 +125,9 @@ fn register_kind(
     openapi: &dyn OpenApiRegistry,
     state: Arc<AppState>,
     kind: DefinitionKind,
-    segment: &str,
 ) -> Router {
+    let segment = kind.plural();
+
     let name_param = ParamSpec {
         name: "name".to_owned(),
         location: ParamLocation::Path,

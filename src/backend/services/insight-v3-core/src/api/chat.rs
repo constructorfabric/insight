@@ -2,6 +2,7 @@
 //! metric/widget/dashboard definitions.
 
 use std::fmt::Write as _;
+
 use std::sync::Arc;
 
 use axum::extract::Extension;
@@ -16,7 +17,7 @@ use utoipa::ToSchema;
 use super::AppState;
 use super::errors::ApiErrors;
 use crate::chat::{Ask, Catalogue, ChatError, KnownTable, Proposal, Schemas, Turn};
-use crate::definitions::{Change, DefinitionKind, DefinitionName};
+use crate::domain::definition::{Change, DefinitionKind, DefinitionName};
 use crate::domain::query::metric_query::{
     MetricQuery, MetricQueryError, MetricRunError, RunResult,
 };
@@ -309,56 +310,17 @@ async fn layer_map(catalog: &Catalog) -> String {
     rendered
 }
 
-/// The columns of the tables the model asked about, read from the same
-/// listing the map came from.
-#[derive(Debug)]
-struct CatalogSchemas<'a> {
-    catalog: &'a Catalog,
-}
-
-#[async_trait::async_trait]
-impl Schemas for CatalogSchemas<'_> {
-    async fn describe(&self, tables: &[String]) -> String {
-        let found = match self.catalog.describe(tables).await {
-            Ok(found) => found,
-            Err(error) => {
-                tracing::warn!(error = ?error, "a schema lookup failed");
-                return "The schema could not be read. Answer from the map alone.".to_owned();
-            }
-        };
-
-        let mut rendered = String::new();
-        for table in &found {
-            let _ = writeln!(rendered, "{}.{}", table.database, table.table);
-            for (column, kind) in &table.columns {
-                let _ = writeln!(rendered, "  {column} {kind}");
-            }
-        }
-
-        // A name that resolved to nothing is said so rather than left out:
-        // silence reads as "no columns" and the model invents them.
-        for asked in tables {
-            let matched = found.iter().any(|table| {
-                asked == &format!("{}.{}", table.database, table.table) || asked == &table.table
-            });
-            if !matched {
-                let _ = writeln!(rendered, "{asked}: no such table on this stand");
-            }
-        }
-
-        rendered
-    }
-}
-
 /// What is already stored, so the model can name it, reuse it, and replace it
 /// when the reader asks for a change. A listing failure degrades the hint; it
 /// does not fail the chat.
 async fn catalogue(state: &AppState) -> Catalogue {
-    Catalogue {
-        metrics: names(state, DefinitionKind::Metric).await,
-        widgets: names(state, DefinitionKind::Widget).await,
-        dashboards: names(state, DefinitionKind::Dashboard).await,
+    let mut built = Vec::with_capacity(DefinitionKind::ALL.len());
+
+    for kind in DefinitionKind::ALL {
+        built.push((kind, names(state, kind).await));
     }
+
+    Catalogue::new(built)
 }
 
 async fn names(state: &AppState, kind: DefinitionKind) -> Vec<String> {
@@ -415,6 +377,47 @@ async fn known_tables(state: &AppState) -> Vec<KnownTable> {
     }
 
     described
+}
+
+/// The columns of the tables the model asked about, read from the same
+/// listing the map came from.
+#[derive(Debug)]
+struct CatalogSchemas<'a> {
+    catalog: &'a Catalog,
+}
+
+#[async_trait::async_trait]
+impl Schemas for CatalogSchemas<'_> {
+    async fn describe(&self, tables: &[String]) -> String {
+        let found = match self.catalog.describe(tables).await {
+            Ok(found) => found,
+            Err(error) => {
+                tracing::warn!(error = ?error, "a schema lookup failed");
+                return "The schema could not be read. Answer from the map alone.".to_owned();
+            }
+        };
+
+        let mut rendered = String::new();
+        for table in &found {
+            let _ = writeln!(rendered, "{}.{}", table.database, table.table);
+            for (column, kind) in &table.columns {
+                let _ = writeln!(rendered, "  {column} {kind}");
+            }
+        }
+
+        // A name that resolved to nothing is said so rather than left out:
+        // silence reads as "no columns" and the model invents them.
+        for asked in tables {
+            let matched = found.iter().any(|table| {
+                asked == &format!("{}.{}", table.database, table.table) || asked == &table.table
+            });
+            if !matched {
+                let _ = writeln!(rendered, "{asked}: no such table on this stand");
+            }
+        }
+
+        rendered
+    }
 }
 
 /// What an answer says when its query found nothing.

@@ -22,9 +22,9 @@ use crate::api::admission::{
     TokenVerifier,
 };
 use crate::chat::ChatClient;
-use crate::definitions::Definitions;
-use crate::definitions::memory::MemoryDefinitions;
+use crate::domain::definition::Definitions;
 use crate::domain::query::metric_query::MetricRunner;
+use crate::store::definitions::memory::MemoryDefinitions;
 use crate::store::raw_data::RawDataStore;
 use crate::store::tables::TableStore;
 

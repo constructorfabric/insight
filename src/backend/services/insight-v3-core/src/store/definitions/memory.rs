@@ -8,7 +8,7 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 
-use super::{
+use crate::domain::definition::{
     Change, DefinitionKind, DefinitionName, DefinitionStoreError, Definitions, NamePage, Page,
 };
 
@@ -59,6 +59,14 @@ mod tests;
 
 #[async_trait]
 impl Definitions for MemoryDefinitions {
+    async fn get(
+        &self,
+        kind: DefinitionKind,
+        name: &DefinitionName,
+    ) -> Result<Option<serde_json::Value>, DefinitionStoreError> {
+        Ok(self.lock().get(&Self::key(kind, name)).cloned())
+    }
+
     async fn put(
         &self,
         kind: DefinitionKind,
@@ -71,14 +79,6 @@ impl Definitions for MemoryDefinitions {
         self.write(kind, name, body);
 
         Ok(())
-    }
-
-    async fn get(
-        &self,
-        kind: DefinitionKind,
-        name: &DefinitionName,
-    ) -> Result<Option<serde_json::Value>, DefinitionStoreError> {
-        Ok(self.lock().get(&Self::key(kind, name)).cloned())
     }
 
     async fn list(&self, kind: DefinitionKind) -> Result<Vec<String>, DefinitionStoreError> {

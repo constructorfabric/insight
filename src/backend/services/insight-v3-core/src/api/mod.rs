@@ -16,7 +16,7 @@ pub(crate) mod tables;
 use admission::IngestAdmission;
 
 use crate::chat::ChatClient;
-use crate::definitions::Definitions;
+use crate::domain::definition::Definitions;
 use crate::domain::query::metric_query::MetricRunner;
 use crate::store::catalog::Catalog;
 use crate::store::identity::IdentityClient;
@@ -177,7 +177,7 @@ pub(crate) fn openapi_document() -> anyhow::Result<utoipa::openapi::OpenApi> {
     let state = Arc::new(AppState::new(
         RawDataStore::new(offline.clone()),
         TableStore::new(offline.clone()),
-        Arc::new(crate::definitions::maria::MariaDefinitions::new(
+        Arc::new(crate::store::definitions::MariaDefinitions::new(
             sea_orm::DatabaseConnection::default(),
         )),
         MetricRunner::new(
@@ -215,7 +215,7 @@ pub(crate) fn register_routes(
     // their own context.
     let api = tables::register_routes(Router::new(), openapi, state.clone(), admission.clone());
     let api = raw_data::register_routes(api, openapi, state.clone(), admission);
-    let api = definitions::register_routes(api, openapi, state.clone());
+    let api = definitions::register_routes(api, openapi, &state);
     let api = metric_run::register_routes(api, openapi, state.clone());
     let api = chat::register_routes(api, openapi, state)
         .layer(insight_log_context::LogContextLayer::new());

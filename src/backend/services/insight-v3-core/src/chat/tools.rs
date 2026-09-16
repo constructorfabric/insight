@@ -2,7 +2,7 @@
 
 use serde_json::{Value, json};
 
-use crate::definitions::DefinitionName;
+use crate::domain::definition::DefinitionName;
 
 pub(super) const ANSWER_TOOL: &str = "answer";
 pub(super) const CREATE_TOOL: &str = "create";

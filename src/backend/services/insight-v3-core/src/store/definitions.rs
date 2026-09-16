@@ -1,5 +1,10 @@
 //! The definitions as `MariaDB` holds them.
 
+pub(crate) mod migration;
+
+#[cfg(test)]
+pub(crate) mod memory;
+
 use std::fmt;
 
 use async_trait::async_trait;
@@ -8,7 +13,7 @@ use sea_orm::{
     TransactionTrait as _,
 };
 
-use super::{
+use crate::domain::definition::{
     Change, DefinitionKind, DefinitionName, DefinitionStoreError, Definitions, NamePage, Page,
 };
 
@@ -101,16 +106,6 @@ impl MariaDefinitions {
 
 #[async_trait]
 impl Definitions for MariaDefinitions {
-    async fn put(
-        &self,
-        kind: DefinitionKind,
-        name: &DefinitionName,
-        body: &serde_json::Value,
-    ) -> Result<(), DefinitionStoreError> {
-        self.db.execute_raw(Self::upsert(kind, name, body)?).await?;
-        Ok(())
-    }
-
     async fn get(
         &self,
         kind: DefinitionKind,
@@ -128,6 +123,16 @@ impl Definitions for MariaDefinitions {
             Some(row) => Ok(Some(serde_json::from_str(&row.body)?)),
             None => Ok(None),
         }
+    }
+
+    async fn put(
+        &self,
+        kind: DefinitionKind,
+        name: &DefinitionName,
+        body: &serde_json::Value,
+    ) -> Result<(), DefinitionStoreError> {
+        self.db.execute_raw(Self::upsert(kind, name, body)?).await?;
+        Ok(())
     }
 
     async fn list(&self, kind: DefinitionKind) -> Result<Vec<String>, DefinitionStoreError> {
@@ -154,8 +159,8 @@ impl Definitions for MariaDefinitions {
             [
                 pattern.clone().into(),
                 pattern.clone().into(),
-                page.limit.into(),
-                page.offset.into(),
+                page.limit().into(),
+                page.offset().into(),
             ],
         ))
         .all(&self.db)

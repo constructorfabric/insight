@@ -11,9 +11,9 @@ use tower::ServiceExt as _;
 use super::*;
 use crate::api::AppState;
 use crate::chat::ChatClient;
-use crate::definitions::Definitions;
-use crate::definitions::memory::MemoryDefinitions;
+use crate::domain::definition::Definitions;
 use crate::domain::query::metric_query::MetricRunner;
+use crate::store::definitions::memory::MemoryDefinitions;
 use crate::store::raw_data::RawDataStore;
 use crate::store::tables::TableStore;
 
@@ -75,10 +75,14 @@ impl TestHarness {
         asked: Option<serde_json::Value>,
     ) -> TestResponse {
         if let Some(body) = stored {
-            let parsed = crate::definitions::DefinitionName::parse(name)
+            let parsed = crate::domain::definition::DefinitionName::parse(name)
                 .unwrap_or_else(|error| panic!("test name must parse: {error}"));
             self.definitions
-                .put(crate::definitions::DefinitionKind::Metric, &parsed, &body)
+                .put(
+                    crate::domain::definition::DefinitionKind::Metric,
+                    &parsed,
+                    &body,
+                )
                 .await
                 .unwrap_or_else(|error| panic!("the store must accept it: {error}"));
         }

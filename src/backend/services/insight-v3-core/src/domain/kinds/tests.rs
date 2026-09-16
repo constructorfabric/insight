@@ -127,7 +127,7 @@ fn every_kind_a_body_names_lists_the_naming_kind_among_its_holders() {
 #[tokio::test]
 async fn a_dashboard_is_checked_through_the_kind_it_was_stored_under() {
     let body = json!({ "time_ranges": ["since_the_beginning"] });
-    let store = crate::definitions::memory::MemoryDefinitions::new();
+    let store = crate::store::definitions::memory::MemoryDefinitions::new();
 
     let refusal = check(DefinitionKind::Dashboard, &body, &store).await;
 

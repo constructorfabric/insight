@@ -8,7 +8,7 @@
 
 use toolkit_canonical_errors::CanonicalError;
 
-use crate::definitions::{DefinitionError, DefinitionStoreError};
+use crate::domain::definition::{DefinitionError, DefinitionStoreError};
 
 #[cfg(test)]
 mod tests;
