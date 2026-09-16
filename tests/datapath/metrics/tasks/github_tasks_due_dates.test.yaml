@@ -42,7 +42,9 @@ bronze:
   config.task_value_map:
     - $ref: ../templates/github_task.yaml#/templates/value_open
     - $ref: ../templates/github_task.yaml#/templates/value_closed_completed
-    - { $ref: ../templates/github_task.yaml#/templates/value_open, field_id: type, value_id: IT_task, unique_key: gh-value-type-task, canonical_value: other, value_display: Task }
+
+  config.field_value_map:
+    - $ref: ../templates/github_task.yaml#/templates/issue_type_kind_task
 
   bronze_github.issue_types:
     - $ref: ../templates/github_task.yaml#/templates/issue_type_task

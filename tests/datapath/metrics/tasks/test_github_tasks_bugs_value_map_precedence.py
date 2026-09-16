@@ -1,11 +1,11 @@
-"""Value-map precedence over the shared name lists for GitHub's bug split.
+"""GitHub's bug split comes from the operator's issue-type decision, keyed by type id.
 
-An operator's map row beats the name lists only while it is alive. Carol closes a
-Bug whose live row says `other` (map wins, non-bug), a Defect with no row (name-list
-fallback, bug), a Regression whose row is deleted (fallback, bug) and an Incident
-whose row starts in 2030 (ignored, and no list knows the name, so `unknown`). Two
-bugs, one non-bug, four closures — and each wrong branch moves the bug count off
-two in its own direction.
+There is no name-list fallback: an id with no live row is `unknown`. Carol closes a
+type named Bug whose live row says `task` (non-bug), a Defect whose live row says
+`bug`, a type renamed to `Task` since its `bug` decision was recorded (same id, still
+a bug), a Regression whose row is deleted, an Incident whose row starts in 2030 and a
+Chore with no row (the last three `unknown`). Two bugs, one non-bug, six closures —
+and each wrong branch moves the bug count off two in its own direction.
 """
 
 from __future__ import annotations
@@ -20,9 +20,10 @@ SPEC = "github_tasks_bugs_value_map_precedence"
 CAROL = "carol@example.com"
 
 
-def test_live_map_rows_win_and_dead_or_future_rows_fall_back(spec: SpecRun) -> None:
-    """A live `other` row beats the bug-name list; a deleted or future row is ignored
-    in favour of the fallback; a name no list knows stays unclaimed by either side."""
+def test_live_rows_classify_by_id_and_anything_else_is_unknown(spec: SpecRun) -> None:
+    """A live row keyed on the type id decides the kind whatever the type is named,
+    including after a rename; a deleted, future or absent row leaves the type
+    `unknown`, counting in tasks.closed only."""
     r = spec.call(
         {
             "url": "/v1/metric-results",
@@ -40,6 +41,6 @@ def test_live_map_rows_win_and_dead_or_future_rows_fall_back(spec: SpecRun) -> N
     )
     assert r.status == 200
 
-    r.row("tasks.closed", "period", entity_id=CAROL).equals(value=4)
+    r.row("tasks.closed", "period", entity_id=CAROL).equals(value=6)
     r.row("tasks.bugs_fixed", "period", entity_id=CAROL).equals(value=2)
     r.row("tasks.closed_non_bug", "period", entity_id=CAROL).equals(value=1)

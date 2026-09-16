@@ -935,7 +935,6 @@ CREATE TABLE IF NOT EXISTS silver.class_task_issuetypes
     `issue_type_id` Nullable(String),
     `issue_type_name` Nullable(String),
     `untranslated_name` Nullable(String),
-    `issue_kind` String,
     `collected_at` DateTime64(3),
     `_version` Int64
 )

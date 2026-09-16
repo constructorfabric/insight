@@ -2,6 +2,10 @@
 -- `role` is a low-cardinality string rather than an enum, so the database
 -- constrains neither it nor the values bound under it — this test is what
 -- carries that constraint instead of the schema.
+--
+-- Only statuses reach `task_value_map`; issue-type decisions live in
+-- `config.field_value_map`, whose domain
+-- `assert_field_values_are_canonical` carries.
 
 WITH bound AS (
     SELECT
@@ -28,8 +32,7 @@ INNER JOIN bound AS b
     AND b.field_id = m.field_id
 WHERE m.is_deleted = 0
   AND NOT (
-      (b.role = 'status'    AND m.canonical_value IN ('new', 'in_progress', 'done', 'undefined'))
-      OR (b.role = 'issuetype' AND m.canonical_value IN ('bug', 'other', 'unknown'))
-      OR b.role NOT IN ('status', 'issuetype')
+      (b.role = 'status' AND m.canonical_value IN ('new', 'in_progress', 'done', 'undefined'))
+      OR b.role != 'status'
   )
 LIMIT 100
