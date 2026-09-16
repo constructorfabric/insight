@@ -45,6 +45,25 @@ See [`deploy/HELM_DEPLOY.md`](../../deploy/HELM_DEPLOY.md) for the full
 external-consumer runbook and [`deploy/gitops/README.md`](../../deploy/gitops/README.md)
 for the Makefile-driven deployment pipeline.
 
+## Airbyte sync monitoring
+
+The sync poller waits for Airbyte to report `succeeded`, `failed`, or `cancelled`.
+Pending and queued jobs, retries (`incomplete`), and running jobs continue to be monitored
+even when their record counters remain unchanged. Airbyte owns job liveness,
+retry policy, and maximum duration; the poll pod has no independent job deadline.
+
+`ingestion.airbyteSync.pollIntervalSeconds` controls polling frequency (default
+30 seconds). `ingestion.airbyteSync.statusUnreadableThresholdSeconds` bounds
+continuous failure to read a recognized job status (default 1800 seconds).
+Every readable status resets that timer. On expiry, the poll step fails with
+`sync.poll_failed`; the Airbyte job's outcome remains unknown and the job is not
+cancelled. Downstream transforms do not run without confirmed sync success.
+
+When upgrading, replace `ingestion.airbyteSync.idleThresholdSeconds` overrides
+with `statusUnreadableThresholdSeconds` if an API outage timeout override is
+needed. The old idle setting is no longer used. Deploy the chart with its matching
+toolbox image because the poller's environment variable also changed.
+
 ## Release name convention
 
 **This chart assumes release name = `insight`.**

@@ -1,11 +1,4 @@
-"""What the poll watchdog counts as progress.
-
-The idle detector compares one tuple per poll — (status, bytes, records,
-state messages) from the latest attempt — so what feeds that tuple decides
-whether a stalled sync is caught or a slow one is killed.
-
-Run: pytest src/ingestion/scripts/tests
-"""
+"""Job status and optional progress telemetry from Airbyte responses."""
 
 from __future__ import annotations
 
@@ -65,6 +58,7 @@ def test_progress_reads_the_latest_attempts_counters(resp, expected) -> None:
         ({"job": {}}, None),
         ({"job": None}, None),
         ({"job": {"status": 7}}, None),
+        ({"job": {"status": "unexpected"}}, None),
         ([], None),
         ("running", None),
     ],

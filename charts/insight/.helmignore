@@ -12,3 +12,4 @@
 # Local notes
 *.local
 NOTES.local.md
+tests/
