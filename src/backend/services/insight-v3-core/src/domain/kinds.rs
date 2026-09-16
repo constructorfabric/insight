@@ -39,6 +39,8 @@ impl Reference {
 pub(crate) enum KindError {
     #[error(transparent)]
     Widget(WidgetError),
+    #[error("definition body is not valid: {0}")]
+    Body(serde_json::Error),
     #[error(transparent)]
     Compile(MetricQueryError),
     #[error("dashboard time range: {0}")]

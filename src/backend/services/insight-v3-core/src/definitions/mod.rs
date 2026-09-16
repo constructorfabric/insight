@@ -8,6 +8,7 @@
 //! name, and a create that failed halfway left what it had already written
 //! behind with nothing to roll it back with.
 
+pub(crate) mod arriving;
 pub(crate) mod migration;
 
 use std::fmt;

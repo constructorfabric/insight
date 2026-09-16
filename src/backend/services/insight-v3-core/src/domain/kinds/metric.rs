@@ -5,15 +5,13 @@ use serde_json::Value;
 use super::{KindError, Reference};
 use crate::domain::query::metric_query::MetricQuery;
 
-/// What a stored metric says about time, checked before it is stored.
+/// Whether a stored metric can be read back and run.
 ///
-/// A body that is not a metric at all is left alone here — it is refused when
-/// run, and refusing it here would be a change of behaviour this move does not
-/// make.
+/// A body stored under a name is what every widget drawing that name will
+/// get, so one that cannot be read as a metric at all is refused here rather
+/// than at each of them.
 pub(crate) fn check(body: &Value) -> Result<(), KindError> {
-    let Ok(metric) = serde_json::from_value::<MetricQuery>(body.clone()) else {
-        return Ok(());
-    };
+    let metric: MetricQuery = serde_json::from_value(body.clone()).map_err(KindError::Body)?;
 
     metric.check_window().map_err(KindError::Compile)
 }

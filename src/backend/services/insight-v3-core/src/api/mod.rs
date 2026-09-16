@@ -8,6 +8,7 @@ use toolkit::api::{OpenApiInfo, OpenApiRegistry, OpenApiRegistryImpl};
 pub(crate) mod admission;
 pub(crate) mod chat;
 pub(crate) mod definitions;
+pub(crate) mod errors;
 pub(crate) mod metric_run;
 pub(crate) mod raw_data;
 pub(crate) mod tables;

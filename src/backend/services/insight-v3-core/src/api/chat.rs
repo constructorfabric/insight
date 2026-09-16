@@ -14,16 +14,27 @@ use toolkit_canonical_errors::{CanonicalError, resource_error};
 use utoipa::ToSchema;
 
 use super::AppState;
+use super::errors::ApiErrors;
 use crate::chat::{Ask, Catalogue, ChatError, KnownTable, Proposal, Schemas, Turn};
-use crate::definitions::{
-    Change, DefinitionError, DefinitionKind, DefinitionName, DefinitionStoreError,
-};
+use crate::definitions::{Change, DefinitionKind, DefinitionName};
 use crate::domain::query::metric_query::{MetricQuery, MetricQueryError, RunResult};
 use crate::store::catalog::{Catalog, Layer, TableSchema};
 use crate::store::tables::TableName;
 
 #[resource_error("gts.cf.insight.insight_v3_core.chat.v1~")]
 struct ChatApiError;
+
+impl ApiErrors for ChatApiError {
+    fn invalid_field(field: &str, detail: String) -> CanonicalError {
+        Self::invalid_argument()
+            .with_field_violation(field, detail, "INVALID")
+            .create()
+    }
+
+    fn timed_out(detail: &str) -> CanonicalError {
+        Self::deadline_exceeded(detail).create()
+    }
+}
 
 #[derive(Debug, Deserialize, ToSchema)]
 struct ChatRequest {
@@ -130,73 +141,93 @@ async fn handle_chat(
             metric,
             widgets,
             dashboard,
-        } => {
-            let mut asked = Vec::new();
-            if let Some((name, body)) = metric {
-                asked.push((DefinitionKind::Metric, name, body));
-            }
-            for (name, body) in widgets {
-                asked.push((DefinitionKind::Widget, name, body));
-            }
-            if let Some((name, body)) = dashboard {
-                asked.push((DefinitionKind::Dashboard, name, body));
-            }
+        } => store_proposed(&state, reply, metric, widgets, dashboard).await,
+    }
+}
 
-            // Every name is checked before anything is written, so one bad
-            // name in the set stores none of it.
-            let mut writes = Vec::with_capacity(asked.len());
-            for (kind, name, body) in asked {
-                let parsed = DefinitionName::parse(&name).map_err(definition_error)?;
-                writes.push((kind, parsed, body, name));
-            }
+/// Stores what the assistant proposed, or none of it.
+///
+/// Every name is parsed and every body checked before anything is written, so
+/// one refusal leaves the reader what they had rather than half a dashboard.
+async fn store_proposed(
+    state: &AppState,
+    reply: String,
+    metric: Option<(String, serde_json::Value)>,
+    widgets: Vec<(String, serde_json::Value)>,
+    dashboard: Option<(String, serde_json::Value)>,
+) -> Result<Response, CanonicalError> {
+    let mut asked = Vec::new();
+    if let Some((name, body)) = metric {
+        asked.push((DefinitionKind::Metric, name, body));
+    }
+    for (name, body) in widgets {
+        asked.push((DefinitionKind::Widget, name, body));
+    }
+    if let Some((name, body)) = dashboard {
+        asked.push((DefinitionKind::Dashboard, name, body));
+    }
 
-            // A widget draws its metric's columns by the names the metric
-            // gives them. Unchecked, a widget could name a column that is not
-            // there and the chart drew its axes and no line.
-            for (kind, _, body, _) in &writes {
-                if *kind == DefinitionKind::Widget {
-                    check_widget_in_batch(&state, body, &writes).await?;
-                }
-            }
+    let mut writes = Vec::with_capacity(asked.len());
+    for (kind, name, body) in asked {
+        let parsed = DefinitionName::parse(&name).map_err(ChatApiError::definition_error)?;
+        writes.push((kind, parsed, body));
+    }
 
-            // Which names are new is read before the write, so a name another
-            // writer takes in between is reported as created rather than
-            // replaced. The write itself is one transaction either way.
-            let mut created = CreatedNames::default();
-            let mut updated = CreatedNames::default();
-            for (kind, parsed, _, name) in &writes {
-                let held = state
-                    .definitions()
-                    .get(*kind, parsed)
-                    .await
-                    .map_err(definition_store_error)?
-                    .is_some();
-                let names = if held { &mut updated } else { &mut created };
-                match kind {
-                    DefinitionKind::Metric => names.metric = Some(name.clone()),
-                    DefinitionKind::Widget => names.widgets.push(name.clone()),
-                    DefinitionKind::Dashboard => names.dashboard = Some(name.clone()),
-                }
-            }
+    state
+        .surfaces()
+        .check_batch(&writes)
+        .await
+        .map_err(crate::api::definitions::custom_error)?;
 
-            let batch: Vec<_> = writes
-                .into_iter()
-                .map(|(kind, parsed, body, _)| Change::Put(kind, parsed, body))
-                .collect();
-            state
-                .definitions()
-                .apply(&batch)
-                .await
-                .map_err(definition_store_error)?;
+    let (created, updated) = named_by_novelty(state, &writes).await?;
 
-            Ok(Json(ChatCreatedResponse {
-                reply,
-                created,
-                updated,
-            })
-            .into_response())
+    let batch: Vec<_> = writes
+        .into_iter()
+        .map(|(kind, parsed, body)| Change::Put(kind, parsed, body))
+        .collect();
+    state
+        .definitions()
+        .apply(&batch)
+        .await
+        .map_err(ChatApiError::definition_store_error)?;
+
+    Ok(Json(ChatCreatedResponse {
+        reply,
+        created,
+        updated,
+    })
+    .into_response())
+}
+
+/// Which of these names the store does not hold yet, and which it does.
+///
+/// Read before the write, so a name another writer takes in between is
+/// reported as created rather than replaced. The write itself is one
+/// transaction either way.
+async fn named_by_novelty(
+    state: &AppState,
+    writes: &[(DefinitionKind, DefinitionName, serde_json::Value)],
+) -> Result<(CreatedNames, CreatedNames), CanonicalError> {
+    let mut created = CreatedNames::default();
+    let mut updated = CreatedNames::default();
+
+    for (kind, parsed, _) in writes {
+        let held = state
+            .definitions()
+            .get(*kind, parsed)
+            .await
+            .map_err(ChatApiError::definition_store_error)?
+            .is_some();
+
+        let names = if held { &mut updated } else { &mut created };
+        match kind {
+            DefinitionKind::Metric => names.metric = Some(parsed.as_str().to_owned()),
+            DefinitionKind::Widget => names.widgets.push(parsed.as_str().to_owned()),
+            DefinitionKind::Dashboard => names.dashboard = Some(parsed.as_str().to_owned()),
         }
     }
+
+    Ok((created, updated))
 }
 
 /// Every table a query may name, as it must name it: `database.table` for a
@@ -328,40 +359,6 @@ async fn names(state: &AppState, kind: DefinitionKind) -> Vec<String> {
             tracing::warn!(error = ?error, ?kind, "could not list definitions for the chat");
             Vec::new()
         }
-    }
-}
-
-/// Checks a widget against the metric it draws, whether that metric is
-/// already stored or arriving in the same request.
-///
-/// A chat request usually builds the metric and the widget together, so the
-/// metric is not in the store yet when the widget is checked.
-async fn check_widget_in_batch(
-    state: &AppState,
-    body: &serde_json::Value,
-    batch: &[(DefinitionKind, DefinitionName, serde_json::Value, String)],
-) -> Result<(), CanonicalError> {
-    let widget: crate::domain::kinds::widget::Widget = serde_json::from_value(body.clone())
-        .map_err(|error| crate::api::definitions::widget_error(&error.into()))?;
-
-    let arriving = batch
-        .iter()
-        .find(|(kind, _, _, name)| *kind == DefinitionKind::Metric && name == widget.metric());
-
-    match arriving {
-        Some((_, _, metric_body, _)) => {
-            let metric: crate::domain::query::metric_query::MetricQuery =
-                serde_json::from_value(metric_body.clone())
-                    .map_err(|error| crate::api::definitions::widget_error(&error.into()))?;
-            widget
-                .check_against(&metric)
-                .map_err(|error| crate::api::definitions::widget_error(&error))
-        }
-        None => state
-            .surfaces()
-            .check_widget(body)
-            .await
-            .map_err(crate::api::definitions::custom_error),
     }
 }
 
@@ -507,30 +504,6 @@ fn run_error(error: crate::domain::query::metric_query::MetricRunError) -> Canon
         MetricRunError::InvalidResponse(source) => {
             tracing::error!(error = ?source, "chat query result deserialization failed");
             CanonicalError::internal("chat query execution failed").create()
-        }
-    }
-}
-
-fn definition_error(error: DefinitionError) -> CanonicalError {
-    ChatApiError::invalid_argument()
-        .with_field_violation("name", error.to_string(), "INVALID")
-        .create()
-}
-
-fn definition_store_error(error: DefinitionStoreError) -> CanonicalError {
-    match error {
-        // Waiting for a connection is the store being busy, not broken.
-        DefinitionStoreError::Database(sea_orm::DbErr::ConnectionAcquire(source)) => {
-            tracing::warn!(error = ?source, "definition store connection timed out");
-            ChatApiError::deadline_exceeded("definition store timed out").create()
-        }
-        DefinitionStoreError::Database(source) => {
-            tracing::error!(error = ?source, "definition store operation failed");
-            CanonicalError::internal("definition store operation failed").create()
-        }
-        DefinitionStoreError::Json(source) => {
-            tracing::error!(error = ?source, "definition body serialization failed");
-            CanonicalError::internal("definition store operation failed").create()
         }
     }
 }

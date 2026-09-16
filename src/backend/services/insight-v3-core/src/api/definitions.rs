@@ -12,10 +12,8 @@ use toolkit_canonical_errors::{CanonicalError, resource_error};
 use utoipa::ToSchema;
 
 use super::AppState;
-use crate::definitions::{
-    Change, DefinitionError, DefinitionKind, DefinitionName, DefinitionStoreError, MAX_PAGE_LIMIT,
-    Page, PageError,
-};
+use super::errors::ApiErrors;
+use crate::definitions::{Change, DefinitionKind, DefinitionName, MAX_PAGE_LIMIT, Page, PageError};
 use crate::domain::kinds;
 use crate::domain::surfaces::CustomError;
 
@@ -46,6 +44,18 @@ struct RenameResponse {
 
 #[resource_error("gts.cf.insight.insight_v3_core.definitions.v1~")]
 struct DefinitionApiError;
+
+impl ApiErrors for DefinitionApiError {
+    fn invalid_field(field: &str, detail: String) -> CanonicalError {
+        Self::invalid_argument()
+            .with_field_violation(field, detail, "INVALID")
+            .create()
+    }
+
+    fn timed_out(detail: &str) -> CanonicalError {
+        Self::deadline_exceeded(detail).create()
+    }
+}
 
 // `.anonymous()`: these routes trust the gateway to authenticate the
 // `__Host-sid` session cookie before forwarding. Must stay off the network
@@ -232,16 +242,14 @@ pub(crate) fn custom_error(error: CustomError) -> CanonicalError {
             )
             .create(),
         CustomError::Widget(source) => widget_error(&source),
-        CustomError::Body(source) => DefinitionApiError::invalid_argument()
-            .with_field_violation("body", source.to_string(), "INVALID")
-            .create(),
-        CustomError::Range(source) => DefinitionApiError::invalid_argument()
-            .with_field_violation("time_ranges", source.to_string(), "INVALID")
-            .create(),
-        CustomError::Compile(source) => DefinitionApiError::invalid_argument()
-            .with_field_violation("body", source.to_string(), "INVALID")
-            .create(),
-        CustomError::Store(source) => definition_store_error(source),
+        CustomError::Body(source) => DefinitionApiError::invalid_field("body", source.to_string()),
+        CustomError::Range(source) => {
+            DefinitionApiError::invalid_field("time_ranges", source.to_string())
+        }
+        CustomError::Compile(source) => {
+            DefinitionApiError::invalid_field("body", source.to_string())
+        }
+        CustomError::Store(source) => DefinitionApiError::definition_store_error(source),
         CustomError::Run(source) => {
             tracing::error!(error = ?source, "metric query execution failed");
             CanonicalError::internal("metric query execution failed").create()
@@ -275,14 +283,14 @@ async fn rename_definition(
     })
     .await?;
 
-    let from = DefinitionName::parse(&name).map_err(definition_error)?;
-    let to = DefinitionName::parse(&request.to).map_err(definition_error)?;
+    let from = DefinitionName::parse(&name).map_err(DefinitionApiError::definition_error)?;
+    let to = DefinitionName::parse(&request.to).map_err(DefinitionApiError::definition_error)?;
 
     let body = state
         .definitions()
         .get(kind, &from)
         .await
-        .map_err(definition_store_error)?
+        .map_err(DefinitionApiError::definition_store_error)?
         .ok_or_else(|| {
             DefinitionApiError::not_found(format!("`{}` was not found", from.as_str()))
                 .with_resource(from.as_str())
@@ -301,7 +309,7 @@ async fn rename_definition(
         .definitions()
         .get(kind, &to)
         .await
-        .map_err(definition_store_error)?
+        .map_err(DefinitionApiError::definition_store_error)?
         .is_some()
     {
         return Err(DefinitionApiError::already_exists(format!(
@@ -324,12 +332,13 @@ async fn rename_definition(
         .await
         .map_err(custom_error)?
     {
-        let parsed = DefinitionName::parse(&holder.name).map_err(definition_error)?;
+        let parsed =
+            DefinitionName::parse(&holder.name).map_err(DefinitionApiError::definition_error)?;
         let Some(body) = state
             .definitions()
             .get(holder.kind, &parsed)
             .await
-            .map_err(definition_store_error)?
+            .map_err(DefinitionApiError::definition_store_error)?
         else {
             continue;
         };
@@ -344,7 +353,7 @@ async fn rename_definition(
         .definitions()
         .apply(&changes)
         .await
-        .map_err(definition_store_error)?;
+        .map_err(DefinitionApiError::definition_store_error)?;
 
     Ok(Json(RenameResponse {
         name: to.as_str().to_owned(),
@@ -366,7 +375,7 @@ async fn delete_definition(
     })
     .await?;
 
-    let name = DefinitionName::parse(&name).map_err(definition_error)?;
+    let name = DefinitionName::parse(&name).map_err(DefinitionApiError::definition_error)?;
 
     match state.surfaces().delete(kind, &name).await {
         Ok(()) => Ok(StatusCode::NO_CONTENT.into_response()),
@@ -389,7 +398,7 @@ async fn put_definition(
     })
     .await?;
 
-    let name = DefinitionName::parse(&name).map_err(definition_error)?;
+    let name = DefinitionName::parse(&name).map_err(DefinitionApiError::definition_error)?;
 
     state
         .surfaces()
@@ -419,7 +428,7 @@ async fn get_definition(
     })
     .await?;
 
-    let name = DefinitionName::parse(&name).map_err(definition_error)?;
+    let name = DefinitionName::parse(&name).map_err(DefinitionApiError::definition_error)?;
 
     match state.surfaces().get(kind, &name).await {
         Ok(body) => Ok(Json(body).into_response()),
@@ -458,33 +467,7 @@ async fn list_definitions(
 }
 
 fn page_error(error: PageError) -> CanonicalError {
-    DefinitionApiError::invalid_argument()
-        .with_field_violation("limit", error.to_string(), "INVALID")
-        .create()
-}
-
-fn definition_error(error: DefinitionError) -> CanonicalError {
-    DefinitionApiError::invalid_argument()
-        .with_field_violation("name", error.to_string(), "INVALID")
-        .create()
-}
-
-fn definition_store_error(error: DefinitionStoreError) -> CanonicalError {
-    match error {
-        // Waiting for a connection is the store being busy, not broken.
-        DefinitionStoreError::Database(sea_orm::DbErr::ConnectionAcquire(source)) => {
-            tracing::warn!(error = ?source, "definition store connection timed out");
-            DefinitionApiError::deadline_exceeded("definition store timed out").create()
-        }
-        DefinitionStoreError::Database(source) => {
-            tracing::error!(error = ?source, "definition store operation failed");
-            CanonicalError::internal("definition store operation failed").create()
-        }
-        DefinitionStoreError::Json(source) => {
-            tracing::error!(error = ?source, "definition body serialization failed");
-            CanonicalError::internal("definition store operation failed").create()
-        }
-    }
+    DefinitionApiError::invalid_field("limit", error.to_string())
 }
 
 #[cfg(test)]

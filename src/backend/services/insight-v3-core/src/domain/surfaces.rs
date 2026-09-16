@@ -4,6 +4,7 @@ use chrono::Utc;
 use serde_json::Value;
 use thiserror::Error;
 
+use crate::definitions::arriving::Arriving;
 use crate::definitions::{
     DefinitionKind, DefinitionName, DefinitionStoreError, Definitions, NamePage, Page,
 };
@@ -24,6 +25,7 @@ impl From<KindError> for CustomError {
     fn from(error: KindError) -> Self {
         match error {
             KindError::Widget(source) => Self::Widget(source),
+            KindError::Body(source) => Self::Body(source),
             KindError::Compile(source) => Self::Compile(source),
             KindError::Range(source) => Self::Range(source),
             KindError::Store(source) => Self::Store(source),
@@ -277,12 +279,22 @@ impl<'a> Surfaces<'a> {
         self.catalog.tables().await.map_err(CustomError::Catalog)
     }
 
-    /// Whether a widget body can be stored, for a caller that has one in hand
-    /// before it is written — the chat checks a batch before storing any of it.
-    pub(crate) async fn check_widget(&self, body: &Value) -> Result<(), CustomError> {
-        kinds::widget::check(body, self.definitions)
-            .await
-            .map_err(CustomError::from)
+    /// Whether every body in a batch can be stored, before any of it is.
+    ///
+    /// Each is checked against the store as the batch will leave it, so a
+    /// widget may draw a metric the same batch writes — and so one refusal
+    /// stores none of it.
+    pub(crate) async fn check_batch(
+        &self,
+        batch: &[(DefinitionKind, DefinitionName, Value)],
+    ) -> Result<(), CustomError> {
+        let arriving = Arriving::new(self.definitions, batch);
+
+        for (kind, _, body) in batch {
+            kinds::check(*kind, body, &arriving).await?;
+        }
+
+        Ok(())
     }
 
     pub(crate) async fn dependents_of(

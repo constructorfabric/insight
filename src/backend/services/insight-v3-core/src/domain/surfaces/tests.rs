@@ -233,10 +233,28 @@ async fn deleting_a_definition_that_was_never_stored_reports_it_missing() {
 }
 
 #[tokio::test]
-async fn running_a_metric_whose_body_is_not_a_query_reports_the_body() -> R {
+async fn a_body_that_cannot_be_read_as_a_metric_is_refused_before_it_is_stored() -> R {
     let fixture = Fixture::new();
-    let surfaces = fixture.surfaces();
-    surfaces
+
+    let refusal = fixture
+        .surfaces()
+        .put(
+            DefinitionKind::Metric,
+            &name("broken"),
+            &json!({"table": "events"}),
+        )
+        .await;
+
+    assert!(matches!(refusal, Err(CustomError::Body(_))), "{refusal:?}");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn running_a_metric_whose_stored_body_is_not_a_query_reports_the_body() -> R {
+    let fixture = Fixture::new();
+    fixture
+        .definitions
         .put(
             DefinitionKind::Metric,
             &name("broken"),
@@ -244,7 +262,11 @@ async fn running_a_metric_whose_body_is_not_a_query_reports_the_body() -> R {
         )
         .await?;
 
-    let Err(error) = surfaces.run_metric(&name("broken"), &legacy()).await else {
+    let Err(error) = fixture
+        .surfaces()
+        .run_metric(&name("broken"), &legacy())
+        .await
+    else {
         panic!("a query with no fields does not deserialize");
     };
 
@@ -495,6 +517,47 @@ async fn a_board_that_offers_no_windows_is_stored_as_it_always_was() -> R {
             &json!({"title": "Board", "items": []}),
         )
         .await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_widget_may_draw_a_metric_arriving_in_the_same_batch() -> R {
+    let fixture = Fixture::new();
+
+    let batch = vec![
+        (DefinitionKind::Metric, name("per_actor"), metric_body()),
+        (
+            DefinitionKind::Widget,
+            name("chart"),
+            line_widget("per_actor", "total"),
+        ),
+    ];
+
+    fixture.surfaces().check_batch(&batch).await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn one_refused_body_refuses_the_whole_batch() -> R {
+    let fixture = Fixture::new();
+
+    let batch = vec![
+        (DefinitionKind::Metric, name("per_actor"), metric_body()),
+        (
+            DefinitionKind::Widget,
+            name("chart"),
+            line_widget("per_actor", "no_such_column"),
+        ),
+    ];
+
+    let refusal = fixture.surfaces().check_batch(&batch).await;
+
+    assert!(
+        matches!(refusal, Err(CustomError::Widget(_))),
+        "{refusal:?}"
+    );
 
     Ok(())
 }
