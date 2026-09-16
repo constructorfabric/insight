@@ -106,22 +106,22 @@ bronze:
   # The census: the 15 rank issues plus dave's BUGD-1 observed alive. DELX-1
   # and BUGX-1 (deleted) and LSTC-1 (its whole project lost) are NOT here.
   bronze_jira.jira_issue_census:
-    - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: "10074", unique_key: "{{ tenant }}-jira-test-DELA-1"}
-    - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: "10075", unique_key: "{{ tenant }}-jira-test-DELB-1"}
-    - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: "10076", unique_key: "{{ tenant }}-jira-test-DELB-2"}
-    - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: "10077", unique_key: "{{ tenant }}-jira-test-DELC-1"}
-    - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: "10078", unique_key: "{{ tenant }}-jira-test-DELC-2"}
-    - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: "10079", unique_key: "{{ tenant }}-jira-test-DELC-3"}
-    - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: "10080", unique_key: "{{ tenant }}-jira-test-DELD-1"}
-    - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: "10081", unique_key: "{{ tenant }}-jira-test-DELD-2"}
-    - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: "10082", unique_key: "{{ tenant }}-jira-test-DELD-3"}
-    - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: "10083", unique_key: "{{ tenant }}-jira-test-DELD-4"}
-    - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: "10084", unique_key: "{{ tenant }}-jira-test-DELE-1"}
-    - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: "10085", unique_key: "{{ tenant }}-jira-test-DELE-2"}
-    - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: "10086", unique_key: "{{ tenant }}-jira-test-DELE-3"}
-    - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: "10087", unique_key: "{{ tenant }}-jira-test-DELE-4"}
-    - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: "10088", unique_key: "{{ tenant }}-jira-test-DELE-5"}
-    - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: "10091", unique_key: "{{ tenant }}-jira-test-BUGD-1",}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: "10074", unique_key: "{{ tenant }}-jira-test-10074"}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: "10075", unique_key: "{{ tenant }}-jira-test-10075"}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: "10076", unique_key: "{{ tenant }}-jira-test-10076"}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: "10077", unique_key: "{{ tenant }}-jira-test-10077"}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: "10078", unique_key: "{{ tenant }}-jira-test-10078"}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: "10079", unique_key: "{{ tenant }}-jira-test-10079"}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: "10080", unique_key: "{{ tenant }}-jira-test-10080"}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: "10081", unique_key: "{{ tenant }}-jira-test-10081"}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: "10082", unique_key: "{{ tenant }}-jira-test-10082"}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: "10083", unique_key: "{{ tenant }}-jira-test-10083"}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: "10084", unique_key: "{{ tenant }}-jira-test-10084"}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: "10085", unique_key: "{{ tenant }}-jira-test-10085"}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: "10086", unique_key: "{{ tenant }}-jira-test-10086"}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: "10087", unique_key: "{{ tenant }}-jira-test-10087"}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: "10088", unique_key: "{{ tenant }}-jira-test-10088"}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_census, jira_id: "10091", unique_key: "{{ tenant }}-jira-test-10091",}
 
   # The roster: TST is visible and live; project LOST is absent entirely.
   bronze_jira.jira_project_visibility:
