@@ -152,7 +152,7 @@ The platform-usage requirements in [PRD §5.7](./PRD.md#57-platform-usage) are n
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-feature-datasets`
 
-- **Purpose**: Make the dataset the unit data is ingested into, described by, shown as and read through — the only source a custom metric names.
+- **Purpose**: Make the dataset the unit data is ingested into, described by, shown as and read through — the only source a custom metric names — and give every definition a hand editor in the portal.
 
 - **Depends On**: 2.1
 
@@ -165,6 +165,7 @@ The platform-usage requirements in [PRD §5.7](./PRD.md#57-platform-usage) are n
   - [ ] `p1` - `cpt-insightspec-v3-fr-metrics-over-datasets`
   - [ ] `p1` - `cpt-insightspec-v3-fr-assistant-reads-datasets`
   - [ ] `p1` - `cpt-insightspec-v3-fr-accept-data`
+  - [ ] `p1` - `cpt-insightspec-v3-fr-author-by-hand`
   - [ ] `p1` - `cpt-insightspec-v3-nfr-reliability`
   - [ ] `p1` - `cpt-insightspec-v3-nfr-security`
   - [ ] `p1` - `cpt-insightspec-v3-nfr-efficiency`

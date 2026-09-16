@@ -21,6 +21,7 @@ date: 2026-09-15
   - [Remove a Dataset](#remove-a-dataset)
   - [Author a Metric Over a Dataset](#author-a-metric-over-a-dataset)
   - [Ask the Assistant About a Dataset](#ask-the-assistant-about-a-dataset)
+  - [Edit a Definition by Hand](#edit-a-definition-by-hand)
   - [Read a Board Over a Window](#read-a-board-over-a-window)
 - [3. Processes / Business Logic (CDSL)](#3-processes--business-logic-cdsl)
   - [Validate a Declaration](#validate-a-declaration)
@@ -51,6 +52,8 @@ date: 2026-09-15
   - [Duplicates Collapse on Read](#duplicates-collapse-on-read)
   - [Assistant and MCP Read Declarations](#assistant-and-mcp-read-declarations)
   - [Portal Dataset Catalogue](#portal-dataset-catalogue)
+  - [One Editor for Every Definition](#one-editor-for-every-definition)
+  - [Refusals Say Where They Belong](#refusals-say-where-they-belong)
   - [Existing Streams and Definitions Are Not Carried Over](#existing-streams-and-definitions-are-not-carried-over)
 - [6. Acceptance Criteria](#6-acceptance-criteria)
 - [7. Testing](#7-testing)
@@ -71,7 +74,9 @@ Today a stream is a physical table that appears on the first write of anyone hol
 
 The feature implements the decision in [ADR-0009](../ADR/0009-a-dataset-is-the-unit-of-ingest-and-query.md): the declaration of the data lives in one dataset, the rows keep their raw JSON shape, and everything that reads or writes rows goes through the dataset.
 
-**Scope of this iteration**: uploaded datasets only, each owning a table in a ClickHouse database this service owns; records stored whole as JSON, read through the declared fields; duplicates collapsed on read by the declared row identity; declarations replaced on write like every other definition, without versions; datasets created and removed by administrators only, in the portal and over the API; the portal reads a metric's effective clock instead of guessing it from the metric body. Datasets bound to warehouse tables, typed columns, declaration history and access policies are later iterations. The analytics service and its own metrics are untouched.
+**Scope of this iteration**: uploaded datasets only, each owning a table in a ClickHouse database this service owns; records stored whole as JSON, read through the declared fields; duplicates collapsed on read by the declared row identity; declarations replaced on write like every other definition, without versions; datasets created and removed by administrators only, in the portal and over the API; the portal reads a metric's effective clock instead of guessing it from the metric body.
+
+**The portal also gains a hand editor for every definition.** A dataset needs one, and a metric, a widget and a dashboard have never had one — each is authored only by the assistant or an agent today. They are one editor over four descriptions rather than four editors, because what differs between them is the shape of the document, not the act of editing it. Datasets bound to warehouse tables, typed columns, declaration history and access policies are later iterations. The analytics service and its own metrics are untouched.
 
 **Nothing is carried over.** This is a clean break: no stream table is adopted, moved or renamed, and no stored metric is rewritten. On a stand that already holds them, the tables stay where they are and the metrics stay as they are, refused from the moment this ships because they name a table. Datasets are declared anew and records are sent again through the ordinary ingest path. Whoever sends records addresses a dataset from that point on; there is no compatibility alias.
 
@@ -84,6 +89,10 @@ The feature implements the decision in [ADR-0009](../ADR/0009-a-dataset-is-the-u
 - `cpt-insightspec-v3-fr-metrics-over-datasets`
 - `cpt-insightspec-v3-fr-assistant-reads-datasets`
 - `cpt-insightspec-v3-fr-accept-data`
+- `cpt-insightspec-v3-fr-author-by-hand`
+- `cpt-insightspec-v3-fr-create-metrics`
+- `cpt-insightspec-v3-fr-create-widgets`
+- `cpt-insightspec-v3-fr-create-dashboards`
 - `cpt-insightspec-v3-nfr-security`
 - `cpt-insightspec-v3-nfr-reliability`
 - `cpt-insightspec-v3-nfr-efficiency`
@@ -321,6 +330,41 @@ The feature implements the decision in [ADR-0009](../ADR/0009-a-dataset-is-the-u
    1. [ ] - `p1` - **RETURN** the reply with the refusal: datasets are created by an administrator - `inst-ds-chat-create-dataset-reject`
 7. [ ] - `p1` - Run or store the proposal through the same paths the portal uses - `inst-ds-chat-apply`
 8. [ ] - `p1` - **RETURN** the reply, the rows or the created names - `inst-ds-chat-return`
+
+### Edit a Definition by Hand
+
+- [ ] `p1` - **ID**: `cpt-insightspec-v3-flow-datasets-edit-definition`
+
+**Actor**: `cpt-insightspec-v3-actor-administrator`
+
+**Success Scenarios**:
+- A dataset is declared from nothing, field by field, and stored
+- A stored widget is opened, its type changed, and the fields offered change with it
+- A declaration carried from another installation is pasted as text and stored unchanged
+
+**Error Scenarios**:
+- The text does not parse, so there is nothing to send
+- The service refuses the document, naming places inside it
+- The service refuses the document as a whole, naming no place in it
+
+**Steps**:
+1. [ ] - `p1` - Administrator opens the editor for a kind, on a new definition or a stored one - `inst-ds-edit-open`
+2. [ ] - `p1` - **IF** a stored definition was opened - `inst-ds-edit-stored`
+   1. [ ] - `p1` - API: GET /v1/{kind}/{name} (the body as stored, which the editor holds as the document) - `inst-ds-edit-read`
+3. [ ] - `p1` - Administrator edits the fields, or the text beside them - `inst-ds-edit-change`
+4. [ ] - `p1` - **IF** the fields were edited - `inst-ds-edit-from-fields`
+   1. [ ] - `p1` - The text is rewritten from the document - `inst-ds-edit-text-follows`
+5. [ ] - `p1` - **ELSE IF** the text parses - `inst-ds-edit-from-text`
+   1. [ ] - `p1` - The document becomes what the text says, and the fields follow - `inst-ds-edit-fields-follow`
+6. [ ] - `p1` - **ELSE** - `inst-ds-edit-unparsed`
+   1. [ ] - `p1` - Leave the fields as they stand, say the text does not parse, and refuse to send - `inst-ds-edit-blocked`
+7. [ ] - `p1` - Administrator sends the document - `inst-ds-edit-send`
+8. [ ] - `p1` - API: PUT /v1/{kind}/{name} (the document, including any property the fields do not know) - `inst-ds-edit-api`
+9. [ ] - `p1` - **IF** the service refuses with places inside the document - `inst-ds-edit-violations`
+   1. [ ] - `p1` - **RETURN** each message beside the place it names, in the fields and in the text - `inst-ds-edit-violations-shown`
+10. [ ] - `p1` - **IF** the service refuses without naming a place - `inst-ds-edit-whole`
+    1. [ ] - `p1` - **RETURN** the message above the document - `inst-ds-edit-whole-shown`
+11. [ ] - `p1` - **RETURN** the stored definition; the catalogue and the rail refresh - `inst-ds-edit-return`
 
 ### Read a Board Over a Window
 
@@ -827,23 +871,51 @@ The chat's system prompt, its look_up tool and the MCP describe tools **MUST** b
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-dod-datasets-portal`
 
-The Custom zone **MUST** gain a Datasets catalogue beside Metrics, Widgets and Dashboards, a dataset page with the declaration, a preview of the latest records and the dependent metrics, and a remove action that shows the dependents when refused.
-
-A dataset **MUST** be declared through a form that edits it field by field — a name, a path, a type, a role, a substitute for an absent value and the person mark on each field; exactly one field marked as the record's main date; the row identity chosen from the fields already declared — so an author is never asked to know the shape by heart.
-
-The same declaration **MUST** also be editable as its own text, beside the form and holding what would be sent, so that one can be pasted whole or carried from another installation. The two **MUST** show one declaration rather than two copies of it: whichever was edited last is the one that is believed, text that does not parse leaves the form as it stands and blocks sending until it does, and a property the form does not know **MUST** be sent rather than dropped, so that a mistyped one is refused by name instead of disappearing. One action sends what both show.
-
-A refusal **MUST** attach each violation to the field it names, in the form and in the text alike, so that a declaration with several problems is corrected in one pass. The rail **MUST** list the catalogue for administrators only. The dependent list **MUST** come from an exact dependency lookup, never from a catalogue search over stored bodies.
+The Custom zone **MUST** gain a Datasets catalogue beside Metrics, Widgets and Dashboards, a dataset page with the declaration, a preview of the latest records and the dependent metrics, and a remove action that shows the dependents when refused. The rail **MUST** list the catalogue for administrators only. The dependent list **MUST** come from an exact dependency lookup, never from a catalogue search over stored bodies.
 
 **Implements**:
 - `cpt-insightspec-v3-flow-datasets-browse`
-- `cpt-insightspec-v3-flow-datasets-create`
 - `cpt-insightspec-v3-flow-datasets-remove`
 - `cpt-insightspec-v3-algo-datasets-dependents`
 
 **Touches**:
 - API: `GET /v1/datasets`, `GET /v1/datasets/{name}`, `GET /v1/datasets/{name}/records`, `GET /v1/datasets/{name}/dependents`, `DELETE /v1/datasets/{name}`
 - Entities: portal routes under `/portal/custom/datasets`
+
+### One Editor for Every Definition
+
+- [ ] `p1` - **ID**: `cpt-insightspec-v3-dod-datasets-editor`
+
+Every definition the Custom zone holds — a dataset, a metric, a widget, a dashboard — **MUST** be creatable and editable by hand in the portal. Three of them have no such surface today, so a reader who wants a small change asks the assistant for one and hopes.
+
+The editor **MUST** be one editor over four descriptions, not four editors: what differs between the kinds is the shape of the document, and the act of editing is the same. The editor **MUST** hold a document, offer the fields that kind admits, add and remove entries of a list, choose the variant of an entry where a kind has variants — a widget by its type, a dashboard item by what it carries — and offer the names of definitions a field refers to, rather than asking them to be typed from memory.
+
+Beside the fields **MUST** sit the same document as text, holding what would be sent, so that one can be pasted whole or carried from another installation. The two **MUST** show one document rather than two copies: whichever was edited last is believed, text that does not parse leaves the fields as they stand and blocks sending until it does, and a property the fields do not know **MUST** be sent rather than dropped, so a mistyped one is refused by name instead of disappearing. One action sends what both show.
+
+A refusal **MUST** be shown where it belongs: a violation naming a place in the document against that place, in the fields and in the text alike, and one naming the document as a whole above it. Nothing about a kind's shape **MUST** be inferred from an example or a stored body; each description says what its kind admits.
+
+**Implements**:
+- `cpt-insightspec-v3-flow-datasets-create`
+- `cpt-insightspec-v3-algo-datasets-validate-declaration`
+
+**Touches**:
+- API: `PUT /v1/datasets/{name}`, `PUT /v1/metrics/{name}`, `PUT /v1/widgets/{name}`, `PUT /v1/dashboards/{name}`
+- Entities: the Custom zone's definition editor and one description per kind
+
+### Refusals Say Where They Belong
+
+- [ ] `p2` - **ID**: `cpt-insightspec-v3-dod-datasets-violations`
+
+A refusal to store a definition **MUST** carry the places in the document it is about, each with a stable reason and a sentence naming what would have been admissible, rather than one sentence about the body as a whole — that is what lets an editor put a message beside the field that caused it.
+
+A dataset declaration **MUST** answer this way from the start. Where a kind's checks already know the place they failed at, they **MUST** answer the same way; where a check only knows that the body as a whole is wrong, it **MUST** say so plainly and the editor **MUST** show it above the document rather than inventing a field for it.
+
+**Implements**:
+- `cpt-insightspec-v3-algo-datasets-validate-declaration`
+- `cpt-insightspec-v3-flow-datasets-author-metric`
+
+**Touches**:
+- API: `PUT /v1/{datasets,metrics,widgets,dashboards}/{name}`
 
 ### Existing Streams and Definitions Are Not Carried Over
 
@@ -868,6 +940,9 @@ The service **MUST** stop creating an ingest-schema landing table in the warehou
 - [ ] Editing the form updates the text beside it, and text that parses updates the form; text that does not parse leaves the form alone and blocks sending
 - [ ] A declaration pasted as text, carrying a property the form does not know, is sent as pasted and refused by name rather than silently stripped
 - [ ] A declaration refused for several reasons shows each one against the field it belongs to, not as one message above the form
+- [ ] A metric, a widget and a dashboard can each be created and changed by hand in the portal, through the same editor a dataset uses
+- [ ] Changing a widget's type changes the fields the editor offers, and a dashboard item offers what its kind of item carries
+- [ ] A field that refers to another definition offers the names that exist rather than expecting one to be typed
 - [ ] A create whose table step fails leaves the name claimed and nothing readable, and the request repeated succeeds
 - [ ] A create and a removal of one dataset, issued together, end in one of the two outcomes and never in a ready dataset whose table was dropped
 - [ ] A metric stored while its dataset is being removed either lands before the removal's dependency check, which then refuses, or is refused itself
@@ -957,14 +1032,6 @@ The risks are a silent mismatch between what a declaration says and what a run r
   **Requirements**: `cpt-insightspec-v3-fr-view-dataset`, `cpt-insightspec-v3-nfr-versatility`.
   **Covers**: `cpt-insightspec-v3-dod-datasets-portal`.
   **Test**: Not implemented.
-- [ ] 25. **The create form builds a declaration and shows where it is wrong** — Versatility · fe-component — add fields, mark one as the main date, pick a row identity from them, then submit a declaration the service refuses for two different fields → the form offers only admissible types and roles, sends what was built, and shows each violation against its own field.
-  **Requirements**: `cpt-insightspec-v3-fr-create-dataset`, `cpt-insightspec-v3-nfr-versatility`.
-  **Covers**: `cpt-insightspec-v3-dod-datasets-portal`.
-  **Test**: Not implemented.
-- [ ] 26. **Form and text stay one declaration** — Reliability · fe-component — edit the form and read the text, paste a declaration that parses and read the form, type text that does not parse, then paste one carrying an unknown property → the text follows the form, the form follows text that parses, broken text leaves the form untouched and blocks sending, and the unknown property reaches the request.
-  **Requirements**: `cpt-insightspec-v3-fr-create-dataset`, `cpt-insightspec-v3-nfr-reliability`.
-  **Covers**: `cpt-insightspec-v3-dod-datasets-portal`.
-  **Test**: Not implemented.
 - [ ] 16. **Ingest adds no warehouse round trip** — Efficiency · rust-unit — post a record into an existing dataset → exactly one insert statement reaches ClickHouse and the dataset lookup is answered by the definitions store.
   **Requirements**: `cpt-insightspec-v3-fr-ingest-into-dataset`, `cpt-insightspec-v3-nfr-efficiency`.
   **Covers**: `cpt-insightspec-v3-dod-datasets-ingest`.
@@ -992,6 +1059,18 @@ The risks are a silent mismatch between what a declaration says and what a run r
 - [ ] 24. **A dataset that is not ready is shown by nothing** — Reliability · rust-unit — with the same two datasets, read the catalogue, one dataset, the record preview and the assistant's context → each omits both, and one dataset answers not found rather than a partial declaration.
   **Requirements**: `cpt-insightspec-v3-fr-view-dataset`, `cpt-insightspec-v3-fr-assistant-reads-datasets`.
   **Covers**: `cpt-insightspec-v3-dod-datasets-ready-gate`.
+  **Test**: Not implemented.
+- [ ] 25. **The editor builds a declaration and shows where it is wrong** — Versatility · fe-component — add fields, mark one as the main date, pick a row identity from them, then submit a declaration the service refuses for two different fields → the editor offers only admissible types and roles, sends what was built, and shows each violation against its own field.
+  **Requirements**: `cpt-insightspec-v3-fr-create-dataset`, `cpt-insightspec-v3-fr-author-by-hand`, `cpt-insightspec-v3-nfr-versatility`.
+  **Covers**: `cpt-insightspec-v3-dod-datasets-editor`.
+  **Test**: Not implemented.
+- [ ] 26. **Fields and text stay one document** — Reliability · fe-component — edit the fields and read the text, paste a document that parses and read the fields, type text that does not parse, then paste one carrying an unknown property → the text follows the fields, the fields follow text that parses, broken text leaves the fields untouched and blocks sending, and the unknown property reaches the request.
+  **Requirements**: `cpt-insightspec-v3-fr-create-dataset`, `cpt-insightspec-v3-nfr-reliability`.
+  **Covers**: `cpt-insightspec-v3-dod-datasets-editor`.
+  **Test**: Not implemented.
+- [ ] 27. **One editor serves every kind, and a variant changes what it offers** — Versatility · fe-component — open the editor on a stored metric, widget and dashboard in turn, then change the widget's type and the kind of a dashboard item → each kind offers its own document, the offered fields follow the chosen variant, a field referring to another definition offers the names that exist, and a refusal naming no place is shown above the document.
+  **Requirements**: `cpt-insightspec-v3-fr-author-by-hand`, `cpt-insightspec-v3-fr-create-metrics`, `cpt-insightspec-v3-fr-create-widgets`, `cpt-insightspec-v3-fr-create-dashboards`, `cpt-insightspec-v3-nfr-versatility`.
+  **Covers**: `cpt-insightspec-v3-dod-datasets-editor`.
   **Test**: Not implemented.
 
 **Performance** — n/a: the feature states no latency or throughput obligation of its own, and the two costs it adds — a payload parsed per record on every run, and a collapsing read over a dataset that declares an identity — are the costs the deferred column materialization exists to remove. Naming a budget here would invent one.

@@ -225,6 +225,14 @@ The system **MUST** let a dashboard be created in realtime.
 
 **Actors**: `cpt-insightspec-v3-actor-dashboard-author`
 
+#### Author Definitions by Hand
+
+- [ ] `p1` - **ID**: `cpt-insightspec-v3-fr-author-by-hand`
+
+The system **MUST** let a person create and change every definition it holds — a dataset, a metric, a widget and a dashboard — by hand in the portal, without asking the assistant or an agent to do it.
+
+**Actors**: `cpt-insightspec-v3-actor-administrator`, `cpt-insightspec-v3-actor-dashboard-author`
+
 #### Metrics Read Datasets
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-fr-metrics-over-datasets`
