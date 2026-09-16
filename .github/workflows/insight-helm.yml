@@ -28,10 +28,16 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install test dependencies
-        run: pip install --quiet pytest
+        run: pip install --quiet pytest pyyaml
       - name: Helm lint
         run: |
+          helm lint src/backend/services/identity-resolution/helm
           helm dependency update charts/insight
+          helm lint charts/insight
           helm lint charts/insight --values charts/insight/tests/values.yaml
       - name: Render-contract tests
-        run: python -m pytest charts/insight/tests/ -q
+        run: >-
+          python -m pytest
+          charts/insight/tests/
+          src/backend/services/identity-resolution/helm/tests/
+          -q
