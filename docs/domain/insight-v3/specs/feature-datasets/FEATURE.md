@@ -823,7 +823,9 @@ The chat's system prompt, its look_up tool and the MCP describe tools **MUST** b
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-dod-datasets-portal`
 
-The Custom zone **MUST** gain a Datasets catalogue beside Metrics, Widgets and Dashboards, a dataset page with the declaration, a preview of the latest records and the dependent metrics, a create form, and a remove action that shows the dependents when refused. The rail **MUST** list the catalogue for administrators only. The dependent list **MUST** come from an exact dependency lookup, never from a catalogue search over stored bodies.
+The Custom zone **MUST** gain a Datasets catalogue beside Metrics, Widgets and Dashboards, a dataset page with the declaration, a preview of the latest records and the dependent metrics, and a remove action that shows the dependents when refused.
+
+A dataset **MUST** be declared through a form that edits it field by field — a name, a path, a type, a role, a substitute for an absent value and the person mark on each field; exactly one field marked as the record's main date; the row identity chosen from the fields already declared — rather than a free-text body, so an author is never asked to know the shape by heart. A refusal **MUST** attach each violation to the field of the form it names, so that a declaration with several problems is corrected in one pass. The rail **MUST** list the catalogue for administrators only. The dependent list **MUST** come from an exact dependency lookup, never from a catalogue search over stored bodies.
 
 **Implements**:
 - `cpt-insightspec-v3-flow-datasets-browse`
@@ -854,6 +856,8 @@ The service **MUST** stop creating an ingest-schema landing table in the warehou
 
 - [ ] A record sent to a dataset that does not exist is refused and no table appears, whatever token it carries
 - [ ] A dataset created in the portal is listed in the catalogue, in the rail and in the assistant's context, and its table exists before the first record
+- [ ] The create form offers only what a declaration admits: the types, the roles, one main date, and a row identity chosen from the fields declared
+- [ ] A declaration refused for several reasons shows each one against the field of the form it belongs to, not as one message above it
 - [ ] A create whose table step fails leaves the name claimed and nothing readable, and the request repeated succeeds
 - [ ] A create and a removal of one dataset, issued together, end in one of the two outcomes and never in a ready dataset whose table was dropped
 - [ ] A metric stored while its dataset is being removed either lands before the removal's dependency check, which then refuses, or is refused itself
@@ -940,6 +944,10 @@ The risks are a silent mismatch between what a declaration says and what a run r
   **Test**: Not implemented.
 - [ ] 15. **The catalogue renders every dataset surface** — Versatility · fe-component — open the Datasets catalogue, a dataset page and its remove action with mocked responses → list with search and total, fields and preview and dependents on the page, the dependents shown when removal is refused.
   **Requirements**: `cpt-insightspec-v3-fr-view-dataset`, `cpt-insightspec-v3-nfr-versatility`.
+  **Covers**: `cpt-insightspec-v3-dod-datasets-portal`.
+  **Test**: Not implemented.
+- [ ] 25. **The create form builds a declaration and shows where it is wrong** — Versatility · fe-component — add fields, mark one as the main date, pick a row identity from them, then submit a declaration the service refuses for two different fields → the form offers only admissible types and roles, sends what was built, and shows each violation against its own field.
+  **Requirements**: `cpt-insightspec-v3-fr-create-dataset`, `cpt-insightspec-v3-nfr-versatility`.
   **Covers**: `cpt-insightspec-v3-dod-datasets-portal`.
   **Test**: Not implemented.
 - [ ] 16. **Ingest adds no warehouse round trip** — Efficiency · rust-unit — post a record into an existing dataset → exactly one insert statement reaches ClickHouse and the dataset lookup is answered by the definitions store.
