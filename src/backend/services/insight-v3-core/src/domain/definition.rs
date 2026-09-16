@@ -152,11 +152,39 @@ pub(crate) enum Change {
     Delete(DefinitionKind, DefinitionName),
 }
 
+/// A definition as it stands: what kind it is, what it is called, and what it
+/// holds.
+#[derive(Debug, Clone)]
+pub(crate) struct Definition {
+    pub(crate) kind: DefinitionKind,
+    pub(crate) name: DefinitionName,
+    pub(crate) body: serde_json::Value,
+}
+
+impl Definition {
+    pub(crate) fn new(kind: DefinitionKind, name: DefinitionName, body: serde_json::Value) -> Self {
+        Self { kind, name, body }
+    }
+}
+
+/// Reading one definition by name, which is all a kind's own rules may do.
+///
+/// A rule that could write would write mid-check, before the batch it belongs
+/// to has been accepted.
+#[async_trait]
+pub(crate) trait Lookup: Send + Sync + fmt::Debug {
+    async fn get(
+        &self,
+        kind: DefinitionKind,
+        name: &DefinitionName,
+    ) -> Result<Option<serde_json::Value>, DefinitionStoreError>;
+}
+
 /// What the API and the chat need of the store, so neither has to know where
 /// definitions live — and so their tests can hold them in a map rather than
 /// answer a database's wire protocol.
 #[async_trait]
-pub(crate) trait Definitions: Send + Sync + fmt::Debug {
+pub(crate) trait Definitions: Lookup {
     /// Stores `body` under `name`, replacing whatever that name held.
     async fn put(
         &self,
@@ -164,12 +192,6 @@ pub(crate) trait Definitions: Send + Sync + fmt::Debug {
         name: &DefinitionName,
         body: &serde_json::Value,
     ) -> Result<(), DefinitionStoreError>;
-
-    async fn get(
-        &self,
-        kind: DefinitionKind,
-        name: &DefinitionName,
-    ) -> Result<Option<serde_json::Value>, DefinitionStoreError>;
 
     /// Every name of this kind.
     ///

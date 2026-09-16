@@ -14,7 +14,8 @@ use sea_orm::{
 };
 
 use crate::domain::definition::{
-    Change, DefinitionKind, DefinitionName, DefinitionStoreError, Definitions, NamePage, Page,
+    Change, DefinitionKind, DefinitionName, DefinitionStoreError, Definitions, Lookup, NamePage,
+    Page,
 };
 
 /// The name is the primary key, so a write is an upsert and two writers cannot
@@ -105,7 +106,7 @@ impl MariaDefinitions {
 }
 
 #[async_trait]
-impl Definitions for MariaDefinitions {
+impl Lookup for MariaDefinitions {
     async fn get(
         &self,
         kind: DefinitionKind,
@@ -124,7 +125,10 @@ impl Definitions for MariaDefinitions {
             None => Ok(None),
         }
     }
+}
 
+#[async_trait]
+impl Definitions for MariaDefinitions {
     async fn put(
         &self,
         kind: DefinitionKind,

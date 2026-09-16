@@ -526,8 +526,8 @@ async fn a_widget_may_draw_a_metric_arriving_in_the_same_batch() -> R {
     let fixture = Fixture::new();
 
     let batch = vec![
-        (DefinitionKind::Metric, name("per_actor"), metric_body()),
-        (
+        Definition::new(DefinitionKind::Metric, name("per_actor"), metric_body()),
+        Definition::new(
             DefinitionKind::Widget,
             name("chart"),
             line_widget("per_actor", "total"),
@@ -544,8 +544,8 @@ async fn one_refused_body_refuses_the_whole_batch() -> R {
     let fixture = Fixture::new();
 
     let batch = vec![
-        (DefinitionKind::Metric, name("per_actor"), metric_body()),
-        (
+        Definition::new(DefinitionKind::Metric, name("per_actor"), metric_body()),
+        Definition::new(
             DefinitionKind::Widget,
             name("chart"),
             line_widget("per_actor", "no_such_column"),

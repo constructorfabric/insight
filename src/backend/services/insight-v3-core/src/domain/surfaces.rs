@@ -6,7 +6,8 @@ use thiserror::Error;
 
 use crate::domain::definition::arriving::Arriving;
 use crate::domain::definition::{
-    Change, DefinitionKind, DefinitionName, DefinitionStoreError, Definitions, NamePage, Page,
+    Change, Definition, DefinitionKind, DefinitionName, DefinitionStoreError, Definitions,
+    NamePage, Page,
 };
 use crate::domain::kinds::dashboard::Item;
 use crate::domain::kinds::widget::WidgetError;
@@ -284,14 +285,16 @@ impl<'a> Surfaces<'a> {
     /// Each is checked against the store as the batch will leave it, so a
     /// widget may draw a metric the same batch writes — and so one refusal
     /// stores none of it.
-    pub(crate) async fn check_batch(
-        &self,
-        batch: &[(DefinitionKind, DefinitionName, Value)],
-    ) -> Result<(), CustomError> {
+    pub(crate) async fn check_batch(&self, batch: &[Definition]) -> Result<(), CustomError> {
         let arriving = Arriving::new(self.definitions, batch);
 
-        for (kind, _, body) in batch {
-            kinds::check(*kind, body, &arriving).await?;
+        for arriving_definition in batch {
+            kinds::check(
+                arriving_definition.kind,
+                &arriving_definition.body,
+                &arriving,
+            )
+            .await?;
         }
 
         Ok(())
@@ -306,7 +309,7 @@ impl<'a> Surfaces<'a> {
 
         Ok(holders
             .into_iter()
-            .map(|(holder, holder_name, _)| Reference::new(holder, holder_name.into_string()))
+            .map(|holder| Reference::new(holder.kind, holder.name.into_string()))
             .collect())
     }
 
@@ -336,11 +339,12 @@ impl<'a> Surfaces<'a> {
         ];
         let mut rewritten = Vec::new();
 
-        for (holder, holder_name, body) in self.holders_of(kind, from).await? {
-            let pointed_at = kinds::rename_reference(holder, body, from.as_str(), to.as_str());
+        for holder in self.holders_of(kind, from).await? {
+            let pointed_at =
+                kinds::rename_reference(holder.kind, holder.body, from.as_str(), to.as_str());
 
-            rewritten.push(holder_name.as_str().to_owned());
-            changes.push(Change::Put(holder, holder_name, pointed_at));
+            rewritten.push(holder.name.as_str().to_owned());
+            changes.push(Change::Put(holder.kind, holder.name, pointed_at));
         }
 
         self.definitions
@@ -359,7 +363,7 @@ impl<'a> Surfaces<'a> {
         &self,
         kind: DefinitionKind,
         name: &DefinitionName,
-    ) -> Result<Vec<(DefinitionKind, DefinitionName, Value)>, CustomError> {
+    ) -> Result<Vec<Definition>, CustomError> {
         let mut holders = Vec::new();
 
         for holder in kinds::referred_to_by(kind) {
@@ -375,7 +379,7 @@ impl<'a> Surfaces<'a> {
         holder: DefinitionKind,
         kind: DefinitionKind,
         name: &DefinitionName,
-    ) -> Result<Vec<(DefinitionKind, DefinitionName, Value)>, CustomError> {
+    ) -> Result<Vec<Definition>, CustomError> {
         let mut found = Vec::new();
 
         for holder_name in self.list(holder).await? {
@@ -392,7 +396,7 @@ impl<'a> Surfaces<'a> {
             };
 
             if names(holder, &body, kind, name) {
-                found.push((holder, parsed, body));
+                found.push(Definition::new(holder, parsed, body));
             }
         }
 

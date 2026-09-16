@@ -17,7 +17,7 @@ use utoipa::ToSchema;
 use super::AppState;
 use super::errors::ApiErrors;
 use crate::chat::{Ask, Catalogue, ChatError, KnownTable, Proposal, Schemas, Turn};
-use crate::domain::definition::{Change, DefinitionKind, DefinitionName};
+use crate::domain::definition::{Change, Definition, DefinitionKind, DefinitionName};
 use crate::domain::query::metric_query::{
     MetricQuery, MetricQueryError, MetricRunError, RunResult,
 };
@@ -179,7 +179,7 @@ async fn store_proposed(
     let mut writes = Vec::with_capacity(asked.len());
     for (kind, name, body) in asked {
         let parsed = DefinitionName::parse(&name).map_err(ChatApiError::definition_error)?;
-        writes.push((kind, parsed, body));
+        writes.push(Definition::new(kind, parsed, body));
     }
 
     state
@@ -192,7 +192,7 @@ async fn store_proposed(
 
     let batch: Vec<_> = writes
         .into_iter()
-        .map(|(kind, parsed, body)| Change::Put(kind, parsed, body))
+        .map(|write| Change::Put(write.kind, write.name, write.body))
         .collect();
     state
         .definitions()
@@ -215,24 +215,25 @@ async fn store_proposed(
 /// transaction either way.
 async fn named_by_novelty(
     state: &AppState,
-    writes: &[(DefinitionKind, DefinitionName, serde_json::Value)],
+    writes: &[Definition],
 ) -> Result<(CreatedNames, CreatedNames), CanonicalError> {
     let mut created = CreatedNames::default();
     let mut updated = CreatedNames::default();
 
-    for (kind, parsed, _) in writes {
+    for write in writes {
         let held = state
             .definitions()
-            .get(*kind, parsed)
+            .get(write.kind, &write.name)
             .await
             .map_err(ChatApiError::definition_store_error)?
             .is_some();
 
-        let names = if held { &mut updated } else { &mut created };
-        match kind {
-            DefinitionKind::Metric => names.metric = Some(parsed.as_str().to_owned()),
-            DefinitionKind::Widget => names.widgets.push(parsed.as_str().to_owned()),
-            DefinitionKind::Dashboard => names.dashboard = Some(parsed.as_str().to_owned()),
+        let reported = if held { &mut updated } else { &mut created };
+        let held_name = write.name.as_str().to_owned();
+        match write.kind {
+            DefinitionKind::Metric => reported.metric = Some(held_name),
+            DefinitionKind::Widget => reported.widgets.push(held_name),
+            DefinitionKind::Dashboard => reported.dashboard = Some(held_name),
         }
     }
 

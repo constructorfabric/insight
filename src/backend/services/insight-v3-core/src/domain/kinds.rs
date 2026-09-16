@@ -14,7 +14,7 @@ use thiserror::Error;
 
 use widget::WidgetError;
 
-use crate::domain::definition::{DefinitionKind, DefinitionStoreError, Definitions};
+use crate::domain::definition::{DefinitionKind, DefinitionStoreError, Lookup};
 use crate::domain::query::metric_query::MetricQueryError;
 use crate::domain::query::time_window::WindowError;
 
@@ -52,12 +52,12 @@ pub(crate) enum KindError {
 
 /// Checks a body against the rules of its kind, before it is stored.
 ///
-/// The store is passed because a kind may need what another definition holds:
+/// A lookup is passed because a kind may need what another definition holds:
 /// a widget draws its metric's columns, so it reads that metric.
 pub(crate) async fn check(
     kind: DefinitionKind,
     body: &Value,
-    definitions: &dyn Definitions,
+    definitions: &dyn Lookup,
 ) -> Result<(), KindError> {
     match kind {
         DefinitionKind::Metric => metric::check(body),

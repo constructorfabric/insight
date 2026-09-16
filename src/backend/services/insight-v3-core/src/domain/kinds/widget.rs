@@ -8,7 +8,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 use super::{KindError, Reference};
-use crate::domain::definition::{DefinitionKind, DefinitionName, Definitions};
+use crate::domain::definition::{DefinitionKind, DefinitionName, Lookup};
 use crate::domain::query::metric_query::MetricQuery;
 
 #[derive(Debug, Deserialize)]
@@ -114,7 +114,7 @@ pub(crate) enum WidgetError {
 ///
 /// The metric is read because a widget names the columns that metric produces,
 /// and naming one it does not is the mistake this catches.
-pub(crate) async fn check(body: &Value, definitions: &dyn Definitions) -> Result<(), KindError> {
+pub(crate) async fn check(body: &Value, definitions: &dyn Lookup) -> Result<(), KindError> {
     let widget: Widget =
         serde_json::from_value(body.clone()).map_err(|error| KindError::Widget(error.into()))?;
 
