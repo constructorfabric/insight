@@ -1,6 +1,6 @@
 # BambooHR Connector
 
-Employee directory, leave requests, and field metadata from BambooHR via API key
+Employee directory, leave requests, Who's Out, and field metadata from BambooHR via API key
 authentication. Python CDK source.
 
 ## Prerequisites
@@ -33,7 +33,7 @@ stringData:
 |-------|----------|-------------|
 | `bamboohr_api_key` | Yes | BambooHR API key (Account > API Keys) |
 | `bamboohr_domain` | Yes | BambooHR subdomain (e.g. `acme` from `acme.bamboohr.com`) |
-| `bamboohr_start_date` | No | Leave requests history start date, ISO format (default: `2020-01-01`) |
+| `bamboohr_start_date` | No | Leave requests and Who's Out history start date, ISO format (default: `2020-01-01`) |
 
 ### Automatically injected
 
@@ -68,6 +68,27 @@ source-bamboohr discover --config config.json
 | `employees` | Employee directory via the custom report API | Full refresh |
 | `leave_requests` | Time-off requests from `bamboohr_start_date` to today | Full refresh |
 | `meta_fields` | Field metadata (names, types, aliases) | Full refresh |
+| `whos_out` | Employee time off and visible company holidays from `bamboohr_start_date` to today (UTC) | Full refresh |
+
+### Who's Out
+
+The stream calls [`time_off/whos_out`](https://documentation.bamboohr.com/reference/list-whos-out)
+with `filter=off` to bypass the caller's saved employee calendar filter. Holiday
+visibility still depends on BambooHR configuration and the caller's access;
+a holiday entry does not establish which employees observe it.
+
+Both `timeOff` and `holiday` entries retain their API payloads. Keys include the
+tenant, source, entry type, ID, and start date to distinguish event types and
+recurring holiday occurrences. Holidays need not contain an `employeeId`.
+
+HTTP 403 skips only this stream with a warning, so an unavailable Who's Out
+feature does not fail the other streams. Other API and transport failures remain
+errors. Skipped or empty results do not establish that employees were available.
+
+This stream collects Bronze data only. It does not feed Silver HR events,
+metrics, comparisons, or attention panels. Full-refresh extraction uses the
+existing append-only destination configuration; deleted or changed occurrences
+are not reconciled here. Downstream availability semantics remain out of scope.
 
 ### Employee fields
 

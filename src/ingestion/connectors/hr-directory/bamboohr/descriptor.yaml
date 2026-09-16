@@ -1,8 +1,6 @@
 name: bamboohr
 type: cdk
-# The major bump full-refreshes the new roster and profile claims before the
-# persons seed projects them.
-version: "2.4.0"
+version: "2.5.0"
 schedule: 0 * * * *
 dbt_select: tag:bamboohr+
 workflow: sync
