@@ -1,9 +1,7 @@
 //! The definition store the tests use.
 //!
 //! It keeps definitions in a map, so a test that stores one and reads it back
-//! asserts on behaviour rather than on a database's wire protocol. The handler
-//! tests used to prime a queue of `ClickHouse` responses in call order, which
-//! meant every change to what a request reads rewrote them.
+//! asserts on behaviour rather than on a database's wire protocol.
 
 use std::collections::BTreeMap;
 use std::sync::Mutex;
@@ -121,9 +119,7 @@ impl Definitions for MemoryDefinitions {
         if self.failing {
             return Err(Self::refuse());
         }
-        // All or nothing, as the transaction is: the batch is applied to a
-        // copy and that copy replaces the map, so a refusal partway through
-        // leaves nothing behind and a reader never sees half of it.
+        // INVARIANT: all or nothing, as the real transaction is.
         let mut stored = self.lock();
         let mut applied = stored.clone();
 

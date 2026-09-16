@@ -40,7 +40,7 @@ impl Gear for InsightV3CoreGear {
         // The definitions are rows read by name and edited in place, so they
         // live in MariaDB rather than beside the data they describe.
         let definitions: Arc<dyn crate::definitions::Definitions> =
-            Arc::new(crate::definitions::MariaDefinitions::new(
+            Arc::new(crate::definitions::maria::MariaDefinitions::new(
                 sea_orm::Database::connect(config.database_url()).await?,
             ));
         let admission = crate::api::admission::IngestAdmission::new(config.ingest_token());

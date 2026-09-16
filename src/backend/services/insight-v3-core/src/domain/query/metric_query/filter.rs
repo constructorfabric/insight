@@ -34,7 +34,7 @@ impl Filter {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum FilterOp {
+pub(super) enum FilterOp {
     Eq,
     Ne,
     Gt,
@@ -70,7 +70,8 @@ pub(crate) enum FilterBind {
 }
 
 impl FilterBind {
-    pub(super) fn as_display_string(&self) -> String {
+    #[cfg(test)]
+    fn as_display_string(&self) -> String {
         match self {
             Self::Str(value) => value.clone(),
             Self::Int(value) => value.to_string(),
@@ -90,6 +91,7 @@ impl FilterBind {
 /// Compares against the string form asserted by `MetricQuery::compile`'s
 /// unit tests, without stringifying the value used to actually bind the
 /// query (see [`FilterBind::bind_onto`]).
+#[cfg(test)]
 impl PartialEq<String> for FilterBind {
     fn eq(&self, other: &String) -> bool {
         self.as_display_string() == *other

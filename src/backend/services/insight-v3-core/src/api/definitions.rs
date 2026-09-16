@@ -232,7 +232,7 @@ fn register_kind(
         .merge(rename)
 }
 
-pub(crate) fn custom_error(error: CustomError) -> CanonicalError {
+pub(super) fn custom_error(error: CustomError) -> CanonicalError {
     match error {
         CustomError::NotFound { kind, name } => {
             DefinitionApiError::not_found(format!("{} `{name}` was not found", kind.singular()))
@@ -346,7 +346,7 @@ async fn put_definition(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
-pub(crate) fn widget_error(error: &crate::domain::kinds::widget::WidgetError) -> CanonicalError {
+fn widget_error(error: &crate::domain::kinds::widget::WidgetError) -> CanonicalError {
     DefinitionApiError::invalid_argument()
         .with_field_violation("body", error.to_string(), "INVALID")
         .create()

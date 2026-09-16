@@ -60,10 +60,9 @@ impl People {
 
     /// The `WITH` clauses the joins read from.
     ///
-    /// A person accumulates a row per name they have ever had, so the latest
-    /// one wins by `argMax` before anything joins to it. Joining the rows
-    /// directly multiplies every fact by that history - it turned 752 merged
-    /// pull requests into 18,800.
+    /// INVARIANT: a person accumulates a row per name they have ever had, so
+    /// the latest one wins by `argMax` before anything joins to it. Joining
+    /// the rows directly multiplies every fact by that history.
     pub(super) fn prelude(&self, handles: &[PersonHandle]) -> Result<String, MetricQueryError> {
         if !is_identifier(&self.database) {
             return Err(MetricQueryError::Identifier(self.database.clone()));

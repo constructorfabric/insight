@@ -1,10 +1,7 @@
 //! What a widget draws, and whether its metric can supply it.
 //!
-//! A widget names columns by the `as_name` its metric gives them. Nothing
-//! checked that, so a widget could name a column the metric never produces —
-//! `y: "lines"` against a metric whose column is `total_lines`. The chart then
-//! rendered its axes and no line at all, which reads as missing data rather
-//! than as a broken definition.
+//! A widget names columns by the `as_name` its metric gives them, so a name
+//! the metric never produces is a broken definition, not missing data.
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -16,7 +13,7 @@ use crate::domain::query::metric_query::MetricQuery;
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
-pub(crate) enum Widget {
+enum Widget {
     Table {
         metric: String,
         #[serde(default)]
@@ -48,7 +45,7 @@ pub(crate) enum Widget {
 
 impl Widget {
     /// The metric this widget draws.
-    pub(crate) fn metric(&self) -> &str {
+    fn metric(&self) -> &str {
         match self {
             Self::Table { metric, .. }
             | Self::Line { metric, .. }
@@ -72,7 +69,7 @@ impl Widget {
     }
 
     /// Refuses a widget whose metric cannot supply what it draws.
-    pub(crate) fn check_against(&self, metric: &MetricQuery) -> Result<(), WidgetError> {
+    fn check_against(&self, metric: &MetricQuery) -> Result<(), WidgetError> {
         let available = metric.column_names();
 
         if self.columns().is_empty() {
@@ -154,5 +151,4 @@ pub(crate) fn rename_reference(mut body: Value, from: &str, to: &str) -> Value {
 }
 
 #[cfg(test)]
-#[path = "widget/tests.rs"]
 mod tests;

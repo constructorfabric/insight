@@ -2,11 +2,13 @@
 
 use serde_json::{Value, json};
 
+use crate::definitions::DefinitionName;
+
 pub(super) const ANSWER_TOOL: &str = "answer";
 pub(super) const CREATE_TOOL: &str = "create";
 pub(super) const LOOK_UP_TOOL: &str = "look_up";
-/// Definition names: what `DefinitionName::parse` accepts.
-pub(super) const NAME_PATTERN: &str = "^[A-Za-z0-9_-]{1,128}$";
+/// Definition names, as the store spells the rule.
+pub(super) const NAME_PATTERN: &str = DefinitionName::PATTERN;
 
 /// The structured query a metric carries. Shared by both tools: the
 /// answer tool runs one, the create tool stores one.

@@ -17,7 +17,9 @@ use super::AppState;
 use super::errors::ApiErrors;
 use crate::chat::{Ask, Catalogue, ChatError, KnownTable, Proposal, Schemas, Turn};
 use crate::definitions::{Change, DefinitionKind, DefinitionName};
-use crate::domain::query::metric_query::{MetricQuery, MetricQueryError, RunResult};
+use crate::domain::query::metric_query::{
+    MetricQuery, MetricQueryError, MetricRunError, RunResult,
+};
 use crate::store::catalog::{Catalog, Layer, TableSchema};
 use crate::store::tables::TableName;
 
@@ -373,11 +375,9 @@ async fn names(state: &AppState, kind: DefinitionKind) -> Vec<String> {
 /// `TableStore::sample_fields` found in its most recent rows. A table with
 /// nothing in it is left out.
 ///
-/// Read from the ingested tables themselves. Deriving them from the stored
-/// metrics instead meant a stand with no metrics yet told the model there
-/// was no data at all — so asked what data existed, it invented
-/// `information_schema` and the query failed in the database. A listing
-/// failure degrades the hint; it does not fail the chat.
+/// Read from the ingested tables themselves, so a stand with no metrics yet
+/// still tells the model what data exists. A listing failure degrades the
+/// hint; it does not fail the chat.
 async fn known_tables(state: &AppState) -> Vec<KnownTable> {
     let names = match state.tables().list().await {
         Ok(names) => names,
@@ -496,9 +496,7 @@ fn compile_error(error: &MetricQueryError) -> CanonicalError {
         .create()
 }
 
-fn run_error(error: crate::domain::query::metric_query::MetricRunError) -> CanonicalError {
-    use crate::domain::query::metric_query::MetricRunError;
-
+fn run_error(error: MetricRunError) -> CanonicalError {
     match error {
         MetricRunError::Timeout => ChatApiError::deadline_exceeded("query timed out").create(),
         MetricRunError::ResultTooLarge => ChatApiError::invalid_argument()

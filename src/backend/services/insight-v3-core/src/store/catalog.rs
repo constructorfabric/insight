@@ -248,5 +248,4 @@ pub(crate) enum CatalogError {
 }
 
 #[cfg(test)]
-#[path = "catalog/tests.rs"]
 mod tests;

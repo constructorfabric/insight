@@ -420,5 +420,4 @@ pub(crate) enum ConfigLoadError {
 }
 
 #[cfg(test)]
-#[path = "config/tests.rs"]
 mod tests;

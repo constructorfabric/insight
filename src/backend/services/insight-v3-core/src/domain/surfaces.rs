@@ -21,18 +21,6 @@ use crate::store::catalog::{Catalog, CatalogError, TableEngine, TableSchema};
 #[cfg(test)]
 mod tests;
 
-impl From<KindError> for CustomError {
-    fn from(error: KindError) -> Self {
-        match error {
-            KindError::Widget(source) => Self::Widget(source),
-            KindError::Body(source) => Self::Body(source),
-            KindError::Compile(source) => Self::Compile(source),
-            KindError::Range(source) => Self::Range(source),
-            KindError::Store(source) => Self::Store(source),
-        }
-    }
-}
-
 #[derive(Debug, Error)]
 pub(crate) enum CustomError {
     #[error("{} `{name}` was not found", kind.singular())]
@@ -53,6 +41,18 @@ pub(crate) enum CustomError {
     Catalog(CatalogError),
     #[error("dashboard time range: {0}")]
     Range(WindowError),
+}
+
+impl From<KindError> for CustomError {
+    fn from(error: KindError) -> Self {
+        match error {
+            KindError::Widget(source) => Self::Widget(source),
+            KindError::Body(source) => Self::Body(source),
+            KindError::Compile(source) => Self::Compile(source),
+            KindError::Range(source) => Self::Range(source),
+            KindError::Store(source) => Self::Store(source),
+        }
+    }
 }
 
 impl CustomError {
@@ -297,7 +297,7 @@ impl<'a> Surfaces<'a> {
         Ok(())
     }
 
-    pub(crate) async fn dependents_of(
+    async fn dependents_of(
         &self,
         kind: DefinitionKind,
         name: &DefinitionName,
@@ -306,7 +306,7 @@ impl<'a> Surfaces<'a> {
 
         Ok(holders
             .into_iter()
-            .map(|(holder, holder_name, _)| Reference::new(holder, holder_name.as_str().to_owned()))
+            .map(|(holder, holder_name, _)| Reference::new(holder, holder_name.into_string()))
             .collect())
     }
 
@@ -363,29 +363,51 @@ impl<'a> Surfaces<'a> {
         let mut holders = Vec::new();
 
         for holder in kinds::referred_to_by(kind) {
-            for holder_name in self.list(*holder).await? {
-                let Ok(parsed) = DefinitionName::parse(&holder_name) else {
-                    continue;
-                };
-                let Some(body) = self
-                    .definitions
-                    .get(*holder, &parsed)
-                    .await
-                    .map_err(CustomError::Store)?
-                else {
-                    continue;
-                };
-
-                let names_it = kinds::refers_to(*holder, &body)
-                    .into_iter()
-                    .any(|reference| reference.kind == kind && reference.name == name.as_str());
-
-                if names_it {
-                    holders.push((*holder, parsed, body));
-                }
-            }
+            holders.extend(self.holders_among(*holder, kind, name).await?);
         }
 
         Ok(holders)
     }
+
+    /// The definitions of one kind that name `name`, with their bodies.
+    async fn holders_among(
+        &self,
+        holder: DefinitionKind,
+        kind: DefinitionKind,
+        name: &DefinitionName,
+    ) -> Result<Vec<(DefinitionKind, DefinitionName, Value)>, CustomError> {
+        let mut found = Vec::new();
+
+        for holder_name in self.list(holder).await? {
+            let Ok(parsed) = DefinitionName::parse(&holder_name) else {
+                continue;
+            };
+            let Some(body) = self
+                .definitions
+                .get(holder, &parsed)
+                .await
+                .map_err(CustomError::Store)?
+            else {
+                continue;
+            };
+
+            if names(holder, &body, kind, name) {
+                found.push((holder, parsed, body));
+            }
+        }
+
+        Ok(found)
+    }
+}
+
+/// Whether this body names that definition.
+fn names(
+    holder: DefinitionKind,
+    body: &Value,
+    kind: DefinitionKind,
+    name: &DefinitionName,
+) -> bool {
+    kinds::refers_to(holder, body)
+        .into_iter()
+        .any(|reference| reference.kind == kind && reference.name == name.as_str())
 }

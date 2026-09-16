@@ -8,7 +8,7 @@ use toolkit::api::{OpenApiInfo, OpenApiRegistry, OpenApiRegistryImpl};
 pub(crate) mod admission;
 pub(crate) mod chat;
 pub(crate) mod definitions;
-pub(crate) mod errors;
+mod errors;
 pub(crate) mod metric_run;
 pub(crate) mod raw_data;
 pub(crate) mod tables;
@@ -177,7 +177,7 @@ pub(crate) fn openapi_document() -> anyhow::Result<utoipa::openapi::OpenApi> {
     let state = Arc::new(AppState::new(
         RawDataStore::new(offline.clone()),
         TableStore::new(offline.clone()),
-        Arc::new(crate::definitions::MariaDefinitions::new(
+        Arc::new(crate::definitions::maria::MariaDefinitions::new(
             sea_orm::DatabaseConnection::default(),
         )),
         MetricRunner::new(

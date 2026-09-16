@@ -1,10 +1,9 @@
 use serde_json::json;
 
-use crate::domain::query::time_window::RequestedRange;
-use crate::store::catalog::TableEngine;
-
 use super::field::coerce_value;
 use super::*;
+use crate::domain::query::time_window::RequestedRange;
+use crate::store::catalog::TableEngine;
 
 fn query(value: serde_json::Value) -> MetricQuery {
     serde_json::from_value(value).unwrap_or_else(|error| panic!("valid metric: {error}"))

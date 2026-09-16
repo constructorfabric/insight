@@ -59,5 +59,4 @@ impl UndatedCount {
 }
 
 #[cfg(test)]
-#[path = "undated/tests.rs"]
 mod tests;

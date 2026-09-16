@@ -191,5 +191,4 @@ struct RawDataRow {
 }
 
 #[cfg(test)]
-#[path = "raw_data/tests.rs"]
 mod tests;

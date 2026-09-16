@@ -299,5 +299,4 @@ pub(crate) enum WindowError {
 }
 
 #[cfg(test)]
-#[path = "time_window/tests.rs"]
 mod tests;

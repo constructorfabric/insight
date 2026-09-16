@@ -118,5 +118,4 @@ impl IdentityError {
 }
 
 #[cfg(test)]
-#[path = "identity/tests.rs"]
 mod tests;

@@ -106,7 +106,7 @@ impl Field {
         })
     }
 
-    pub(super) fn read(
+    fn read(
         &self,
         qualifier: Option<&str>,
         binds: &mut Vec<FilterBind>,
@@ -139,7 +139,7 @@ impl Field {
     }
 
     /// This field's own conditions, as one expression, binding their values.
-    pub(super) fn condition(
+    fn condition(
         &self,
         qualifier: Option<&str>,
         binds: &mut Vec<FilterBind>,
@@ -261,7 +261,7 @@ impl<'a> Source<'a> {
     }
 }
 
-pub(super) fn qualified(column: &str, qualifier: Option<&str>) -> Result<String, MetricQueryError> {
+fn qualified(column: &str, qualifier: Option<&str>) -> Result<String, MetricQueryError> {
     if !is_identifier(column) {
         return Err(MetricQueryError::Identifier(column.to_owned()));
     }
@@ -303,7 +303,7 @@ impl FieldType {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum Agg {
+pub(super) enum Agg {
     Count,
     Sum,
     Avg,

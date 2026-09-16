@@ -60,7 +60,7 @@ impl Item {
 ///
 /// Both, because this answers "is this widget still in use" — a board that
 /// says it either way is still drawing it.
-pub(crate) fn widgets(body: &Value) -> Vec<String> {
+fn widgets(body: &Value) -> Vec<String> {
     let mut names = Vec::new();
 
     if let Some(Value::Array(items)) = body.get("items") {
@@ -84,7 +84,7 @@ pub(crate) fn widgets(body: &Value) -> Vec<String> {
 }
 
 /// The same body, with every item drawing `from` drawing `to` instead.
-pub(crate) fn renamed(mut body: Value, from: &str, to: &str) -> Value {
+fn renamed(mut body: Value, from: &str, to: &str) -> Value {
     if let Some(Value::Array(items)) = body.get_mut("items") {
         for item in items {
             let Some(widget) = item.get_mut("widget") else {
@@ -163,5 +163,4 @@ pub(crate) fn rename_reference(body: Value, from: &str, to: &str) -> Value {
 }
 
 #[cfg(test)]
-#[path = "dashboard/tests.rs"]
 mod tests;

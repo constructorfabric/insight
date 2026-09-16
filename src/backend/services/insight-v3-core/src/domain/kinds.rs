@@ -1,9 +1,9 @@
 //! One module per kind of definition, holding what that kind admits.
 //!
 //! Everything a kind knows about itself lives in its own module; this root
-//! dispatches to them. The match is exhaustive, so a kind added to
-//! [`DefinitionKind`] cannot be stored unchecked or leave its references
-//! unseen — the compiler asks for both before it builds.
+//! dispatches to them. INVARIANT: every dispatch matches exhaustively, so a
+//! kind added to [`DefinitionKind`] cannot be stored unchecked or leave its
+//! references unseen.
 
 pub(crate) mod dashboard;
 pub(crate) mod metric;
@@ -12,14 +12,15 @@ pub(crate) mod widget;
 use serde_json::Value;
 use thiserror::Error;
 
+use widget::WidgetError;
+
 use crate::definitions::{DefinitionKind, DefinitionStoreError, Definitions};
-use crate::domain::kinds::widget::WidgetError;
 use crate::domain::query::metric_query::MetricQueryError;
 use crate::domain::query::time_window::WindowError;
 
 /// One definition naming another: a widget naming its metric, a board naming
 /// a widget it draws.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Reference {
     pub(crate) kind: DefinitionKind,
     pub(crate) name: String,
@@ -97,5 +98,4 @@ pub(crate) fn referred_to_by(kind: DefinitionKind) -> &'static [DefinitionKind] 
 }
 
 #[cfg(test)]
-#[path = "kinds/tests.rs"]
 mod tests;

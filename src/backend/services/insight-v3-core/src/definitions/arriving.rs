@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use serde_json::Value;
 
-use crate::definitions::{
+use super::{
     Change, DefinitionKind, DefinitionName, DefinitionStoreError, Definitions, NamePage, Page,
 };
 

@@ -178,5 +178,4 @@ pub(crate) enum TableStoreError {
 }
 
 #[cfg(test)]
-#[path = "tables/tests.rs"]
 mod tests;
