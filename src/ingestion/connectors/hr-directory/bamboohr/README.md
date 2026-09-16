@@ -77,18 +77,26 @@ with `filter=off` to bypass the caller's saved employee calendar filter. Holiday
 visibility still depends on BambooHR configuration and the caller's access;
 a holiday entry does not establish which employees observe it.
 
-Both `timeOff` and `holiday` entries retain their API payloads. Keys include the
-tenant, source, entry type, ID, and start date to distinguish event types and
-recurring holiday occurrences. Holidays need not contain an `employeeId`.
+Each successful fetch emits one snapshot with the full API list serialized in
+`entries_json`, including `[]` for an empty result. `window_start` and `window_end`
+record the requested date range. The stable `unique_key` encodes the tenant and
+source as a JSON pair. Both `timeOff` and `holiday` payloads remain unchanged;
+holidays need not contain an `employeeId`. Entry validation belongs downstream;
+the raw snapshot does not discard entries with missing or unexpected fields.
 
 HTTP 403 skips only this stream with a warning, so an unavailable Who's Out
 feature does not fail the other streams. Other API and transport failures remain
-errors. Skipped or empty results do not establish that employees were available.
+errors. A skipped fetch emits no snapshot and leaves the last successful one
+available. An empty snapshot means no entries were returned for that window,
+not proof that every employee was available.
 
 This stream collects Bronze data only. It does not feed Silver HR events,
 metrics, comparisons, or attention panels. Full-refresh extraction uses the
-existing append-only destination configuration; deleted or changed occurrences
-are not reconciled here. Downstream availability semantics remain out of scope.
+existing append-only destination configuration. Consumers must select the latest
+snapshot per tenant and source before expanding `entries_json`, so removed
+entries and successful empty results do not leave older absences in use. Snapshot
+ordering uses Airbyte extraction metadata; freshness handling and downstream
+availability semantics remain out of scope.
 
 ### Employee fields
 

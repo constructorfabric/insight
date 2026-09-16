@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from datetime import UTC, datetime
 
@@ -22,7 +23,7 @@ def stream_for(client: FakeClient) -> WhosOutStream:
 def test_history_window_ignores_saved_employee_filter() -> None:
     client = FakeClient({PATH: []})
     before = datetime.now(UTC).date().isoformat()
-    assert list(stream_for(client).read_records(SyncMode.full_refresh)) == []
+    records = list(stream_for(client).read_records(SyncMode.full_refresh))
     after = datetime.now(UTC).date().isoformat()
 
     method, path, params = client.calls[0]
@@ -30,9 +31,14 @@ def test_history_window_ignores_saved_employee_filter() -> None:
     assert params["start"] == "2024-01-01"
     assert before <= params["end"] <= after
     assert params["filter"] == "off"
+    assert len(records) == 1
+    assert records[0]["window_start"] == params["start"]
+    assert records[0]["window_end"] == params["end"]
+    assert json.loads(records[0]["entries_json"]) == []
+    validate(records[0], stream_for(client).get_json_schema())
 
 
-def test_time_off_and_holidays_keep_payloads_and_distinct_occurrence_keys() -> None:
+def test_time_off_and_holidays_share_one_lossless_envelope() -> None:
     rows = [
         {
             "id": 7,
@@ -48,13 +54,47 @@ def test_time_off_and_holidays_keep_payloads_and_distinct_occurrence_keys() -> N
     stream = stream_for(FakeClient({PATH: rows}))
     records = list(stream.read_records(SyncMode.full_refresh))
 
-    assert len(records) == len(rows)
-    assert len({record["unique_key"] for record in records}) == len(rows)
+    assert len(records) == 1
     assert records == list(stream.read_records(SyncMode.full_refresh))
-    for row, record in zip(rows, records, strict=True):
-        assert record == {**row, "tenant_id": TENANT, "source_id": SOURCE, "unique_key": record["unique_key"]}
-        assert "unique_key" not in row
-        validate(record, stream.get_json_schema())
+    record = records[0]
+    assert record["tenant_id"] == TENANT
+    assert record["source_id"] == SOURCE
+    assert json.loads(record["entries_json"]) == rows
+    assert all("unique_key" not in row for row in rows)
+    validate(record, stream.get_json_schema())
+
+
+def test_empty_refresh_keeps_the_same_snapshot_key() -> None:
+    rows = [{"id": 7, "type": "holiday", "start": "2024-05-01"}]
+    stream = stream_for(FakeClient({PATH: rows}))
+    [first] = list(stream.read_records(SyncMode.full_refresh))
+    rows.clear()
+    [second] = list(stream.read_records(SyncMode.full_refresh))
+
+    assert first["unique_key"] == second["unique_key"]
+    assert len(json.loads(first["entries_json"])) == 1
+    assert json.loads(second["entries_json"]) == []
+
+
+def test_snapshot_keys_isolate_tenants_and_sources() -> None:
+    keys = set()
+    for tenant, source in [("a", "b-c"), ("a-b", "c"), ("a", "c"), ("a-b", "b-c")]:
+        stream = WhosOutStream(FakeClient({PATH: []}), tenant, source, "2024-01-01")
+        [record] = list(stream.read_records(SyncMode.full_refresh))
+        keys.add(record["unique_key"])
+
+    assert len(keys) == 4
+
+
+def test_history_window_changes_do_not_change_snapshot_key() -> None:
+    keys = set()
+    for start in ["2024-01-01", "2025-01-01"]:
+        stream = WhosOutStream(FakeClient({PATH: []}), TENANT, SOURCE, start)
+        [record] = list(stream.read_records(SyncMode.full_refresh))
+        keys.add(record["unique_key"])
+        assert record["window_start"] == start
+
+    assert len(keys) == 1
 
 
 def test_forbidden_whos_out_warns_without_failing(caplog: pytest.LogCaptureFixture) -> None:
@@ -86,8 +126,10 @@ def test_non_list_response_is_an_error() -> None:
 
 
 @pytest.mark.parametrize("row", [None, "invalid", {}, {"id": "", "type": "holiday", "start": "2024-05-01"}])
-def test_unkeyable_rows_are_skipped(row: object) -> None:
-    assert list(stream_for(FakeClient({PATH: [row]})).read_records(SyncMode.full_refresh)) == []
+def test_raw_envelope_does_not_silently_discard_entries(row: object) -> None:
+    records = list(stream_for(FakeClient({PATH: [row]})).read_records(SyncMode.full_refresh))
+    assert len(records) == 1
+    assert json.loads(records[0]["entries_json"]) == [row]
 
 
 @pytest.mark.parametrize("start_date", [None, "2024-01-01"])
@@ -98,7 +140,7 @@ def test_source_passes_shared_history_start(start_date: str | None, monkeypatch:
     stream = next(stream for stream in SourceBamboohr().streams(config) if stream.name == "whos_out")
 
     assert not stream.supports_incremental
-    assert list(stream.read_records(SyncMode.full_refresh)) == []
+    assert len(list(stream.read_records(SyncMode.full_refresh))) == 1
     assert client.calls[0][2]["start"] == (start_date or "2020-01-01")
 
 
