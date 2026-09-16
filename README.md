@@ -127,7 +127,7 @@ Source code for all platform components.
 ```
 src/
 ├── ingestion/        ← Data pipeline (Airbyte + Argo + ClickHouse + dbt)
-├── backend/          ← REST API server (Rust + cyberfabric-core)
+├── backend/          ← REST API server (Rust)
 └── frontend/         ← SPA (React + TanStack source, Dockerfile, Helm)
 ```
 
@@ -222,7 +222,7 @@ Incoming documents pending triage and integration into `docs/`. Not yet canonica
 Two supported paths:
 
 - **Local development (Docker Compose)** — [`./dev-compose.sh up`](./dev-compose.sh) runs the full stack on a developer laptop with only Docker. Default for day-to-day backend / frontend work.
-- **Cluster deployment** — Cyberfabric engineers use the private `infra/insight-gitops` repository (Makefile-driven, OCI-pinned chart); the same path runs locally on a Kind/OrbStack cluster via `cd deploy/gitops && make deploy ENV=local` when you need Airbyte / Argo Workflows or the real cluster shape. External consumers of the umbrella Helm chart use it directly via `helm`, ArgoCD, Flux, or whatever orchestrator they already have; the chart contract lives at [`charts/insight/README.md`](charts/insight/README.md).
+- **Cluster deployment** — Constructor Fabric engineers use the private `infra/insight-gitops` repository (Makefile-driven, OCI-pinned chart); the same path runs locally on a Kind/OrbStack cluster via `cd deploy/gitops && make deploy ENV=local` when you need Airbyte / Argo Workflows or the real cluster shape. External consumers of the umbrella Helm chart use it directly via `helm`, ArgoCD, Flux, or whatever orchestrator they already have; the chart contract lives at [`charts/insight/README.md`](charts/insight/README.md).
 
 The two paths share a single first-run wizard, so the MariaDB / ClickHouse / tenant / dev-email answers are identical across them. The full guide for both is [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -242,7 +242,7 @@ The compose stack does **not** ship Airbyte or Argo Workflows — for ingestion 
 
 ### Cluster deployment
 
-Cyberfabric clusters are deployed from the private `infra/insight-gitops` repository — Makefile-driven, OCI-pinned umbrella chart, sealed secrets, L0/L2/L3 layered architecture. Engineers should refer to that repository's README; the deploy model is specified in [`deploy/gitops/README.md`](deploy/gitops/README.md).
+Constructor Fabric clusters are deployed from the private `infra/insight-gitops` repository — Makefile-driven, OCI-pinned umbrella chart, sealed secrets, L0/L2/L3 layered architecture. Engineers should refer to that repository's README; the deploy model is specified in [`deploy/gitops/README.md`](deploy/gitops/README.md).
 
 External consumers run the umbrella chart directly:
 
