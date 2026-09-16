@@ -1,6 +1,28 @@
-use serde_json::json;
+use serde_json::{Value, json};
 
+use super::anthropic::{Message, MessagesResponse};
+use super::conversation::{ModelTransport, converse, thread};
+use super::prompt::system_prompt;
+use super::tools::{
+    ANSWER_TOOL, CREATE_TOOL, LOOK_UP_TOOL, NAME_PATTERN, metric_query_schema, proposal_tools,
+};
 use super::*;
+
+impl Turn {
+    fn user(content: &str) -> Self {
+        Self {
+            role: "user".to_owned(),
+            content: content.to_owned(),
+        }
+    }
+
+    fn assistant(content: &str) -> Self {
+        Self {
+            role: "assistant".to_owned(),
+            content: content.to_owned(),
+        }
+    }
+}
 
 fn people() -> People {
     People::new("identity")
@@ -131,8 +153,6 @@ fn prose_that_merely_contains_quotes_is_left_alone() {
 
 #[test]
 fn the_whole_thread_reaches_the_model_with_the_new_turn_last() {
-    // Each request used to carry the newest message alone, so the model
-    // answered "and by author?" with no idea what came before it.
     let turns = [
         Turn::user("how many lines per day?"),
         Turn::assistant("Here they are."),
@@ -261,6 +281,7 @@ impl ModelTransport for ScriptedModel {
     }
 }
 
+#[derive(Debug)]
 struct FixedSchemas(&'static str);
 
 #[async_trait::async_trait]

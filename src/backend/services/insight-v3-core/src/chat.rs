@@ -1,29 +1,27 @@
 //! The chat client: turns a message into either a one-time answer or a set
 //! of metric/widget/dashboard definitions to store.
 
+mod anthropic;
+mod conversation;
+mod prompt;
+mod proposal;
+mod tools;
+
 use std::time::Duration;
 
 use secrecy::{ExposeSecret as _, SecretString};
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde::Deserialize;
 use thiserror::Error;
 use utoipa::ToSchema;
 
-use crate::domain::query::metric_query::{MetricQuery, MetricQueryError, People};
+use anthropic::Anthropic;
+use conversation::{converse, thread};
+use prompt::system_prompt;
+pub(crate) use proposal::Proposal;
 
-const ANTHROPIC_API_BASE: &str = "https://api.anthropic.com";
-const ANTHROPIC_VERSION: &str = "2023-06-01";
+use crate::domain::query::metric_query::{MetricQueryError, People};
+
 const CHAT_TIMEOUT_SECS: u64 = 30;
-const CHAT_MAX_TOKENS: u32 = 2048;
-const ANSWER_TOOL: &str = "answer";
-const LOOK_UP_TOOL: &str = "look_up";
-/// How many times one message may ask what a table holds before answering.
-/// Three is room to look at a handful of tables across two or three layers;
-/// past that the model is circling rather than converging.
-const MAX_LOOKUPS: usize = 3;
-const CREATE_TOOL: &str = "create";
-/// Definition names: what `DefinitionName::parse` accepts.
-const NAME_PATTERN: &str = "^[A-Za-z0-9_-]{1,128}$";
 
 /// One turn of the conversation so far. The reader's panel keeps the thread
 /// and sends it back, because the service stores no session.
@@ -32,24 +30,6 @@ pub(crate) struct Turn {
     /// `user` or `assistant`; anything else is dropped before the call.
     pub(crate) role: String,
     pub(crate) content: String,
-}
-
-impl Turn {
-    #[cfg(test)]
-    fn user(content: &str) -> Self {
-        Self {
-            role: "user".to_owned(),
-            content: content.to_owned(),
-        }
-    }
-
-    #[cfg(test)]
-    fn assistant(content: &str) -> Self {
-        Self {
-            role: "assistant".to_owned(),
-            content: content.to_owned(),
-        }
-    }
 }
 
 /// What is already stored, so the model can name it, reuse it and replace it.
@@ -67,10 +47,7 @@ impl Catalogue {
 }
 
 /// One question, and everything the model needs to answer it.
-///
-/// A struct rather than eight arguments: what the model is told has grown from
-/// the message alone to the thread, the stand's map, what is already built,
-/// and what it may query.
+#[derive(Debug)]
 pub(crate) struct Ask<'a> {
     pub(crate) message: &'a str,
     /// The turns before this one; the service keeps no session.
@@ -93,7 +70,7 @@ pub(crate) struct Ask<'a> {
 /// hundred - but their columns run to tens of thousands of tokens and would
 /// go stale, so the model asks for the few it needs.
 #[async_trait::async_trait]
-pub(crate) trait Schemas: Send + Sync {
+pub(crate) trait Schemas: Send + Sync + std::fmt::Debug {
     /// The named tables, rendered for the model. A name it cannot resolve is
     /// reported as such rather than omitted, or the model reads silence as
     /// "no columns" and invents them.
@@ -106,221 +83,6 @@ pub(crate) struct KnownTable {
     pub(crate) name: String,
     /// `day (string), lines (int)`, sampled from its rows.
     pub(crate) fields: String,
-}
-
-/// One of the two things the model can propose in reply to a chat message.
-#[derive(Debug)]
-pub(crate) enum Proposal {
-    /// A one-time question. The service runs `query` when there is one and
-    /// answers; nothing is stored. A question about what data exists needs no
-    /// query, and forcing one got an invented query and a junk table with it.
-    Answer {
-        reply: String,
-        query: Option<MetricQuery>,
-    },
-    /// A metric/widget/dashboard to store. Any of the three may be absent.
-    Create {
-        reply: String,
-        metric: Option<(String, Value)>,
-        widgets: Vec<(String, Value)>,
-        dashboard: Option<(String, Value)>,
-    },
-}
-
-impl Proposal {
-    /// [`Proposal::parse`], then refuse a table the reader does not have.
-    ///
-    /// Asked what data exists, the model reaches for `information_schema` and
-    /// friends; the charset check passes such a name and the query then fails
-    /// in the database, which surfaced as an internal error. The refusal goes
-    /// back through the repair round, so the model gets the real table list.
-    /// With no known tables at all the check stands aside — refusing
-    /// everything would be worse than the guess.
-    pub(crate) fn checked(
-        reply: &str,
-        allowed: &[String],
-        people: &People,
-    ) -> Result<Self, ChatError> {
-        let proposal = Self::parse(reply, people)?;
-
-        if allowed.is_empty() {
-            return Ok(proposal);
-        }
-
-        match proposal.table() {
-            Some(named) if !allowed.contains(&named) => {
-                Err(ChatError::UnknownTable {
-                    table: named,
-                    // Naming a few is enough to redirect the model; the whole
-                    // stand is already in the prompt, and hundreds of names
-                    // in an error help nobody.
-                    known: allowed
-                        .iter()
-                        .take(12)
-                        .map(String::as_str)
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                })
-            }
-            _ => Ok(proposal),
-        }
-    }
-
-    /// The table this proposal reads, qualified by its database when it names
-    /// one, so `silver.class_git_commits` is told apart from a table of the
-    /// same name in another layer.
-    fn table(&self) -> Option<String> {
-        let (database, table) = match self {
-            Self::Answer { query, .. } => {
-                let query = query.as_ref()?;
-                (query.database(), query.table())
-            }
-            Self::Create { metric, .. } => {
-                let (_, body) = metric.as_ref()?;
-                (
-                    body.get("database").and_then(Value::as_str),
-                    body.get("table").and_then(Value::as_str)?,
-                )
-            }
-        };
-
-        Some(match database {
-            Some(database) => format!("{database}.{table}"),
-            None => table.to_owned(),
-        })
-    }
-
-    /// Strips any prose or code fence around the JSON object, deserializes on
-    /// `intent`, and compiles every query and every proposed metric with
-    /// [`MetricQuery::compile`] — a refusal is [`ChatError::Metric`], and
-    /// nothing runs or is stored.
-    pub(crate) fn parse(reply: &str, people: &People) -> Result<Self, ChatError> {
-        let wire: ProposalWire = serde_json::from_str(extract_json_object(reply))?;
-
-        Ok(match wire {
-            ProposalWire::Answer { reply, query } => {
-                if let Some(query) = query.as_ref() {
-                    query.compile(people)?;
-                }
-                Self::Answer {
-                    reply: as_prose(reply),
-                    query,
-                }
-            }
-            ProposalWire::Create {
-                reply,
-                metric,
-                widgets,
-                dashboard,
-            } => {
-                if metric.is_none() && widgets.is_empty() && dashboard.is_none() {
-                    return Err(ChatError::EmptyCreate);
-                }
-
-                Self::Create {
-                    reply: as_prose(reply),
-                    metric: metric
-                        .map(|named| compile_named_metric(named, people))
-                        .transpose()?,
-                    widgets: widgets.into_iter().map(NamedBody::into_pair).collect(),
-                    dashboard: dashboard.map(NamedBody::into_pair),
-                }
-            }
-        })
-    }
-}
-
-fn compile_named_metric(named: NamedBody, people: &People) -> Result<(String, Value), ChatError> {
-    let metric: MetricQuery = serde_json::from_value(named.body.clone())?;
-    metric.compile(people)?;
-    Ok(named.into_pair())
-}
-
-/// The conversation as the API takes it: the turns so far, then the new
-/// message. A turn with any other role is dropped rather than trusted.
-fn thread(turns: &[Turn], message: &str) -> Vec<Message> {
-    let mut messages: Vec<Message> = turns
-        .iter()
-        .filter_map(|turn| {
-            let role = match turn.role.as_str() {
-                "user" => "user",
-                "assistant" => "assistant",
-                _ => return None,
-            };
-            Some(Message {
-                role,
-                content: Value::String(turn.content.clone()),
-            })
-        })
-        .collect();
-
-    messages.push(Message::user(message));
-
-    messages
-}
-
-/// The reply as prose.
-///
-/// Seen live: the model encodes the whole reply a second time, so the string
-/// arrives quoted with its newlines escaped and the panel shows `\n` between
-/// paragraphs and a trailing quote. Only a value that is entirely one JSON
-/// string is unwrapped, so prose that merely contains a quote is untouched.
-fn as_prose(reply: String) -> String {
-    let trimmed = reply.trim();
-    if !(trimmed.starts_with('"') && trimmed.ends_with('"') && trimmed.len() > 1) {
-        return reply;
-    }
-
-    serde_json::from_str::<String>(trimmed).unwrap_or(reply)
-}
-
-fn extract_json_object(text: &str) -> &str {
-    match (text.find('{'), text.rfind('}')) {
-        (Some(start), Some(end)) if end >= start => &text[start..=end],
-        _ => text,
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "intent", rename_all = "lowercase")]
-enum ProposalWire {
-    Answer {
-        reply: String,
-        #[serde(default)]
-        query: Option<MetricQuery>,
-    },
-    Create {
-        reply: String,
-        #[serde(default)]
-        metric: Option<NamedBody>,
-        #[serde(default)]
-        widgets: Vec<NamedBody>,
-        #[serde(default)]
-        dashboard: Option<NamedBody>,
-    },
-}
-
-#[derive(Debug, Deserialize)]
-struct NamedBody {
-    name: String,
-    body: Value,
-}
-
-impl NamedBody {
-    fn into_pair(self) -> (String, Value) {
-        (self.name, self.body)
-    }
-}
-
-impl ChatError {
-    /// What the repair round tells the model. `Display` on the JSON variant
-    /// names a category; the serde message names the offending field.
-    fn feedback(&self) -> String {
-        match self {
-            Self::Json(error) => error.to_string(),
-            other => other.to_string(),
-        }
-    }
 }
 
 #[derive(Debug, Error)]
@@ -345,6 +107,25 @@ pub(crate) enum ChatError {
     Failed,
     #[error("this instance has no Anthropic key, so the assistant cannot answer")]
     NoKey,
+}
+
+impl ChatError {
+    /// What the repair round tells the model. `Display` on the JSON variant
+    /// names a category; the serde message names the offending field.
+    pub(super) fn feedback(&self) -> String {
+        match self {
+            Self::Json(error) => error.to_string(),
+            Self::Metric(_)
+            | Self::UnknownTable { .. }
+            | Self::EmptyCreate
+            | Self::TooManyLookups
+            | Self::TokenRejected
+            | Self::Unavailable
+            | Self::Timeout
+            | Self::Failed
+            | Self::NoKey => self.to_string(),
+        }
+    }
 }
 
 /// Proposes an answer or a creation from a chat message.
@@ -416,7 +197,7 @@ impl ChatClient {
             #[cfg(test)]
             ChatBackend::Scripted(build) => Ok(build()),
             ChatBackend::Live { http, token, model } => {
-                let transport = Anthropic { http, token, model };
+                let transport = Anthropic::new(http, token, model);
                 converse(
                     &transport,
                     ask.schemas,
@@ -431,631 +212,5 @@ impl ChatClient {
     }
 }
 
-/// One forced tool call, returning the proposal JSON the model produced.
-/// The turn, which may take several round trips.
-///
-/// The model sees the map of every table but not their columns, so it may ask
-/// what a handful of them hold before it answers. Each answer is fed back as a
-/// tool result and the conversation continues; the reply that is not a lookup
-/// ends it.
-async fn converse(
-    transport: &dyn ModelTransport,
-    schemas: &dyn Schemas,
-    system: &str,
-    mut messages: Vec<Message>,
-    allowed: &[String],
-    people: &People,
-) -> Result<Proposal, ChatError> {
-    for _ in 0..=MAX_LOOKUPS {
-        let response = transport.send(system, &messages).await?;
-
-        if let Some(look_up) = response.look_up() {
-            tracing::info!(tables = ?look_up.tables, "the model asked what these tables hold");
-            let described = schemas.describe(&look_up.tables).await;
-            messages.push(Message::assistant(response.blocks()));
-            messages.push(Message::tool_result(&look_up.id, &described));
-            continue;
-        }
-
-        let proposed = response.proposal_json();
-        return match Proposal::checked(&proposed, allowed, people) {
-            Ok(proposal) => Ok(proposal),
-            // One repair round: hand the model its own rejection and let it
-            // correct itself. The schema stops malformed arguments; this
-            // catches what only our own validation knows - an unknown table,
-            // a column that is not there.
-            Err(rejection) => {
-                let detail = rejection.feedback();
-                tracing::info!(rejection = %detail, "asking the model to correct its proposal");
-                let correction =
-                    format!("That proposal was rejected: {detail}\nReturn a corrected proposal.");
-                let answer = match response.terminal_tool_id() {
-                    Some(id) => Message::tool_error(id, &correction),
-                    None => Message::user(correction),
-                };
-                messages.push(Message::assistant(response.blocks()));
-                messages.push(answer);
-                let second = transport.send(system, &messages).await?;
-                Proposal::checked(&second.proposal_json(), allowed, people)
-            }
-        };
-    }
-
-    Err(ChatError::TooManyLookups)
-}
-
-/// One round trip to the model.
-///
-/// A trait rather than a function so the conversation below - which can take
-/// several turns, because the model may ask what a table holds before it
-/// answers - is exercised in a test without an HTTP server standing in for
-/// the API.
-#[async_trait::async_trait]
-trait ModelTransport: Send + Sync {
-    async fn send(&self, system: &str, messages: &[Message])
-    -> Result<MessagesResponse, ChatError>;
-}
-
-struct Anthropic<'a> {
-    http: &'a reqwest::Client,
-    token: &'a SecretString,
-    model: &'a str,
-}
-
-#[async_trait::async_trait]
-impl ModelTransport for Anthropic<'_> {
-    async fn send(
-        &self,
-        system: &str,
-        messages: &[Message],
-    ) -> Result<MessagesResponse, ChatError> {
-        call_model(self.http, self.token, self.model, system, messages).await
-    }
-}
-
-async fn call_model(
-    http: &reqwest::Client,
-    token: &SecretString,
-    model: &str,
-    system: &str,
-    messages: &[Message],
-) -> Result<MessagesResponse, ChatError> {
-    let body = MessagesRequest {
-        model,
-        max_tokens: CHAT_MAX_TOKENS,
-        system,
-        messages,
-        tools: proposal_tools(),
-        tool_choice: json!({ "type": "any" }),
-    };
-
-    let response = http
-        .post(format!("{ANTHROPIC_API_BASE}/v1/messages"))
-        .header("x-api-key", token.expose_secret())
-        .header("anthropic-version", ANTHROPIC_VERSION)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|error| transport_error(&error))?;
-
-    let status = response.status();
-    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return Err(ChatError::TokenRejected);
-    }
-    if status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error() {
-        tracing::warn!(status = %status, "the model call was refused upstream");
-        return Err(ChatError::Unavailable);
-    }
-    if !status.is_success() {
-        let said = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "<the body could not be read>".to_owned());
-        tracing::error!(
-            status = %status,
-            said = %said.chars().take(400).collect::<String>(),
-            "the model call failed upstream"
-        );
-        return Err(ChatError::Failed);
-    }
-
-    response.json().await.map_err(|error| {
-        tracing::error!(error = %error, "the model answer could not be read");
-        ChatError::Failed
-    })
-}
-
-fn transport_error(error: &reqwest::Error) -> ChatError {
-    if error.is_timeout() {
-        return ChatError::Timeout;
-    }
-    tracing::error!(error = %error, "the model could not be reached");
-    ChatError::Failed
-}
-
-fn system_prompt(tables: &[KnownTable], catalogue: &Catalogue, map: &str) -> String {
-    let mut prompt = String::from(
-        "You are the Insight v3 chat assistant. Answer by calling exactly one tool.\n\
-         Write replies as plain prose. No markdown: asterisks and hashes are shown as typed.\n\n\
-         - Call `answer` to answer a question: it runs one query and stores nothing. Leave the query out when the question is about what data exists.\n\
-         - Call `create` to build definitions to store. Pass the metric, the widgets and the dashboard as {\"name\":<string>,\"body\":<object>}, where the name is the identifier and the body is the definition. A create that carries none of the three is refused, and a dashboard needs the metric and widgets it draws.\n\n\
-         A MetricQuery is {\"table\":<string>,\"fields\":[{\"json\":<string>,\"type\":\"string\"|\"int\"|\"float\",\"agg\":\"count\"|\"sum\"|\"avg\"|\"min\"|\"max\"|null,\"as_name\":<string>}],\"group_by\":[<string>],\"filters\":[{\"json\":<string>,\"type\":<field type>,\"op\":\"eq\"|\"ne\"|\"gt\"|\"gte\"|\"lt\"|\"lte\",\"value\":<value>}],\"order_by\":{\"field\":<as_name>,\"direction\":\"asc\"|\"desc\"}|null,\"limit\":<int>|null}.\n\
-         Give a metric a \"time\" whenever its table carries a timestamp for when the thing happened: {\"time\":{\"column\":\"occurred_at\"}}, or {\"time\":{\"json\":\"committed_at\"}} for a key inside an ingested payload. Without one a reader cannot pick a window and the metric answers every row, whatever the board is set to. Never use the column that records when the row was loaded. Declare no grain: the picked range chooses it, and the rows come back with a `bucket` column a line widget draws on x.\n\
-         A field reads `column` for a typed column, `json` for a key in the row's `raw_data`, or both together for a key inside any JSON column the table carries. A `json` key may be a dotted path, \"field.name\". Where that payload is an array of objects, `where` names the element the field means: {\"column\":\"field_values_json\",\"json\":\"name\",\"type\":\"string\",\"as_name\":\"status\",\"where\":{\"json\":\"field.name\",\"type\":\"string\",\"op\":\"eq\",\"value\":\"Status\"}}.\n\
-         A question about the most, the largest or the top of something needs order_by on the aggregated field with direction desc, and a limit. Without it the rows come back in the grouping's order and the first row is not the largest.\n\
-         Every group_by entry must be spelled exactly like the as_name of a field in the same query.\n\
-         A rate is two fields and a third that divides them: give each half its own `when` condition, then a field with \"divide\":[numerator,denominator] and \"percent\":true where a percentage is what the question asked for. A gate pass rate is sum(value) when measure_key is gate_passed, sum(value) when measure_key is gate_runs, then those two divided.\n\
-         A column holding a person carries `person`: \"email\" for an address, \"id\" for a person id. The rows then read the name that person is known by rather than the handle a source system wrote, so group by people that way in preference to any name column on the table itself.\n\
-         A widget draws its metric's columns by their as_name, never by the raw json field: a metric whose as_name is total_lines is drawn as y total_lines.\n\
-         A widget is one of: {\"type\":\"table\",\"metric\":<metric name>,\"columns\":[<string>]}; {\"type\":\"line\"|\"bar\"|\"area\",\"metric\":<metric name>,\"x\":<string>,\"y\":<string>}; {\"type\":\"stat\",\"metric\":<metric name>,\"value\":<string>,\"label\":<string>}; {\"type\":\"pie\",\"metric\":<metric name>,\"label\":<string>,\"value\":<string>}.\n\
-         Pick the one that answers the question: a count per category is a bar, a count over time is a line, a running total is an area, a single number is a stat, a share of a total is a pie, and anything with several columns worth reading is a table.\n\
-         A dashboard is {\"title\":<string>,\"items\":[<item>]}, drawn top to bottom. An item is {\"widget\":<widget name>}, {\"heading\":<string>} for a section title over the widgets that follow, or {\"text\":<string>} for a line saying what a number means or leaves out. Group the widgets under headings when a board holds more than a handful.\n",
-    );
-
-    if tables.is_empty() {
-        prompt.push_str("\nNo tables are known yet.\n");
-    } else {
-        prompt.push_str("\nKnown tables:\n");
-        for table in tables {
-            prompt.push_str("- ");
-            prompt.push_str(&table.name);
-            prompt.push_str(": ");
-            prompt.push_str(&table.fields);
-            prompt.push('\n');
-        }
-    }
-
-    if !map.is_empty() {
-        prompt.push_str(
-            "\nEvery table on this stand, by layer. Bronze is a provider's raw \
-             payloads, silver is cleaned per-source models, gold is the \
-             published metrics, and identity is who people are. Columns are NOT \
-             listed: call `look_up` for the tables you mean to query, then name \
-             their columns exactly.\n\n",
-        );
-        prompt.push_str(map);
-        prompt.push('\n');
-        prompt.push_str(
-            "\nA query on one of those tables names its `database` and reads \
-             real columns, so each field and filter carries `column`. Only v3's \
-             own ingest tables keep their payload in one JSON column, and there \
-             a field carries `json` instead. A field may not carry both.\n",
-        );
-    }
-
-    if catalogue.is_empty() {
-        prompt.push_str("\nNothing is built yet.\n");
-    } else {
-        push_catalogue(&mut prompt, "Metrics", &catalogue.metrics);
-        push_catalogue(&mut prompt, "Widgets", &catalogue.widgets);
-        push_catalogue(&mut prompt, "Dashboards", &catalogue.dashboards);
-        prompt.push_str(
-            "\nReusing a name replaces what is stored under it, which is how a \
-             dashboard is changed: build it again with the widgets it should \
-             hold now.\n",
-        );
-    }
-
-    prompt
-}
-
-fn push_catalogue(prompt: &mut String, label: &str, names: &[String]) {
-    if names.is_empty() {
-        return;
-    }
-
-    prompt.push('\n');
-    prompt.push_str(label);
-    prompt.push_str(" already built: ");
-    prompt.push_str(&names.join(", "));
-    prompt.push('\n');
-}
-
-#[derive(Serialize)]
-struct MessagesRequest<'a> {
-    model: &'a str,
-    max_tokens: u32,
-    system: &'a str,
-    messages: &'a [Message],
-    tools: Vec<Value>,
-    tool_choice: Value,
-}
-
-/// The structured query a metric carries. Shared by both tools: the
-/// answer tool runs one, the create tool stores one.
-fn metric_query_schema() -> Value {
-    let plain = json!({ "type": "string" });
-    let field_type = json!({ "enum": ["string", "int", "float"] });
-
-    json!({
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["table", "fields", "group_by", "filters"],
-        "properties": {
-            "table": plain,
-            "database": {
-                "type": "string",
-                "description": "The database the table is in, from the map. Omit only for a table ingested here.",
-            },
-            "fields": { "type": "array", "items": metric_field_schema() },
-            "time": {
-                "type": "object",
-                "additionalProperties": false,
-                "description": "The timestamp a reader may window and bucket this metric by - the moment the thing happened, never the moment the row arrived. Exactly one of column or json.",
-                "properties": {
-                    "column": {
-                        "type": "string",
-                        "description": "A real date or datetime column of the table.",
-                    },
-                    "json": {
-                        "type": "string",
-                        "description": "A key inside the payload column holding a timestamp, for a table ingested here only.",
-                    },
-                    "type": { "enum": ["datetime"] },
-                },
-            },
-            "max_range": {
-                "type": "string",
-                "description": "The widest window this metric will answer, as an ISO duration of whole days, months or years - P30D, P6M, P1Y. A wider request is refused rather than left to time out.",
-            },
-            "group_by": { "type": "array", "items": plain },
-            "order_by": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["field"],
-                "properties": {
-                    "field": { "type": "string" },
-                    "direction": { "enum": ["asc", "desc"] },
-                },
-            },
-            "filters": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": ["type", "op", "value"],
-                    "properties": {
-                        "column": { "type": "string" },
-                        "json": { "type": "string" },
-                        "type": field_type,
-                        "op": { "enum": ["eq", "ne", "gt", "gte", "lt", "lte"] },
-                        "value": { "type": ["string", "number", "boolean"] },
-                    },
-                },
-            },
-            "limit": { "type": "integer" },
-        },
-    })
-}
-
-/// The two tools the model may call. The tool it picks IS the intent, so a
-/// question cannot be mistaken for a creation. The schemas guide the shape and
-/// document the name charset. `strict` is deliberately NOT set: the nested
-/// [`MetricQuery`] shape exceeds the API's compiled-grammar budget and a strict
-/// request is refused outright ("the compiled grammar is too large"). What the
-/// schema cannot enforce, our own validation refuses and the repair round fixes.
-fn metric_field_schema() -> Value {
-    let plain = json!({ "type": "string" });
-    let field_type = json!({ "enum": ["string", "int", "float"] });
-
-    json!({
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["type", "as_name"],
-        "properties": {
-            "column": {
-                "type": "string",
-                "description": "A real column, for any table from the map. Exactly one of column or json.",
-            },
-            "json": {
-                "type": "string",
-                "description": "A key inside the payload column, for a table ingested here only.",
-            },
-            "type": field_type,
-            "agg": { "enum": ["count", "sum", "avg", "min", "max"] },
-            "as_name": plain,
-            "person": {
-                "enum": ["email", "id"],
-                "description": "Set when this column holds a person: email for an address, id for a person id. The rows then carry the name they are known by.",
-            },
-            "when": {
-                "type": "array",
-                "description": "Conditions on this aggregate alone, for one half of a rate: a numerator and a denominator that live in the same column are told apart here.",
-                "items": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": ["type", "op", "value"],
-                    "properties": {
-                        "column": plain,
-                        "json": plain,
-                        "type": field_type,
-                        "op": { "enum": ["eq", "ne", "gt", "gte", "lt", "lte"] },
-                        "value": { "type": ["string", "number", "boolean"] },
-                    },
-                },
-            },
-            "divide": {
-                "type": "array",
-                "description": "Two as_names of THIS query, [numerator, denominator], both selected before this field. The rate is their division.",
-                "items": plain,
-            },
-            "percent": {
-                "type": "boolean",
-                "description": "Read that division as a percentage.",
-            },
-        },
-    })
-}
-
-fn proposal_tools() -> Vec<Value> {
-    let plain = json!({ "type": "string" });
-    let name = json!({
-        "type": "string",
-        "pattern": NAME_PATTERN,
-        "description": "letters, digits, underscore and dash only - never a space",
-    });
-    let metric_query = metric_query_schema();
-
-    let widget = json!({
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["type", "metric"],
-        "properties": {
-            "type": { "enum": ["table", "line", "bar", "area", "stat", "pie"] },
-            "metric": name,
-            "columns": { "type": "array", "items": plain },
-            "x": plain,
-            "y": plain,
-            "value": plain,
-            "label": plain,
-        },
-    });
-    let item = json!({
-        "type": "object",
-        "additionalProperties": false,
-        "description": "Exactly one of widget, heading or text.",
-        "properties": {
-            "widget": name,
-            "heading": { "type": "string" },
-            "text": { "type": "string" },
-        },
-    });
-    let dashboard = json!({
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["title", "items"],
-        "properties": {
-            "title": { "type": "string" },
-            "items": { "type": "array", "items": item },
-        },
-    });
-    let named = |body: Value| {
-        json!({
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["name", "body"],
-            "properties": { "name": name, "body": body },
-        })
-    };
-
-    vec![
-        json!({
-            "name": LOOK_UP_TOOL,
-            "description": "Read the columns of tables named in the map above, before querying them. Call this whenever you do not already know a table's exact column names - guessing them is the most common way a query fails.",
-            "input_schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["tables"],
-                "properties": {
-                    "tables": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "Tables as `database.table`, at most a handful at a time.",
-                    },
-                },
-            },
-        }),
-        json!({
-            "name": ANSWER_TOOL,
-            "description": "Answer a question. Stores nothing. Include the query to read data; leave it out when the question is about what data exists, which the table list above already answers.",
-            "input_schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["reply"],
-                "properties": { "reply": { "type": "string" }, "query": metric_query.clone() },
-            },
-        }),
-        json!({
-            "name": CREATE_TOOL,
-            "description": "Build metric, widget and dashboard definitions to store. Use only when asked to build or save something. Carry every definition the request needs: a dashboard request means the metric, the widgets that draw it, and the dashboard holding them.",
-            "input_schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["reply"],
-                "properties": {
-                    "reply": { "type": "string" },
-                    "metric": named(metric_query),
-                    "widgets": { "type": "array", "items": named(widget) },
-                    "dashboard": named(dashboard),
-                },
-            },
-        }),
-    ]
-}
-
-/// One turn on the wire. `content` is a string for prose and an array of
-/// content blocks when it carries a tool result, which is why it is a value
-/// rather than a `&str`.
-#[derive(Clone, Serialize)]
-struct Message {
-    role: &'static str,
-    content: Value,
-}
-
-impl Message {
-    fn user(content: impl Into<String>) -> Self {
-        Self {
-            role: "user",
-            content: Value::String(content.into()),
-        }
-    }
-
-    /// The assistant's own turn, echoed back verbatim. The API requires the
-    /// `tool_use` block it produced to precede the result we return for it.
-    fn assistant(blocks: Value) -> Self {
-        Self {
-            role: "assistant",
-            content: blocks,
-        }
-    }
-
-    /// The answer to one `tool_use`, addressed by its id.
-    fn tool_result(id: &str, content: &str) -> Self {
-        Self {
-            role: "user",
-            content: json!([{
-                "type": "tool_result",
-                "tool_use_id": id,
-                "content": content,
-            }]),
-        }
-    }
-
-    /// A refusal, addressed to the call that earned it.
-    ///
-    /// The API requires every `tool_use` to be answered by a `tool_result`;
-    /// following one with a plain message is a 400, which is how the repair
-    /// round used to fail instead of repairing.
-    fn tool_error(id: &str, content: &str) -> Self {
-        Self {
-            role: "user",
-            content: json!([{
-                "type": "tool_result",
-                "tool_use_id": id,
-                "is_error": true,
-                "content": content,
-            }]),
-        }
-    }
-}
-
-#[derive(Deserialize)]
-struct MessagesResponse {
-    #[serde(default)]
-    content: Vec<ContentBlock>,
-}
-
-/// A request for the columns of some tables.
-struct LookUp {
-    /// The `tool_use` id the result must be addressed to.
-    id: String,
-    tables: Vec<String>,
-}
-
-impl MessagesResponse {
-    /// The turn as the API needs it echoed back: a tool result must follow the
-    /// assistant turn that asked for it, carrying the same `tool_use` block.
-    fn blocks(&self) -> Value {
-        Value::Array(
-            self.content
-                .iter()
-                .map(|block| {
-                    if block.kind == "tool_use" {
-                        json!({
-                            "type": "tool_use",
-                            "id": block.id,
-                            "name": block.name,
-                            "input": block.input.clone().unwrap_or(json!({})),
-                        })
-                    } else {
-                        json!({ "type": "text", "text": block.text })
-                    }
-                })
-                .collect(),
-        )
-    }
-
-    /// The id of the call that ended the turn, so a refusal can be addressed
-    /// to it. Absent when the model replied in prose instead of calling.
-    fn terminal_tool_id(&self) -> Option<&str> {
-        self.content
-            .iter()
-            .find(|block| {
-                block.kind == "tool_use" && (block.name == ANSWER_TOOL || block.name == CREATE_TOOL)
-            })
-            .map(|block| block.id.as_str())
-    }
-
-    /// The tables this turn asks about, when it asks rather than answers.
-    fn look_up(&self) -> Option<LookUp> {
-        let block = self
-            .content
-            .iter()
-            .find(|block| block.kind == "tool_use" && block.name == LOOK_UP_TOOL)?;
-        let tables = block
-            .input
-            .as_ref()?
-            .get("tables")?
-            .as_array()?
-            .iter()
-            .filter_map(|name| name.as_str().map(str::to_owned))
-            .collect::<Vec<_>>();
-
-        (!tables.is_empty()).then_some(LookUp {
-            id: block.id.clone(),
-            tables,
-        })
-    }
-
-    fn text(&self) -> String {
-        self.content
-            .iter()
-            .filter(|block| block.kind == "text")
-            .map(|block| block.text.trim())
-            .filter(|text| !text.is_empty())
-            .collect::<Vec<_>>()
-            .join("\n\n")
-    }
-
-    /// The forced tool call's arguments, tagged with the intent the chosen
-    /// tool implies, in the shape `Proposal::parse` reads. Falls back to the
-    /// text blocks when a reply arrives without a tool call at all.
-    fn proposal_json(&self) -> String {
-        for block in &self.content {
-            if block.kind != "tool_use" {
-                continue;
-            }
-            let intent = match block.name.as_str() {
-                ANSWER_TOOL => "answer",
-                CREATE_TOOL => "create",
-                _ => continue,
-            };
-            if let Some(Value::Object(fields)) = block.input.clone() {
-                let mut tagged = fields;
-                tagged.insert("intent".to_owned(), Value::String(intent.to_owned()));
-                return Value::Object(tagged).to_string();
-            }
-        }
-
-        self.text()
-    }
-}
-
-#[derive(Deserialize)]
-struct ContentBlock {
-    #[serde(rename = "type", default)]
-    kind: String,
-    /// Present on a `tool_use`; a tool result is addressed by it.
-    #[serde(default)]
-    id: String,
-    #[serde(default)]
-    text: String,
-    #[serde(default)]
-    name: String,
-    #[serde(default)]
-    input: Option<Value>,
-}
-
 #[cfg(test)]
-#[path = "chat/tests.rs"]
 mod tests;

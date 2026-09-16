@@ -309,6 +309,7 @@ async fn layer_map(catalog: &Catalog) -> String {
 
 /// The columns of the tables the model asked about, read from the same
 /// listing the map came from.
+#[derive(Debug)]
 struct CatalogSchemas<'a> {
     catalog: &'a Catalog,
 }
