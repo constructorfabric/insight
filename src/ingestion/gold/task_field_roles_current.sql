@@ -52,6 +52,7 @@ vendor_defaults AS (
         ('summary',              'title',     'none'),
         ('assignee',             'assignee',  'none'),
         ('issuetype',            'issuetype', 'none'),
+        ('resolution',           'resolution', 'none'),
         ('duedate',              'duedate',   'none'),
         ('timeoriginalestimate', 'estimate',  'seconds'),
         ('timespent',            'spent',     'seconds')

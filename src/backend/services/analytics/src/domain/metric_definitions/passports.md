@@ -720,6 +720,30 @@ is an order statistic instead, and always answers with one that did.
 - Shape: integer, higher_is_better, unit issues
 - Notes: Issues of a known non-bug type a person closed during the period. Issues whose type cannot be determined are excluded rather than counted here.
 
+## tasks.closed_fixed — Closed fixed
+
+- Source: task (task_metric_observations)
+- Reads: closed_fixed
+- Formula: sum(closed_fixed)
+- Shape: integer, higher_is_better, unit issues
+- Notes: Issues a person closed during the period whose resolution class is fixed — work that was really done rather than dismissed. Part of issues closed, not a separate total.
+
+## tasks.closed_duplicate — Closed duplicates
+
+- Source: task (task_metric_observations)
+- Reads: closed_duplicate
+- Formula: sum(closed_duplicate)
+- Shape: integer, neutral, unit issues
+- Notes: Issues a person closed during the period whose resolution class is duplicate. Part of issues closed, not a separate total.
+
+## tasks.closed_wontfix — Closed won't-fix
+
+- Source: task (task_metric_observations)
+- Reads: closed_wontfix
+- Formula: sum(closed_wontfix)
+- Shape: integer, neutral, unit issues
+- Notes: Issues a person closed during the period whose resolution class is wontfix. Part of issues closed, not a separate total.
+
 ## tasks.dev_time — Development time
 
 - Source: task (task_metric_observations)

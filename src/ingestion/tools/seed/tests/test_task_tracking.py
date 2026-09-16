@@ -234,23 +234,30 @@ def test_the_issuetype_dimension_emits_exactly_the_declared_rows_per_source(
         assert per_source == declared, f"source {source_id} diverges from _ISSUE_TYPE_DIM"
 
 
+@pytest.mark.parametrize(
+    ("field", "dim"),
+    [("issue_type", task._ISSUE_TYPE_DIM), ("resolution", task._RESOLUTION_DIM)],
+    ids=["issue_type", "resolution"],
+)
 def test_the_value_map_emits_exactly_the_declared_decisions_per_source(
-    rows: Rows,
+    rows: Rows, field: str, dim: dict[str, tuple[str, str]]
 ) -> None:
     by_source: dict[str, dict[str, tuple[str, str]]] = {}
     for row in rows["config.field_value_map"]:
         assert row["tenant_id"] == _TENANT
-        assert row["field"] == "issue_type"
+        assert row["field"] in ("issue_type", "resolution")
         assert row["is_deleted"] == 0
+        if row["field"] != field:
+            continue
         per_source = by_source.setdefault(row["insight_source_id"], {})
         assert row["source_key"] not in per_source, (
             f"source {row['insight_source_id']} duplicates decision {row['source_key']}"
         )
         per_source[row["source_key"]] = (row["display_name"], row["target_value"])
 
-    declared = {type_id: (name, kind) for name, (type_id, kind) in task._ISSUE_TYPE_DIM.items()}
+    declared = {source_key: (name, kind) for name, (source_key, kind) in dim.items()}
     for source_id, per_source in by_source.items():
-        assert per_source == declared, f"source {source_id} diverges from _ISSUE_TYPE_DIM"
+        assert per_source == declared, f"source {source_id} diverges from the {field} dimension"
 
 
 def test_the_value_map_carries_a_bug_decision_keyed_by_the_history_value_id(
