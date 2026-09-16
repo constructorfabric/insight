@@ -101,6 +101,18 @@ impl TestHarness {
         self.mock.add(handlers::provide(Vec::<String>::new()));
     }
 
+    /// Whether the store holds anything under `name`.
+    async fn holds(&self, kind: DefinitionKind, name: &str) -> bool {
+        let name = crate::definitions::DefinitionName::parse(name)
+            .unwrap_or_else(|error| panic!("test name must parse: {error}"));
+
+        self.definitions
+            .get(kind, &name)
+            .await
+            .unwrap_or_else(|error| panic!("the store must answer: {error}"))
+            .is_some()
+    }
+
     /// What the store holds under `name`, for the cases about what a request
     /// wrote rather than what it answered.
     async fn stored(&self, kind: DefinitionKind, name: &str) -> serde_json::Value {
@@ -402,4 +414,63 @@ async fn an_answer_with_rows_keeps_the_reply_it_came_with() -> Result<(), Box<dy
     server.abort();
 
     Ok(())
+}
+
+fn a_widget_naming_a_column_the_metric_lacks() -> Proposal {
+    Proposal::Create {
+        reply: "ok".to_owned(),
+        metric: Some((
+            "m".to_owned(),
+            json!({
+                "table": "events",
+                "fields": [{ "json": "day", "type": "string", "as_name": "day" }]
+            }),
+        )),
+        widgets: vec![(
+            "chart".to_owned(),
+            json!({ "type": "table", "metric": "m", "columns": ["nowhere"] }),
+        )],
+        dashboard: None,
+    }
+}
+
+fn a_metric_that_cannot_be_read_as_a_query() -> Proposal {
+    Proposal::Create {
+        reply: "ok".to_owned(),
+        metric: Some(("m".to_owned(), json!({ "table": "events" }))),
+        widgets: Vec::new(),
+        dashboard: None,
+    }
+}
+
+#[tokio::test]
+async fn a_proposal_with_one_refused_body_stores_none_of_it() {
+    let harness = TestHarness::new(ChatClient::scripted(
+        a_widget_naming_a_column_the_metric_lacks,
+    ))
+    .await;
+    harness.queue_chat_context();
+
+    let refused = harness.post_chat("build me a board").await;
+
+    assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+    assert!(
+        !harness.holds(DefinitionKind::Metric, "m").await,
+        "the metric of a refused batch must not be stored"
+    );
+    assert!(!harness.holds(DefinitionKind::Widget, "chart").await);
+}
+
+#[tokio::test]
+async fn a_proposed_metric_that_cannot_be_read_as_a_query_is_refused_before_it_is_stored() {
+    let harness = TestHarness::new(ChatClient::scripted(
+        a_metric_that_cannot_be_read_as_a_query,
+    ))
+    .await;
+    harness.queue_chat_context();
+
+    let refused = harness.post_chat("build me a metric").await;
+
+    assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+    assert!(!harness.holds(DefinitionKind::Metric, "m").await);
 }

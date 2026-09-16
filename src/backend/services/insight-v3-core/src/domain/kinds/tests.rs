@@ -98,10 +98,38 @@ fn only_the_kinds_that_can_name_a_kind_are_worth_reading() {
 }
 
 #[test]
-fn a_dashboard_offering_a_range_the_server_cannot_resolve_is_refused() {
-    let body = json!({ "time_ranges": ["last_7_days", "since_the_beginning"] });
+fn every_kind_a_body_names_lists_the_naming_kind_among_its_holders() {
+    let cases = [
+        (
+            DefinitionKind::Metric,
+            json!({ "table": "events", "fields": [] }),
+        ),
+        (
+            DefinitionKind::Widget,
+            json!({ "type": "stat", "metric": "commits", "value": "total" }),
+        ),
+        (
+            DefinitionKind::Dashboard,
+            json!({ "items": [{ "widget": "chart" }] }),
+        ),
+    ];
 
-    let refusal = dashboard::check(&body);
+    for (kind, body) in cases {
+        for reference in refers_to(kind, &body) {
+            assert!(
+                referred_to_by(reference.kind).contains(&kind),
+                "{kind:?} names {reference:?}, so it must be among that kind's holders"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_dashboard_is_checked_through_the_kind_it_was_stored_under() {
+    let body = json!({ "time_ranges": ["since_the_beginning"] });
+    let store = crate::definitions::memory::MemoryDefinitions::new();
+
+    let refusal = check(DefinitionKind::Dashboard, &body, &store).await;
 
     assert!(
         matches!(refusal, Err(KindError::Range(_))),

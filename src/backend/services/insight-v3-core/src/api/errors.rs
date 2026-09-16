@@ -10,6 +10,9 @@ use toolkit_canonical_errors::CanonicalError;
 
 use crate::definitions::{DefinitionError, DefinitionStoreError};
 
+#[cfg(test)]
+mod tests;
+
 /// One endpoint group, as the errors it answers with.
 pub(crate) trait ApiErrors {
     /// A value the caller can correct, named by the field carrying it.

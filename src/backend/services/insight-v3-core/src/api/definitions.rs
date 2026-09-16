@@ -42,7 +42,7 @@ struct RenameResponse {
 }
 
 #[resource_error("gts.cf.insight.insight_v3_core.definitions.v1~")]
-struct DefinitionApiError;
+pub(super) struct DefinitionApiError;
 
 impl ApiErrors for DefinitionApiError {
     fn invalid_field(field: &str, detail: String) -> CanonicalError {

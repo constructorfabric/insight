@@ -623,3 +623,88 @@ async fn a_rename_onto_a_name_someone_holds_is_refused_and_writes_nothing() -> R
 
     Ok(())
 }
+
+#[tokio::test]
+async fn renaming_a_definition_to_the_name_it_already_has_changes_nothing() -> R {
+    let fixture = Fixture::new();
+    let surfaces = fixture.surfaces();
+    surfaces
+        .put(DefinitionKind::Metric, &name("per_actor"), &metric_body())
+        .await?;
+    surfaces
+        .put(
+            DefinitionKind::Widget,
+            &name("chart"),
+            &line_widget("per_actor", "total"),
+        )
+        .await?;
+
+    let rewritten = surfaces
+        .rename(
+            DefinitionKind::Metric,
+            &name("per_actor"),
+            &name("per_actor"),
+        )
+        .await?;
+
+    assert!(rewritten.is_empty(), "{rewritten:?}");
+    assert_eq!(
+        surfaces
+            .get(DefinitionKind::Metric, &name("per_actor"))
+            .await?,
+        metric_body()
+    );
+    let widget = surfaces.get(DefinitionKind::Widget, &name("chart")).await?;
+    assert_eq!(widget["metric"], "per_actor");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn renaming_a_widget_points_every_board_that_held_it_at_the_new_name() -> R {
+    let fixture = Fixture::new();
+    let surfaces = fixture.surfaces();
+    surfaces
+        .put(DefinitionKind::Metric, &name("per_actor"), &metric_body())
+        .await?;
+    for held in ["old", "kept"] {
+        surfaces
+            .put(
+                DefinitionKind::Widget,
+                &name(held),
+                &line_widget("per_actor", "total"),
+            )
+            .await?;
+    }
+    surfaces
+        .put(
+            DefinitionKind::Dashboard,
+            &name("listed"),
+            &json!({ "title": "b", "items": [{ "heading": "h" }, { "widget": "old" }] }),
+        )
+        .await?;
+    surfaces
+        .put(
+            DefinitionKind::Dashboard,
+            &name("shorthand"),
+            &json!({ "title": "b", "widgets": ["old", "kept"] }),
+        )
+        .await?;
+
+    let mut rewritten = surfaces
+        .rename(DefinitionKind::Widget, &name("old"), &name("new"))
+        .await?;
+    rewritten.sort();
+
+    assert_eq!(rewritten, vec!["listed".to_owned(), "shorthand".to_owned()]);
+    let listed = surfaces
+        .get(DefinitionKind::Dashboard, &name("listed"))
+        .await?;
+    assert_eq!(listed["items"][1]["widget"], "new");
+    let shorthand = surfaces
+        .get(DefinitionKind::Dashboard, &name("shorthand"))
+        .await?;
+    assert_eq!(shorthand["widgets"], json!(["new", "kept"]));
+
+    Ok(())
+}

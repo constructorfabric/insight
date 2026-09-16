@@ -29,14 +29,29 @@ impl TestHarness {
         Self::with_caller(true).await
     }
 
+    /// A harness whose definition store refuses every write.
+    #[allow(clippy::unused_async)]
+    async fn with_a_store_that_is_down() -> Self {
+        Self::build(
+            true,
+            &(Arc::new(MemoryDefinitions::refusing()) as Arc<dyn Definitions>),
+        )
+    }
+
     /// A caller who does or does not hold the admin role.
     #[allow(clippy::unused_async)]
     async fn with_caller(is_admin: bool) -> Self {
+        Self::build(
+            is_admin,
+            &(Arc::new(MemoryDefinitions::new()) as Arc<dyn Definitions>),
+        )
+    }
+
+    fn build(is_admin: bool, definitions: &Arc<dyn Definitions>) -> Self {
         let mut mock = Mock::new();
         mock.non_exhaustive();
         let openapi = OpenApiRegistryImpl::new();
         let url = mock.url();
-        let definitions: Arc<dyn Definitions> = Arc::new(MemoryDefinitions::new());
         let state = Arc::new(AppState::new(
             RawDataStore::new(insight_clickhouse::Client::new(
                 insight_clickhouse::Config::new(url, "insight"),
@@ -551,6 +566,10 @@ async fn renaming_onto_a_name_in_use_changes_nothing() {
         .await;
 
     assert_eq!(refused.status(), StatusCode::CONFLICT);
+    assert!(
+        String::from_utf8_lossy(&refused.body).contains("already_here"),
+        "the refusal must name the name that is taken"
+    );
     // Neither name moved, and the widget still draws the one it did.
     assert_eq!(
         harness
@@ -687,4 +706,80 @@ async fn a_page_bigger_than_the_cap_is_refused() {
     let refused = harness.list_json("/v1/metrics?limit=5000").await;
 
     assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn a_metric_body_that_cannot_be_read_as_a_query_is_refused_on_write() {
+    let harness = TestHarness::new().await;
+
+    let refusal = harness
+        .put_json("/v1/metrics/commits_per_day", json!({ "table": "events" }))
+        .await;
+
+    assert_eq!(refusal.status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        harness.get_json("/v1/metrics/commits_per_day").await.status,
+        StatusCode::NOT_FOUND,
+        "a refused body must not be stored"
+    );
+}
+
+#[tokio::test]
+async fn a_metric_offering_a_window_the_server_cannot_resolve_is_refused_on_write() {
+    let harness = TestHarness::new().await;
+
+    let refusal = harness
+        .put_json(
+            "/v1/metrics/commits_per_day",
+            json!({
+                "table": "events",
+                "fields": [{ "json": "day", "type": "string", "as_name": "day" }],
+                "time": { "json": "committed_at" },
+                "max_range": "for ever",
+            }),
+        )
+        .await;
+
+    assert_eq!(refusal.status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        harness.get_json("/v1/metrics/commits_per_day").await.status,
+        StatusCode::NOT_FOUND
+    );
+
+    let sound = harness
+        .put_json(
+            "/v1/metrics/commits_per_day",
+            json!({
+                "table": "events",
+                "fields": [{ "json": "day", "type": "string", "as_name": "day" }],
+                "time": { "json": "committed_at" },
+                "max_range": "P6M",
+            }),
+        )
+        .await;
+
+    assert_eq!(
+        sound.status,
+        StatusCode::NO_CONTENT,
+        "only the window the server cannot resolve is the caller's mistake"
+    );
+}
+
+#[tokio::test]
+async fn a_store_that_is_down_is_ours_to_fix_and_says_nothing_about_itself() {
+    let harness = TestHarness::with_a_store_that_is_down().await;
+
+    let failed = harness
+        .put_json(
+            "/v1/metrics/commits_per_day",
+            json!({
+                "table": "events",
+                "fields": [{ "json": "day", "type": "string", "as_name": "day" }]
+            }),
+        )
+        .await;
+
+    assert_eq!(failed.status, StatusCode::INTERNAL_SERVER_ERROR);
+    let said = String::from_utf8_lossy(&failed.body);
+    assert!(!said.contains("store is down"), "{said}");
 }

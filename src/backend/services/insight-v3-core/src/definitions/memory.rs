@@ -24,6 +24,14 @@ impl MemoryDefinitions {
         Self::default()
     }
 
+    /// A store that refuses every write, for the cases about one that is down.
+    pub(crate) fn refusing() -> Self {
+        Self {
+            failing: true,
+            ..Self::default()
+        }
+    }
+
     fn key(kind: DefinitionKind, name: &DefinitionName) -> (&'static str, String) {
         (kind.table(), name.as_str().to_owned())
     }
@@ -45,6 +53,9 @@ impl MemoryDefinitions {
         DefinitionStoreError::Database(sea_orm::DbErr::Custom("store is down".to_owned()))
     }
 }
+
+#[cfg(test)]
+mod tests;
 
 #[async_trait]
 impl Definitions for MemoryDefinitions {
