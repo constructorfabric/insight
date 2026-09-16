@@ -6,6 +6,14 @@
 //! references unseen.
 
 pub(crate) mod dashboard;
+// Its own tests exercise it; the store and the API that read it arrive in the
+// steps after this one. `expect` rather than `allow`, so the marker fails once
+// they do.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "wired up by the dataset store and API")
+)]
+pub(crate) mod dataset;
 pub(crate) mod metric;
 pub(crate) mod widget;
 
