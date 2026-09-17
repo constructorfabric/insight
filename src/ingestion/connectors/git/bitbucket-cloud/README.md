@@ -109,6 +109,25 @@ transformation. The API link is used rather than a URL derived from
 The streams are otherwise independent: each carries its own cursor and asks the
 proxy for its own window. They join downstream by `sha`.
 
+`pull_requests` takes `repositories` as its parent by reference, and the four
+pull-request children take `pull_requests` the same way: one definition per
+listing, no copies. The CDK caches parent-stream responses per stream name and
+URL for the life of the sync, so `pull_requests` and its four children share one
+read of the repository listing (the top-level `repositories` stream reads its own
+incremental window) and each repository's pull requests are listed once for all
+five. One blocking stream group per level runs
+`repositories`, then `pull_requests`, then the children one at a time, so every
+read after the first is a cache hit rather than a race to the vendor. Each child
+still keeps its own copy of the listing's cursor in its state; when two
+children's cursors for a repository differ (one of them lagged), their URLs
+differ, both read the vendor, and nothing is shared or lost. The listing's upper
+bound is the slice end floored to the UTC hour for the same reason: a per-stream
+`now()` would give every stream its own URL and turn the one read back into five,
+and a bound fixed for the walk keeps every page of it on one window. The bound
+moves once an hour, so a sync sees pull-request updates up to the top of the hour
+it started in, and a second sync inside the same hour lists nothing new; schedule
+syncs at least an hour apart, shortly past the hour.
+
 `branches` is full refresh — bronze keeps the latest state per branch, and
 head-movement history is derived by the `snapshot` / `fields_history` dbt
 macros. Its `unique_key` excludes `head_sha`, so the ReplacingMergeTree
@@ -148,8 +167,8 @@ forms so an omission is visible:
 
 | anchor | applies to | form |
 |---|---|---|
-| `repos_since_start` | every repository listing (12 of them) | `q=updated_on >= start_date`, server-side |
-| `prs_since_start` | the four per-PR fan-out parents | `q=updated_on >= max(start_date, now - 30d)` |
+| `repos_since_start` | `repositories` (also the parent of every pull-request stream) and the repository listings of the branch, pipeline and deployment walks | `q=updated_on >= start_date`, server-side |
+| `prs_since_start` | `pull_requests`, the parent of the four per-PR children | `q=updated_on >= <the stream's own cursor> AND updated_on < <slice end floored to the UTC hour>` |
 
 Filtering repositories server-side is what bounds the clone cost: an untouched
 repository is never returned, so the proxy never walks it. VERIFIED against the
