@@ -1037,7 +1037,6 @@ fn a_table_written_with_its_database_is_read_as_both() {
         compiled.sql
     );
     assert_eq!(metric.database(), Some("bronze_github"));
-    assert_eq!(metric.table(), "commits");
 }
 
 #[test]
@@ -1051,7 +1050,13 @@ fn a_database_field_wins_over_a_qualified_table() {
     }));
 
     assert_eq!(metric.database(), Some("silver"));
-    assert_eq!(metric.table(), "class_git_commits");
+    assert!(
+        metric
+            .compile(&people())
+            .unwrap_or_else(|error| panic!("the query compiles: {error}"))
+            .sql
+            .contains("FROM `silver`.`class_git_commits`")
+    );
 }
 
 #[test]

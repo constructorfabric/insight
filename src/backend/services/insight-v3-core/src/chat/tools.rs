@@ -14,65 +14,62 @@ pub(super) const NAME_PATTERN: &str = DefinitionName::PATTERN;
 /// answer tool runs one, the create tool stores one.
 pub(super) fn metric_query_schema() -> Value {
     let plain = json!({ "type": "string" });
-    let field_type = json!({ "enum": ["string", "int", "float"] });
 
     json!({
         "type": "object",
         "additionalProperties": false,
-        "required": ["table", "fields", "group_by", "filters"],
+        "required": ["dataset", "fields", "group_by", "filters"],
         "properties": {
-            "table": plain,
-            "database": {
+            "dataset": {
                 "type": "string",
-                "description": "The database the table is in, from the map. Omit only for a table ingested here.",
+                "description": "The dataset this metric reads, from the list above.",
             },
             "fields": { "type": "array", "items": metric_field_schema() },
             "time": {
                 "type": "object",
                 "additionalProperties": false,
-                "description": "The timestamp a reader may window and bucket this metric by - the moment the thing happened, never the moment the row arrived. Exactly one of column or json.",
-                "properties": {
-                    "column": {
-                        "type": "string",
-                        "description": "A real date or datetime column of the table.",
-                    },
-                    "json": {
-                        "type": "string",
-                        "description": "A key inside the payload column holding a timestamp, for a table ingested here only.",
-                    },
-                    "type": { "enum": ["datetime"] },
-                },
+                "description": "The dataset field a reader may window and bucket this metric by. Leave it out to use the dataset's own main date.",
+                "required": ["field"],
+                "properties": { "field": plain },
             },
             "max_range": {
                 "type": "string",
                 "description": "The widest window this metric will answer, as an ISO duration of whole days, months or years - P30D, P6M, P1Y. A wider request is refused rather than left to time out.",
             },
-            "group_by": { "type": "array", "items": plain },
+            "group_by": {
+                "type": "array",
+                "items": plain,
+                "description": "Names this metric produces: the as_name of a field, or `bucket` for a windowed run. Never a dataset field this metric did not select.",
+            },
             "order_by": {
                 "type": "object",
                 "additionalProperties": false,
                 "required": ["field"],
                 "properties": {
-                    "field": { "type": "string" },
+                    "field": {
+                        "type": "string",
+                        "description": "One as_name this metric produces, an aggregate's own name included.",
+                    },
                     "direction": { "enum": ["asc", "desc"] },
                 },
             },
-            "filters": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": ["type", "op", "value"],
-                    "properties": {
-                        "column": { "type": "string" },
-                        "json": { "type": "string" },
-                        "type": field_type,
-                        "op": { "enum": ["eq", "ne", "gt", "gte", "lt", "lte"] },
-                        "value": { "type": ["string", "number", "boolean"] },
-                    },
-                },
-            },
+            "filters": { "type": "array", "items": condition_schema() },
             "limit": { "type": "integer" },
+        },
+    })
+}
+
+/// One condition over a declared field of the dataset.
+fn condition_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["field", "type", "op", "value"],
+        "properties": {
+            "field": { "type": "string", "description": "A declared field of the dataset." },
+            "type": { "enum": ["string", "int", "float"] },
+            "op": { "enum": ["eq", "ne", "gt", "gte", "lt", "lte"] },
+            "value": { "type": ["string", "number", "boolean"] },
         },
     })
 }
@@ -87,36 +84,17 @@ fn metric_field_schema() -> Value {
         "additionalProperties": false,
         "required": ["type", "as_name"],
         "properties": {
-            "column": {
+            "field": {
                 "type": "string",
-                "description": "A real column, for any table from the map. Exactly one of column or json.",
-            },
-            "json": {
-                "type": "string",
-                "description": "A key inside the payload column, for a table ingested here only.",
+                "description": "The declared field of the dataset this reads. Leave it out only for `count` over the rows.",
             },
             "type": field_type,
             "agg": { "enum": ["count", "sum", "avg", "min", "max"] },
             "as_name": plain,
-            "person": {
-                "enum": ["email", "id"],
-                "description": "Set when this column holds a person: email for an address, id for a person id. The rows then carry the name they are known by.",
-            },
             "when": {
                 "type": "array",
-                "description": "Conditions on this aggregate alone, for one half of a rate: a numerator and a denominator that live in the same column are told apart here.",
-                "items": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": ["type", "op", "value"],
-                    "properties": {
-                        "column": plain,
-                        "json": plain,
-                        "type": field_type,
-                        "op": { "enum": ["eq", "ne", "gt", "gte", "lt", "lte"] },
-                        "value": { "type": ["string", "number", "boolean"] },
-                    },
-                },
+                "description": "Conditions on this aggregate alone, for one half of a rate: a numerator and a denominator that live in the same field are told apart here.",
+                "items": condition_schema(),
             },
             "divide": {
                 "type": "array",

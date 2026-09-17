@@ -1,8 +1,8 @@
 //! What the model is told before it is asked anything.
 
-use super::{Catalogue, KnownTable};
+use super::Catalogue;
 
-pub(super) fn system_prompt(tables: &[KnownTable], catalogue: &Catalogue, map: &str) -> String {
+pub(super) fn system_prompt(datasets: &str, catalogue: &Catalogue) -> String {
     let mut prompt = String::from(
         "You are the Insight v3 chat assistant. Answer by calling exactly one tool.\n\
          Write replies as plain prose. No markdown: asterisks and hashes are shown as typed.\n\n\
@@ -21,36 +21,15 @@ pub(super) fn system_prompt(tables: &[KnownTable], catalogue: &Catalogue, map: &
          A dashboard is {\"title\":<string>,\"items\":[<item>]}, drawn top to bottom. An item is {\"widget\":<widget name>}, {\"heading\":<string>} for a section title over the widgets that follow, or {\"text\":<string>} for a line saying what a number means or leaves out. Group the widgets under headings when a board holds more than a handful.\n",
     );
 
-    if tables.is_empty() {
-        prompt.push_str("\nNo tables are known yet.\n");
-    } else {
-        prompt.push_str("\nKnown tables:\n");
-        for table in tables {
-            prompt.push_str("- ");
-            prompt.push_str(&table.name);
-            prompt.push_str(": ");
-            prompt.push_str(&table.fields);
-            prompt.push('\n');
-        }
-    }
-
-    if !map.is_empty() {
-        prompt.push_str(
-            "\nEvery table on this stand, by layer. Bronze is a provider's raw \
-             payloads, silver is cleaned per-source models, gold is the \
-             published metrics, and identity is who people are. Columns are NOT \
-             listed: call `look_up` for the tables you mean to query, then name \
-             their columns exactly.\n\n",
-        );
-        prompt.push_str(map);
-        prompt.push('\n');
-        prompt.push_str(
-            "\nA query on one of those tables names its `database` and reads \
-             real columns, so each field and filter carries `column`. Only v3's \
-             own ingest tables keep their payload in one JSON column, and there \
-             a field carries `json` instead. A field may not carry both.\n",
-        );
-    }
+    prompt.push_str("\nThe datasets you may read:\n\n");
+    prompt.push_str(datasets);
+    prompt.push_str(
+        "\nA metric names one `dataset` and then names its declared fields: \
+         each selected field, each condition and the clock carry `field`. \
+         Group and order by the names the metric itself produces - its \
+         `as_name` values, and `bucket` for a windowed run. Ask `look_up` for a \
+         dataset you want spelled out again.\n",
+    );
 
     if catalogue.is_empty() {
         prompt.push_str("\nNothing is built yet.\n");

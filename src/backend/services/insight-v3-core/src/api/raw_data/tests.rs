@@ -26,7 +26,6 @@ use crate::domain::datasets::Datasets as _;
 use crate::domain::definition::Definitions;
 use crate::domain::query::metric_query::MetricRunner;
 use crate::store::definitions::memory::MemoryDefinitions;
-use crate::store::tables::TableStore;
 
 const TEST_TOKEN: &str = "correct-token-0123456789abcdefghi";
 
@@ -79,9 +78,6 @@ fn state(mock: &Mock, datasets: crate::api::Datasets) -> Arc<AppState> {
     let definitions: Arc<dyn Definitions> = Arc::new(MemoryDefinitions::new());
     Arc::new(AppState::new(
         crate::api::Warehouse {
-            tables: TableStore::new(insight_clickhouse::Client::new(
-                insight_clickhouse::Config::new(url, "insight"),
-            )),
             catalog: crate::store::catalog::Catalog::new(
                 insight_clickhouse::Client::new(insight_clickhouse::Config::new(
                     "http://catalogue.invalid",

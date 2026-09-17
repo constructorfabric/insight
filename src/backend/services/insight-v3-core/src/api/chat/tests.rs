@@ -15,7 +15,6 @@ use crate::chat::{ChatClient, Proposal};
 use crate::domain::definition::Definitions;
 use crate::domain::query::metric_query::MetricRunner;
 use crate::store::definitions::memory::MemoryDefinitions;
-use crate::store::tables::TableStore;
 
 struct TestHarness {
     mock: Mock,
@@ -39,9 +38,6 @@ impl TestHarness {
         let definitions: Arc<dyn Definitions> = Arc::new(MemoryDefinitions::new());
         let state = Arc::new(AppState::new(
             crate::api::Warehouse {
-                tables: TableStore::new(insight_clickhouse::Client::new(
-                    insight_clickhouse::Config::new(url, "insight"),
-                )),
                 catalog: crate::store::catalog::Catalog::new(
                     insight_clickhouse::Client::new(insight_clickhouse::Config::new(
                         "http://catalogue.invalid",

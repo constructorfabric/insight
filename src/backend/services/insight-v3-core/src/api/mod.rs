@@ -12,7 +12,6 @@ pub(crate) mod definitions;
 mod errors;
 pub(crate) mod metric_run;
 pub(crate) mod raw_data;
-pub(crate) mod tables;
 
 use admission::IngestAdmission;
 
@@ -22,7 +21,6 @@ use crate::domain::query::metric_query::MetricRunner;
 use crate::store::catalog::Catalog;
 use crate::store::dataset_tables::DatasetTables;
 use crate::store::identity::IdentityClient;
-use crate::store::tables::TableStore;
 
 /// What a refused surface says.
 pub(crate) const ADMIN_ONLY: &str = "admin role required for this operation";
@@ -91,7 +89,6 @@ pub(crate) struct AppState {
 /// tables there are, what shape they have, and what runs a metric over them.
 #[derive(Debug)]
 pub(crate) struct Warehouse {
-    pub(crate) tables: TableStore,
     pub(crate) catalog: Catalog,
     pub(crate) metrics: MetricRunner,
 }
@@ -150,14 +147,6 @@ impl AppState {
         }
     }
 
-    pub(crate) fn tables(&self) -> &TableStore {
-        &self.warehouse.tables
-    }
-
-    pub(crate) fn catalog(&self) -> &Catalog {
-        &self.warehouse.catalog
-    }
-
     pub(crate) fn definitions(&self) -> &dyn Definitions {
         self.definitions.as_ref()
     }
@@ -175,11 +164,7 @@ impl AppState {
     }
 
     pub(crate) fn assistant(&self) -> crate::domain::assistant::Assistant<'_> {
-        crate::domain::assistant::Assistant::new(
-            self.definitions.as_ref(),
-            &self.warehouse.catalog,
-            &self.warehouse.tables,
-        )
+        crate::domain::assistant::Assistant::new(self.definitions.as_ref(), self.datasets())
     }
 
     pub(crate) fn datasets(&self) -> &dyn crate::domain::datasets::Datasets {
@@ -248,7 +233,6 @@ pub(crate) fn openapi_document() -> anyhow::Result<utoipa::openapi::OpenApi> {
     ));
     let state = Arc::new(AppState::new(
         crate::api::Warehouse {
-            tables: TableStore::new(offline.clone()),
             catalog: Catalog::new(offline.clone(), "insight".to_owned()),
             metrics: MetricRunner::new(
                 offline,
@@ -287,8 +271,7 @@ pub(crate) fn register_routes(
     // Built apart from the host's router so the layer wraps this service's
     // own routes, and merged in after — the host's own endpoints carry
     // their own context.
-    let api = tables::register_routes(Router::new(), openapi, state.clone(), admission.clone());
-    let api = raw_data::register_routes(api, openapi, state.clone(), admission);
+    let api = raw_data::register_routes(Router::new(), openapi, state.clone(), admission);
     let api = definitions::register_routes(api, openapi, &state);
     let api = datasets::register_routes(api, openapi, &state);
     let api = metric_run::register_routes(api, openapi, state.clone());

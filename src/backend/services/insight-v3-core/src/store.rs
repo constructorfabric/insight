@@ -5,4 +5,3 @@ pub(crate) mod dataset_tables;
 pub(crate) mod datasets;
 pub(crate) mod definitions;
 pub(crate) mod identity;
-pub(crate) mod tables;

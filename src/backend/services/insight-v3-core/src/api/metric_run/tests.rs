@@ -14,7 +14,6 @@ use crate::chat::ChatClient;
 use crate::domain::definition::Definitions;
 use crate::domain::query::metric_query::MetricRunner;
 use crate::store::definitions::memory::MemoryDefinitions;
-use crate::store::tables::TableStore;
 
 type R = Result<(), Box<dyn std::error::Error>>;
 
@@ -32,7 +31,6 @@ impl TestHarness {
         let mut mock = Mock::new();
         mock.non_exhaustive();
         let openapi = toolkit::api::OpenApiRegistryImpl::new();
-        let definitions_url = mock.url();
         let metrics_client = insight_clickhouse::Client::new(insight_clickhouse::Config::new(
             metrics_url,
             "insight",
@@ -40,9 +38,6 @@ impl TestHarness {
         let definitions: Arc<dyn Definitions> = Arc::new(MemoryDefinitions::new());
         let state = Arc::new(AppState::new(
             crate::api::Warehouse {
-                tables: TableStore::new(insight_clickhouse::Client::new(
-                    insight_clickhouse::Config::new(definitions_url, "insight"),
-                )),
                 catalog: crate::store::catalog::Catalog::fixed(Vec::new()),
                 metrics: MetricRunner::new(
                     metrics_client,

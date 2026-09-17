@@ -170,11 +170,6 @@ impl MetricQuery {
     pub(crate) fn own_clock(&self) -> Option<&str> {
         self.time.as_ref().and_then(TimeField::reads)
     }
-    /// The table alone, with any database it was written with stripped off.
-    pub(crate) fn table(&self) -> &str {
-        self.split().1
-    }
-
     /// The database, whether it came in its own field or qualified the table.
     pub(crate) fn database(&self) -> Option<&str> {
         self.split().0

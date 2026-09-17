@@ -14,7 +14,6 @@ use crate::chat::ChatClient;
 use crate::domain::definition::Definitions;
 use crate::domain::query::metric_query::MetricRunner;
 use crate::store::definitions::memory::MemoryDefinitions;
-use crate::store::tables::TableStore;
 
 struct TestHarness {
     /// Held, not read: the stores this harness does not exercise are built
@@ -53,9 +52,6 @@ impl TestHarness {
         let url = mock.url();
         let state = Arc::new(AppState::new(
             crate::api::Warehouse {
-                tables: TableStore::new(insight_clickhouse::Client::new(
-                    insight_clickhouse::Config::new(url, "insight"),
-                )),
                 catalog: crate::store::catalog::Catalog::new(
                     insight_clickhouse::Client::new(insight_clickhouse::Config::new(
                         "http://catalogue.invalid",

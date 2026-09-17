@@ -125,22 +125,6 @@ impl Catalog {
         self.read(<[TableSchema]>::to_vec).await
     }
 
-    /// The named tables only, for a schema lookup. `database.table` or a bare
-    /// table, which matches in any database.
-    pub(crate) async fn describe(
-        &self,
-        names: &[String],
-    ) -> Result<Vec<TableSchema>, CatalogError> {
-        self.read(|tables| {
-            tables
-                .iter()
-                .filter(|schema| names.iter().any(|name| schema.is_named(name)))
-                .cloned()
-                .collect()
-        })
-        .await
-    }
-
     /// Which engine holds one table, and `Other` for a table this catalogue
     /// has never heard of.
     pub(crate) async fn engine_of(&self, name: &str) -> Result<TableEngine, CatalogError> {

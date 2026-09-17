@@ -6,9 +6,9 @@ use serde_json::Value;
 use super::ChatError;
 use crate::domain::query::metric_query::{MetricQuery, People};
 
-/// The whole stand is already in the prompt, and hundreds of names in an
-/// error help nobody.
-const TABLES_NAMED_IN_A_REFUSAL: usize = 12;
+/// Every dataset is already in the prompt, and a long list in an error helps
+/// nobody.
+const DATASETS_NAMED_IN_A_REFUSAL: usize = 12;
 
 /// One of the two things the model can propose in reply to a chat message.
 #[derive(Debug)]
@@ -30,7 +30,7 @@ pub(crate) enum Proposal {
 }
 
 impl Proposal {
-    /// [`Proposal::parse`], then refuse a table the reader does not have.
+    /// [`Proposal::parse`], then refuse a dataset the reader does not have.
     ///
     /// The refusal goes back through the repair round, so the model gets the
     /// real table list. With no known tables at all the check stands aside.
@@ -45,12 +45,12 @@ impl Proposal {
             return Ok(proposal);
         }
 
-        match proposal.table() {
-            Some(named) if !allowed.contains(&named) => Err(ChatError::UnknownTable {
-                table: named,
+        match proposal.dataset() {
+            Some(named) if !allowed.contains(&named) => Err(ChatError::UnknownDataset {
+                dataset: named,
                 known: allowed
                     .iter()
-                    .take(TABLES_NAMED_IN_A_REFUSAL)
+                    .take(DATASETS_NAMED_IN_A_REFUSAL)
                     .map(String::as_str)
                     .collect::<Vec<_>>()
                     .join(", "),
@@ -59,28 +59,17 @@ impl Proposal {
         }
     }
 
-    /// The table this proposal reads, qualified by its database when it names
-    /// one, so `silver.class_git_commits` is told apart from a table of the
-    /// same name in another layer.
-    fn table(&self) -> Option<String> {
-        let (database, table) = match self {
-            Self::Answer { query, .. } => {
-                let query = query.as_ref()?;
-                (query.database(), query.table())
-            }
+    /// The dataset this proposal reads.
+    fn dataset(&self) -> Option<String> {
+        match self {
+            Self::Answer { query, .. } => query.as_ref()?.dataset().map(str::to_owned),
             Self::Create { metric, .. } => {
                 let (_, body) = metric.as_ref()?;
-                (
-                    body.get("database").and_then(Value::as_str),
-                    body.get("table").and_then(Value::as_str)?,
-                )
+                body.get("dataset")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
             }
-        };
-
-        Some(match database {
-            Some(database) => format!("{database}.{table}"),
-            None => table.to_owned(),
-        })
+        }
     }
 
     /// Strips any prose or code fence around the JSON object, deserializes on

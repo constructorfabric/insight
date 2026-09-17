@@ -15,7 +15,7 @@ use utoipa::ToSchema;
 use super::AppState;
 use super::errors::ApiErrors;
 use crate::chat::{Ask, ChatError, Proposal, Turn};
-use crate::domain::assistant::CatalogSchemas;
+use crate::domain::assistant::DatasetSchemas;
 use crate::domain::definition::{Change, Definition, DefinitionKind, DefinitionName};
 use crate::domain::query::metric_query::{
     MetricQuery, MetricQueryError, MetricRunError, RunResult,
@@ -110,15 +110,14 @@ async fn handle_chat(
     .await?;
 
     let briefing = state.assistant().briefing().await;
-    let schemas = CatalogSchemas::new(state.catalog());
+    let schemas = DatasetSchemas::new(state.datasets(), state.definitions());
     let proposal = state
         .chat()
         .propose(&Ask {
             message: &request.message,
             turns: &request.history,
-            tables: &briefing.tables,
+            datasets: &briefing.datasets,
             catalogue: &briefing.catalogue,
-            map: &briefing.map,
             allowed: &briefing.allowed,
             schemas: &schemas,
             people: state.metrics().people(),
@@ -273,7 +272,7 @@ fn chat_error(error: ChatError) -> CanonicalError {
         ChatError::Metric(source) => ChatApiError::invalid_argument()
             .with_field_violation("reply", source.to_string(), "INVALID")
             .create(),
-        ChatError::UnknownTable { .. } => ChatApiError::invalid_argument()
+        ChatError::UnknownDataset { .. } => ChatApiError::invalid_argument()
             .with_field_violation("query", error.to_string(), "INVALID")
             .create(),
         ChatError::TooManyLookups => {

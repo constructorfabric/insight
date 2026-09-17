@@ -59,37 +59,26 @@ pub(crate) struct Ask<'a> {
     pub(crate) message: &'a str,
     /// The turns before this one; the service keeps no session.
     pub(crate) turns: &'a [Turn],
-    /// The tables ingested here, with the fields sampled from their payloads.
-    pub(crate) tables: &'a [KnownTable],
+    /// The declared datasets, as a reader is told them.
+    pub(crate) datasets: &'a str,
     pub(crate) catalogue: &'a Catalogue,
-    /// Every table on the stand by layer, names only.
-    pub(crate) map: &'a str,
-    /// Every table a query may name, qualified as it must be named.
+    /// Every dataset a metric may read.
     pub(crate) allowed: &'a [String],
     pub(crate) schemas: &'a dyn Schemas,
     /// Where a person's name is resolved from.
     pub(crate) people: &'a People,
 }
 
-/// What the columns of a table are, asked for by name.
+/// What a dataset declares, asked for by name.
 ///
-/// The map in the system prompt names every table on the stand - a few
-/// hundred - but their columns run to tens of thousands of tokens and would
-/// go stale, so the model asks for the few it needs.
+/// The prompt already names every dataset and its fields; this is what the
+/// model asks when it wants one spelled out again mid-conversation.
 #[async_trait::async_trait]
 pub(crate) trait Schemas: Send + Sync + std::fmt::Debug {
-    /// The named tables, rendered for the model. A name it cannot resolve is
+    /// The named datasets, rendered for the model. A name it cannot resolve is
     /// reported as such rather than omitted, or the model reads silence as
-    /// "no columns" and invents them.
-    async fn describe(&self, tables: &[String]) -> String;
-}
-
-/// A table data has been ingested into, and what is in it.
-#[derive(Debug, Clone)]
-pub(crate) struct KnownTable {
-    pub(crate) name: String,
-    /// `day (string), lines (int)`, sampled from its rows.
-    pub(crate) fields: String,
+    /// "no fields" and invents them.
+    async fn describe(&self, datasets: &[String]) -> String;
 }
 
 #[derive(Debug, Error)]
@@ -98,8 +87,8 @@ pub(crate) enum ChatError {
     Json(#[from] serde_json::Error),
     #[error(transparent)]
     Metric(#[from] MetricQueryError),
-    #[error("there is no table named `{table}`; the tables are: {known}")]
-    UnknownTable { table: String, known: String },
+    #[error("there is no dataset named `{dataset}`; the datasets are: {known}")]
+    UnknownDataset { dataset: String, known: String },
     #[error("a create must carry at least one metric, widget or dashboard")]
     EmptyCreate,
     #[error("the model kept asking what tables hold instead of answering")]
@@ -123,7 +112,7 @@ impl ChatError {
         match self {
             Self::Json(error) => error.to_string(),
             Self::Metric(_)
-            | Self::UnknownTable { .. }
+            | Self::UnknownDataset { .. }
             | Self::EmptyCreate
             | Self::TooManyLookups
             | Self::TokenRejected
@@ -208,7 +197,7 @@ impl ChatClient {
                 converse(
                     &transport,
                     ask.schemas,
-                    &system_prompt(ask.tables, ask.catalogue, ask.map),
+                    &system_prompt(ask.datasets, ask.catalogue),
                     thread(ask.turns, ask.message),
                     ask.allowed,
                     ask.people,

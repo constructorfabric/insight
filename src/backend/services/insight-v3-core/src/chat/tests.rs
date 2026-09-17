@@ -179,16 +179,12 @@ fn a_first_message_is_a_thread_of_one() {
 #[test]
 fn the_prompt_names_what_is_already_built() {
     let prompt = system_prompt(
-        &[KnownTable {
-            name: "events".to_owned(),
-            fields: "day (string)".to_owned(),
-        }],
+        "commits: Commits\n  - day (date and time), the record's main date\n",
         &Catalogue::new(vec![
             (DefinitionKind::Metric, vec!["lines_per_day".to_owned()]),
             (DefinitionKind::Widget, vec!["lines_chart".to_owned()]),
             (DefinitionKind::Dashboard, vec!["engineering".to_owned()]),
         ]),
-        "",
     );
 
     assert!(prompt.contains("lines_per_day"), "{prompt}");
@@ -208,12 +204,8 @@ fn the_grammar_lets_a_metric_declare_the_clock_a_reader_windows_by() {
 #[test]
 fn the_prompt_asks_for_a_clock_when_the_table_carries_one() {
     let prompt = system_prompt(
-        &[KnownTable {
-            name: "events".to_owned(),
-            fields: "occurred_at (datetime)".to_owned(),
-        }],
+        "commits: Commits\n  - day (date and time), the record's main date\n",
         &Catalogue::default(),
-        "",
     );
 
     assert!(prompt.contains("\"time\""), "{prompt}");
@@ -222,12 +214,8 @@ fn the_prompt_asks_for_a_clock_when_the_table_carries_one() {
 #[test]
 fn an_empty_catalogue_says_nothing_is_built_yet() {
     let prompt = system_prompt(
-        &[KnownTable {
-            name: "events".to_owned(),
-            fields: "day (string)".to_owned(),
-        }],
+        "commits: Commits\n  - day (date and time), the record's main date\n",
         &Catalogue::default(),
-        "",
     );
 
     assert!(prompt.contains("Nothing is built yet"), "{prompt}");
@@ -436,18 +424,19 @@ fn a_lookup_asking_for_nothing_is_not_a_lookup() {
 }
 
 #[test]
-fn the_map_and_both_field_shapes_are_explained() {
+fn the_prompt_carries_the_datasets_and_how_to_name_their_fields() {
     let prompt = system_prompt(
-        &[],
+        "commits: Commits\n  - lines (whole number), something to measure\n",
         &Catalogue::default(),
-        "Gold (published metrics)\n  insight:\n    git_metric_observations\n",
     );
 
-    assert!(prompt.contains("git_metric_observations"), "{prompt}");
+    assert!(prompt.contains("commits: Commits"), "{prompt}");
+    assert!(prompt.contains("lines (whole number)"), "{prompt}");
+    // Which name space a reference belongs to is the thing it gets wrong.
+    assert!(prompt.contains("`dataset`"), "{prompt}");
+    assert!(prompt.contains("`field`"), "{prompt}");
+    assert!(prompt.contains("as_name"), "{prompt}");
     assert!(prompt.contains("look_up"), "{prompt}");
-    // Which shape belongs to which table is the thing it gets wrong.
-    assert!(prompt.contains("`column`"), "{prompt}");
-    assert!(prompt.contains("`json`"), "{prompt}");
 }
 
 #[test]
@@ -468,13 +457,17 @@ fn the_widget_schema_offers_exactly_the_kinds_the_renderer_draws() {
 }
 
 #[test]
-fn the_query_schema_offers_both_a_database_and_a_column() {
+fn the_query_schema_names_a_dataset_and_its_fields() {
     let answer = tool(ANSWER_TOOL);
     let query = &answer["input_schema"]["properties"]["query"]["properties"];
 
-    assert_eq!(query["database"]["type"], json!("string"));
+    assert_eq!(query["dataset"]["type"], json!("string"));
+    assert!(query.get("database").is_none(), "{query}");
+    assert!(query.get("table").is_none(), "{query}");
     let field = &query["fields"]["items"]["properties"];
-    assert_eq!(field["person"]["enum"], json!(["email", "id"]));
+    assert_eq!(field["field"]["type"], json!("string"));
+    assert!(field.get("json").is_none(), "{field}");
+    assert!(field.get("column").is_none(), "{field}");
     assert!(
         field["when"]["items"].is_object(),
         "a field can carry its own condition"
@@ -484,9 +477,9 @@ fn the_query_schema_offers_both_a_database_and_a_column() {
         "a field can divide two others"
     );
     assert_eq!(field["percent"]["type"], json!("boolean"));
-    assert_eq!(field["column"]["type"], json!("string"));
-    // Neither is required: exactly one of them is, which no JSON schema
-    // this API accepts can express, so the compiler refuses it instead.
+    // The field a metric reads is not required: counting rows names none, and
+    // no JSON schema this API accepts can say "required unless counting", so
+    // the compiler refuses what the schema lets through.
     assert_eq!(
         query["fields"]["items"]["required"],
         json!(["type", "as_name"])
@@ -505,31 +498,23 @@ fn a_lookup_tool_is_offered() {
 }
 
 #[test]
-fn the_prompt_names_every_table_with_its_fields() {
-    let prompt = system_prompt(
-        &[KnownTable {
-            name: "events".to_owned(),
-            fields: "day (string), lines (int)".to_owned(),
-        }],
-        &Catalogue::default(),
-        "",
-    );
+fn the_prompt_names_every_dataset_with_its_fields() {
+    let described = "commits: Commits\n  - day (date and time), the record's main date\n";
 
-    assert!(
-        prompt.contains("- events: day (string), lines (int)"),
-        "{prompt}"
-    );
-    assert!(!prompt.contains("No tables are known yet"), "{prompt}");
+    let prompt = system_prompt(described, &Catalogue::default());
+
+    assert!(prompt.contains(described), "{prompt}");
 }
 
 #[test]
-fn an_answer_naming_a_table_the_reader_does_not_have_is_refused() {
-    let known = ["events".to_owned(), "silver.class_git_commits".to_owned()];
+fn an_answer_naming_a_dataset_the_reader_does_not_have_is_refused() {
+    let known = ["commits".to_owned(), "deploys".to_owned()];
     let reply = json!({
         "intent": "answer",
         "reply": "here",
         "query": {
-            "table": "information_schema_tables",
+            "dataset": "information_schema_tables",
+            "table": "unused",
             "fields": [{ "json": "day", "type": "string", "as_name": "day" }],
             "group_by": [],
             "filters": []
@@ -538,14 +523,14 @@ fn an_answer_naming_a_table_the_reader_does_not_have_is_refused() {
     .to_string();
 
     let Err(rejection) = Proposal::checked(&reply, &known, &people()) else {
-        panic!("a table that does not exist must not reach the database");
+        panic!("a dataset that does not exist must not reach the warehouse");
     };
 
     // The message is what the repair round hands back, so it has to name
-    // the tables that DO exist.
+    // the datasets that DO exist.
     let feedback = rejection.feedback();
     assert!(feedback.contains("information_schema_tables"), "{feedback}");
-    assert!(feedback.contains("events"), "{feedback}");
+    assert!(feedback.contains("commits"), "{feedback}");
 }
 
 #[test]
@@ -588,30 +573,6 @@ fn a_layer_table_passes_when_its_database_qualifies_it() {
     assert!(matches!(
         Proposal::checked(&reply, &known, &people()),
         Ok(Proposal::Answer { .. })
-    ));
-}
-
-#[test]
-fn the_same_table_in_another_database_is_refused() {
-    // Two layers can hold a table of one name, so the database is part of
-    // what is checked rather than dropped.
-    let known = ["silver.class_git_commits".to_owned()];
-    let reply = json!({
-        "intent": "answer",
-        "reply": "here",
-        "query": {
-            "database": "bronze_github",
-            "table": "class_git_commits",
-            "fields": [{ "column": "author_email", "type": "string", "as_name": "author" }],
-            "group_by": [],
-            "filters": []
-        }
-    })
-    .to_string();
-
-    assert!(matches!(
-        Proposal::checked(&reply, &known, &people()),
-        Err(ChatError::UnknownTable { .. })
     ));
 }
 
@@ -744,9 +705,8 @@ async fn a_blank_key_says_so_instead_of_answering() {
         .propose(&Ask {
             message: "commits per day",
             turns: &[],
-            tables: &[],
+            datasets: "",
             catalogue: &Catalogue::default(),
-            map: "",
             allowed: &[],
             schemas: &FixedSchemas("unused"),
             people: &people(),
@@ -811,15 +771,14 @@ async fn a_reply_that_called_no_tool_is_corrected_with_a_plain_message() {
 }
 
 #[test]
-fn a_refusal_names_a_handful_of_tables_rather_than_the_whole_stand() {
-    let allowed: Vec<String> = (0..20)
-        .map(|index| format!("silver.table_{index}"))
-        .collect();
+fn a_refusal_names_a_handful_of_datasets_rather_than_every_one() {
+    let allowed: Vec<String> = (0..20).map(|index| format!("dataset_{index}")).collect();
     let reply = json!({
         "intent": "answer",
         "reply": "here",
         "query": {
-            "table": "nowhere",
+            "dataset": "nowhere",
+            "table": "unused",
             "fields": [{ "json": "day", "type": "string", "as_name": "day" }],
             "group_by": ["day"],
             "filters": [],
@@ -829,9 +788,9 @@ fn a_refusal_names_a_handful_of_tables_rather_than_the_whole_stand() {
 
     let refusal = Proposal::checked(&reply, &allowed, &people());
 
-    let Err(ChatError::UnknownTable { known, .. }) = refusal else {
-        panic!("expected an unknown table, got {refusal:?}");
+    let Err(ChatError::UnknownDataset { known, .. }) = refusal else {
+        panic!("expected an unknown dataset, got {refusal:?}");
     };
-    assert!(known.contains("silver.table_11"), "{known}");
-    assert!(!known.contains("silver.table_12"), "{known}");
+    assert!(known.contains("dataset_11"), "{known}");
+    assert!(!known.contains("dataset_12"), "{known}");
 }

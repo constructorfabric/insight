@@ -136,37 +136,6 @@ async fn each_table_becomes_one_schema_carrying_its_columns_in_position_order() 
 }
 
 #[tokio::test]
-async fn a_bare_table_is_described_in_every_database_that_has_one() {
-    let (_mock, catalog) = catalog_over(vec![
-        column("bronze_github", "issues", "number", "UInt64"),
-        column("silver", "git_commits", "sha", "String"),
-        column("silver", "issues", "key", "String"),
-    ]);
-
-    let named = catalog
-        .describe(&[
-            "silver.git_commits".to_owned(),
-            "issues".to_owned(),
-            "not_on_this_stand".to_owned(),
-        ])
-        .await
-        .unwrap_or_else(|error| panic!("the catalogue should describe: {error}"));
-
-    let found: Vec<(String, String)> = named
-        .into_iter()
-        .map(|schema| (schema.database, schema.table))
-        .collect();
-    assert_eq!(
-        found,
-        vec![
-            ("bronze_github".to_owned(), "issues".to_owned()),
-            ("silver".to_owned(), "git_commits".to_owned()),
-            ("silver".to_owned(), "issues".to_owned()),
-        ]
-    );
-}
-
-#[tokio::test]
 async fn a_second_listing_inside_the_ttl_asks_clickhouse_nothing() {
     // The mock answers one request, so a second query fails the call below.
     let (_mock, catalog) = catalog_over(vec![column("silver", "git_commits", "sha", "String")]);
