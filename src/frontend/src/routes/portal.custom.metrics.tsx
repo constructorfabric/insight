@@ -52,7 +52,7 @@ function MetricRow({ name }: { name: string }) {
           {(error as Error).message}
         </p>
       ) : (
-        <MetricSummary definition={data} />
+        <MetricSummary definition={data.definition} />
       )}
     </DefinitionCard>
   );

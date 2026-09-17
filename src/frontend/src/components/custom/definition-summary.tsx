@@ -14,17 +14,17 @@ import { cn } from "@/lib/utils";
  * idea of what a metric looks like.
  */
 
-/** Where a field or filter reads its value: a column, or a payload key. */
-function source(of: { column?: string; json?: string }): string {
-  return of.column ?? of.json ?? "";
-}
-
-/** One field, as the query reads it. */
+/**
+ * One field, as the query reads it.
+ *
+ * A `count` naming no field counts the records rather than anything in them,
+ * which is why the parentheses can be empty.
+ */
 function reads(field: MetricDefinition["fields"][number]): string {
-  const read = field.agg ? `${field.agg}(${source(field)})` : source(field);
-  const named = field.person ? `${read} by name` : read;
+  const read = field.field ?? "";
+  const applied = field.agg ? `${field.agg}(${read})` : read;
 
-  return `${named} as ${field.as_name}`;
+  return `${applied} as ${field.as_name}`;
 }
 
 export function MetricSummary({
@@ -37,12 +37,8 @@ export function MetricSummary({
 
   return (
     <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5">
-      <Row label="Table">
-        <code className="font-mono">
-          {definition.database
-            ? `${definition.database}.${definition.table}`
-            : definition.table}
-        </code>
+      <Row label="Dataset">
+        <code className="font-mono">{definition.dataset}</code>
       </Row>
       <Row label="Fields">
         <span className="font-mono">
@@ -58,7 +54,7 @@ export function MetricSummary({
         <Row label="Filtered">
           <span className="font-mono">
             {filters
-              .map((f) => `${source(f)} ${f.op} ${String(f.value)}`)
+              .map((f) => `${f.field ?? ""} ${f.op} ${String(f.value)}`)
               .join(", ")}
           </span>
         </Row>

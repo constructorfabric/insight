@@ -8,6 +8,7 @@ import {
   CustomApiError,
   fetchDashboard,
   fetchDashboardNames,
+  fetchMetric,
   fetchWidget,
   runMetric,
 } from "./custom-client";
@@ -16,7 +17,7 @@ const mockFetch = fetchWithAuth as unknown as ReturnType<typeof vi.fn>;
 
 function response(
   body: unknown,
-  init?: { ok?: boolean; status?: number },
+  init?: { ok?: boolean; status?: number }
 ): Response {
   return {
     ok: init?.ok ?? true,
@@ -44,13 +45,13 @@ describe("fetchDashboardNames", () => {
     await fetchDashboardNames({ search: "git ops", limit: 50, offset: 50 });
 
     expect(mockFetch).toHaveBeenCalledWith(
-      "/api/v3/v1/dashboards?q=git+ops&limit=50&offset=50",
+      "/api/v3/v1/dashboards?q=git+ops&limit=50&offset=50"
     );
   });
 
   it("surfaces a failure as an API error", async () => {
     mockFetch.mockResolvedValueOnce(
-      response({ title: "forbidden" }, { ok: false, status: 403 }),
+      response({ title: "forbidden" }, { ok: false, status: 403 })
     );
 
     await expect(fetchDashboardNames()).rejects.toBeInstanceOf(CustomApiError);
@@ -58,9 +59,9 @@ describe("fetchDashboardNames", () => {
 });
 
 describe("fetchDashboard", () => {
-  it("reads one dashboard by name", async () => {
+  it("reads one dashboard by name, out of the envelope it arrives in", async () => {
     const dashboard = { title: "Engineering", widgets: ["commits_table"] };
-    mockFetch.mockResolvedValueOnce(response(dashboard));
+    mockFetch.mockResolvedValueOnce(response({ body: dashboard }));
 
     await expect(fetchDashboard("engineering")).resolves.toEqual(dashboard);
     expect(mockFetch).toHaveBeenCalledWith("/api/v3/v1/dashboards/engineering");
@@ -68,12 +69,45 @@ describe("fetchDashboard", () => {
 
   it("encodes the name into the path", async () => {
     mockFetch.mockResolvedValueOnce(
-      response({ title: "x", widgets: [] }),
+      response({ body: { title: "x", widgets: [] } })
     );
 
     await fetchDashboard("a/b?c");
 
     expect(mockFetch).toHaveBeenCalledWith("/api/v3/v1/dashboards/a%2Fb%3Fc");
+  });
+
+  it("reads a metric with the clock a window over it would use", async () => {
+    const definition = {
+      dataset: "commits",
+      fields: [{ agg: "count", type: "int", as_name: "total" }],
+    };
+    mockFetch.mockResolvedValueOnce(
+      response({
+        body: definition,
+        clock: { field: "occurred_at", from: "dataset" },
+      })
+    );
+
+    await expect(fetchMetric("commits_per_day")).resolves.toEqual({
+      definition,
+      clock: { field: "occurred_at", from: "dataset" },
+    });
+  });
+
+  // A metric nothing dates is windowed by nothing, and the absent clock is
+  // what says so - the body cannot, because the date may be the dataset's.
+  it("reads a metric that nothing dates without one", async () => {
+    const definition = {
+      dataset: "commits",
+      fields: [{ agg: "count", type: "int", as_name: "total" }],
+    };
+    mockFetch.mockResolvedValueOnce(response({ body: definition }));
+
+    await expect(fetchMetric("all_commits")).resolves.toEqual({
+      definition,
+      clock: undefined,
+    });
   });
 
   it("surfaces a failure as an API error", async () => {
@@ -84,9 +118,13 @@ describe("fetchDashboard", () => {
 });
 
 describe("fetchWidget", () => {
-  it("reads one widget by name", async () => {
-    const widget = { type: "table", metric: "commits_per_day", columns: ["day", "lines"] };
-    mockFetch.mockResolvedValueOnce(response(widget));
+  it("reads one widget by name, out of the envelope it arrives in", async () => {
+    const widget = {
+      type: "table",
+      metric: "commits_per_day",
+      columns: ["day", "lines"],
+    };
+    mockFetch.mockResolvedValueOnce(response({ body: widget }));
 
     await expect(fetchWidget("commits_table")).resolves.toEqual(widget);
     expect(mockFetch).toHaveBeenCalledWith("/api/v3/v1/widgets/commits_table");
@@ -107,13 +145,13 @@ describe("runMetric", () => {
     await expect(runMetric("commits_per_day")).resolves.toEqual(result);
     expect(mockFetch).toHaveBeenCalledWith(
       "/api/v3/v1/metrics/commits_per_day/run",
-      expect.objectContaining({ method: "POST" }),
+      expect.objectContaining({ method: "POST" })
     );
   });
 
   it("surfaces a failure as an API error rather than an empty result", async () => {
     mockFetch.mockResolvedValueOnce(
-      response({ detail: "unknown table `evnts`" }, { ok: false, status: 400 }),
+      response({ detail: "unknown table `evnts`" }, { ok: false, status: 400 })
     );
 
     await expect(runMetric("broken")).rejects.toBeInstanceOf(CustomApiError);

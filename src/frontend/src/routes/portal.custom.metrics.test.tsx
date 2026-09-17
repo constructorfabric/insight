@@ -40,25 +40,30 @@ beforeEach(() => {
 
 describe("/portal/custom/metrics", () => {
   it("names every metric and reads its query back", async () => {
-    vi.mocked(customClient.fetchMetricNames).mockResolvedValue({ names: [
-      "lines_per_day",
-    ], total: 1 });
+    vi.mocked(customClient.fetchMetricNames).mockResolvedValue({
+      names: ["lines_per_day"],
+      total: 1,
+    });
     vi.mocked(customClient.fetchMetric).mockResolvedValue({
-      table: "events",
-      fields: [
-        { json: "day", type: "string", as_name: "day" },
-        { json: "lines", type: "int", agg: "sum", as_name: "total_lines" },
-      ],
-      group_by: ["day"],
-      filters: [{ json: "event", type: "string", op: "eq", value: "commit" }],
-      order_by: { field: "total_lines", direction: "desc" },
-      limit: 100,
+      definition: {
+        dataset: "commits",
+        fields: [
+          { field: "day", type: "string", as_name: "day" },
+          { field: "lines", type: "int", agg: "sum", as_name: "total_lines" },
+        ],
+        group_by: ["day"],
+        filters: [
+          { field: "event", type: "string", op: "eq", value: "commit" },
+        ],
+        order_by: { field: "total_lines", direction: "desc" as const },
+        limit: 100,
+      },
     });
 
     render(<Component />, { wrapper });
 
     expect(await screen.findByText("lines_per_day")).toBeInTheDocument();
-    expect(await screen.findByText("events")).toBeInTheDocument();
+    expect(await screen.findByText("commits")).toBeInTheDocument();
     // The aggregate and its alias, so a reader can tell which column is which.
     expect(
       await screen.findByText("day as day, sum(lines) as total_lines")
@@ -69,48 +74,55 @@ describe("/portal/custom/metrics", () => {
     expect(await screen.findByText("100")).toBeInTheDocument();
   });
 
-  it("reads back a query over a real table, by column and by person", async () => {
+  it("reads back a query over a dataset, by its declared fields", async () => {
     // Metrics grew columns, a database and a resolved person after this card
     // was written, and it printed `undefined` for every one of them.
-    vi.mocked(customClient.fetchMetricNames).mockResolvedValue({ names: [
-      "pr_merged_by_author",
-    ], total: 1 });
+    vi.mocked(customClient.fetchMetricNames).mockResolvedValue({
+      names: ["pr_merged_by_author"],
+      total: 1,
+    });
     vi.mocked(customClient.fetchMetric).mockResolvedValue({
-      database: "silver",
-      table: "class_git_pull_requests",
-      fields: [
-        {
-          column: "author_email",
-          type: "string",
-          as_name: "author_name",
-          person: "email",
-        },
-        { column: "pr_id", type: "int", agg: "count", as_name: "merged" },
-      ],
-      group_by: ["author_name"],
-      filters: [{ column: "state", type: "string", op: "eq", value: "MERGED" }],
+      definition: {
+        dataset: "pull_requests",
+        fields: [
+          { field: "author", type: "string", as_name: "author_name" },
+          {
+            field: "pull_request",
+            type: "int",
+            agg: "count",
+            as_name: "merged",
+          },
+        ],
+        group_by: ["author_name"],
+        filters: [
+          { field: "state", type: "string", op: "eq", value: "MERGED" },
+        ],
+      },
     });
 
     render(<Component />, { wrapper });
 
-    expect(
-      await screen.findByText("silver.class_git_pull_requests")
-    ).toBeInTheDocument();
+    expect(await screen.findByText("pull_requests")).toBeInTheDocument();
     expect(
       await screen.findByText(
-        "author_email by name as author_name, count(pr_id) as merged"
+        "author as author_name, count(pull_request) as merged"
       )
     ).toBeInTheDocument();
     expect(await screen.findByText("state eq MERGED")).toBeInTheDocument();
   });
 
   it("counts rows without naming a column", async () => {
-    vi.mocked(customClient.fetchMetricNames).mockResolvedValue({ names: ["how_many"], total: 1 });
+    vi.mocked(customClient.fetchMetricNames).mockResolvedValue({
+      names: ["how_many"],
+      total: 1,
+    });
     vi.mocked(customClient.fetchMetric).mockResolvedValue({
-      table: "silver.class_git_commits",
-      fields: [{ type: "int", agg: "count", as_name: "commits" }],
-      group_by: [],
-      filters: [],
+      definition: {
+        dataset: "commits",
+        fields: [{ type: "int", agg: "count", as_name: "commits" }],
+        group_by: [],
+        filters: [],
+      },
     });
 
     render(<Component />, { wrapper });
@@ -119,12 +131,17 @@ describe("/portal/custom/metrics", () => {
   });
 
   it("leaves out the rows a metric does not use", async () => {
-    vi.mocked(customClient.fetchMetricNames).mockResolvedValue({ names: ["everything"], total: 1 });
+    vi.mocked(customClient.fetchMetricNames).mockResolvedValue({
+      names: ["everything"],
+      total: 1,
+    });
     vi.mocked(customClient.fetchMetric).mockResolvedValue({
-      table: "events",
-      fields: [{ json: "lines", type: "int", as_name: "lines" }],
-      group_by: [],
-      filters: [],
+      definition: {
+        dataset: "commits",
+        fields: [{ field: "lines", type: "int", as_name: "lines" }],
+        group_by: [],
+        filters: [],
+      },
     });
 
     render(<Component />, { wrapper });
@@ -137,7 +154,10 @@ describe("/portal/custom/metrics", () => {
   });
 
   it("says so when there are no metrics yet", async () => {
-    vi.mocked(customClient.fetchMetricNames).mockResolvedValue({ names: [], total: 0 });
+    vi.mocked(customClient.fetchMetricNames).mockResolvedValue({
+      names: [],
+      total: 0,
+    });
 
     render(<Component />, { wrapper });
 
@@ -157,15 +177,17 @@ describe("/portal/custom/metrics", () => {
   });
 
   it("keeps the rest of the page when one metric fails to load", async () => {
-    vi.mocked(customClient.fetchMetricNames).mockResolvedValue({ names: [
-      "broken",
-      "fine",
-    ], total: 2 });
+    vi.mocked(customClient.fetchMetricNames).mockResolvedValue({
+      names: ["broken", "fine"],
+      total: 2,
+    });
     vi.mocked(customClient.fetchMetric).mockImplementation(async (name) => {
       if (name === "broken") throw new Error("that metric is gone");
       return {
-        table: "events",
-        fields: [{ json: "lines", type: "int", as_name: "lines" }],
+        definition: {
+          dataset: "commits",
+          fields: [{ field: "lines", type: "int", as_name: "lines" }],
+        },
       };
     });
 
@@ -178,8 +200,10 @@ describe("/portal/custom/metrics", () => {
   });
   it("says how many metrics there are, and reads the next page at the end", async () => {
     vi.mocked(customClient.fetchMetric).mockResolvedValue({
-      table: "events",
-      fields: [{ json: "lines", type: "int", as_name: "lines" }],
+      definition: {
+        dataset: "commits",
+        fields: [{ field: "lines", type: "int", as_name: "lines" }],
+      },
     });
     vi.mocked(customClient.fetchMetricNames).mockImplementation(
       async ({ offset = 0 } = {}) =>
@@ -205,8 +229,10 @@ describe("/portal/custom/metrics", () => {
       total: 1,
     });
     vi.mocked(customClient.fetchMetric).mockResolvedValue({
-      table: "events",
-      fields: [{ json: "lines", type: "int", as_name: "lines" }],
+      definition: {
+        dataset: "commits",
+        fields: [{ field: "lines", type: "int", as_name: "lines" }],
+      },
     });
 
     render(<Component />, { wrapper });

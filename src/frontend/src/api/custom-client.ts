@@ -47,38 +47,60 @@ export type Widget = TableWidget | SeriesWidget | StatWidget | PieWidget;
 /**
  * A metric's stored query, as the service interprets it.
  *
- * A field reads either a key inside an ingested payload (`json`) or a real
- * column of a table on the stand (`column`) — never both, and a lone `count`
- * needs neither.
+ * Every field names a field the dataset declares. Where a value sits in a
+ * record is the declaration's to say, so a metric never says it.
  */
 export interface MetricDefinition {
-  database?: string;
-  table: string;
+  /** The dataset this metric reads. Every metric reads one. */
+  dataset: string;
   /**
-   * The timestamp a reader may window and bucket by. A metric without one
-   * answers every row, whatever the board's picker is set to.
+   * The declared field a reader may window and bucket by. Left out, the
+   * dataset's own main date is used - which only the declaration knows, so
+   * the service reports the one in force rather than the body implying it.
    */
-  time?: { json?: string; column?: string; type?: string };
+  time?: { field?: string };
   /** The widest window this metric will answer, as an ISO duration. */
   max_range?: string;
   fields: {
-    json?: string;
-    column?: string;
+    field?: string;
     type: string;
     agg?: string;
     as_name: string;
-    person?: "email" | "id";
   }[];
   group_by?: string[];
   filters?: {
-    json?: string;
-    column?: string;
+    field?: string;
     type: string;
     op: string;
     value: unknown;
   }[];
   order_by?: { field: string; direction?: "asc" | "desc" };
   limit?: number;
+}
+
+/**
+ * The date a window over a metric selects by, and who decided it.
+ *
+ * A metric over a dataset may name no date and still be windowed, because the
+ * dataset marks one, so its stored body cannot say whether a card drawn from
+ * it follows the board's window. This can.
+ */
+export interface EffectiveClock {
+  field: string;
+  from: "metric" | "dataset";
+}
+
+/** A stored definition as the service hands it back. */
+interface DefinitionResponse<T> {
+  body: T;
+  /** Only a metric has one, and only when a window has a date to select by. */
+  clock?: EffectiveClock;
+}
+
+/** A metric as it is stored, with the clock a window over it would use. */
+export interface StoredMetric {
+  definition: MetricDefinition;
+  clock?: EffectiveClock;
 }
 
 export interface MetricResult {
@@ -233,7 +255,9 @@ export async function fetchDashboard(name: string): Promise<Dashboard> {
   const res = await fetchWithAuth(
     `${BASE}/dashboards/${encodeURIComponent(name)}`
   );
-  return readJson<Dashboard>(res);
+  const read = await readJson<DefinitionResponse<Dashboard>>(res);
+
+  return read.body;
 }
 
 export async function fetchMetricNames(
@@ -243,11 +267,13 @@ export async function fetchMetricNames(
   return readJson<NamePage>(res);
 }
 
-export async function fetchMetric(name: string): Promise<MetricDefinition> {
+export async function fetchMetric(name: string): Promise<StoredMetric> {
   const res = await fetchWithAuth(
     `${BASE}/metrics/${encodeURIComponent(name)}`
   );
-  return readJson<MetricDefinition>(res);
+  const read = await readJson<DefinitionResponse<MetricDefinition>>(res);
+
+  return { definition: read.body, clock: read.clock };
 }
 
 export async function fetchWidgetNames(
@@ -261,7 +287,9 @@ export async function fetchWidget(name: string): Promise<Widget> {
   const res = await fetchWithAuth(
     `${BASE}/widgets/${encodeURIComponent(name)}`
   );
-  return readJson<Widget>(res);
+  const read = await readJson<DefinitionResponse<Widget>>(res);
+
+  return read.body;
 }
 
 /**
