@@ -9,6 +9,9 @@ use crate::domain::query::time_window::{Bounds, Grain, Window};
 
 #[derive(Debug, Deserialize)]
 pub(super) struct TimeField {
+    /// The declared field of the dataset the window selects by.
+    #[serde(default, rename = "field")]
+    pub(super) declared: Option<String>,
     #[serde(default)]
     pub(super) json: Option<String>,
     #[serde(default)]
@@ -22,6 +25,11 @@ fn datetime_type() -> String {
 }
 
 impl TimeField {
+    /// The declared field this windows by, when it names one.
+    pub(super) fn reads(&self) -> Option<&str> {
+        self.declared.as_deref()
+    }
+
     pub(super) fn source(&self) -> Result<Source<'_>, MetricQueryError> {
         if self.r#type != "datetime" {
             return Err(MetricQueryError::ClockType(self.r#type.clone()));

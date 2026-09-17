@@ -27,6 +27,16 @@ pub(crate) enum FieldType {
 }
 
 impl FieldType {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::String => "a string",
+            Self::Int => "a whole number",
+            Self::Float => "a number",
+            Self::Bool => "a flag",
+            Self::Datetime => "a datetime",
+        }
+    }
+
     pub(crate) fn is_numeric(self) -> bool {
         match self {
             Self::Int | Self::Float => true,
@@ -102,6 +112,13 @@ pub(crate) struct Declaration {
 impl Declaration {
     pub(crate) fn field(&self, name: &str) -> Option<&Field> {
         self.fields.iter().find(|field| field.name == name)
+    }
+
+    pub(crate) fn field_names(&self) -> Vec<&str> {
+        self.fields
+            .iter()
+            .map(|field| field.name.as_str())
+            .collect()
     }
 
     /// The field a window selects by when a metric names none.

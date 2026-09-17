@@ -8,56 +8,11 @@ use std::collections::HashSet;
 
 use super::declaration::{BUCKET_COLUMN, Declaration, FieldType, MAX_PATH_SEGMENTS};
 use crate::domain::definition::DefinitionName;
+use crate::domain::violation::{Reason, Violation};
 
 /// Catalogue paths a dataset may not take, because a static segment of the
 /// portal already answers on them.
 const RESERVED_NAMES: [&str; 4] = ["metrics", "widgets", "dashboards", "datasets"];
-
-/// Why one part of a declaration cannot be stored.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Reason {
-    Missing,
-    Unknown,
-    Duplicate,
-    Malformed,
-    NotAdmissible,
-}
-
-impl Reason {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Missing => "MISSING",
-            Self::Unknown => "UNKNOWN",
-            Self::Duplicate => "DUPLICATE",
-            Self::Malformed => "MALFORMED",
-            Self::NotAdmissible => "NOT_ADMISSIBLE",
-        }
-    }
-}
-
-/// One problem, addressed to the place in the body that carries it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Violation {
-    /// Where the problem is, as the submitted body is shaped:
-    /// `fields[2].type`, `row_identity[0]`, `name`.
-    pub(crate) field: String,
-    pub(crate) reason: Reason,
-    pub(crate) detail: String,
-}
-
-impl Violation {
-    fn new(field: impl Into<String>, reason: Reason, detail: impl Into<String>) -> Self {
-        Self {
-            field: field.into(),
-            reason,
-            detail: detail.into(),
-        }
-    }
-
-    pub(crate) fn reason_code(&self) -> &'static str {
-        self.reason.as_str()
-    }
-}
 
 /// Checks a declaration, reporting every problem rather than the first.
 pub(crate) fn validate(name: &str, declaration: &Declaration) -> Vec<Violation> {

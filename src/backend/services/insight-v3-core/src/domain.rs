@@ -15,3 +15,4 @@ pub(crate) mod kinds;
 pub(crate) mod metric_run;
 pub(crate) mod query;
 pub(crate) mod surfaces;
+pub(crate) mod violation;

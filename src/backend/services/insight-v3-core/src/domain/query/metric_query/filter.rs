@@ -7,6 +7,9 @@ use super::field::{FieldType, Source};
 
 #[derive(Debug, Deserialize)]
 pub(super) struct Filter {
+    /// The declared field of the dataset this compares.
+    #[serde(default, rename = "field")]
+    pub(super) declared: Option<String>,
     #[serde(default)]
     pub(super) json: Option<String>,
     #[serde(default)]
@@ -17,6 +20,11 @@ pub(super) struct Filter {
 }
 
 impl Filter {
+    /// The declared field this compares, when it names one.
+    pub(super) fn reads(&self) -> Option<&str> {
+        self.declared.as_deref()
+    }
+
     pub(super) fn source(&self) -> Result<Source<'_>, MetricQueryError> {
         Source::resolve(self.json.as_deref(), self.column.as_deref())
             .ok_or_else(|| MetricQueryError::FieldSource("a filter".to_owned()))

@@ -40,6 +40,10 @@ impl Direction {
 
 #[derive(Debug, Deserialize)]
 pub(super) struct Field {
+    /// The declared field of the dataset this reads. The two below are how a
+    /// metric addressed a value before datasets.
+    #[serde(default, rename = "field")]
+    pub(super) declared: Option<String>,
     #[serde(default)]
     pub(super) json: Option<String>,
     #[serde(default)]
@@ -71,6 +75,27 @@ pub(super) struct Field {
 }
 
 impl Field {
+    /// The declared field this reads, when it names one.
+    pub(super) fn reads(&self) -> Option<&str> {
+        self.declared.as_deref()
+    }
+
+    /// What this field does to the value it reads.
+    pub(super) fn aggregate(&self) -> Option<super::Aggregate> {
+        self.agg.map(|agg| {
+            if agg.arithmetic() {
+                super::Aggregate::Arithmetic
+            } else {
+                super::Aggregate::Ordering
+            }
+        })
+    }
+
+    /// The conditions this aggregate alone keeps rows by.
+    pub(super) fn conditions(&self) -> &[Filter] {
+        &self.when
+    }
+
     pub(super) fn source(&self) -> Result<Source<'_>, MetricQueryError> {
         Source::resolve(self.json.as_deref(), self.column.as_deref())
             .ok_or_else(|| MetricQueryError::FieldSource(format!("field `{}`", self.as_name)))
@@ -312,6 +337,14 @@ pub(super) enum Agg {
 }
 
 impl Agg {
+    /// Whether this aggregate needs a number under it.
+    pub(super) fn arithmetic(self) -> bool {
+        match self {
+            Self::Sum | Self::Avg => true,
+            Self::Count | Self::Min | Self::Max => false,
+        }
+    }
+
     pub(super) fn sql(self) -> &'static str {
         match self {
             Self::Count => "count",

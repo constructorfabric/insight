@@ -30,8 +30,42 @@ use crate::domain::query::time_window::WindowError;
 /// table is never mistaken for one a join brought in.
 const FACT_ALIAS: &str = "__f";
 
+/// One place a metric names a field of its dataset.
+#[derive(Debug)]
+pub(crate) struct Reference<'a> {
+    /// Where in the submitted body this reference sits.
+    pub(crate) at: String,
+    pub(crate) field: &'a str,
+    pub(crate) used: Used<'a>,
+}
+
+/// What a metric does with the field it names, which is what decides whether
+/// the declared type admits it.
+#[derive(Debug)]
+pub(crate) enum Used<'a> {
+    /// Selected, with the aggregate applied to it if there is one.
+    Selected(Option<Aggregate>),
+    /// Compared against a value.
+    Compared(&'a serde_json::Value),
+    /// Read as the window's clock.
+    Clock,
+}
+
+/// The aggregates that need a number under them, told from those that do not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Aggregate {
+    /// Sum or average, which only a number admits.
+    Arithmetic,
+    /// Count, minimum or maximum, which any type admits.
+    Ordering,
+}
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct MetricQuery {
+    /// The dataset this metric reads. The relation below is how metrics
+    /// addressed data before datasets, and is on its way out.
+    #[serde(default)]
+    dataset: Option<String>,
     #[serde(default)]
     database: Option<String>,
     table: String,
@@ -52,6 +86,90 @@ pub(crate) struct MetricQuery {
 
 /// What this query addresses, and whether the clock it declares is sound.
 impl MetricQuery {
+    /// The dataset this metric reads, when it names one.
+    #[expect(dead_code, reason = "read by the metric write path and the compiler")]
+    pub(crate) fn dataset(&self) -> Option<&str> {
+        self.dataset.as_deref()
+    }
+
+    /// Every declared field this metric names: the source of each selected
+    /// field, of each filter, and of the clock.
+    ///
+    /// Told apart from the names the metric produces, which are its own
+    /// columns and answer to nothing in the declaration.
+    pub(crate) fn field_references(&self) -> Vec<Reference<'_>> {
+        let mut named = Vec::new();
+
+        for (index, field) in self.fields.iter().enumerate() {
+            if let Some(read) = field.reads() {
+                named.push(Reference {
+                    at: format!("fields[{index}].field"),
+                    field: read,
+                    used: Used::Selected(field.aggregate()),
+                });
+            }
+            for (inner, condition) in field.conditions().iter().enumerate() {
+                if let Some(read) = condition.reads() {
+                    named.push(Reference {
+                        at: format!("fields[{index}].when[{inner}].field"),
+                        field: read,
+                        used: Used::Compared(&condition.value),
+                    });
+                }
+            }
+        }
+
+        for (index, filter) in self.filters.iter().enumerate() {
+            if let Some(read) = filter.reads() {
+                named.push(Reference {
+                    at: format!("filters[{index}].field"),
+                    field: read,
+                    used: Used::Compared(&filter.value),
+                });
+            }
+        }
+
+        if let Some(read) = self.time.as_ref().and_then(TimeField::reads) {
+            named.push(Reference {
+                at: "time.field".to_owned(),
+                field: read,
+                used: Used::Clock,
+            });
+        }
+
+        named
+    }
+
+    /// The columns this metric produces, which is what its grouping and its
+    /// ordering may name.
+    pub(crate) fn output_names(&self) -> Vec<&str> {
+        self.fields
+            .iter()
+            .map(|field| field.as_name.as_str())
+            .collect()
+    }
+
+    /// Where the grouping and the ordering name a column, with the place in
+    /// the body each came from.
+    pub(crate) fn output_references(&self) -> Vec<(String, &str)> {
+        let mut named: Vec<(String, &str)> = self
+            .group_by
+            .iter()
+            .enumerate()
+            .map(|(index, group)| (format!("group_by[{index}]"), group.as_str()))
+            .collect();
+
+        if let Some(order) = self.order_by.as_ref() {
+            named.push(("order_by.field".to_owned(), order.field.as_str()));
+        }
+
+        named
+    }
+
+    /// The clock the metric names itself, if it names one.
+    pub(crate) fn own_clock(&self) -> Option<&str> {
+        self.time.as_ref().and_then(TimeField::reads)
+    }
     /// The table alone, with any database it was written with stripped off.
     pub(crate) fn table(&self) -> &str {
         self.split().1

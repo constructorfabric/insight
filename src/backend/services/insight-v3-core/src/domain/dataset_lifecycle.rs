@@ -14,7 +14,8 @@ use super::datasets::{
 use super::definition::DefinitionName;
 use super::kinds::dataset::declaration::Declaration;
 use super::kinds::dataset::state::{DatasetState, Operation};
-use super::kinds::dataset::validate::{Violation, validate};
+use super::kinds::dataset::validate::validate;
+use super::violation::Violation;
 use crate::store::dataset_tables::{DatasetTableError, DatasetTables, Shape};
 
 /// Creating and removing datasets, which only an administrator does.
