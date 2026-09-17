@@ -56,8 +56,8 @@ Derive the whole table in dbt, per `(issue, field)`, from three bronze inputs.
 
 The reconstruction walks each field's history from newest to oldest, reverse-
 applying every event to the current value, so the oldest emitted row is the
-field's value at issue creation. Each `(issue, field)` pair is independent,
-which is what makes the incremental strategy cheap (§7).
+field's value at issue creation. Each issue is independent of every other,
+which is what lets a run recompute only the issues bronze touched (§7).
 
 ### 2.1 A backward fold is needed for one class only
 
@@ -707,25 +707,33 @@ NULL, which carries no information; those are skipped.
 
 ## 7. Incremental strategy
 
-No high-water mark. The unit of recomputation is the `(issue, field)` pair.
+The unit of recomputation is the **issue**, not the event and not the
+`(issue, field)` pair. Only the element-wise kinds fold state across an issue's
+event sequence (§2.1), but they do fold, so the state after event N needs every
+earlier event of that issue; and the synthetic rows — creation marker,
+`synthetic_initial`, `retired_field`, `snapshot_diff` — are functions of the
+whole issue. Nothing smaller than the issue can be recomputed on its own, and
+nothing can be appended: a changelog entry re-emitted without one of its items,
+or an issue whose key changed, leaves rows behind that only a replacement
+removes.
 
-1. Find pairs whose changelog set in bronze differs from what the output table
-   already records — a new `changelog_id` for that pair, or a changed issue
-   snapshot.
-2. Recompute those pairs **in full**, from the current value backwards.
-3. Replace by `delete+insert` keyed on the pair.
+The model is `materialized='incremental'` with `delete+insert` keyed on
+`(insight_source_id, issue_id)`. A run:
 
-This is idempotent, removes the seam entirely, and makes `--full-refresh` work
-by ordinary dbt semantics. It also retires
-`reset_task_field_history_on_full_refresh` and the `CREATE TABLE IF NOT EXISTS`
-macro that forced it to exist.
+1. finds the **touched** issues — those for which bronze holds something newer
+   than the version their journal rows carry: an issue row or a changelog entry
+   whose `_airbyte_extracted_at` exceeds the issue's `_version` in the table.
+   An issue with no rows at all is touched by definition;
+2. derives the complete journal of every touched issue, reading nothing of any
+   other — the scope narrows every read of the issue table, the changelog items
+   and the snapshot, so the JSON of an untouched issue is never scanned;
+3. deletes every row of the touched issues and inserts the derived ones.
 
-The seam check survives as a **test**, not as a mechanism: recomputing a pair
-must reproduce the rows it previously held, for every event at or below the
-issue snapshot's `collected_at`. Events newer than the snapshot are excluded
-from the comparison — the issue stream and the history stream are read at
-different points within a sync, so an event newer than the snapshot is expected
-and self-heals on the next run.
+This is what keeps the build's memory proportional to the day's churn instead
+of to the history, which was the reason for the change: the query's peak sits
+in operators that grow with the input and that the spill settings do not bound
+— lowering those settings raises the peak rather than lowering it, and the peak
+falls with the share of issues recomputed.
 
 Idempotence relies on `unique_key` being a pure function of content:
 
@@ -733,7 +741,10 @@ Idempotence relies on `unique_key` being a pure function of content:
 
 where `event_id` is the bronze `changelog_id` for changelog rows and
 `initial:{issue_id}` for synthetic rows. Two runs over the same bronze data
-therefore produce byte-identical keys, and ReplacingMergeTree collapses them.
+therefore produce byte-identical keys and byte-identical rows, and the
+transformation lane holds that in place: an incremental run over unchanged
+bronze changes nothing, and a run after a change reproduces what a full rebuild
+would (`tests/jira/transform/test_incremental_recompute.py`).
 
 The issue is named by its immutable id, not by `id_readable`. Jira changes the
 readable key when an issue moves between projects; a key built from it stored
@@ -747,26 +758,109 @@ never a join key. An entry whose row has no id names an issue the issue stream
 never delivered; it is left out of the journal and counted by
 `assert_jira_substream_rows_without_issue_id`. `jira_history_key` is the one
 place the formula lives, and `assert_jira_field_history_key_is_issue_keyed`
-recomputes it over every row.
+recomputes it over every row. Under incrementality this is also what makes a
+move harmless: the new key arrives as a newer issue row, the issue is touched,
+and its rows — keyed by the id, so the same rows — are replaced under the new
+`id_readable`. Were the key part of `unique_key`, the old rows would sit outside
+the replaced set forever.
 
-### 7.1 What a rebuild changes downstream
+### 7.1 The field catalogue is an input too
 
-The model is materialized as a table and recomputed in full on every run; the
-class it feeds is incremental and admits rows whose `_version` exceeds the
-newest it holds. A build-time `_version` would therefore make every rebuild
+`retired_field` and `unclassified_field` rows follow the current classification
+(`jira__task_field_kind`), and `synthetic_initial` rows follow which fields are
+modelled and how their values are read. A catalogue that changed — a field
+created, one reclassified, one renamed — therefore changes rows of issues bronze
+never touched, and an issue-scoped run would never revisit them.
+
+The classification the last build used is recorded on the journal table itself
+(its comment, written by the model's post-hook after a successful build): a
+hash over every `(source, field_id, field_kind, field_name)` of the whole
+catalogue, not only the modelled subset, because an `ignored` field decides
+what the unclassified arm leaves out. The record travels with the table, so a
+table that carries none — a fresh install, a dropped table, the first run after
+this mechanism landed — is rebuilt too. A field renamed is a shift like any
+other: the rebuild is what keeps "incremental output equals a full rebuild"
+true without exceptions, and renames are rare.
+
+A rebuild is not a separate mechanism: the touched set becomes every issue, and
+the `delete+insert` that follows replaces every row whose issue bronze still
+knows. That is every row the journal should hold — each arm derives its issues
+from the issue stream or from the changelog, and bronze forgets neither — so
+nothing has to be emptied first. A model cannot ask dbt for a real full refresh
+anyway: `config()` does nothing at run time, so only the CLI flag reaches
+`should_full_refresh()`, and dropping the table breaks the run because the
+materialization reads the target's existence before hooks fire.
+
+The one thing `delete+insert` cannot reach is a row left by an earlier shape of
+this model, keyed by an issue id bronze never had. The model's pre-hook removes
+exactly those, on rebuild runs only. Emptying the table instead would be
+shorter, and is worse where it matters: the expensive half of a rebuild is
+deriving the rows, and a run that dies there — at the memory ceiling this design
+exists to stay under — would leave the journal empty until the next night.
+Nothing destructive happens until the derivation has succeeded.
+
+A rebuild does write its rows twice, once into the relation `delete+insert`
+stages and once into the table. That cost is confined to rebuild runs.
+
+**A catalogue change therefore costs a whole rebuild, however small it was.**
+Adding one field to a Jira instance shifts the fingerprint, and the common case
+— a genuinely new field no existing issue carries — changes no existing row at
+all. Narrowing this to the issues a changed field actually reaches is a
+worthwhile follow-up: for each field whose kind or name moved, the issues
+holding rows for it, plus the issues holding `unclassified_field` rows for a
+field that has just become classifiable. It needs the previous classification
+kept per field rather than as one hash, so it is a table rather than a comment,
+and it is not attempted here.
+
+A change to the **models** is not detected this way. It ships as a major
+descriptor bump, which dispatches a full refresh (ADR-0015), as before.
+
+### 7.2 What a run changes downstream
+
+The class this model feeds is incremental and admits rows whose `_version`
+exceeds the newest it holds. A build-time `_version` would make every rebuild
 look entirely new to the class, and the class would delete and re-insert the
 whole Jira journal on every run.
 
 `_version` is instead the issue's *input freshness*: the newest
 `_airbyte_extracted_at` among the issue's own bronze row and its changelog
-entries, stamped on every row of that issue. Unchanged bronze reproduces the
-same versions, so the class leaves the issue alone; an issue that received
-anything has all its rows re-emitted under the new version, and `delete+insert`
-on `unique_key` replaces them. The GitHub arm versions its rows the same way.
+entries, stamped on every row of that issue — the same freshness the touched
+set is decided by, so an issue is recomputed exactly when its version moves.
+Unchanged bronze reproduces the same versions and the class leaves the issue
+alone; a touched issue has all its rows re-emitted under the new version, and
+the class's `delete+insert` on `unique_key` replaces them. The GitHub arm
+versions its rows the same way.
 
-The corollary is that a change to the models or to the field catalogue alone
-moves no version: it reaches the class through a full refresh, which a major
-descriptor bump dispatches (ADR-0015).
+The freshness is floored at the **catalogue epoch**: the catalogue's own
+extraction stamp at the last full rebuild, kept in the same record as the hash.
+Between rebuilds the floor is constant and moves no version. A rebuild forced
+by a catalogue shift or by a full refresh takes the current stamp as its epoch,
+so every row it writes is newer than anything the class holds and the class
+re-ingests the whole Jira journal once — which is what a rebuild that changed
+rows of untouched issues requires.
+
+The floor cannot hide a later change from the touched set. A rebuild's epoch is
+an extraction stamp the run has already read, so every extraction after it is
+larger, and an issue touched from then on compares greater than the floor its
+rows carry.
+
+**Deployment.** The first run on a warehouse that already holds this table finds
+no record, rebuilds through the path above, and records one — no descriptor bump
+and no operator step. That first rebuild raises every row's version to its
+epoch, so the class re-ingests the Jira journal once, exactly as it does after
+any full refresh; from the next run on, only touched issues move.
+
+Two limits of the composition, stated rather than solved here:
+
+- the class deletes only the keys the incoming batch carries. A row that
+  vanished from this model's output — a changelog item its entry no longer has,
+  a `retired_field` that came back — is gone from staging but stays in the
+  class until a full refresh. This was equally true of the full nightly rebuild;
+- the delete of a touched issue and the insert of its new rows are two
+  statements. A run that fails between them leaves the issue with no rows, which
+  the next run treats as touched and repairs; a run that fails inside the insert
+  can leave part of an issue, and its version then reads as current. A full
+  refresh, or any catalogue shift, repairs that too.
 
 ## 8. Long text in a side table
 
@@ -1038,8 +1132,9 @@ cheap and it fails loudly the first time someone reaches for a field id.
 - *bronze coverage*: every field key present with a non-null value in an issue's
   JSON must have at least one row for that issue in the history. The existing
   tests all run history → bronze; this is the missing direction.
-- *seam*: recomputation reproduces previously recorded rows, restricted to
-  events at or below the snapshot's `collected_at` (§7).
+- *seam*: an incremental run over unchanged bronze reproduces every row and
+  every version, and a run after a change produces what a full rebuild would
+  (§7; `tests/jira/transform/test_incremental_recompute.py`).
 - *retired-field recency*: no field is excluded for catalogue absence while
   carrying an event newer than the oldest `collected_at` in the catalogue
   (§3.2) — this is the guard that distinguishes a deleted field from one whose

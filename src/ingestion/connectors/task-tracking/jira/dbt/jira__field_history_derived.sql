@@ -3,7 +3,9 @@
 -- depends_on: {{ ref('jira__issue_field_snapshot') }}
 -- depends_on: {{ ref('jira__changelog_items') }}
 {{ config(
-    materialized='table',
+    materialized='incremental',
+    incremental_strategy='delete+insert',
+    unique_key=['insight_source_id', 'issue_id'],
     alias='jira__field_history_derived',
     schema='staging',
     engine='ReplacingMergeTree(_version)',
@@ -13,13 +15,33 @@
         'max_bytes_before_external_group_by': 2000000000,
         'max_bytes_before_external_sort': 2000000000,
     },
+    pre_hook="{{ jira_journal_drop_rows_bronze_cannot_account_for() }}",
+    post_hook="{{ jira_journal_record_catalogue() }}",
     tags=['staging', 'jira', 'silver:class_task_field_history']
 ) }}
+
+{%- set catalogue = jira_journal_catalogue_state() -%}
+{%- set touched_only = is_incremental() and not catalogue.rebuild -%}
 
 -- The per-(issue x field x event) journal, derived in dbt. The Jira producer of
 -- `silver.class_task_field_history`, joined there by the availability and
 -- lifecycle arms and by the GitHub arm. See
 -- `connectors/task-tracking/jira/specs/FIELD-HISTORY-IN-DBT.md`.
+--
+-- Recomputed per ISSUE (§7). The element-wise kinds fold state across an
+-- issue's whole event sequence, so no event can be appended on its own: an
+-- issue that received anything since the last run has its complete journal
+-- derived again and every row it held replaced. Issues bronze did not touch
+-- are not read. A field catalogue that differs from the one the last build
+-- used rebuilds the whole table, because `retired_field`,
+-- `unclassified_field` and `synthetic_initial` rows depend on it
+-- (`jira_journal_catalogue_state`).
+--
+-- INVARIANT: `delete+insert` alongside ReplacingMergeTree is deliberate, not
+-- two dedup mechanisms stacked. The engine collapses a key re-emitted with a
+-- newer version; only the delete removes a row that should no longer exist at
+-- all — an item its changelog entry no longer carries, a `retired_field` whose
+-- field came back. The class this feeds is keyed and materialized the same way.
 --
 -- Six kinds of row, matching the contract the class consumers rely on (§10):
 --   1. one creation marker per issue (`field_id = 'created'`, `_seq = 0`);
@@ -52,6 +74,70 @@ WITH kinds AS (
       AND field_id != 'created'
 ),
 
+{% if touched_only %}
+-- ── the issues this run recomputes ──────────────────────────────────────────
+-- An issue is touched when bronze holds something newer about it than the
+-- version its journal rows carry: its own row or a changelog entry extracted
+-- since. A row's `_version` is at least the issue's input freshness, so an
+-- issue whose inputs did not move compares equal and is left alone. An issue
+-- with no rows at all — new, or emptied by a build that did not finish — has
+-- nothing to compare against and is recomputed.
+--
+-- Narrow columns only: this reads every issue in bronze and every row of the
+-- journal, and neither the JSON nor the value arrays.
+input_freshness AS (
+    SELECT
+        insight_source_id,
+        issue_id,
+        max(extracted_at)                                 AS fresh_at
+    FROM (
+        SELECT
+            COALESCE(source_id, '')                       AS insight_source_id,
+            COALESCE(toString(jira_id), '')               AS issue_id,
+            toDateTime64(_airbyte_extracted_at, 3)        AS extracted_at
+        FROM {{ source('bronze_jira', 'jira_issue') }}
+        WHERE jira_id IS NOT NULL
+
+        UNION ALL
+
+        SELECT
+            insight_source_id,
+            assumeNotNull(jira_id)                        AS issue_id,
+            extracted_at
+        FROM {{ ref('jira__changelog_items') }}
+        WHERE jira_id IS NOT NULL
+    )
+    GROUP BY insight_source_id, issue_id
+),
+
+journal_versions AS (
+    SELECT
+        insight_source_id,
+        issue_id,
+        max(_version)                                     AS journal_version
+    FROM {{ this }}
+    GROUP BY insight_source_id, issue_id
+),
+
+touched AS (
+    SELECT
+        f.insight_source_id                               AS insight_source_id,
+        f.issue_id                                        AS issue_id
+    FROM input_freshness AS f
+    LEFT JOIN journal_versions AS v
+        ON v.insight_source_id = f.insight_source_id
+       AND v.issue_id = f.issue_id
+    WHERE toUnixTimestamp64Milli(f.fresh_at) > toInt64(COALESCE(v.journal_version, 0))
+),
+
+-- The set as ONE scalar, computed once for the whole statement. A CTE named in
+-- an `IN` is inlined at every reference, and the reads below reference the
+-- scope dozens of times once their own CTEs are expanded — each copy would
+-- scan the journal again. A scalar subquery is evaluated once and cached, and
+-- every predicate unpacks the same array (`jira_journal_issue_in_scope`).
+(SELECT groupArray((insight_source_id, issue_id)) FROM touched) AS touched_set,
+{% endif %}
+
 -- One row per issue: identity, creation time, reporter. Same two-pass dedup as
 -- the snapshot model — the aggregation carries only a raw id, never the JSON.
 issue_winner AS (
@@ -61,9 +147,15 @@ issue_winner AS (
     SELECT source_id, jira_id, argMax(_airbyte_raw_id, _airbyte_extracted_at) AS raw_id
     FROM {{ source('bronze_jira', 'jira_issue') }}
     WHERE jira_id IS NOT NULL
+    {% if touched_only -%}
+      AND {{ jira_journal_issue_in_scope("COALESCE(source_id, '')", "COALESCE(toString(jira_id), '')") }}
+    {%- endif %}
     GROUP BY source_id, jira_id
 ),
 
+-- The scope predicate is repeated on every read of the issue table rather than
+-- left to the join on `raw_id`: it is what lets the scan skip the JSON of the
+-- issues this run does not recompute.
 issues AS (
     SELECT
         COALESCE(i.source_id, '')                         AS insight_source_id,
@@ -75,6 +167,9 @@ issues AS (
         toDateTime64(i._airbyte_extracted_at, 3)          AS observed_at
     FROM {{ source('bronze_jira', 'jira_issue') }} AS i
     INNER JOIN issue_winner AS w ON i._airbyte_raw_id = w.raw_id
+    {% if touched_only -%}
+    WHERE {{ jira_journal_issue_in_scope("COALESCE(i.source_id, '')", "COALESCE(toString(i.jira_id), '')") }}
+    {%- endif %}
 ),
 
 -- The same winning bronze row, carrying the payload and the moment it was
@@ -88,6 +183,9 @@ issue_json AS (
         toDateTime64(i._airbyte_extracted_at, 3)          AS observed_at
     FROM {{ source('bronze_jira', 'jira_issue') }} AS i
     INNER JOIN issue_winner AS w ON i._airbyte_raw_id = w.raw_id
+    {% if touched_only -%}
+    WHERE {{ jira_journal_issue_in_scope("COALESCE(i.source_id, '')", "COALESCE(toString(i.jira_id), '')") }}
+    {%- endif %}
 ),
 
 -- Every changelog item, attributed to its issue by the issue's immutable id.
@@ -103,6 +201,9 @@ changelog_items AS (
         assumeNotNull(ci.jira_id)                         AS issue_id
     FROM {{ ref('jira__changelog_items') }} AS ci
     WHERE ci.jira_id IS NOT NULL
+    {% if touched_only -%}
+      AND {{ jira_journal_issue_in_scope('ci.insight_source_id', 'assumeNotNull(ci.jira_id)') }}
+    {%- endif %}
 ),
 
 -- The newest moment bronze received anything about an issue: its own row or
@@ -241,6 +342,9 @@ snapshot_element_wise AS (
         ON k.insight_source_id = s.insight_source_id
        AND k.field_id = s.field_id
     WHERE k.field_kind IN {{ jira_element_wise_kinds() }}
+    {% if touched_only -%}
+      AND {{ jira_journal_issue_in_scope('s.insight_source_id', 's.issue_id') }}
+    {%- endif %}
 ),
 
 snapshot AS (
@@ -251,6 +355,9 @@ snapshot AS (
         s.value_ids                                       AS value_ids,
         s.value_displays                                  AS value_displays
     FROM {{ ref('jira__issue_field_snapshot') }} AS s FINAL
+    {% if touched_only -%}
+    WHERE {{ jira_journal_issue_in_scope('s.insight_source_id', 's.issue_id') }}
+    {%- endif %}
 ),
 
 -- ── fields the issue stopped carrying ───────────────────────────────────────
@@ -959,9 +1066,11 @@ LEFT JOIN issues AS i
 -- time. A build-time stamp would make every rebuild of this table look new to
 -- `class_task_field_history`, whose incremental filter admits rows above its
 -- newest version, and the class would rewrite the whole Jira journal on every
--- run. A change to the models or to the field catalogue alone does not bump a
--- version; it reaches the class through a full refresh, which a major
--- descriptor bump dispatches.
+-- run. It is floored at the catalogue epoch — the catalogue's extraction stamp
+-- at the last full rebuild — so a rebuild forced by a catalogue shift or a full
+-- refresh reaches the class for every issue, and between rebuilds the floor is
+-- constant and moves nothing. A change to the models alone still needs a full
+-- refresh, which a major descriptor bump dispatches.
 SELECT
     j.unique_key,
     j.insight_source_id,
@@ -981,7 +1090,8 @@ SELECT
     j.value_displays,
     CAST(j.value_id_type AS LowCardinality(String))     AS value_id_type,
     j.collected_at,
-    toUInt64(toUnixTimestamp64Milli(f.fresh_at))        AS _version
+    toUInt64(greatest(toUnixTimestamp64Milli(f.fresh_at),
+                      toInt64({{ catalogue.epoch_ms }})))  AS _version
 FROM journal AS j
 INNER JOIN issue_freshness AS f
     ON f.insight_source_id = j.insight_source_id
