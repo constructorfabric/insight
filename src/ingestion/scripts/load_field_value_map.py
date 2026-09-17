@@ -87,7 +87,10 @@ DEFAULTS_COLUMNS = ("tenant_id", "insight_source_id", "field", "default_value")
 
 # Canonical domain per standardized field. A row for a field outside this set is
 # rejected: no consumer resolves it yet, so it could only mislead.
-FIELD_DOMAINS = {"issue_type": frozenset({"bug", "task", "unknown"})}
+FIELD_DOMAINS = {
+    "issue_type": frozenset({"bug", "task", "unknown"}),
+    "resolution": frozenset({"fixed", "duplicate", "wontfix", "unknown"}),
+}
 
 Key = tuple[str, str, str, str, str]
 DefaultKey = tuple[str, str, str]

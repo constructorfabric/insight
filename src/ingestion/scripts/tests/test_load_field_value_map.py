@@ -34,6 +34,7 @@ HEADER = "tenant_id\tinsight_source_id\tdata_source\tfield\tsource_key\tdisplay_
 ROW = "zz-test\tsrc-1\tjira\tissue_type\tstory\tStory\ttask"
 OTHER_ROW = "zz-test\tsrc-1\tgithub\tissue_type\t10404\tDefect\tbug"
 DEFAULT_ROW = "zz-test\tsrc-1\tissue_type\ttask"
+RESOLUTION_ROW = "zz-test\tsrc-1\tjira\tresolution\t1\tFixed\tfixed"
 
 
 def parse(text: str, name: str = "a.tsv") -> list[Mapping]:
@@ -120,8 +121,24 @@ class TestParsing:
             parse(line)
 
     def test_a_field_outside_the_supported_set_is_rejected_naming_the_set(self):
-        with pytest.raises(MappingFileError, match="field 'status' is not supported; supported fields: issue_type"):
+        expected = "field 'status' is not supported; supported fields: issue_type, resolution"
+        with pytest.raises(MappingFileError, match=expected):
             parse("zz-test\tsrc-1\tjira\tstatus\tdone\tDone\ttask")
+
+    def test_a_resolution_decision_is_accepted(self):
+        assert parse(RESOLUTION_ROW) == [Mapping("zz-test", "src-1", "jira", "resolution", "1", "Fixed", "fixed")]
+
+    @pytest.mark.parametrize(
+        ("value", "problem"),
+        [
+            ("resolved", "'resolved' for field 'resolution' is not one of duplicate, fixed, unknown, wontfix"),
+            ("Fixed", "'Fixed' for field 'resolution'"),
+        ],
+        ids=["outside-the-domain", "wrong-case"],
+    )
+    def test_a_resolution_target_outside_the_domain_is_rejected(self, value, problem):
+        with pytest.raises(MappingFileError, match=problem):
+            parse(f"zz-test\tsrc-1\tjira\tresolution\t1\tFixed\t{value}")
 
     @pytest.mark.parametrize(
         ("line", "problem"),
@@ -243,8 +260,14 @@ class TestDefaultsParsing:
         assert str(error.value) == f"defaults.tsv:2: {problem}"
 
     def test_a_field_outside_the_supported_set_is_rejected_naming_the_set(self):
-        with pytest.raises(MappingFileError, match="field 'status' is not supported; supported fields: issue_type"):
+        expected = "field 'status' is not supported; supported fields: issue_type, resolution"
+        with pytest.raises(MappingFileError, match=expected):
             parse_default("zz-test\tsrc-1\tstatus\ttask")
+
+    def test_a_resolution_default_is_accepted(self):
+        assert parse_default("zz-test\tsrc-1\tresolution\twontfix") == [
+            Default("zz-test", "src-1", "resolution", "wontfix")
+        ]
 
     @pytest.mark.parametrize(
         ("value", "problem"),

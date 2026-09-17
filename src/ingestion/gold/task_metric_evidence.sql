@@ -79,7 +79,10 @@ issue_facts AS (
                     ifNull(any(s.issue_type_key), '__unknown__'),
                     ifNull(any(s.issue_type_name), 'Type unknown')
                 ),
-                tuple('source', any(s.data_source), any(s.data_source))
+                tuple('source', any(s.data_source), any(s.data_source)),
+                -- The kind is the label too: the domain is bounded, and a
+                -- vendor name would fragment one class into many groups.
+                tuple('resolution', any(s.resolution_kind), any(s.resolution_kind))
             ] AS Array(Tuple(key String, value String, label Nullable(String)))
         ) AS type_dimensions
     FROM issue_state AS s
@@ -112,7 +115,8 @@ issue_item_evidence AS (
                 -- Without this, two trackers blend into one per-person figure
                 -- with no way to tell them apart, and an issue mirrored between
                 -- them is counted twice with nothing to say so.
-                tuple('source', data_source, data_source)
+                tuple('source', data_source, data_source),
+                tuple('resolution', resolution_kind, resolution_kind)
             ] AS Array(Tuple(key String, value String, label Nullable(String)))
         ) AS type_dimensions
     FROM issue_state
@@ -120,6 +124,12 @@ issue_item_evidence AS (
         [tuple('tasks_closed', toFloat64(1))],
         if(issue_kind = 'bug', [tuple('bugs_fixed', toFloat64(1))], []),
         if(issue_kind = 'task', [tuple('closed_non_bug', toFloat64(1))], []),
+        -- Closed-by-resolution-class subsets of tasks_closed. The unknown
+        -- class deliberately has no measure: the unclassified-closures alert
+        -- owns it.
+        if(resolution_kind = 'fixed', [tuple('closed_fixed', toFloat64(1))], []),
+        if(resolution_kind = 'duplicate', [tuple('closed_duplicate', toFloat64(1))], []),
+        if(resolution_kind = 'wontfix', [tuple('closed_wontfix', toFloat64(1))], []),
         if(
             due_date IS NOT NULL AND toDate(final_close_at) <= due_date,
             [tuple('due_date_on_time', toFloat64(1))],
