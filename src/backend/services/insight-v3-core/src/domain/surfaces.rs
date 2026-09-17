@@ -44,6 +44,8 @@ pub(crate) enum CustomError {
     Range(WindowError),
     #[error("no dataset named `{0}` is ready to be read")]
     DatasetNotReady(String),
+    #[error(transparent)]
+    Datasets(crate::domain::datasets::DatasetStoreError),
     #[error("this dataset cannot answer that metric - {}", crate::domain::violation::said(.0))]
     Unanswerable(Vec<Violation>),
 }
@@ -57,6 +59,7 @@ impl From<KindError> for CustomError {
             KindError::Range(source) => Self::Range(source),
             KindError::Store(source) => Self::Store(source),
             KindError::DatasetNotReady(named) => Self::DatasetNotReady(named),
+            KindError::Datasets(source) => Self::Datasets(source),
             KindError::Unanswerable(violations) => Self::Unanswerable(violations),
         }
     }
@@ -75,7 +78,7 @@ impl CustomError {
             | Self::DatasetNotReady(_)
             | Self::Unanswerable(_)
             | Self::Compile(_) => true,
-            Self::Run(_) | Self::Store(_) | Self::Catalog(_) => false,
+            Self::Run(_) | Self::Store(_) | Self::Catalog(_) | Self::Datasets(_) => false,
         }
     }
 }
@@ -212,7 +215,14 @@ impl<'a> Surfaces<'a> {
         }
 
         let metric: MetricQuery = serde_json::from_value(body.clone()).ok()?;
-        let ready = datasets::ready(self.datasets, metric.dataset()?).await?;
+        let held = datasets::ready(self.datasets, metric.dataset()?).await;
+        let ready = match held {
+            Ok(ready) => ready?,
+            Err(error) => {
+                tracing::error!(error = ?error, "could not read a metric's dataset");
+                return None;
+            }
+        };
 
         EffectiveClock::of(&metric, &ready.declaration)
     }

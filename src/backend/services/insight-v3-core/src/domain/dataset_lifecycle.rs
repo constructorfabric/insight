@@ -9,7 +9,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 use super::datasets::{
-    Attempt, DatasetStoreError, Datasets, Finish, OperationToken, Owning, Refused,
+    Attempt, DatasetStoreError, Datasets, Finish, OperationToken, Owning, Refused, Taken,
 };
 use super::definition::{DefinitionKind, DefinitionName, DefinitionStoreError, Definitions};
 use super::kinds::dataset::declaration::Declaration;
@@ -101,18 +101,17 @@ impl<'a> DatasetLifecycle<'a> {
             return Err(DatasetChangeError::Invalid(violations));
         }
 
-        if self.stands(name).await? {
-            return self.replace(name, body, &declaration).await;
+        // Whether this is a replacement or a new dataset is decided while the
+        // row is held, so a dataset that stands is never created over.
+        match self.datasets.take_create(name, body).await {
+            Ok(Taken::Stands) => self.replace(name, body, &declaration).await,
+            Ok(Taken::Attempt(attempt)) => self.bring_into_being(name, body, attempt).await,
+            Err(error) => {
+                held_by_another(name, &error);
+
+                Err(error.into())
+            }
         }
-
-        self.bring_into_being(name, body).await
-    }
-
-    /// Whether a ready dataset already answers to this name.
-    async fn stands(&self, name: &DefinitionName) -> Result<bool, DatasetChangeError> {
-        let held = self.datasets.get(name).await?;
-
-        Ok(held.is_some_and(|held| held.state == DatasetState::Ready))
     }
 
     /// The declaration of a dataset that stands is replaced where it lies,
@@ -134,7 +133,11 @@ impl<'a> DatasetLifecycle<'a> {
             return Err(DatasetChangeError::WouldBreak(broken));
         }
 
-        self.datasets.replace(name, body).await?;
+        // A removal may have taken the dataset since it was read, and then
+        // there is nothing standing to replace.
+        if !self.datasets.replace(name, body).await? {
+            return Err(DatasetChangeError::NotFound);
+        }
 
         Ok(body.clone())
     }
@@ -187,29 +190,40 @@ impl<'a> DatasetLifecycle<'a> {
         Ok(broken)
     }
 
+    /// Makes the table this attempt's records go into, and publishes the
+    /// dataset while it still owns it.
+    ///
+    /// Anything that goes wrong after the table exists takes it away again:
+    /// the declaration naming it is written last, so a table left behind is
+    /// one no reader could ever reach.
     async fn bring_into_being(
         &self,
         name: &DefinitionName,
         body: &Value,
+        attempt: Attempt,
     ) -> Result<Value, DatasetChangeError> {
-        let attempt = self
-            .datasets
-            .take_create(name, body)
-            .await
-            .inspect_err(|error| held_by_another(name, error))?;
         let table = attempt.token.table(name);
 
-        self.tables.provision(&table).await?;
+        if let Err(error) = self.tables.provision(&table).await {
+            self.discard(&table).await;
 
-        match self.record(name, &attempt, table.clone()).await? {
-            Owning::Held => Ok(body.clone()),
-            Owning::Lost => {
+            return Err(error.into());
+        }
+
+        match self.record(name, &attempt, table.clone()).await {
+            Ok(Owning::Held) => Ok(body.clone()),
+            Ok(Owning::Lost) => {
                 finished_stale(name, Operation::Create);
                 self.discard(&table).await;
 
                 Err(DatasetChangeError::Refused(Refused::Busy(
                     Operation::Create,
                 )))
+            }
+            Err(error) => {
+                self.discard(&table).await;
+
+                Err(error)
             }
         }
     }
@@ -222,9 +236,12 @@ impl<'a> DatasetLifecycle<'a> {
         &self,
         name: &DefinitionName,
     ) -> Result<Removal, DatasetChangeError> {
-        if self.datasets.get(name).await?.is_none() {
+        let Some(held) = self.datasets.get(name).await? else {
             return Err(DatasetChangeError::NotFound);
-        }
+        };
+        // Only a dataset that stood can be handed back as one: an abandoned
+        // create has no declaration anybody published.
+        let stood = held.state == DatasetState::Ready;
 
         let readers: Vec<String> = self
             .readers(name)
@@ -252,13 +269,16 @@ impl<'a> DatasetLifecycle<'a> {
             }
         };
 
-        self.drop_records(name).await.inspect_err(|error| {
+        if let Err(error) = self.drop_records(name).await {
             tracing::error!(
                 error = ?error,
                 dataset = name.as_str(),
                 "a dataset's table could not be dropped"
             );
-        })?;
+            self.release(name, &attempt, stood).await;
+
+            return Err(error);
+        }
 
         match self
             .datasets
@@ -317,6 +337,31 @@ impl<'a> DatasetLifecycle<'a> {
         }
 
         Ok(self.datasets.finish(name, token, Finish::Ready).await?)
+    }
+
+    /// Hands a dataset back to its readers when a removal could not take its
+    /// table away.
+    ///
+    /// Leaving the row mid-removal would hide a dataset that is still whole
+    /// from every surface, with no way back but a hand-written row.
+    async fn release(&self, name: &DefinitionName, attempt: &Attempt, stood: bool) {
+        if !stood {
+            return;
+        }
+
+        match self
+            .datasets
+            .finish(name, &attempt.token, Finish::Released)
+            .await
+        {
+            Ok(Owning::Held) => {}
+            Ok(Owning::Lost) => finished_stale(name, Operation::Remove),
+            Err(error) => tracing::error!(
+                error = ?error,
+                dataset = name.as_str(),
+                "a dataset could not be handed back after its removal failed"
+            ),
+        }
     }
 
     /// Takes away a table this attempt made and then lost the right to.

@@ -41,7 +41,8 @@ fn a_ready_dataset(url: &str) -> crate::api::Datasets {
         let attempt = rows
             .take_create(&name, &declaration)
             .await
-            .unwrap_or_else(|error| panic!("the dataset is claimed: {error}"));
+            .unwrap_or_else(|error| panic!("the dataset is claimed: {error}"))
+            .attempt();
         for written in [
             crate::domain::datasets::Finish::Provisioned("ds_commits_1".to_owned()),
             crate::domain::datasets::Finish::Ready,

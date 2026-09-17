@@ -30,6 +30,7 @@ impl<'a> DatasetRecords<'a> {
     pub(crate) async fn latest(&self, name: &DefinitionName) -> Result<Vec<Record>, PreviewError> {
         let ready = datasets::ready(self.datasets, name.as_str())
             .await
+            .map_err(PreviewError::Store)?
             .ok_or_else(|| PreviewError::NotReady(name.as_str().to_owned()))?;
 
         match self.tables.latest(&ready.table, self.cap).await {
@@ -48,6 +49,8 @@ impl<'a> DatasetRecords<'a> {
 pub(crate) enum PreviewError {
     #[error("no dataset named `{0}` is ready to be read")]
     NotReady(String),
+    #[error(transparent)]
+    Store(crate::domain::datasets::DatasetStoreError),
     #[error(transparent)]
     Table(DatasetTableError),
 }

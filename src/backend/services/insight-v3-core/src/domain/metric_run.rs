@@ -180,6 +180,7 @@ impl<'a> MetricRuns<'a> {
     async fn ready_dataset(&self, named: &str) -> Result<(Declaration, String), CustomError> {
         let ready = datasets::ready(self.datasets, named)
             .await
+            .map_err(CustomError::Datasets)?
             .ok_or_else(|| CustomError::DatasetNotReady(named.to_owned()))?;
 
         Ok((ready.declaration, ready.table))

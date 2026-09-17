@@ -258,6 +258,7 @@ pub(super) fn custom_error(error: CustomError) -> CanonicalError {
         }
         CustomError::Unanswerable(violations) => unanswerable(&violations),
         CustomError::Store(source) => DefinitionApiError::definition_store_error(source),
+        CustomError::Datasets(source) => DefinitionApiError::dataset_store_error(source),
         CustomError::Run(source) => {
             tracing::error!(error = ?source, "metric query execution failed");
             CanonicalError::internal("metric query execution failed").create()

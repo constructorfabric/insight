@@ -107,23 +107,30 @@ pub(crate) struct Ready {
 /// The dataset under this name, when one is ready to be read.
 ///
 /// Absent, still being made and being removed all read as none: the table is
-/// not there yet, or is about to go. Every caller answers that the same way,
-/// so none of them tells the three apart.
-pub(crate) async fn ready(datasets: &dyn Datasets, named: &str) -> Option<Ready> {
-    let name = DefinitionName::parse(named).ok()?;
-    let held = datasets.get(&name).await.ok()??;
+/// not there yet, or is about to go. Every caller answers those the same way,
+/// so none of them tells the three apart. A store that did not answer is not
+/// one of them - it is ours, and it keeps its error.
+pub(crate) async fn ready(
+    datasets: &dyn Datasets,
+    named: &str,
+) -> Result<Option<Ready>, DatasetStoreError> {
+    let Ok(name) = DefinitionName::parse(named) else {
+        return Ok(None);
+    };
+    let Some(held) = datasets.get(&name).await? else {
+        return Ok(None);
+    };
     if held.state != DatasetState::Ready {
-        return None;
+        return Ok(None);
     }
-    let table = held.physical_table?;
+    let Some(table) = held.physical_table else {
+        return Ok(None);
+    };
 
-    match serde_json::from_value(held.declaration) {
-        Ok(declaration) => Some(Ready { declaration, table }),
-        Err(error) => {
-            tracing::error!(error = ?error, "a stored dataset declaration could not be read");
-            None
-        }
-    }
+    Ok(Some(Ready {
+        declaration: serde_json::from_value(held.declaration)?,
+        table,
+    }))
 }
 
 /// Why an attempt may not take a dataset.
@@ -148,6 +155,9 @@ pub(crate) enum Taking {
     Claim,
     /// There is nothing to remove.
     Gone,
+    /// A dataset already answers to this name. Its records stay where they
+    /// are, so what follows is a replacement and not an operation at all.
+    Stands,
     /// A row this attempt may take, into the state the operation implies.
     Take(DatasetState),
     Refuse(Refused),
@@ -155,8 +165,9 @@ pub(crate) enum Taking {
 
 /// Whether `operation` may be taken on the dataset `held` describes.
 ///
-/// A ready dataset is taken for a create by the flow that replaces one; a
-/// replacement that changes no table never comes here at all.
+/// INVARIANT: a create never takes a dataset that stands. Taking it would
+/// demote it out of sight, provision a second table and leave the records in
+/// the first, so the answer is that it stands and the caller replaces it.
 pub(crate) fn taking(held: Option<&Dataset>, operation: Operation, now: DateTime<Utc>) -> Taking {
     let Some(held) = held else {
         return match operation {
@@ -171,6 +182,10 @@ pub(crate) fn taking(held: Option<&Dataset>, operation: Operation, now: DateTime
 
     if held.state == DatasetState::Removing && operation == Operation::Create {
         return Taking::Refuse(Refused::Removing);
+    }
+
+    if held.state == DatasetState::Ready && operation == Operation::Create {
+        return Taking::Stands;
     }
 
     Taking::Take(match operation {
@@ -208,9 +223,33 @@ pub(crate) struct Attempt {
     pub(crate) token: OperationToken,
 }
 
+/// What asking for a create came to.
+#[derive(Debug, Clone)]
+pub(crate) enum Taken {
+    /// Nobody held the name, so this attempt owns it.
+    Attempt(Attempt),
+    /// A dataset already stands under it, and is replaced where it lies.
+    Stands,
+}
+
+impl Taken {
+    /// The attempt a free name hands over.
+    #[cfg(test)]
+    pub(crate) fn attempt(self) -> Attempt {
+        match self {
+            Self::Attempt(attempt) => attempt,
+            Self::Stands => panic!("a dataset already stands under that name"),
+        }
+    }
+}
+
 /// What an attempt writes when its work is done, or part of it is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Finish {
+    /// The dataset is left as it was found, holding its records. What a
+    /// removal writes when it could not take the table away: leaving the row
+    /// mid-removal would hide a dataset nothing can bring back.
+    Released,
     /// The table this attempt provisioned. Recorded before the create is
     /// finished, so an attempt that has since lost the dataset learns to drop
     /// what it made.
@@ -232,6 +271,9 @@ pub(crate) enum Owning {
 }
 
 /// Whether the row still records this attempt as the owner.
+///
+/// The token alone answers it: a lease that lapsed is taken over by minting a
+/// fresh token, so a row that still carries this one was never taken over.
 pub(crate) fn finishing(held: Option<&Dataset>, token: &OperationToken) -> Owning {
     let owns = held
         .and_then(|held| held.held.as_ref())
@@ -263,18 +305,19 @@ pub(crate) trait Datasets: Send + Sync + fmt::Debug {
         &self,
         name: &DefinitionName,
         declaration: &Value,
-    ) -> Result<Attempt, DatasetStoreError>;
+    ) -> Result<Taken, DatasetStoreError>;
 
     /// Takes a removal for a fresh attempt.
     async fn take_remove(&self, name: &DefinitionName) -> Result<Attempt, DatasetStoreError>;
 
     /// Replaces the declaration of a dataset that stands, in one transaction:
-    /// no table changes, so nothing may interleave with it.
+    /// no table changes, so nothing may interleave with it. Answers whether
+    /// there was still one standing to replace.
     async fn replace(
         &self,
         name: &DefinitionName,
         declaration: &Value,
-    ) -> Result<(), DatasetStoreError>;
+    ) -> Result<bool, DatasetStoreError>;
 
     /// Writes what this attempt came to write, but only while it still owns
     /// the dataset.

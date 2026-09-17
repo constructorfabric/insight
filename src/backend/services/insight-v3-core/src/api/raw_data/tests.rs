@@ -54,7 +54,8 @@ async fn a_ready_dataset(url: &str, table: &str) -> crate::api::Datasets {
             &serde_json::json!({ "title": "Events", "fields": [] }),
         )
         .await
-        .unwrap_or_else(|error| panic!("the dataset is claimed: {error}"));
+        .unwrap_or_else(|error| panic!("the dataset is claimed: {error}"))
+        .attempt();
     for written in [
         crate::domain::datasets::Finish::Provisioned(table.to_owned()),
         crate::domain::datasets::Finish::Ready,

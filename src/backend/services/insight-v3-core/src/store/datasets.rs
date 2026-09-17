@@ -12,7 +12,7 @@ use serde_json::Value;
 
 use crate::domain::datasets::{
     Attempt, Dataset, DatasetStoreError, Datasets, Finish, Held, Lease, OperationToken, Owning,
-    Refused, Taking, finishing, taking,
+    Refused, Taken, Taking, finishing, taking,
 };
 use crate::domain::definition::{DefinitionName, NamePage, Page};
 use crate::domain::kinds::dataset::state::{DatasetState, Operation};
@@ -119,20 +119,25 @@ impl Datasets for MariaDatasets {
         &self,
         name: &DefinitionName,
         declaration: &Value,
-    ) -> Result<Attempt, DatasetStoreError> {
+    ) -> Result<Taken, DatasetStoreError> {
         self.take(name, Operation::Create, Some(declaration)).await
     }
 
     async fn take_remove(&self, name: &DefinitionName) -> Result<Attempt, DatasetStoreError> {
-        self.take(name, Operation::Remove, None).await
+        match self.take(name, Operation::Remove, None).await? {
+            Taken::Attempt(attempt) => Ok(attempt),
+            // Only a create is answered with a dataset that stands.
+            Taken::Stands => Err(Refused::Gone.into()),
+        }
     }
 
     async fn replace(
         &self,
         name: &DefinitionName,
         declaration: &Value,
-    ) -> Result<(), DatasetStoreError> {
-        self.db
+    ) -> Result<bool, DatasetStoreError> {
+        let replaced = self
+            .db
             .execute_raw(Statement::from_sql_and_values(
                 DbBackend::MySql,
                 REPLACE_BODY,
@@ -144,7 +149,7 @@ impl Datasets for MariaDatasets {
             ))
             .await?;
 
-        Ok(())
+        Ok(replaced.rows_affected() > 0)
     }
 
     async fn finish(
@@ -166,7 +171,9 @@ impl Datasets for MariaDatasets {
                 RECORD_TABLE,
                 [table.into(), name.as_str().into()],
             ),
-            Finish::Ready => Statement::from_sql_and_values(
+            // Publishing a new dataset and handing a kept one back are the
+            // same row: ready, held by nobody, its table where it was.
+            Finish::Ready | Finish::Released => Statement::from_sql_and_values(
                 DbBackend::MySql,
                 MARK_READY,
                 [DatasetState::Ready.as_str().into(), name.as_str().into()],
@@ -189,7 +196,7 @@ impl MariaDatasets {
         name: &DefinitionName,
         operation: Operation,
         declaration: Option<&Value>,
-    ) -> Result<Attempt, DatasetStoreError> {
+    ) -> Result<Taken, DatasetStoreError> {
         let transaction = self.db.begin().await?;
 
         let now =
@@ -208,6 +215,11 @@ impl MariaDatasets {
         match taking(held.as_ref(), operation, now) {
             Taking::Refuse(refusal) => return Err(refusal.into()),
             Taking::Gone => return Err(Refused::Gone.into()),
+            Taking::Stands => {
+                transaction.rollback().await?;
+
+                return Ok(Taken::Stands);
+            }
             Taking::Claim => {
                 let body =
                     declaration.map_or_else(|| Ok(String::from("{}")), serde_json::to_string)?;
@@ -259,7 +271,7 @@ impl MariaDatasets {
 
         transaction.commit().await?;
 
-        Ok(Attempt { token })
+        Ok(Taken::Attempt(Attempt { token }))
     }
 }
 

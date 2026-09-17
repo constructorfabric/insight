@@ -143,6 +143,7 @@ fn custom_error(error: CustomError) -> CanonicalError {
         CustomError::Compile(source) => compile_error(&source),
         CustomError::Run(source) => run_error(source),
         CustomError::Store(source) => MetricRunApiError::definition_store_error(source),
+        CustomError::Datasets(source) => MetricRunApiError::dataset_store_error(source),
         CustomError::InUse { .. }
         | CustomError::Widget(_)
         | CustomError::Range(_)

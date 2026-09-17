@@ -139,7 +139,8 @@ impl Datasets {
                 let attempt = rows
                     .take_create(&name, declaration)
                     .await
-                    .unwrap_or_else(|error| panic!("the dataset is claimed: {error}"));
+                    .unwrap_or_else(|error| panic!("the dataset is claimed: {error}"))
+                    .attempt();
                 for written in [Finish::Provisioned(format!("ds_{named}_1")), Finish::Ready] {
                     rows.finish(&name, &attempt.token, written)
                         .await

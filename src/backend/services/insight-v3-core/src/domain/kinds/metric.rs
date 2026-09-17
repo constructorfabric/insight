@@ -46,7 +46,10 @@ pub(crate) async fn check(
     reaches_past_the_declaration(&metric)?;
     metric.check_window().map_err(KindError::Compile)?;
 
-    let Some(ready) = datasets::ready(datasets, named).await else {
+    let Some(ready) = datasets::ready(datasets, named)
+        .await
+        .map_err(KindError::Datasets)?
+    else {
         return Err(KindError::DatasetNotReady(named.to_owned()));
     };
 

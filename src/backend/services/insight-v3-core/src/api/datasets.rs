@@ -364,6 +364,7 @@ async fn dataset_dependents(
 fn preview_error(error: PreviewError) -> CanonicalError {
     match error {
         PreviewError::NotReady(named) => not_found(&named),
+        PreviewError::Store(source) => DatasetApiError::dataset_store_error(source),
         PreviewError::Table(source) => {
             tracing::error!(error = ?source, "a dataset's records could not be read");
             CanonicalError::internal("the dataset store did not answer").create()

@@ -276,25 +276,76 @@ async fn reading_the_catalogue_needs_the_admin_role() {
 /// A dataset mid-removal is gone from every surface at once, rather than
 /// lingering on the one that forgot to ask.
 #[tokio::test]
-async fn a_dataset_that_is_not_ready_is_shown_by_nothing() {
+async fn a_dataset_still_being_made_is_shown_by_nothing() {
+    let harness = TestHarness::new();
+    // The name is free, and then the table cannot be made: the row stays
+    // claimed, holding the name, with nothing published under it. The attempt
+    // takes back whatever it may have made before giving up.
+    harness.mock.add(handlers::provide(Vec::<NoTable>::new()));
+    harness.mock.add(handlers::failure(
+        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+    ));
+    harness.mock.add(handlers::record_ddl());
+    let (declared, _) = harness.put("commits", declaration()).await;
+
+    let (listed, listing) = harness.get("/v1/datasets").await;
+    let (read_one, _) = harness.get("/v1/datasets/commits").await;
+    let (records, _) = harness.get("/v1/datasets/commits/records").await;
+
+    assert_eq!(declared, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(listed, StatusCode::OK);
+    assert_eq!(read(&listing)["names"], json!([]));
+    assert_eq!(read_one, StatusCode::NOT_FOUND);
+    assert_eq!(records, StatusCode::NOT_FOUND);
+}
+
+/// A dataset whose records could not be taken away is still whole, so it goes
+/// back to its readers rather than staying hidden with no way out.
+#[tokio::test]
+async fn a_removal_that_cannot_drop_the_table_hands_the_dataset_back() {
     let harness = TestHarness::new();
     harness.a_free_name();
     harness.put("commits", declaration()).await;
     harness.mock.add(handlers::failure(
         axum::http::StatusCode::INTERNAL_SERVER_ERROR,
     ));
-    harness.delete("commits").await;
 
+    let (removed, _) = harness.delete("commits").await;
+
+    assert_eq!(removed, StatusCode::INTERNAL_SERVER_ERROR);
     let (listed, listing) = harness.get("/v1/datasets").await;
     let (read_one, _) = harness.get("/v1/datasets/commits").await;
-    // Still held: the row is mid-removal, not gone, so this is the gate and
-    // not a dataset that simply left.
-    let (retaken, _) = harness.put("commits", declaration()).await;
-
     assert_eq!(listed, StatusCode::OK);
-    assert_eq!(read(&listing)["names"], json!([]));
-    assert_eq!(read_one, StatusCode::NOT_FOUND);
-    assert_eq!(retaken, StatusCode::CONFLICT);
+    assert_eq!(read(&listing)["names"], json!(["commits"]));
+    assert_eq!(read_one, StatusCode::OK);
+}
+
+/// Replacing a dataset that stands changes its declaration where it lies; it
+/// is never taken for a create, which would leave its records behind.
+#[tokio::test]
+async fn declaring_a_name_that_stands_replaces_it_without_touching_its_table() {
+    let harness = TestHarness::new();
+    harness.a_free_name();
+    harness.put("commits", declaration()).await;
+
+    let (replaced, body) = harness
+        .put(
+            "commits",
+            json!({
+                "title": "Commits",
+                "fields": [
+                    { "name": "day", "path": "day", "type": "datetime", "default_clock": true },
+                    { "name": "lines", "path": "lines", "type": "int" },
+                    { "name": "repo", "path": "repo", "type": "string" }
+                ]
+            }),
+        )
+        .await;
+
+    // No shape read and no DDL were queued for this one: a replacement that
+    // reached the warehouse would have found the mock empty and failed.
+    assert_eq!(replaced, StatusCode::OK);
+    assert_eq!(read(&body)["declaration"]["fields"][2]["name"], "repo");
 }
 
 #[tokio::test]

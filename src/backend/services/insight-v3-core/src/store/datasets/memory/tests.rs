@@ -25,7 +25,10 @@ fn declaration() -> Value {
 async fn a_create_claims_a_name_nobody_holds_and_keeps_what_it_was_given() -> R {
     let store = MemoryDatasets::at(at(0));
 
-    let attempt = store.take_create(&name("commits"), &declaration()).await?;
+    let attempt = store
+        .take_create(&name("commits"), &declaration())
+        .await?
+        .attempt();
 
     let Some(held) = store.get(&name("commits")).await? else {
         panic!("the claim left a row");
@@ -47,7 +50,10 @@ async fn a_create_claims_a_name_nobody_holds_and_keeps_what_it_was_given() -> R 
 #[tokio::test]
 async fn a_second_create_is_refused_while_the_first_still_holds_the_lease() -> R {
     let store = MemoryDatasets::at(at(0));
-    store.take_create(&name("commits"), &declaration()).await?;
+    store
+        .take_create(&name("commits"), &declaration())
+        .await?
+        .attempt();
 
     let refused = store.take_create(&name("commits"), &declaration()).await;
 
@@ -65,10 +71,16 @@ async fn a_second_create_is_refused_while_the_first_still_holds_the_lease() -> R
 #[tokio::test]
 async fn once_the_lease_lapses_another_attempt_may_take_the_dataset_over() -> R {
     let store = MemoryDatasets::at(at(0));
-    let first = store.take_create(&name("commits"), &declaration()).await?;
+    let first = store
+        .take_create(&name("commits"), &declaration())
+        .await?
+        .attempt();
 
     store.set_now(at(LEASE_SECS + 1));
-    let second = store.take_create(&name("commits"), &declaration()).await?;
+    let second = store
+        .take_create(&name("commits"), &declaration())
+        .await?
+        .attempt();
 
     assert_ne!(
         second.token, first.token,
@@ -100,7 +112,10 @@ async fn a_dataset_that_was_never_there_has_nothing_to_remove() -> R {
 #[tokio::test]
 async fn a_name_under_removal_is_not_free_to_create_again() -> R {
     let store = MemoryDatasets::at(at(0));
-    store.take_create(&name("commits"), &declaration()).await?;
+    store
+        .take_create(&name("commits"), &declaration())
+        .await?
+        .attempt();
     store.set_now(at(LEASE_SECS + 1));
     store.take_remove(&name("commits")).await?;
 
@@ -118,7 +133,10 @@ async fn a_name_under_removal_is_not_free_to_create_again() -> R {
 #[tokio::test]
 async fn an_attempt_that_kept_the_dataset_publishes_what_it_made() -> R {
     let store = MemoryDatasets::at(at(0));
-    let attempt = store.take_create(&name("commits"), &declaration()).await?;
+    let attempt = store
+        .take_create(&name("commits"), &declaration())
+        .await?
+        .attempt();
     let table = attempt.token.table(&name("commits"));
 
     let recorded = store
@@ -147,10 +165,16 @@ async fn an_attempt_that_kept_the_dataset_publishes_what_it_made() -> R {
 #[tokio::test]
 async fn an_attempt_that_lost_the_dataset_publishes_nothing() -> R {
     let store = MemoryDatasets::at(at(0));
-    let abandoned = store.take_create(&name("commits"), &declaration()).await?;
+    let abandoned = store
+        .take_create(&name("commits"), &declaration())
+        .await?
+        .attempt();
 
     store.set_now(at(LEASE_SECS + 1));
-    let took_over = store.take_create(&name("commits"), &declaration()).await?;
+    let took_over = store
+        .take_create(&name("commits"), &declaration())
+        .await?
+        .attempt();
     let stale = store
         .finish(&name("commits"), &abandoned.token, Finish::Ready)
         .await?;
@@ -172,11 +196,17 @@ async fn an_attempt_that_lost_the_dataset_publishes_nothing() -> R {
 #[tokio::test]
 async fn taking_over_an_abandoned_create_publishes_its_own_declaration() -> R {
     let store = MemoryDatasets::at(at(0));
-    store.take_create(&name("commits"), &declaration()).await?;
+    store
+        .take_create(&name("commits"), &declaration())
+        .await?
+        .attempt();
 
     store.set_now(at(LEASE_SECS + 1));
     let second = json!({ "fields": [{ "name": "hour", "path": "hour", "type": "string" }] });
-    let attempt = store.take_create(&name("commits"), &second).await?;
+    let attempt = store
+        .take_create(&name("commits"), &second)
+        .await?
+        .attempt();
     store
         .finish(&name("commits"), &attempt.token, Finish::Ready)
         .await?;
@@ -192,7 +222,10 @@ async fn taking_over_an_abandoned_create_publishes_its_own_declaration() -> R {
 #[tokio::test]
 async fn a_removal_that_kept_the_dataset_takes_the_row_with_it() -> R {
     let store = MemoryDatasets::at(at(0));
-    let created = store.take_create(&name("commits"), &declaration()).await?;
+    let created = store
+        .take_create(&name("commits"), &declaration())
+        .await?
+        .attempt();
     store
         .finish(&name("commits"), &created.token, Finish::Ready)
         .await?;
@@ -205,6 +238,100 @@ async fn a_removal_that_kept_the_dataset_takes_the_row_with_it() -> R {
     assert_eq!(removed, Owning::Held);
     assert!(store.get(&name("commits")).await?.is_none());
     assert!(store.list().await?.is_empty());
+
+    Ok(())
+}
+
+/// Asking to create a name a dataset already answers to is a replacement, and
+/// the answer says so rather than handing out an operation.
+#[tokio::test]
+async fn a_create_over_a_dataset_that_stands_answers_that_it_stands() -> R {
+    let store = MemoryDatasets::at(at(0));
+    let created = store
+        .take_create(&name("commits"), &declaration())
+        .await?
+        .attempt();
+    store
+        .finish(
+            &name("commits"),
+            &created.token,
+            Finish::Provisioned("ds_commits_1".to_owned()),
+        )
+        .await?;
+    store
+        .finish(&name("commits"), &created.token, Finish::Ready)
+        .await?;
+
+    let again = store.take_create(&name("commits"), &declaration()).await?;
+
+    assert!(matches!(again, Taken::Stands), "{again:?}");
+    let Some(held) = store.get(&name("commits")).await? else {
+        panic!("the dataset stands");
+    };
+    assert_eq!(held.state, DatasetState::Ready, "it was never demoted");
+    assert_eq!(held.physical_table, Some("ds_commits_1".to_owned()));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn replacing_a_dataset_nothing_stands_under_writes_nothing() -> R {
+    let store = MemoryDatasets::at(at(0));
+
+    assert!(
+        !store.replace(&name("commits"), &declaration()).await?,
+        "there is no dataset to replace"
+    );
+
+    let claimed = store
+        .take_create(&name("commits"), &declaration())
+        .await?
+        .attempt();
+    assert!(
+        !store.replace(&name("commits"), &declaration()).await?,
+        "one still being made does not stand either"
+    );
+    store
+        .finish(&name("commits"), &claimed.token, Finish::Ready)
+        .await?;
+
+    assert!(store.replace(&name("commits"), &declaration()).await?);
+
+    Ok(())
+}
+
+/// A removal that could not take the table away gives the dataset back whole:
+/// its declaration, its table and its readers.
+#[tokio::test]
+async fn a_released_removal_leaves_the_dataset_as_it_was_found() -> R {
+    let store = MemoryDatasets::at(at(0));
+    let created = store
+        .take_create(&name("commits"), &declaration())
+        .await?
+        .attempt();
+    store
+        .finish(
+            &name("commits"),
+            &created.token,
+            Finish::Provisioned("ds_commits_1".to_owned()),
+        )
+        .await?;
+    store
+        .finish(&name("commits"), &created.token, Finish::Ready)
+        .await?;
+
+    let removal = store.take_remove(&name("commits")).await?;
+    let released = store
+        .finish(&name("commits"), &removal.token, Finish::Released)
+        .await?;
+
+    assert_eq!(released, Owning::Held);
+    let Some(held) = store.get(&name("commits")).await? else {
+        panic!("the dataset is still there");
+    };
+    assert_eq!(held.state, DatasetState::Ready);
+    assert_eq!(held.physical_table, Some("ds_commits_1".to_owned()));
+    assert!(held.held.is_none(), "nothing holds it now");
 
     Ok(())
 }

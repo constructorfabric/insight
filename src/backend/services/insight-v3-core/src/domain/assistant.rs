@@ -68,8 +68,17 @@ impl<'a> Assistant<'a> {
         declared
     }
 
+    /// A dataset store that did not answer leaves the model without that
+    /// dataset rather than failing the ask, but it is recorded: the model
+    /// would otherwise be told a dataset does not exist.
     async fn ready(&self, name: &str) -> Option<Declaration> {
-        Some(datasets::ready(self.datasets, name).await?.declaration)
+        match datasets::ready(self.datasets, name).await {
+            Ok(held) => Some(held?.declaration),
+            Err(error) => {
+                tracing::warn!(error = ?error, name, "could not read a dataset for the chat");
+                None
+            }
+        }
     }
 
     /// What is already stored, so the model can name it, reuse it, and replace it

@@ -151,7 +151,8 @@ async fn clocked(metric: &MetricQuery, datasets: &dyn Datasets) -> bool {
     let Some(named) = metric.dataset() else {
         return metric.has_clock().unwrap_or(false);
     };
-    let Some(ready) = crate::domain::datasets::ready(datasets, named).await else {
+    let held = crate::domain::datasets::ready(datasets, named).await;
+    let Ok(Some(ready)) = held else {
         return false;
     };
 

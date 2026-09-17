@@ -155,7 +155,8 @@ async fn a_dataset_another_attempt_is_making_is_not_declared_twice() -> R {
     fixture
         .datasets
         .take_create(&name("commits"), &declaration())
-        .await?;
+        .await?
+        .attempt();
 
     let refused = fixture
         .lifecycle()
@@ -238,7 +239,7 @@ impl Datasets for LosesTheDataset {
         &self,
         name: &DefinitionName,
         declaration: &Value,
-    ) -> Result<Attempt, DatasetStoreError> {
+    ) -> Result<crate::domain::datasets::Taken, DatasetStoreError> {
         self.0.take_create(name, declaration).await
     }
 
@@ -250,7 +251,7 @@ impl Datasets for LosesTheDataset {
         &self,
         name: &DefinitionName,
         declaration: &Value,
-    ) -> Result<(), DatasetStoreError> {
+    ) -> Result<bool, DatasetStoreError> {
         self.0.replace(name, declaration).await
     }
 
@@ -380,7 +381,8 @@ async fn a_dataset_being_created_is_not_removed_from_under_that_attempt() -> R {
     fixture
         .datasets
         .take_create(&name("commits"), &declaration())
-        .await?;
+        .await?
+        .attempt();
 
     let refused = fixture.lifecycle().remove(&name("commits")).await;
 

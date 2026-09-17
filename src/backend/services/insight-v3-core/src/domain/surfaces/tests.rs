@@ -52,7 +52,11 @@ impl Fixture {
     /// Declares a dataset that stands, ready to be read.
     async fn a_ready_dataset(&self, named: &str, declaration: &serde_json::Value) -> R {
         let name = name(named);
-        let attempt = self.datasets.take_create(&name, declaration).await?;
+        let attempt = self
+            .datasets
+            .take_create(&name, declaration)
+            .await?
+            .attempt();
         for written in [
             crate::domain::datasets::Finish::Provisioned(format!("ds_{named}_1")),
             crate::domain::datasets::Finish::Ready,

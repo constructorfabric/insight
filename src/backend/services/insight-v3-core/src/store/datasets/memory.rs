@@ -13,7 +13,7 @@ use serde_json::Value;
 
 use crate::domain::datasets::{
     Attempt, Dataset, DatasetStoreError, Datasets, Finish, Held, Lease, OperationToken, Owning,
-    Refused, Taking, finishing, taking,
+    Refused, Taken, Taking, finishing, taking,
 };
 use crate::domain::definition::{DefinitionName, NamePage, Page};
 use crate::domain::kinds::dataset::state::{DatasetState, Operation};
@@ -57,7 +57,7 @@ impl MemoryDatasets {
         name: &DefinitionName,
         operation: Operation,
         declaration: Option<&Value>,
-    ) -> Result<Attempt, DatasetStoreError> {
+    ) -> Result<Taken, DatasetStoreError> {
         let now = self.now();
         let mut stored = self.lock();
 
@@ -71,6 +71,7 @@ impl MemoryDatasets {
         match taking(stored.get(name.as_str()), operation, now) {
             Taking::Refuse(refusal) => return Err(refusal.into()),
             Taking::Gone => return Err(Refused::Gone.into()),
+            Taking::Stands => return Ok(Taken::Stands),
             Taking::Claim => {
                 stored.insert(
                     name.as_str().to_owned(),
@@ -95,7 +96,7 @@ impl MemoryDatasets {
             }
         }
 
-        Ok(Attempt { token })
+        Ok(Taken::Attempt(Attempt { token }))
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, Dataset>> {
@@ -139,28 +140,33 @@ impl Datasets for MemoryDatasets {
         &self,
         name: &DefinitionName,
         declaration: &Value,
-    ) -> Result<Attempt, DatasetStoreError> {
+    ) -> Result<Taken, DatasetStoreError> {
         self.take(name, Operation::Create, Some(declaration))
     }
 
     async fn take_remove(&self, name: &DefinitionName) -> Result<Attempt, DatasetStoreError> {
-        self.take(name, Operation::Remove, None)
+        match self.take(name, Operation::Remove, None)? {
+            Taken::Attempt(attempt) => Ok(attempt),
+            // Only a create is answered with a dataset that stands.
+            Taken::Stands => Err(Refused::Gone.into()),
+        }
     }
 
     async fn replace(
         &self,
         name: &DefinitionName,
         declaration: &Value,
-    ) -> Result<(), DatasetStoreError> {
+    ) -> Result<bool, DatasetStoreError> {
         let mut stored = self.lock();
-        if let Some(dataset) = stored
+        let Some(dataset) = stored
             .get_mut(name.as_str())
             .filter(|dataset| dataset.state == DatasetState::Ready)
-        {
-            dataset.declaration = declaration.clone();
-        }
+        else {
+            return Ok(false);
+        };
+        dataset.declaration = declaration.clone();
 
-        Ok(())
+        Ok(true)
     }
 
     async fn finish(
@@ -181,7 +187,7 @@ impl Datasets for MemoryDatasets {
                     dataset.physical_table = Some(table);
                 }
             }
-            Finish::Ready => {
+            Finish::Ready | Finish::Released => {
                 if let Some(dataset) = stored.get_mut(name.as_str()) {
                     dataset.state = DatasetState::Ready;
                     dataset.held = None;

@@ -53,6 +53,8 @@ pub(crate) enum KindError {
     Store(DefinitionStoreError),
     #[error("no dataset named `{0}` is ready to be read")]
     DatasetNotReady(String),
+    #[error(transparent)]
+    Datasets(crate::domain::datasets::DatasetStoreError),
     #[error("this dataset cannot answer that metric - {}", crate::domain::violation::said(.0))]
     Unanswerable(Vec<Violation>),
 }
