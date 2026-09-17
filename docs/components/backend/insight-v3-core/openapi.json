@@ -57,13 +57,14 @@
       "RawDataRequest": {
         "additionalProperties": false,
         "properties": {
-          "raw_data": {},
-          "table": {
+          "dataset": {
+            "description": "The dataset this record belongs to, which must already be declared.",
             "type": "string"
-          }
+          },
+          "raw_data": {}
         },
         "required": [
-          "table",
+          "dataset",
           "raw_data"
         ],
         "type": "object"
@@ -1249,7 +1250,7 @@
               }
             }
           },
-          "description": "Physical table name and raw JSON data",
+          "description": "The dataset name and the record",
           "required": true
         },
         "responses": {
@@ -1275,6 +1276,16 @@
               }
             },
             "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
           },
           "413": {
             "content": {

@@ -17,7 +17,6 @@ use crate::mcp::test_support::Issuer;
 use crate::store::catalog::Catalog;
 use crate::store::definitions::memory::MemoryDefinitions;
 use crate::store::identity::IdentityClient;
-use crate::store::raw_data::RawDataStore;
 use crate::store::tables::TableStore;
 
 type R = Result<(), Box<dyn Error>>;
@@ -36,7 +35,6 @@ fn surfaces() -> tools::CustomSurfaces {
 
     let state = Arc::new(AppState::new(
         crate::api::Warehouse {
-            raw_data: RawDataStore::new(client()),
             tables: TableStore::new(client()),
             catalog: Catalog::new(client(), "insight".to_owned()),
             metrics: MetricRunner::new(client(), People::new("identity")),

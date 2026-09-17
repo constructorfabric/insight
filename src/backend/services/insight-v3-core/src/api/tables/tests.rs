@@ -14,7 +14,6 @@ use crate::chat::ChatClient;
 use crate::domain::definition::Definitions;
 use crate::domain::query::metric_query::MetricRunner;
 use crate::store::definitions::memory::MemoryDefinitions;
-use crate::store::raw_data::RawDataStore;
 use crate::store::tables::TableStore;
 
 const TEST_TOKEN: &str = "correct-token-0123456789abcdefghi";
@@ -24,9 +23,6 @@ fn app(mock: &Mock, openapi: &OpenApiRegistryImpl) -> axum::Router {
     let definitions: Arc<dyn Definitions> = Arc::new(MemoryDefinitions::new());
     let state = Arc::new(AppState::new(
         crate::api::Warehouse {
-            raw_data: RawDataStore::new(insight_clickhouse::Client::new(
-                insight_clickhouse::Config::new(url, "insight"),
-            )),
             tables: TableStore::new(insight_clickhouse::Client::new(
                 insight_clickhouse::Config::new(url, "insight"),
             )),

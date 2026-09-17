@@ -22,7 +22,6 @@ use crate::domain::query::metric_query::MetricRunner;
 use crate::store::catalog::Catalog;
 use crate::store::dataset_tables::DatasetTables;
 use crate::store::identity::IdentityClient;
-use crate::store::raw_data::RawDataStore;
 use crate::store::tables::TableStore;
 
 /// What a refused surface says.
@@ -92,7 +91,6 @@ pub(crate) struct AppState {
 /// tables there are, what shape they have, and what runs a metric over them.
 #[derive(Debug)]
 pub(crate) struct Warehouse {
-    pub(crate) raw_data: RawDataStore,
     pub(crate) tables: TableStore,
     pub(crate) catalog: Catalog,
     pub(crate) metrics: MetricRunner,
@@ -152,10 +150,6 @@ impl AppState {
         }
     }
 
-    pub(crate) fn raw_data(&self) -> &RawDataStore {
-        &self.warehouse.raw_data
-    }
-
     pub(crate) fn tables(&self) -> &TableStore {
         &self.warehouse.tables
     }
@@ -190,6 +184,13 @@ impl AppState {
 
     pub(crate) fn datasets(&self) -> &dyn crate::domain::datasets::Datasets {
         self.datasets.rows.as_ref()
+    }
+
+    pub(crate) fn dataset_ingest(&self) -> crate::domain::dataset_ingest::DatasetIngest<'_> {
+        crate::domain::dataset_ingest::DatasetIngest::new(
+            self.datasets.rows.as_ref(),
+            &self.datasets.tables,
+        )
     }
 
     pub(crate) fn dataset_lifecycle(
@@ -247,7 +248,6 @@ pub(crate) fn openapi_document() -> anyhow::Result<utoipa::openapi::OpenApi> {
     ));
     let state = Arc::new(AppState::new(
         crate::api::Warehouse {
-            raw_data: RawDataStore::new(offline.clone()),
             tables: TableStore::new(offline.clone()),
             catalog: Catalog::new(offline.clone(), "insight".to_owned()),
             metrics: MetricRunner::new(

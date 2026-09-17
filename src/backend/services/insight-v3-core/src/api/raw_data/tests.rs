@@ -22,10 +22,10 @@ use crate::api::admission::{
     TokenVerifier,
 };
 use crate::chat::ChatClient;
+use crate::domain::datasets::Datasets as _;
 use crate::domain::definition::Definitions;
 use crate::domain::query::metric_query::MetricRunner;
 use crate::store::definitions::memory::MemoryDefinitions;
-use crate::store::raw_data::RawDataStore;
 use crate::store::tables::TableStore;
 
 const TEST_TOKEN: &str = "correct-token-0123456789abcdefghi";
@@ -44,14 +44,41 @@ fn verifier() -> TokenVerifier {
     TokenVerifier::new(&SecretString::from(TEST_TOKEN.to_owned()))
 }
 
-fn state(mock: &Mock) -> Arc<AppState> {
+/// A dataset that stands, ready to take records into `table`.
+async fn a_ready_dataset(url: &str, table: &str) -> crate::api::Datasets {
+    let rows = crate::store::datasets::memory::MemoryDatasets::at(chrono::Utc::now());
+    let name = crate::domain::definition::DefinitionName::parse("synthetic_events")
+        .unwrap_or_else(|error| panic!("the name parses: {error}"));
+    let attempt = rows
+        .take_create(
+            &name,
+            &serde_json::json!({ "title": "Events", "fields": [] }),
+        )
+        .await
+        .unwrap_or_else(|error| panic!("the dataset is claimed: {error}"));
+    for written in [
+        crate::domain::datasets::Finish::Provisioned(table.to_owned()),
+        crate::domain::datasets::Finish::Ready,
+    ] {
+        rows.finish(&name, &attempt.token, written)
+            .await
+            .unwrap_or_else(|error| panic!("the dataset is published: {error}"));
+    }
+
+    crate::api::Datasets::new(
+        Arc::new(rows),
+        crate::store::dataset_tables::DatasetTables::new(insight_clickhouse::Client::new(
+            insight_clickhouse::Config::new(url, "insight_datasets"),
+        )),
+        "insight_datasets".to_owned(),
+    )
+}
+
+fn state(mock: &Mock, datasets: crate::api::Datasets) -> Arc<AppState> {
     let url = mock.url();
     let definitions: Arc<dyn Definitions> = Arc::new(MemoryDefinitions::new());
     Arc::new(AppState::new(
         crate::api::Warehouse {
-            raw_data: RawDataStore::new(insight_clickhouse::Client::new(
-                insight_clickhouse::Config::new(url, "insight"),
-            )),
             tables: TableStore::new(insight_clickhouse::Client::new(
                 insight_clickhouse::Config::new(url, "insight"),
             )),
@@ -70,17 +97,24 @@ fn state(mock: &Mock) -> Arc<AppState> {
         definitions.clone(),
         ChatClient::keyless(),
         crate::store::identity::IdentityClient::fixed(true),
-        crate::api::Datasets::offline(url),
+        datasets,
     ))
 }
 
-fn app(mock: &Mock) -> Router {
+/// The service with one dataset standing, which is what a sender writes into.
+async fn app(mock: &Mock) -> Router {
+    let datasets = a_ready_dataset(mock.url(), "ds_synthetic_events_1").await;
+
+    with_datasets(mock, datasets)
+}
+
+fn with_datasets(mock: &Mock, datasets: crate::api::Datasets) -> Router {
     let openapi = OpenApiRegistryImpl::new();
 
     register_routes(
         Router::new(),
         &openapi,
-        state(mock),
+        state(mock, datasets),
         IngestAdmission::new(&SecretString::from(TEST_TOKEN.to_owned())),
     )
 }
@@ -150,7 +184,8 @@ async fn unauthorized_request_does_not_reach_clickhouse() {
     let mock = Mock::new();
 
     let response = app(&mock)
-        .oneshot(post(Body::from(r#"{"table":"a","raw_data":1}"#), None))
+        .await
+        .oneshot(post(Body::from(r#"{"dataset":"a","raw_data":1}"#), None))
         .await
         .unwrap_or_else(|error| panic!("router must respond: {error}"));
 
@@ -162,12 +197,13 @@ async fn authorized_request_commits_the_insert_before_returning_no_content() {
     let mock = Mock::new();
     let recording = mock.add(handlers::record::<CapturedRawDataRow>());
     let body = serde_json::to_vec(&json!({
-        "table": "synthetic_events",
+        "dataset": "synthetic_events",
         "raw_data": [1, {"nested": true}]
     }))
     .unwrap_or_else(|error| panic!("test JSON must serialize: {error}"));
 
     let response = app(&mock)
+        .await
         .oneshot(post(Body::from(body), Some(TEST_TOKEN)))
         .await
         .unwrap_or_else(|error| panic!("router must respond: {error}"));
@@ -182,29 +218,31 @@ async fn authorized_request_commits_the_insert_before_returning_no_content() {
 }
 
 #[tokio::test]
-async fn invalid_table_name_is_a_client_error_without_an_insert() {
+async fn a_name_no_dataset_could_have_is_not_found_and_reaches_no_table() {
     let mock = Mock::new();
 
     let response = app(&mock)
+        .await
         .oneshot(post(
-            Body::from(r#"{"table":"   ","raw_data":null}"#),
+            Body::from(r#"{"dataset":"   ","raw_data":null}"#),
             Some(TEST_TOKEN),
         ))
         .await
         .unwrap_or_else(|error| panic!("router must respond: {error}"));
 
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
 async fn oversized_request_is_rejected_before_an_insert() {
     let mock = Mock::new();
     let body = format!(
-        r#"{{"table":"synthetic_events","raw_data":"{}"}}"#,
+        r#"{{"dataset":"synthetic_events","raw_data":"{}"}}"#,
         "x".repeat(MAX_REQUEST_BODY_BYTES)
     );
 
     let response = app(&mock)
+        .await
         .oneshot(post(Body::from(body), Some(TEST_TOKEN)))
         .await
         .unwrap_or_else(|error| panic!("router must respond: {error}"));
@@ -215,7 +253,10 @@ async fn oversized_request_is_rejected_before_an_insert() {
 #[tokio::test]
 async fn saturated_gate_rejects_without_polling_the_body_or_clickhouse() {
     let mock = Mock::new();
-    let state = state(&mock);
+    let state = state(
+        &mock,
+        a_ready_dataset(mock.url(), "ds_synthetic_events_1").await,
+    );
     let admission = IngestAdmission::new(&SecretString::from(TEST_TOKEN.to_owned()));
     let _permits: Vec<_> = (0..MAX_CONCURRENT_WRITES)
         .map(|_| {
@@ -257,10 +298,11 @@ async fn missing_json_content_type_remains_unsupported_media_type() {
         .method("POST")
         .uri("/v1/raw-data")
         .header(INGEST_TOKEN_HEADER, TEST_TOKEN)
-        .body(Body::from(r#"{"table":"synthetic_events","raw_data":1}"#))
+        .body(Body::from(r#"{"dataset":"synthetic_events","raw_data":1}"#))
         .unwrap_or_else(|error| panic!("test request must be valid: {error}"));
 
     let response = app(&mock)
+        .await
         .oneshot(request)
         .await
         .unwrap_or_else(|error| panic!("router must respond: {error}"));
@@ -274,8 +316,9 @@ async fn clickhouse_failure_returns_only_a_generic_error() {
     mock.add(handlers::failure(status::INTERNAL_SERVER_ERROR));
 
     let response = app(&mock)
+        .await
         .oneshot(post(
-            Body::from(r#"{"table":"synthetic_events","raw_data":1}"#),
+            Body::from(r#"{"dataset":"synthetic_events","raw_data":1}"#),
             Some(TEST_TOKEN),
         ))
         .await
@@ -295,7 +338,10 @@ async fn clickhouse_failure_returns_only_a_generic_error() {
 async fn openapi_documents_the_instance_token_and_timeout_response() {
     let mock = Mock::new();
     let openapi = OpenApiRegistryImpl::new();
-    let state = state(&mock);
+    let state = state(
+        &mock,
+        a_ready_dataset(mock.url(), "ds_synthetic_events_1").await,
+    );
     let _ = register_routes(
         Router::new(),
         &openapi,
@@ -321,8 +367,25 @@ async fn openapi_documents_the_instance_token_and_timeout_response() {
 }
 
 #[test]
-fn insert_timeout_is_reported_as_gateway_timeout() {
-    let response = store_error(&StoreError::Timeout).into_response();
+fn a_store_that_did_not_answer_in_time_is_a_gateway_timeout() {
+    let dataset =
+        DefinitionName::parse("commits").unwrap_or_else(|error| panic!("the name parses: {error}"));
+
+    let response = ingest_error(
+        &dataset,
+        IngestError::Table(crate::store::dataset_tables::DatasetTableError::Timeout),
+    )
+    .into_response();
 
     assert_eq!(response.status(), StatusCode::GATEWAY_TIMEOUT);
+}
+
+#[test]
+fn a_record_named_for_a_dataset_that_is_not_ready_is_not_found() {
+    let dataset =
+        DefinitionName::parse("commits").unwrap_or_else(|error| panic!("the name parses: {error}"));
+
+    let response = ingest_error(&dataset, IngestError::NotReady).into_response();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }

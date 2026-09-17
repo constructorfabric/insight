@@ -51,7 +51,6 @@ impl Gear for InsightV3CoreGear {
         let chat = crate::chat::ChatClient::new(config.anthropic_token(), config.chat_model());
         let app = Arc::new(crate::api::AppState::new(
             crate::api::Warehouse {
-                raw_data: crate::store::raw_data::RawDataStore::new(config.clickhouse_client()),
                 tables: crate::store::tables::TableStore::new(config.clickhouse_client()),
                 catalog: crate::store::catalog::Catalog::new(
                     config.clickhouse_query_client(),
