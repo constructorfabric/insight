@@ -1,5 +1,5 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import { ChartLine, LayoutDashboard, Sigma } from "lucide-react";
+import { ChartLine, Database, LayoutDashboard, Sigma } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 
 import {
@@ -43,6 +43,11 @@ export function CustomNav() {
               label="Widgets"
               icon={<ChartLine />}
             />
+            <CatalogueRow
+              to="/portal/custom/datasets"
+              label="Datasets"
+              icon={<Database />}
+            />
           </SidebarMenu>
         </SidebarGroupContent>
       </SidebarGroup>
@@ -57,7 +62,11 @@ function CatalogueRow({
   icon,
   exact = false,
 }: {
-  to: "/portal/custom" | "/portal/custom/metrics" | "/portal/custom/widgets";
+  to:
+    | "/portal/custom"
+    | "/portal/custom/metrics"
+    | "/portal/custom/widgets"
+    | "/portal/custom/datasets";
   label: string;
   icon: React.ReactNode;
   /** Dashboards owns the zone root, so it must not match every child path. */

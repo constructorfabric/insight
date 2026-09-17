@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 
 import {
+  DefinitionActions,
   DefinitionCard,
   DefinitionList,
 } from "@/components/custom/definition-list";
@@ -40,7 +41,10 @@ function WidgetRow({ name }: { name: string }) {
   const { data, isPending, isError, error } = useQuery(widgetQuery(name));
 
   return (
-    <DefinitionCard name={name} kind="widgets">
+    <DefinitionCard
+      name={name}
+      actions={<DefinitionActions kind="widgets" name={name} />}
+    >
       {isPending ? (
         <CenteredSpinner className="min-h-24" />
       ) : isError ? (

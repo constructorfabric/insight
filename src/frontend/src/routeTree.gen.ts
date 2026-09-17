@@ -20,8 +20,10 @@ import { Route as IcPersonPersonalRouteImport } from './routes/ic.$person.person
 import { Route as IcPersonTeamRouteImport } from './routes/ic.$person.team'
 import { Route as PortalCustomIndexRouteImport } from './routes/portal.custom.index'
 import { Route as PortalCustomNameRouteImport } from './routes/portal.custom.$name'
+import { Route as PortalCustomDatasetsRouteImport } from './routes/portal.custom.datasets'
 import { Route as PortalCustomMetricsRouteImport } from './routes/portal.custom.metrics'
 import { Route as PortalCustomWidgetsRouteImport } from './routes/portal.custom.widgets'
+import { Route as PortalCustomDatasetsNameRouteImport } from './routes/portal.custom.datasets.$name'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -78,6 +80,11 @@ const PortalCustomNameRoute = PortalCustomNameRouteImport.update({
   path: '/$name',
   getParentRoute: () => PortalCustomRoute,
 } as any)
+const PortalCustomDatasetsRoute = PortalCustomDatasetsRouteImport.update({
+  id: '/datasets',
+  path: '/datasets',
+  getParentRoute: () => PortalCustomRoute,
+} as any)
 const PortalCustomMetricsRoute = PortalCustomMetricsRouteImport.update({
   id: '/metrics',
   path: '/metrics',
@@ -88,6 +95,12 @@ const PortalCustomWidgetsRoute = PortalCustomWidgetsRouteImport.update({
   path: '/widgets',
   getParentRoute: () => PortalCustomRoute,
 } as any)
+const PortalCustomDatasetsNameRoute =
+  PortalCustomDatasetsNameRouteImport.update({
+    id: '/$name',
+    path: '/$name',
+    getParentRoute: () => PortalCustomDatasetsRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -99,10 +112,12 @@ export interface FileRoutesByFullPath {
   '/ic/$person/personal': typeof IcPersonPersonalRoute
   '/ic/$person/team': typeof IcPersonTeamRoute
   '/portal/custom/$name': typeof PortalCustomNameRoute
+  '/portal/custom/datasets': typeof PortalCustomDatasetsRouteWithChildren
   '/portal/custom/metrics': typeof PortalCustomMetricsRoute
   '/portal/custom/widgets': typeof PortalCustomWidgetsRoute
   '/ic/$person/': typeof IcPersonIndexRoute
   '/portal/custom/': typeof PortalCustomIndexRoute
+  '/portal/custom/datasets/$name': typeof PortalCustomDatasetsNameRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -111,10 +126,12 @@ export interface FileRoutesByTo {
   '/ic/$person/personal': typeof IcPersonPersonalRoute
   '/ic/$person/team': typeof IcPersonTeamRoute
   '/portal/custom/$name': typeof PortalCustomNameRoute
+  '/portal/custom/datasets': typeof PortalCustomDatasetsRouteWithChildren
   '/portal/custom/metrics': typeof PortalCustomMetricsRoute
   '/portal/custom/widgets': typeof PortalCustomWidgetsRoute
   '/ic/$person': typeof IcPersonIndexRoute
   '/portal/custom': typeof PortalCustomIndexRoute
+  '/portal/custom/datasets/$name': typeof PortalCustomDatasetsNameRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -127,10 +144,12 @@ export interface FileRoutesById {
   '/ic/$person/personal': typeof IcPersonPersonalRoute
   '/ic/$person/team': typeof IcPersonTeamRoute
   '/portal/custom/$name': typeof PortalCustomNameRoute
+  '/portal/custom/datasets': typeof PortalCustomDatasetsRouteWithChildren
   '/portal/custom/metrics': typeof PortalCustomMetricsRoute
   '/portal/custom/widgets': typeof PortalCustomWidgetsRoute
   '/ic/$person/': typeof IcPersonIndexRoute
   '/portal/custom/': typeof PortalCustomIndexRoute
+  '/portal/custom/datasets/$name': typeof PortalCustomDatasetsNameRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -144,10 +163,12 @@ export interface FileRouteTypes {
     | '/ic/$person/personal'
     | '/ic/$person/team'
     | '/portal/custom/$name'
+    | '/portal/custom/datasets'
     | '/portal/custom/metrics'
     | '/portal/custom/widgets'
     | '/ic/$person/'
     | '/portal/custom/'
+    | '/portal/custom/datasets/$name'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -156,10 +177,12 @@ export interface FileRouteTypes {
     | '/ic/$person/personal'
     | '/ic/$person/team'
     | '/portal/custom/$name'
+    | '/portal/custom/datasets'
     | '/portal/custom/metrics'
     | '/portal/custom/widgets'
     | '/ic/$person'
     | '/portal/custom'
+    | '/portal/custom/datasets/$name'
   id:
     | '__root__'
     | '/'
@@ -171,10 +194,12 @@ export interface FileRouteTypes {
     | '/ic/$person/personal'
     | '/ic/$person/team'
     | '/portal/custom/$name'
+    | '/portal/custom/datasets'
     | '/portal/custom/metrics'
     | '/portal/custom/widgets'
     | '/ic/$person/'
     | '/portal/custom/'
+    | '/portal/custom/datasets/$name'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -263,6 +288,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PortalCustomNameRouteImport
       parentRoute: typeof PortalCustomRoute
     }
+    '/portal/custom/datasets': {
+      id: '/portal/custom/datasets'
+      path: '/datasets'
+      fullPath: '/portal/custom/datasets'
+      preLoaderRoute: typeof PortalCustomDatasetsRouteImport
+      parentRoute: typeof PortalCustomRoute
+    }
     '/portal/custom/metrics': {
       id: '/portal/custom/metrics'
       path: '/metrics'
@@ -277,11 +309,30 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PortalCustomWidgetsRouteImport
       parentRoute: typeof PortalCustomRoute
     }
+    '/portal/custom/datasets/$name': {
+      id: '/portal/custom/datasets/$name'
+      path: '/$name'
+      fullPath: '/portal/custom/datasets/$name'
+      preLoaderRoute: typeof PortalCustomDatasetsNameRouteImport
+      parentRoute: typeof PortalCustomDatasetsRoute
+    }
   }
 }
 
+interface PortalCustomDatasetsRouteChildren {
+  PortalCustomDatasetsNameRoute: typeof PortalCustomDatasetsNameRoute
+}
+
+const PortalCustomDatasetsRouteChildren: PortalCustomDatasetsRouteChildren = {
+  PortalCustomDatasetsNameRoute: PortalCustomDatasetsNameRoute,
+}
+
+const PortalCustomDatasetsRouteWithChildren =
+  PortalCustomDatasetsRoute._addFileChildren(PortalCustomDatasetsRouteChildren)
+
 interface PortalCustomRouteChildren {
   PortalCustomNameRoute: typeof PortalCustomNameRoute
+  PortalCustomDatasetsRoute: typeof PortalCustomDatasetsRouteWithChildren
   PortalCustomMetricsRoute: typeof PortalCustomMetricsRoute
   PortalCustomWidgetsRoute: typeof PortalCustomWidgetsRoute
   PortalCustomIndexRoute: typeof PortalCustomIndexRoute
@@ -289,6 +340,7 @@ interface PortalCustomRouteChildren {
 
 const PortalCustomRouteChildren: PortalCustomRouteChildren = {
   PortalCustomNameRoute: PortalCustomNameRoute,
+  PortalCustomDatasetsRoute: PortalCustomDatasetsRouteWithChildren,
   PortalCustomMetricsRoute: PortalCustomMetricsRoute,
   PortalCustomWidgetsRoute: PortalCustomWidgetsRoute,
   PortalCustomIndexRoute: PortalCustomIndexRoute,

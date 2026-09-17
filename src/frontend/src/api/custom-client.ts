@@ -103,6 +103,49 @@ export interface StoredMetric {
   clock?: EffectiveClock;
 }
 
+/** What a value is read as, which decides what a metric may do with it. */
+export type FieldType = "string" | "int" | "float" | "bool" | "datetime";
+
+/** What a field is for, as a reader is told it. Advisory only. */
+export type FieldRole = "dimension" | "measurable" | "time";
+
+/** One field of a dataset, as declared. */
+export interface DeclaredField {
+  name: string;
+  /** Where the value sits in a record, as dot-separated segments. */
+  path: string;
+  type: FieldType;
+  role?: FieldRole;
+  description?: string;
+  /** What a reader is shown where the value is empty. Presentation only. */
+  absent_value?: string;
+  person?: "email" | "id";
+  /** Whether a window with no date of its own selects by this one. */
+  default_clock?: boolean;
+}
+
+/** What a dataset says about the records it holds. */
+export interface DatasetDeclaration {
+  title: string;
+  description?: string;
+  fields: DeclaredField[];
+  /** The fields that make two records the same record. */
+  row_identity?: string[];
+}
+
+/** A dataset as the catalogue and its page read it. */
+export interface Dataset {
+  name: string;
+  declaration: DatasetDeclaration;
+}
+
+/** One record a dataset holds, as it arrived. */
+export interface DatasetRecord {
+  id: string;
+  received_at: string;
+  raw_data: unknown;
+}
+
 export interface MetricResult {
   columns: string[];
   rows: unknown[][];
@@ -174,6 +217,9 @@ async function readJson<T>(res: Response): Promise<T> {
 
 /** What a definition is, in the API's path segments. */
 export type DefinitionKind = "metrics" | "widgets" | "dashboards";
+
+/** Every kind the Custom zone holds, including the one with a lifecycle. */
+export type EditableKind = DefinitionKind | "datasets";
 
 /**
  * Removes a definition.
@@ -290,6 +336,96 @@ export async function fetchWidget(name: string): Promise<Widget> {
   const read = await readJson<DefinitionResponse<Widget>>(res);
 
   return read.body;
+}
+
+export async function fetchDatasetNames(
+  page: PageRequest = {}
+): Promise<NamePage> {
+  const res = await fetchWithAuth(`${BASE}/datasets${pageQuery(page)}`);
+  return readJson<NamePage>(res);
+}
+
+export async function fetchDataset(name: string): Promise<Dataset> {
+  const res = await fetchWithAuth(
+    `${BASE}/datasets/${encodeURIComponent(name)}`
+  );
+  return readJson<Dataset>(res);
+}
+
+/** The latest records the dataset holds, newest first, capped by the service. */
+export async function fetchDatasetRecords(
+  name: string
+): Promise<DatasetRecord[]> {
+  const res = await fetchWithAuth(
+    `${BASE}/datasets/${encodeURIComponent(name)}/records`
+  );
+  const read = await readJson<{ records: DatasetRecord[] }>(res);
+
+  return read.records;
+}
+
+/**
+ * Every metric that reads this dataset.
+ *
+ * An exact lookup over what each body names, so a metric merely mentioning
+ * the name in a label is not one of them.
+ */
+export async function fetchDatasetDependents(
+  name: string
+): Promise<string[]> {
+  const res = await fetchWithAuth(
+    `${BASE}/datasets/${encodeURIComponent(name)}/dependents`
+  );
+  const read = await readJson<{ metrics: string[] }>(res);
+
+  return read.metrics;
+}
+
+/**
+ * Declares a dataset, or replaces the declaration of one that stands.
+ *
+ * A replacement touches no record: it is refused where a metric reading the
+ * dataset would break or quietly start answering something else.
+ */
+export async function putDataset(
+  name: string,
+  declaration: unknown
+): Promise<Dataset> {
+  const res = await fetchWithAuth(
+    `${BASE}/datasets/${encodeURIComponent(name)}`,
+    { method: "PUT", headers: JSON_HEADERS, body: JSON.stringify(declaration) }
+  );
+  return readJson<Dataset>(res);
+}
+
+/** Stores a definition of any other kind, as the document says it. */
+export async function putDefinition(
+  kind: DefinitionKind,
+  name: string,
+  body: unknown
+): Promise<void> {
+  const res = await fetchWithAuth(
+    `${BASE}/${kind}/${encodeURIComponent(name)}`,
+    { method: "PUT", headers: JSON_HEADERS, body: JSON.stringify(body) }
+  );
+  if (!res.ok) {
+    throw new CustomApiError(res.status, await res.json().catch(() => null));
+  }
+}
+
+/**
+ * Takes a dataset away, with the records it holds.
+ *
+ * Refused while a metric reads it, and the reply names every one.
+ */
+export async function deleteDataset(name: string): Promise<void> {
+  const res = await fetchWithAuth(
+    `${BASE}/datasets/${encodeURIComponent(name)}`,
+    { method: "DELETE" }
+  );
+  if (!res.ok) {
+    throw new CustomApiError(res.status, await res.json().catch(() => null));
+  }
 }
 
 /**

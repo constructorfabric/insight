@@ -1,7 +1,11 @@
 import type { ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 
-import type { MetricDefinition, Widget } from "@/api/custom-client";
+import type {
+  DatasetDeclaration,
+  MetricDefinition,
+  Widget,
+} from "@/api/custom-client";
 import { Badge } from "@/components/ui/badge";
 import { TEXT_BODY, TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
@@ -25,6 +29,39 @@ function reads(field: MetricDefinition["fields"][number]): string {
   const applied = field.agg ? `${field.agg}(${read})` : read;
 
   return `${applied} as ${field.as_name}`;
+}
+
+/** What a dataset says about its records, as a catalogue row reads it. */
+export function DatasetSummary({
+  declaration,
+}: {
+  declaration: DatasetDeclaration;
+}) {
+  const identity = declaration.row_identity ?? [];
+  const clock = declaration.fields.find((field) => field.default_clock);
+
+  return (
+    <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5">
+      <Row label="Title">{declaration.title}</Row>
+      <Row label="Fields">
+        <span className="font-mono">
+          {declaration.fields
+            .map((field) => `${field.name} (${field.type})`)
+            .join(", ")}
+        </span>
+      </Row>
+      {clock ? (
+        <Row label="Main date">
+          <span className="font-mono">{clock.name}</span>
+        </Row>
+      ) : null}
+      {identity.length ? (
+        <Row label="One record per">
+          <span className="font-mono">{identity.join(", ")}</span>
+        </Row>
+      ) : null}
+    </dl>
+  );
 }
 
 export function MetricSummary({

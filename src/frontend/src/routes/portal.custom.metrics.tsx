@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 
 import {
+  DefinitionActions,
   DefinitionCard,
   DefinitionList,
 } from "@/components/custom/definition-list";
@@ -44,7 +45,10 @@ function MetricRow({ name }: { name: string }) {
   const { data, isPending, isError, error } = useQuery(metricQuery(name));
 
   return (
-    <DefinitionCard name={name} kind="metrics">
+    <DefinitionCard
+      name={name}
+      actions={<DefinitionActions kind="metrics" name={name} />}
+    >
       {isPending ? (
         <CenteredSpinner className="min-h-24" />
       ) : isError ? (

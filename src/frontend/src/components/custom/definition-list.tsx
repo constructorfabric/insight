@@ -94,14 +94,19 @@ export function DefinitionList({
   );
 }
 
-/** One definition's card, with its name as the identifier it is. */
+/**
+ * One definition's card, with its name as the identifier it is.
+ *
+ * What may be done to it is passed in rather than assumed: a dataset owns
+ * records and cannot be renamed, so the actions differ by kind.
+ */
 export function DefinitionCard({
   name,
-  kind,
+  actions,
   children,
 }: {
   name: string;
-  kind: DefinitionKind;
+  actions: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -111,11 +116,26 @@ export function DefinitionCard({
           {name}
         </CardTitle>
         <span className="ms-auto flex shrink-0 items-center gap-1">
-          <RenameDefinition kind={kind} name={name} />
-          <RemoveDefinition kind={kind} name={name} />
+          {actions}
         </span>
       </CardHeader>
       <CardContent>{children}</CardContent>
     </Card>
+  );
+}
+
+/** What a reader may do to a metric, a widget or a dashboard. */
+export function DefinitionActions({
+  kind,
+  name,
+}: {
+  kind: DefinitionKind;
+  name: string;
+}) {
+  return (
+    <>
+      <RenameDefinition kind={kind} name={name} />
+      <RemoveDefinition kind={kind} name={name} />
+    </>
   );
 }
