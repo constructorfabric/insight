@@ -1,10 +1,9 @@
 //! What the assistant is told before it is asked anything.
 
-use super::datasets::Datasets;
-use super::definition::{DefinitionKind, DefinitionName, Definitions};
+use super::datasets::{self, Datasets};
+use super::definition::{DefinitionKind, Definitions};
 use super::kinds::dataset::declaration::Declaration;
 use super::kinds::dataset::describe::{describe, describe_all};
-use super::kinds::dataset::state::DatasetState;
 use crate::chat::{Catalogue, Schemas};
 
 /// Everything the model is given about this stand, gathered once per ask.
@@ -70,13 +69,7 @@ impl<'a> Assistant<'a> {
     }
 
     async fn ready(&self, name: &str) -> Option<Declaration> {
-        let parsed = DefinitionName::parse(name).ok()?;
-        let held = self.datasets.get(&parsed).await.ok()??;
-        if held.state != DatasetState::Ready {
-            return None;
-        }
-
-        serde_json::from_value(held.declaration).ok()
+        Some(datasets::ready(self.datasets, name).await?.declaration)
     }
 
     /// What is already stored, so the model can name it, reuse it, and replace it

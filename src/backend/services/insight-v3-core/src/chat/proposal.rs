@@ -81,7 +81,7 @@ impl Proposal {
 
         Ok(match wire {
             ProposalWire::Answer { reply, query } => {
-                if let Some(query) = query.as_ref() {
+                if let Some(query) = query.as_ref().filter(|query| query.dataset().is_none()) {
                     query.compile(people)?;
                 }
                 Self::Answer {
@@ -114,7 +114,10 @@ impl Proposal {
 
 fn compile_named_metric(named: NamedBody, people: &People) -> Result<(String, Value), ChatError> {
     let metric: MetricQuery = serde_json::from_value(named.body.clone())?;
-    metric.compile(people)?;
+    if metric.dataset().is_none() {
+        metric.compile(people)?;
+    }
+
     Ok(named.into_pair())
 }
 

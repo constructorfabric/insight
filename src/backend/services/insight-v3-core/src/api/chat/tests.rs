@@ -12,6 +12,7 @@ use tower::ServiceExt as _;
 use super::*;
 use crate::api::AppState;
 use crate::chat::{ChatClient, Proposal};
+use crate::domain::datasets::Datasets as _;
 use crate::domain::definition::Definitions;
 use crate::domain::query::metric_query::MetricRunner;
 use crate::store::definitions::memory::MemoryDefinitions;
@@ -20,6 +21,44 @@ struct TestHarness {
     mock: Mock,
     router: Router,
     definitions: Arc<dyn Definitions>,
+}
+
+/// The one dataset the assistant reads in these cases.
+fn a_ready_dataset(url: &str) -> crate::api::Datasets {
+    let rows = crate::store::datasets::memory::MemoryDatasets::at(chrono::Utc::now());
+    let name = crate::domain::definition::DefinitionName::parse("commits")
+        .unwrap_or_else(|error| panic!("the name parses: {error}"));
+    let declaration = json!({
+        "title": "Commits",
+        "fields": [
+            { "name": "author_email", "path": "author_email", "type": "string" },
+            { "name": "day", "path": "day", "type": "string" },
+            { "name": "lines", "path": "lines", "type": "int" }
+        ]
+    });
+
+    futures::executor::block_on(async {
+        let attempt = rows
+            .take_create(&name, &declaration)
+            .await
+            .unwrap_or_else(|error| panic!("the dataset is claimed: {error}"));
+        for written in [
+            crate::domain::datasets::Finish::Provisioned("ds_commits_1".to_owned()),
+            crate::domain::datasets::Finish::Ready,
+        ] {
+            rows.finish(&name, &attempt.token, written)
+                .await
+                .unwrap_or_else(|error| panic!("the dataset is published: {error}"));
+        }
+    });
+
+    crate::api::Datasets::new(
+        std::sync::Arc::new(rows),
+        crate::store::dataset_tables::DatasetTables::new(insight_clickhouse::Client::new(
+            insight_clickhouse::Config::new(url, "insight_datasets"),
+        )),
+        "insight_datasets".to_owned(),
+    )
 }
 
 impl TestHarness {
@@ -56,7 +95,7 @@ impl TestHarness {
             definitions.clone(),
             chat,
             crate::store::identity::IdentityClient::fixed(true),
-            crate::api::Datasets::offline(url),
+            a_ready_dataset(url),
         ));
         let router = crate::api::definitions::register_routes(Router::new(), &openapi, &state);
         let router = register_routes(router, &openapi, state);
@@ -197,9 +236,8 @@ fn empty_answer_proposal() -> Proposal {
         reply: "Here is who has committed the most overall.".to_owned(),
         query: Some(
             serde_json::from_value(json!({
-                "database": "silver",
-                "table": "fct_git_commit",
-                "fields": [{ "column": "author_email", "type": "string", "as_name": "author" }],
+                                "dataset": "commits",
+                "fields": [{ "field": "author_email", "type": "string", "as_name": "author" }],
                 "group_by": ["author"],
                 "filters": []
             }))
@@ -215,8 +253,8 @@ fn single_existing_widget_proposal() -> Proposal {
         metric: Some((
             "m".to_owned(),
             json!({
-                "table": "events",
-                "fields": [{ "json": "day", "type": "string", "as_name": "day" }]
+                "dataset": "commits",
+                "fields": [{ "field": "day", "type": "string", "as_name": "day" }]
             }),
         )),
         widgets: vec![(
@@ -236,8 +274,8 @@ async fn a_name_already_in_use_is_replaced_and_reported_as_updated() {
         .put_json(
             "/v1/metrics/was_here_first",
             json!({
-                "table": "events",
-                "fields": [{ "json": "day", "type": "string", "as_name": "day" }]
+                "dataset": "commits",
+                "fields": [{ "field": "day", "type": "string", "as_name": "day" }]
             }),
         )
         .await;
@@ -275,9 +313,9 @@ fn whole_board_proposal() -> Proposal {
         metric: Some((
             "delivery_metric".to_owned(),
             json!({
-                "table": "events",
+                "dataset": "commits",
                 "fields": [
-                    { "json": "day", "type": "string", "as_name": "day" },
+                    { "field": "day", "type": "string", "as_name": "day" },
                     { "json": "lines", "type": "int", "agg": "sum", "as_name": "lines" }
                 ],
                 "group_by": ["day"]
@@ -380,7 +418,7 @@ async fn an_answer_whose_query_found_nothing_says_there_is_no_data()
 
     assert_eq!(
         body["reply"],
-        "No data: that query returned no rows from silver.fct_git_commit."
+        "No data: that query returned no rows from commits."
     );
     server.abort();
 
@@ -416,8 +454,8 @@ fn a_widget_naming_a_column_the_metric_lacks() -> Proposal {
         metric: Some((
             "m".to_owned(),
             json!({
-                "table": "events",
-                "fields": [{ "json": "day", "type": "string", "as_name": "day" }]
+                "dataset": "commits",
+                "fields": [{ "field": "day", "type": "string", "as_name": "day" }]
             }),
         )),
         widgets: vec![(
@@ -431,7 +469,7 @@ fn a_widget_naming_a_column_the_metric_lacks() -> Proposal {
 fn a_metric_that_cannot_be_read_as_a_query() -> Proposal {
     Proposal::Create {
         reply: "ok".to_owned(),
-        metric: Some(("m".to_owned(), json!({ "table": "events" }))),
+        metric: Some(("m".to_owned(), json!({ "dataset": "commits" }))),
         widgets: Vec::new(),
         dashboard: None,
     }

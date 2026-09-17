@@ -15,9 +15,11 @@ use thiserror::Error;
 
 use widget::WidgetError;
 
+use crate::domain::datasets::Datasets;
 use crate::domain::definition::{DefinitionKind, DefinitionStoreError, Lookup};
 use crate::domain::query::metric_query::MetricQueryError;
 use crate::domain::query::time_window::WindowError;
+use crate::domain::violation::Violation;
 
 /// One definition naming another: a widget naming its metric, a board naming
 /// a widget it draws.
@@ -49,19 +51,26 @@ pub(crate) enum KindError {
     Range(WindowError),
     #[error(transparent)]
     Store(DefinitionStoreError),
+    #[error("no dataset named `{0}` is ready to be read")]
+    DatasetNotReady(String),
+    #[error("this dataset cannot answer that metric - {}", crate::domain::violation::said(.0))]
+    Unanswerable(Vec<Violation>),
 }
 
 /// Checks a body against the rules of its kind, before it is stored.
 ///
 /// A lookup is passed because a kind may need what another definition holds:
-/// a widget draws its metric's columns, so it reads that metric.
+/// a widget draws its metric's columns, so it reads that metric. The datasets
+/// are passed for the same reason: a metric reads one, and what that dataset
+/// declares is what decides whether the metric has an answer.
 pub(crate) async fn check(
     kind: DefinitionKind,
     body: &Value,
     definitions: &dyn Lookup,
+    datasets: &dyn Datasets,
 ) -> Result<(), KindError> {
     match kind {
-        DefinitionKind::Metric => metric::check(body),
+        DefinitionKind::Metric => metric::check(body, datasets).await,
         DefinitionKind::Widget => widget::check(body, definitions).await,
         DefinitionKind::Dashboard => dashboard::check(body),
     }

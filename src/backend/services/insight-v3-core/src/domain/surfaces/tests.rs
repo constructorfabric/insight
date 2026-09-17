@@ -3,7 +3,6 @@ use std::error::Error;
 use serde_json::json;
 
 use super::*;
-use crate::domain::datasets::Datasets as _;
 use crate::domain::query::metric_query::{MetricRunner, People};
 use crate::store::catalog::Catalog;
 use crate::store::definitions::memory::MemoryDefinitions;
@@ -18,7 +17,9 @@ struct Fixture {
 }
 
 impl Fixture {
-    fn new() -> Self {
+    /// A stand whose datasets stand ready, since every stored metric reads
+    /// one and is checked against what it declares.
+    async fn new() -> Self {
         let client = || {
             insight_clickhouse::Client::new(insight_clickhouse::Config::new(
                 "http://clickhouse.invalid",
@@ -26,12 +27,40 @@ impl Fixture {
             ))
         };
 
-        Self {
+        let fixture = Self {
             definitions: MemoryDefinitions::new(),
             metrics: MetricRunner::new(client(), People::new("identity")),
             catalog: Catalog::new(client(), "insight".to_owned()),
             datasets: crate::store::datasets::memory::MemoryDatasets::at(chrono::Utc::now()),
+        };
+
+        for (named, declaration) in [
+            // Marks no main date, so a metric naming no clock of its own has
+            // none at all.
+            ("commits", commits()),
+            ("pull_requests", pull_requests()),
+        ] {
+            fixture
+                .a_ready_dataset(named, &declaration)
+                .await
+                .unwrap_or_else(|error| panic!("`{named}` should be declarable: {error}"));
         }
+
+        fixture
+    }
+
+    /// Declares a dataset that stands, ready to be read.
+    async fn a_ready_dataset(&self, named: &str, declaration: &serde_json::Value) -> R {
+        let name = name(named);
+        let attempt = self.datasets.take_create(&name, declaration).await?;
+        for written in [
+            crate::domain::datasets::Finish::Provisioned(format!("ds_{named}_1")),
+            crate::domain::datasets::Finish::Ready,
+        ] {
+            self.datasets.finish(&name, &attempt.token, written).await?;
+        }
+
+        Ok(())
     }
 
     fn metric_runs(&self) -> crate::domain::metric_run::MetricRuns<'_> {
@@ -45,7 +74,7 @@ impl Fixture {
     }
 
     fn surfaces(&self) -> Surfaces<'_> {
-        Surfaces::new(&self.definitions)
+        Surfaces::new(&self.definitions, &self.datasets)
     }
 }
 
@@ -67,15 +96,151 @@ fn name(value: &str) -> DefinitionName {
     parsed
 }
 
+fn commits() -> serde_json::Value {
+    json!({
+        "title": "Commits",
+        "fields": [{ "name": "actor", "path": "actor", "type": "string" }]
+    })
+}
+
+fn pull_requests() -> serde_json::Value {
+    json!({
+        "title": "Pull requests",
+        "fields": [
+            { "name": "pull_request", "path": "pull_request", "type": "int" },
+            { "name": "opened_at", "path": "opened_at", "type": "datetime" },
+            { "name": "merged_at", "path": "merged_at", "type": "datetime" }
+        ]
+    })
+}
+
 fn metric_body() -> serde_json::Value {
     json!({
-        "table": "events",
+        "dataset": "commits",
         "fields": [
-            {"json": "actor", "type": "string", "as_name": "actor"},
-            {"json": "actor", "type": "string", "agg": "count", "as_name": "total"}
+            {"field": "actor", "type": "string", "as_name": "actor"},
+            {"field": "actor", "type": "string", "agg": "count", "as_name": "total"}
         ],
         "group_by": ["actor"]
     })
+}
+
+/// The one field `commits` declares, and what a metric may ask of it.
+mod what_the_dataset_answers {
+    use super::*;
+
+    /// Every violation a refusal carried, so a test can name the one it means.
+    fn refused(error: &CustomError) -> Vec<(String, String)> {
+        let CustomError::Unanswerable(violations) = error else {
+            panic!("should be refused as unanswerable: {error:?}");
+        };
+
+        violations
+            .iter()
+            .map(|violation| (violation.field.clone(), violation.detail.clone()))
+            .collect()
+    }
+
+    async fn refusal_of(body: &serde_json::Value) -> CustomError {
+        let fixture = Fixture::new().await;
+        let Err(error) = fixture
+            .surfaces()
+            .put(DefinitionKind::Metric, &name("asked"), body)
+            .await
+        else {
+            panic!("the dataset cannot answer this: {body}");
+        };
+
+        error
+    }
+
+    #[tokio::test]
+    async fn a_metric_naming_a_field_the_dataset_never_declared_is_refused_on_write() {
+        let error = refusal_of(&json!({
+            "dataset": "commits",
+            "fields": [{"field": "lines", "type": "int", "agg": "sum", "as_name": "total"}]
+        }))
+        .await;
+
+        let violations = refused(&error);
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert_eq!(violations[0].0, "fields[0].field");
+        assert!(violations[0].1.contains("`lines`"), "{violations:?}");
+    }
+
+    #[tokio::test]
+    async fn a_metric_summing_a_field_no_number_lives_in_is_refused_on_write() {
+        let error = refusal_of(&json!({
+            "dataset": "commits",
+            "fields": [{"field": "actor", "type": "string", "agg": "sum", "as_name": "total"}]
+        }))
+        .await;
+
+        let violations = refused(&error);
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert_eq!(violations[0].0, "fields[0].field");
+    }
+
+    #[tokio::test]
+    async fn a_metric_comparing_a_field_against_another_type_is_refused_on_write() {
+        let error = refusal_of(&json!({
+            "dataset": "commits",
+            "fields": [{"field": "actor", "type": "string", "as_name": "actor"}],
+            "filters": [{"field": "actor", "type": "string", "op": "eq", "value": 7}]
+        }))
+        .await;
+
+        assert_eq!(refused(&error)[0].0, "filters[0].field");
+    }
+
+    #[tokio::test]
+    async fn a_metric_windowing_by_a_field_holding_no_date_is_refused_on_write() {
+        let error = refusal_of(&json!({
+            "dataset": "commits",
+            "time": {"field": "actor", "type": "datetime"},
+            "fields": [{"field": "actor", "type": "string", "agg": "count", "as_name": "total"}]
+        }))
+        .await;
+
+        assert_eq!(refused(&error)[0].0, "time.field");
+    }
+
+    /// One answer carries every refusal, so an editor marks them all at once
+    /// rather than one round trip per mistake.
+    #[tokio::test]
+    async fn a_metric_wrong_in_several_places_is_refused_once_with_all_of_them() {
+        let error = refusal_of(&json!({
+            "dataset": "commits",
+            "fields": [
+                {"field": "lines", "type": "int", "agg": "sum", "as_name": "total"},
+                {"field": "repository", "type": "string", "as_name": "repository"}
+            ]
+        }))
+        .await;
+
+        let violations = refused(&error);
+        assert_eq!(
+            violations
+                .iter()
+                .map(|(at, _)| at.clone())
+                .collect::<Vec<_>>(),
+            vec!["fields[0].field", "fields[1].field"]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_metric_over_a_dataset_nobody_declared_is_refused_on_write() {
+        let error = refusal_of(&json!({
+            "dataset": "deploys",
+            "fields": [{"field": "actor", "type": "string", "as_name": "actor"}]
+        }))
+        .await;
+
+        assert!(
+            matches!(&error, CustomError::DatasetNotReady(named) if named == "deploys"),
+            "{error:?}"
+        );
+    }
 }
 
 fn line_widget(metric: &str, y: &str) -> serde_json::Value {
@@ -84,7 +249,7 @@ fn line_widget(metric: &str, y: &str) -> serde_json::Value {
 
 #[tokio::test]
 async fn reading_a_definition_that_was_never_stored_reports_it_missing() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::new().await;
 
     let Err(error) = fixture
         .surfaces()
@@ -100,7 +265,7 @@ async fn reading_a_definition_that_was_never_stored_reports_it_missing() {
 
 #[tokio::test]
 async fn a_widget_naming_a_column_its_metric_does_not_produce_is_refused() -> R {
-    let fixture = Fixture::new();
+    let fixture = Fixture::new().await;
     let surfaces = fixture.surfaces();
     surfaces
         .put(DefinitionKind::Metric, &name("per-actor"), &metric_body())
@@ -125,7 +290,7 @@ async fn a_widget_naming_a_column_its_metric_does_not_produce_is_refused() -> R 
 
 #[tokio::test]
 async fn a_widget_naming_a_metric_that_is_not_stored_is_refused() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::new().await;
 
     let Err(error) = fixture
         .surfaces()
@@ -144,7 +309,7 @@ async fn a_widget_naming_a_metric_that_is_not_stored_is_refused() {
 
 #[tokio::test]
 async fn a_metric_a_widget_still_draws_is_kept_and_its_dependents_named() -> R {
-    let fixture = Fixture::new();
+    let fixture = Fixture::new().await;
     let surfaces = fixture.surfaces();
     surfaces
         .put(DefinitionKind::Metric, &name("per-actor"), &metric_body())
@@ -174,7 +339,7 @@ async fn a_metric_a_widget_still_draws_is_kept_and_its_dependents_named() -> R {
 
 #[tokio::test]
 async fn a_widget_a_dashboard_still_holds_is_kept_and_its_dependents_named() -> R {
-    let fixture = Fixture::new();
+    let fixture = Fixture::new().await;
     let surfaces = fixture.surfaces();
     surfaces
         .put(DefinitionKind::Metric, &name("per-actor"), &metric_body())
@@ -211,7 +376,7 @@ async fn a_widget_a_dashboard_still_holds_is_kept_and_its_dependents_named() -> 
 
 #[tokio::test]
 async fn a_dashboard_holds_widgets_so_nothing_reports_it_as_a_dependent() -> R {
-    let fixture = Fixture::new();
+    let fixture = Fixture::new().await;
     let surfaces = fixture.surfaces();
     surfaces
         .put(
@@ -232,7 +397,7 @@ async fn a_dashboard_holds_widgets_so_nothing_reports_it_as_a_dependent() -> R {
 
 #[tokio::test]
 async fn deleting_a_definition_that_was_never_stored_reports_it_missing() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::new().await;
 
     let Err(error) = fixture
         .surfaces()
@@ -247,14 +412,14 @@ async fn deleting_a_definition_that_was_never_stored_reports_it_missing() {
 
 #[tokio::test]
 async fn a_body_that_cannot_be_read_as_a_metric_is_refused_before_it_is_stored() -> R {
-    let fixture = Fixture::new();
+    let fixture = Fixture::new().await;
 
     let refusal = fixture
         .surfaces()
         .put(
             DefinitionKind::Metric,
             &name("broken"),
-            &json!({"table": "events"}),
+            &json!({"dataset": "commits"}),
         )
         .await;
 
@@ -265,13 +430,13 @@ async fn a_body_that_cannot_be_read_as_a_metric_is_refused_before_it_is_stored()
 
 #[tokio::test]
 async fn running_a_metric_whose_stored_body_is_not_a_query_reports_the_body() -> R {
-    let fixture = Fixture::new();
+    let fixture = Fixture::new().await;
     fixture
         .definitions
         .put(
             DefinitionKind::Metric,
             &name("broken"),
-            &json!({"table": "events"}),
+            &json!({"dataset": "commits"}),
         )
         .await?;
 
@@ -286,7 +451,7 @@ async fn running_a_metric_whose_stored_body_is_not_a_query_reports_the_body() ->
 
 #[tokio::test]
 async fn running_a_metric_that_was_never_stored_reports_it_missing() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::new().await;
 
     let Err(error) = fixture.metric_runs().run(&name("absent"), &legacy()).await else {
         panic!("there is no such metric to run");
@@ -297,7 +462,7 @@ async fn running_a_metric_that_was_never_stored_reports_it_missing() {
 
 #[tokio::test]
 async fn listing_names_them_in_the_order_the_store_gives() -> R {
-    let fixture = Fixture::new();
+    let fixture = Fixture::new().await;
     let surfaces = fixture.surfaces();
     surfaces
         .put(DefinitionKind::Metric, &name("alpha"), &metric_body())
@@ -316,7 +481,7 @@ async fn listing_names_them_in_the_order_the_store_gives() -> R {
 
 #[tokio::test]
 async fn a_stored_metric_reads_back_as_it_was_written() -> R {
-    let fixture = Fixture::new();
+    let fixture = Fixture::new().await;
     let surfaces = fixture.surfaces();
     surfaces
         .put(DefinitionKind::Metric, &name("per-actor"), &metric_body())
@@ -334,12 +499,11 @@ async fn a_stored_metric_reads_back_as_it_was_written() -> R {
 
 #[tokio::test]
 async fn a_range_asked_of_a_metric_with_no_clock_is_refused_before_any_read() -> R {
-    let fixture = Fixture::new();
+    let fixture = Fixture::new().await;
     let surfaces = fixture.surfaces();
     surfaces
         .put(DefinitionKind::Metric, &name("clockless"), &metric_body())
         .await?;
-
     let Err(error) = fixture
         .metric_runs()
         .run(&name("clockless"), &ranged("P7D"))
@@ -366,30 +530,30 @@ mod the_demo_definitions {
 
     fn opened() -> serde_json::Value {
         json!({
-            "table": "pull_requests",
-            "time": {"json": "opened_at"},
-            "fields": [{"json": "pull_request", "type": "int", "agg": "count", "as_name": "opened"}]
+            "dataset": "pull_requests",
+            "time": {"field": "opened_at"},
+            "fields": [{"field": "pull_request", "type": "int", "agg": "count", "as_name": "opened"}]
         })
     }
 
     fn merged() -> serde_json::Value {
         json!({
-            "table": "pull_requests",
-            "time": {"json": "merged_at"},
-            "fields": [{"json": "pull_request", "type": "int", "agg": "count", "as_name": "merged"}]
+            "dataset": "pull_requests",
+            "time": {"field": "merged_at"},
+            "fields": [{"field": "pull_request", "type": "int", "agg": "count", "as_name": "merged"}]
         })
     }
 
     fn all_time() -> serde_json::Value {
         json!({
-            "table": "pull_requests",
-            "fields": [{"json": "pull_request", "type": "int", "agg": "count", "as_name": "total"}]
+            "dataset": "pull_requests",
+            "fields": [{"field": "pull_request", "type": "int", "agg": "count", "as_name": "total"}]
         })
     }
 
     #[tokio::test]
     async fn two_clocks_over_one_table_are_two_storable_metrics() -> R {
-        let fixture = Fixture::new();
+        let fixture = Fixture::new().await;
         let surfaces = fixture.surfaces();
 
         surfaces
@@ -404,7 +568,7 @@ mod the_demo_definitions {
 
     #[tokio::test]
     async fn a_clocked_line_draws_the_bucket_its_metric_injects() -> R {
-        let fixture = Fixture::new();
+        let fixture = Fixture::new().await;
         let surfaces = fixture.surfaces();
         surfaces
             .put(DefinitionKind::Metric, &name("prs_opened"), &opened())
@@ -427,37 +591,8 @@ mod the_demo_definitions {
     }
 
     #[tokio::test]
-    async fn a_clockless_line_has_no_bucket_to_draw() -> R {
-        let fixture = Fixture::new();
-        let surfaces = fixture.surfaces();
-        surfaces
-            .put(DefinitionKind::Metric, &name("prs_all"), &all_time())
-            .await?;
-
-        let refused = surfaces
-            .put(
-                DefinitionKind::Widget,
-                &name("prs_all_line"),
-                &json!({
-                    "type": "line",
-                    "metric": "prs_all",
-                    "x": "bucket",
-                    "y": "total",
-                }),
-            )
-            .await;
-
-        assert!(
-            matches!(refused, Err(CustomError::Widget(_))),
-            "{refused:?}"
-        );
-
-        Ok(())
-    }
-
-    #[tokio::test]
     async fn a_board_offering_all_time_is_stored_with_the_windows_it_offers() -> R {
-        let fixture = Fixture::new();
+        let fixture = Fixture::new().await;
         let surfaces = fixture.surfaces();
         surfaces
             .put(DefinitionKind::Metric, &name("prs_all"), &all_time())
@@ -493,7 +628,7 @@ mod the_demo_definitions {
 
 #[tokio::test]
 async fn a_board_offering_a_window_the_server_cannot_resolve_is_not_stored() -> R {
-    let fixture = Fixture::new();
+    let fixture = Fixture::new().await;
     let surfaces = fixture.surfaces();
 
     for board in [
@@ -513,7 +648,7 @@ async fn a_board_offering_a_window_the_server_cannot_resolve_is_not_stored() -> 
 
 #[tokio::test]
 async fn a_board_that_offers_no_windows_is_stored_as_it_always_was() -> R {
-    let fixture = Fixture::new();
+    let fixture = Fixture::new().await;
 
     fixture
         .surfaces()
@@ -529,7 +664,7 @@ async fn a_board_that_offers_no_windows_is_stored_as_it_always_was() -> R {
 
 #[tokio::test]
 async fn a_widget_may_draw_a_metric_arriving_in_the_same_batch() -> R {
-    let fixture = Fixture::new();
+    let fixture = Fixture::new().await;
 
     let batch = vec![
         Definition::new(DefinitionKind::Metric, name("per_actor"), metric_body()),
@@ -547,7 +682,7 @@ async fn a_widget_may_draw_a_metric_arriving_in_the_same_batch() -> R {
 
 #[tokio::test]
 async fn one_refused_body_refuses_the_whole_batch() -> R {
-    let fixture = Fixture::new();
+    let fixture = Fixture::new().await;
 
     let batch = vec![
         Definition::new(DefinitionKind::Metric, name("per_actor"), metric_body()),
@@ -570,7 +705,7 @@ async fn one_refused_body_refuses_the_whole_batch() -> R {
 
 #[tokio::test]
 async fn renaming_points_every_widget_that_drew_the_old_name_at_the_new_one() -> R {
-    let fixture = Fixture::new();
+    let fixture = Fixture::new().await;
     let surfaces = fixture.surfaces();
     surfaces
         .put(DefinitionKind::Metric, &name("per_actor"), &metric_body())
@@ -600,7 +735,7 @@ async fn renaming_points_every_widget_that_drew_the_old_name_at_the_new_one() ->
 
 #[tokio::test]
 async fn a_rename_onto_a_name_someone_holds_is_refused_and_writes_nothing() -> R {
-    let fixture = Fixture::new();
+    let fixture = Fixture::new().await;
     let surfaces = fixture.surfaces();
     for held in ["per_actor", "by_actor"] {
         surfaces
@@ -632,7 +767,7 @@ async fn a_rename_onto_a_name_someone_holds_is_refused_and_writes_nothing() -> R
 
 #[tokio::test]
 async fn renaming_a_definition_to_the_name_it_already_has_changes_nothing() -> R {
-    let fixture = Fixture::new();
+    let fixture = Fixture::new().await;
     let surfaces = fixture.surfaces();
     surfaces
         .put(DefinitionKind::Metric, &name("per_actor"), &metric_body())
@@ -668,7 +803,7 @@ async fn renaming_a_definition_to_the_name_it_already_has_changes_nothing() -> R
 
 #[tokio::test]
 async fn renaming_a_widget_points_every_board_that_held_it_at_the_new_name() -> R {
-    let fixture = Fixture::new();
+    let fixture = Fixture::new().await;
     let surfaces = fixture.surfaces();
     surfaces
         .put(DefinitionKind::Metric, &name("per_actor"), &metric_body())
@@ -715,11 +850,10 @@ async fn renaming_a_widget_points_every_board_that_held_it_at_the_new_name() -> 
     Ok(())
 }
 
-/// A metric reading a dataset rather than a relation of its own.
+/// A metric reading a dataset this stand never declared.
 fn over_a_dataset() -> serde_json::Value {
     json!({
-        "dataset": "commits",
-        "table": "unused",
+        "dataset": "deploys",
         "fields": [{ "field": "lines", "type": "int", "agg": "sum", "as_name": "total" }],
         "group_by": [],
         "filters": []
@@ -728,14 +862,14 @@ fn over_a_dataset() -> serde_json::Value {
 
 fn a_declaration() -> serde_json::Value {
     json!({
-        "title": "Commits",
+        "title": "Deploys",
         "fields": [{ "name": "lines", "path": "lines", "type": "int" }]
     })
 }
 
 #[tokio::test]
 async fn running_a_metric_over_a_dataset_nobody_declared_says_so() -> R {
-    let fixture = Fixture::new();
+    let fixture = Fixture::new().await;
     fixture
         .definitions
         .put(DefinitionKind::Metric, &name("lines"), &over_a_dataset())
@@ -746,7 +880,7 @@ async fn running_a_metric_over_a_dataset_nobody_declared_says_so() -> R {
     };
 
     assert!(
-        matches!(&error, CustomError::DatasetNotReady(named) if named == "commits"),
+        matches!(&error, CustomError::DatasetNotReady(named) if named == "deploys"),
         "{error:?}"
     );
 
@@ -755,14 +889,14 @@ async fn running_a_metric_over_a_dataset_nobody_declared_says_so() -> R {
 
 #[tokio::test]
 async fn running_a_metric_over_a_dataset_still_being_made_says_so() -> R {
-    let fixture = Fixture::new();
+    let fixture = Fixture::new().await;
     fixture
         .definitions
         .put(DefinitionKind::Metric, &name("lines"), &over_a_dataset())
         .await?;
     fixture
         .datasets
-        .take_create(&name("commits"), &a_declaration())
+        .take_create(&name("deploys"), &a_declaration())
         .await?;
 
     let Err(error) = fixture.metric_runs().run(&name("lines"), &legacy()).await else {

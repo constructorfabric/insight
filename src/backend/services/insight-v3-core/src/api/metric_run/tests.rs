@@ -25,6 +25,25 @@ struct TestHarness {
     definitions: Arc<dyn Definitions>,
 }
 
+/// The one dataset every run here reads: a record with a moment, a day and a
+/// number in it.
+fn a_ready_dataset(url: &str) -> crate::api::Datasets {
+    crate::api::Datasets::holding(
+        url,
+        &[(
+            "commits",
+            json!({
+            "title": "Commits",
+            "fields": [
+                { "name": "occurred_at", "path": "occurred_at", "type": "datetime" },
+                { "name": "day", "path": "day", "type": "string" },
+                    { "name": "lines", "path": "lines", "type": "int" }
+                ]
+            }),
+        )],
+    )
+}
+
 impl TestHarness {
     #[allow(clippy::unused_async)]
     async fn new(metrics_url: &str) -> Self {
@@ -36,6 +55,7 @@ impl TestHarness {
             "insight",
         ));
         let definitions: Arc<dyn Definitions> = Arc::new(MemoryDefinitions::new());
+        let datasets = a_ready_dataset(metrics_url);
         let state = Arc::new(AppState::new(
             crate::api::Warehouse {
                 catalog: crate::store::catalog::Catalog::fixed(Vec::new()),
@@ -47,7 +67,7 @@ impl TestHarness {
             definitions.clone(),
             ChatClient::keyless(),
             crate::store::identity::IdentityClient::fixed(true),
-            crate::api::Datasets::offline("http://offline.invalid"),
+            datasets,
         ));
         let router = register_routes(Router::new(), &openapi, state);
 
@@ -181,8 +201,8 @@ fn midnights(day: chrono::NaiveDate) -> [i64; 2] {
 
 fn clocked_metric() -> serde_json::Value {
     json!({
-        "table": "events",
-        "time": { "column": "occurred_at" },
+        "dataset": "commits",
+        "time": { "field": "occurred_at" },
         "fields": [{ "agg": "count", "type": "int", "as_name": "total" }]
     })
 }
@@ -230,10 +250,10 @@ async fn a_stored_metric_runs_and_returns_columns_in_field_order() -> R {
 
     let harness = TestHarness::new(&format!("http://{address}")).await;
     let metric = json!({
-        "table": "events",
+        "dataset": "commits",
         "fields": [
-            { "json": "day", "type": "string", "as_name": "day" },
-            { "json": "lines", "type": "int", "agg": "sum", "as_name": "lines" }
+            { "field": "day", "type": "string", "as_name": "day" },
+            { "field": "lines", "type": "int", "agg": "sum", "as_name": "lines" }
         ],
         "group_by": ["day"],
         "filters": [],
@@ -268,7 +288,7 @@ async fn a_missing_metric_is_not_found() -> R {
 #[tokio::test]
 async fn an_uncompilable_metric_is_a_bad_request() -> R {
     let harness = TestHarness::new("http://127.0.0.1:1").await;
-    let metric = json!({ "table": "events", "fields": [], "group_by": [], "filters": [] });
+    let metric = json!({ "dataset": "commits", "fields": [], "group_by": [], "filters": [] });
 
     let response = harness.run("empty", Some(metric)).await;
 
@@ -310,7 +330,8 @@ async fn a_ranged_run_buckets_its_rows_and_says_how_many_had_no_clock() -> R {
             "columns": ["bucket", "total"],
             "rows": [["2026-09-10 00:00:00", 2]],
             "percents": [],
-            "undated": 4
+            "undated": 4,
+            "clock": { "field": "occurred_at", "from": "metric" }
         })
     );
 
@@ -390,7 +411,7 @@ async fn a_body_whose_fields_are_the_wrong_shape_is_a_bad_request() -> R {
 async fn a_range_asked_of_a_metric_with_no_clock_is_a_bad_request() -> R {
     let harness = TestHarness::new("http://127.0.0.1:1").await;
     let clockless = json!({
-        "table": "events",
+        "dataset": "commits",
         "fields": [{ "agg": "count", "type": "int", "as_name": "total" }]
     });
 
@@ -450,7 +471,7 @@ async fn a_run_that_wants_a_total_asks_for_the_window_without_a_bucket() -> R {
 
     let sql = only_read(&seen);
     assert!(!sql.contains("`bucket`"), "{sql}");
-    assert!(sql.contains("`occurred_at` >="), "{sql}");
+    assert!(sql.contains("'occurred_at'"), "{sql}");
 
     server.abort();
     Ok(())
@@ -461,8 +482,8 @@ async fn a_window_wider_than_the_metric_allows_is_a_bad_request() -> R {
     let (address, server) = clocked_upstream().await;
     let harness = TestHarness::new(&address).await;
     let capped = json!({
-        "table": "events",
-        "time": { "column": "occurred_at" },
+        "dataset": "commits",
+        "time": { "field": "occurred_at" },
         "max_range": "P7D",
         "fields": [{ "agg": "count", "type": "int", "as_name": "total" }]
     });

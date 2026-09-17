@@ -17,9 +17,7 @@ use super::errors::ApiErrors;
 use crate::chat::{Ask, ChatError, Proposal, Turn};
 use crate::domain::assistant::DatasetSchemas;
 use crate::domain::definition::{Change, Definition, DefinitionKind, DefinitionName};
-use crate::domain::query::metric_query::{
-    MetricQuery, MetricQueryError, MetricRunError, RunResult,
-};
+use crate::domain::query::metric_query::{MetricQuery, RunResult};
 
 #[resource_error("gts.cf.insight.insight_v3_core.chat.v1~")]
 struct ChatApiError;
@@ -127,7 +125,10 @@ async fn handle_chat(
 
     match proposal {
         Proposal::Answer { reply, query } => {
-            let queried = query.as_ref().map(MetricQuery::qualified);
+            let queried = query
+                .as_ref()
+                .and_then(MetricQuery::dataset)
+                .map(str::to_owned);
             let result = answered_with(&state, query).await?;
             let reply = match &result {
                 Some(rows) if rows.rows.is_empty() => no_rows(queried.as_deref()),
@@ -255,13 +256,13 @@ async fn answered_with(
         return Ok(None);
     };
 
-    let compiled = query
-        .compile(state.metrics().people())
-        .map_err(|error| compile_error(&error))?;
+    let answered = state
+        .metric_runs()
+        .answer(&query)
+        .await
+        .map_err(crate::api::definitions::custom_error)?;
 
-    Ok(Some(
-        state.metrics().run(&compiled).await.map_err(run_error)?,
-    ))
+    Ok(Some(answered))
 }
 
 fn chat_error(error: ChatError) -> CanonicalError {
@@ -300,29 +301,6 @@ fn chat_error(error: ChatError) -> CanonicalError {
         ChatError::NoKey => {
             tracing::error!("the assistant was asked to answer with no anthropic token set");
             CanonicalError::internal("the assistant is not configured on this instance").create()
-        }
-    }
-}
-
-fn compile_error(error: &MetricQueryError) -> CanonicalError {
-    ChatApiError::invalid_argument()
-        .with_field_violation("query", error.to_string(), "INVALID")
-        .create()
-}
-
-fn run_error(error: MetricRunError) -> CanonicalError {
-    match error {
-        MetricRunError::Timeout => ChatApiError::deadline_exceeded("query timed out").create(),
-        MetricRunError::ResultTooLarge => ChatApiError::invalid_argument()
-            .with_field_violation("query", "result exceeded the size limit", "TOO_LARGE")
-            .create(),
-        MetricRunError::ClickHouse(source) => {
-            tracing::error!(error = ?source, "chat query execution failed");
-            CanonicalError::internal("chat query execution failed").create()
-        }
-        MetricRunError::InvalidResponse(source) => {
-            tracing::error!(error = ?source, "chat query result deserialization failed");
-            CanonicalError::internal("chat query execution failed").create()
         }
     }
 }

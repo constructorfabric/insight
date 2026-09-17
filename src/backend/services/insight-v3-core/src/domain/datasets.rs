@@ -13,6 +13,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 use super::definition::DefinitionName;
+use super::kinds::dataset::declaration::Declaration;
 use super::kinds::dataset::state::{DatasetState, Operation};
 
 /// How long an attempt owns a dataset before another may take over.
@@ -91,6 +92,36 @@ impl Dataset {
             .as_ref()
             .filter(|held| held.until > now)
             .map(|held| held.operation)
+    }
+}
+
+/// A dataset that stands ready to be read: what its records mean, and where
+/// they are kept.
+#[derive(Debug)]
+pub(crate) struct Ready {
+    pub(crate) declaration: Declaration,
+    pub(crate) table: String,
+}
+
+/// The dataset under this name, when one is ready to be read.
+///
+/// Absent, still being made and being removed all read as none: the table is
+/// not there yet, or is about to go. Every caller answers that the same way,
+/// so none of them tells the three apart.
+pub(crate) async fn ready(datasets: &dyn Datasets, named: &str) -> Option<Ready> {
+    let name = DefinitionName::parse(named).ok()?;
+    let held = datasets.get(&name).await.ok()??;
+    if held.state != DatasetState::Ready {
+        return None;
+    }
+    let table = held.physical_table?;
+
+    match serde_json::from_value(held.declaration) {
+        Ok(declaration) => Some(Ready { declaration, table }),
+        Err(error) => {
+            tracing::error!(error = ?error, "a stored dataset declaration could not be read");
+            None
+        }
     }
 }
 

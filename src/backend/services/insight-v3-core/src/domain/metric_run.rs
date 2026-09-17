@@ -2,13 +2,13 @@
 
 use chrono::Utc;
 
-use super::datasets::Datasets;
+use super::datasets::{self, Datasets};
 use super::definition::{DefinitionKind, DefinitionName, Lookup};
 use super::kinds::dataset::declaration::Declaration;
-use super::kinds::dataset::state::DatasetState;
+use super::kinds::metric::answerable::EffectiveClock;
 use super::query::metric_query::over::Over;
 use super::query::metric_query::{MetricQuery, MetricQueryError, MetricRunner, RunResult};
-use super::query::time_window::WindowRequest;
+use super::query::time_window::{Window, WindowRequest};
 use super::query::undated::UndatedCount;
 use super::surfaces::CustomError;
 use crate::store::catalog::{Catalog, TableEngine};
@@ -128,9 +128,37 @@ impl<'a> MetricRuns<'a> {
             .run(&compiled)
             .await
             .map_err(CustomError::Run)?;
+        result.clock = EffectiveClock::of(metric, &declaration);
         if request.is_ranged() {
             result.undated = Some(self.undated_over(metric, over).await?.count());
         }
+
+        Ok(result)
+    }
+
+    /// Runs a metric nobody stored: the assistant's own, written to answer one
+    /// question and kept nowhere.
+    pub(crate) async fn answer(&self, metric: &MetricQuery) -> Result<RunResult, CustomError> {
+        let Some(named) = metric.dataset() else {
+            return Err(CustomError::Compile(MetricQueryError::NoDataset));
+        };
+        let (declaration, table) = self.ready_dataset(named).await?;
+        let over = Over {
+            declaration: &declaration,
+            database: self.datasets_database,
+            table: &table,
+        };
+
+        let compiled = metric
+            .compile_over(self.metrics.people(), &Window::legacy(), over)
+            .map_err(CustomError::Compile)?;
+
+        let mut result = self
+            .metrics
+            .run(&compiled)
+            .await
+            .map_err(CustomError::Run)?;
+        result.clock = EffectiveClock::of(metric, &declaration);
 
         Ok(result)
     }
@@ -141,25 +169,11 @@ impl<'a> MetricRuns<'a> {
     /// nothing: a run over it would read a table that is not there yet or is
     /// about to go.
     async fn ready_dataset(&self, named: &str) -> Result<(Declaration, String), CustomError> {
-        let name = DefinitionName::parse(named)
-            .map_err(|_| CustomError::DatasetNotReady(named.to_owned()))?;
-        let held = self
-            .datasets
-            .get(&name)
+        let ready = datasets::ready(self.datasets, named)
             .await
-            .map_err(|_| CustomError::DatasetNotReady(named.to_owned()))?
-            .filter(|held| held.state == DatasetState::Ready);
+            .ok_or_else(|| CustomError::DatasetNotReady(named.to_owned()))?;
 
-        let Some(held) = held else {
-            return Err(CustomError::DatasetNotReady(named.to_owned()));
-        };
-        let Some(table) = held.physical_table else {
-            return Err(CustomError::DatasetNotReady(named.to_owned()));
-        };
-
-        let declaration = serde_json::from_value(held.declaration).map_err(CustomError::Body)?;
-
-        Ok((declaration, table))
+        Ok((ready.declaration, ready.table))
     }
 
     async fn undated_over(

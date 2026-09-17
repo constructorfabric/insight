@@ -51,3 +51,15 @@ impl Violation {
         self.reason.as_str()
     }
 }
+
+/// Every violation in one line, for a reader with nowhere to mark a field.
+///
+/// The paths are kept: a model repairing its own body needs to know which
+/// part of it was refused, and the sentence alone does not say.
+pub(crate) fn said(violations: &[Violation]) -> String {
+    violations
+        .iter()
+        .map(|violation| format!("{}: {}", violation.field, violation.detail))
+        .collect::<Vec<_>>()
+        .join("; ")
+}

@@ -6,6 +6,8 @@
 //! produces, and appears in its grouping and its ordering. Only the first kind
 //! is the dataset's to answer for.
 
+use serde::Serialize;
+
 use crate::domain::kinds::dataset::declaration::{BUCKET_COLUMN, Declaration, FieldType};
 use crate::domain::query::metric_query::{Aggregate, MetricQuery, Reference, Used};
 use crate::domain::violation::{Reason, Violation};
@@ -53,10 +55,31 @@ pub(crate) fn effective_clock<'a>(
 }
 
 /// Who decided which field a window selects by.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub(crate) enum ClockSource {
     Metric,
     Dataset,
+}
+
+/// The clock a window over this metric selects by, as a reader is told it.
+///
+/// A metric over a dataset may name no clock and still be windowed, so its
+/// body does not say whether a card follows the board's window. This does.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct EffectiveClock {
+    pub(crate) field: String,
+    /// Whether the metric named this field or inherited it.
+    pub(crate) from: ClockSource,
+}
+
+impl EffectiveClock {
+    pub(crate) fn of(metric: &MetricQuery, declaration: &Declaration) -> Option<Self> {
+        effective_clock(metric, declaration).map(|(field, from)| Self {
+            field: field.to_owned(),
+            from,
+        })
+    }
 }
 
 fn check_reference(

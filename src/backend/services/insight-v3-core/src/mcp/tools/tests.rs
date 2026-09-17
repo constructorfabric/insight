@@ -16,7 +16,30 @@ use crate::store::identity::IdentityClient;
 
 type R = Result<(), Box<dyn Error>>;
 
+/// A stand whose one dataset stands ready, since every stored metric reads
+/// one.
 fn surfaces() -> CustomSurfaces {
+    built(crate::api::Datasets::holding(
+        "http://offline.invalid",
+        &[(
+            "commits",
+            json!({
+                "title": "Commits",
+                "fields": [
+                    { "name": "actor", "path": "actor", "type": "string" },
+                    { "name": "lines_added", "path": "lines_added", "type": "int" }
+                ]
+            }),
+        )],
+    ))
+}
+
+/// A stand where nobody has declared anything.
+fn surfaces_without_a_dataset() -> CustomSurfaces {
+    built(crate::api::Datasets::offline("http://offline.invalid"))
+}
+
+fn built(datasets: crate::api::Datasets) -> CustomSurfaces {
     let client = || {
         insight_clickhouse::Client::new(insight_clickhouse::Config::new(
             "http://clickhouse.invalid",
@@ -36,7 +59,7 @@ fn surfaces() -> CustomSurfaces {
         Arc::new(MemoryDefinitions::new()),
         ChatClient::keyless(),
         identity,
-        crate::api::Datasets::offline("http://offline.invalid"),
+        datasets,
     ));
 
     CustomSurfaces::new(state)
@@ -44,7 +67,7 @@ fn surfaces() -> CustomSurfaces {
 
 fn metric_body() -> Value {
     json!({
-        "table": "events",
+        "dataset": "commits",
         "fields": [
             {"json": "actor", "type": "string", "as_name": "actor"},
             {"json": "actor", "type": "string", "agg": "count", "as_name": "total"}
@@ -317,19 +340,18 @@ async fn a_range_the_server_does_not_know_is_refused_by_the_tool() {
 }
 
 #[tokio::test]
-async fn a_metric_whose_clock_cannot_be_read_is_not_stored() {
+async fn a_metric_addressing_a_relation_of_its_own_is_not_stored() {
     let result = surfaces()
         .put_metric(put(
-            "broken_clock",
+            "over_a_table",
             json!({
                 "table": "events",
-                "time": {"json": "at", "type": "string"},
                 "fields": [{"agg": "count", "type": "int", "as_name": "total"}]
             }),
         ))
         .await;
 
-    assert_refused(&result, "is not datetime");
+    assert_refused(&result, "must name the `dataset` it reads");
 }
 
 #[tokio::test]
@@ -338,7 +360,7 @@ async fn a_metric_whose_maximum_range_is_not_a_duration_is_not_stored() {
         .put_metric(put(
             "bad_cap",
             json!({
-                "table": "events",
+                "dataset": "commits",
                 "time": {"column": "occurred_at"},
                 "max_range": "P0D",
                 "fields": [{"agg": "count", "type": "int", "as_name": "total"}]
@@ -358,7 +380,7 @@ async fn a_metric_that_declares_a_clock_and_a_cap_is_stored() -> R {
             .put_metric(put(
                 "opened",
                 json!({
-                    "table": "events",
+                    "dataset": "commits",
                     "time": {"column": "occurred_at"},
                     "max_range": "P1Y",
                     "fields": [{"agg": "count", "type": "int", "as_name": "total"}]
@@ -372,7 +394,7 @@ async fn a_metric_that_declares_a_clock_and_a_cap_is_stored() -> R {
 
 #[tokio::test]
 async fn with_nothing_declared_the_listing_says_who_declares_a_dataset() {
-    let result = surfaces().list_datasets().await;
+    let result = surfaces_without_a_dataset().list_datasets().await;
 
     assert_eq!(result.is_error, Some(false), "{result:?}");
     let said = format!("{result:?}");
@@ -389,9 +411,8 @@ async fn search_definitions_matches_a_name_and_a_body() {
             .put_metric(put(
                 "lines_per_day",
                 json!({
-                    "database": "silver",
-                    "table": "class_git_commits",
-                    "fields": [{"column": "lines_added", "type": "int", "as_name": "lines"}]
+                    "dataset": "commits",
+                    "fields": [{"field": "lines_added", "type": "int", "as_name": "lines"}]
                 }),
             ))
             .await,
@@ -400,7 +421,7 @@ async fn search_definitions_matches_a_name_and_a_body() {
 
     let by_body = assert_accepted(
         &surfaces
-            .search_definitions(finding(DefinitionKind::Metric, "class_git_commits"))
+            .search_definitions(finding(DefinitionKind::Metric, "lines_added"))
             .await,
     );
     assert_eq!(by_body["names"], json!(["lines_per_day"]));

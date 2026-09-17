@@ -3,16 +3,19 @@
 use serde_json::Value;
 use thiserror::Error;
 
+use crate::domain::datasets::{self, Datasets};
 use crate::domain::definition::arriving::Arriving;
 use crate::domain::definition::{
     Change, Definition, DefinitionKind, DefinitionName, DefinitionStoreError, Definitions,
     NamePage, Page,
 };
 use crate::domain::kinds::dashboard::Item;
+use crate::domain::kinds::metric::answerable::EffectiveClock;
 use crate::domain::kinds::widget::WidgetError;
 use crate::domain::kinds::{self, KindError, Reference};
-use crate::domain::query::metric_query::{MetricQueryError, MetricRunError};
+use crate::domain::query::metric_query::{MetricQuery, MetricQueryError, MetricRunError};
 use crate::domain::query::time_window::WindowError;
+use crate::domain::violation::Violation;
 use crate::store::catalog::CatalogError;
 
 #[cfg(test)]
@@ -40,6 +43,8 @@ pub(crate) enum CustomError {
     Range(WindowError),
     #[error("no dataset named `{0}` is ready to be read")]
     DatasetNotReady(String),
+    #[error("this dataset cannot answer that metric - {}", crate::domain::violation::said(.0))]
+    Unanswerable(Vec<Violation>),
 }
 
 impl From<KindError> for CustomError {
@@ -50,6 +55,8 @@ impl From<KindError> for CustomError {
             KindError::Compile(source) => Self::Compile(source),
             KindError::Range(source) => Self::Range(source),
             KindError::Store(source) => Self::Store(source),
+            KindError::DatasetNotReady(named) => Self::DatasetNotReady(named),
+            KindError::Unanswerable(violations) => Self::Unanswerable(violations),
         }
     }
 }
@@ -65,6 +72,7 @@ impl CustomError {
             | Self::Body(_)
             | Self::Range(_)
             | Self::DatasetNotReady(_)
+            | Self::Unanswerable(_)
             | Self::Compile(_) => true,
             Self::Run(_) | Self::Store(_) | Self::Catalog(_) => false,
         }
@@ -74,11 +82,15 @@ impl CustomError {
 #[derive(Debug)]
 pub(crate) struct Surfaces<'a> {
     definitions: &'a dyn Definitions,
+    datasets: &'a dyn Datasets,
 }
 
 impl<'a> Surfaces<'a> {
-    pub(crate) fn new(definitions: &'a dyn Definitions) -> Self {
-        Self { definitions }
+    pub(crate) fn new(definitions: &'a dyn Definitions, datasets: &'a dyn Datasets) -> Self {
+        Self {
+            definitions,
+            datasets,
+        }
     }
 
     /// One page of the names of this kind matching `needle`, or of all of
@@ -164,12 +176,33 @@ impl<'a> Surfaces<'a> {
         name: &DefinitionName,
         body: &Value,
     ) -> Result<(), CustomError> {
-        kinds::check(kind, body, self.definitions).await?;
+        kinds::check(kind, body, self.definitions, self.datasets).await?;
 
         self.definitions
             .put(kind, name, body)
             .await
             .map_err(CustomError::Store)
+    }
+
+    /// The clock a window over this definition selects by, when it has one.
+    ///
+    /// Only a metric does, and a metric over a dataset may inherit it, so its
+    /// stored body is not enough to tell a reader whether a card drawn from it
+    /// follows the board's window.
+    pub(crate) async fn clock_of(
+        &self,
+        kind: DefinitionKind,
+        body: &Value,
+    ) -> Option<EffectiveClock> {
+        match kind {
+            DefinitionKind::Metric => {}
+            DefinitionKind::Widget | DefinitionKind::Dashboard => return None,
+        }
+
+        let metric: MetricQuery = serde_json::from_value(body.clone()).ok()?;
+        let ready = datasets::ready(self.datasets, metric.dataset()?).await?;
+
+        EffectiveClock::of(&metric, &ready.declaration)
     }
 
     pub(crate) async fn delete(
@@ -213,6 +246,7 @@ impl<'a> Surfaces<'a> {
                 arriving_definition.kind,
                 &arriving_definition.body,
                 &arriving,
+                self.datasets,
             )
             .await?;
         }

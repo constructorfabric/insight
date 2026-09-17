@@ -27,6 +27,10 @@ pub(crate) struct RunResult {
     /// a run that asked for a window leaves any out.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) undated: Option<u64>,
+    /// The field this run windowed by, and who decided it. Absent where
+    /// nothing windowed the run at all.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) clock: Option<crate::domain::kinds::metric::answerable::EffectiveClock>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -96,6 +100,7 @@ impl MetricRunner {
             rows,
             percents: compiled.percents.clone(),
             undated: None,
+            clock: None,
         })
     }
 

@@ -69,6 +69,7 @@ pub(crate) struct MetricQuery {
     dataset: Option<String>,
     #[serde(default)]
     database: Option<String>,
+    #[serde(default)]
     table: String,
     #[serde(default)]
     time: Option<TimeField>,
@@ -90,6 +91,12 @@ impl MetricQuery {
     /// The dataset this metric reads, when it names one.
     pub(crate) fn dataset(&self) -> Option<&str> {
         self.dataset.as_deref()
+    }
+
+    /// Whether this metric addresses a relation of its own, which is how
+    /// metrics read data before datasets and is no longer allowed.
+    pub(crate) fn addresses_a_relation(&self) -> bool {
+        !self.table.is_empty() || self.database.is_some()
     }
 
     /// Every declared field this metric names: the source of each selected
@@ -216,8 +223,12 @@ impl MetricQuery {
         names
     }
 
+    /// Whether a windowed run of this metric injects a `bucket` column.
+    ///
+    /// A metric over a dataset may inherit the dataset's main date, which only
+    /// the declaration knows, so every one of them may produce a bucket.
     fn valid_clock(&self) -> bool {
-        self.has_clock().unwrap_or(false)
+        self.dataset.is_some() || self.has_clock().unwrap_or(false)
     }
 
     fn maximum(&self) -> Result<Option<MaximumRange>, MetricQueryError> {
@@ -228,8 +239,14 @@ impl MetricQuery {
             .transpose()?)
     }
 
+    /// Whether the window this metric declares holds up on its own.
+    ///
+    /// A metric over a dataset names a declared field as its clock, and
+    /// whether that field is a date is the declaration's to answer, not this.
     pub(crate) fn check_window(&self) -> Result<(), MetricQueryError> {
-        self.has_clock()?;
+        if self.dataset.is_none() {
+            self.has_clock()?;
+        }
         self.maximum()?;
 
         Ok(())
@@ -284,6 +301,10 @@ pub(crate) enum MetricQueryError {
     FieldSource(String),
     #[error("`{0}` is not a field of the dataset this metric reads")]
     UnknownField(String),
+    #[error("a metric must name the `dataset` it reads")]
+    NoDataset,
+    #[error("a metric reads a dataset, so it may not name a `table` or a `database`")]
+    AddressesARelation,
     #[error("`{0}` selects an array element, so it and its `where` must read json")]
     Selector(String),
     #[error("{0}")]

@@ -226,6 +226,9 @@ impl MetricQuery {
         engine: TableEngine,
         over: Option<Over<'_>>,
     ) -> Result<CompiledQuery, MetricQueryError> {
+        if self.fields.is_empty() {
+            return Err(MetricQueryError::NoFields);
+        }
         let (_, table) = self.split();
         if over.is_none() {
             self.validate_shape(table)?;

@@ -2,6 +2,11 @@ use serde_json::json;
 
 use super::*;
 
+/// A dataset store holding nothing, for the kinds that never read one.
+fn datasets() -> crate::store::datasets::memory::MemoryDatasets {
+    crate::store::datasets::memory::MemoryDatasets::at(chrono::Utc::now())
+}
+
 #[test]
 fn a_widget_names_the_metric_it_draws() {
     let body = json!({ "type": "stat", "metric": "commits", "value": "total" });
@@ -129,7 +134,7 @@ async fn a_dashboard_is_checked_through_the_kind_it_was_stored_under() {
     let body = json!({ "time_ranges": ["since_the_beginning"] });
     let store = crate::store::definitions::memory::MemoryDefinitions::new();
 
-    let refusal = check(DefinitionKind::Dashboard, &body, &store).await;
+    let refusal = check(DefinitionKind::Dashboard, &body, &store, &datasets()).await;
 
     assert!(
         matches!(refusal, Err(KindError::Range(_))),

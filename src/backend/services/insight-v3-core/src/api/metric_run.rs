@@ -146,6 +146,7 @@ fn custom_error(error: CustomError) -> CanonicalError {
         CustomError::InUse { .. }
         | CustomError::Widget(_)
         | CustomError::Range(_)
+        | CustomError::Unanswerable(_)
         | CustomError::Catalog(_) => {
             tracing::error!(%error, "running a metric produced an unrelated failure");
             CanonicalError::internal("metric query execution failed").create()

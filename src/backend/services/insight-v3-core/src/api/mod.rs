@@ -115,6 +115,39 @@ impl Datasets {
         }
     }
 
+    /// Datasets over a store holding datasets that stand ready, for the
+    /// harnesses whose metrics have to read something.
+    #[cfg(test)]
+    pub(crate) fn holding(url: &str, declared: &[(&str, serde_json::Value)]) -> Self {
+        use crate::domain::datasets::{Datasets as _, Finish};
+
+        let rows = crate::store::datasets::memory::MemoryDatasets::at(chrono::Utc::now());
+
+        futures::executor::block_on(async {
+            for (named, declaration) in declared {
+                let name = crate::domain::definition::DefinitionName::parse(named)
+                    .unwrap_or_else(|error| panic!("`{named}` should be a dataset name: {error}"));
+                let attempt = rows
+                    .take_create(&name, declaration)
+                    .await
+                    .unwrap_or_else(|error| panic!("the dataset is claimed: {error}"));
+                for written in [Finish::Provisioned(format!("ds_{named}_1")), Finish::Ready] {
+                    rows.finish(&name, &attempt.token, written)
+                        .await
+                        .unwrap_or_else(|error| panic!("the dataset is published: {error}"));
+                }
+            }
+        });
+
+        Self::new(
+            Arc::new(rows),
+            DatasetTables::new(insight_clickhouse::Client::new(
+                insight_clickhouse::Config::new(url, "insight_datasets"),
+            )),
+            "insight_datasets".to_owned(),
+        )
+    }
+
     /// Datasets over a store that is never reached, for a state that answers
     /// without one.
     pub(crate) fn offline(url: &str) -> Self {
@@ -160,7 +193,7 @@ impl AppState {
     }
 
     pub(crate) fn surfaces(&self) -> crate::domain::surfaces::Surfaces<'_> {
-        crate::domain::surfaces::Surfaces::new(self.definitions.as_ref())
+        crate::domain::surfaces::Surfaces::new(self.definitions.as_ref(), self.datasets())
     }
 
     pub(crate) fn assistant(&self) -> crate::domain::assistant::Assistant<'_> {

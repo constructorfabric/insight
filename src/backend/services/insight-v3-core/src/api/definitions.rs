@@ -14,7 +14,9 @@ use utoipa::ToSchema;
 use super::AppState;
 use super::errors::ApiErrors;
 use crate::domain::definition::{DefinitionKind, DefinitionName, MAX_PAGE_LIMIT, Page, PageError};
+use crate::domain::kinds::metric::answerable::EffectiveClock;
 use crate::domain::surfaces::CustomError;
+use crate::domain::violation::Violation;
 
 /// The query string on a list: what to look for, in a name or in a body, and
 /// which page of the matches to answer with.
@@ -216,6 +218,18 @@ fn register_kind(
         .merge(rename)
 }
 
+/// A stored definition as a reader is given it.
+///
+/// The body is what was written; the clock is not in it, because a metric
+/// over a dataset may inherit one, and a reader deciding whether to window a
+/// card cannot tell from the body alone.
+#[derive(Debug, Serialize)]
+struct DefinitionResponse {
+    body: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    clock: Option<EffectiveClock>,
+}
+
 pub(super) fn custom_error(error: CustomError) -> CanonicalError {
     match error {
         CustomError::NotFound { kind, name } => {
@@ -242,6 +256,7 @@ pub(super) fn custom_error(error: CustomError) -> CanonicalError {
         CustomError::Compile(source) => {
             DefinitionApiError::invalid_field("body", source.to_string())
         }
+        CustomError::Unanswerable(violations) => unanswerable(&violations),
         CustomError::Store(source) => DefinitionApiError::definition_store_error(source),
         CustomError::Run(source) => {
             tracing::error!(error = ?source, "metric query execution failed");
@@ -252,6 +267,34 @@ pub(super) fn custom_error(error: CustomError) -> CanonicalError {
             CanonicalError::internal("table catalogue read failed").create()
         }
     }
+}
+
+/// Every way the dataset cannot answer the metric, reported together.
+///
+/// A metric wrong in several places is answered once, with each place named
+/// as the submitted body shapes it, so an editor can mark all of them.
+fn unanswerable(violations: &[Violation]) -> CanonicalError {
+    let Some((first, rest)) = violations.split_first() else {
+        return DefinitionApiError::invalid_field(
+            "body",
+            "the dataset cannot answer this metric".to_owned(),
+        );
+    };
+
+    let mut builder = DefinitionApiError::invalid_argument().with_field_violation(
+        &first.field,
+        first.detail.clone(),
+        first.reason_code(),
+    );
+    for violation in rest {
+        builder = builder.with_field_violation(
+            &violation.field,
+            violation.detail.clone(),
+            violation.reason_code(),
+        );
+    }
+
+    builder.create()
 }
 
 /// The same body, pointed at the new name.
@@ -355,8 +398,13 @@ async fn get_definition(
 
     let name = DefinitionName::parse(&name).map_err(DefinitionApiError::definition_error)?;
 
-    match state.surfaces().get(kind, &name).await {
-        Ok(body) => Ok(Json(body).into_response()),
+    let surfaces = state.surfaces();
+    match surfaces.get(kind, &name).await {
+        Ok(body) => {
+            let clock = surfaces.clock_of(kind, &body).await;
+
+            Ok(Json(DefinitionResponse { body, clock }).into_response())
+        }
         Err(CustomError::NotFound { .. }) => Ok(StatusCode::NOT_FOUND.into_response()),
         Err(other) => Err(custom_error(other)),
     }
