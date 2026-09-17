@@ -1,9 +1,13 @@
 //! The `MariaDB` schema the definitions live in.
 //!
 //! Applied by the `migrate` subcommand, which compose runs once before the
-//! server starts. The script is idempotent (`CREATE TABLE IF NOT EXISTS`), so
-//! a run against a schema that is already current only writes the
+//! server starts. Every script is idempotent (`CREATE TABLE IF NOT EXISTS`),
+//! so a run against a schema that is already current only writes the
 //! `seaql_migrations` ledger.
+//!
+//! INVARIANT: every migration names itself, and no two names are the same.
+//! The ledger is keyed by that name, so two migrations sharing one would let
+//! the ledger say the second had run when it had not.
 
 use sea_orm_migration::prelude::*;
 
@@ -54,11 +58,15 @@ fn statements(script: &str) -> Vec<String> {
 }
 
 mod m20260907_000001_definitions {
-    use super::{DbErr, MigrationTrait, SchemaManager, apply_sql};
-    use sea_orm_migration::prelude::DeriveMigrationName;
+    use super::{DbErr, MigrationName, MigrationTrait, SchemaManager, apply_sql};
 
-    #[derive(DeriveMigrationName)]
     pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &'static str {
+            "m20260907_000001_definitions"
+        }
+    }
 
     #[async_trait::async_trait]
     impl MigrationTrait for Migration {
@@ -75,11 +83,15 @@ mod m20260907_000001_definitions {
 }
 
 mod m20260916_000002_datasets {
-    use super::{DbErr, MigrationTrait, SchemaManager, apply_sql};
-    use sea_orm_migration::prelude::DeriveMigrationName;
+    use super::{DbErr, MigrationName, MigrationTrait, SchemaManager, apply_sql};
 
-    #[derive(DeriveMigrationName)]
     pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &'static str {
+            "m20260916_000002_datasets"
+        }
+    }
 
     #[async_trait::async_trait]
     impl MigrationTrait for Migration {
@@ -116,6 +128,26 @@ mod tests {
             3
         );
         assert!(!script.contains("ReplacingMergeTree"));
+    }
+
+    /// The ledger is keyed by the name a migration gives itself. Two sharing
+    /// one name collide on a fresh database and, worse, let an installation
+    /// that already ran the first believe it has run the second.
+    #[test]
+    fn every_migration_names_itself_and_no_two_names_are_the_same() {
+        use sea_orm_migration::MigratorTrait as _;
+
+        let migrations = super::Migrator::migrations();
+        let names: Vec<&str> = migrations
+            .iter()
+            .map(|migration| migration.name())
+            .collect();
+
+        assert_eq!(
+            names,
+            ["m20260907_000001_definitions", "m20260916_000002_datasets"],
+            "a migration's name is the ledger's key, so it is written down here"
+        );
     }
 
     /// Every script is applied a statement at a time, and a statement cut in
