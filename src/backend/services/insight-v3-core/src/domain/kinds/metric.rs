@@ -1,12 +1,5 @@
 //! What a stored metric admits, and what it names.
 
-// Its own tests exercise it; the metric write path and the compiler that call
-// it arrive in the steps after this one. `expect` rather than `allow`, so the
-// marker fails once they do.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "wired up by the metric write path")
-)]
 pub(crate) mod answerable;
 
 use serde_json::Value;
@@ -25,7 +18,18 @@ pub(crate) fn check(body: &Value) -> Result<(), KindError> {
     metric.check_window().map_err(KindError::Compile)
 }
 
-/// A metric names no other definition: it reads a relation, not a definition.
+/// A metric names no other definition: it reads a dataset, which is not one.
 pub(crate) fn refers_to(_body: &Value) -> Vec<Reference> {
     Vec::new()
+}
+
+/// The dataset this metric reads, when its body names one readably.
+///
+/// Datasets are not definitions of the same kind — they own a table of records
+/// and a lifecycle — so a metric's hold on one is not in the reference graph
+/// the other kinds share.
+pub(crate) fn reads_dataset(body: &Value) -> Option<String> {
+    body.get("dataset")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
 }

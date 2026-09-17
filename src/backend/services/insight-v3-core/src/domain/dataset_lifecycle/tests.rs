@@ -5,6 +5,7 @@ use serde_json::json;
 
 use super::*;
 use crate::store::datasets::memory::MemoryDatasets;
+use crate::store::definitions::memory::MemoryDefinitions;
 
 type R = Result<(), Box<dyn std::error::Error>>;
 
@@ -32,6 +33,7 @@ struct Fixture {
     mock: Mock,
     datasets: MemoryDatasets,
     tables: DatasetTables,
+    definitions: MemoryDefinitions,
 }
 
 impl Fixture {
@@ -50,6 +52,7 @@ impl Fixture {
             ),
             mock,
             tables,
+            definitions: MemoryDefinitions::new(),
         }
     }
 
@@ -59,7 +62,7 @@ impl Fixture {
     }
 
     fn lifecycle(&self) -> DatasetLifecycle<'_> {
-        DatasetLifecycle::new(&self.datasets, &self.tables)
+        DatasetLifecycle::new(&self.datasets, &self.tables, &self.definitions)
     }
 }
 
@@ -265,7 +268,7 @@ async fn an_attempt_that_lost_the_dataset_takes_away_the_table_it_made() -> R {
             .unwrap_or_else(|| panic!("the fixture time exists")),
     ));
 
-    let refused = DatasetLifecycle::new(&datasets, &fixture.tables)
+    let refused = DatasetLifecycle::new(&datasets, &fixture.tables, &fixture.definitions)
         .declare(&name("commits"), &declaration())
         .await;
 
@@ -408,6 +411,195 @@ async fn a_table_that_is_no_longer_ours_is_left_where_it_is() -> R {
         ),
         "{refused:?}"
     );
+
+    Ok(())
+}
+
+/// A metric reading the fixture dataset, stored as a reader of it.
+async fn a_metric_reading_commits(fixture: &Fixture, named: &str, body: Value) -> R {
+    let stored = DefinitionName::parse(named)?;
+    fixture
+        .definitions
+        .put(DefinitionKind::Metric, &stored, &body)
+        .await?;
+
+    Ok(())
+}
+
+fn reading_commits() -> Value {
+    json!({
+        "dataset": "commits",
+        "table": "commits",
+        "fields": [{ "field": "lines", "type": "int", "agg": "sum", "as_name": "total" }],
+        "group_by": [],
+        "filters": []
+    })
+}
+
+/// The fixture declaration with one field's path moved, and nothing else.
+fn declaration_reading_elsewhere() -> Value {
+    json!({
+        "title": "Commits",
+        "fields": [
+            { "name": "day", "path": "day", "type": "datetime", "default_clock": true },
+            { "name": "lines", "path": "changed.lines", "type": "int" }
+        ]
+    })
+}
+
+#[tokio::test]
+async fn a_dataset_a_metric_still_reads_is_not_taken_away() -> R {
+    let fixture = Fixture::new();
+    fixture.nothing_holds_the_name();
+    fixture.mock.add(handlers::record_ddl());
+    fixture
+        .lifecycle()
+        .declare(&name("commits"), &declaration())
+        .await?;
+    a_metric_reading_commits(&fixture, "lines_per_day", reading_commits()).await?;
+
+    let refused = fixture.lifecycle().remove(&name("commits")).await;
+
+    let Err(DatasetChangeError::StillRead(readers)) = refused else {
+        panic!("expected a refusal naming the readers, got {refused:?}");
+    };
+    assert_eq!(readers, vec!["lines_per_day".to_owned()]);
+    assert!(
+        fixture.datasets.get(&name("commits")).await?.is_some(),
+        "the dataset stays while something reads it"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_replacement_that_leaves_a_reader_unanswerable_is_refused_naming_it() -> R {
+    let fixture = Fixture::new();
+    fixture.nothing_holds_the_name();
+    fixture.mock.add(handlers::record_ddl());
+    fixture
+        .lifecycle()
+        .declare(&name("commits"), &declaration())
+        .await?;
+    a_metric_reading_commits(&fixture, "lines_per_day", reading_commits()).await?;
+
+    let without_lines = json!({
+        "title": "Commits",
+        "fields": [{ "name": "day", "path": "day", "type": "datetime", "default_clock": true }]
+    });
+    let refused = fixture
+        .lifecycle()
+        .declare(&name("commits"), &without_lines)
+        .await;
+
+    let Err(DatasetChangeError::WouldBreak(broken)) = refused else {
+        panic!("expected a refusal naming the metric, got {refused:?}");
+    };
+    assert!(
+        broken.iter().any(|one| one.metric == "lines_per_day"),
+        "{broken:?}"
+    );
+    let Some(held) = fixture.datasets.get(&name("commits")).await? else {
+        panic!("the dataset stands");
+    };
+    assert_eq!(held.declaration, declaration(), "nothing was written");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_replacement_that_would_move_a_readers_numbers_is_refused_though_it_stays_valid() -> R {
+    let fixture = Fixture::new();
+    fixture.nothing_holds_the_name();
+    fixture.mock.add(handlers::record_ddl());
+    fixture
+        .lifecycle()
+        .declare(&name("commits"), &declaration())
+        .await?;
+    a_metric_reading_commits(&fixture, "lines_per_day", reading_commits()).await?;
+
+    let refused = fixture
+        .lifecycle()
+        .declare(&name("commits"), &declaration_reading_elsewhere())
+        .await;
+
+    let Err(DatasetChangeError::WouldBreak(broken)) = refused else {
+        panic!("expected a refusal, got {refused:?}");
+    };
+    assert!(
+        broken
+            .iter()
+            .any(|one| one.why.contains("somewhere else in the record")),
+        "{broken:?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_replacement_that_moves_the_date_a_reader_windows_by_is_refused() -> R {
+    let fixture = Fixture::new();
+    fixture.nothing_holds_the_name();
+    fixture.mock.add(handlers::record_ddl());
+    let with_two_dates = json!({
+        "title": "Commits",
+        "fields": [
+            { "name": "day", "path": "day", "type": "datetime", "default_clock": true },
+            { "name": "merged", "path": "merged", "type": "datetime" },
+            { "name": "lines", "path": "lines", "type": "int" }
+        ]
+    });
+    fixture
+        .lifecycle()
+        .declare(&name("commits"), &with_two_dates)
+        .await?;
+    a_metric_reading_commits(&fixture, "lines_per_day", reading_commits()).await?;
+
+    let moved_clock = json!({
+        "title": "Commits",
+        "fields": [
+            { "name": "day", "path": "day", "type": "datetime" },
+            { "name": "merged", "path": "merged", "type": "datetime", "default_clock": true },
+            { "name": "lines", "path": "lines", "type": "int" }
+        ]
+    });
+    let refused = fixture
+        .lifecycle()
+        .declare(&name("commits"), &moved_clock)
+        .await;
+
+    let Err(DatasetChangeError::WouldBreak(broken)) = refused else {
+        panic!("expected a refusal, got {refused:?}");
+    };
+    assert!(
+        broken
+            .iter()
+            .any(|one| one.why.contains("window selects by")),
+        "{broken:?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_replacement_nothing_reads_is_free_to_land() -> R {
+    let fixture = Fixture::new();
+    fixture.nothing_holds_the_name();
+    fixture.mock.add(handlers::record_ddl());
+    fixture
+        .lifecycle()
+        .declare(&name("commits"), &declaration())
+        .await?;
+
+    fixture
+        .lifecycle()
+        .declare(&name("commits"), &declaration_reading_elsewhere())
+        .await?;
+
+    let Some(held) = fixture.datasets.get(&name("commits")).await? else {
+        panic!("the dataset stands");
+    };
+    assert_eq!(held.declaration, declaration_reading_elsewhere());
 
     Ok(())
 }

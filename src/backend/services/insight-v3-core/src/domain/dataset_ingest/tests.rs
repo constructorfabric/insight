@@ -7,6 +7,7 @@ use uuid::Uuid;
 use super::*;
 use crate::domain::dataset_lifecycle::DatasetLifecycle;
 use crate::store::datasets::memory::MemoryDatasets;
+use crate::store::definitions::memory::MemoryDefinitions;
 
 type R = Result<(), Box<dyn std::error::Error>>;
 
@@ -41,6 +42,7 @@ struct Fixture {
     mock: Mock,
     datasets: MemoryDatasets,
     tables: DatasetTables,
+    definitions: MemoryDefinitions,
 }
 
 impl Fixture {
@@ -59,6 +61,7 @@ impl Fixture {
             ),
             mock,
             tables,
+            definitions: MemoryDefinitions::new(),
         }
     }
 
@@ -66,7 +69,7 @@ impl Fixture {
     async fn a_ready_dataset(&self) -> R {
         self.mock.add(handlers::provide(Vec::<NoTable>::new()));
         self.mock.add(handlers::record_ddl());
-        DatasetLifecycle::new(&self.datasets, &self.tables)
+        DatasetLifecycle::new(&self.datasets, &self.tables, &self.definitions)
             .declare(&name("commits"), &declaration())
             .await?;
 
