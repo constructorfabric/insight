@@ -44,6 +44,11 @@ bronze:
     - $ref: ../templates/github_task.yaml#/templates/issue_type_kind_task
     - $ref: ../templates/github_task.yaml#/templates/issue_type_kind_bug
 
+  config.field_value_defaults:
+    # Unmapped type ids are unclassified by decision, not by accident:
+    # `assert_task_field_value_defaults_exist` requires this row.
+    - $ref: ../templates/github_task.yaml#/templates/github_issue_type_default_unknown
+
   # Without a (account, e-mail) pair there is no `class_task_users` row, and
   # gold's inner join drops every issue — a GitHub fixture that seeds only
   # issues attributes nothing at all.

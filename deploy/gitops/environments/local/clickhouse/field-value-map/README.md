@@ -48,10 +48,16 @@ history; `recorded_by=gitops`).
 
 ## Defaults
 
-An optional `defaults.tsv` assigns, per (tenant, source, field), the value an
-unmapped source key falls to. No row means the hardcoded `unknown` terminal.
-All four columns are required; `default_value` obeys the same per-field domain
-as `target_value`.
+`defaults.tsv` assigns, per (tenant, source, field), the value an unmapped
+source key falls to. It is required: with no row an unmapped key silently
+reaches gold's hardcoded `unknown` terminal, which reads exactly like a
+decision nobody made. A source whose unmapped closures really are unclassified
+says so with `default_value` `unknown`; that is a decision, and it is not the
+same thing as leaving the row out. `assert_task_field_value_defaults_exist`
+blocks the gold build in CI when a row is absent, and the Grafana rule
+`insight-field-value-defaults-missing` reports it in a deployed install. All
+four columns are required; `default_value` obeys the same per-field domain as
+`target_value`.
 
 ```
 tenant_id  insight_source_id  field  default_value

@@ -7,9 +7,9 @@ description: >
   `silver.class_task_issuetypes` carrying raw identity only; GOLD resolves
   `issue_kind` from the operator's live `config.field_value_map` row for the
   type id and nothing else, and counts a closure as a fixed bug when that kind
-  says `bug`. There is no name-list fallback, and this tenant configures no
-  `config.field_value_defaults` row either, so an id with no live row is
-  `unknown`. The row counts only while it is alive: `is_deleted = 0` and
+  says `bug`. There is no name-list fallback; this tenant's
+  `config.field_value_defaults` row DECIDES that an id with no live map row is
+  `unknown`. The map row counts only while it is alive: `is_deleted = 0` and
   `valid_from` not in the future.
 
   Carol closes six issues, one per branch of that matrix. `IT_bug` is named
@@ -59,6 +59,11 @@ bronze:
     - { $ref: ../templates/github_task.yaml#/templates/github_issue_type, source_key: IT_regression, unique_key: gh-type-kind-regression, target_value: task, display_name: Regression, is_deleted: 1 }
     # Future row: must be ignored.
     - { $ref: ../templates/github_task.yaml#/templates/github_issue_type, source_key: IT_incident, unique_key: gh-type-kind-incident, target_value: bug, display_name: Incident, valid_from: "2030-01-01 00:00:00.000" }
+
+  config.field_value_defaults:
+    # Unmapped type ids are unclassified by decision, not by accident:
+    # `assert_task_field_value_defaults_exist` requires this row.
+    - $ref: ../templates/github_task.yaml#/templates/github_issue_type_default_unknown
 
   bronze_github.issue_types:
     - $ref: ../templates/github_task.yaml#/templates/issue_type_bug

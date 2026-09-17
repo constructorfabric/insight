@@ -537,7 +537,9 @@ def seed_field_value_map(
     """Operator issue-type decisions: one config.field_value_map row per
     (source, issue type) binding the type id to its issue kind. Gold resolves
     issue_kind from these rows at its own build; without them every closed
-    issue reads as `unknown` and the bug / non-bug measures stay empty."""
+    issue reads as `unknown` and the bug / non-bug measures stay empty. The
+    matching `config.field_value_defaults` rows are seeded alongside — see
+    `seed_field_value_defaults`."""
     truncate(client, "config", "field_value_map")
     cols = [
         "tenant_id",
@@ -582,6 +584,56 @@ def seed_field_value_map(
     return bulk_insert(client, "config", "field_value_map", cols, rows)
 
 
+def seed_field_value_defaults(
+    client: clickhouse_connect.driver.client.Client,
+    roster: Sequence[Person],
+    tenant_uuid: str,
+) -> int:
+    """The per-source fallback decision for the classified fields: one
+    config.field_value_defaults row per (task source, field) saying that a
+    source key the map does not cover is `unknown`.
+
+    The seed maps every value it emits, so nothing actually falls here — the
+    rows exist because `assert_task_field_value_defaults_exist` blocks the gold
+    build without them. A seeded stand carries the operator decision it would
+    demand of a real one, and `unknown` is that decision stated explicitly
+    rather than left to the hardcoded terminal."""
+    truncate(client, "config", "field_value_defaults")
+    cols = [
+        "tenant_id",
+        "insight_source_id",
+        "field",
+        "valid_from",
+        "recorded_at",
+        "unique_key",
+        "default_value",
+        "is_deleted",
+        "note",
+        "recorded_by",
+    ]
+    epoch = _dt.datetime(1970, 1, 1, tzinfo=UTC)
+    now = anchor_datetime()
+    rows: list[tuple[object, ...]] = []
+    for p in task_persons(roster):
+        src_id = deterministic_uuid("task.source", p.uuid)
+        for field in ("issue_type", "resolution"):
+            rows.append(
+                (
+                    tenant_uuid,
+                    src_id,
+                    field,
+                    epoch,
+                    now,
+                    deterministic_uuid("task.fieldvaluedefault", src_id, field),
+                    "unknown",
+                    0,
+                    "",
+                    "seed",
+                )
+            )
+    return bulk_insert(client, "config", "field_value_defaults", cols, rows)
+
+
 def generate(
     client: clickhouse_connect.driver.client.Client,
     roster: Sequence[Person],
@@ -601,4 +653,5 @@ def generate(
         "silver.class_task_statuses": seed_class_task_statuses(client, roster),
         "silver.class_task_issuetypes": seed_class_task_issuetypes(client, roster),
         "config.field_value_map": seed_field_value_map(client, roster, tenant_uuid),
+        "config.field_value_defaults": seed_field_value_defaults(client, roster, tenant_uuid),
     }

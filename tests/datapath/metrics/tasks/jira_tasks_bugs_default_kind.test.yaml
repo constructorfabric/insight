@@ -43,6 +43,7 @@ bronze:
   config.field_value_defaults:
     # Unmapped issue-type ids at this source fall to `task`.
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue_type_default
+    - $ref: ../templates/jira_task.yaml#/templates/jira_resolution_default_unknown
 
   bronze_jira.jira_issuetypes:
     - $ref: ../templates/jira_task.yaml#/templates/issuetype_bug

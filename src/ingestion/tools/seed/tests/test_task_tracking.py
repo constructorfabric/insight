@@ -37,6 +37,7 @@ _TABLES = (
     "silver.class_task_statuses",
     "silver.class_task_issuetypes",
     "config.field_value_map",
+    "config.field_value_defaults",
 )
 
 _INITIAL_FIELDS = {
@@ -270,6 +271,25 @@ def test_the_value_map_carries_a_bug_decision_keyed_by_the_history_value_id(
             f"bug decision keyed {row['source_key']!r}, history events use {_BUG_TYPE_ID!r}"
         )
         assert row["display_name"] == "Bug"
+
+
+def test_every_source_carries_a_default_decision_for_each_classified_field(rows: Rows) -> None:
+    """`assert_task_field_value_defaults_exist` blocks the gold build without
+    these rows, so a seeded stand states the fallback rather than leaving it to
+    gold's hardcoded terminal."""
+    mapped = {(row["insight_source_id"], row["field"]) for row in rows["config.field_value_map"]}
+    assert mapped, "no value-map rows — nothing to default for"
+
+    by_key: dict[tuple[str, str], str] = {}
+    for row in rows["config.field_value_defaults"]:
+        assert row["tenant_id"] == _TENANT
+        assert row["is_deleted"] == 0
+        key = (row["insight_source_id"], row["field"])
+        assert key not in by_key, f"{key} duplicates its default decision"
+        by_key[key] = row["default_value"]
+
+    assert set(by_key) == mapped, "a task source has decisions for a field but no default"
+    assert set(by_key.values()) == {"unknown"}
 
 
 # ─── Referential integrity of the seed itself ────────────────────────────
