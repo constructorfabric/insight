@@ -5,6 +5,10 @@
 //! belongs elsewhere.
 
 pub(crate) mod declaration;
+// The prompt and the MCP tools that render this arrive in the step after this
+// one. `expect` rather than `allow`, so the marker fails once they do.
+#[cfg_attr(not(test), expect(dead_code, reason = "wired up by the assistant"))]
+pub(crate) mod describe;
 pub(crate) mod read;
 pub(crate) mod state;
 pub(crate) mod validate;
