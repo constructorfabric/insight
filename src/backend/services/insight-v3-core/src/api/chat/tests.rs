@@ -58,6 +58,7 @@ fn a_ready_dataset(url: &str) -> crate::api::Datasets {
             insight_clickhouse::Config::new(url, "insight_datasets"),
         )),
         "insight_datasets".to_owned(),
+        50,
     )
 }
 

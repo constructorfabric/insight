@@ -140,5 +140,8 @@ fn an_attempt_writes_only_while_the_row_still_records_it() {
 
 #[test]
 fn a_lease_lapses_a_bounded_time_after_it_is_taken() {
-    assert_eq!(lease_until(at(0)), at(0) + TimeDelta::seconds(LEASE_SECS));
+    assert_eq!(
+        Lease::default().until(at(0)),
+        at(0) + TimeDelta::seconds(LEASE_SECS)
+    );
 }

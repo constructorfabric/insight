@@ -15,9 +15,13 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 /// The seeded `admin` role id — a stable migration constant of the identity
 /// service, mirrored here so a role check needs no extra round trip.
 const ADMIN_ROLE_ID: Uuid = Uuid::from_u128(0xa4d1_1000_0000_4000_8000_0000_0000_0001);
+/// Who a harness's fixed answer says is asking.
+#[cfg(test)]
+const FIXED_CALLER: Uuid = Uuid::nil();
 
 #[derive(Debug, Deserialize)]
 struct MeResponse {
+    person_id: Uuid,
     roles: Vec<MeRole>,
 }
 
@@ -70,15 +74,22 @@ impl IdentityClient {
         }
     }
 
-    /// Whether the caller behind `authorization` holds the admin role.
-    pub(crate) async fn is_admin(
+    /// The caller behind `authorization` when they hold the admin role, and
+    /// nothing when they do not.
+    ///
+    /// Who asked is answered here rather than left to the caller's word: a
+    /// removal takes a dataset's records with it, so "who removed this" has
+    /// to have an answer.
+    pub(crate) async fn admin_caller(
         &self,
         authorization: Option<&str>,
-    ) -> Result<bool, IdentityError> {
+    ) -> Result<Option<Uuid>, IdentityError> {
         let (http, base_url) = match &self.mode {
             Mode::Live { http, base_url } => (http, base_url),
             #[cfg(test)]
-            Mode::Fixed(is_admin) => return Ok(*is_admin),
+            Mode::Fixed(is_admin) => {
+                return Ok(is_admin.then_some(FIXED_CALLER));
+            }
         };
 
         let url = format!("{base_url}/v1/me");
@@ -93,8 +104,9 @@ impl IdentityClient {
         }
 
         let me: MeResponse = response.json().await?;
+        let is_admin = me.roles.iter().any(|role| role.role_id == ADMIN_ROLE_ID);
 
-        Ok(me.roles.iter().any(|role| role.role_id == ADMIN_ROLE_ID))
+        Ok(is_admin.then_some(me.person_id))
     }
 }
 

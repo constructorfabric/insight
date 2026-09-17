@@ -40,11 +40,12 @@ fn forwarded_authorization(headers: &axum::http::HeaderMap) -> Option<&str> {
 ///
 /// An identity that is absent or unreachable is a server error, never a
 /// permit: a role check that cannot be made has not passed.
+/// Refuses a caller without the admin role, and names the one with it.
 pub(crate) async fn require_admin(
     state: &AppState,
     headers: &axum::http::HeaderMap,
     denied: fn() -> toolkit_canonical_errors::CanonicalError,
-) -> Result<(), toolkit_canonical_errors::CanonicalError> {
+) -> Result<uuid::Uuid, toolkit_canonical_errors::CanonicalError> {
     if !state.identity.is_configured() {
         tracing::error!("identity service is not configured; admin access cannot be verified");
         return Err(toolkit_canonical_errors::CanonicalError::internal(
@@ -53,9 +54,9 @@ pub(crate) async fn require_admin(
         .create());
     }
 
-    let is_admin = state
+    let caller = state
         .identity
-        .is_admin(forwarded_authorization(headers))
+        .admin_caller(forwarded_authorization(headers))
         .await
         .map_err(|error| {
             if error.is_about_the_caller() {
@@ -69,8 +70,8 @@ pub(crate) async fn require_admin(
             .create()
         })?;
 
-    if is_admin {
-        return Ok(());
+    if let Some(caller) = caller {
+        return Ok(caller);
     }
 
     Err(denied())
@@ -100,18 +101,26 @@ pub(crate) struct Datasets {
     pub(crate) rows: Arc<dyn crate::domain::datasets::Datasets>,
     pub(crate) tables: Arc<DatasetTables>,
     pub(crate) database: String,
+    /// How many of a dataset's latest records one look shows.
+    pub(crate) preview_rows: u64,
 }
+
+/// What a state built without configuration shows, which no served request
+/// reaches: the openapi dump, and the harnesses.
+const DEFAULT_PREVIEW_ROWS: u64 = 50;
 
 impl Datasets {
     pub(crate) fn new(
         rows: Arc<dyn crate::domain::datasets::Datasets>,
         tables: DatasetTables,
         database: String,
+        preview_rows: u64,
     ) -> Self {
         Self {
             rows,
             tables: Arc::new(tables),
             database,
+            preview_rows,
         }
     }
 
@@ -145,6 +154,7 @@ impl Datasets {
                 insight_clickhouse::Config::new(url, "insight_datasets"),
             )),
             "insight_datasets".to_owned(),
+            DEFAULT_PREVIEW_ROWS,
         )
     }
 
@@ -154,11 +164,13 @@ impl Datasets {
         Self::new(
             Arc::new(crate::store::datasets::MariaDatasets::new(
                 sea_orm::DatabaseConnection::default(),
+                crate::domain::datasets::Lease::default(),
             )),
             DatasetTables::new(insight_clickhouse::Client::new(
                 insight_clickhouse::Config::new(url, "insight_datasets"),
             )),
             "insight_datasets".to_owned(),
+            DEFAULT_PREVIEW_ROWS,
         )
     }
 }
@@ -202,6 +214,14 @@ impl AppState {
 
     pub(crate) fn datasets(&self) -> &dyn crate::domain::datasets::Datasets {
         self.datasets.rows.as_ref()
+    }
+
+    pub(crate) fn dataset_records(&self) -> crate::domain::dataset_records::DatasetRecords<'_> {
+        crate::domain::dataset_records::DatasetRecords::new(
+            self.datasets.rows.as_ref(),
+            &self.datasets.tables,
+            self.datasets.preview_rows,
+        )
     }
 
     pub(crate) fn dataset_ingest(&self) -> crate::domain::dataset_ingest::DatasetIngest<'_> {

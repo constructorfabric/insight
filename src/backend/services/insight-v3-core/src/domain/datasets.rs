@@ -12,11 +12,12 @@ use chrono::{DateTime, TimeDelta, Utc};
 use serde_json::Value;
 use thiserror::Error;
 
-use super::definition::DefinitionName;
+use super::definition::{DefinitionName, NamePage, Page};
 use super::kinds::dataset::declaration::Declaration;
 use super::kinds::dataset::state::{DatasetState, Operation};
 
-/// How long an attempt owns a dataset before another may take over.
+/// How long an attempt owns a dataset before another may take over, where an
+/// installation sets nothing.
 ///
 /// Long enough for a table to be created or dropped, short enough that an
 /// abandoned attempt does not hold a name for a shift.
@@ -178,9 +179,27 @@ pub(crate) fn taking(held: Option<&Dataset>, operation: Operation, now: DateTime
     })
 }
 
-/// When a lease taken now lapses.
-pub(crate) fn lease_until(now: DateTime<Utc>) -> DateTime<Utc> {
-    now + TimeDelta::seconds(LEASE_SECS)
+/// How long this installation lets an attempt hold a dataset.
+///
+/// An installation that cannot wait out an abandoned create shortens it; one
+/// whose warehouse is slow to make a table lengthens it.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Lease(TimeDelta);
+
+impl Lease {
+    pub(crate) fn of_seconds(seconds: i64) -> Self {
+        Self(TimeDelta::seconds(seconds))
+    }
+
+    pub(crate) fn until(self, now: DateTime<Utc>) -> DateTime<Utc> {
+        now + self.0
+    }
+}
+
+impl Default for Lease {
+    fn default() -> Self {
+        Self::of_seconds(LEASE_SECS)
+    }
 }
 
 /// What an attempt carries away from taking an operation.
@@ -229,6 +248,13 @@ pub(crate) trait Datasets: Send + Sync + fmt::Debug {
 
     /// Every dataset name, whatever state it is in.
     async fn list(&self) -> Result<Vec<String>, DatasetStoreError>;
+
+    /// One page of the datasets a reader may see: the ready ones matching
+    /// `needle` over name and declaration, with how many match in all.
+    ///
+    /// A dataset mid-create or mid-removal is left out rather than shown in a
+    /// state nothing can be done with.
+    async fn page(&self, needle: &str, page: Page) -> Result<NamePage, DatasetStoreError>;
 
     /// Takes a create for a fresh attempt, holding the row for the whole
     /// decision. The declaration is the one this attempt means to publish, so

@@ -2,11 +2,11 @@
 
 use std::sync::Arc;
 
-use axum::extract::{Extension, Path};
+use axum::extract::{Extension, Path, Query};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use toolkit::api::{OpenApiRegistry, OperationBuilder, ParamLocation, ParamSpec};
 use toolkit_canonical_errors::{CanonicalError, resource_error};
 use utoipa::ToSchema;
@@ -14,9 +14,12 @@ use utoipa::ToSchema;
 use super::AppState;
 use super::errors::ApiErrors;
 use crate::domain::dataset_lifecycle::{Broken, DatasetChangeError, Removal};
+use crate::domain::dataset_records::PreviewError;
 use crate::domain::datasets::Refused;
-use crate::domain::definition::DefinitionName;
+use crate::domain::definition::{DefinitionName, MAX_PAGE_LIMIT, Page};
+use crate::domain::kinds::dataset::state::DatasetState;
 use crate::domain::violation::Violation;
+use crate::store::dataset_tables::Record;
 
 #[resource_error("gts.cf.insight.insight_v3_core.datasets.v1~")]
 struct DatasetApiError;
@@ -47,10 +50,44 @@ struct DatasetResponse {
     declaration: serde_json::Value,
 }
 
-/// Every dataset there is, whatever state it is in.
+/// One page of the datasets a reader may open.
 #[derive(Debug, Serialize, ToSchema)]
 struct DatasetNames {
     names: Vec<String>,
+    /// Every match, not the page - so a reader can say what is behind it.
+    total: u64,
+}
+
+/// What a dataset holds, as a reader is shown it.
+#[derive(Debug, Serialize)]
+struct DatasetRecords {
+    records: Vec<Record>,
+}
+
+/// Everything that would go with this dataset.
+#[derive(Debug, Serialize, ToSchema)]
+struct DatasetDependents {
+    metrics: Vec<String>,
+}
+
+/// What a catalogue read asks for.
+#[derive(Debug, Deserialize)]
+struct Search {
+    #[serde(default)]
+    q: String,
+    limit: Option<u64>,
+    offset: Option<u64>,
+}
+
+fn query_param(name: &str, param_type: &str, description: &str) -> ParamSpec {
+    ParamSpec {
+        name: name.to_owned(),
+        location: ParamLocation::Query,
+        required: false,
+        description: Some(description.to_owned()),
+        param_type: param_type.to_owned(),
+        array: false,
+    }
 }
 
 pub(crate) fn register_routes(
@@ -116,17 +153,34 @@ pub(crate) fn register_routes(
 
     let list = OperationBuilder::get("/v1/datasets")
         .operation_id("insight_v3_core.datasets.list")
-        .summary("Every dataset there is")
+        .summary("List the datasets a reader may open, or the ones matching ?q=")
         .anonymous()
         .exposed()
-        .json_response(StatusCode::OK, "The dataset names")
+        .param(query_param(
+            "q",
+            "string",
+            "Text to look for in a name or in a declaration",
+        ))
+        .param(query_param(
+            "limit",
+            "integer",
+            &format!("Page size, 1 to {MAX_PAGE_LIMIT}"),
+        ))
+        .param(query_param("offset", "integer", "Names to skip"))
+        .json_response(StatusCode::OK, "One page of names, and how many match")
+        .error_400(openapi)
+        .error_403(openapi)
         .error_500(openapi)
         .error_504(openapi)
         .handler(list_datasets)
         .register(Router::new(), openapi)
         .layer(Extension(Arc::clone(state)));
 
-    router.merge(put).merge(get).merge(delete).merge(list)
+    register_reads(
+        router.merge(put).merge(get).merge(delete).merge(list),
+        openapi,
+        state,
+    )
 }
 
 async fn put_dataset(
@@ -135,8 +189,9 @@ async fn put_dataset(
     headers: axum::http::HeaderMap,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Response, CanonicalError> {
-    admin_only(&state, &headers).await?;
+    let caller = admin_only(&state, &headers).await?;
     let name = DefinitionName::parse(&name).map_err(DatasetApiError::definition_error)?;
+    tracing::info!(%caller, dataset = name.as_str(), "declaring a dataset");
 
     let stored = state
         .dataset_lifecycle()
@@ -151,17 +206,25 @@ async fn put_dataset(
     .into_response())
 }
 
+/// One dataset, as a reader may open it.
+///
+/// A dataset mid-create or mid-removal is not found rather than half shown:
+/// its table is not there yet, or is about to go, so nothing on the page
+/// behind it would hold.
 async fn get_dataset(
     Extension(state): Extension<Arc<AppState>>,
     Path(name): Path<String>,
+    headers: axum::http::HeaderMap,
 ) -> Result<Response, CanonicalError> {
+    admin_only(&state, &headers).await?;
     let name = DefinitionName::parse(&name).map_err(DatasetApiError::definition_error)?;
 
     let held = state
         .datasets()
         .get(&name)
         .await
-        .map_err(DatasetApiError::dataset_store_error)?;
+        .map_err(DatasetApiError::dataset_store_error)?
+        .filter(|held| held.state == DatasetState::Ready);
 
     let Some(held) = held else {
         return Err(not_found(name.as_str()));
@@ -179,8 +242,9 @@ async fn delete_dataset(
     Path(name): Path<String>,
     headers: axum::http::HeaderMap,
 ) -> Result<Response, CanonicalError> {
-    admin_only(&state, &headers).await?;
+    let caller = admin_only(&state, &headers).await?;
     let name = DefinitionName::parse(&name).map_err(DatasetApiError::definition_error)?;
+    tracing::info!(%caller, dataset = name.as_str(), "removing a dataset");
 
     match state
         .dataset_lifecycle()
@@ -194,20 +258,123 @@ async fn delete_dataset(
 
 async fn list_datasets(
     Extension(state): Extension<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Query(search): Query<Search>,
 ) -> Result<Response, CanonicalError> {
-    let names = state
+    admin_only(&state, &headers).await?;
+    let page = Page::parse(search.limit, search.offset)
+        .map_err(|error| DatasetApiError::invalid_field("limit", error.to_string()))?;
+
+    let found = state
         .datasets()
-        .list()
+        .page(search.q.trim(), page)
         .await
         .map_err(DatasetApiError::dataset_store_error)?;
 
-    Ok(Json(DatasetNames { names }).into_response())
+    Ok(Json(DatasetNames {
+        names: found.names,
+        total: found.total,
+    })
+    .into_response())
+}
+
+/// What a dataset's page reads beside its declaration: the records that have
+/// arrived, and what would go with it.
+fn register_reads(router: Router, openapi: &dyn OpenApiRegistry, state: &Arc<AppState>) -> Router {
+    let name_param = ParamSpec {
+        name: "name".to_owned(),
+        location: ParamLocation::Path,
+        required: true,
+        description: Some("Dataset name".to_owned()),
+        param_type: "string".to_owned(),
+        array: false,
+    };
+
+    let records = OperationBuilder::get("/v1/datasets/{name}/records")
+        .operation_id("insight_v3_core.datasets.records")
+        .summary("The latest records a dataset holds, newest first")
+        .anonymous()
+        .exposed()
+        .param(name_param.clone())
+        .json_response(StatusCode::OK, "The latest records")
+        .error_400(openapi)
+        .error_403(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_504(openapi)
+        .handler(dataset_records)
+        .register(Router::new(), openapi)
+        .layer(Extension(Arc::clone(state)));
+
+    let dependents = OperationBuilder::get("/v1/datasets/{name}/dependents")
+        .operation_id("insight_v3_core.datasets.dependents")
+        .summary("Every metric that reads this dataset")
+        .anonymous()
+        .exposed()
+        .param(name_param)
+        .json_response(StatusCode::OK, "The metric names")
+        .error_400(openapi)
+        .error_403(openapi)
+        .error_500(openapi)
+        .error_504(openapi)
+        .handler(dataset_dependents)
+        .register(Router::new(), openapi)
+        .layer(Extension(Arc::clone(state)));
+
+    router.merge(records).merge(dependents)
+}
+
+/// The latest records a dataset holds, as they arrived.
+async fn dataset_records(
+    Extension(state): Extension<Arc<AppState>>,
+    Path(name): Path<String>,
+    headers: axum::http::HeaderMap,
+) -> Result<Response, CanonicalError> {
+    admin_only(&state, &headers).await?;
+    let name = DefinitionName::parse(&name).map_err(DatasetApiError::definition_error)?;
+
+    let records = state
+        .dataset_records()
+        .latest(&name)
+        .await
+        .map_err(preview_error)?;
+
+    Ok(Json(DatasetRecords { records }).into_response())
+}
+
+/// Every metric that reads this dataset, so a reader sees what a removal
+/// would take with it before asking for one.
+async fn dataset_dependents(
+    Extension(state): Extension<Arc<AppState>>,
+    Path(name): Path<String>,
+    headers: axum::http::HeaderMap,
+) -> Result<Response, CanonicalError> {
+    admin_only(&state, &headers).await?;
+    let name = DefinitionName::parse(&name).map_err(DatasetApiError::definition_error)?;
+
+    let metrics = state
+        .dataset_lifecycle()
+        .dependents(&name)
+        .await
+        .map_err(change_error)?;
+
+    Ok(Json(DatasetDependents { metrics }).into_response())
+}
+
+fn preview_error(error: PreviewError) -> CanonicalError {
+    match error {
+        PreviewError::NotReady(named) => not_found(&named),
+        PreviewError::Table(source) => {
+            tracing::error!(error = ?source, "a dataset's records could not be read");
+            CanonicalError::internal("the dataset store did not answer").create()
+        }
+    }
 }
 
 async fn admin_only(
     state: &AppState,
     headers: &axum::http::HeaderMap,
-) -> Result<(), CanonicalError> {
+) -> Result<uuid::Uuid, CanonicalError> {
     crate::api::require_admin(state, headers, || {
         DatasetApiError::permission_denied()
             .with_reason(crate::api::ADMIN_ONLY)

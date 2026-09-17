@@ -226,6 +226,14 @@ impl Datasets for LosesTheDataset {
         self.0.list().await
     }
 
+    async fn page(
+        &self,
+        needle: &str,
+        page: crate::domain::definition::Page,
+    ) -> Result<crate::domain::definition::NamePage, DatasetStoreError> {
+        self.0.page(needle, page).await
+    }
+
     async fn take_create(
         &self,
         name: &DefinitionName,

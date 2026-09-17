@@ -42,10 +42,12 @@ fn an_unset_url_is_not_configured() {
 #[test]
 fn the_roles_a_caller_holds_decide() {
     let admin: MeResponse = serde_json::from_value(serde_json::json!({
+        "person_id": "00000000-0000-4000-8000-000000000001",
         "roles": [{ "role_id": "a4d11000-0000-4000-8000-000000000001" }]
     }))
     .unwrap_or_else(|error| panic!("the fixture parses: {error}"));
     let other: MeResponse = serde_json::from_value(serde_json::json!({
+        "person_id": "00000000-0000-4000-8000-000000000002",
         "roles": [{ "role_id": "00000000-0000-4000-8000-000000000009" }]
     }))
     .unwrap_or_else(|error| panic!("the fixture parses: {error}"));

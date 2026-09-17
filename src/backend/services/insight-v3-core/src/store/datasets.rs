@@ -11,17 +11,23 @@ use sea_orm::{
 use serde_json::Value;
 
 use crate::domain::datasets::{
-    Attempt, Dataset, DatasetStoreError, Datasets, Finish, Held, OperationToken, Owning, Refused,
-    Taking, finishing, lease_until, taking,
+    Attempt, Dataset, DatasetStoreError, Datasets, Finish, Held, Lease, OperationToken, Owning,
+    Refused, Taking, finishing, taking,
 };
-use crate::domain::definition::DefinitionName;
+use crate::domain::definition::{DefinitionName, NamePage, Page};
 use crate::domain::kinds::dataset::state::{DatasetState, Operation};
+use crate::store::like_escaped;
 
 const SELECT_ROW: &str = "SELECT name, body, state, physical_table, operation, operation_token, lease_until FROM datasets WHERE name = ?";
 /// The same read, holding the row: a second writer of this dataset waits
 /// rather than acting on a state that is about to change.
 const SELECT_ROW_HELD: &str = "SELECT name, body, state, physical_table, operation, operation_token, lease_until FROM datasets WHERE name = ? FOR UPDATE";
 const SELECT_NAMES: &str = "SELECT name FROM datasets ORDER BY name";
+/// The catalogue's read: only what a reader may open, searched over the name
+/// and the declaration, because "which dataset holds this field" is the
+/// question a catalogue is asked.
+const PAGE_NAMES: &str = "SELECT name FROM datasets WHERE state = ? AND (name LIKE ? ESCAPE '\\\\' OR body LIKE ? ESCAPE '\\\\') ORDER BY name LIMIT ? OFFSET ?";
+const COUNT_MATCHES: &str = "SELECT COUNT(*) AS total FROM datasets WHERE state = ? AND (name LIKE ? ESCAPE '\\\\' OR body LIKE ? ESCAPE '\\\\')";
 /// One clock for every lease, so two servers cannot disagree about whether
 /// one has lapsed.
 const NOW: &str = "SELECT UTC_TIMESTAMP(6) AS now";
@@ -40,11 +46,12 @@ const REPLACE_BODY: &str =
 
 pub(crate) struct MariaDatasets {
     db: DatabaseConnection,
+    lease: Lease,
 }
 
 impl MariaDatasets {
-    pub(crate) fn new(db: DatabaseConnection) -> Self {
-        Self { db }
+    pub(crate) fn new(db: DatabaseConnection, lease: Lease) -> Self {
+        Self { db, lease }
     }
 }
 
@@ -72,6 +79,40 @@ impl Datasets for MariaDatasets {
         .await?;
 
         Ok(rows.into_iter().map(|row| row.name).collect())
+    }
+
+    async fn page(&self, needle: &str, page: Page) -> Result<NamePage, DatasetStoreError> {
+        let pattern = format!("%{}%", like_escaped(needle));
+        let rows = NameRow::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::MySql,
+            PAGE_NAMES,
+            [
+                DatasetState::Ready.as_str().into(),
+                pattern.clone().into(),
+                pattern.clone().into(),
+                page.limit().into(),
+                page.offset().into(),
+            ],
+        ))
+        .all(&self.db)
+        .await?;
+
+        let counted = TotalRow::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::MySql,
+            COUNT_MATCHES,
+            [
+                DatasetState::Ready.as_str().into(),
+                pattern.clone().into(),
+                pattern.into(),
+            ],
+        ))
+        .one(&self.db)
+        .await?;
+
+        Ok(NamePage {
+            names: rows.into_iter().map(|row| row.name).collect(),
+            total: counted.map_or(0, |row| u64::try_from(row.total).unwrap_or(0)),
+        })
     }
 
     async fn take_create(
@@ -162,7 +203,7 @@ impl MariaDatasets {
         let held = held_row(&transaction, name).await?;
 
         let token = OperationToken::mint();
-        let until = lease_until(now);
+        let until = self.lease.until(now);
 
         match taking(held.as_ref(), operation, now) {
             Taking::Refuse(refusal) => return Err(refusal.into()),
@@ -298,6 +339,11 @@ impl DatasetRow {
 #[derive(Debug, FromQueryResult)]
 struct NameRow {
     name: String,
+}
+
+#[derive(Debug, FromQueryResult)]
+struct TotalRow {
+    total: i64,
 }
 
 #[derive(Debug, FromQueryResult)]

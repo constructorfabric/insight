@@ -24,6 +24,11 @@ const CREATE_TABLE: &str = "CREATE TABLE IF NOT EXISTS ? (
 ENGINE = MergeTree
 ORDER BY (table_name, received_at, id)";
 const DROP_TABLE: &str = "DROP TABLE IF EXISTS ?";
+/// The preview: the latest records, newest first, with the id breaking an
+/// equal receipt instant so that repeated reads agree on the order.
+const READ_LATEST: &str = "SELECT id, received_at, raw_data FROM ?
+ORDER BY received_at DESC, id DESC
+LIMIT ?";
 const READ_SHAPE: &str = "SELECT sorting_key FROM system.tables
 WHERE database = currentDatabase() AND name = ?";
 /// Creating or dropping a table waits on a cluster-wide lock, so it gets a
@@ -111,6 +116,29 @@ impl DatasetTables {
         insert.end().await?;
 
         Ok(())
+    }
+
+    /// The latest records a dataset holds, newest first.
+    ///
+    /// Each record is given back as it was sent: this is a reader looking at
+    /// what arrived, so a payload is never reshaped on the way out.
+    pub(crate) async fn latest(
+        &self,
+        table: &str,
+        limit: u64,
+    ) -> Result<Vec<Record>, DatasetTableError> {
+        let rows = self
+            .client
+            .inner()
+            .query(READ_LATEST)
+            .bind(Identifier(table))
+            .bind(limit)
+            .fetch_all::<PreviewRow>();
+        let found = tokio::time::timeout(self.read_timeout, rows)
+            .await
+            .map_err(|_| DatasetTableError::Timeout)??;
+
+        Ok(found.into_iter().map(PreviewRow::into_record).collect())
     }
 
     /// What, if anything, holds this name in the datasets database.
@@ -208,6 +236,16 @@ struct ShapeRow {
 
 /// One record as a dataset's table holds it: whole, and stamped with when it
 /// arrived.
+/// One stored record as a reader is shown it.
+#[derive(Debug, Serialize)]
+pub(crate) struct Record {
+    pub(crate) id: Uuid,
+    pub(crate) received_at: DateTime<Utc>,
+    /// The payload as it arrived. A record this service could not read back
+    /// as JSON is given as the text it holds, rather than left out.
+    pub(crate) raw_data: serde_json::Value,
+}
+
 #[derive(Debug, Serialize, Deserialize, clickhouse::Row)]
 struct RecordRow {
     #[serde(with = "clickhouse::serde::uuid")]
@@ -216,6 +254,30 @@ struct RecordRow {
     raw_data: String,
     #[serde(with = "clickhouse::serde::chrono::datetime64::millis")]
     received_at: DateTime<Utc>,
+}
+
+/// A record as the preview reads it back: the columns the preview selects,
+/// in the order it selects them.
+#[derive(Debug, Serialize, Deserialize, clickhouse::Row)]
+struct PreviewRow {
+    #[serde(with = "clickhouse::serde::uuid")]
+    id: Uuid,
+    #[serde(with = "clickhouse::serde::chrono::datetime64::millis")]
+    received_at: DateTime<Utc>,
+    raw_data: String,
+}
+
+impl PreviewRow {
+    fn into_record(self) -> Record {
+        let raw_data = serde_json::from_str(&self.raw_data)
+            .unwrap_or_else(|_| serde_json::Value::String(self.raw_data.clone()));
+
+        Record {
+            id: self.id,
+            received_at: self.received_at,
+            raw_data,
+        }
+    }
 }
 
 impl From<clickhouse::error::Error> for DatasetTableError {

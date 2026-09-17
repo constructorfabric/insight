@@ -17,6 +17,7 @@ use crate::domain::definition::{
     Change, DefinitionKind, DefinitionName, DefinitionStoreError, Definitions, Lookup, NamePage,
     Page,
 };
+use crate::store::like_escaped;
 
 /// The name is the primary key, so a write is an upsert and two writers cannot
 /// leave two rows claiming one name.
@@ -52,13 +53,6 @@ fn sql(template: &str, kind: DefinitionKind) -> String {
 ///
 /// `%` and `_` are wildcards there, so a search for `pr_merged` would match
 /// `prXmerged` — the caller typed a name, not a pattern.
-fn like_escaped(needle: &str) -> String {
-    needle
-        .replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_")
-}
-
 #[derive(Debug, FromQueryResult)]
 struct BodyRow {
     body: String,

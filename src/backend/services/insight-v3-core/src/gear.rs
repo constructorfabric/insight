@@ -43,9 +43,13 @@ impl Gear for InsightV3CoreGear {
         let definitions: Arc<dyn crate::domain::definition::Definitions> =
             Arc::new(crate::store::definitions::MariaDefinitions::new(db.clone()));
         let datasets = crate::api::Datasets::new(
-            Arc::new(crate::store::datasets::MariaDatasets::new(db)),
+            Arc::new(crate::store::datasets::MariaDatasets::new(
+                db,
+                config.dataset_lease(),
+            )),
             crate::store::dataset_tables::DatasetTables::new(config.datasets_client()),
             config.datasets_database(),
+            config.dataset_preview_rows(),
         );
         let admission = crate::api::admission::IngestAdmission::new(config.ingest_token());
         let chat = crate::chat::ChatClient::new(config.anthropic_token(), config.chat_model());

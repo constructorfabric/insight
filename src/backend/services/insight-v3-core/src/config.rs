@@ -10,6 +10,13 @@ const DEFAULT_IDENTITY_DATABASE: &str = "identity";
 /// builds, so nothing this service creates or drops can reach a table someone
 /// else owns.
 const DEFAULT_DATASETS_DATABASE: &str = "insight_datasets";
+/// How many of a dataset's latest records a reader is shown at once.
+const DEFAULT_DATASET_PREVIEW_ROWS: u64 = 50;
+/// The widest preview an installation may ask for: the payloads are whole
+/// records, so the bound is on what one response may carry, not on taste.
+const MAX_DATASET_PREVIEW_ROWS: u64 = 500;
+/// The longest an installation may let an abandoned attempt hold a dataset.
+const MAX_DATASET_LEASE_SECS: i64 = 3600;
 pub(crate) const MIN_INGEST_TOKEN_BYTES: usize = 32;
 pub(crate) const MAX_INGEST_TOKEN_BYTES: usize = 1024;
 const DEFAULT_CHAT_MODEL: &str = "claude-sonnet-5";
@@ -59,6 +66,10 @@ pub(crate) struct GearConfig {
     pub(crate) identity_database: String,
     /// The database the datasets' own tables live in.
     pub(crate) datasets_database: String,
+    /// How many of a dataset's latest records its page shows.
+    pub(crate) dataset_preview_rows: u64,
+    /// How long an abandoned create or removal holds its dataset.
+    pub(crate) dataset_lease_secs: i64,
     pub(crate) clickhouse_user: Option<String>,
     pub(crate) clickhouse_password: Option<SecretString>,
     /// The read-only principal the assistant's query path connects as. Blank
@@ -80,6 +91,8 @@ impl Default for GearConfig {
             clickhouse_database: DEFAULT_CLICKHOUSE_DATABASE.to_owned(),
             identity_database: DEFAULT_IDENTITY_DATABASE.to_owned(),
             datasets_database: DEFAULT_DATASETS_DATABASE.to_owned(),
+            dataset_preview_rows: DEFAULT_DATASET_PREVIEW_ROWS,
+            dataset_lease_secs: crate::domain::datasets::LEASE_SECS,
             clickhouse_user: None,
             clickhouse_password: None,
             clickhouse_query_user: None,
@@ -116,6 +129,8 @@ pub(crate) struct ValidatedConfig {
     clickhouse_database: String,
     identity_database: String,
     datasets_database: String,
+    dataset_preview_rows: u64,
+    dataset_lease_secs: i64,
     clickhouse_user: Option<String>,
     clickhouse_password: Option<SecretString>,
     clickhouse_query_user: Option<String>,
@@ -139,6 +154,8 @@ impl fmt::Debug for GearConfig {
             .field("clickhouse_database", &self.clickhouse_database)
             .field("identity_database", &self.identity_database)
             .field("datasets_database", &self.datasets_database)
+            .field("dataset_preview_rows", &self.dataset_preview_rows)
+            .field("dataset_lease_secs", &self.dataset_lease_secs)
             .field("clickhouse_user", &self.clickhouse_user)
             .field("clickhouse_password", &REDACTED)
             .field("clickhouse_query_user", &self.clickhouse_query_user)
@@ -161,6 +178,8 @@ impl fmt::Debug for ValidatedConfig {
             .field("clickhouse_database", &self.clickhouse_database)
             .field("identity_database", &self.identity_database)
             .field("datasets_database", &self.datasets_database)
+            .field("dataset_preview_rows", &self.dataset_preview_rows)
+            .field("dataset_lease_secs", &self.dataset_lease_secs)
             .field("clickhouse_user", &self.clickhouse_user)
             .field("clickhouse_password", &REDACTED)
             .field("clickhouse_query_user", &self.clickhouse_query_user)
@@ -266,6 +285,14 @@ impl ValidatedConfig {
         self.datasets_database.clone()
     }
 
+    pub(crate) fn dataset_preview_rows(&self) -> u64 {
+        self.dataset_preview_rows
+    }
+
+    pub(crate) fn dataset_lease(&self) -> crate::domain::datasets::Lease {
+        crate::domain::datasets::Lease::of_seconds(self.dataset_lease_secs)
+    }
+
     /// A client connected to the database the datasets' tables live in, which
     /// is the only database this service creates or drops a table in.
     pub(crate) fn datasets_client(&self) -> insight_clickhouse::Client {
@@ -320,6 +347,12 @@ impl GearConfig {
         require_non_empty("clickhouse_database", &self.clickhouse_database)?;
         require_non_empty("identity_database", &self.identity_database)?;
         require_non_empty("datasets_database", &self.datasets_database)?;
+        if self.dataset_preview_rows == 0 || self.dataset_preview_rows > MAX_DATASET_PREVIEW_ROWS {
+            return Err(ConfigError::PreviewRows(MAX_DATASET_PREVIEW_ROWS));
+        }
+        if self.dataset_lease_secs <= 0 || self.dataset_lease_secs > MAX_DATASET_LEASE_SECS {
+            return Err(ConfigError::LeaseSecs(MAX_DATASET_LEASE_SECS));
+        }
         require_non_empty("chat_model", &self.chat_model)?;
         require_non_empty("database_url", &self.database_url)?;
         require_non_empty("identity_url", &self.identity_url)?;
@@ -344,6 +377,8 @@ impl GearConfig {
             clickhouse_database: self.clickhouse_database,
             identity_database: self.identity_database,
             datasets_database: self.datasets_database,
+            dataset_preview_rows: self.dataset_preview_rows,
+            dataset_lease_secs: self.dataset_lease_secs,
             clickhouse_user: self.clickhouse_user,
             clickhouse_password: self.clickhouse_password,
             clickhouse_query_user,
@@ -438,6 +473,10 @@ pub(crate) enum ConfigError {
     InvalidIngestTokenCharacters,
     #[error("gears.insight-v3-core.config.mcp.bind_addr is not a socket address")]
     McpBindAddr,
+    #[error("gears.insight-v3-core.config.dataset_preview_rows must be 1 to {0}")]
+    PreviewRows(u64),
+    #[error("gears.insight-v3-core.config.dataset_lease_secs must be 1 to {0}")]
+    LeaseSecs(i64),
 }
 
 #[derive(Debug, Error)]

@@ -3,6 +3,7 @@
 pub(crate) mod assistant;
 pub(crate) mod dataset_ingest;
 pub(crate) mod dataset_lifecycle;
+pub(crate) mod dataset_records;
 pub(crate) mod datasets;
 pub(crate) mod definition;
 pub(crate) mod kinds;

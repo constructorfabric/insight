@@ -4,6 +4,8 @@ use super::*;
 
 fn valid_config() -> GearConfig {
     GearConfig {
+        dataset_preview_rows: 50,
+        dataset_lease_secs: 60,
         clickhouse_url: "http://clickhouse.example.test:8123".to_owned(),
         clickhouse_database: "insight".to_owned(),
         identity_database: "identity".to_owned(),

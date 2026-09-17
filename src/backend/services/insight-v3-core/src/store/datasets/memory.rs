@@ -12,10 +12,10 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 use crate::domain::datasets::{
-    Attempt, Dataset, DatasetStoreError, Datasets, Finish, Held, OperationToken, Owning, Refused,
-    Taking, finishing, lease_until, taking,
+    Attempt, Dataset, DatasetStoreError, Datasets, Finish, Held, Lease, OperationToken, Owning,
+    Refused, Taking, finishing, taking,
 };
-use crate::domain::definition::DefinitionName;
+use crate::domain::definition::{DefinitionName, NamePage, Page};
 use crate::domain::kinds::dataset::state::{DatasetState, Operation};
 
 #[cfg(test)]
@@ -65,7 +65,7 @@ impl MemoryDatasets {
         let held = Held {
             operation,
             token: token.clone(),
-            until: lease_until(now),
+            until: Lease::default().until(now),
         };
 
         match taking(stored.get(name.as_str()), operation, now) {
@@ -113,6 +113,26 @@ impl Datasets for MemoryDatasets {
 
     async fn list(&self) -> Result<Vec<String>, DatasetStoreError> {
         Ok(self.lock().keys().cloned().collect())
+    }
+
+    async fn page(&self, needle: &str, page: Page) -> Result<NamePage, DatasetStoreError> {
+        let held = self.lock();
+        let mut matched: Vec<String> = held
+            .values()
+            .filter(|dataset| dataset.state == DatasetState::Ready)
+            .filter(|dataset| matches(dataset, needle))
+            .map(|dataset| dataset.name.as_str().to_owned())
+            .collect();
+        matched.sort();
+
+        let total = matched.len() as u64;
+        let names = matched
+            .into_iter()
+            .skip(usize::try_from(page.offset()).unwrap_or(usize::MAX))
+            .take(usize::try_from(page.limit()).unwrap_or(usize::MAX))
+            .collect();
+
+        Ok(NamePage { names, total })
     }
 
     async fn take_create(
@@ -174,4 +194,15 @@ impl Datasets for MemoryDatasets {
 
         Ok(Owning::Held)
     }
+}
+
+/// Whether a dataset answers this search: its name or its declaration holds
+/// the needle, as the stored listing matches it.
+fn matches(dataset: &Dataset, needle: &str) -> bool {
+    let needle = needle.trim();
+    if needle.is_empty() {
+        return true;
+    }
+
+    dataset.name.as_str().contains(needle) || dataset.declaration.to_string().contains(needle)
 }

@@ -68,6 +68,22 @@ impl<'a> DatasetLifecycle<'a> {
         Ok(reading)
     }
 
+    /// Every metric that reads this dataset, by name.
+    ///
+    /// An exact lookup over what each body names, never a search over stored
+    /// text: a metric mentioning the name in a label does not depend on it.
+    pub(crate) async fn dependents(
+        &self,
+        name: &DefinitionName,
+    ) -> Result<Vec<String>, DatasetChangeError> {
+        Ok(self
+            .readers(name)
+            .await?
+            .into_iter()
+            .map(|(reader, _)| reader)
+            .collect())
+    }
+
     /// Declares a dataset, or replaces the declaration of one that stands.
     ///
     /// A replacement of a ready dataset touches no table, so it commits in one
@@ -176,7 +192,11 @@ impl<'a> DatasetLifecycle<'a> {
         name: &DefinitionName,
         body: &Value,
     ) -> Result<Value, DatasetChangeError> {
-        let attempt = self.datasets.take_create(name, body).await?;
+        let attempt = self
+            .datasets
+            .take_create(name, body)
+            .await
+            .inspect_err(|error| held_by_another(name, error))?;
         let table = attempt.token.table(name);
 
         self.tables.provision(&table).await?;
@@ -184,6 +204,7 @@ impl<'a> DatasetLifecycle<'a> {
         match self.record(name, &attempt, table.clone()).await? {
             Owning::Held => Ok(body.clone()),
             Owning::Lost => {
+                finished_stale(name, Operation::Create);
                 self.discard(&table).await;
 
                 Err(DatasetChangeError::Refused(Refused::Busy(
@@ -225,10 +246,19 @@ impl<'a> DatasetLifecycle<'a> {
             Err(DatasetStoreError::Refused(Refused::Gone)) => {
                 return Err(DatasetChangeError::NotFound);
             }
-            Err(other) => return Err(other.into()),
+            Err(other) => {
+                held_by_another(name, &other);
+                return Err(other.into());
+            }
         };
 
-        self.drop_records(name).await?;
+        self.drop_records(name).await.inspect_err(|error| {
+            tracing::error!(
+                error = ?error,
+                dataset = name.as_str(),
+                "a dataset's table could not be dropped"
+            );
+        })?;
 
         match self
             .datasets
@@ -236,9 +266,13 @@ impl<'a> DatasetLifecycle<'a> {
             .await?
         {
             Owning::Held => Ok(Removal::Removed),
-            Owning::Lost => Err(DatasetChangeError::Refused(Refused::Busy(
-                Operation::Remove,
-            ))),
+            Owning::Lost => {
+                finished_stale(name, Operation::Remove);
+
+                Err(DatasetChangeError::Refused(Refused::Busy(
+                    Operation::Remove,
+                )))
+            }
         }
     }
 
@@ -376,6 +410,29 @@ impl From<DatasetStoreError> for DatasetChangeError {
             other => Self::Store(other),
         }
     }
+}
+
+/// One of the three states an operator has to recognise: an attempt refused
+/// because another holds the dataset. The other two are an attempt that
+/// finished stale, and a drop that failed.
+fn held_by_another(name: &DefinitionName, error: &DatasetStoreError) {
+    if let DatasetStoreError::Refused(Refused::Busy(operation)) = error {
+        tracing::warn!(
+            dataset = name.as_str(),
+            holder = operation.as_str(),
+            "a dataset is held by another attempt"
+        );
+    }
+}
+
+/// An attempt that did its work and lost the dataset before writing the
+/// outcome: whatever it made is discarded and the request is refused.
+fn finished_stale(name: &DefinitionName, operation: Operation) {
+    tracing::warn!(
+        dataset = name.as_str(),
+        operation = operation.as_str(),
+        "an attempt finished after its lease had lapsed"
+    );
 }
 
 #[cfg(test)]
