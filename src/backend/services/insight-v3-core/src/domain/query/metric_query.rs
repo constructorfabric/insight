@@ -88,7 +88,6 @@ pub(crate) struct MetricQuery {
 /// What this query addresses, and whether the clock it declares is sound.
 impl MetricQuery {
     /// The dataset this metric reads, when it names one.
-    #[expect(dead_code, reason = "read by the metric write path and the compiler")]
     pub(crate) fn dataset(&self) -> Option<&str> {
         self.dataset.as_deref()
     }

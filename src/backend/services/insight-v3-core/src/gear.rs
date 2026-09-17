@@ -39,26 +39,33 @@ impl Gear for InsightV3CoreGear {
         let config = config.validate()?;
         // The definitions are rows read by name and edited in place, so they
         // live in MariaDB rather than beside the data they describe.
+        let db = sea_orm::Database::connect(config.database_url()).await?;
         let definitions: Arc<dyn crate::domain::definition::Definitions> =
-            Arc::new(crate::store::definitions::MariaDefinitions::new(
-                sea_orm::Database::connect(config.database_url()).await?,
-            ));
+            Arc::new(crate::store::definitions::MariaDefinitions::new(db.clone()));
+        let datasets = crate::api::Datasets::new(
+            Arc::new(crate::store::datasets::MariaDatasets::new(db)),
+            crate::store::dataset_tables::DatasetTables::new(config.datasets_client()),
+            config.datasets_database(),
+        );
         let admission = crate::api::admission::IngestAdmission::new(config.ingest_token());
         let chat = crate::chat::ChatClient::new(config.anthropic_token(), config.chat_model());
         let app = Arc::new(crate::api::AppState::new(
-            crate::store::raw_data::RawDataStore::new(config.clickhouse_client()),
-            crate::store::tables::TableStore::new(config.clickhouse_client()),
+            crate::api::Warehouse {
+                raw_data: crate::store::raw_data::RawDataStore::new(config.clickhouse_client()),
+                tables: crate::store::tables::TableStore::new(config.clickhouse_client()),
+                catalog: crate::store::catalog::Catalog::new(
+                    config.clickhouse_query_client(),
+                    config.clickhouse_database(),
+                ),
+                metrics: crate::domain::query::metric_query::MetricRunner::new(
+                    config.clickhouse_query_client(),
+                    crate::domain::query::metric_query::People::new(config.identity_database()),
+                ),
+            },
             definitions,
-            crate::domain::query::metric_query::MetricRunner::new(
-                config.clickhouse_query_client(),
-                crate::domain::query::metric_query::People::new(config.identity_database()),
-            ),
             chat,
             crate::store::identity::IdentityClient::new(config.identity_url())?,
-            crate::store::catalog::Catalog::new(
-                config.clickhouse_query_client(),
-                config.clickhouse_database(),
-            ),
+            datasets,
         ));
         let runtime = RuntimeState {
             app: Arc::clone(&app),

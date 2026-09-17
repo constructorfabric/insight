@@ -38,7 +38,8 @@ pub(crate) fn read(field: &Field, form: Form, payload: &str) -> String {
 ///
 /// A declaration naming no identity leaves the table as it is, every record
 /// its own.
-pub(crate) fn collapsed(declaration: &Declaration, table: &str) -> String {
+pub(crate) fn collapsed(declaration: &Declaration, database: &str, table: &str) -> String {
+    let relation = format!("`{database}`.`{table}`");
     let identity: Vec<String> = declaration
         .row_identity
         .iter()
@@ -50,7 +51,7 @@ pub(crate) fn collapsed(declaration: &Declaration, table: &str) -> String {
         .collect();
 
     if identity.is_empty() {
-        return format!("`{table}`");
+        return relation;
     }
 
     let complete = identity
@@ -60,7 +61,7 @@ pub(crate) fn collapsed(declaration: &Declaration, table: &str) -> String {
         .join(" AND ");
 
     format!(
-        "(SELECT * FROM `{table}` ORDER BY received_at DESC, id DESC LIMIT 1 BY {}, if({complete}, '', toString(id)))",
+        "(SELECT * FROM {relation} ORDER BY received_at DESC, id DESC LIMIT 1 BY {}, if({complete}, '', toString(id)))",
         identity.join(", ")
     )
 }

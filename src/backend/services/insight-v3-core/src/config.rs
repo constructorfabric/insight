@@ -262,9 +262,12 @@ impl ValidatedConfig {
         &self.identity_database
     }
 
+    pub(crate) fn datasets_database(&self) -> String {
+        self.datasets_database.clone()
+    }
+
     /// A client connected to the database the datasets' tables live in, which
     /// is the only database this service creates or drops a table in.
-    #[expect(dead_code, reason = "wired up by the dataset flows and API")]
     pub(crate) fn datasets_client(&self) -> insight_clickhouse::Client {
         let mut config =
             insight_clickhouse::Config::new(&self.clickhouse_url, &self.datasets_database);

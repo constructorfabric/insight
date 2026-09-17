@@ -97,7 +97,10 @@ fn a_dataset_naming_no_identity_leaves_every_record_its_own() {
         "fields": [{ "name": "day", "path": "day", "type": "datetime" }]
     }));
 
-    assert_eq!(collapsed(&declared, "ds_commits_1"), "`ds_commits_1`");
+    assert_eq!(
+        collapsed(&declared, "insight_datasets", "ds_commits_1"),
+        "`insight_datasets`.`ds_commits_1`"
+    );
 }
 
 #[test]
@@ -111,7 +114,7 @@ fn records_sharing_an_identity_collapse_to_the_one_received_last() {
         "row_identity": ["sha", "repo"]
     }));
 
-    let relation = collapsed(&declared, "ds_commits_1");
+    let relation = collapsed(&declared, "insight_datasets", "ds_commits_1");
 
     assert!(
         relation.contains("ORDER BY received_at DESC, id DESC"),
@@ -132,7 +135,7 @@ fn a_record_whose_identity_is_incomplete_is_collapsed_with_nothing() {
         "row_identity": ["sha"]
     }));
 
-    let relation = collapsed(&declared, "ds_commits_1");
+    let relation = collapsed(&declared, "insight_datasets", "ds_commits_1");
 
     // An absent key is not evidence that two events are the same event, so
     // such a record stands alone under its own id.
@@ -150,7 +153,7 @@ fn identity_reads_the_record_and_not_what_a_reader_is_shown() {
         "row_identity": ["author"]
     }));
 
-    let relation = collapsed(&declared, "ds_commits_1");
+    let relation = collapsed(&declared, "insight_datasets", "ds_commits_1");
 
     assert!(
         !relation.contains("unknown"),

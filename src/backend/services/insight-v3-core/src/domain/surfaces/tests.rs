@@ -3,6 +3,7 @@ use std::error::Error;
 use serde_json::json;
 
 use super::*;
+use crate::domain::datasets::Datasets as _;
 use crate::domain::query::metric_query::{MetricRunner, People};
 use crate::store::catalog::Catalog;
 use crate::store::definitions::memory::MemoryDefinitions;
@@ -11,6 +12,7 @@ type R = Result<(), Box<dyn Error>>;
 
 struct Fixture {
     definitions: MemoryDefinitions,
+    datasets: crate::store::datasets::memory::MemoryDatasets,
     metrics: MetricRunner,
     catalog: Catalog,
 }
@@ -28,11 +30,18 @@ impl Fixture {
             definitions: MemoryDefinitions::new(),
             metrics: MetricRunner::new(client(), People::new("identity")),
             catalog: Catalog::new(client(), "insight".to_owned()),
+            datasets: crate::store::datasets::memory::MemoryDatasets::at(chrono::Utc::now()),
         }
     }
 
     fn metric_runs(&self) -> crate::domain::metric_run::MetricRuns<'_> {
-        crate::domain::metric_run::MetricRuns::new(&self.definitions, &self.metrics, &self.catalog)
+        crate::domain::metric_run::MetricRuns::new(
+            &self.definitions,
+            &self.metrics,
+            &self.catalog,
+            &self.datasets,
+            "insight_datasets",
+        )
     }
 
     fn surfaces(&self) -> Surfaces<'_> {
@@ -702,6 +711,68 @@ async fn renaming_a_widget_points_every_board_that_held_it_at_the_new_name() -> 
         .get(DefinitionKind::Dashboard, &name("shorthand"))
         .await?;
     assert_eq!(shorthand["widgets"], json!(["new", "kept"]));
+
+    Ok(())
+}
+
+/// A metric reading a dataset rather than a relation of its own.
+fn over_a_dataset() -> serde_json::Value {
+    json!({
+        "dataset": "commits",
+        "table": "unused",
+        "fields": [{ "field": "lines", "type": "int", "agg": "sum", "as_name": "total" }],
+        "group_by": [],
+        "filters": []
+    })
+}
+
+fn a_declaration() -> serde_json::Value {
+    json!({
+        "title": "Commits",
+        "fields": [{ "name": "lines", "path": "lines", "type": "int" }]
+    })
+}
+
+#[tokio::test]
+async fn running_a_metric_over_a_dataset_nobody_declared_says_so() -> R {
+    let fixture = Fixture::new();
+    fixture
+        .definitions
+        .put(DefinitionKind::Metric, &name("lines"), &over_a_dataset())
+        .await?;
+
+    let Err(error) = fixture.metric_runs().run(&name("lines"), &legacy()).await else {
+        panic!("there is no such dataset to read");
+    };
+
+    assert!(
+        matches!(&error, CustomError::DatasetNotReady(named) if named == "commits"),
+        "{error:?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn running_a_metric_over_a_dataset_still_being_made_says_so() -> R {
+    let fixture = Fixture::new();
+    fixture
+        .definitions
+        .put(DefinitionKind::Metric, &name("lines"), &over_a_dataset())
+        .await?;
+    fixture
+        .datasets
+        .take_create(&name("commits"), &a_declaration())
+        .await?;
+
+    let Err(error) = fixture.metric_runs().run(&name("lines"), &legacy()).await else {
+        panic!("a dataset still being made has no table to read");
+    };
+
+    assert!(
+        matches!(error, CustomError::DatasetNotReady(_)),
+        "{error:?}"
+    );
 
     Ok(())
 }

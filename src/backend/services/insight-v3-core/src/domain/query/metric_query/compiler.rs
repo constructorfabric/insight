@@ -202,7 +202,6 @@ impl MetricQuery {
     }
 
     /// The same, over the dataset this metric reads.
-    #[cfg_attr(not(test), expect(dead_code, reason = "wired up by the run path"))]
     pub(crate) fn compile_over(
         &self,
         people: &People,

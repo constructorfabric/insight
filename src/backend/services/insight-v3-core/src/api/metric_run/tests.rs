@@ -40,20 +40,23 @@ impl TestHarness {
         ));
         let definitions: Arc<dyn Definitions> = Arc::new(MemoryDefinitions::new());
         let state = Arc::new(AppState::new(
-            RawDataStore::new(insight_clickhouse::Client::new(
-                insight_clickhouse::Config::new(definitions_url, "insight"),
-            )),
-            TableStore::new(insight_clickhouse::Client::new(
-                insight_clickhouse::Config::new(definitions_url, "insight"),
-            )),
+            crate::api::Warehouse {
+                raw_data: RawDataStore::new(insight_clickhouse::Client::new(
+                    insight_clickhouse::Config::new(definitions_url, "insight"),
+                )),
+                tables: TableStore::new(insight_clickhouse::Client::new(
+                    insight_clickhouse::Config::new(definitions_url, "insight"),
+                )),
+                catalog: crate::store::catalog::Catalog::fixed(Vec::new()),
+                metrics: MetricRunner::new(
+                    metrics_client,
+                    crate::domain::query::metric_query::People::new("identity"),
+                ),
+            },
             definitions.clone(),
-            MetricRunner::new(
-                metrics_client,
-                crate::domain::query::metric_query::People::new("identity"),
-            ),
             ChatClient::keyless(),
             crate::store::identity::IdentityClient::fixed(true),
-            crate::store::catalog::Catalog::fixed(Vec::new()),
+            crate::api::Datasets::offline("http://offline.invalid"),
         ));
         let router = register_routes(Router::new(), &openapi, state);
 

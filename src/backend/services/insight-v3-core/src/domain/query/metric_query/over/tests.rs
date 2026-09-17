@@ -45,6 +45,7 @@ fn compiled(body: serde_json::Value, window: &Window) -> String {
     let declared = declaration();
     let over = Over {
         declaration: &declared,
+        database: "insight_datasets",
         table: "ds_commits_1",
     };
 
@@ -132,6 +133,7 @@ fn a_range_over_a_dataset_that_marks_no_main_date_is_refused() {
     let written = metric(lines_per_author());
     let over = Over {
         declaration: &declared,
+        database: "insight_datasets",
         table: "ds_commits_1",
     };
 
@@ -151,6 +153,7 @@ fn a_field_the_dataset_never_declared_is_refused_by_name() {
     let declared = declaration();
     let over = Over {
         declaration: &declared,
+        database: "insight_datasets",
         table: "ds_commits_1",
     };
 
@@ -168,6 +171,7 @@ fn the_records_a_window_left_out_are_counted_over_the_same_relation_as_the_rows(
     let declared = declaration();
     let over = Over {
         declaration: &declared,
+        database: "insight_datasets",
         table: "ds_commits_1",
     };
 

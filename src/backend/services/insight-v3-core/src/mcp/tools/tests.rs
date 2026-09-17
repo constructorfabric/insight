@@ -31,13 +31,16 @@ fn surfaces() -> CustomSurfaces {
     };
 
     let state = Arc::new(AppState::new(
-        RawDataStore::new(client()),
-        TableStore::new(client()),
+        crate::api::Warehouse {
+            raw_data: RawDataStore::new(client()),
+            tables: TableStore::new(client()),
+            catalog: Catalog::new(client(), "insight".to_owned()),
+            metrics: MetricRunner::new(client(), People::new("identity")),
+        },
         Arc::new(MemoryDefinitions::new()),
-        MetricRunner::new(client(), People::new("identity")),
         ChatClient::keyless(),
         identity,
-        Catalog::new(client(), "insight".to_owned()),
+        crate::api::Datasets::offline("http://offline.invalid"),
     ));
 
     CustomSurfaces::new(state)

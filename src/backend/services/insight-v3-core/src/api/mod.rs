@@ -19,6 +19,7 @@ use crate::chat::ChatClient;
 use crate::domain::definition::Definitions;
 use crate::domain::query::metric_query::MetricRunner;
 use crate::store::catalog::Catalog;
+use crate::store::dataset_tables::DatasetTables;
 use crate::store::identity::IdentityClient;
 use crate::store::raw_data::RawDataStore;
 use crate::store::tables::TableStore;
@@ -79,46 +80,88 @@ pub(crate) async fn require_admin(
 
 #[derive(Debug)]
 pub(crate) struct AppState {
-    raw_data: RawDataStore,
-    tables: TableStore,
+    warehouse: Warehouse,
     definitions: Arc<dyn Definitions>,
-    metrics: MetricRunner,
     chat: ChatClient,
     identity: IdentityClient,
-    catalog: Catalog,
+    datasets: Datasets,
+}
+
+/// Everything this service reaches in the warehouse: where records land, what
+/// tables there are, what shape they have, and what runs a metric over them.
+#[derive(Debug)]
+pub(crate) struct Warehouse {
+    pub(crate) raw_data: RawDataStore,
+    pub(crate) tables: TableStore,
+    pub(crate) catalog: Catalog,
+    pub(crate) metrics: MetricRunner,
+}
+
+/// Everything about datasets this service reaches: their rows, the tables
+/// holding their records, and the database those live in.
+#[derive(Debug, Clone)]
+pub(crate) struct Datasets {
+    pub(crate) rows: Arc<dyn crate::domain::datasets::Datasets>,
+    #[expect(dead_code, reason = "read by the dataset flows the API wires next")]
+    pub(crate) tables: Arc<DatasetTables>,
+    pub(crate) database: String,
+}
+
+impl Datasets {
+    pub(crate) fn new(
+        rows: Arc<dyn crate::domain::datasets::Datasets>,
+        tables: DatasetTables,
+        database: String,
+    ) -> Self {
+        Self {
+            rows,
+            tables: Arc::new(tables),
+            database,
+        }
+    }
+
+    /// Datasets over a store that is never reached, for a state that answers
+    /// without one.
+    pub(crate) fn offline(url: &str) -> Self {
+        Self::new(
+            Arc::new(crate::store::datasets::MariaDatasets::new(
+                sea_orm::DatabaseConnection::default(),
+            )),
+            DatasetTables::new(insight_clickhouse::Client::new(
+                insight_clickhouse::Config::new(url, "insight_datasets"),
+            )),
+            "insight_datasets".to_owned(),
+        )
+    }
 }
 
 impl AppState {
     pub(crate) fn new(
-        raw_data: RawDataStore,
-        tables: TableStore,
+        warehouse: Warehouse,
         definitions: Arc<dyn Definitions>,
-        metrics: MetricRunner,
         chat: ChatClient,
         identity: IdentityClient,
-        catalog: Catalog,
+        datasets: Datasets,
     ) -> Self {
         Self {
-            raw_data,
-            tables,
+            warehouse,
             definitions,
-            metrics,
             chat,
             identity,
-            catalog,
+            datasets,
         }
     }
 
     pub(crate) fn raw_data(&self) -> &RawDataStore {
-        &self.raw_data
+        &self.warehouse.raw_data
     }
 
     pub(crate) fn tables(&self) -> &TableStore {
-        &self.tables
+        &self.warehouse.tables
     }
 
     pub(crate) fn catalog(&self) -> &Catalog {
-        &self.catalog
+        &self.warehouse.catalog
     }
 
     pub(crate) fn definitions(&self) -> &dyn Definitions {
@@ -126,7 +169,7 @@ impl AppState {
     }
 
     pub(crate) fn metrics(&self) -> &MetricRunner {
-        &self.metrics
+        &self.warehouse.metrics
     }
 
     pub(crate) fn chat(&self) -> &ChatClient {
@@ -140,16 +183,18 @@ impl AppState {
     pub(crate) fn assistant(&self) -> crate::domain::assistant::Assistant<'_> {
         crate::domain::assistant::Assistant::new(
             self.definitions.as_ref(),
-            &self.catalog,
-            &self.tables,
+            &self.warehouse.catalog,
+            &self.warehouse.tables,
         )
     }
 
     pub(crate) fn metric_runs(&self) -> crate::domain::metric_run::MetricRuns<'_> {
         crate::domain::metric_run::MetricRuns::new(
             self.definitions.as_ref(),
-            &self.metrics,
-            &self.catalog,
+            &self.warehouse.metrics,
+            &self.warehouse.catalog,
+            self.datasets.rows.as_ref(),
+            &self.datasets.database,
         )
     }
 }
@@ -187,18 +232,21 @@ pub(crate) fn openapi_document() -> anyhow::Result<utoipa::openapi::OpenApi> {
         "insight",
     ));
     let state = Arc::new(AppState::new(
-        RawDataStore::new(offline.clone()),
-        TableStore::new(offline.clone()),
+        crate::api::Warehouse {
+            raw_data: RawDataStore::new(offline.clone()),
+            tables: TableStore::new(offline.clone()),
+            catalog: Catalog::new(offline.clone(), "insight".to_owned()),
+            metrics: MetricRunner::new(
+                offline,
+                crate::domain::query::metric_query::People::new("identity"),
+            ),
+        },
         Arc::new(crate::store::definitions::MariaDefinitions::new(
             sea_orm::DatabaseConnection::default(),
         )),
-        MetricRunner::new(
-            offline.clone(),
-            crate::domain::query::metric_query::People::new("identity"),
-        ),
         ChatClient::keyless(),
         IdentityClient::new("http://identity.invalid")?,
-        Catalog::new(offline, "insight".to_owned()),
+        crate::api::Datasets::offline("http://offline.invalid"),
     ));
 
     let openapi = OpenApiRegistryImpl::new();

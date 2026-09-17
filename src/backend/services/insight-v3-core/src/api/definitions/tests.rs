@@ -53,26 +53,31 @@ impl TestHarness {
         let openapi = OpenApiRegistryImpl::new();
         let url = mock.url();
         let state = Arc::new(AppState::new(
-            RawDataStore::new(insight_clickhouse::Client::new(
-                insight_clickhouse::Config::new(url, "insight"),
-            )),
-            TableStore::new(insight_clickhouse::Client::new(
-                insight_clickhouse::Config::new(url, "insight"),
-            )),
+            crate::api::Warehouse {
+                raw_data: RawDataStore::new(insight_clickhouse::Client::new(
+                    insight_clickhouse::Config::new(url, "insight"),
+                )),
+                tables: TableStore::new(insight_clickhouse::Client::new(
+                    insight_clickhouse::Config::new(url, "insight"),
+                )),
+                catalog: crate::store::catalog::Catalog::new(
+                    insight_clickhouse::Client::new(insight_clickhouse::Config::new(
+                        "http://catalogue.invalid",
+                        "insight",
+                    )),
+                    "insight".to_owned(),
+                ),
+                metrics: MetricRunner::new(
+                    insight_clickhouse::Client::new(insight_clickhouse::Config::new(
+                        url, "insight",
+                    )),
+                    crate::domain::query::metric_query::People::new("identity"),
+                ),
+            },
             definitions.clone(),
-            MetricRunner::new(
-                insight_clickhouse::Client::new(insight_clickhouse::Config::new(url, "insight")),
-                crate::domain::query::metric_query::People::new("identity"),
-            ),
             ChatClient::keyless(),
             crate::store::identity::IdentityClient::fixed(is_admin),
-            crate::store::catalog::Catalog::new(
-                insight_clickhouse::Client::new(insight_clickhouse::Config::new(
-                    "http://catalogue.invalid",
-                    "insight",
-                )),
-                "insight".to_owned(),
-            ),
+            crate::api::Datasets::offline(url),
         ));
         let router = register_routes(Router::new(), &openapi, &state);
 

@@ -15,14 +15,16 @@ use crate::domain::kinds::dataset::read::{Form, PAYLOAD_COLUMN, collapsed, read}
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Over<'a> {
     pub(crate) declaration: &'a Declaration,
-    /// The table holding the records, as the dataset's row names it.
+    /// The database this service keeps every dataset's records in.
+    pub(crate) database: &'a str,
+    /// The table holding them, as the dataset's row names it.
     pub(crate) table: &'a str,
 }
 
 impl Over<'_> {
     /// The relation a run reads: one record per identity.
     pub(crate) fn relation(self, qualifier: Option<&str>) -> String {
-        let mut from = collapsed(self.declaration, self.table);
+        let mut from = collapsed(self.declaration, self.database, self.table);
 
         if let Some(alias) = qualifier {
             let _ = write!(from, " AS `{alias}`");

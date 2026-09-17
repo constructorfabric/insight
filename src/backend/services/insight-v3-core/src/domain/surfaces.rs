@@ -38,6 +38,8 @@ pub(crate) enum CustomError {
     Catalog(CatalogError),
     #[error("dashboard time range: {0}")]
     Range(WindowError),
+    #[error("no dataset named `{0}` is ready to be read")]
+    DatasetNotReady(String),
 }
 
 impl From<KindError> for CustomError {
@@ -62,6 +64,7 @@ impl CustomError {
             | Self::Widget(_)
             | Self::Body(_)
             | Self::Range(_)
+            | Self::DatasetNotReady(_)
             | Self::Compile(_) => true,
             Self::Run(_) | Self::Store(_) | Self::Catalog(_) => false,
         }

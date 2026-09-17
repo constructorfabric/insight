@@ -231,6 +231,10 @@ pub(super) fn custom_error(error: CustomError) -> CanonicalError {
             )
             .create(),
         CustomError::Widget(source) => widget_error(&source),
+        CustomError::DatasetNotReady(named) => DefinitionApiError::invalid_field(
+            "body",
+            format!("no dataset named `{named}` is ready"),
+        ),
         CustomError::Body(source) => DefinitionApiError::invalid_field("body", source.to_string()),
         CustomError::Range(source) => {
             DefinitionApiError::invalid_field("time_ranges", source.to_string())

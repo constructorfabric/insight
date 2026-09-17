@@ -134,6 +134,11 @@ fn window_field(error: &WindowError) -> &'static str {
 fn custom_error(error: CustomError) -> CanonicalError {
     match error {
         CustomError::NotFound { name, .. } => metric_not_found(&name),
+        CustomError::DatasetNotReady(named) => {
+            MetricRunApiError::not_found(format!("no dataset named `{named}` is ready to be read"))
+                .with_resource(&named)
+                .create()
+        }
         CustomError::Body(source) => invalid_metric_body(&source),
         CustomError::Compile(source) => compile_error(&source),
         CustomError::Run(source) => run_error(source),
