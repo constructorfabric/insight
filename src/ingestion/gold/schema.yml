@@ -856,7 +856,8 @@ models:
                 values:
                   - tasks_closed
                   - bugs_fixed
-                  - closed_non_bug
+                  - closed_task
+                  - closed_unknown_type
                   - closed_fixed
                   - closed_duplicate
                   - closed_wontfix

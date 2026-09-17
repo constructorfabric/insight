@@ -44,7 +44,7 @@ def test_tasks_closed(spec: SpecRun) -> None:
                         ],
                     },
                     {"metric_key": "tasks.bugs_fixed", "views": [{"view": "period"}]},
-                    {"metric_key": "tasks.closed_non_bug", "views": [{"view": "period"}]},
+                    {"metric_key": "tasks.closed_task", "views": [{"view": "period"}]},
                     {"metric_key": "tasks.bugs_ratio", "views": [{"view": "period"}]},
                 ],
             },
@@ -84,12 +84,47 @@ def test_tasks_closed(spec: SpecRun) -> None:
     assert len(some(by_type, entity_id=ERIN)) == 4
 
     r.row("tasks.bugs_fixed", "period", entity_id=ERIN).equals(value=1)
-    r.row("tasks.closed_non_bug", "period", entity_id=ERIN).equals(value=3)
+    r.row("tasks.closed_task", "period", entity_id=ERIN).equals(value=3)
     # 1 bug over ALL 6 closes: the unknown-kind and typeless closures stay in
     # the denominator — a ratio computed over classified closes only reads 25.
     r.row("tasks.bugs_ratio", "period", entity_id=ERIN).check(
         "value", lambda v: float(v) == approx(100 / 6), "1 bug of 6 closes"
     )
+
+
+def test_kind_subsets_partition_the_closed_issues(spec: SpecRun) -> None:
+    """Erin's 6 closes split 1 bug + 3 tasks + 2 unclassified (the Incident and the
+    type-less issue), so the three kind metrics add back up to tasks.closed."""
+    r = spec.call(
+        {
+            "url": "/v1/metric-results",
+            "method": "POST",
+            "body": {
+                "entity": {"type": "person", "ids": [ERIN]},
+                "period": {"from": "2026-12-20", "to": "2026-12-31"},
+                "metrics": [
+                    {
+                        "metric_key": "tasks.closed_unknown",
+                        "views": [
+                            {"view": "period"},
+                            {"view": "peer"},
+                            {"view": "timeseries", "bucket": "day"},
+                        ],
+                    }
+                ],
+            },
+        }
+    )
+    assert r.status == 200
+
+    r.row("tasks.closed_unknown", "period", entity_id=ERIN).equals(value=2)
+    # Erin is the only member closing an unclassified issue, so the cohort is hers
+    # alone: the other four carry no observation and drop out of the pool.
+    r.row("tasks.closed_unknown", "peer", entity_id=ERIN).equals(
+        target_value=2, p25=None, median=None, p75=None, min=None, max=None, n=1
+    )
+    unknown = one(r.series("tasks.closed_unknown"), entity_id=ERIN)["points"]
+    assert float(one(unknown, bucket_start="2026-12-25")["value"]) == approx(2.0)
 
 
 def test_tasks_closed_empty_window(spec: SpecRun) -> None:

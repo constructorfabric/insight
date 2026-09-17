@@ -123,7 +123,8 @@ issue_item_evidence AS (
     ARRAY JOIN arrayConcat(
         [tuple('tasks_closed', toFloat64(1))],
         if(issue_kind = 'bug', [tuple('bugs_fixed', toFloat64(1))], []),
-        if(issue_kind = 'task', [tuple('closed_non_bug', toFloat64(1))], []),
+        if(issue_kind = 'task', [tuple('closed_task', toFloat64(1))], []),
+        if(issue_kind = 'unknown', [tuple('closed_unknown_type', toFloat64(1))], []),
         -- Closed-by-resolution-class subsets of tasks_closed. The unknown
         -- class deliberately has no measure: the unclassified-closures alert
         -- owns it.
