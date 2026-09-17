@@ -156,7 +156,6 @@ pub(crate) fn lease_until(now: DateTime<Utc>) -> DateTime<Utc> {
 #[derive(Debug, Clone)]
 pub(crate) struct Attempt {
     pub(crate) token: OperationToken,
-    pub(crate) state: DatasetState,
 }
 
 /// What an attempt writes when its work is done, or part of it is.

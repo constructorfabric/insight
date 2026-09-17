@@ -27,10 +27,10 @@ async fn a_create_claims_a_name_nobody_holds_and_keeps_what_it_was_given() -> R 
 
     let attempt = store.take_create(&name("commits"), &declaration()).await?;
 
-    assert_eq!(attempt.state, DatasetState::Claimed);
     let Some(held) = store.get(&name("commits")).await? else {
         panic!("the claim left a row");
     };
+    assert_eq!(held.state, DatasetState::Claimed);
     assert_eq!(held.name.as_str(), "commits");
     assert_eq!(held.declaration, declaration());
     assert_eq!(held.physical_table, None, "no table is provisioned yet");

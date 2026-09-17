@@ -7,6 +7,7 @@ use toolkit::api::{OpenApiInfo, OpenApiRegistry, OpenApiRegistryImpl};
 
 pub(crate) mod admission;
 pub(crate) mod chat;
+pub(crate) mod datasets;
 pub(crate) mod definitions;
 mod errors;
 pub(crate) mod metric_run;
@@ -102,7 +103,6 @@ pub(crate) struct Warehouse {
 #[derive(Debug, Clone)]
 pub(crate) struct Datasets {
     pub(crate) rows: Arc<dyn crate::domain::datasets::Datasets>,
-    #[expect(dead_code, reason = "read by the dataset flows the API wires next")]
     pub(crate) tables: Arc<DatasetTables>,
     pub(crate) database: String,
 }
@@ -185,6 +185,20 @@ impl AppState {
             self.definitions.as_ref(),
             &self.warehouse.catalog,
             &self.warehouse.tables,
+        )
+    }
+
+    pub(crate) fn datasets(&self) -> &dyn crate::domain::datasets::Datasets {
+        self.datasets.rows.as_ref()
+    }
+
+    pub(crate) fn dataset_lifecycle(
+        &self,
+    ) -> crate::domain::dataset_lifecycle::DatasetLifecycle<'_> {
+        crate::domain::dataset_lifecycle::DatasetLifecycle::new(
+            self.datasets.rows.as_ref(),
+            &self.datasets.tables,
+            self.definitions.as_ref(),
         )
     }
 
@@ -276,6 +290,7 @@ pub(crate) fn register_routes(
     let api = tables::register_routes(Router::new(), openapi, state.clone(), admission.clone());
     let api = raw_data::register_routes(api, openapi, state.clone(), admission);
     let api = definitions::register_routes(api, openapi, &state);
+    let api = datasets::register_routes(api, openapi, &state);
     let api = metric_run::register_routes(api, openapi, state.clone());
     let api = chat::register_routes(api, openapi, state)
         .layer(insight_log_context::LogContextLayer::new());

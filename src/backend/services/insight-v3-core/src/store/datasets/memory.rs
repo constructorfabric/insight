@@ -68,7 +68,7 @@ impl MemoryDatasets {
             until: lease_until(now),
         };
 
-        let state = match taking(stored.get(name.as_str()), operation, now) {
+        match taking(stored.get(name.as_str()), operation, now) {
             Taking::Refuse(refusal) => return Err(refusal.into()),
             Taking::Gone => return Err(Refused::Gone.into()),
             Taking::Claim => {
@@ -82,8 +82,6 @@ impl MemoryDatasets {
                         held: Some(held),
                     },
                 );
-
-                DatasetState::Claimed
             }
             Taking::Take(state) => {
                 let Some(dataset) = stored.get_mut(name.as_str()) else {
@@ -94,12 +92,10 @@ impl MemoryDatasets {
                 if let Some(declaration) = declaration {
                     dataset.declaration = declaration.clone();
                 }
-
-                state
             }
-        };
+        }
 
-        Ok(Attempt { token, state })
+        Ok(Attempt { token })
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, Dataset>> {

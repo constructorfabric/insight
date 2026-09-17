@@ -47,10 +47,6 @@ impl Violation {
     }
 
     /// The reason as a caller branches on it, rather than reads.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "read by the API that answers with violations")
-    )]
     pub(crate) fn reason_code(&self) -> &'static str {
         self.reason.as_str()
     }

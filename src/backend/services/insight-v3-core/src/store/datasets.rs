@@ -164,7 +164,7 @@ impl MariaDatasets {
         let token = OperationToken::mint();
         let until = lease_until(now);
 
-        let state = match taking(held.as_ref(), operation, now) {
+        match taking(held.as_ref(), operation, now) {
             Taking::Refuse(refusal) => return Err(refusal.into()),
             Taking::Gone => return Err(Refused::Gone.into()),
             Taking::Claim => {
@@ -185,8 +185,6 @@ impl MariaDatasets {
                     ))
                     .await
                     .map_err(taken_or)?;
-
-                DatasetState::Claimed
             }
             Taking::Take(state) => {
                 let statement = match declaration {
@@ -215,14 +213,12 @@ impl MariaDatasets {
                     ),
                 };
                 transaction.execute_raw(statement).await?;
-
-                state
             }
-        };
+        }
 
         transaction.commit().await?;
 
-        Ok(Attempt { token, state })
+        Ok(Attempt { token })
     }
 }
 

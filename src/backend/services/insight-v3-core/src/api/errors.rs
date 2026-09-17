@@ -29,6 +29,34 @@ pub(crate) trait ApiErrors {
         Self::invalid_field("name", error.to_string())
     }
 
+    /// A dataset store that did not answer.
+    ///
+    /// Same policy as the definitions below: only the wait is the caller's to
+    /// see, and a refusal the caller can act on keeps its own shape.
+    fn dataset_store_error(error: crate::domain::datasets::DatasetStoreError) -> CanonicalError {
+        use crate::domain::datasets::DatasetStoreError;
+
+        match error {
+            DatasetStoreError::Database(sea_orm::DbErr::ConnectionAcquire(source)) => {
+                tracing::warn!(error = ?source, "dataset store connection timed out");
+                Self::timed_out("dataset store timed out")
+            }
+            DatasetStoreError::Refused(refusal) => Self::invalid_field("name", refusal.to_string()),
+            DatasetStoreError::Database(source) => {
+                tracing::error!(error = ?source, "dataset store operation failed");
+                CanonicalError::internal("dataset store operation failed").create()
+            }
+            DatasetStoreError::Json(source) => {
+                tracing::error!(error = ?source, "a dataset declaration could not be read");
+                CanonicalError::internal("dataset store operation failed").create()
+            }
+            DatasetStoreError::UnreadableRow(said) => {
+                tracing::error!(said, "a dataset row holds a word this service never wrote");
+                CanonicalError::internal("dataset store operation failed").create()
+            }
+        }
+    }
+
     /// A definition store that did not answer.
     ///
     /// Only the wait is the caller's to see: what the database said is ours,
