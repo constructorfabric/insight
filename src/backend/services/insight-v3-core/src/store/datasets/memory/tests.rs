@@ -344,3 +344,59 @@ async fn a_removal_that_could_not_finish_holds_the_name_until_its_lease_lapses()
 
     Ok(())
 }
+
+/// A removal carries away the table the row named when it took the operation.
+/// Reading the name when the drop runs would name whatever the row says then,
+/// which after a take-over and a fresh create is somebody else's records.
+#[tokio::test]
+async fn a_removal_remembers_the_table_it_took_the_dataset_for() -> R {
+    let store = MemoryDatasets::at(at(0));
+    let first = store
+        .take_create(&name("commits"), &declaration())
+        .await?
+        .attempt();
+    store
+        .finish(
+            &name("commits"),
+            &first.token,
+            Finish::Provisioned("ds_commits_1".to_owned()),
+        )
+        .await?;
+    store
+        .finish(&name("commits"), &first.token, Finish::Ready)
+        .await?;
+
+    let stalled = store.take_remove(&name("commits")).await?;
+    assert_eq!(stalled.table.as_deref(), Some("ds_commits_1"));
+
+    // Its lease lapses, another removal completes, and the name is taken again
+    // by a dataset whose records live somewhere else entirely.
+    store.set_now(at(LEASE_SECS + 1));
+    let repeated = store.take_remove(&name("commits")).await?;
+    store
+        .finish(&name("commits"), &repeated.token, Finish::Removed)
+        .await?;
+    let remade = store
+        .take_create(&name("commits"), &declaration())
+        .await?
+        .attempt();
+    store
+        .finish(
+            &name("commits"),
+            &remade.token,
+            Finish::Provisioned("ds_commits_2".to_owned()),
+        )
+        .await?;
+    store
+        .finish(&name("commits"), &remade.token, Finish::Ready)
+        .await?;
+
+    // The stalled removal still names what it took, not what stands now.
+    assert_eq!(stalled.table.as_deref(), Some("ds_commits_1"));
+    let Some(standing) = store.get(&name("commits")).await? else {
+        panic!("the remade dataset stands");
+    };
+    assert_eq!(standing.physical_table.as_deref(), Some("ds_commits_2"));
+
+    Ok(())
+}

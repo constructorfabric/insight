@@ -267,6 +267,91 @@ impl Datasets for LosesTheDataset {
     }
 }
 
+/// A store that took the operation and then stopped answering, which is what
+/// a connection lost on the way back from a commit looks like.
+#[derive(Debug)]
+struct StopsAnswering(MemoryDatasets);
+
+#[async_trait::async_trait]
+impl Datasets for StopsAnswering {
+    async fn get(
+        &self,
+        name: &DefinitionName,
+    ) -> Result<Option<crate::domain::datasets::Dataset>, DatasetStoreError> {
+        self.0.get(name).await
+    }
+
+    async fn list(&self) -> Result<Vec<String>, DatasetStoreError> {
+        self.0.list().await
+    }
+
+    async fn page(
+        &self,
+        needle: &str,
+        page: crate::domain::definition::Page,
+    ) -> Result<crate::domain::definition::NamePage, DatasetStoreError> {
+        self.0.page(needle, page).await
+    }
+
+    async fn take_create(
+        &self,
+        name: &DefinitionName,
+        declaration: &Value,
+    ) -> Result<crate::domain::datasets::Taken, DatasetStoreError> {
+        self.0.take_create(name, declaration).await
+    }
+
+    async fn take_remove(&self, name: &DefinitionName) -> Result<Attempt, DatasetStoreError> {
+        self.0.take_remove(name).await
+    }
+
+    async fn replace(
+        &self,
+        name: &DefinitionName,
+        declaration: &Value,
+    ) -> Result<bool, DatasetStoreError> {
+        self.0.replace(name, declaration).await
+    }
+
+    async fn finish(
+        &self,
+        _name: &DefinitionName,
+        _token: &OperationToken,
+        _finish: Finish,
+    ) -> Result<Owning, DatasetStoreError> {
+        Err(DatasetStoreError::UnreadableRow("no answer".to_owned()))
+    }
+}
+
+/// A store that did not answer has not said the write failed: the commit may
+/// have landed and the acknowledgement been lost, leaving a dataset that
+/// stands and names this table. A table nothing names can be swept up; one a
+/// standing dataset names cannot be brought back.
+#[tokio::test]
+async fn a_publication_the_store_never_answered_for_keeps_its_table() -> R {
+    let fixture = Fixture::new();
+    fixture.nothing_holds_the_name();
+    let recording = fixture.mock.add(handlers::record_ddl());
+    let datasets = StopsAnswering(MemoryDatasets::at(
+        Utc.with_ymd_and_hms(2026, 9, 16, 12, 0, 0)
+            .single()
+            .unwrap_or_else(|| panic!("the fixture time exists")),
+    ));
+
+    let failed = DatasetLifecycle::new(&datasets, &fixture.tables, &fixture.definitions)
+        .declare(&name("commits"), &declaration())
+        .await;
+
+    assert!(failed.is_err(), "{failed:?}");
+    let issued = recording.query().await;
+    assert!(
+        !issued.contains("DROP TABLE"),
+        "an unanswered publication must leave its table alone: {issued}"
+    );
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn an_attempt_that_lost_the_dataset_takes_away_the_table_it_made() -> R {
     let fixture = Fixture::new();

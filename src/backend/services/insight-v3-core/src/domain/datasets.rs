@@ -222,6 +222,13 @@ impl Default for Lease {
 #[derive(Debug, Clone)]
 pub(crate) struct Attempt {
     pub(crate) token: OperationToken,
+    /// The table the row named when this attempt took the operation.
+    ///
+    /// INVARIANT: a removal drops this table and no other. Reading the name
+    /// again when the drop runs would read whatever the row says then, and a
+    /// removal that outlived its lease would take the table of the dataset
+    /// that has since been made under the same name.
+    pub(crate) table: Option<String>,
 }
 
 /// What asking for a create came to.

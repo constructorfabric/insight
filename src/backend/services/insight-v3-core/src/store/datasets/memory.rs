@@ -62,6 +62,9 @@ impl MemoryDatasets {
         let mut stored = self.lock();
 
         let token = OperationToken::mint();
+        let table = stored
+            .get(name.as_str())
+            .and_then(|dataset| dataset.physical_table.clone());
         let held = Held {
             operation,
             token: token.clone(),
@@ -96,7 +99,7 @@ impl MemoryDatasets {
             }
         }
 
-        Ok(Taken::Attempt(Attempt { token }))
+        Ok(Taken::Attempt(Attempt { token, table }))
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, Dataset>> {

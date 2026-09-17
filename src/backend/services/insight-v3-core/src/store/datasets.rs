@@ -209,6 +209,7 @@ impl MariaDatasets {
 
         let token = OperationToken::mint();
         let until = self.lease.until(now);
+        let table = held.as_ref().and_then(|held| held.physical_table.clone());
 
         match taking(held.as_ref(), operation, now) {
             Taking::Refuse(refusal) => return Err(refusal.into()),
@@ -269,7 +270,7 @@ impl MariaDatasets {
 
         transaction.commit().await?;
 
-        Ok(Taken::Attempt(Attempt { token }))
+        Ok(Taken::Attempt(Attempt { token, table }))
     }
 }
 

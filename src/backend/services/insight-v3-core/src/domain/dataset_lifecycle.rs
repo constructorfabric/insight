@@ -226,6 +226,9 @@ impl<'a> DatasetLifecycle<'a> {
 
         match self.record(name, &attempt, table.clone()).await {
             Ok(Owning::Held) => Ok(body.clone()),
+            // The store answered, under the row lock, that this attempt no
+            // longer owns the dataset. Nothing was published, so the table
+            // this attempt made is its own to take away.
             Ok(Owning::Lost) => {
                 finished_stale(name, Operation::Create);
                 self.discard(&table).await;
@@ -234,8 +237,18 @@ impl<'a> DatasetLifecycle<'a> {
                     Operation::Create,
                 )))
             }
+            // INVARIANT: a store that did not answer has not said the write
+            // failed. A commit may have landed and the acknowledgement been
+            // lost, so the dataset may stand and hold this table. A table
+            // nothing names can be swept up; one a standing dataset names
+            // cannot be brought back.
             Err(error) => {
-                self.discard(&table).await;
+                tracing::error!(
+                    error = ?error,
+                    dataset = name.as_str(),
+                    table,
+                    "a dataset was left with a table whose publication is unknown"
+                );
 
                 Err(error)
             }
@@ -243,9 +256,6 @@ impl<'a> DatasetLifecycle<'a> {
     }
 
     /// Takes a dataset away, with the records it holds.
-    ///
-    /// The table dropped is the one the row names and no other, so a drop
-    /// arriving late cannot reach a table some later dataset provisioned.
     pub(crate) async fn remove(
         &self,
         name: &DefinitionName,
@@ -283,7 +293,7 @@ impl<'a> DatasetLifecycle<'a> {
         // INVARIANT: a removal that could not take the table away leaves the
         // row mid-removal. The name stays held and nothing reads it, and the
         // lease lapsing is what lets the request be repeated until it lands.
-        if let Err(error) = self.drop_records(name).await {
+        if let Err(error) = self.drop_records(attempt.table.as_deref()).await {
             tracing::error!(
                 error = ?error,
                 dataset = name.as_str(),
@@ -309,24 +319,26 @@ impl<'a> DatasetLifecycle<'a> {
         }
     }
 
-    /// Drops the table this dataset's row names, if it names one and it is
-    /// still a table of this service's own shape.
-    async fn drop_records(&self, name: &DefinitionName) -> Result<(), DatasetChangeError> {
-        let Some(table) = self
-            .datasets
-            .get(name)
-            .await?
-            .and_then(|held| held.physical_table)
-        else {
+    /// Drops the table this removal took the dataset for, if there was one and
+    /// it is still a table of this service's own shape.
+    ///
+    /// INVARIANT: the name comes from the attempt, which read it under the row
+    /// lock. Reading it again here would name whatever the row says now, so a
+    /// removal that outlived its lease would take the records of the dataset
+    /// since made under the same name.
+    async fn drop_records(&self, table: Option<&str>) -> Result<(), DatasetChangeError> {
+        let Some(table) = table else {
             return Ok(());
         };
 
-        match self.tables.shape_of(&table).await? {
+        match self.tables.shape_of(table).await? {
             Shape::Absent => Ok(()),
-            Shape::Ingest => Ok(self.tables.drop_table(&table).await?),
+            Shape::Ingest => Ok(self.tables.drop_table(table).await?),
             // Something else holds the name now. Dropping it would take a
             // table this service never made.
-            Shape::Foreign => Err(DatasetChangeError::Table(DatasetTableError::NotOurs(table))),
+            Shape::Foreign => Err(DatasetChangeError::Table(DatasetTableError::NotOurs(
+                table.to_owned(),
+            ))),
         }
     }
 
