@@ -14,14 +14,7 @@ use super::datasets::{
 use super::definition::{DefinitionKind, DefinitionName, DefinitionStoreError, Definitions};
 use super::kinds::dataset::declaration::Declaration;
 use super::kinds::dataset::shape;
-#[cfg_attr(
-    not(test),
-    expect(
-        unused_imports,
-        reason = "the tests read the state through this module"
-    )
-)]
-use super::kinds::dataset::state::{DatasetState, Operation};
+use super::kinds::dataset::state::Operation;
 use super::kinds::dataset::validate::validate;
 use super::kinds::metric;
 use super::kinds::metric::answerable;

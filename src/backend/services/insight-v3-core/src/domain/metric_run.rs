@@ -63,9 +63,6 @@ impl<'a> MetricRuns<'a> {
 
         let metric: MetricQuery = serde_json::from_value(body).map_err(CustomError::Body)?;
 
-        // A metric addressing a warehouse relation is how metrics read data
-        // before datasets. None can be written any more, and one written
-        // before is refused rather than read from a relation nothing declares.
         let Some(named) = metric.dataset() else {
             return Err(CustomError::Compile(MetricQueryError::NoDataset));
         };

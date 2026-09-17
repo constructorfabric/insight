@@ -4,6 +4,7 @@ use serde::Serialize;
 use serde_json::json;
 
 use super::*;
+use crate::domain::kinds::dataset::state::DatasetState;
 use crate::store::datasets::memory::MemoryDatasets;
 use crate::store::definitions::memory::MemoryDefinitions;
 

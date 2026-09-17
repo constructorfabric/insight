@@ -57,7 +57,7 @@ impl TestHarness {
     }
 
     /// A harness whose definition store refuses every write.
-    #[allow(clippy::unused_async)]
+    #[expect(clippy::unused_async, reason = "the harness mirrors the async one")]
     async fn with_a_store_that_is_down() -> Self {
         Self::build(
             true,
@@ -66,7 +66,7 @@ impl TestHarness {
     }
 
     /// A caller who does or does not hold the admin role.
-    #[allow(clippy::unused_async)]
+    #[expect(clippy::unused_async, reason = "the harness mirrors the async one")]
     async fn with_caller(is_admin: bool) -> Self {
         Self::build(
             is_admin,
@@ -231,7 +231,7 @@ impl TestResponse {
         self.status
     }
 
-    #[allow(clippy::unused_async)]
+    #[expect(clippy::unused_async, reason = "the harness mirrors the async one")]
     async fn json(&self) -> serde_json::Value {
         serde_json::from_slice(&self.body)
             .unwrap_or_else(|error| panic!("response body must be JSON: {error}"))

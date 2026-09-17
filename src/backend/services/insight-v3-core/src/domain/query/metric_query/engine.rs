@@ -3,8 +3,8 @@
 
 /// The engine behind a warehouse relation, as far as reading it is concerned.
 ///
-/// A dataset's own table is a plain `MergeTree` this service made, so only the
-/// relations metrics addressed before datasets are anything else.
+/// A dataset's own table is a plain `MergeTree` this service made, so this is
+/// only ever `Other` on a served path.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[cfg_attr(
     not(test),

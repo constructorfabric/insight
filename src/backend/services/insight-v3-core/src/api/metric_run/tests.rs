@@ -45,7 +45,7 @@ fn a_ready_dataset(url: &str) -> crate::api::Datasets {
 }
 
 impl TestHarness {
-    #[allow(clippy::unused_async)]
+    #[expect(clippy::unused_async, reason = "the harness mirrors the async one")]
     async fn new(metrics_url: &str) -> Self {
         let mut mock = Mock::new();
         mock.non_exhaustive();
@@ -223,7 +223,7 @@ impl TestResponse {
         self.status
     }
 
-    #[allow(clippy::unused_async)]
+    #[expect(clippy::unused_async, reason = "the harness mirrors the async one")]
     async fn json(&self) -> serde_json::Value {
         serde_json::from_slice(&self.body)
             .unwrap_or_else(|error| panic!("response body must be JSON: {error}"))

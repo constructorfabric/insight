@@ -1,9 +1,4 @@
 //! The dataset a metric is compiled over.
-//!
-//! A metric reading a dataset names its fields; where each value sits in a
-//! record, and which records count as one, are the declaration's to say. A
-//! metric with none of this behind it addresses a warehouse relation itself,
-//! which is how metrics read data before datasets.
 
 use std::fmt::Write as _;
 

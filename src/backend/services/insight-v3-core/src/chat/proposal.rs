@@ -16,8 +16,7 @@ enum Reads {
     /// No query and no metric: a reply that stands on its own.
     Nothing,
     Dataset(String),
-    /// A metric that names no dataset, which is the shape metrics had before
-    /// datasets and is no longer one this service can run.
+    /// A metric that names no dataset, which nothing here can run.
     SomethingElse,
 }
 

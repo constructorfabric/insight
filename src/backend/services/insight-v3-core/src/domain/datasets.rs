@@ -86,8 +86,9 @@ pub(crate) struct Dataset {
 impl Dataset {
     /// The operation holding this dataset, if one still is.
     ///
-    /// A lapsed lease never means the attempt succeeded: it means its outcome
-    /// no longer counts, which finishing an operation enforces.
+    /// INVARIANT: a lapsed lease is not a finished operation. Taking one over
+    /// mints a fresh token, which is what makes the lapsed attempt's own
+    /// finish a no-op.
     pub(crate) fn holder(&self, now: DateTime<Utc>) -> Option<Operation> {
         self.held
             .as_ref()

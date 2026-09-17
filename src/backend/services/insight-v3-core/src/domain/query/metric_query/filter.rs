@@ -140,12 +140,7 @@ impl FilterOp {
     }
 }
 
-/// A single filter value, typed per its declared [`FieldType`].
-///
-/// `MetricQuery::compile` validates each filter value against its declared
-/// type up front, so binding a numeric filter produces a numeric SQL literal
-/// rather than a quoted string compared against a `JSONExtractInt`/`Float`
-/// expression.
+/// A filter value, bound as the type the dataset declares the field to be.
 #[derive(Debug, Clone)]
 pub(crate) enum FilterBind {
     Str(String),
@@ -176,9 +171,8 @@ impl FilterBind {
     }
 }
 
-/// Compares against the string form asserted by `MetricQuery::compile`'s
-/// unit tests, without stringifying the value used to actually bind the
-/// query (see [`FilterBind::bind_onto`]).
+/// Compares against the string form the compiler's tests assert, without
+/// stringifying the value the query is actually bound with.
 #[cfg(test)]
 impl PartialEq<String> for FilterBind {
     fn eq(&self, other: &String) -> bool {

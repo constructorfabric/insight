@@ -70,7 +70,7 @@ impl TestHarness {
 
     /// A harness whose metric queries go somewhere that answers them, for the
     /// cases about what an answer does with the rows it got back.
-    #[allow(clippy::unused_async)]
+    #[expect(clippy::unused_async, reason = "the harness mirrors the async one")]
     async fn with_metrics(chat: ChatClient, metrics: Option<&str>) -> Self {
         let mut mock = Mock::new();
         mock.non_exhaustive();
@@ -194,7 +194,7 @@ impl TestResponse {
         self.status
     }
 
-    #[allow(clippy::unused_async)]
+    #[expect(clippy::unused_async, reason = "the harness mirrors the async one")]
     async fn json(&self) -> serde_json::Value {
         serde_json::from_slice(&self.body)
             .unwrap_or_else(|error| panic!("response body must be JSON: {error}"))
@@ -202,7 +202,7 @@ impl TestResponse {
 }
 
 #[derive(Debug, Default, Deserialize)]
-#[allow(
+#[expect(
     dead_code,
     reason = "mirrors the full response shape; not every field is asserted on"
 )]
@@ -215,7 +215,7 @@ struct TestCreated {
 #[derive(Debug, Deserialize)]
 struct ChatCreatedBody {
     #[serde(default)]
-    #[allow(dead_code)]
+    #[expect(dead_code, reason = "the wire shape carries it; no case asserts it")]
     reply: String,
     #[serde(default)]
     created: TestCreated,

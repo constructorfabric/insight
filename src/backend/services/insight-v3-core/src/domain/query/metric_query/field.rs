@@ -41,8 +41,8 @@ impl Direction {
 
 #[derive(Debug, Deserialize)]
 pub(super) struct Field {
-    /// The declared field of the dataset this reads. The two below are how a
-    /// metric addressed a value before datasets.
+    /// The declared field of the dataset this reads. The two below it are
+    /// refused on a metric that reads one.
     #[serde(default, rename = "field")]
     pub(super) declared: Option<String>,
     #[serde(default)]

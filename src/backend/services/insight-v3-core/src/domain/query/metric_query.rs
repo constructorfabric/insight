@@ -66,8 +66,8 @@ pub(crate) enum Aggregate {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct MetricQuery {
-    /// The dataset this metric reads. The relation below is how metrics
-    /// addressed data before datasets, and is on its way out.
+    /// The dataset this metric reads. The relation below it is refused, and
+    /// is read back only to say so.
     #[serde(default)]
     dataset: Option<String>,
     #[serde(default)]
@@ -96,8 +96,8 @@ impl MetricQuery {
         self.dataset.as_deref()
     }
 
-    /// Whether this metric addresses a relation of its own, which is how
-    /// metrics read data before datasets and is no longer allowed.
+    /// Whether this metric addresses a relation of its own, which a metric
+    /// over a dataset may not.
     pub(crate) fn addresses_a_relation(&self) -> bool {
         !self.table.is_empty() || self.database.is_some()
     }
