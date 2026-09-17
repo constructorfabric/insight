@@ -110,6 +110,45 @@ mod tests {
 
     type R = Result<(), Box<dyn std::error::Error>>;
 
+    const CLICKHOUSE_URL_VAR: &str = "INTEGRATION_TESTS_CLICKHOUSE_URL";
+    const ABSENCE_MIGRATION: &str = include_str!(
+        "../../../../../ingestion/scripts/migrations/20260916000000_person-absences.sql"
+    );
+
+    fn warehouse_client() -> Option<insight_clickhouse::Client> {
+        let url = std::env::var(CLICKHOUSE_URL_VAR).unwrap_or_default();
+        if url.is_empty() {
+            eprintln!("skipping: {CLICKHOUSE_URL_VAR} not set");
+            return None;
+        }
+
+        let mut config = insight_clickhouse::Config::new(url, "default");
+        if let (Ok(user), Ok(password)) = (
+            std::env::var("INTEGRATION_TESTS_CLICKHOUSE_USER"),
+            std::env::var("INTEGRATION_TESTS_CLICKHOUSE_PASSWORD"),
+        ) && !user.is_empty()
+        {
+            config = config.with_auth(user, password);
+        }
+
+        Some(insight_clickhouse::Client::new(config))
+    }
+
+    async fn prepare_warehouse(client: &insight_clickhouse::Client) -> R {
+        for statement in [
+            "CREATE DATABASE IF NOT EXISTS identity",
+            "CREATE DATABASE IF NOT EXISTS silver",
+            "CREATE TABLE IF NOT EXISTS identity.account_assignment
+             (source_type String, source_id UUID, account_id String, person_id UUID,
+              created_at DateTime64(6))
+             ENGINE = MergeTree ORDER BY (source_type, source_id, account_id)",
+            ABSENCE_MIGRATION,
+        ] {
+            client.query(statement).execute().await?;
+        }
+        Ok(())
+    }
+
     fn request() -> Result<ValidatedMetricResultsRequest, Box<dyn std::error::Error>> {
         Ok(ValidatedMetricResultsRequest {
             tenant_id: Uuid::from_u128(1),
@@ -193,11 +232,13 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires ABSENCE_TEST_CLICKHOUSE_URL pointing to an isolated warehouse with the class and identity schemas"]
+    #[ignore = "requires isolated ClickHouse; set INTEGRATION_TESTS_CLICKHOUSE_URL to enable"]
     async fn warehouse_resolves_only_requested_people_and_overlapping_intervals() -> R {
-        let url = std::env::var("ABSENCE_TEST_CLICKHOUSE_URL")?;
-        let client =
-            insight_clickhouse::Client::new(insight_clickhouse::Config::new(url, "default"));
+        let Some(client) = warehouse_client() else {
+            return Ok(());
+        };
+        prepare_warehouse(&client).await?;
+
         let mut request = request()?;
         request.tenant_id = Uuid::new_v4();
         let person = Uuid::new_v4();
@@ -205,14 +246,12 @@ mod tests {
         let source = Uuid::new_v4().to_string();
         client
             .query(
-                "INSERT INTO identity.identity_persons
-             (id, value_type, insight_source_type, insight_source_id, insight_tenant_id,
-              value_effective, person_id, created_at)
-             SELECT 1, 'id', 'bamboohr', toUUID(UUIDNumToString(sipHash128(?))),
-                    toUUID(?), 'account-example', toUUID(?), now64(6)",
+                "INSERT INTO identity.account_assignment
+             (source_type, source_id, account_id, person_id, created_at)
+             SELECT 'bamboohr', toUUID(UUIDNumToString(sipHash128(?))),
+                    'account-example', toUUID(?), now64(6)",
             )
             .bind(source.as_str())
-            .bind(request.tenant_id.to_string())
             .bind(person.to_string())
             .execute()
             .await?;
@@ -289,6 +328,8 @@ mod tests {
 
         request.compare_to = None;
         assert!(super::load(&client, &request).await.is_empty());
+        request.from = NaiveDate::parse_from_str("2025-05-01", "%Y-%m-%d")?;
+        request.to = NaiveDate::parse_from_str("2025-05-31", "%Y-%m-%d")?;
         request.entity = ValidatedEntitySelection::Person {
             ids: vec![Uuid::new_v4()],
         };

@@ -14,6 +14,8 @@ WITH snapshots AS (
         ) AS snapshot
     FROM {{ source('bamboohr', 'whos_out') }}
     WHERE entries_json IS NOT NULL
+      AND tenant_id IS NOT NULL
+      AND source_id IS NOT NULL
     GROUP BY tenant_id, source_id
 ),
 
