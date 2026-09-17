@@ -7,6 +7,7 @@ use serde::Deserialize;
 
 use super::MetricQueryError;
 use super::filter::{Filter, FilterBind};
+use super::over::Over;
 use super::people::PersonHandle;
 
 const MAX_IDENTIFIER_CHARS: usize = 128;
@@ -109,11 +110,12 @@ impl Field {
     /// aggregate, and every plain field, still reads exactly one.
     pub(super) fn expression(
         &self,
+        over: Option<Over<'_>>,
         qualifier: Option<&str>,
         binds: &mut Vec<FilterBind>,
     ) -> Result<String, MetricQueryError> {
-        if self.agg == Some(Agg::Count) && self.json.is_none() && self.column.is_none() {
-            return Ok(match self.condition(qualifier, binds)? {
+        if self.agg == Some(Agg::Count) && self.reads_nothing() {
+            return Ok(match self.condition(over, qualifier, binds)? {
                 Some(condition) => format!("countIf({condition})"),
                 None => "count()".to_owned(),
             });
@@ -121,8 +123,8 @@ impl Field {
 
         // The read binds before the condition does, because it is the read
         // that SQL states first.
-        let read = self.read(qualifier, binds)?;
-        let condition = self.condition(qualifier, binds)?;
+        let read = self.read(over, qualifier, binds)?;
+        let condition = self.condition(over, qualifier, binds)?;
 
         Ok(match (self.agg, condition) {
             (Some(agg), Some(condition)) => format!("{}If({read}, {condition})", agg.sql()),
@@ -133,9 +135,14 @@ impl Field {
 
     fn read(
         &self,
+        over: Option<Over<'_>>,
         qualifier: Option<&str>,
         binds: &mut Vec<FilterBind>,
     ) -> Result<String, MetricQueryError> {
+        if let Some(over) = over {
+            return over.read(self.declared.as_deref(), &self.as_name, qualifier);
+        }
+
         let source = self.source()?;
 
         let Some(selector) = &self.r#where else {
@@ -166,6 +173,7 @@ impl Field {
     /// This field's own conditions, as one expression, binding their values.
     fn condition(
         &self,
+        over: Option<Over<'_>>,
         qualifier: Option<&str>,
         binds: &mut Vec<FilterBind>,
     ) -> Result<Option<String>, MetricQueryError> {
@@ -175,13 +183,17 @@ impl Field {
 
         let mut parts = Vec::with_capacity(self.when.len());
         for one in &self.when {
-            let source = one.source()?;
-            let read = source.sql(one.r#type, qualifier)?;
+            let (read, bound) = one.compare(over, qualifier)?;
             parts.push(format!("{read} {} ?", one.op.sql()));
-            binds.push(one.bind(source)?);
+            binds.push(bound);
         }
 
         Ok(Some(parts.join(" AND ")))
+    }
+
+    /// Whether this field names nothing to read, which only counting rows may.
+    fn reads_nothing(&self) -> bool {
+        self.declared.is_none() && self.json.is_none() && self.column.is_none()
     }
 
     /// One field over another, when this field is a rate rather than a value.

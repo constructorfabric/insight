@@ -64,7 +64,7 @@ fn compiled(
     engine: TableEngine,
 ) -> CompiledQuery {
     metric
-        .compile_window(&people(), &window(token, bucketed), engine)
+        .compile_window(&people(), &window(token, bucketed), engine, None)
         .unwrap_or_else(|error| panic!("`{token}` compiles: {error}"))
 }
 
@@ -94,7 +94,12 @@ fn a_clock_reads_the_payload_column_it_names() {
     }));
 
     let compiled = metric
-        .compile_window(&people(), &window("P7D", true), TableEngine::MergeTree)
+        .compile_window(
+            &people(),
+            &window("P7D", true),
+            TableEngine::MergeTree,
+            None,
+        )
         .unwrap_or_else(|error| panic!("compiles: {error}"));
 
     assert!(
@@ -116,7 +121,12 @@ fn malformed_or_non_datetime_clocks_are_refused() {
         let metric = timed_metric(&time);
         assert!(
             metric
-                .compile_window(&people(), &window("P7D", true), TableEngine::MergeTree)
+                .compile_window(
+                    &people(),
+                    &window("P7D", true),
+                    TableEngine::MergeTree,
+                    None
+                )
                 .is_err(),
             "should reject {time}"
         );
@@ -174,11 +184,21 @@ fn a_clock_cannot_also_be_a_filter_and_bucket_is_reserved() {
     }));
 
     assert!(matches!(
-        filtered.compile_window(&people(), &window("P7D", true), TableEngine::MergeTree),
+        filtered.compile_window(
+            &people(),
+            &window("P7D", true),
+            TableEngine::MergeTree,
+            None
+        ),
         Err(MetricQueryError::ClockFilter(_))
     ));
     assert!(matches!(
-        colliding.compile_window(&people(), &window("P7D", true), TableEngine::MergeTree),
+        colliding.compile_window(
+            &people(),
+            &window("P7D", true),
+            TableEngine::MergeTree,
+            None
+        ),
         Err(MetricQueryError::BucketAlias)
     ));
 }
@@ -195,7 +215,12 @@ fn a_clock_cannot_be_reused_by_an_aggregate_condition() {
     }));
 
     assert!(matches!(
-        metric.compile_window(&people(), &window("P7D", true), TableEngine::MergeTree),
+        metric.compile_window(
+            &people(),
+            &window("P7D", true),
+            TableEngine::MergeTree,
+            None
+        ),
         Err(MetricQueryError::ClockFilter(_))
     ));
 }
@@ -208,7 +233,12 @@ fn a_direct_window_on_a_clockless_metric_is_refused() {
     }));
 
     assert!(matches!(
-        metric.compile_window(&people(), &window("P7D", false), TableEngine::MergeTree),
+        metric.compile_window(
+            &people(),
+            &window("P7D", false),
+            TableEngine::MergeTree,
+            None
+        ),
         Err(MetricQueryError::ClocklessWindow)
     ));
     assert!(metric.compile(&people()).is_ok());
@@ -225,15 +255,30 @@ fn finite_metric_caps_reject_wider_and_unbounded_windows() {
 
     assert!(
         metric
-            .compile_window(&people(), &window("P30D", false), TableEngine::MergeTree)
+            .compile_window(
+                &people(),
+                &window("P30D", false),
+                TableEngine::MergeTree,
+                None
+            )
             .is_ok()
     );
     assert!(matches!(
-        metric.compile_window(&people(), &window("P1Y", false), TableEngine::MergeTree),
+        metric.compile_window(
+            &people(),
+            &window("P1Y", false),
+            TableEngine::MergeTree,
+            None
+        ),
         Err(MetricQueryError::RangeExceedsMaximum(_))
     ));
     assert!(matches!(
-        metric.compile_window(&people(), &window("inf", false), TableEngine::MergeTree),
+        metric.compile_window(
+            &people(),
+            &window("inf", false),
+            TableEngine::MergeTree,
+            None
+        ),
         Err(MetricQueryError::RangeExceedsMaximum(_))
     ));
 }
@@ -296,7 +341,7 @@ fn an_undated_query_counts_the_rows_without_a_clock() {
     let metric = timed_metric(&json!({ "column": "occurred_at" }));
 
     let undated = metric
-        .undated_query(TableEngine::MergeTree)
+        .undated_query(TableEngine::MergeTree, None)
         .unwrap_or_else(|error| panic!("the undated count compiles: {error}"))
         .unwrap_or_else(|| panic!("a clocked metric has an undated count"));
 
@@ -316,7 +361,7 @@ fn an_undated_query_reads_the_same_rows_the_metric_does() {
     }));
 
     let undated = metric
-        .undated_query(TableEngine::ReplacingMergeTree)
+        .undated_query(TableEngine::ReplacingMergeTree, None)
         .unwrap_or_else(|error| panic!("the undated count compiles: {error}"))
         .unwrap_or_else(|| panic!("a clocked metric has an undated count"));
 
@@ -333,7 +378,7 @@ fn a_clockless_metric_has_no_undated_count_to_read() {
     let metric = timed_metric(&serde_json::Value::Null);
 
     let undated = metric
-        .undated_query(TableEngine::MergeTree)
+        .undated_query(TableEngine::MergeTree, None)
         .unwrap_or_else(|error| panic!("a clockless metric is not an error: {error}"));
 
     assert!(undated.is_none());

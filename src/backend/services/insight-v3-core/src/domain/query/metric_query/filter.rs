@@ -4,6 +4,7 @@ use serde::Deserialize;
 
 use super::MetricQueryError;
 use super::field::{FieldType, Source};
+use super::over::Over;
 
 #[derive(Debug, Deserialize)]
 pub(super) struct Filter {
@@ -28,6 +29,33 @@ impl Filter {
     pub(super) fn source(&self) -> Result<Source<'_>, MetricQueryError> {
         Source::resolve(self.json.as_deref(), self.column.as_deref())
             .ok_or_else(|| MetricQueryError::FieldSource("a filter".to_owned()))
+    }
+
+    /// What this filter reads, and the value bound against it.
+    pub(super) fn compare(
+        &self,
+        over: Option<Over<'_>>,
+        qualifier: Option<&str>,
+    ) -> Result<(String, FilterBind), MetricQueryError> {
+        if let Some(over) = over {
+            let read = over.read(self.declared.as_deref(), "a filter", qualifier)?;
+            let bound = self.bind_value(self.declared.as_deref().unwrap_or("a filter"))?;
+
+            return Ok((read, bound));
+        }
+
+        let source = self.source()?;
+
+        Ok((source.sql(self.r#type, qualifier)?, self.bind(source)?))
+    }
+
+    fn bind_value(&self, named: &str) -> Result<FilterBind, MetricQueryError> {
+        match self.r#type {
+            FieldType::String => self.value.as_str().map(|v| FilterBind::Str(v.to_owned())),
+            FieldType::Int => self.value.as_i64().map(FilterBind::Int),
+            FieldType::Float => self.value.as_f64().map(FilterBind::Float),
+        }
+        .ok_or_else(|| MetricQueryError::FilterValue(named.to_owned()))
     }
 
     pub(super) fn bind(&self, source: Source<'_>) -> Result<FilterBind, MetricQueryError> {

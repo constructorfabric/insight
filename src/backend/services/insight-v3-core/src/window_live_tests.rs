@@ -98,7 +98,7 @@ impl Stand {
         engine: TableEngine,
     ) -> (RunResult, UndatedCount) {
         let undated = match metric
-            .undated_query(engine)
+            .undated_query(engine, None)
             .unwrap_or_else(|error| panic!("the undated count compiles: {error}"))
         {
             Some(query) => self
@@ -113,7 +113,7 @@ impl Stand {
             .resolve(Utc::now())
             .unwrap_or_else(|error| panic!("the window resolves: {error}"));
         let compiled = metric
-            .compile_window(self.runner.people(), &window, engine)
+            .compile_window(self.runner.people(), &window, engine, None)
             .unwrap_or_else(|error| panic!("the metric compiles: {error}"));
         let result = self
             .runner

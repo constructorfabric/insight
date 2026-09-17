@@ -67,7 +67,7 @@ impl<'a> MetricRuns<'a> {
             .map_err(|error| CustomError::Compile(error.into()))?;
 
         let compiled = metric
-            .compile_window(self.metrics.people(), &window, engine)
+            .compile_window(self.metrics.people(), &window, engine, None)
             .map_err(CustomError::Compile)?;
 
         let mut result = self
@@ -101,7 +101,10 @@ impl<'a> MetricRuns<'a> {
             return Ok(UndatedCount::default());
         }
 
-        let Some(query) = metric.undated_query(engine).map_err(CustomError::Compile)? else {
+        let Some(query) = metric
+            .undated_query(engine, None)
+            .map_err(CustomError::Compile)?
+        else {
             return Ok(UndatedCount::default());
         };
 

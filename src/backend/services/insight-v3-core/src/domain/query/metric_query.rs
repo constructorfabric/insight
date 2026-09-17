@@ -4,6 +4,7 @@ mod clock;
 mod compiler;
 mod field;
 mod filter;
+pub(crate) mod over;
 mod people;
 mod runner;
 
@@ -287,6 +288,8 @@ pub(crate) enum MetricQueryError {
     FilterValue(String),
     #[error("{0} must name `json`, `column`, or both")]
     FieldSource(String),
+    #[error("`{0}` is not a field of the dataset this metric reads")]
+    UnknownField(String),
     #[error("`{0}` selects an array element, so it and its `where` must read json")]
     Selector(String),
     #[error("{0}")]

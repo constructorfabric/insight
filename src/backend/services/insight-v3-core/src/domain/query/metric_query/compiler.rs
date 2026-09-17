@@ -6,8 +6,11 @@ use std::fmt::Write as _;
 use super::clock::{TimeField, add_window_predicates, bucket_expression, clock_expression};
 use super::field::{FieldType, is_identifier};
 use super::filter::FilterBind;
+use super::over::Over;
 use super::people::{People, PersonHandle};
 use super::{CompiledQuery, FACT_ALIAS, MetricQuery, MetricQueryError, UndatedQuery};
+use crate::domain::kinds::dataset::declaration::BUCKET_COLUMN;
+use crate::domain::kinds::metric::answerable::effective_clock;
 use crate::domain::query::time_window::Window;
 use crate::store::catalog::TableEngine;
 
@@ -31,9 +34,14 @@ impl MetricQuery {
     fn time_expression(
         &self,
         window: &Window,
+        over: Option<Over<'_>>,
         qualifier: Option<&str>,
         as_names: &HashSet<&str>,
     ) -> Result<Option<String>, MetricQueryError> {
+        if let Some(over) = over {
+            return self.dataset_clock(window, over, qualifier, as_names);
+        }
+
         let clock = self.time.as_ref().map(TimeField::source).transpose()?;
         if matches!(window, Window::Requested { .. }) && clock.is_none() {
             return Err(MetricQueryError::ClocklessWindow);
@@ -64,6 +72,36 @@ impl MetricQuery {
 
         clock
             .map(|source| clock_expression(source, qualifier))
+            .transpose()
+    }
+
+    /// The date a windowed run over a dataset selects by: the metric's own
+    /// when it names one, the dataset's main date otherwise.
+    fn dataset_clock(
+        &self,
+        window: &Window,
+        over: Over<'_>,
+        qualifier: Option<&str>,
+        as_names: &HashSet<&str>,
+    ) -> Result<Option<String>, MetricQueryError> {
+        let clock = effective_clock(self, over.declaration).map(|(field, _)| field);
+        if matches!(window, Window::Requested { .. }) && clock.is_none() {
+            return Err(MetricQueryError::ClocklessWindow);
+        }
+
+        if let Some(maximum) = self.maximum()?
+            && !maximum.allows(window)
+        {
+            return Err(MetricQueryError::RangeExceedsMaximum(
+                self.max_range.clone().unwrap_or_default(),
+            ));
+        }
+        if window.grain().is_some() && as_names.contains(BUCKET_COLUMN) {
+            return Err(MetricQueryError::BucketAlias);
+        }
+
+        clock
+            .map(|field| over.read(Some(field), "time", qualifier))
             .transpose()
     }
 
@@ -99,7 +137,11 @@ impl MetricQuery {
 
     /// Each field as it is selected, with whatever joining in a person's
     /// name takes with it.
-    fn selection(&self, qualifier: Option<&str>) -> Result<Selection<'_>, MetricQueryError> {
+    fn selection(
+        &self,
+        over: Option<Over<'_>>,
+        qualifier: Option<&str>,
+    ) -> Result<Selection<'_>, MetricQueryError> {
         let mut selection = Selection {
             parts: Vec::with_capacity(self.fields.len()),
             as_names: HashSet::with_capacity(self.fields.len()),
@@ -145,7 +187,7 @@ impl MetricQuery {
                         "coalesce(nullIf(`{alias}`.`display_name`, ''), {read})"
                     ))
                 }
-                None => field.expression(qualifier, &mut selection.binds)?,
+                None => field.expression(over, qualifier, &mut selection.binds)?,
             };
             selection
                 .parts
@@ -156,7 +198,18 @@ impl MetricQuery {
     }
 
     pub(crate) fn compile(&self, people: &People) -> Result<CompiledQuery, MetricQueryError> {
-        self.compile_window(people, &Window::legacy(), TableEngine::Other)
+        self.compile_window(people, &Window::legacy(), TableEngine::Other, None)
+    }
+
+    /// The same, over the dataset this metric reads.
+    #[cfg_attr(not(test), expect(dead_code, reason = "wired up by the run path"))]
+    pub(crate) fn compile_over(
+        &self,
+        people: &People,
+        window: &Window,
+        over: Over<'_>,
+    ) -> Result<CompiledQuery, MetricQueryError> {
+        self.compile_window(people, window, TableEngine::Other, Some(over))
     }
 
     /// Whether this definition is shaped like something runnable, answered
@@ -172,9 +225,12 @@ impl MetricQuery {
         people: &People,
         window: &Window,
         engine: TableEngine,
+        over: Option<Over<'_>>,
     ) -> Result<CompiledQuery, MetricQueryError> {
         let (_, table) = self.split();
-        self.validate_shape(table)?;
+        if over.is_none() {
+            self.validate_shape(table)?;
+        }
 
         // Resolving a name joins another table in, and then a bare column
         // could mean either side - so every read carries the fact table's
@@ -191,9 +247,9 @@ impl MetricQuery {
             joins,
             handles,
             mut binds,
-        } = self.selection(qualifier)?;
+        } = self.selection(over, qualifier)?;
 
-        let time_expression = self.time_expression(window, qualifier, &as_names)?;
+        let time_expression = self.time_expression(window, over, qualifier, &as_names)?;
         let bucket = window.grain().zip(time_expression.as_deref());
         if let Some((grain, clock)) = bucket {
             parts.insert(
@@ -212,9 +268,9 @@ impl MetricQuery {
             &mut where_parts,
             &mut binds,
         )?;
-        self.add_filters(qualifier, &mut where_parts, &mut binds)?;
+        self.add_filters(over, qualifier, &mut where_parts, &mut binds)?;
 
-        let from = self.table_source(qualifier, engine);
+        let from = self.table_source(over, qualifier, engine);
         let prelude = if handles.is_empty() {
             String::new()
         } else {
@@ -263,21 +319,30 @@ impl MetricQuery {
 
     fn add_filters(
         &self,
+        over: Option<Over<'_>>,
         qualifier: Option<&str>,
         where_parts: &mut Vec<String>,
         binds: &mut Vec<FilterBind>,
     ) -> Result<(), MetricQueryError> {
         for filter in &self.filters {
-            let source = filter.source()?;
-            let read = source.sql(filter.r#type, qualifier)?;
+            let (read, bound) = filter.compare(over, qualifier)?;
             where_parts.push(format!("{read} {} ?", filter.op.sql()));
-            binds.push(filter.bind(source)?);
+            binds.push(bound);
         }
 
         Ok(())
     }
 
-    fn table_source(&self, qualifier: Option<&str>, engine: TableEngine) -> String {
+    fn table_source(
+        &self,
+        over: Option<Over<'_>>,
+        qualifier: Option<&str>,
+        engine: TableEngine,
+    ) -> String {
+        if let Some(over) = over {
+            return over.relation(qualifier);
+        }
+
         let (database, table) = self.split();
         let mut from = match database {
             Some(database) => format!("`{database}`.`{table}`"),
@@ -299,22 +364,26 @@ impl MetricQuery {
     pub(crate) fn undated_query(
         &self,
         engine: TableEngine,
+        over: Option<Over<'_>>,
     ) -> Result<Option<UndatedQuery>, MetricQueryError> {
         let (_, table) = self.split();
-        self.validate_shape(table)?;
+        if over.is_none() {
+            self.validate_shape(table)?;
+        }
 
-        let Some(time) = self.time.as_ref() else {
+        let Some(clock) = self.undated_clock(over)? else {
             return Ok(None);
         };
-        let clock = clock_expression(time.source()?, None)?;
 
         let mut where_parts = Vec::with_capacity(self.filters.len());
         let mut binds = Vec::with_capacity(self.filters.len());
-        self.add_filters(None, &mut where_parts, &mut binds)?;
+        self.add_filters(over, None, &mut where_parts, &mut binds)?;
 
+        // Over the collapsed relation, not the raw table, so the count and
+        // the rows describe the same records.
         let mut sql = format!(
             "SELECT countIf(isNull({clock})) AS undated FROM {}",
-            self.table_source(None, engine)
+            self.table_source(over, None, engine)
         );
         if !where_parts.is_empty() {
             sql.push_str(" WHERE ");
@@ -322,6 +391,21 @@ impl MetricQuery {
         }
 
         Ok(Some(UndatedQuery { sql, binds }))
+    }
+
+    /// The date the undated count asks about, when there is one.
+    fn undated_clock(&self, over: Option<Over<'_>>) -> Result<Option<String>, MetricQueryError> {
+        let Some(over) = over else {
+            return self
+                .time
+                .as_ref()
+                .map(|time| clock_expression(time.source()?, None))
+                .transpose();
+        };
+
+        effective_clock(self, over.declaration)
+            .map(|(field, _)| over.read(Some(field), "time", None))
+            .transpose()
     }
 
     fn validate_shape(&self, table: &str) -> Result<(), MetricQueryError> {
