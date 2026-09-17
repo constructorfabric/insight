@@ -1,0 +1,7 @@
+# Matched to the cf-prod stand (ns mariadb, operator-managed). cf-prod runs 3
+# replicas via mariadb-operator; this stand is a single bitnami primary, so only
+# the per-pod resources transfer, not the topology.
+primary:
+  resources:
+    requests: { cpu: "2", memory: 6Gi }
+    limits:   { cpu: "6", memory: 12Gi }

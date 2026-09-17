@@ -1,0 +1,7 @@
+# Matched to the cf-prod stand (ns redis, operator-managed). cf-prod runs 3
+# replicas via redis-operator; this stand is a single master, so only the per-pod
+# resources transfer, not the topology.
+master:
+  resources:
+    requests: { cpu: 300m, memory: 512Mi }
+    limits:   { cpu: "1", memory: 2Gi }

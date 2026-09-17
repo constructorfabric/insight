@@ -1,0 +1,35 @@
+kubeContext: insight-perf
+protected: true # shared cluster — make deploy needs CONFIRM=yes-deploy-insight-perf
+namespaces: {services: insight, infra: insight-infra}
+release: insight
+# Merged over the inventory deploy-insight-stand.sh generates, on every phase.
+bootstrap: {namespaces: true, ingressNginx: true, certManager: false, sealedSecrets: false,
+  # Envoy Gateway brings the Gateway API CRDs, and it must exist before cert-manager:
+  # the gitops cert-manager install sets enableGatewayAPI=true, and without the CRDs it
+  # crash-loops on "the Gateway API CRDs do not seem to be present".
+  envoyGateway: true}
+system:
+  mariadb: true
+  clickhouse: true
+  redis: true
+  # No product feature consumes Redpanda: the authenticator writes sign-in events and
+  # nothing reads them. Saves 3 cores / 8 GB / 50 GB on this stand.
+  redpanda: false
+  redpandaConsole: false
+  airbyte: true
+  argoWorkflows: true
+  loki: false
+  alloy: false
+  grafana: false
+secrets:
+  infra:
+    - {name: mariadb-creds, enabled: true}
+    - {name: clickhouse-creds, enabled: true}
+    - {name: redis-creds, enabled: true}
+  services:
+    - {name: insight-db-creds, enabled: true}
+    # NGINX_BFF (0.4.x): ES256 gateway-JWT signing key (current.pem) mounted by the authenticator.
+    - {name: insight-authenticator-signing-keys, enabled: true}
+    # Real-IdP OIDC secret off — the authenticator logs in against the bundled in-cluster
+    # keycloak; its leaf config is composed at deploy time by compose-app-secrets.sh.
+    - {name: insight-oidc, enabled: false}

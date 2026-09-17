@@ -1,0 +1,136 @@
+credentials: {deploymentMode: gitops, autoGenerate: false}
+global:
+  storageClass: csi-cinder-default
+  tenantDefaultId: "00000000-df51-5b42-9538-d2b56b7ee953"
+clickhouse: {deploy: false, host: clickhouse.insight-infra.svc.cluster.local, port: 8123, database: insight, username: insight}
+mariadb: {deploy: false, host: mariadb.insight-infra.svc.cluster.local, port: 3306, database: insight, username: insight}
+redis: {deploy: false, host: redis-master.insight-infra.svc.cluster.local, port: 6379}
+redpanda: {deploy: false, brokers: "redpanda.insight-infra.svc.cluster.local:9093"}
+ingestion:
+  templates: {enabled: true}
+  reconcile:
+    tenantId: "00000000-df51-5b42-9538-d2b56b7ee953"
+    destinationName: clickhouse-bronze
+    argoInstanceId: "argo-workflows-insight-infra"
+# Airbyte runs at L2 in insight-infra while this release lives in insight. Declare the
+# namespace and let the chart compute apiUrl from it — airbyte.namespace also
+# tells the sync/reconcile jobs which namespace to read airbyte-auth-secrets
+# from (cross-namespace via the K8s API, RBAC rendered by the chart). Requires
+# insight >= 0.4.46 (insight#1935, fixes #1885). Do NOT go back to pinning
+# apiUrl here with namespace unset: that combination makes the jobs look for the
+# Secret in insight and needs the mirrored copy this stand no longer creates.
+airbyte:
+  namespace: insight-infra
+# Merged over the values deploy-insight-stand.sh generates, on every phase.
+#
+# Only what the charts can express. topologySpreadConstraints, authn-tls resources
+# and Keycloak session sharing have no values hook and need a chart change in the
+# insight repo; Keycloak therefore stays at one copy, because a second one would
+# drop sessions rather than share them.
+gateway:
+  replicaCount: 3
+  ingress:
+    enabled: true
+    className: nginx
+    host: insight.ktursunov.me
+    annotations: {nginx.ingress.kubernetes.io/proxy-body-size: "200m"}
+    tls: {enabled: true, secretName: tls-w-ktursunov-me}
+  resources: {requests: {cpu: 25m, memory: 32Mi}, limits: {cpu: '1', memory: 256Mi}}
+# insightV3Core is deliberately absent: it is optional in the chart and cannot boot
+# until the instance's ingest token is sealed, which this stand has no use for.
+
+# Resolve logins by email. The alternative, external_id, needs a sourceType whose
+# external ids match the bundled Keycloak's `sub` values; the roster's emails match
+# the generated realm users deterministically, and dev and qaclust attribute the
+# same way. compose-app-secrets.sh leaves sourceType unread in this mode.
+authenticator:
+  replicaCount: 3
+  tlsDiscovery:
+    enabled: true
+    issuerRef: {name: local-ca, kind: ClusterIssuer}
+  oidc:
+    issuerUrl: "https://insight.ktursunov.me/kc/realms/insight"
+    clientId: "insight-authenticator"
+    clientSecret: "insight-authenticator-dev-secret"
+    redirectUri: "https://insight.ktursunov.me/auth/callback"
+    tenantClaim: "tenant_id"
+    defaultTenantId: "00000000-df51-5b42-9538-d2b56b7ee953"
+    resolveBy: email
+# The umbrella's keycloak subchart marks these `required`, and the values the deploy
+# script generates carry only deploy/hostname/ingress. Wiring matches cf-prod: the
+# admin credentials come from the secret phase_app creates, the database password from
+# the composed insight-db-creds.
+keycloak:
+  deploy: true
+  hostname: "https://insight.ktursunov.me/kc"
+  # This stand's edge is Envoy Gateway, not ingress-nginx: an Ingress here renders
+  # nothing that serves, and /kc/* then falls through the gateway's PathPrefix "/"
+  # route to the SPA — OIDC discovery gets text/html and /auth/login returns 500.
+  ingress: {enabled: false}
+  route:
+    enabled: true
+    parentRef: {name: insight, namespace: insight-infra, sectionName: https}
+    host: insight.ktursunov.me
+  admin:
+    existingSecret: insight-keycloak-config
+  database:
+    host: mariadb.insight-infra.svc.cluster.local
+    username: insight
+    passwordSecret:
+      name: insight-db-creds
+      key: mariadb-password
+  theme:
+    returnUrl: "https://insight.ktursunov.me"
+# fakeidp off — keycloak is the IdP on this stand.
+fakeidp:
+  deploy: false
+analytics:
+  replicaCount: 3
+  resources: {requests: {cpu: 50m, memory: 128Mi}, limits: {cpu: '1', memory: 1Gi}}
+identity:
+  deploy: true
+  databaseName: "identity"
+  tenantDefaultId: "00000000-0000-0000-0000-000000000000"
+  resources: {requests: {cpu: 50m, memory: 128Mi}, limits: {cpu: '1', memory: 1Gi}}
+frontend:
+  deploy: true
+  replicaCount: 3
+  ingress: {enabled: false} # served THROUGH the gateway edge; only the gateway holds an Ingress
+# Off by default in the chart, and the app phase refuses to proceed without it:
+# the authenticator's login bootstrap resolves callers through this service only.
+identityResolution:
+  deploy: true
+  replicaCount: 3
+  # The one source trusted to say who exists. Email logins are looked up only
+  # within this roster, so it must match the source_type the seeded org is written
+  # under — dev resolves against "bamboohr", cf-prod against "github". The 299-person
+  # reference org is the BambooHR-shaped demo org, so: bamboohr.
+  rosterSourceType: bamboohr
+# Off: it clones repositories for the git connectors, and this stand's data is seeded
+# straight into silver rather than ingested. The chart defaults it on and its config
+# secret is never created by the deploy script, so it sits in CreateContainerConfigError.
+# Also drops the 50 GB cache volume.
+gitCliProxy:
+  deploy: false
+
+# Imports the generated realm into Keycloak via keycloak-config-cli. Without it
+# the `insight` realm never exists: /kc/realms/master answers 200 but
+# /kc/realms/insight is a real 404, OIDC discovery fails and /auth/login 500s.
+# The server itself has no --import-realm and mounts no realm volume.
+keycloakConfig:
+  enabled: true
+  # In-cluster, so the import does not depend on the edge or on DNS rewrites.
+  url: "http://insight-keycloak.insight.svc.cluster.local:8085/kc"
+  allowInsecureUrl: true
+  existingSecret: "insight-keycloak-config"
+  # The generated realm is JSON; config-cli fails on any glob with zero matches,
+  # and this environment has no YAML realms.
+  filesLocations: "/config/*.json"
+  # envFrom injects the secret's keys under their own names (username/password);
+  # config-cli reads KEYCLOAK_USER/KEYCLOAK_PASSWORD, so the login has to be mapped
+  # explicitly or the import dies with "Could not connect to keycloak: password required".
+  extraEnv:
+    - name: KEYCLOAK_USER
+      valueFrom: {secretKeyRef: {name: insight-keycloak-config, key: username}}
+    - name: KEYCLOAK_PASSWORD
+      valueFrom: {secretKeyRef: {name: insight-keycloak-config, key: password}}
