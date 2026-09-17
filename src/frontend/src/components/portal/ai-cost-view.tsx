@@ -137,17 +137,21 @@ export function AiCostView({ item }: { item: string | null }) {
   const orgScope = useOrgScope();
   const { pivot, roster } = orgScope;
 
-  // The roster IS the member list: identity owns who is on the team and
+  // The scope IS the member list — pivot included: identity owns who is on the team and
   // every metric for them comes from `/v1/metric-results`. There is no second
   // source to reconcile — the legacy per-member batch this used to call was
   // removed upstream with the rest of the old metric UI.
   const members = useMemo<TeamMember[]>(
-    () =>
-      (roster ?? []).map((entry) => ({
+    () => [
+      ...(pivot
+        ? [{ person_id: pivot.person_id, name: personDisplayName(pivot) }]
+        : []),
+      ...(roster ?? []).map((entry) => ({
         person_id: entry.person_id,
         name: personDisplayName(entry),
       })),
-    [roster],
+    ],
+    [pivot, roster],
   );
   const memberIds = useMemo(
     () => members.map((m) => normalizePersonId(m.person_id)),
@@ -389,7 +393,7 @@ export function AiCostView({ item }: { item: string | null }) {
       <div>
         <h1 className="text-lg font-semibold tracking-tight">AI &amp; Cost</h1>
         <p className="text-sm text-muted-foreground">
-          {teamName ? `${teamName}'s org` : "Org"} · {orgScope.rosterCount} people
+          {teamName ? `${teamName}'s org` : "Org"} · {members.length} people
         </p>
       </div>
 
