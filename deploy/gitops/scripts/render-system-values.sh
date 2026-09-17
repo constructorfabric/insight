@@ -24,6 +24,12 @@ OUT_DIR=${3:?usage: render-system-values.sh <svc> <env> <out-dir>}
 
 NS_VARS=(NS_INFRA NS_MONITORING NS_APP)
 
+# Selector-only: these reach label matchers, never an FQDN, so a `|`
+# alternation is legal here and never in NS_VARS.
+NS_SELECTOR_VARS=(NS_DATASTORES)
+
+LABEL_RE='^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
+
 SED_ARGS=()
 for v in "${NS_VARS[@]}"; do
   val=${!v:-}
@@ -33,8 +39,20 @@ for v in "${NS_VARS[@]}"; do
     || { echo "render-system-values: \$$v is empty — inventory not readable?" >&2; exit 1; }
   # A DNS-1123 label is also what keeps the value inert inside the sed
   # expression below.
-  [[ $val =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] \
+  [[ $val =~ $LABEL_RE ]] \
     || { echo "render-system-values: \$$v='$val' is not a DNS-1123 label" >&2; exit 1; }
+  SED_ARGS+=(-e "s/[\$]{$v}/$val/g")
+done
+
+for v in "${NS_SELECTOR_VARS[@]}"; do
+  val=${!v:-}
+  [ -n "$val" ] \
+    || { echo "render-system-values: \$$v is empty — inventory not readable?" >&2; exit 1; }
+  IFS='|' read -r -a parts <<< "$val"
+  for part in "${parts[@]}"; do
+    [[ $part =~ $LABEL_RE ]] \
+      || { echo "render-system-values: \$$v='$val' is not a '|'-separated list of DNS-1123 labels" >&2; exit 1; }
+  done
   SED_ARGS+=(-e "s/[\$]{$v}/$val/g")
 done
 

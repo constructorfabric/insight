@@ -53,6 +53,12 @@ initChownData:
 plugins:
   - grafana-clickhouse-datasource@4.21.1
 
+# Grafana 13.2's preinstall auto-update deregisters each bundled plugin before
+# reinstalling it, then fails on the read-only dir — loki never comes back.
+grafana.ini:
+  plugins:
+    preinstall_auto_update: false
+
 # Password for the SELECT-only `grafana` ClickHouse user (#2888), provisioned
 # by the app deploy hook (apply-ch-migrations -> provision-grafana-access.sh)
 # from the insight-db-creds key `clickhouse-grafana-password`. Seal the SAME
@@ -192,17 +198,17 @@ dashboards:
              "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
              "datasource": {"type": "loki", "uid": "loki"},
              "options": {"showTime": true, "wrapLogMessage": true, "sortOrder": "Descending"},
-             "targets": [{"refId": "A", "expr": "{namespace=\"${NS_APP}\", pod=~\".*reconcile.*\"}"}]},
+             "targets": [{"refId": "A", "expr": "{namespace=\"${NS_APP}\", pod=~\".*reconcile.*\"} | json | __error__=``"}]},
             {"id": 2, "type": "logs", "title": "Airbyte syncs (trigger / poll)",
              "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
              "datasource": {"type": "loki", "uid": "loki"},
              "options": {"showTime": true, "wrapLogMessage": true, "sortOrder": "Descending"},
-             "targets": [{"refId": "A", "expr": "{namespace=\"${NS_APP}\", pod=~\".*-sync-.*\"}"}]},
+             "targets": [{"refId": "A", "expr": "{namespace=\"${NS_APP}\", pod=~\".*-sync-.*\"} | json | __error__=``"}]},
             {"id": 3, "type": "logs", "title": "dbt",
              "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
              "datasource": {"type": "loki", "uid": "loki"},
              "options": {"showTime": true, "wrapLogMessage": true, "sortOrder": "Descending"},
-             "targets": [{"refId": "A", "expr": "{namespace=\"${NS_APP}\", pod=~\".*dbt.*\"}"}]},
+             "targets": [{"refId": "A", "expr": "{namespace=\"${NS_APP}\", pod=~\".*dbt.*\"} | json | __error__=``"}]},
             {"id": 4, "type": "logs", "title": "Deploy: hook pods (migrations, configuration)",
              "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
              "datasource": {"type": "loki", "uid": "loki"},
@@ -1635,7 +1641,7 @@ dashboards:
               },
               "targets": [
                 {
-                  "expr": "sum by (code, kind) (count_over_time({namespace=\"${NS_INFRA}\", container=\"clickhouse\"} |~ `<Error>` | regexp `Code: (?P<code>\\d+)\\..*\\((?P<kind>[A-Z_]+)\\)` [$__auto]))",
+                  "expr": "sum by (code, kind) (count_over_time({namespace=~\"${NS_DATASTORES}\", container=\"clickhouse\"} |~ `<Error>` | regexp `Code: (?P<code>\\d+)\\..*\\((?P<kind>[A-Z_]+)\\)` [$__auto]))",
                   "legendFormat": "Code {{code}} · {{kind}}",
                   "refId": "A"
                 }
@@ -1662,7 +1668,7 @@ dashboards:
               },
               "targets": [
                 {
-                  "expr": "{namespace=\"${NS_INFRA}\", container=\"clickhouse\"} |~ `<Error>`",
+                  "expr": "{namespace=~\"${NS_DATASTORES}\", container=\"clickhouse\"} |~ `<Error>`",
                   "refId": "A"
                 }
               ],
@@ -1812,7 +1818,7 @@ dashboards:
               }
             ]
           },
-          "description": "Availability of Insight, two ways. REPORTABLE: request-based at the gateway, failures = 5xx and timeouts, 4xx counts as success, 30-day rolling — the AWS/GCP SLA and Google SLI convention. DIAGNOSTIC: healthcheck uptime of Insight's own components (gateway, authenticator, analytics, identity-resolution, frontend, git-cli-proxy), composited as every-component-serving-at-once. Third-party software is out of scope, Keycloak included. Both halves break down by service. User journeys are NOT measured — that needs browser emulation, which this stand does not have. Readiness comes from kube-state-metrics on the qaclust VictoriaMetrics (cluster=dev, 30s); request and probe-log panels come from this stand's Loki. Target 99.9%.",
+          "description": "Availability of Insight, two ways. REPORTABLE: request-based at the gateway, failures = 5xx and timeouts, 4xx counts as success, 30-day rolling — the AWS/GCP SLA and Google SLI convention. DIAGNOSTIC: healthcheck uptime of Insight's own components (gateway, authenticator, analytics, identity-resolution, frontend, git-cli-proxy), composited as every-component-serving-at-once. Third-party software is out of scope, Keycloak included. Both halves break down by service. User journeys are NOT measured — that needs browser emulation, which this stand does not have. Readiness comes from kube-state-metrics on the qaclust VictoriaMetrics (cluster=dev, 30s); request and probe-log panels come from this stand's Loki. Target 99.9%. A third measure sits on the availability row: MTBF over the row's own failure definition — the selected range divided by the failed-request count from the gateway log.",
           "editable": true,
           "graphTooltip": 1,
           "panels": [
@@ -1868,7 +1874,7 @@ dashboards:
               },
               "gridPos": {
                 "h": 5,
-                "w": 7,
+                "w": 5,
                 "x": 0,
                 "y": 1
               },
@@ -1944,8 +1950,8 @@ dashboards:
               },
               "gridPos": {
                 "h": 5,
-                "w": 6,
-                "x": 7,
+                "w": 5,
+                "x": 5,
                 "y": 1
               },
               "id": 3,
@@ -1982,6 +1988,82 @@ dashboards:
             },
             {
               "datasource": {
+                "type": "prometheus",
+                "uid": "vm"
+              },
+              "description": "Mean time between service failures, measured from requests rather than pod readiness. A failure begins when the 5xx ratio across all services crosses 1% over a 5m window and ends when it falls back, so sustained degradation counts once and an isolated error does not. Time healthy divided by the number of entries into breach. Source is the services' own OTLP http_server_request_duration_seconds histogram on VictoriaMetrics - not the gateway access logs the other panels in this row read, so it also covers traffic that never crosses the gateway. Shows 'No failures' when the range holds none, and No data where the histogram is not collected.",
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "thresholds"
+                  },
+                  "decimals": 1,
+                  "mappings": [
+                    {
+                      "options": {
+                        "match": "null",
+                        "result": {
+                          "color": "green",
+                          "index": 0,
+                          "text": "No failures"
+                        }
+                      },
+                      "type": "special"
+                    }
+                  ],
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "text",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "m"
+                },
+                "overrides": []
+              },
+              "gridPos": {
+                "h": 5,
+                "w": 5,
+                "x": 10,
+                "y": 1
+              },
+              "id": 29,
+              "options": {
+                "colorMode": "value",
+                "graphMode": "none",
+                "justifyMode": "auto",
+                "reduceOptions": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "fields": "",
+                  "values": false
+                },
+                "text": {
+                  "titleSize": 13,
+                  "valueSize": 30
+                },
+                "textMode": "auto"
+              },
+              "targets": [
+                {
+                  "datasource": {
+                    "type": "loki",
+                    "uid": "loki"
+                  },
+                  "expr": "(${__range_s} / 60) / sum(count_over_time({namespace=\"${NS_APP}\", container=\"gateway\"} | json | __error__=`` | uri!~`/grafana.*|/apis/.*|/favicon.ico|/apple-touch-icon.*|/.well-known/.*` | status >= 500 or status == 499 [$__range]))",
+                  "queryType": "instant",
+                  "refId": "A"
+                }
+              ],
+              "title": "MTBF · failed requests",
+              "type": "stat"
+            },
+            {
+              "datasource": {
                 "type": "loki",
                 "uid": "loki"
               },
@@ -2011,8 +2093,8 @@ dashboards:
               },
               "gridPos": {
                 "h": 5,
-                "w": 5,
-                "x": 13,
+                "w": 4,
+                "x": 15,
                 "y": 1
               },
               "id": 4,
@@ -2074,8 +2156,8 @@ dashboards:
               },
               "gridPos": {
                 "h": 5,
-                "w": 6,
-                "x": 18,
+                "w": 5,
+                "x": 19,
                 "y": 1
               },
               "id": 5,
@@ -2115,7 +2197,7 @@ dashboards:
                 "type": "loki",
                 "uid": "loki"
               },
-              "description": "Requests the gateway answered itself (empty upstream_addr) are EXCLUDED. That bucket is only rate-limit rejections and auth denials, against ~1% of traffic, so it scored a working proxy at 39% and dragged the composite. The gateway's real availability is every row here: each of these requests crossed it and was forwarded.",
+              "description": "Requests the gateway answered itself (empty upstream_addr) are EXCLUDED. Component is derived from the upstream port: 8081 analytics, 8082 identity-resolution, 8083 authenticator, 80 frontend, 8084 git-cli-proxy, 8085 keycloak, 8087 v3-core, and 8086 by path (/mcp is the analytics MCP port, anything else is v3-core); an unmapped upstream keeps its raw IP:port so a new service shows up instead of being mislabelled. A component the gateway served no request to in the window falls back to its Kubernetes health probes (analytics, authenticator, identity-resolution and v3-core log them; gateway, frontend and git-cli-proxy do not), and those rows read 0 requests. That bucket is only rate-limit rejections and auth denials, against ~1% of traffic, so it scored a working proxy at 39% and dragged the composite. The gateway's real availability is every row here: each of these requests crossed it and was forwarded.",
               "fieldConfig": {
                 "defaults": {
                   "custom": {
@@ -2242,7 +2324,7 @@ dashboards:
                     "type": "loki",
                     "uid": "loki"
                   },
-                  "expr": "100 * (1 - ((sum by (component)(count_over_time({namespace=\"${NS_APP}\", container=\"gateway\"} | json | __error__=`` | uri!~`/grafana.*|/apis/.*|/favicon.ico|/apple-touch-icon.*|/.well-known/.*` | upstream_addr!=`` | label_format component=`{{ regexReplaceAll \"^$\" (regexReplaceAll \"^[0-9.]+:8085$\" (regexReplaceAll \"^[0-9.]+:80$\" (regexReplaceAll \"^[0-9.]+:8083$\" (regexReplaceAll \"^[0-9.]+:8082$\" (regexReplaceAll \"^[0-9.]+:8081$\" .upstream_addr \"analytics\") \"identity-resolution\") \"authenticator\") \"frontend\") \"keycloak\") \"gateway\" }}` | status >= 500 or status == 499 [$__range])) or (sum by (component)(count_over_time({namespace=\"${NS_APP}\", container=\"gateway\"} | json | __error__=`` | uri!~`/grafana.*|/apis/.*|/favicon.ico|/apple-touch-icon.*|/.well-known/.*` | upstream_addr!=`` | label_format component=`{{ regexReplaceAll \"^$\" (regexReplaceAll \"^[0-9.]+:8085$\" (regexReplaceAll \"^[0-9.]+:80$\" (regexReplaceAll \"^[0-9.]+:8083$\" (regexReplaceAll \"^[0-9.]+:8082$\" (regexReplaceAll \"^[0-9.]+:8081$\" .upstream_addr \"analytics\") \"identity-resolution\") \"authenticator\") \"frontend\") \"keycloak\") \"gateway\" }}` [$__range])) * 0)) / sum by (component)(count_over_time({namespace=\"${NS_APP}\", container=\"gateway\"} | json | __error__=`` | uri!~`/grafana.*|/apis/.*|/favicon.ico|/apple-touch-icon.*|/.well-known/.*` | upstream_addr!=`` | label_format component=`{{ regexReplaceAll \"^$\" (regexReplaceAll \"^[0-9.]+:8085$\" (regexReplaceAll \"^[0-9.]+:80$\" (regexReplaceAll \"^[0-9.]+:8083$\" (regexReplaceAll \"^[0-9.]+:8082$\" (regexReplaceAll \"^[0-9.]+:8081$\" .upstream_addr \"analytics\") \"identity-resolution\") \"authenticator\") \"frontend\") \"keycloak\") \"gateway\" }}` [$__range]))))",
+                  "expr": "100 * (1 - ((sum by (component)(count_over_time({namespace=\"${NS_APP}\", container=\"gateway\"} | json | __error__=`` | uri!~`/grafana.*|/apis/.*|/favicon.ico|/apple-touch-icon.*|/.well-known/.*` | upstream_addr!=`` | label_format component=`{{ $p := regexReplaceAll \".*:\" .upstream_addr \"\" }}{{ if eq $p \"8081\" }}analytics{{ else if eq $p \"8082\" }}identity-resolution{{ else if eq $p \"8083\" }}authenticator{{ else if eq $p \"80\" }}frontend{{ else if eq $p \"8084\" }}git-cli-proxy{{ else if eq $p \"8085\" }}keycloak{{ else if eq $p \"8087\" }}v3-core{{ else if eq $p \"8086\" }}{{ if hasPrefix \"/mcp\" .uri }}analytics{{ else }}v3-core{{ end }}{{ else }}{{ .upstream_addr }}{{ end }}` | status >= 500 or status == 499 [$__range])) or (sum by (component)(count_over_time({namespace=\"${NS_APP}\", container=\"gateway\"} | json | __error__=`` | uri!~`/grafana.*|/apis/.*|/favicon.ico|/apple-touch-icon.*|/.well-known/.*` | upstream_addr!=`` | label_format component=`{{ $p := regexReplaceAll \".*:\" .upstream_addr \"\" }}{{ if eq $p \"8081\" }}analytics{{ else if eq $p \"8082\" }}identity-resolution{{ else if eq $p \"8083\" }}authenticator{{ else if eq $p \"80\" }}frontend{{ else if eq $p \"8084\" }}git-cli-proxy{{ else if eq $p \"8085\" }}keycloak{{ else if eq $p \"8087\" }}v3-core{{ else if eq $p \"8086\" }}{{ if hasPrefix \"/mcp\" .uri }}analytics{{ else }}v3-core{{ end }}{{ else }}{{ .upstream_addr }}{{ end }}` [$__range])) * 0)) / sum by (component)(count_over_time({namespace=\"${NS_APP}\", container=\"gateway\"} | json | __error__=`` | uri!~`/grafana.*|/apis/.*|/favicon.ico|/apple-touch-icon.*|/.well-known/.*` | upstream_addr!=`` | label_format component=`{{ $p := regexReplaceAll \".*:\" .upstream_addr \"\" }}{{ if eq $p \"8081\" }}analytics{{ else if eq $p \"8082\" }}identity-resolution{{ else if eq $p \"8083\" }}authenticator{{ else if eq $p \"80\" }}frontend{{ else if eq $p \"8084\" }}git-cli-proxy{{ else if eq $p \"8085\" }}keycloak{{ else if eq $p \"8087\" }}v3-core{{ else if eq $p \"8086\" }}{{ if hasPrefix \"/mcp\" .uri }}analytics{{ else }}v3-core{{ end }}{{ else }}{{ .upstream_addr }}{{ end }}` [$__range])))) or 100 * (1 - ((sum by (component)(count_over_time({namespace=\"${NS_APP}\", container=~\"analytics|authenticator|identity-resolution|insight-v3-core\"} | json | fields_user_agent=~`kube-probe.*` | fields_uri=~`/health.*` | label_format component=`{{ if eq .container \"insight-v3-core\" }}v3-core{{ else }}{{ .container }}{{ end }}` | fields_status >= 400 [$__range])) or (sum by (component)(count_over_time({namespace=\"${NS_APP}\", container=~\"analytics|authenticator|identity-resolution|insight-v3-core\"} | json | fields_user_agent=~`kube-probe.*` | fields_uri=~`/health.*` | label_format component=`{{ if eq .container \"insight-v3-core\" }}v3-core{{ else }}{{ .container }}{{ end }}` [$__range])) * 0)) / sum by (component)(count_over_time({namespace=\"${NS_APP}\", container=~\"analytics|authenticator|identity-resolution|insight-v3-core\"} | json | fields_user_agent=~`kube-probe.*` | fields_uri=~`/health.*` | label_format component=`{{ if eq .container \"insight-v3-core\" }}v3-core{{ else }}{{ .container }}{{ end }}` [$__range]))))",
                   "legendFormat": "{{component}}",
                   "queryType": "instant",
                   "refId": "A"
@@ -2252,7 +2334,7 @@ dashboards:
                     "type": "loki",
                     "uid": "loki"
                   },
-                  "expr": "sum by (component)(count_over_time({namespace=\"${NS_APP}\", container=\"gateway\"} | json | __error__=`` | uri!~`/grafana.*|/apis/.*|/favicon.ico|/apple-touch-icon.*|/.well-known/.*` | upstream_addr!=`` | label_format component=`{{ regexReplaceAll \"^$\" (regexReplaceAll \"^[0-9.]+:8085$\" (regexReplaceAll \"^[0-9.]+:80$\" (regexReplaceAll \"^[0-9.]+:8083$\" (regexReplaceAll \"^[0-9.]+:8082$\" (regexReplaceAll \"^[0-9.]+:8081$\" .upstream_addr \"analytics\") \"identity-resolution\") \"authenticator\") \"frontend\") \"keycloak\") \"gateway\" }}` [$__range]))",
+                  "expr": "sum by (component)(count_over_time({namespace=\"${NS_APP}\", container=\"gateway\"} | json | __error__=`` | uri!~`/grafana.*|/apis/.*|/favicon.ico|/apple-touch-icon.*|/.well-known/.*` | upstream_addr!=`` | label_format component=`{{ $p := regexReplaceAll \".*:\" .upstream_addr \"\" }}{{ if eq $p \"8081\" }}analytics{{ else if eq $p \"8082\" }}identity-resolution{{ else if eq $p \"8083\" }}authenticator{{ else if eq $p \"80\" }}frontend{{ else if eq $p \"8084\" }}git-cli-proxy{{ else if eq $p \"8085\" }}keycloak{{ else if eq $p \"8087\" }}v3-core{{ else if eq $p \"8086\" }}{{ if hasPrefix \"/mcp\" .uri }}analytics{{ else }}v3-core{{ end }}{{ else }}{{ .upstream_addr }}{{ end }}` [$__range]))",
                   "legendFormat": "{{component}}",
                   "queryType": "instant",
                   "refId": "B"
@@ -2262,7 +2344,7 @@ dashboards:
                     "type": "loki",
                     "uid": "loki"
                   },
-                  "expr": "sum by (component)(count_over_time({namespace=\"${NS_APP}\", container=\"gateway\"} | json | __error__=`` | uri!~`/grafana.*|/apis/.*|/favicon.ico|/apple-touch-icon.*|/.well-known/.*` | upstream_addr!=`` | label_format component=`{{ regexReplaceAll \"^$\" (regexReplaceAll \"^[0-9.]+:8085$\" (regexReplaceAll \"^[0-9.]+:80$\" (regexReplaceAll \"^[0-9.]+:8083$\" (regexReplaceAll \"^[0-9.]+:8082$\" (regexReplaceAll \"^[0-9.]+:8081$\" .upstream_addr \"analytics\") \"identity-resolution\") \"authenticator\") \"frontend\") \"keycloak\") \"gateway\" }}` | status >= 500 or status == 499 [$__range]))",
+                  "expr": "sum by (component)(count_over_time({namespace=\"${NS_APP}\", container=\"gateway\"} | json | __error__=`` | uri!~`/grafana.*|/apis/.*|/favicon.ico|/apple-touch-icon.*|/.well-known/.*` | upstream_addr!=`` | label_format component=`{{ $p := regexReplaceAll \".*:\" .upstream_addr \"\" }}{{ if eq $p \"8081\" }}analytics{{ else if eq $p \"8082\" }}identity-resolution{{ else if eq $p \"8083\" }}authenticator{{ else if eq $p \"80\" }}frontend{{ else if eq $p \"8084\" }}git-cli-proxy{{ else if eq $p \"8085\" }}keycloak{{ else if eq $p \"8087\" }}v3-core{{ else if eq $p \"8086\" }}{{ if hasPrefix \"/mcp\" .uri }}analytics{{ else }}v3-core{{ end }}{{ else }}{{ .upstream_addr }}{{ end }}` | status >= 500 or status == 499 [$__range]))",
                   "legendFormat": "{{component}}",
                   "queryType": "instant",
                   "refId": "C"
@@ -2352,7 +2434,7 @@ dashboards:
                 "type": "loki",
                 "uid": "loki"
               },
-              "description": "Requests the gateway answered itself (empty upstream_addr) are EXCLUDED. That bucket is only rate-limit rejections and auth denials, against ~1% of traffic, so it scored a working proxy at 39% and dragged the composite. The gateway's real availability is every row here: each of these requests crossed it and was forwarded.",
+              "description": "Requests the gateway answered itself (empty upstream_addr) are EXCLUDED. Component is derived from the upstream port: 8081 analytics, 8082 identity-resolution, 8083 authenticator, 80 frontend, 8084 git-cli-proxy, 8085 keycloak, 8087 v3-core, and 8086 by path (/mcp is the analytics MCP port, anything else is v3-core); an unmapped upstream keeps its raw IP:port so a new service shows up instead of being mislabelled. A component the gateway served no request to in the window falls back to its Kubernetes health probes (analytics, authenticator, identity-resolution and v3-core log them; gateway, frontend and git-cli-proxy do not), and those rows read 0 requests. That bucket is only rate-limit rejections and auth denials, against ~1% of traffic, so it scored a working proxy at 39% and dragged the composite. The gateway's real availability is every row here: each of these requests crossed it and was forwarded.",
               "fieldConfig": {
                 "defaults": {
                   "custom": {
@@ -2396,7 +2478,7 @@ dashboards:
                     "type": "loki",
                     "uid": "loki"
                   },
-                  "expr": "100 * (1 - ((sum by (component)(count_over_time({namespace=\"${NS_APP}\", container=\"gateway\"} | json | __error__=`` | uri!~`/grafana.*|/apis/.*|/favicon.ico|/apple-touch-icon.*|/.well-known/.*` | upstream_addr!=`` | label_format component=`{{ regexReplaceAll \"^$\" (regexReplaceAll \"^[0-9.]+:8085$\" (regexReplaceAll \"^[0-9.]+:80$\" (regexReplaceAll \"^[0-9.]+:8083$\" (regexReplaceAll \"^[0-9.]+:8082$\" (regexReplaceAll \"^[0-9.]+:8081$\" .upstream_addr \"analytics\") \"identity-resolution\") \"authenticator\") \"frontend\") \"keycloak\") \"gateway\" }}` | status >= 500 or status == 499 [1h])) or (sum by (component)(count_over_time({namespace=\"${NS_APP}\", container=\"gateway\"} | json | __error__=`` | uri!~`/grafana.*|/apis/.*|/favicon.ico|/apple-touch-icon.*|/.well-known/.*` | upstream_addr!=`` | label_format component=`{{ regexReplaceAll \"^$\" (regexReplaceAll \"^[0-9.]+:8085$\" (regexReplaceAll \"^[0-9.]+:80$\" (regexReplaceAll \"^[0-9.]+:8083$\" (regexReplaceAll \"^[0-9.]+:8082$\" (regexReplaceAll \"^[0-9.]+:8081$\" .upstream_addr \"analytics\") \"identity-resolution\") \"authenticator\") \"frontend\") \"keycloak\") \"gateway\" }}` [1h])) * 0)) / sum by (component)(count_over_time({namespace=\"${NS_APP}\", container=\"gateway\"} | json | __error__=`` | uri!~`/grafana.*|/apis/.*|/favicon.ico|/apple-touch-icon.*|/.well-known/.*` | upstream_addr!=`` | label_format component=`{{ regexReplaceAll \"^$\" (regexReplaceAll \"^[0-9.]+:8085$\" (regexReplaceAll \"^[0-9.]+:80$\" (regexReplaceAll \"^[0-9.]+:8083$\" (regexReplaceAll \"^[0-9.]+:8082$\" (regexReplaceAll \"^[0-9.]+:8081$\" .upstream_addr \"analytics\") \"identity-resolution\") \"authenticator\") \"frontend\") \"keycloak\") \"gateway\" }}` [1h]))))",
+                  "expr": "100 * (1 - ((sum by (component)(count_over_time({namespace=\"${NS_APP}\", container=\"gateway\"} | json | __error__=`` | uri!~`/grafana.*|/apis/.*|/favicon.ico|/apple-touch-icon.*|/.well-known/.*` | upstream_addr!=`` | label_format component=`{{ $p := regexReplaceAll \".*:\" .upstream_addr \"\" }}{{ if eq $p \"8081\" }}analytics{{ else if eq $p \"8082\" }}identity-resolution{{ else if eq $p \"8083\" }}authenticator{{ else if eq $p \"80\" }}frontend{{ else if eq $p \"8084\" }}git-cli-proxy{{ else if eq $p \"8085\" }}keycloak{{ else if eq $p \"8087\" }}v3-core{{ else if eq $p \"8086\" }}{{ if hasPrefix \"/mcp\" .uri }}analytics{{ else }}v3-core{{ end }}{{ else }}{{ .upstream_addr }}{{ end }}` | status >= 500 or status == 499 [1h])) or (sum by (component)(count_over_time({namespace=\"${NS_APP}\", container=\"gateway\"} | json | __error__=`` | uri!~`/grafana.*|/apis/.*|/favicon.ico|/apple-touch-icon.*|/.well-known/.*` | upstream_addr!=`` | label_format component=`{{ $p := regexReplaceAll \".*:\" .upstream_addr \"\" }}{{ if eq $p \"8081\" }}analytics{{ else if eq $p \"8082\" }}identity-resolution{{ else if eq $p \"8083\" }}authenticator{{ else if eq $p \"80\" }}frontend{{ else if eq $p \"8084\" }}git-cli-proxy{{ else if eq $p \"8085\" }}keycloak{{ else if eq $p \"8087\" }}v3-core{{ else if eq $p \"8086\" }}{{ if hasPrefix \"/mcp\" .uri }}analytics{{ else }}v3-core{{ end }}{{ else }}{{ .upstream_addr }}{{ end }}` [1h])) * 0)) / sum by (component)(count_over_time({namespace=\"${NS_APP}\", container=\"gateway\"} | json | __error__=`` | uri!~`/grafana.*|/apis/.*|/favicon.ico|/apple-touch-icon.*|/.well-known/.*` | upstream_addr!=`` | label_format component=`{{ $p := regexReplaceAll \".*:\" .upstream_addr \"\" }}{{ if eq $p \"8081\" }}analytics{{ else if eq $p \"8082\" }}identity-resolution{{ else if eq $p \"8083\" }}authenticator{{ else if eq $p \"80\" }}frontend{{ else if eq $p \"8084\" }}git-cli-proxy{{ else if eq $p \"8085\" }}keycloak{{ else if eq $p \"8087\" }}v3-core{{ else if eq $p \"8086\" }}{{ if hasPrefix \"/mcp\" .uri }}analytics{{ else }}v3-core{{ end }}{{ else }}{{ .upstream_addr }}{{ end }}` [1h])))) or 100 * (1 - ((sum by (component)(count_over_time({namespace=\"${NS_APP}\", container=~\"analytics|authenticator|identity-resolution|insight-v3-core\"} | json | fields_user_agent=~`kube-probe.*` | fields_uri=~`/health.*` | label_format component=`{{ if eq .container \"insight-v3-core\" }}v3-core{{ else }}{{ .container }}{{ end }}` | fields_status >= 400 [1h])) or (sum by (component)(count_over_time({namespace=\"${NS_APP}\", container=~\"analytics|authenticator|identity-resolution|insight-v3-core\"} | json | fields_user_agent=~`kube-probe.*` | fields_uri=~`/health.*` | label_format component=`{{ if eq .container \"insight-v3-core\" }}v3-core{{ else }}{{ .container }}{{ end }}` [1h])) * 0)) / sum by (component)(count_over_time({namespace=\"${NS_APP}\", container=~\"analytics|authenticator|identity-resolution|insight-v3-core\"} | json | fields_user_agent=~`kube-probe.*` | fields_uri=~`/health.*` | label_format component=`{{ if eq .container \"insight-v3-core\" }}v3-core{{ else }}{{ .container }}{{ end }}` [1h]))))",
                   "interval": "1h",
                   "legendFormat": "{{component}}",
                   "queryType": "range",
@@ -7129,7 +7211,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "sum by (container) (rate(container_cpu_usage_seconds_total{namespace=\"${NS_INFRA}\", container!=\"\"}[5m]))",
+                  "expr": "sum by (container) (rate(container_cpu_usage_seconds_total{namespace=~\"${NS_DATASTORES}\", container!=\"\"}[5m]))",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -7140,7 +7222,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "quantile_over_time(0.95, (sum by (container) (rate(container_cpu_usage_seconds_total{namespace=\"${NS_INFRA}\", container!=\"\"}[5m])))[$__range:5m])",
+                  "expr": "quantile_over_time(0.95, (sum by (container) (rate(container_cpu_usage_seconds_total{namespace=~\"${NS_DATASTORES}\", container!=\"\"}[5m])))[$__range:5m])",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -7151,7 +7233,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "sum by (container) (kube_pod_container_resource_requests{namespace=\"${NS_INFRA}\", container!=\"\", resource=\"cpu\"})",
+                  "expr": "sum by (container) (kube_pod_container_resource_requests{namespace=~\"${NS_DATASTORES}\", container!=\"\", resource=\"cpu\"})",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -7162,7 +7244,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "sum by (container) (container_memory_working_set_bytes{namespace=\"${NS_INFRA}\", container!=\"\"})",
+                  "expr": "sum by (container) (container_memory_working_set_bytes{namespace=~\"${NS_DATASTORES}\", container!=\"\"})",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -7173,7 +7255,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "quantile_over_time(0.95, (sum by (container) (container_memory_working_set_bytes{namespace=\"${NS_INFRA}\", container!=\"\"}))[$__range:5m])",
+                  "expr": "quantile_over_time(0.95, (sum by (container) (container_memory_working_set_bytes{namespace=~\"${NS_DATASTORES}\", container!=\"\"}))[$__range:5m])",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -7184,7 +7266,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "sum by (container) (kube_pod_container_resource_limits{namespace=\"${NS_INFRA}\", container!=\"\", resource=\"memory\"})",
+                  "expr": "sum by (container) (kube_pod_container_resource_limits{namespace=~\"${NS_DATASTORES}\", container!=\"\", resource=\"memory\"})",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -7258,7 +7340,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "sum by (container) (rate(container_cpu_usage_seconds_total{namespace=\"${NS_INFRA}\", container!=\"\"}[5m]))",
+                  "expr": "sum by (container) (rate(container_cpu_usage_seconds_total{namespace=~\"${NS_DATASTORES}\", container!=\"\"}[5m]))",
                   "instant": false,
                   "legendFormat": "{{container}}",
                   "range": true,
@@ -7314,7 +7396,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "sum by (container) (container_memory_working_set_bytes{namespace=\"${NS_INFRA}\", container!=\"\"})",
+                  "expr": "sum by (container) (container_memory_working_set_bytes{namespace=~\"${NS_DATASTORES}\", container!=\"\"})",
                   "instant": false,
                   "legendFormat": "{{container}}",
                   "range": true,
@@ -7407,7 +7489,7 @@ dashboards:
               },
               "targets": [
                 {
-                  "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container!=\"\"}[$__rate_interval]))",
+                  "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container!=\"\"}[$__rate_interval]))",
                   "legendFormat": "{{pod}}",
                   "refId": "A"
                 }
@@ -7449,7 +7531,7 @@ dashboards:
               },
               "targets": [
                 {
-                  "expr": "sum by (pod) (container_memory_working_set_bytes{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container!=\"\"})",
+                  "expr": "sum by (pod) (container_memory_working_set_bytes{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container!=\"\"})",
                   "legendFormat": "{{pod}}",
                   "refId": "A"
                 }
@@ -7506,7 +7588,7 @@ dashboards:
               },
               "targets": [
                 {
-                  "expr": "100 * max by (pod) ( max by (pod, container) (container_memory_working_set_bytes{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0\", container!=\"\"}) / on (pod, container) max by (pod, container) (kube_pod_container_resource_limits{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0\", resource=\"memory\"}) )",
+                  "expr": "100 * max by (pod) ( max by (pod, container) (container_memory_working_set_bytes{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0\", container!=\"\"}) / on (pod, container) max by (pod, container) (kube_pod_container_resource_limits{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0\", resource=\"memory\"}) )",
                   "legendFormat": "{{pod}}",
                   "refId": "A"
                 }
@@ -7559,7 +7641,7 @@ dashboards:
               },
               "targets": [
                 {
-                  "expr": "sum by (pod, container) (kube_pod_container_status_restarts_total{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\"})",
+                  "expr": "sum by (pod, container) (kube_pod_container_status_restarts_total{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\"})",
                   "format": "table",
                   "instant": true,
                   "refId": "A"
@@ -7611,12 +7693,12 @@ dashboards:
               },
               "targets": [
                 {
-                  "expr": "sum by (pod) (rate(container_fs_reads_bytes_total{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container!=\"\"}[$__rate_interval])) > 0",
+                  "expr": "sum by (pod) (rate(container_fs_reads_bytes_total{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container!=\"\"}[$__rate_interval])) > 0",
                   "legendFormat": "{{pod}} read",
                   "refId": "A"
                 },
                 {
-                  "expr": "sum by (pod) (rate(container_fs_writes_bytes_total{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container!=\"\"}[$__rate_interval])) > 0",
+                  "expr": "sum by (pod) (rate(container_fs_writes_bytes_total{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container!=\"\"}[$__rate_interval])) > 0",
                   "legendFormat": "{{pod}} write",
                   "refId": "B"
                 }
@@ -8080,7 +8162,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "sum by (container) (kube_pod_container_resource_requests{namespace=\"${NS_INFRA}\", container=~\"clickhouse|mariadb|redis|redpanda|loki\", resource=\"cpu\"})",
+                  "expr": "sum by (container) (kube_pod_container_resource_requests{namespace=~\"${NS_DATASTORES}\", container=~\"clickhouse|mariadb|redis|redpanda|loki\", resource=\"cpu\"})",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -8091,7 +8173,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "sum by (container) (kube_pod_container_resource_limits{namespace=\"${NS_INFRA}\", container=~\"clickhouse|mariadb|redis|redpanda|loki\", resource=\"cpu\"})",
+                  "expr": "sum by (container) (kube_pod_container_resource_limits{namespace=~\"${NS_DATASTORES}\", container=~\"clickhouse|mariadb|redis|redpanda|loki\", resource=\"cpu\"})",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -8102,7 +8184,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "quantile_over_time(0.95, (sum by (container) (rate(container_cpu_usage_seconds_total{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container=~\"clickhouse|mariadb|redis|redpanda|loki\"}[5m])))[$__range:5m])",
+                  "expr": "quantile_over_time(0.95, (sum by (container) (rate(container_cpu_usage_seconds_total{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container=~\"clickhouse|mariadb|redis|redpanda|loki\"}[5m])))[$__range:5m])",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -8113,7 +8195,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "max_over_time((sum by (container) (rate(container_cpu_usage_seconds_total{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container=~\"clickhouse|mariadb|redis|redpanda|loki\"}[5m])))[$__range:5m])",
+                  "expr": "max_over_time((sum by (container) (rate(container_cpu_usage_seconds_total{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container=~\"clickhouse|mariadb|redis|redpanda|loki\"}[5m])))[$__range:5m])",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -8124,7 +8206,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "100 * quantile_over_time(0.95, (sum by (container) (rate(container_cpu_usage_seconds_total{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container=~\"clickhouse|mariadb|redis|redpanda|loki\"}[5m])))[$__range:5m]) / sum by (container) (kube_pod_container_resource_requests{namespace=\"${NS_INFRA}\", container=~\"clickhouse|mariadb|redis|redpanda|loki\", resource=\"cpu\"})",
+                  "expr": "100 * quantile_over_time(0.95, (sum by (container) (rate(container_cpu_usage_seconds_total{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container=~\"clickhouse|mariadb|redis|redpanda|loki\"}[5m])))[$__range:5m]) / sum by (container) (kube_pod_container_resource_requests{namespace=~\"${NS_DATASTORES}\", container=~\"clickhouse|mariadb|redis|redpanda|loki\", resource=\"cpu\"})",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -8135,7 +8217,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "100 * max_over_time((sum by (container) (rate(container_cpu_usage_seconds_total{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container=~\"clickhouse|mariadb|redis|redpanda|loki\"}[5m])))[$__range:5m]) / sum by (container) (kube_pod_container_resource_limits{namespace=\"${NS_INFRA}\", container=~\"clickhouse|mariadb|redis|redpanda|loki\", resource=\"cpu\"})",
+                  "expr": "100 * max_over_time((sum by (container) (rate(container_cpu_usage_seconds_total{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container=~\"clickhouse|mariadb|redis|redpanda|loki\"}[5m])))[$__range:5m]) / sum by (container) (kube_pod_container_resource_limits{namespace=~\"${NS_DATASTORES}\", container=~\"clickhouse|mariadb|redis|redpanda|loki\", resource=\"cpu\"})",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -8395,7 +8477,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "sum by (container) (kube_pod_container_resource_requests{namespace=\"${NS_INFRA}\", container=~\"clickhouse|mariadb|redis|redpanda|loki\", resource=\"memory\"})",
+                  "expr": "sum by (container) (kube_pod_container_resource_requests{namespace=~\"${NS_DATASTORES}\", container=~\"clickhouse|mariadb|redis|redpanda|loki\", resource=\"memory\"})",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -8406,7 +8488,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "sum by (container) (kube_pod_container_resource_limits{namespace=\"${NS_INFRA}\", container=~\"clickhouse|mariadb|redis|redpanda|loki\", resource=\"memory\"})",
+                  "expr": "sum by (container) (kube_pod_container_resource_limits{namespace=~\"${NS_DATASTORES}\", container=~\"clickhouse|mariadb|redis|redpanda|loki\", resource=\"memory\"})",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -8417,7 +8499,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "quantile_over_time(0.95, (sum by (container) (container_memory_working_set_bytes{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container=~\"clickhouse|mariadb|redis|redpanda|loki\"}))[$__range:5m])",
+                  "expr": "quantile_over_time(0.95, (sum by (container) (container_memory_working_set_bytes{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container=~\"clickhouse|mariadb|redis|redpanda|loki\"}))[$__range:5m])",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -8428,7 +8510,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "max_over_time((sum by (container) (container_memory_working_set_bytes{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container=~\"clickhouse|mariadb|redis|redpanda|loki\"}))[$__range:5m])",
+                  "expr": "max_over_time((sum by (container) (container_memory_working_set_bytes{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container=~\"clickhouse|mariadb|redis|redpanda|loki\"}))[$__range:5m])",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -8439,7 +8521,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "100 * quantile_over_time(0.95, (sum by (container) (container_memory_working_set_bytes{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container=~\"clickhouse|mariadb|redis|redpanda|loki\"}))[$__range:5m]) / sum by (container) (kube_pod_container_resource_requests{namespace=\"${NS_INFRA}\", container=~\"clickhouse|mariadb|redis|redpanda|loki\", resource=\"memory\"})",
+                  "expr": "100 * quantile_over_time(0.95, (sum by (container) (container_memory_working_set_bytes{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container=~\"clickhouse|mariadb|redis|redpanda|loki\"}))[$__range:5m]) / sum by (container) (kube_pod_container_resource_requests{namespace=~\"${NS_DATASTORES}\", container=~\"clickhouse|mariadb|redis|redpanda|loki\", resource=\"memory\"})",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -8450,7 +8532,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "100 * max_over_time((sum by (container) (container_memory_working_set_bytes{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container=~\"clickhouse|mariadb|redis|redpanda|loki\"}))[$__range:5m]) / sum by (container) (kube_pod_container_resource_limits{namespace=\"${NS_INFRA}\", container=~\"clickhouse|mariadb|redis|redpanda|loki\", resource=\"memory\"})",
+                  "expr": "100 * max_over_time((sum by (container) (container_memory_working_set_bytes{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container=~\"clickhouse|mariadb|redis|redpanda|loki\"}))[$__range:5m]) / sum by (container) (kube_pod_container_resource_limits{namespace=~\"${NS_DATASTORES}\", container=~\"clickhouse|mariadb|redis|redpanda|loki\", resource=\"memory\"})",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -8533,7 +8615,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "100 * sum by (pod, container) (rate(container_cpu_cfs_throttled_periods_total{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container!=\"\"}[$__rate_interval])) / sum by (pod, container) (rate(container_cpu_cfs_periods_total{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container!=\"\"}[$__rate_interval]))",
+                  "expr": "100 * sum by (pod, container) (rate(container_cpu_cfs_throttled_periods_total{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container!=\"\"}[$__rate_interval])) / sum by (pod, container) (rate(container_cpu_cfs_periods_total{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container!=\"\"}[$__rate_interval]))",
                   "legendFormat": "{{pod}} · {{container}}",
                   "refId": "A"
                 }
@@ -8597,7 +8679,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "100 * sum by (container) (rate(container_cpu_usage_seconds_total{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container=~\"clickhouse|mariadb|redis|redpanda|loki\"}[$__rate_interval])) / sum by (container) (kube_pod_container_resource_limits{namespace=\"${NS_INFRA}\", container=~\"clickhouse|mariadb|redis|redpanda|loki\", resource=\"cpu\"})",
+                  "expr": "100 * sum by (container) (rate(container_cpu_usage_seconds_total{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container=~\"clickhouse|mariadb|redis|redpanda|loki\"}[$__rate_interval])) / sum by (container) (kube_pod_container_resource_limits{namespace=~\"${NS_DATASTORES}\", container=~\"clickhouse|mariadb|redis|redpanda|loki\", resource=\"cpu\"})",
                   "legendFormat": "{{container}}",
                   "refId": "A"
                 }
@@ -8651,7 +8733,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "sum(increase(container_oom_events_total{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container!=\"\"}[$__range]))",
+                  "expr": "sum(increase(container_oom_events_total{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\", container!=\"\"}[$__range]))",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -8711,7 +8793,7 @@ dashboards:
                     "type": "prometheus",
                     "uid": "vm"
                   },
-                  "expr": "sum(increase(kube_pod_container_status_restarts_total{namespace=\"${NS_INFRA}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\"}[$__range]))",
+                  "expr": "sum(increase(kube_pod_container_status_restarts_total{namespace=~\"${NS_DATASTORES}\", pod=~\"clickhouse-shard0-0|mariadb-0|redis-master-0|redpanda-0|loki-0\"}[$__range]))",
                   "format": "table",
                   "instant": true,
                   "range": false,
@@ -9005,7 +9087,7 @@ dashboards:
                 {
                   "refId": "A",
                   "legendFormat": "slow queries",
-                  "expr": "sum(count_over_time({namespace=\"${NS_INFRA}\", pod=~\"mariadb-.*\", container=\"slow-log\"} |= \"# Query_time\" [$__auto]))"
+                  "expr": "sum(count_over_time({namespace=~\"${NS_DATASTORES}\", pod=~\"mariadb-.*\", container=\"slow-log\"} |= \"# Query_time\" [$__auto]))"
                 }
               ]
             },
@@ -9031,7 +9113,7 @@ dashboards:
               "targets": [
                 {
                   "refId": "A",
-                  "expr": "{namespace=\"${NS_INFRA}\", pod=~\"mariadb-.*\", container=\"slow-log\"}"
+                  "expr": "{namespace=~\"${NS_DATASTORES}\", pod=~\"mariadb-.*\", container=\"slow-log\"}"
                 }
               ]
             }
