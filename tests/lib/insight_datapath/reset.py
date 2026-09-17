@@ -36,6 +36,7 @@ SEED_OWNED: frozenset[Relation] = frozenset(
     {
         ("bronze_bamboohr", "employees"),
         ("bronze_bitbucket_cloud", "repositories"),
+        ("config", "field_value_map"),
         ("bronze_claude_team_invoices", "claude_team_invoice_lines"),
         ("bronze_github", "deployment_statuses"),
         ("bronze_github", "deployments"),

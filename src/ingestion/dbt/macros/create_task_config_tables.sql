@@ -17,11 +17,11 @@
   (tenant, source, field), the value unmapped keys fall to; no default row means
   the hardcoded `unknown` terminal, never the raw source value.
 
-  What `source_key` is depends on how the vendor keys values. GitHub issue
-  types are org-scoped, so it is the type id. Jira mints a distinct type id per
-  project while the name is what recurs, so for Jira it is the normalized name:
-  lower(trimBoth(coalesce(nullIf(untranslatedName, ''), name))) — the form
-  `jira__task_issuetypes` joins on.
+  For issue types `source_key` is the vendor's type id on both sides:
+  org-scoped for GitHub, per-project for Jira, so Jira needs one decision per
+  project type. Keying on the name instead would let a rename re-classify
+  closed history, silently and retroactively. An id with no row falls to the
+  tenant's `field_value_defaults` row, then to `unknown`.
 
   Bitemporal by design. `valid_from` says which events a mapping applies to: the
   process genuinely changed on a date. `recorded_at` says when the decision was

@@ -20,8 +20,14 @@
 -- per measure branch (ClickHouse re-inlines every WITH reference).
 --
 -- Lifecycle comes from class_task_statuses.status_category ('done' = closed)
--- joined on the status id — never match status display names; issue type is the
--- same shape, via class_task_issuetypes.issue_kind.
+-- joined on the status id — never match status display names. The issue KIND
+-- (bug / task / unknown) is resolved HERE, not in silver: the operator's
+-- `config.field_value_map` row for (tenant, source, field='issue_type',
+-- source_key = type id) decides it; an unmapped id falls to the tenant's
+-- `config.field_value_defaults` row for the field, then to 'unknown' — never
+-- to a name or the raw value. Resolving at the gold build is what makes a
+-- mapping change apply on the next run without a silver rebuild.
+-- `class_task_issuetypes` stays the raw catalogue dimension for the names.
 -- Fields are matched by ROLE, not by vendor field id: `field_id` is documented
 -- as vendor-specific, so a literal here would only ever be Jira's name for the
 -- thing. `task_field_roles_current` carries the binding. Attribution:
@@ -31,6 +37,55 @@
 -- a stale version would skew the pivot.
 
 WITH
+-- Operator issue-type decisions: bitemporal latest row per key FIRST, the
+-- tombstone/domain filter AFTER. INVARIANT: unique_key includes recorded_at,
+-- so a retraction (is_deleted=1) or a typo is a NEWER separate row — filtering
+-- before LIMIT 1 BY would resurrect the older live decision. When the newest
+-- row is a tombstone or outside the domain, the key classifies as unmapped;
+-- `assert_field_values_are_canonical` reports the typo row itself.
+issue_type_map AS (
+    SELECT
+        tenant_id,
+        insight_source_id,
+        source_key,
+        target_value
+    FROM (
+        SELECT
+            tenant_id,
+            insight_source_id,
+            source_key,
+            target_value,
+            is_deleted
+        FROM {{ source('config', 'field_value_map') }} FINAL
+        WHERE field = 'issue_type'
+          AND valid_from <= now64(3)
+        ORDER BY valid_from DESC, recorded_at DESC
+        LIMIT 1 BY tenant_id, insight_source_id, source_key
+    )
+    WHERE is_deleted = 0
+      AND target_value IN ('bug', 'task', 'unknown')
+),
+-- Per (tenant, source) fallback for unmapped type ids; same shape, same guard.
+issue_type_default AS (
+    SELECT
+        tenant_id,
+        insight_source_id,
+        default_value
+    FROM (
+        SELECT
+            tenant_id,
+            insight_source_id,
+            default_value,
+            is_deleted
+        FROM {{ source('config', 'field_value_defaults') }} FINAL
+        WHERE field = 'issue_type'
+          AND valid_from <= now64(3)
+        ORDER BY valid_from DESC, recorded_at DESC
+        LIMIT 1 BY tenant_id, insight_source_id
+    )
+    WHERE is_deleted = 0
+      AND default_value IN ('bug', 'task', 'unknown')
+),
 task_users AS (
     SELECT
         tenant_id,
@@ -148,10 +203,16 @@ SELECT
     p.title                                                                  AS title,
     cur.status_category                                                      AS status_category,
     p.issue_type                                                             AS issue_type,
-    -- A missing dimension row reads as '' under join_use_nulls=0 (the
-    -- non-Nullable String default) and NULL under =1 — nullIf folds both
-    -- into the fallback, matching the null-proofing of `role` above.
-    coalesce(nullIf(it.issue_kind, ''), 'unknown')                           AS issue_kind,
+    -- Mapping row → tenant default → 'unknown'. A join miss reads as ''
+    -- under join_use_nulls=0 (the non-Nullable String default) and NULL
+    -- under =1 — nullIf folds both into the next fallback, so the chain is
+    -- regime-independent. CAST off the LowCardinality the config columns
+    -- carry: this is a serving table whose type the backend reads.
+    CAST(coalesce(
+        nullIf(toString(m.target_value), ''),
+        nullIf(toString(d.default_value), ''),
+        'unknown'
+    ) AS String)                                                             AS issue_kind,
     coalesce(it.untranslated_name, nullIf(it.issue_type_name, ''),
              nullIf(p.issue_type, ''))                                       AS issue_type_key,
     coalesce(nullIf(it.issue_type_name, ''), nullIf(p.issue_type, ''))       AS issue_type_name,
@@ -173,6 +234,13 @@ LEFT JOIN {{ ref('class_task_statuses') }} AS cur FINAL
     ON cur.insight_source_id = p.insight_source_id AND cur.status_id = p.status_id
 LEFT JOIN {{ ref('class_task_issuetypes') }} AS it FINAL
     ON it.insight_source_id = p.insight_source_id AND it.issue_type_id = p.issue_type_id
+LEFT JOIN issue_type_map AS m
+    ON m.tenant_id = u.tenant_id
+    AND m.insight_source_id = p.insight_source_id
+    AND m.source_key = p.issue_type_id
+LEFT JOIN issue_type_default AS d
+    ON d.tenant_id = u.tenant_id
+    AND d.insight_source_id = p.insight_source_id
 -- Issues deleted at the source (or in the project trash) leave every task
 -- metric: this table is the root of the gold task chain, so the filter
 -- propagates to spans, worklog flow and evidence. archived / access_lost /
