@@ -8,7 +8,7 @@ use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use toolkit::api::{OpenApiRegistry, OperationBuilder, ParamLocation, ParamSpec};
-use toolkit_canonical_errors::{CanonicalError, resource_error};
+use toolkit_canonical_errors::{CanonicalError, Http, resource_error};
 use utoipa::ToSchema;
 
 use super::AppState;
@@ -114,6 +114,7 @@ pub(crate) fn register_routes(
         .json_response(StatusCode::OK, "The stored declaration")
         .error_400(openapi)
         .error_403(openapi)
+        .error_404(openapi)
         .error_409(openapi)
         .error_500(openapi)
         .error_504(openapi)
@@ -128,6 +129,8 @@ pub(crate) fn register_routes(
         .exposed()
         .param(name_param.clone())
         .json_response(StatusCode::OK, "The stored declaration")
+        .error_400(openapi)
+        .error_403(openapi)
         .error_404(openapi)
         .error_500(openapi)
         .error_504(openapi)
@@ -142,6 +145,7 @@ pub(crate) fn register_routes(
         .exposed()
         .param(name_param)
         .no_content_response(StatusCode::NO_CONTENT, "The dataset is gone")
+        .error_400(openapi)
         .error_403(openapi)
         .error_404(openapi)
         .error_409(openapi)
@@ -402,6 +406,7 @@ fn change_error(error: DatasetChangeError) -> CanonicalError {
                 format!("still read by {}", readers.join(", ")),
                 "in_use",
             )
+            .with_override(Http::status_code(StatusCode::CONFLICT.as_u16()))
             .create(),
         DatasetChangeError::WouldBreak(broken) => would_break(&broken),
         DatasetChangeError::Refused(Refused::Busy(operation)) => DatasetApiError::aborted(format!(
@@ -457,6 +462,7 @@ fn would_break(broken: &[Broken]) -> CanonicalError {
     let Some((first, rest)) = broken.split_first() else {
         return DatasetApiError::failed_precondition()
             .with_precondition_violation("name", "a metric reads this dataset", "would_break")
+            .with_override(Http::status_code(StatusCode::CONFLICT.as_u16()))
             .create();
     };
 
@@ -468,6 +474,7 @@ fn would_break(broken: &[Broken]) -> CanonicalError {
     for one in rest {
         builder = builder.with_precondition_violation(&one.metric, one.why.clone(), "would_break");
     }
+    let builder = builder.with_override(Http::status_code(StatusCode::CONFLICT.as_u16()));
 
     builder.create()
 }

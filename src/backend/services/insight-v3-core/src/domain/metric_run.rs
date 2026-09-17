@@ -11,15 +11,14 @@ use super::query::metric_query::{MetricQuery, MetricQueryError, MetricRunner, Ru
 use super::query::time_window::{Window, WindowRequest};
 use super::query::undated::UndatedCount;
 use super::surfaces::CustomError;
-use crate::store::catalog::{Catalog, TableEngine};
+use crate::domain::query::metric_query::TableEngine;
 
 /// Everything a metric needs to answer: the definition it is stored as, the
-/// warehouse that holds the table, and the catalogue that says how.
+/// dataset it reads, and the warehouse the records are kept in.
 #[derive(Debug)]
 pub(crate) struct MetricRuns<'a> {
     definitions: &'a dyn Lookup,
     metrics: &'a MetricRunner,
-    catalog: &'a Catalog,
     datasets: &'a dyn Datasets,
     /// The database every dataset's records are kept in.
     datasets_database: &'a str,
@@ -29,14 +28,12 @@ impl<'a> MetricRuns<'a> {
     pub(crate) fn new(
         definitions: &'a dyn Lookup,
         metrics: &'a MetricRunner,
-        catalog: &'a Catalog,
         datasets: &'a dyn Datasets,
         datasets_database: &'a str,
     ) -> Self {
         Self {
             definitions,
             metrics,
-            catalog,
             datasets,
             datasets_database,
         }
@@ -66,36 +63,14 @@ impl<'a> MetricRuns<'a> {
 
         let metric: MetricQuery = serde_json::from_value(body).map_err(CustomError::Body)?;
 
-        if let Some(named) = metric.dataset() {
-            return self.run_over_dataset(&metric, named, request).await;
-        }
+        // A metric addressing a warehouse relation is how metrics read data
+        // before datasets. None can be written any more, and one written
+        // before is refused rather than read from a relation nothing declares.
+        let Some(named) = metric.dataset() else {
+            return Err(CustomError::Compile(MetricQueryError::NoDataset));
+        };
 
-        metric.check().map_err(CustomError::Compile)?;
-
-        if request.is_ranged() && !metric.has_clock().map_err(CustomError::Compile)? {
-            return Err(CustomError::Compile(MetricQueryError::ClocklessWindow));
-        }
-
-        let engine = self.engine_of(&metric).await?;
-        let undated = self.undated_of(&metric, request, engine).await?;
-        let window = request
-            .resolve(Utc::now())
-            .map_err(|error| CustomError::Compile(error.into()))?;
-
-        let compiled = metric
-            .compile_window(self.metrics.people(), &window, engine, None)
-            .map_err(CustomError::Compile)?;
-
-        let mut result = self
-            .metrics
-            .run(&compiled)
-            .await
-            .map_err(CustomError::Run)?;
-        if request.is_ranged() {
-            result.undated = Some(undated.count());
-        }
-
-        Ok(result)
+        self.run_over_dataset(&metric, named, request).await
     }
 
     /// Runs a metric over the dataset it reads.
@@ -193,35 +168,6 @@ impl<'a> MetricRuns<'a> {
     ) -> Result<UndatedCount, CustomError> {
         let Some(query) = metric
             .undated_query(TableEngine::Other, Some(over))
-            .map_err(CustomError::Compile)?
-        else {
-            return Ok(UndatedCount::default());
-        };
-
-        self.metrics.undated(&query).await.map_err(CustomError::Run)
-    }
-
-    /// Which engine holds the metric's table, so a replacing one is read
-    /// through `FINAL` rather than counted twice.
-    async fn engine_of(&self, metric: &MetricQuery) -> Result<TableEngine, CustomError> {
-        self.catalog
-            .engine_of(&metric.qualified())
-            .await
-            .map_err(CustomError::Catalog)
-    }
-
-    async fn undated_of(
-        &self,
-        metric: &MetricQuery,
-        request: &WindowRequest,
-        engine: TableEngine,
-    ) -> Result<UndatedCount, CustomError> {
-        if !request.is_ranged() {
-            return Ok(UndatedCount::default());
-        }
-
-        let Some(query) = metric
-            .undated_query(engine, None)
             .map_err(CustomError::Compile)?
         else {
             return Ok(UndatedCount::default());

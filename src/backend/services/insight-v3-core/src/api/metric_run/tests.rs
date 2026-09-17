@@ -57,13 +57,10 @@ impl TestHarness {
         let definitions: Arc<dyn Definitions> = Arc::new(MemoryDefinitions::new());
         let datasets = a_ready_dataset(metrics_url);
         let state = Arc::new(AppState::new(
-            crate::api::Warehouse {
-                catalog: crate::store::catalog::Catalog::fixed(Vec::new()),
-                metrics: MetricRunner::new(
-                    metrics_client,
-                    crate::domain::query::metric_query::People::new("identity"),
-                ),
-            },
+            MetricRunner::new(
+                metrics_client,
+                crate::domain::query::metric_query::People::new("identity"),
+            ),
             definitions.clone(),
             ChatClient::keyless(),
             crate::store::identity::IdentityClient::fixed(true),

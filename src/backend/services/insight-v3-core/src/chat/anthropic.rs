@@ -208,7 +208,7 @@ impl MessagesResponse {
             .map(|block| block.id.as_str())
     }
 
-    /// The tables this turn asks about, when it asks rather than answers.
+    /// The datasets this turn asks about, when it asks rather than answers.
     pub(super) fn look_up(&self) -> Option<LookUp> {
         let block = self
             .content
@@ -217,7 +217,7 @@ impl MessagesResponse {
         let tables = block
             .input
             .as_ref()?
-            .get("tables")?
+            .get("datasets")?
             .as_array()?
             .iter()
             .filter_map(|name| name.as_str().map(str::to_owned))

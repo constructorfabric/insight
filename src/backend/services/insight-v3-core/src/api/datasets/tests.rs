@@ -56,20 +56,10 @@ impl TestHarness {
         );
         let definitions = Arc::new(MemoryDefinitions::new());
         let state = Arc::new(AppState::new(
-            crate::api::Warehouse {
-                catalog: crate::store::catalog::Catalog::new(
-                    insight_clickhouse::Client::new(insight_clickhouse::Config::new(
-                        url, "insight",
-                    )),
-                    "insight".to_owned(),
-                ),
-                metrics: MetricRunner::new(
-                    insight_clickhouse::Client::new(insight_clickhouse::Config::new(
-                        url, "insight",
-                    )),
-                    crate::domain::query::metric_query::People::new("identity"),
-                ),
-            },
+            MetricRunner::new(
+                insight_clickhouse::Client::new(insight_clickhouse::Config::new(url, "insight")),
+                crate::domain::query::metric_query::People::new("identity"),
+            ),
             Arc::clone(&definitions) as Arc<dyn crate::domain::definition::Definitions>,
             ChatClient::keyless(),
             crate::store::identity::IdentityClient::fixed(is_admin),
@@ -459,4 +449,78 @@ async fn a_dataset_nothing_reads_names_nothing() {
 
     assert_eq!(asked, StatusCode::OK);
     assert_eq!(read(&body)["metrics"], json!([]));
+}
+
+/// A removal a metric would break, and a replacement that would break one, are
+/// conflicts rather than malformed requests: the body is fine, the stand is
+/// not, and the portal branches on the status.
+#[tokio::test]
+async fn a_dataset_something_still_reads_answers_a_conflict() {
+    let harness = TestHarness::new();
+    harness.a_free_name();
+    harness.put("commits", declaration()).await;
+    harness
+        .definitions
+        .put(
+            crate::domain::definition::DefinitionKind::Metric,
+            &crate::domain::definition::DefinitionName::parse("lines_per_day")
+                .unwrap_or_else(|error| panic!("the name parses: {error}")),
+            &json!({
+                "dataset": "commits",
+                "fields": [{"field": "lines", "type": "int", "agg": "sum", "as_name": "total"}]
+            }),
+        )
+        .await
+        .unwrap_or_else(|error| panic!("the metric is stored: {error}"));
+
+    let (removed, said) = harness.delete("commits").await;
+    let (replaced, would) = harness
+        .put(
+            "commits",
+            json!({
+                "title": "Commits",
+                "fields": [
+                    { "name": "day", "path": "day", "type": "datetime", "default_clock": true }
+                ]
+            }),
+        )
+        .await;
+
+    assert_eq!(removed, StatusCode::CONFLICT);
+    assert!(
+        format!("{:?}", read(&said)).contains("lines_per_day"),
+        "the refusal names what reads it: {:?}",
+        read(&said)
+    );
+    assert_eq!(replaced, StatusCode::CONFLICT);
+    assert!(
+        format!("{:?}", read(&would)).contains("lines_per_day"),
+        "the refusal names what would break: {:?}",
+        read(&would)
+    );
+}
+
+/// Every place a declaration is wrong is answered at once, against the field
+/// that carries it, so a form marks them all in one pass.
+#[tokio::test]
+async fn a_declaration_wrong_in_several_ways_names_every_place() {
+    let harness = TestHarness::new();
+
+    let (refused, body) = harness
+        .put(
+            "commits",
+            json!({
+                "title": "Commits",
+                "fields": [
+                    { "name": "day", "path": "day", "type": "moment" },
+                    { "name": "lines", "path": "lines", "type": "int", "colour": "red" }
+                ]
+            }),
+        )
+        .await;
+
+    assert_eq!(refused, StatusCode::BAD_REQUEST);
+    let said = format!("{:?}", read(&body));
+    assert!(said.contains("fields[0].type"), "{said}");
+    assert!(said.contains("fields[1].colour"), "{said}");
 }

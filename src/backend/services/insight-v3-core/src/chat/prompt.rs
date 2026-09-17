@@ -8,14 +8,16 @@ pub(super) fn system_prompt(datasets: &str, catalogue: &Catalogue) -> String {
          Write replies as plain prose. No markdown: asterisks and hashes are shown as typed.\n\n\
          - Call `answer` to answer a question: it runs one query and stores nothing. Leave the query out when the question is about what data exists.\n\
          - Call `create` to build definitions to store. Pass the metric, the widgets and the dashboard as {\"name\":<string>,\"body\":<object>}, where the name is the identifier and the body is the definition. A create that carries none of the three is refused, and a dashboard needs the metric and widgets it draws.\n\n\
-         A MetricQuery is {\"table\":<string>,\"fields\":[{\"json\":<string>,\"type\":\"string\"|\"int\"|\"float\",\"agg\":\"count\"|\"sum\"|\"avg\"|\"min\"|\"max\"|null,\"as_name\":<string>}],\"group_by\":[<string>],\"filters\":[{\"json\":<string>,\"type\":<field type>,\"op\":\"eq\"|\"ne\"|\"gt\"|\"gte\"|\"lt\"|\"lte\",\"value\":<value>}],\"order_by\":{\"field\":<as_name>,\"direction\":\"asc\"|\"desc\"}|null,\"limit\":<int>|null}.\n\
-         Give a metric a \"time\" whenever its table carries a timestamp for when the thing happened: {\"time\":{\"column\":\"occurred_at\"}}, or {\"time\":{\"json\":\"committed_at\"}} for a key inside an ingested payload. Without one a reader cannot pick a window and the metric answers every row, whatever the board is set to. Never use the column that records when the row was loaded. Declare no grain: the picked range chooses it, and the rows come back with a `bucket` column a line widget draws on x.\n\
-         A field reads `column` for a typed column, `json` for a key in the row's `raw_data`, or both together for a key inside any JSON column the table carries. A `json` key may be a dotted path, \"field.name\". Where that payload is an array of objects, `where` names the element the field means: {\"column\":\"field_values_json\",\"json\":\"name\",\"type\":\"string\",\"as_name\":\"status\",\"where\":{\"json\":\"field.name\",\"type\":\"string\",\"op\":\"eq\",\"value\":\"Status\"}}.\n\
+         A MetricQuery reads one dataset: {\"dataset\":<string>,\"fields\":[{\"field\":<declared field>,\"type\":\"string\"|\"int\"|\"float\",\"agg\":\"count\"|\"sum\"|\"avg\"|\"min\"|\"max\"|null,\"as_name\":<string>}],\"group_by\":[<string>],\"filters\":[{\"field\":<declared field>,\"type\":<field type>,\"op\":\"eq\"|\"ne\"|\"gt\"|\"gte\"|\"lt\"|\"lte\",\"value\":<value>}],\"order_by\":{\"field\":<as_name>,\"direction\":\"asc\"|\"desc\"}|null,\"limit\":<int>|null}.\n\
+         Every `field` names a field the dataset declares, spelled exactly as the list below spells it. A metric never says where a value sits in a record: the dataset already does.\n\
+         `count` with no `field` counts records. Only a field declared as a number can be summed or averaged; grouping, filtering, counting, the smallest and the largest are open to every type.\n\
+         A dataset may mark a main date, and a metric over it is windowed by that date without asking. Give a metric its own \"time\" only to window by a different declared date: {\"time\":{\"field\":\"merged_at\"}}. Declare no grain: the picked range chooses it, and the rows come back with a `bucket` column a line widget draws on x.\n\
+         `max_range` caps the widest window a metric will answer, as an ISO duration of whole days, months or years - P30D, P6M, P1Y.\n\
          A question about the most, the largest or the top of something needs order_by on the aggregated field with direction desc, and a limit. Without it the rows come back in the grouping's order and the first row is not the largest.\n\
-         Every group_by entry must be spelled exactly like the as_name of a field in the same query.\n\
-         A rate is two fields and a third that divides them: give each half its own `when` condition, then a field with \"divide\":[numerator,denominator] and \"percent\":true where a percentage is what the question asked for. A gate pass rate is sum(value) when measure_key is gate_passed, sum(value) when measure_key is gate_runs, then those two divided.\n\
-         A column holding a person carries `person`: \"email\" for an address, \"id\" for a person id. The rows then read the name that person is known by rather than the handle a source system wrote, so group by people that way in preference to any name column on the table itself.\n\
-         A widget draws its metric's columns by their as_name, never by the raw json field: a metric whose as_name is total_lines is drawn as y total_lines.\n\
+         group_by and order_by name what the metric itself produces: an `as_name`, or `bucket` for a windowed run. Never a declared field the metric did not select.\n\
+         A rate is two fields and a third that divides them: give each half its own `when` condition, then a field with \"divide\":[numerator,denominator] and \"percent\":true where a percentage is what the question asked for.\n\
+         Where a declared field holds a person the rows already read the name that person is known by, so group by that field rather than by any other name in the record.\n\
+         A widget draws its metric's columns by their as_name: a metric whose as_name is total_lines is drawn as y total_lines.\n\
          A widget is one of: {\"type\":\"table\",\"metric\":<metric name>,\"columns\":[<string>]}; {\"type\":\"line\"|\"bar\"|\"area\",\"metric\":<metric name>,\"x\":<string>,\"y\":<string>}; {\"type\":\"stat\",\"metric\":<metric name>,\"value\":<string>,\"label\":<string>}; {\"type\":\"pie\",\"metric\":<metric name>,\"label\":<string>,\"value\":<string>}.\n\
          Pick the one that answers the question: a count per category is a bar, a count over time is a line, a running total is an area, a single number is a stat, a share of a total is a pie, and anything with several columns worth reading is a table.\n\
          A dashboard is {\"title\":<string>,\"items\":[<item>]}, drawn top to bottom. An item is {\"widget\":<widget name>}, {\"heading\":<string>} for a section title over the widgets that follow, or {\"text\":<string>} for a line saying what a number means or leaves out. Group the widgets under headings when a board holds more than a handful.\n",
@@ -24,11 +26,10 @@ pub(super) fn system_prompt(datasets: &str, catalogue: &Catalogue) -> String {
     prompt.push_str("\nThe datasets you may read:\n\n");
     prompt.push_str(datasets);
     prompt.push_str(
-        "\nA metric names one `dataset` and then names its declared fields: \
-         each selected field, each condition and the clock carry `field`. \
-         Group and order by the names the metric itself produces - its \
-         `as_name` values, and `bucket` for a windowed run. Ask `look_up` for a \
-         dataset you want spelled out again.\n",
+        "\nA metric names one `dataset` from this list and then names its \
+         declared fields. These are the only datasets there are, and a metric \
+         over anything else is refused. Ask `look_up` for a dataset you want \
+         spelled out again.\n",
     );
 
     if catalogue.is_empty() {

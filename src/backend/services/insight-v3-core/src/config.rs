@@ -276,11 +276,6 @@ impl ValidatedConfig {
     }
 
     /// The database gold materialises into — `dbt_project.yml` sets
-    /// `gold_database` to the same one this service reads and writes.
-    pub(crate) fn clickhouse_database(&self) -> String {
-        self.clickhouse_database.clone()
-    }
-
     /// The database holding the names people are known by.
     pub(crate) fn identity_database(&self) -> &str {
         &self.identity_database

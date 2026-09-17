@@ -18,7 +18,6 @@ use admission::IngestAdmission;
 use crate::chat::ChatClient;
 use crate::domain::definition::Definitions;
 use crate::domain::query::metric_query::MetricRunner;
-use crate::store::catalog::Catalog;
 use crate::store::dataset_tables::DatasetTables;
 use crate::store::identity::IdentityClient;
 
@@ -79,19 +78,11 @@ pub(crate) async fn require_admin(
 
 #[derive(Debug)]
 pub(crate) struct AppState {
-    warehouse: Warehouse,
+    metrics: MetricRunner,
     definitions: Arc<dyn Definitions>,
     chat: ChatClient,
     identity: IdentityClient,
     datasets: Datasets,
-}
-
-/// Everything this service reaches in the warehouse: where records land, what
-/// tables there are, what shape they have, and what runs a metric over them.
-#[derive(Debug)]
-pub(crate) struct Warehouse {
-    pub(crate) catalog: Catalog,
-    pub(crate) metrics: MetricRunner,
 }
 
 /// Everything about datasets this service reaches: their rows, the tables
@@ -178,14 +169,14 @@ impl Datasets {
 
 impl AppState {
     pub(crate) fn new(
-        warehouse: Warehouse,
+        metrics: MetricRunner,
         definitions: Arc<dyn Definitions>,
         chat: ChatClient,
         identity: IdentityClient,
         datasets: Datasets,
     ) -> Self {
         Self {
-            warehouse,
+            metrics,
             definitions,
             chat,
             identity,
@@ -198,7 +189,7 @@ impl AppState {
     }
 
     pub(crate) fn metrics(&self) -> &MetricRunner {
-        &self.warehouse.metrics
+        &self.metrics
     }
 
     pub(crate) fn chat(&self) -> &ChatClient {
@@ -210,7 +201,7 @@ impl AppState {
             self.definitions.as_ref(),
             self.datasets(),
             &self.datasets.database,
-            self.warehouse.metrics.people(),
+            self.metrics.people(),
         )
     }
 
@@ -250,8 +241,7 @@ impl AppState {
     pub(crate) fn metric_runs(&self) -> crate::domain::metric_run::MetricRuns<'_> {
         crate::domain::metric_run::MetricRuns::new(
             self.definitions.as_ref(),
-            &self.warehouse.metrics,
-            &self.warehouse.catalog,
+            &self.metrics,
             self.datasets.rows.as_ref(),
             &self.datasets.database,
         )
@@ -291,13 +281,10 @@ pub(crate) fn openapi_document() -> anyhow::Result<utoipa::openapi::OpenApi> {
         "insight",
     ));
     let state = Arc::new(AppState::new(
-        crate::api::Warehouse {
-            catalog: Catalog::new(offline.clone(), "insight".to_owned()),
-            metrics: MetricRunner::new(
-                offline,
-                crate::domain::query::metric_query::People::new("identity"),
-            ),
-        },
+        MetricRunner::new(
+            offline,
+            crate::domain::query::metric_query::People::new("identity"),
+        ),
         Arc::new(crate::store::definitions::MariaDefinitions::new(
             sea_orm::DatabaseConnection::default(),
         )),

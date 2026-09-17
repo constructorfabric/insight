@@ -4,7 +4,6 @@ use serde_json::json;
 
 use super::*;
 use crate::domain::query::metric_query::{MetricRunner, People};
-use crate::store::catalog::Catalog;
 use crate::store::definitions::memory::MemoryDefinitions;
 
 type R = Result<(), Box<dyn Error>>;
@@ -13,7 +12,6 @@ struct Fixture {
     definitions: MemoryDefinitions,
     datasets: crate::store::datasets::memory::MemoryDatasets,
     metrics: MetricRunner,
-    catalog: Catalog,
 }
 
 impl Fixture {
@@ -30,7 +28,6 @@ impl Fixture {
         let fixture = Self {
             definitions: MemoryDefinitions::new(),
             metrics: MetricRunner::new(client(), People::new("identity")),
-            catalog: Catalog::new(client(), "insight".to_owned()),
             datasets: crate::store::datasets::memory::MemoryDatasets::at(chrono::Utc::now()),
         };
 
@@ -71,7 +68,6 @@ impl Fixture {
         crate::domain::metric_run::MetricRuns::new(
             &self.definitions,
             &self.metrics,
-            &self.catalog,
             &self.datasets,
             "insight_datasets",
         )

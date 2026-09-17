@@ -12,8 +12,8 @@ use super::{CompiledQuery, FACT_ALIAS, MetricQuery, MetricQueryError, UndatedQue
 use crate::domain::kinds::dataset::declaration::BUCKET_COLUMN;
 use crate::domain::kinds::dataset::read::Form;
 use crate::domain::kinds::metric::answerable::effective_clock;
+use crate::domain::query::metric_query::TableEngine;
 use crate::domain::query::time_window::Window;
-use crate::store::catalog::TableEngine;
 
 const DEFAULT_LIMIT: u32 = 1000;
 const MAX_LIMIT: u32 = 10000;
@@ -220,6 +220,7 @@ impl MetricQuery {
         Ok(selection)
     }
 
+    #[cfg(test)]
     pub(crate) fn compile(&self, people: &People) -> Result<CompiledQuery, MetricQueryError> {
         self.compile_window(people, &Window::legacy(), TableEngine::Other, None)
     }
@@ -232,14 +233,6 @@ impl MetricQuery {
         over: Over<'_>,
     ) -> Result<CompiledQuery, MetricQueryError> {
         self.compile_window(people, window, TableEngine::Other, Some(over))
-    }
-
-    /// Whether this definition is shaped like something runnable, answered
-    /// without compiling it or reading anything.
-    pub(crate) fn check(&self) -> Result<(), MetricQueryError> {
-        let (_, table) = self.split();
-
-        self.validate_shape(table)
     }
 
     pub(crate) fn compile_window(

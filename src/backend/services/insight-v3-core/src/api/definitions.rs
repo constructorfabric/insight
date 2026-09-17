@@ -114,6 +114,7 @@ fn register_list(
         .param(query_param("offset", "integer", "Names to skip"))
         .json_response(StatusCode::OK, "One page of names, and how many match")
         .error_400(openapi)
+        .error_403(openapi)
         .error_500(openapi)
         .error_504(openapi)
         .handler(list_definitions)
@@ -151,6 +152,7 @@ fn register_kind(
         .json_request::<serde_json::Value>(openapi, "The definition body")
         .no_content_response(StatusCode::NO_CONTENT, "Definition stored")
         .error_400(openapi)
+        .error_403(openapi)
         .error_500(openapi)
         .error_504(openapi)
         .handler(put_definition)
@@ -166,6 +168,7 @@ fn register_kind(
         .param(name_param)
         .json_response(StatusCode::OK, "The definition body")
         .error_400(openapi)
+        .error_403(openapi)
         .error_404(openapi)
         .error_500(openapi)
         .error_504(openapi)
@@ -184,6 +187,7 @@ fn register_kind(
         .param(delete_param)
         .no_content_response(StatusCode::NO_CONTENT, "Definition removed")
         .error_400(openapi)
+        .error_403(openapi)
         .error_404(openapi)
         .error_500(openapi)
         .error_504(openapi)
@@ -201,6 +205,7 @@ fn register_kind(
         .json_request::<RenameRequest>(openapi, "The new name")
         .json_response(StatusCode::OK, "The new name, and what was rewritten")
         .error_400(openapi)
+        .error_403(openapi)
         .error_404(openapi)
         .error_409(openapi)
         .error_500(openapi)
@@ -262,10 +267,6 @@ pub(super) fn custom_error(error: CustomError) -> CanonicalError {
         CustomError::Run(source) => {
             tracing::error!(error = ?source, "metric query execution failed");
             CanonicalError::internal("metric query execution failed").create()
-        }
-        CustomError::Catalog(source) => {
-            tracing::error!(error = ?source, "table catalogue read failed");
-            CanonicalError::internal("table catalogue read failed").create()
         }
     }
 }

@@ -14,7 +14,6 @@ use crate::chat::ChatClient;
 use crate::config::McpConfig;
 use crate::domain::query::metric_query::{MetricRunner, People};
 use crate::mcp::test_support::Issuer;
-use crate::store::catalog::Catalog;
 use crate::store::definitions::memory::MemoryDefinitions;
 use crate::store::identity::IdentityClient;
 
@@ -33,10 +32,7 @@ fn surfaces() -> tools::CustomSurfaces {
     };
 
     let state = Arc::new(AppState::new(
-        crate::api::Warehouse {
-            catalog: Catalog::new(client(), "insight".to_owned()),
-            metrics: MetricRunner::new(client(), People::new("identity")),
-        },
+        MetricRunner::new(client(), People::new("identity")),
         Arc::new(MemoryDefinitions::new()),
         ChatClient::keyless(),
         identity,

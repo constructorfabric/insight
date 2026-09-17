@@ -2,6 +2,7 @@
 
 mod clock;
 mod compiler;
+mod engine;
 mod field;
 mod filter;
 pub(crate) mod over;
@@ -16,6 +17,7 @@ use thiserror::Error;
 use crate::domain::kinds::dataset::declaration::BUCKET_COLUMN;
 use crate::domain::query::time_window::MaximumRange;
 
+pub(crate) use engine::TableEngine;
 use field::FieldType;
 use filter::FilterBind;
 pub(crate) use people::People;
@@ -233,14 +235,6 @@ impl MetricQuery {
                 (Some(database), table)
             }
             _ => (None, &self.table),
-        }
-    }
-
-    /// The table as the query addressed it, database and all.
-    pub(crate) fn qualified(&self) -> String {
-        match self.split() {
-            (Some(database), table) => format!("{database}.{table}"),
-            (None, table) => table.to_owned(),
         }
     }
 

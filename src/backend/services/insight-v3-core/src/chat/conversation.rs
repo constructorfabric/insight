@@ -53,7 +53,7 @@ pub(super) async fn converse(
         let response = transport.send(system, &messages).await?;
 
         if let Some(look_up) = response.look_up() {
-            tracing::info!(tables = ?look_up.tables(), "the model asked what these tables hold");
+            tracing::info!(datasets = ?look_up.tables(), "the model asked what these datasets declare");
             let described = schemas.describe(look_up.tables()).await;
             messages.push(Message::assistant(response.blocks()));
             messages.push(Message::tool_result(look_up.id(), &described));

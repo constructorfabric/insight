@@ -15,10 +15,10 @@ use chrono::Utc;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+use crate::domain::query::metric_query::TableEngine;
 use crate::domain::query::metric_query::{MetricQuery, MetricRunner, People, RunResult};
 use crate::domain::query::time_window::WindowRequest;
 use crate::domain::query::undated::UndatedCount;
-use crate::store::catalog::TableEngine;
 
 const URL_VAR: &str = "INTEGRATION_TESTS_CLICKHOUSE_URL";
 

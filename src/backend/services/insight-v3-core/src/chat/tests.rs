@@ -59,13 +59,16 @@ fn a_create_intent_is_read_out_of_the_model_reply() {
     }
 }
 
+/// A body that cannot be read as a metric at all is caught here, where the
+/// repair round can still fix it. What the dataset makes of a readable metric
+/// is answered where the declaration is, which is the write and the run.
 #[test]
-fn a_metric_the_compiler_refuses_is_not_stored() {
-    let reply = r#"{"intent":"create","reply":"x","metric":{"name":"bad","body":{"table":"events`--","fields":[],"group_by":[],"filters":[]}},"widgets":[],"dashboard":null}"#;
+fn a_metric_body_that_is_not_one_is_refused_before_anything_is_stored() {
+    let reply = r#"{"intent":"create","reply":"x","metric":{"name":"bad","body":{"dataset":"commits","fields":[{"as_name":"x"}]}},"widgets":[],"dashboard":null}"#;
 
     assert!(matches!(
         Proposal::parse(reply, &people()),
-        Err(ChatError::Metric(_))
+        Err(ChatError::Json(_))
     ));
 }
 
@@ -281,7 +284,7 @@ impl Schemas for FixedSchemas {
 
 fn look_up_turn(id: &str, tables: &Value) -> Value {
     json!({ "content": [
-        { "type": "tool_use", "id": id, "name": LOOK_UP_TOOL, "input": { "tables": tables } },
+        { "type": "tool_use", "id": id, "name": LOOK_UP_TOOL, "input": { "datasets": tables } },
     ]})
 }
 
@@ -491,10 +494,10 @@ fn a_lookup_tool_is_offered() {
     let look_up = tool(LOOK_UP_TOOL);
 
     assert_eq!(
-        look_up["input_schema"]["properties"]["tables"]["type"],
+        look_up["input_schema"]["properties"]["datasets"]["type"],
         json!("array")
     );
-    assert_eq!(look_up["input_schema"]["required"], json!(["tables"]));
+    assert_eq!(look_up["input_schema"]["required"], json!(["datasets"]));
 }
 
 #[test]
@@ -534,14 +537,14 @@ fn an_answer_naming_a_dataset_the_reader_does_not_have_is_refused() {
 }
 
 #[test]
-fn a_known_table_passes_the_check() {
-    let known = ["events".to_owned()];
+fn a_dataset_the_stand_declares_passes_the_check() {
+    let known = ["commits".to_owned()];
     let reply = json!({
         "intent": "answer",
         "reply": "here",
         "query": {
-            "table": "events",
-            "fields": [{ "json": "day", "type": "string", "as_name": "day" }],
+            "dataset": "commits",
+            "fields": [{ "field": "day", "type": "string", "as_name": "day" }],
             "group_by": [],
             "filters": []
         }
@@ -554,38 +557,42 @@ fn a_known_table_passes_the_check() {
     ));
 }
 
+/// A query addressing a warehouse relation is how metrics read data before
+/// datasets. It goes back to the model with the list, so the conversation
+/// corrects it rather than the reader meeting a refusal.
 #[test]
-fn a_layer_table_passes_when_its_database_qualifies_it() {
-    let known = ["silver.class_git_commits".to_owned()];
-    let reply = json!({
-        "intent": "answer",
-        "reply": "here",
-        "query": {
-            "database": "silver",
-            "table": "class_git_commits",
-            "fields": [{ "column": "author_email", "type": "string", "as_name": "author" }],
-            "group_by": [],
-            "filters": []
-        }
-    })
-    .to_string();
-
-    assert!(matches!(
-        Proposal::checked(&reply, &known, &people()),
-        Ok(Proposal::Answer { .. })
-    ));
-}
-
-#[test]
-fn with_nothing_ingested_the_check_stands_aside() {
-    // Refusing every table when we know of none would block the chat
-    // outright on a stand whose listing failed.
+fn a_query_naming_a_table_instead_of_a_dataset_is_sent_back_for_repair() {
+    let known = ["commits".to_owned()];
     let reply = json!({
         "intent": "answer",
         "reply": "here",
         "query": {
             "table": "events",
             "fields": [{ "json": "day", "type": "string", "as_name": "day" }],
+            "group_by": [],
+            "filters": []
+        }
+    })
+    .to_string();
+
+    let refusal = Proposal::checked(&reply, &known, &people());
+
+    assert!(
+        matches!(&refusal, Err(ChatError::NoDataset { known }) if known.contains("commits")),
+        "{refusal:?}"
+    );
+}
+
+/// A stand whose dataset listing came back empty answers nothing, so a
+/// proposal over any dataset is refused rather than run against nothing.
+#[test]
+fn with_nothing_declared_every_proposal_is_refused() {
+    let reply = json!({
+        "intent": "answer",
+        "reply": "here",
+        "query": {
+            "dataset": "commits",
+            "fields": [{ "field": "day", "type": "string", "as_name": "day" }],
             "group_by": [],
             "filters": []
         }
@@ -594,7 +601,7 @@ fn with_nothing_ingested_the_check_stands_aside() {
 
     assert!(matches!(
         Proposal::checked(&reply, &[], &people()),
-        Ok(Proposal::Answer { .. })
+        Err(ChatError::UnknownDataset { .. })
     ));
 }
 
@@ -674,26 +681,6 @@ fn a_create_that_stores_nothing_is_refused() {
     assert!(matches!(
         Proposal::parse(&reply, &people()),
         Err(ChatError::EmptyCreate)
-    ));
-}
-
-#[test]
-fn an_answer_with_a_field_outside_a_selected_group_by_is_a_metric_refusal() {
-    let reply = json!({
-        "intent": "answer",
-        "reply": "x",
-        "query": {
-            "table": "events",
-            "fields": [{ "json": "day", "type": "string", "as_name": "day" }],
-            "group_by": ["not_selected"],
-            "filters": []
-        }
-    })
-    .to_string();
-
-    assert!(matches!(
-        Proposal::parse(&reply, &people()),
-        Err(ChatError::Metric(MetricQueryError::GroupBy(_)))
     ));
 }
 

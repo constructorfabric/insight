@@ -13,6 +13,7 @@ use super::datasets::{
 };
 use super::definition::{DefinitionKind, DefinitionName, DefinitionStoreError, Definitions};
 use super::kinds::dataset::declaration::Declaration;
+use super::kinds::dataset::shape;
 use super::kinds::dataset::state::{DatasetState, Operation};
 use super::kinds::dataset::validate::validate;
 use super::kinds::metric;
@@ -95,6 +96,13 @@ impl<'a> DatasetLifecycle<'a> {
         name: &DefinitionName,
         body: &Value,
     ) -> Result<Value, DatasetChangeError> {
+        // The shape first, so a body the deserialiser cannot read is answered
+        // with every place that is wrong rather than the first one it met.
+        let violations = shape::check(body);
+        if !violations.is_empty() {
+            return Err(DatasetChangeError::Invalid(violations));
+        }
+
         let declaration = read(body)?;
         let violations = validate(name.as_str(), &declaration);
         if !violations.is_empty() {

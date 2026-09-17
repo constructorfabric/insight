@@ -170,23 +170,23 @@ pub(super) fn proposal_tools() -> Vec<Value> {
     vec![
         json!({
             "name": LOOK_UP_TOOL,
-            "description": "Read the columns of tables named in the map above, before querying them. Call this whenever you do not already know a table's exact column names - guessing them is the most common way a query fails.",
+            "description": "Read what a dataset declares, before writing a metric over it. Call this whenever you do not already know a dataset's exact field names - guessing them is the most common way a metric fails.",
             "input_schema": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": ["tables"],
+                "required": ["datasets"],
                 "properties": {
-                    "tables": {
+                    "datasets": {
                         "type": "array",
                         "items": { "type": "string" },
-                        "description": "Tables as `database.table`, at most a handful at a time.",
+                        "description": "Dataset names, at most a handful at a time.",
                     },
                 },
             },
         }),
         json!({
             "name": ANSWER_TOOL,
-            "description": "Answer a question. Stores nothing. Include the query to read data; leave it out when the question is about what data exists, which the table list above already answers.",
+            "description": "Answer a question. Stores nothing. Include the query to read data; leave it out when the question is about what data exists, which the dataset list above already answers.",
             "input_schema": {
                 "type": "object",
                 "additionalProperties": false,

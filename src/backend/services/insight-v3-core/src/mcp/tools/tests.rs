@@ -10,7 +10,6 @@ use crate::api::AppState;
 use crate::chat::ChatClient;
 use crate::domain::kinds::dashboard::{HeadingItem, TextItem, WidgetItem};
 use crate::domain::query::metric_query::{MetricRunner, People};
-use crate::store::catalog::Catalog;
 use crate::store::definitions::memory::MemoryDefinitions;
 use crate::store::identity::IdentityClient;
 
@@ -53,10 +52,7 @@ fn built(datasets: crate::api::Datasets) -> CustomSurfaces {
     };
 
     let state = Arc::new(AppState::new(
-        crate::api::Warehouse {
-            catalog: Catalog::new(client(), "insight".to_owned()),
-            metrics: MetricRunner::new(client(), People::new("identity")),
-        },
+        MetricRunner::new(client(), People::new("identity")),
         Arc::new(MemoryDefinitions::new()),
         ChatClient::keyless(),
         identity,

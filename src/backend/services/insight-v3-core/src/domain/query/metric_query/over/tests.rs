@@ -175,7 +175,10 @@ fn the_records_a_window_left_out_are_counted_over_the_same_relation_as_the_rows(
     };
 
     let counted = written
-        .undated_query(crate::store::catalog::TableEngine::Other, Some(over))
+        .undated_query(
+            crate::domain::query::metric_query::TableEngine::Other,
+            Some(over),
+        )
         .unwrap_or_else(|error| panic!("the count compiles: {error}"))
         .unwrap_or_else(|| panic!("a dataset with a main date has a count"));
 

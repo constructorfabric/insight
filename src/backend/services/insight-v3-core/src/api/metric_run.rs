@@ -59,6 +59,7 @@ pub(crate) fn register_routes(
         .param(name_param)
         .json_response(StatusCode::OK, "Query result")
         .error_400(openapi)
+        .error_403(openapi)
         .error_404(openapi)
         .error_500(openapi)
         .error_504(openapi)
@@ -147,8 +148,7 @@ fn custom_error(error: CustomError) -> CanonicalError {
         CustomError::InUse { .. }
         | CustomError::Widget(_)
         | CustomError::Range(_)
-        | CustomError::Unanswerable(_)
-        | CustomError::Catalog(_) => {
+        | CustomError::Unanswerable(_) => {
             tracing::error!(%error, "running a metric produced an unrelated failure");
             CanonicalError::internal("metric query execution failed").create()
         }

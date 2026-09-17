@@ -7,11 +7,11 @@ use serde_json::Value;
 use super::{KindError, Reference};
 use crate::domain::datasets::{self, Datasets, Ready};
 use crate::domain::kinds::metric::answerable::effective_clock;
+use crate::domain::query::metric_query::TableEngine;
 use crate::domain::query::metric_query::over::Over;
 use crate::domain::query::metric_query::{MetricQuery, MetricQueryError, People};
 use crate::domain::query::time_window::{Bounds, Grain, Window};
 use crate::domain::violation::{Reason, Violation};
-use crate::store::catalog::TableEngine;
 
 /// The window a dry compilation uses: bucketed, so the bucket and the cap are
 /// exercised, and empty, so no cap can refuse it for its width.

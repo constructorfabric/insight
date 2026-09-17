@@ -10,6 +10,17 @@ use crate::domain::query::metric_query::{MetricQuery, People};
 /// nobody.
 const DATASETS_NAMED_IN_A_REFUSAL: usize = 12;
 
+/// What a proposal reads, before it is known whether the stand has it.
+#[derive(Debug)]
+enum Reads {
+    /// No query and no metric: a reply that stands on its own.
+    Nothing,
+    Dataset(String),
+    /// A metric that names no dataset, which is the shape metrics had before
+    /// datasets and is no longer one this service can run.
+    SomethingElse,
+}
+
 /// One of the two things the model can propose in reply to a chat message.
 #[derive(Debug)]
 pub(crate) enum Proposal {
@@ -30,65 +41,79 @@ pub(crate) enum Proposal {
 }
 
 impl Proposal {
-    /// [`Proposal::parse`], then refuse a dataset the reader does not have.
+    /// [`Proposal::parse`], then refuse anything the stand cannot answer.
     ///
-    /// The refusal goes back through the repair round, so the model gets the
-    /// real table list. With no known tables at all the check stands aside.
+    /// A proposal that names no dataset, or names one nobody declared, goes
+    /// back through the repair round with the list, so the model corrects it
+    /// in the conversation rather than the reader meeting a refusal.
     pub(super) fn checked(
         reply: &str,
         allowed: &[String],
         people: &People,
     ) -> Result<Self, ChatError> {
         let proposal = Self::parse(reply, people)?;
+        let known = || {
+            allowed
+                .iter()
+                .take(DATASETS_NAMED_IN_A_REFUSAL)
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
 
-        if allowed.is_empty() {
-            return Ok(proposal);
-        }
-
-        match proposal.dataset() {
-            Some(named) if !allowed.contains(&named) => Err(ChatError::UnknownDataset {
+        match proposal.reads() {
+            Reads::Nothing => Ok(proposal),
+            Reads::Dataset(named) if allowed.contains(&named) => Ok(proposal),
+            Reads::Dataset(named) => Err(ChatError::UnknownDataset {
                 dataset: named,
-                known: allowed
-                    .iter()
-                    .take(DATASETS_NAMED_IN_A_REFUSAL)
-                    .map(String::as_str)
-                    .collect::<Vec<_>>()
-                    .join(", "),
+                known: known(),
             }),
-            _ => Ok(proposal),
+            Reads::SomethingElse => Err(ChatError::NoDataset { known: known() }),
         }
     }
 
-    /// The dataset this proposal reads.
-    fn dataset(&self) -> Option<String> {
-        match self {
-            Self::Answer { query, .. } => query.as_ref()?.dataset().map(str::to_owned),
-            Self::Create { metric, .. } => {
-                let (_, body) = metric.as_ref()?;
-                body.get("dataset")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned)
+    /// What this proposal reads, which every metric must answer with a
+    /// dataset the stand declares.
+    fn reads(&self) -> Reads {
+        let body = match self {
+            Self::Answer { query, .. } => {
+                let Some(query) = query.as_ref() else {
+                    return Reads::Nothing;
+                };
+
+                return match query.dataset() {
+                    Some(named) => Reads::Dataset(named.to_owned()),
+                    None => Reads::SomethingElse,
+                };
             }
+            Self::Create { metric, .. } => {
+                let Some((_, body)) = metric.as_ref() else {
+                    return Reads::Nothing;
+                };
+                body
+            }
+        };
+
+        match body.get("dataset").and_then(Value::as_str) {
+            Some(named) => Reads::Dataset(named.to_owned()),
+            None => Reads::SomethingElse,
         }
     }
 
-    /// Strips any prose or code fence around the JSON object, deserializes on
-    /// `intent`, and compiles every query and every proposed metric with
-    /// [`MetricQuery::compile`] — a refusal is [`ChatError::Metric`], and
-    /// nothing runs or is stored.
+    /// Strips any prose or code fence around the JSON object and deserializes
+    /// on `intent`.
+    ///
+    /// A query is not compiled here: compiling one over a dataset needs the
+    /// declaration, which the run and the write both read. What this catches
+    /// is a reply that is not a proposal at all.
     pub(super) fn parse(reply: &str, people: &People) -> Result<Self, ChatError> {
         let wire: ProposalWire = serde_json::from_str(extract_json_object(reply))?;
 
         Ok(match wire {
-            ProposalWire::Answer { reply, query } => {
-                if let Some(query) = query.as_ref().filter(|query| query.dataset().is_none()) {
-                    query.compile(people)?;
-                }
-                Self::Answer {
-                    reply: as_prose(reply),
-                    query,
-                }
-            }
+            ProposalWire::Answer { reply, query } => Self::Answer {
+                reply: as_prose(reply),
+                query,
+            },
             ProposalWire::Create {
                 reply,
                 metric,
@@ -102,7 +127,7 @@ impl Proposal {
                 Self::Create {
                     reply: as_prose(reply),
                     metric: metric
-                        .map(|named| compile_named_metric(named, people))
+                        .map(|named| readable_metric(named, people))
                         .transpose()?,
                     widgets: widgets.into_iter().map(NamedBody::into_pair).collect(),
                     dashboard: dashboard.map(NamedBody::into_pair),
@@ -112,11 +137,10 @@ impl Proposal {
     }
 }
 
-fn compile_named_metric(named: NamedBody, people: &People) -> Result<(String, Value), ChatError> {
-    let metric: MetricQuery = serde_json::from_value(named.body.clone())?;
-    if metric.dataset().is_none() {
-        metric.compile(people)?;
-    }
+/// A proposed metric that can at least be read as one, so the repair round
+/// hears about a malformed body rather than the write path.
+fn readable_metric(named: NamedBody, _people: &People) -> Result<(String, Value), ChatError> {
+    let _: MetricQuery = serde_json::from_value(named.body.clone())?;
 
     Ok(named.into_pair())
 }

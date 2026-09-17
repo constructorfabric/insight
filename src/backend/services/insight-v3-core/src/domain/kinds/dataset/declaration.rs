@@ -27,6 +27,9 @@ pub(crate) enum FieldType {
 }
 
 impl FieldType {
+    /// Every type a field may be declared as, as a reader writes them.
+    pub(crate) const ALL: [&'static str; 5] = ["string", "int", "float", "bool", "datetime"];
+
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::String => "a string",
@@ -57,12 +60,20 @@ pub(crate) enum FieldRole {
     Time,
 }
 
+impl FieldRole {
+    pub(crate) const ALL: [&'static str; 3] = ["dimension", "measurable", "time"];
+}
+
 /// Which handle a field carries when it holds a person.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum PersonHandle {
     Email,
     Id,
+}
+
+impl PersonHandle {
+    pub(crate) const ALL: [&'static str; 2] = ["email", "id"];
 }
 
 /// One field of a dataset, as declared.

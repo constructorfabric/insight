@@ -107,7 +107,8 @@ async fn a_declaration_that_does_not_hold_is_refused_before_any_table_is_made() 
         .await;
 
     assert!(
-        matches!(refused, Err(DatasetChangeError::Unreadable(_))),
+        matches!(&refused, Err(DatasetChangeError::Invalid(violations))
+            if violations.iter().any(|one| one.field == "fields[0].type")),
         "{refused:?}"
     );
     assert!(

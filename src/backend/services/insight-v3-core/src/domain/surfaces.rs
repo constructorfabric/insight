@@ -17,7 +17,6 @@ use crate::domain::kinds::{self, KindError, Reference};
 use crate::domain::query::metric_query::{MetricQuery, MetricQueryError, MetricRunError, People};
 use crate::domain::query::time_window::WindowError;
 use crate::domain::violation::Violation;
-use crate::store::catalog::CatalogError;
 
 #[cfg(test)]
 mod tests;
@@ -38,8 +37,6 @@ pub(crate) enum CustomError {
     Run(MetricRunError),
     #[error(transparent)]
     Store(DefinitionStoreError),
-    #[error(transparent)]
-    Catalog(CatalogError),
     #[error("dashboard time range: {0}")]
     Range(WindowError),
     #[error("no dataset named `{0}` is ready to be read")]
@@ -78,7 +75,7 @@ impl CustomError {
             | Self::DatasetNotReady(_)
             | Self::Unanswerable(_)
             | Self::Compile(_) => true,
-            Self::Run(_) | Self::Store(_) | Self::Catalog(_) | Self::Datasets(_) => false,
+            Self::Run(_) | Self::Store(_) | Self::Datasets(_) => false,
         }
     }
 }

@@ -86,6 +86,7 @@ pub(crate) fn register_routes(
         .json_request::<ChatRequest>(openapi, "The chat message")
         .json_response(StatusCode::OK, "The model's reply")
         .error_400(openapi)
+        .error_403(openapi)
         .error_500(openapi)
         .error_504(openapi)
         .handler(handle_chat)
@@ -273,9 +274,11 @@ fn chat_error(error: ChatError) -> CanonicalError {
         ChatError::Metric(source) => ChatApiError::invalid_argument()
             .with_field_violation("reply", source.to_string(), "INVALID")
             .create(),
-        ChatError::UnknownDataset { .. } => ChatApiError::invalid_argument()
-            .with_field_violation("query", error.to_string(), "INVALID")
-            .create(),
+        ChatError::UnknownDataset { .. } | ChatError::NoDataset { .. } => {
+            ChatApiError::invalid_argument()
+                .with_field_violation("query", error.to_string(), "INVALID")
+                .create()
+        }
         ChatError::TooManyLookups => {
             tracing::warn!("the model exhausted its schema lookups without answering");
             CanonicalError::internal("the model did not answer").create()

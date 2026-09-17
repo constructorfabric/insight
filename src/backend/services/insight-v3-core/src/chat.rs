@@ -89,9 +89,11 @@ pub(crate) enum ChatError {
     Metric(#[from] MetricQueryError),
     #[error("there is no dataset named `{dataset}`; the datasets are: {known}")]
     UnknownDataset { dataset: String, known: String },
+    #[error("a metric reads one of the datasets; the datasets are: {known}")]
+    NoDataset { known: String },
     #[error("a create must carry at least one metric, widget or dashboard")]
     EmptyCreate,
-    #[error("the model kept asking what tables hold instead of answering")]
+    #[error("the model kept asking what the datasets declare instead of answering")]
     TooManyLookups,
     #[error("the key was rejected upstream")]
     TokenRejected,
@@ -113,6 +115,7 @@ impl ChatError {
             Self::Json(error) => error.to_string(),
             Self::Metric(_)
             | Self::UnknownDataset { .. }
+            | Self::NoDataset { .. }
             | Self::EmptyCreate
             | Self::TooManyLookups
             | Self::TokenRejected
