@@ -11,7 +11,7 @@ use super::query::metric_query::{MetricQuery, MetricQueryError, MetricRunner, Ru
 use super::query::time_window::WindowRequest;
 use super::query::undated::UndatedCount;
 use super::surfaces::CustomError;
-use crate::store::catalog::{Catalog, TableEngine, TableSchema};
+use crate::store::catalog::{Catalog, TableEngine};
 
 /// Everything a metric needs to answer: the definition it is stored as, the
 /// warehouse that holds the table, and the catalogue that says how.
@@ -204,9 +204,5 @@ impl<'a> MetricRuns<'a> {
         };
 
         self.metrics.undated(&query).await.map_err(CustomError::Run)
-    }
-
-    pub(crate) async fn tables(&self) -> Result<Vec<TableSchema>, CustomError> {
-        self.catalog.tables().await.map_err(CustomError::Catalog)
     }
 }

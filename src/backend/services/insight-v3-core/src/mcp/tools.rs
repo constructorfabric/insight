@@ -5,7 +5,7 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerInfo};
 use rmcp::{ServerHandler, tool, tool_handler, tool_router};
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::api::AppState;
@@ -14,7 +14,6 @@ use crate::domain::kinds::dashboard::Item;
 use crate::domain::metric_run::MetricRuns;
 use crate::domain::query::time_window::WindowRequest;
 use crate::domain::surfaces::{CustomError, Surfaces};
-use crate::store::catalog::{Layer, TableSchema};
 
 #[cfg(test)]
 mod tests;
@@ -87,20 +86,6 @@ pub(crate) struct PutRequest {
     pub(crate) name: String,
     /// The definition body.
     pub(crate) body: Value,
-}
-
-#[derive(Debug, Serialize)]
-struct TableEntry {
-    database: String,
-    table: String,
-    layer: &'static str,
-    columns: Vec<ColumnEntry>,
-}
-
-#[derive(Debug, Serialize)]
-struct ColumnEntry {
-    name: String,
-    r#type: String,
 }
 
 #[derive(Clone)]
@@ -237,7 +222,7 @@ impl CustomSurfaces {
 
     #[tool(
         name = "put_metric",
-        description = "Creates or replaces a metric: a declarative query over an ingested table. The body names the table and the fields to read, for example {\"table\": \"events\", \"fields\": [{\"json\": \"actor\", \"type\": \"string\", \"as_name\": \"actor\"}, {\"json\": \"actor\", \"type\": \"string\", \"agg\": \"count\", \"as_name\": \"total\"}], \"group_by\": [\"actor\"]}. A field reads a typed column of the table (`column`), a key inside the row's `raw_data` payload (`json`), or a key inside any JSON column the table carries (`column` and `json` together, as in {\"column\": \"field_values_json\", \"json\": \"name\"}). A `json` key may be a dotted path into nested objects, such as \"field.name\". When the payload is an array of objects, add `where` - one filter, shaped like the others - to say which element the field means: {\"column\": \"field_values_json\", \"json\": \"name\", \"type\": \"string\", \"as_name\": \"status\", \"where\": {\"json\": \"field.name\", \"type\": \"string\", \"op\": \"eq\", \"value\": \"Status\"}}. `type` is string, int or float; `agg` is count, sum, avg, min or max. Add `time` to say which timestamp a reader may window by - {\"time\": {\"column\": \"occurred_at\"}} for a date column, or {\"json\": \"committed_at\"} for one inside the payload - and the run gains a `bucket` column ordered oldest first. `max_range` caps the widest window it will answer, as an ISO duration such as \"P1Y\". Optional `database`, `filters`, `order_by` and `limit`. Call list_tables first so the table and columns exist."
+        description = "Creates or replaces a metric: a declarative query over one dataset. The body names the dataset and the fields to read, for example {\"dataset\": \"commits\", \"fields\": [{\"field\": \"author\", \"type\": \"string\", \"as_name\": \"author\"}, {\"field\": \"lines\", \"type\": \"int\", \"agg\": \"sum\", \"as_name\": \"total\"}], \"group_by\": [\"author\"]}. Every `field` names a field the dataset declares; `group_by` and `order_by` name what this metric produces - an `as_name`, or `bucket` for a windowed run. `agg` is count, sum, avg, min or max, and only a number is summed or averaged. `count` alone counts the rows and names no field. Add `time` to window by a field other than the dataset's own main date: {\"time\": {\"field\": \"merged\"}}. `max_range` caps the widest window it will answer, as an ISO duration such as \"P1Y\". Optional `filters`, `order_by` and `limit`. Call list_datasets first so the dataset and its fields exist."
     )]
     async fn put_metric(&self, Parameters(request): Parameters<PutRequest>) -> CallToolResult {
         self.write(DefinitionKind::Metric, request).await
@@ -313,24 +298,13 @@ impl CustomSurfaces {
     }
 
     #[tool(
-        name = "list_tables",
-        description = "Every database and table this server can see, each with its columns and the layer it belongs to. Call this before writing a metric, so the metric names a table and columns that exist."
+        name = "list_datasets",
+        description = "Every dataset this server can read, with what each of its fields holds and which records count as one. Call this before writing a metric, so the metric names a dataset and fields that exist. Only an administrator declares a dataset; this server cannot."
     )]
-    async fn list_tables(&self) -> CallToolResult {
-        let tables = match self.metric_runs().tables().await {
-            Ok(tables) => tables,
-            Err(error) => return tool_error(&error),
-        };
+    async fn list_datasets(&self) -> CallToolResult {
+        let described = self.state.assistant().briefing().await;
 
-        let entries: Vec<TableEntry> = tables.iter().map(table_entry).collect();
-
-        match serde_json::to_value(&entries) {
-            Ok(value) => CallToolResult::structured(json!({"tables": value})),
-            Err(error) => {
-                tracing::error!(%error, "the table catalogue could not be encoded");
-                refuse("the catalogue was read but could not be encoded")
-            }
-        }
+        CallToolResult::structured(json!({ "datasets": described.datasets }))
     }
 }
 
@@ -343,39 +317,14 @@ impl ServerHandler for CustomSurfaces {
                     .with_title("Insight custom surfaces"),
             )
             .with_instructions(
-                "Author the metrics, widgets and dashboards the portal reads. Call list_tables \
-                 to learn what data exists, put_metric to define a query over it, run_metric to \
-                 see the rows it yields, then put_widget to draw those rows and put_dashboard to \
-                 hold the widgets. A widget names its metric's columns by their as_name, and a \
-                 definition still in use cannot be deleted until its dependents are.",
+                "Author the metrics, widgets and dashboards the portal reads. Call \
+                 list_datasets to learn what data exists, put_metric to define a query over one \
+                 dataset, run_metric to see the rows it yields, then put_widget to draw those \
+                 rows and put_dashboard to hold the widgets. A metric names a dataset and its \
+                 declared fields; a widget names its metric's columns by their as_name; and a \
+                 definition still in use cannot be deleted until its dependents are. Datasets \
+                 themselves are declared by an administrator, not here.",
             )
-    }
-}
-
-fn table_entry(schema: &TableSchema) -> TableEntry {
-    TableEntry {
-        database: schema.database.clone(),
-        table: schema.table.clone(),
-        layer: layer_name(schema.layer),
-        columns: schema
-            .columns
-            .iter()
-            .map(|(name, kind)| ColumnEntry {
-                name: name.clone(),
-                r#type: kind.clone(),
-            })
-            .collect(),
-    }
-}
-
-fn layer_name(layer: Layer) -> &'static str {
-    match layer {
-        Layer::Bronze => "bronze",
-        Layer::Silver => "silver",
-        Layer::Gold => "gold",
-        Layer::Identity => "identity",
-        Layer::Ingest => "ingest",
-        Layer::Other => "other",
     }
 }
 

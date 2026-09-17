@@ -128,8 +128,8 @@ fn the_server_announces_exactly_the_ten_custom_surface_tools() {
             "arrange_dashboard",
             "delete_definition",
             "get_definition",
+            "list_datasets",
             "list_definitions",
-            "list_tables",
             "put_dashboard",
             "put_metric",
             "put_widget",
@@ -160,7 +160,7 @@ fn the_instructions_point_a_client_at_the_discovery_tool_first() {
     let Some(instructions) = info.instructions else {
         panic!("the server carries instructions");
     };
-    assert!(instructions.contains("list_tables"), "{instructions}");
+    assert!(instructions.contains("list_datasets"), "{instructions}");
 }
 
 #[tokio::test]
@@ -371,10 +371,12 @@ async fn a_metric_that_declares_a_clock_and_a_cap_is_stored() -> R {
 }
 
 #[tokio::test]
-async fn a_catalogue_that_cannot_be_read_is_a_tool_error_rather_than_a_panic() {
-    let result = surfaces().list_tables().await;
+async fn with_nothing_declared_the_listing_says_who_declares_a_dataset() {
+    let result = surfaces().list_datasets().await;
 
-    assert_eq!(result.is_error, Some(true), "{result:?}");
+    assert_eq!(result.is_error, Some(false), "{result:?}");
+    let said = format!("{result:?}");
+    assert!(said.contains("administrator"), "{said}");
 }
 
 #[tokio::test]

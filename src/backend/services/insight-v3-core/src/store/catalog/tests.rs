@@ -39,7 +39,7 @@ fn catalog_over(rows: Vec<ColumnFixture>) -> (Mock, Catalog) {
 
 async fn listing(catalog: &Catalog) -> Vec<TableSchema> {
     catalog
-        .tables()
+        .read(<[TableSchema]>::to_vec)
         .await
         .unwrap_or_else(|error| panic!("the catalogue should list: {error}"))
 }
@@ -142,7 +142,7 @@ async fn a_second_listing_inside_the_ttl_asks_clickhouse_nothing() {
 
     let first = listing(&catalog).await;
     let second = catalog
-        .tables()
+        .read(<[TableSchema]>::to_vec)
         .await
         .unwrap_or_else(|error| panic!("the cached listing should not query again: {error}"));
 

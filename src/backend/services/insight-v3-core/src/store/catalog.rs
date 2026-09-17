@@ -120,11 +120,6 @@ impl Catalog {
         }
     }
 
-    /// Every table the connected user can see, cached for `CACHE_TTL`.
-    pub(crate) async fn tables(&self) -> Result<Vec<TableSchema>, CatalogError> {
-        self.read(<[TableSchema]>::to_vec).await
-    }
-
     /// Which engine holds one table, and `Other` for a table this catalogue
     /// has never heard of.
     pub(crate) async fn engine_of(&self, name: &str) -> Result<TableEngine, CatalogError> {
