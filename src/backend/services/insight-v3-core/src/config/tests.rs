@@ -38,6 +38,67 @@ fn required_values_must_not_be_empty() {
     }
 }
 
+/// The datasets database is a name this service writes into SQL and the one
+/// place it creates and drops tables, so it is a plain identifier of its own.
+#[test]
+fn the_datasets_database_is_an_identifier_apart_from_the_warehouse() {
+    let cases = [
+        ("insight_datasets", true),
+        ("ds2", true),
+        ("", false),
+        ("insight datasets", false),
+        ("insight`datasets", false),
+        ("insight-datasets", false),
+        ("insight", false),
+    ];
+
+    for (name, accepted) in cases {
+        let mut config = valid_config();
+        config.datasets_database = name.to_owned();
+
+        assert_eq!(
+            config.validate().is_ok(),
+            accepted,
+            "datasets_database {name:?} should be accepted: {accepted}"
+        );
+    }
+}
+
+#[test]
+fn the_dataset_settings_stay_within_their_bounds() {
+    let previews = [(0, false), (1, true), (500, true), (501, false)];
+    for (rows, accepted) in previews {
+        let mut config = valid_config();
+        config.dataset_preview_rows = rows;
+
+        assert_eq!(
+            config.validate().is_ok(),
+            accepted,
+            "dataset_preview_rows {rows} should be accepted: {accepted}"
+        );
+    }
+
+    let leases = [(0, false), (1, true), (3600, true), (3601, false)];
+    for (seconds, accepted) in leases {
+        let mut config = valid_config();
+        config.dataset_lease_secs = seconds;
+
+        assert_eq!(
+            config.validate().is_ok(),
+            accepted,
+            "dataset_lease_secs {seconds} should be accepted: {accepted}"
+        );
+    }
+}
+
+#[test]
+fn a_migration_refuses_the_same_datasets_database_as_a_served_request() {
+    let mut config = valid_config();
+    config.datasets_database = "insight".to_owned();
+
+    assert!(config.validate_stores().is_err());
+}
+
 #[test]
 fn chat_model_must_not_be_empty() {
     let mut config = valid_config();

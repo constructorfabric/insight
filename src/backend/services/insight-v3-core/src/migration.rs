@@ -1,20 +1,21 @@
+use clickhouse::sql::Identifier;
 use thiserror::Error;
 
-const CREATE_RAW_DATA_TABLE: &str = "CREATE TABLE IF NOT EXISTS raw_data (
-    id UUID,
-    table_name String,
-    raw_data String,
-    received_at DateTime64(3, 'UTC')
-)
-ENGINE = MergeTree
-ORDER BY (table_name, received_at, id)";
+/// The database every dataset's table lives in, and nothing else does.
+///
+/// A dataset's table is created when the dataset is, so the database has to
+/// stand before the first declaration - and nothing else this service does
+/// would make it.
+const CREATE_DATASETS_DATABASE: &str = "CREATE DATABASE IF NOT EXISTS ?";
 
-/// The ingest landing table. The definitions used to be created here too;
-/// they live in `MariaDB` now — see [`crate::domain::definition`].
-pub(crate) async fn migrate(client: &insight_clickhouse::Client) -> Result<(), MigrationError> {
+pub(crate) async fn migrate(
+    client: &insight_clickhouse::Client,
+    datasets_database: &str,
+) -> Result<(), MigrationError> {
     client
         .inner()
-        .query(CREATE_RAW_DATA_TABLE)
+        .query(CREATE_DATASETS_DATABASE)
+        .bind(Identifier(datasets_database))
         .execute()
         .await?;
 
@@ -22,7 +23,7 @@ pub(crate) async fn migrate(client: &insight_clickhouse::Client) -> Result<(), M
 }
 
 #[derive(Debug, Error)]
-#[error("failed to migrate the raw_data table")]
+#[error("failed to create the datasets database")]
 pub(crate) struct MigrationError(#[from] clickhouse::error::Error);
 
 #[cfg(test)]
@@ -32,21 +33,17 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn migration_creates_the_raw_data_table() {
+    async fn the_migration_makes_the_datasets_database_and_nothing_in_the_warehouse() {
         let mock = Mock::new();
         let recording = mock.add(handlers::record_ddl());
         let client =
             insight_clickhouse::Client::new(insight_clickhouse::Config::new(mock.url(), "insight"));
 
-        migrate(&client)
+        migrate(&client, "insight_datasets")
             .await
             .unwrap_or_else(|error| panic!("migration must succeed: {error}"));
         let ddl = recording.query().await;
 
-        assert!(ddl.contains("CREATE TABLE IF NOT EXISTS raw_data"));
-        assert!(ddl.contains("table_name String"));
-        assert!(ddl.contains("raw_data String"));
-        assert!(ddl.contains("received_at DateTime64(3, 'UTC')"));
-        assert!(ddl.contains("ORDER BY (table_name, received_at, id)"));
+        assert_eq!(ddl, "CREATE DATABASE IF NOT EXISTS `insight_datasets`");
     }
 }

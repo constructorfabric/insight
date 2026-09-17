@@ -112,8 +112,8 @@ impl RestApiCapability for InsightV3CoreGear {
 pub(crate) async fn run_migrate(app: &toolkit::bootstrap::AppConfig) -> anyhow::Result<()> {
     let config = crate::config::ValidatedConfig::stores_from_app_config(app)?;
 
-    crate::migration::migrate(config.clickhouse()).await?;
-    tracing::info!("raw_data migration complete");
+    crate::migration::migrate(config.clickhouse(), config.datasets_database()).await?;
+    tracing::info!("datasets database migration complete");
 
     let db = sea_orm::Database::connect(config.database_url()).await?;
     <crate::store::definitions::migration::Migrator as sea_orm_migration::MigratorTrait>::up(

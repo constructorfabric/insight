@@ -321,6 +321,9 @@ clickhouse:
     # Adoption events (#2573). Here rather than in the migration alone because
     # the presentation_ro grant references it before that migration runs.
     - product_usage
+    # Dataset record tables (insight-v3-core). The service's migrate step
+    # creates it too; listed so the database stands before the first deploy.
+    - insight_datasets
   # When true (default), a post-install/post-upgrade Hook Job
   # (clickhouse-migrate-job) applies the gold-view migrations
   # (src/ingestion/scripts/migrations/*.sql) + ADR-0007 placeholders against

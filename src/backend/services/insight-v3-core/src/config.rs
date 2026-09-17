@@ -111,12 +111,17 @@ impl Default for GearConfig {
 /// migration that cannot serve a request should still run.
 pub(crate) struct StoreConfig {
     clickhouse: insight_clickhouse::Client,
+    datasets_database: String,
     database_url: String,
 }
 
 impl StoreConfig {
     pub(crate) fn clickhouse(&self) -> &insight_clickhouse::Client {
         &self.clickhouse
+    }
+
+    pub(crate) fn datasets_database(&self) -> &str {
+        &self.datasets_database
     }
 
     pub(crate) fn database_url(&self) -> &str {
@@ -315,6 +320,7 @@ impl GearConfig {
     pub(crate) fn validate_stores(self) -> Result<StoreConfig, ConfigError> {
         require_non_empty("clickhouse_url", &self.clickhouse_url)?;
         require_non_empty("clickhouse_database", &self.clickhouse_database)?;
+        validate_datasets_database(&self.datasets_database, &self.clickhouse_database)?;
         require_non_empty("database_url", &self.database_url)?;
         validate_credentials(
             self.clickhouse_user.as_deref(),
@@ -338,6 +344,7 @@ impl GearConfig {
                     ),
                 },
             ),
+            datasets_database: self.datasets_database,
             database_url: self.database_url,
         })
     }
@@ -346,7 +353,7 @@ impl GearConfig {
         require_non_empty("clickhouse_url", &self.clickhouse_url)?;
         require_non_empty("clickhouse_database", &self.clickhouse_database)?;
         require_non_empty("identity_database", &self.identity_database)?;
-        require_non_empty("datasets_database", &self.datasets_database)?;
+        validate_datasets_database(&self.datasets_database, &self.clickhouse_database)?;
         if self.dataset_preview_rows == 0 || self.dataset_preview_rows > MAX_DATASET_PREVIEW_ROWS {
             return Err(ConfigError::PreviewRows(MAX_DATASET_PREVIEW_ROWS));
         }
@@ -418,6 +425,24 @@ impl IngestToken {
     }
 }
 
+/// The datasets database is interpolated into SQL as a name and is the one
+/// place this service creates and drops tables, so it has to be a plain
+/// identifier and it has to be a database of its own.
+fn validate_datasets_database(datasets: &str, warehouse: &str) -> Result<(), ConfigError> {
+    let is_identifier = !datasets.is_empty()
+        && datasets
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '_');
+    if !is_identifier {
+        return Err(ConfigError::DatasetsDatabaseName);
+    }
+    if datasets == warehouse {
+        return Err(ConfigError::DatasetsDatabaseIsTheWarehouse);
+    }
+
+    Ok(())
+}
+
 fn require_non_empty(field: &'static str, value: &str) -> Result<(), ConfigError> {
     if value.trim().is_empty() {
         return Err(ConfigError::Empty(field));
@@ -477,6 +502,10 @@ pub(crate) enum ConfigError {
     PreviewRows(u64),
     #[error("gears.insight-v3-core.config.dataset_lease_secs must be 1 to {0}")]
     LeaseSecs(i64),
+    #[error("gears.insight-v3-core.config.datasets_database must be letters, digits or underscore")]
+    DatasetsDatabaseName,
+    #[error("gears.insight-v3-core.config.datasets_database must not be the clickhouse_database")]
+    DatasetsDatabaseIsTheWarehouse,
 }
 
 #[derive(Debug, Error)]
