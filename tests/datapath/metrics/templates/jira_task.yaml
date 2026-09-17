@@ -48,8 +48,8 @@ templates:
   # ── Issues closed by Alice ───────────────────────────────────────────────
   alice_task_1:
     $ref: "#/templates/jira_issue"
-    id: T-1
-    jira_id: T-1
+    id: "10001"
+    jira_id: "10001"
     unique_key: jira-test-T-1
     id_readable: TST-1
     created: "2026-01-15T09:00:00"
@@ -57,8 +57,8 @@ templates:
 
   alice_task_2:
     $ref: "#/templates/jira_issue"
-    id: T-2
-    jira_id: T-2
+    id: "10002"
+    jira_id: "10002"
     unique_key: jira-test-T-2
     id_readable: TST-2
     created: "2026-01-15T11:30:00"
@@ -74,13 +74,14 @@ templates:
 
   # ── Changelog (bronze_jira.jira_issue_history) ───────────────────────────
   # jira__changelog_items explodes `items` (JSON array of field changes). Each
-  # issue records the status transition into Closed on 2026-01-15; jira-enrich
-  # reverse-applies it onto the snapshot (Closed) so final_close_at = this event.
+  # issue records the status transition into Closed on 2026-01-15; the derived
+  # journal reads its `to` side as the state after it, so final_close_at = this event.
   jira_history:
     unique_key: null
     source_id: jira-test
     tenant_id: "{{ tenant }}"
     id_readable: null
+    jira_id: null
     changelog_id: null
     created_at: ""
     author_account_id: alice-jira-acct
@@ -93,6 +94,7 @@ templates:
   alice_task_1_closed:
     $ref: "#/templates/jira_history"
     id_readable: TST-1
+    jira_id: "10001"
     changelog_id: "10001"
     unique_key: jira-test-TST-1-10001
     created_at: "2026-01-15T14:00:00.000+0000"
@@ -101,6 +103,7 @@ templates:
   alice_task_2_closed:
     $ref: "#/templates/jira_history"
     id_readable: TST-2
+    jira_id: "10002"
     changelog_id: "10002"
     unique_key: jira-test-TST-2-10002
     created_at: "2026-01-15T16:30:00.000+0000"
@@ -151,8 +154,8 @@ templates:
     unique_key: jira-test-field-duedate
 
   # Numeric time-tracking fields (drive estimation_accuracy). Jira tracks them in
-  # seconds; jira-enrich only sees them via the changelog (the issue snapshot does
-  # not carry timeoriginalestimate / timespent), so a test must set them there.
+  # seconds; the issue fixture does not carry timeoriginalestimate / timespent, so
+  # a test sets them through the changelog.
   field_timeoriginalestimate:
     $ref: "#/templates/jira_field"
     field_id: timeoriginalestimate
@@ -175,6 +178,7 @@ templates:
     source_id: jira-test
     worklog_id: null
     id_readable: null
+    jira_id: null
     author_account_id: alice-jira-acct
     started: ""
     time_spent_seconds: null

@@ -218,23 +218,17 @@ ingestion:
   # `serviceaccount "argo-workflow" not found`.
   templates:
     enabled: true
-  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.09.12.10.56-70368e0" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
+  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.09.16.19.33-6243243" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
   # The sample-data seeder's image, for TEST stands only. Nothing in the chart
   # runs it: `src/ingestion/tools/seed/seed-stand.sh` reads this value to render
   # a one-shot Job. Its own image rather than the toolbox on purpose — the
   # toolbox runs migrations on real stands and does not carry demo data. Empty
   # (the default) means the stand cannot be seeded until an operator names an
   # image, either here or with the script's `--image` flag.
-  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.09.12.10.56-70368e0" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
-  # airbyte-sync poll-job tunables — see templates/ingestion/airbyte-sync.yaml.
-  # The poll loop replaces a wall-clock deadline with a progress watchdog:
-  # it tracks (status, bytesEmitted, recordsEmitted, stateMessagesEmitted)
-  # on the latest attempt and resets a timer whenever any of those move.
-  # If the timer exceeds `idleThresholdSeconds`, the step exits with a
-  # "no-progress" failure (exit 2), distinct from SIGTERM (exit 143).
+  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.09.16.19.33-6243243" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
   airbyteSync:
     pollIntervalSeconds: 30
-    idleThresholdSeconds: 1800 # 30 min without any byte/record/state movement → fail
+    statusUnreadableThresholdSeconds: 1800
   # jira-enrich (templates/ingestion/tt-enrich-jira-run.yaml). Phase 1 of the
   # binary holds the whole reference set in memory — field metadata, every
   # issue snapshot, and the last known value of each field it must diff
@@ -334,6 +328,26 @@ clickhouse:
   # CH migrations out-of-band (e.g. a managed-warehouse change process).
   # The Job also no-ops if an overlay explicitly clears ingestion.toolboxImage.
   runMigrations: true
+  # Operator-authored mapping seed for config.field_value_map (and
+  # config.field_value_defaults from defaults.tsv), applied by a post-install/
+  # post-upgrade Hook Job (weight 300, after clickhouse-migrate) from a TSV
+  # ConfigMap the gitops `field-value-map` target builds out of
+  # environments/<env>/clickhouse/field-value-map/. Insert-only: a key that
+  # already carries a decision is never rewritten, and an empty or absent
+  # bundle is a no-op.
+  fieldValueMap:
+    enabled: false
+    # Pre-created ConfigMap (empty = <insight.fullname>-field-value-map, which
+    # is what the gitops `field-value-map` target creates). Set it explicitly
+    # under a fullnameOverride, as keycloakConfig.realmsConfigMap is set.
+    configMap: ""
+    # `recorded_by` stamp on the rows this loader writes, so a seeded decision
+    # is distinguishable from a hand-authored one.
+    recordedBy: "gitops"
+    # Per-request ClickHouse timeout, seconds. Bounds the hook: a stalled
+    # endpoint fails the Job instead of holding the release open.
+    timeoutSeconds: 30
+    resources: {}
 # ─── MariaDB ─────────────────────────────────────────────────────────────
 mariadb:
   host: "" # MUST be set (external L2 MariaDB host)

@@ -75,9 +75,10 @@ pub(crate) struct RunRequest {
     /// `P30D`, `PMC` (the last complete calendar month), `PQC` (the last
     /// complete calendar quarter), `P1Y`, `inf` (every dated row), or an
     /// ISO 8601 date interval such as `2026-08-01/2026-09-01`, whose end
-    /// date is excluded. Relative windows count back from the newest row
-    /// the metric can see, not from now. Omit it to read every row, as a
-    /// run with no options always has.
+    /// date is excluded. Relative windows count back from now, so one that
+    /// starts after the newest row answers no rows rather than sliding back
+    /// to the last day that has them. Omit it to read every row, as a run
+    /// with no options always has.
     pub(crate) range: Option<String>,
     /// Whether the answer comes one row per time bucket. `false` answers one
     /// row for the whole window, which is what a total is. `true` by
@@ -249,7 +250,7 @@ impl CustomSurfaces {
 
     #[tool(
         name = "put_metric",
-        description = "Creates or replaces a metric: a declarative query over an ingested table. The body names the table and the fields to read, for example {\"table\": \"events\", \"fields\": [{\"json\": \"actor\", \"type\": \"string\", \"as_name\": \"actor\"}, {\"json\": \"actor\", \"type\": \"string\", \"agg\": \"count\", \"as_name\": \"total\"}], \"group_by\": [\"actor\"]}. A field reads either a key inside the row's JSON payload (`json`) or a typed column of the table (`column`); `type` is string, int or float; `agg` is count, sum, avg, min or max. Add `time` to say which timestamp a reader may window by - {\"time\": {\"column\": \"occurred_at\"}} for a date column, or {\"json\": \"committed_at\"} for one inside the payload - and the run gains a `bucket` column ordered oldest first. `max_range` caps the widest window it will answer, as an ISO duration such as \"P1Y\". Optional `database`, `filters`, `order_by` and `limit`. Call list_tables first so the table and columns exist."
+        description = "Creates or replaces a metric: a declarative query over an ingested table. The body names the table and the fields to read, for example {\"table\": \"events\", \"fields\": [{\"json\": \"actor\", \"type\": \"string\", \"as_name\": \"actor\"}, {\"json\": \"actor\", \"type\": \"string\", \"agg\": \"count\", \"as_name\": \"total\"}], \"group_by\": [\"actor\"]}. A field reads a typed column of the table (`column`), a key inside the row's `raw_data` payload (`json`), or a key inside any JSON column the table carries (`column` and `json` together, as in {\"column\": \"field_values_json\", \"json\": \"name\"}). A `json` key may be a dotted path into nested objects, such as \"field.name\". When the payload is an array of objects, add `where` - one filter, shaped like the others - to say which element the field means: {\"column\": \"field_values_json\", \"json\": \"name\", \"type\": \"string\", \"as_name\": \"status\", \"where\": {\"json\": \"field.name\", \"type\": \"string\", \"op\": \"eq\", \"value\": \"Status\"}}. `type` is string, int or float; `agg` is count, sum, avg, min or max. Add `time` to say which timestamp a reader may window by - {\"time\": {\"column\": \"occurred_at\"}} for a date column, or {\"json\": \"committed_at\"} for one inside the payload - and the run gains a `bucket` column ordered oldest first. `max_range` caps the widest window it will answer, as an ISO duration such as \"P1Y\". Optional `database`, `filters`, `order_by` and `limit`. Call list_tables first so the table and columns exist."
     )]
     async fn put_metric(&self, Parameters(request): Parameters<PutRequest>) -> CallToolResult {
         self.write(ToolKind::Metric, request).await

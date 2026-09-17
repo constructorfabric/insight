@@ -11,8 +11,8 @@ description: >
   Fixture:
     * erin, 2026-10-01, acme/api: sizes 10, 30, 204 — an odd pool whose median
       is 30, plus a merge commit (1000) that must contribute nothing.
-    * erin, 2026-10-02, acme/web: sizes 4, 6 — an even pool; ClickHouse
-      quantileExact(0.5) takes the UPPER middle element, so the day reads 6.
+    * erin, 2026-10-02, acme/web: sizes 4, 6 — an even pool, so the day reads
+      their average, 5, which is a size no commit had.
     * dave, 2026-10-01, acme/api: one commit whose bronze row carries no
       stats at all. Staging projects absent stats to zero, so the commit
       enters the median as 0 rather than abstaining.

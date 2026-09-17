@@ -13,16 +13,12 @@
         'max_bytes_before_external_group_by': 2000000000,
         'max_bytes_before_external_sort': 2000000000,
     },
-    tags=['staging', 'jira']
+    tags=['staging', 'jira', 'silver:class_task_field_history']
 ) }}
 
--- The per-(issue x field x event) journal, derived in dbt.
---
--- This is the replacement for the Rust `jira-enrich` output. It is materialized
--- under its OWN name rather than over `staging.jira__task_field_history` so the
--- two can be compared row for row on a real warehouse before the binary is
--- retired; the cutover is a rename plus dropping the Rust arm from
--- `class_task_field_history`. See
+-- The per-(issue x field x event) journal, derived in dbt. The Jira producer of
+-- `silver.class_task_field_history`, joined there by the availability and
+-- lifecycle arms and by the GitHub arm. See
 -- `connectors/task-tracking/jira/specs/FIELD-HISTORY-IN-DBT.md`.
 --
 -- Six kinds of row, matching the contract the class consumers rely on (§10):
@@ -75,7 +71,8 @@ issues AS (
         COALESCE(toString(i.id_readable), '')             AS id_readable,
         COALESCE(parseDateTime64BestEffortOrNull(i.created, 3),
                  toDateTime64(0, 3))                      AS created_at,
-        i.reporter_id                                     AS reporter_id
+        i.reporter_id                                     AS reporter_id,
+        toDateTime64(i._airbyte_extracted_at, 3)          AS observed_at
     FROM {{ source('bronze_jira', 'jira_issue') }} AS i
     INNER JOIN issue_winner AS w ON i._airbyte_raw_id = w.raw_id
 ),
@@ -106,6 +103,25 @@ changelog_items AS (
         assumeNotNull(ci.jira_id)                         AS issue_id
     FROM {{ ref('jira__changelog_items') }} AS ci
     WHERE ci.jira_id IS NOT NULL
+),
+
+-- The newest moment bronze received anything about an issue: its own row or
+-- any of its changelog entries. Every journal row of the issue carries it as
+-- `_version`, so a rebuild over unchanged bronze reproduces the same versions
+-- and the class's incremental filter leaves the issue alone; an issue that
+-- received anything has all its rows re-emitted under the new version. Every
+-- row's issue is in one of the two inputs, so no row is left without one.
+issue_freshness AS (
+    SELECT
+        insight_source_id,
+        issue_id,
+        max(observed_at)                                  AS fresh_at
+    FROM (
+        SELECT insight_source_id, issue_id, observed_at FROM issues
+        UNION ALL
+        SELECT insight_source_id, issue_id, extracted_at AS observed_at FROM changelog_items
+    )
+    GROUP BY insight_source_id, issue_id
 ),
 
 -- Every changelog item that belongs to a field we model, with its delta already
@@ -572,22 +588,49 @@ newest_from_events AS (
 --
 -- An ABSENT key is a different thing and belongs to `retired_pairs` — the field
 -- left the issue's context, rather than the issue dropping its value.
-cleared_pairs AS (
+-- Pairs whose events end on a value the snapshot does not hold. Resolved
+-- BEFORE the issue JSON is consulted, so the JSON is probed for these pairs
+-- only.
+missing_from_snapshot AS (
     SELECT
         n.insight_source_id                               AS insight_source_id,
         n.issue_id                                        AS issue_id,
-        n.field_id                                        AS field_id,
-        j.observed_at                                     AS event_at
+        n.field_id                                        AS field_id
     FROM newest_from_events AS n
-    INNER JOIN issue_json AS j
-        ON j.insight_source_id = n.insight_source_id
-       AND j.issue_id = n.issue_id
     LEFT ANTI JOIN snapshot AS s
         ON s.insight_source_id = n.insight_source_id
        AND s.issue_id = n.issue_id
        AND s.field_id = n.field_id
     WHERE length(n.value_ids) > 0
-      AND JSONHas(j.custom_fields_json, n.field_id)
+),
+
+-- Every key the issue JSON carries, one row each, streamed out of the JSON
+-- column. MEMORY (§13): this is the LEFT side of the join below on purpose.
+-- The JSON column is gigabytes wide, and a join that puts `issue_json` on the
+-- right builds a hash table holding every issue's payload — the shape that
+-- can exceed a server's memory budget on its own. Streaming the keys and
+-- hashing the small pair set instead keeps the join to the pair set's size.
+present_keys AS (
+    SELECT
+        j.insight_source_id                               AS insight_source_id,
+        j.issue_id                                        AS issue_id,
+        k                                                 AS field_id,
+        j.observed_at                                     AS observed_at
+    FROM issue_json AS j
+    ARRAY JOIN JSONExtractKeys(j.custom_fields_json) AS k
+),
+
+cleared_pairs AS (
+    SELECT
+        m.insight_source_id                               AS insight_source_id,
+        m.issue_id                                        AS issue_id,
+        m.field_id                                        AS field_id,
+        p.observed_at                                     AS event_at
+    FROM present_keys AS p
+    INNER JOIN missing_from_snapshot AS m
+        ON m.insight_source_id = p.insight_source_id
+       AND m.issue_id = p.issue_id
+       AND m.field_id = p.field_id
 ),
 
 -- ── the value of every modelled field at issue creation ─────────────────────
@@ -661,7 +704,11 @@ initial_seq AS (
         toUInt32(row_number() OVER (PARTITION BY insight_source_id, issue_id
                                     ORDER BY field_id)) AS seq
     FROM initial_state
-)
+),
+
+-- The six kinds of row, each arm typed loosely; the projection below fixes the
+-- class types once.
+journal AS (
 
 -- ── row 1: the creation marker ──────────────────────────────────────────────
 SELECT
@@ -682,8 +729,7 @@ SELECT
     CAST([] AS Array(String))                             AS value_ids,
     CAST([] AS Array(String))                             AS value_displays,
     CAST('none' AS String)                                AS value_id_type,
-    now64(3)                                              AS collected_at,
-    toUnixTimestamp64Milli(now64(3))                      AS _version
+    now64(3)                                              AS collected_at
 FROM issues
 
 UNION ALL
@@ -710,8 +756,7 @@ SELECT
     CAST({{ jira_distinct_arrays_by_id('e.sides.3', 'e.sides.4', 'ids') }} AS Array(String))      AS value_ids,
     CAST({{ jira_distinct_arrays_by_id('e.sides.3', 'e.sides.4', 'displays') }} AS Array(String)) AS value_displays,
     {{ jira_field_id_type('e.field_kind') }}              AS value_id_type,
-    now64(3)                                              AS collected_at,
-    toUnixTimestamp64Milli(now64(3))                      AS _version
+    now64(3)                                              AS collected_at
 FROM live_events AS e
 LEFT JOIN issues AS i
     ON i.insight_source_id = e.insight_source_id
@@ -751,8 +796,7 @@ SELECT
     CAST(arrayMap(x -> splitByChar('\x1f', x)[2],
                   argMax(a.state_pairs, a.ops_seq)) AS Array(String))  AS value_displays,
     {{ jira_field_id_type('any(a.field_kind)') }}         AS value_id_type,
-    now64(3)                                              AS collected_at,
-    toUnixTimestamp64Milli(now64(3))                      AS _version
+    now64(3)                                              AS collected_at
 FROM element_wise_state AS a
 LEFT JOIN issues AS i
     ON i.insight_source_id = a.insight_source_id
@@ -782,8 +826,7 @@ SELECT
     CAST({{ jira_distinct_arrays_by_id('s.value_ids', 's.value_displays', 'ids') }} AS Array(String))      AS value_ids,
     CAST({{ jira_distinct_arrays_by_id('s.value_ids', 's.value_displays', 'displays') }} AS Array(String)) AS value_displays,
     {{ jira_field_id_type('s.field_kind') }}              AS value_id_type,
-    now64(3)                                              AS collected_at,
-    toUnixTimestamp64Milli(now64(3))                      AS _version
+    now64(3)                                              AS collected_at
 FROM initial_seq AS s
 INNER JOIN issues AS i
     ON i.insight_source_id = s.insight_source_id
@@ -822,8 +865,7 @@ SELECT
     -- stable per (source, field), so a row of that field may not carry a
     -- different one just because its arrays are empty.
     {{ jira_field_id_type('k.field_kind') }}              AS value_id_type,
-    now64(3)                                              AS collected_at,
-    toUnixTimestamp64Milli(now64(3))                      AS _version
+    now64(3)                                              AS collected_at
 FROM retired_pairs AS r
 INNER JOIN kinds AS k
     ON k.insight_source_id = r.insight_source_id
@@ -864,8 +906,7 @@ SELECT
     CAST([] AS Array(String))                             AS value_ids,
     CAST([] AS Array(String))                             AS value_displays,
     {{ jira_field_id_type('k.field_kind') }}              AS value_id_type,
-    now64(3)                                              AS collected_at,
-    toUnixTimestamp64Milli(now64(3))                      AS _version
+    now64(3)                                              AS collected_at
 FROM cleared_pairs AS c
 INNER JOIN kinds AS k
     ON k.insight_source_id = c.insight_source_id
@@ -902,9 +943,46 @@ SELECT
     CAST(if(u.last_display = '', [], [u.last_display]) AS Array(String)) AS value_displays,
     -- Not `opaque_id`: nothing here establishes that the value IS an id.
     CAST('none' AS String)                                AS value_id_type,
-    now64(3)                                              AS collected_at,
-    toUnixTimestamp64Milli(now64(3))                      AS _version
+    now64(3)                                              AS collected_at
 FROM unclassified_events AS u
 LEFT JOIN issues AS i
     ON i.insight_source_id = u.insight_source_id
    AND i.issue_id = u.issue_id
+)
+
+-- The class contract's column order and types. The discriminators are
+-- `LowCardinality(String)`, not enums: every source contributes its own arm to
+-- the class, and an enum would make each of them name the values of all the
+-- others.
+--
+-- `_version` is the issue's input freshness (`issue_freshness`), not the build
+-- time. A build-time stamp would make every rebuild of this table look new to
+-- `class_task_field_history`, whose incremental filter admits rows above its
+-- newest version, and the class would rewrite the whole Jira journal on every
+-- run. A change to the models or to the field catalogue alone does not bump a
+-- version; it reaches the class through a full refresh, which a major
+-- descriptor bump dispatches.
+SELECT
+    j.unique_key,
+    j.insight_source_id,
+    j.data_source,
+    j.issue_id,
+    j.id_readable,
+    j.event_id,
+    j.event_at,
+    CAST(j.event_kind AS LowCardinality(String))        AS event_kind,
+    j._seq,
+    j.author_id,
+    j.field_id,
+    j.field_name,
+    CAST(j.field_cardinality AS LowCardinality(String)) AS field_cardinality,
+    CAST(j.delta_action AS LowCardinality(String))      AS delta_action,
+    j.value_ids,
+    j.value_displays,
+    CAST(j.value_id_type AS LowCardinality(String))     AS value_id_type,
+    j.collected_at,
+    toUInt64(toUnixTimestamp64Milli(f.fresh_at))        AS _version
+FROM journal AS j
+INNER JOIN issue_freshness AS f
+    ON f.insight_source_id = j.insight_source_id
+   AND f.issue_id = j.issue_id

@@ -1,9 +1,9 @@
 # Field history in dbt
 
 Design for replacing the Rust `jira-enrich` binary with dbt models that derive
-`staging.jira__task_field_history` from bronze.
+the Jira field-history journal from bronze.
 
-Status: implemented up to the cutover. The models of §2–§9 are built alongside the Rust binary, which stays the silver producer until §10 is carried out.
+Status: cut over. `jira__field_history_derived` is the Jira producer of `silver.class_task_field_history`; the binary's output table is read by nothing, and the binary, its image and its parameter plumbing are removed in a follow-up. §10.1 and §10.1.1 record the cutover as it was carried out.
 
 ## 1. Why
 
@@ -749,6 +749,25 @@ never delivered; it is left out of the journal and counted by
 place the formula lives, and `assert_jira_field_history_key_is_issue_keyed`
 recomputes it over every row.
 
+### 7.1 What a rebuild changes downstream
+
+The model is materialized as a table and recomputed in full on every run; the
+class it feeds is incremental and admits rows whose `_version` exceeds the
+newest it holds. A build-time `_version` would therefore make every rebuild
+look entirely new to the class, and the class would delete and re-insert the
+whole Jira journal on every run.
+
+`_version` is instead the issue's *input freshness*: the newest
+`_airbyte_extracted_at` among the issue's own bronze row and its changelog
+entries, stamped on every row of that issue. Unchanged bronze reproduces the
+same versions, so the class leaves the issue alone; an issue that received
+anything has all its rows re-emitted under the new version, and `delete+insert`
+on `unique_key` replaces them. The GitHub arm versions its rows the same way.
+
+The corollary is that a change to the models or to the field catalogue alone
+moves no version: it reaches the class through a full refresh, which a major
+descriptor bump dispatches (ADR-0015).
+
 ## 8. Long text in a side table
 
 Status: implemented (`jira__task_field_text`). §5's normalizers
@@ -843,7 +862,7 @@ The output table is consumed by `silver.class_task_field_history` through
   `scalar` it reports `none`, so no field's identifier type moves at cutover
 - `unique_key` as the single ORDER BY column
 
-### 10.1 Retiring four columns, and why the fifth stays
+### 10.1 Retiring four columns, and why the fifth stayed until the cutover
 
 `author_display`, `delta_value_id` and `delta_value_display` leave
 `silver.class_task_field_history`. None of them has a reader in gold, in silver
@@ -854,9 +873,9 @@ detail of one change joins back to the event it came from, a path
 their entity id in `delta_value_id` **and** in `value_ids[1]`, so nothing is
 lost there either.
 
-**`title` stays until the cutover**, and the plan to drop it with the others was
-wrong for a reason worth stating: the title's *producer* changes at cutover, not
-before.
+**`title` stayed until the cutover** (it is gone now, see §10.1.1), and the plan
+to drop it with the others was wrong for a reason worth stating: the title's
+*producer* changes at cutover, not before.
 
 Gold reads the title through the `title` role, and for Jira that role binds
 `summary`. While the Rust binary is still the producer, a `summary` row exists
@@ -910,15 +929,24 @@ the pieces:
    `task_issue_state`, not from the journal.
    `tests/jira/transform/test_title_role.py` holds the precedence in place.
 
-Dropping `title` from the staging arms and from `silver.class_task_field_history`
-is a migration under `src/ingestion/scripts/migrations/` in the cutover change,
-once the derived model has produced a `summary` row for every issue; the
-`ADD COLUMN IF NOT EXISTS ... AFTER id_readable` self-migration in the DDL macro
-goes with the macro itself.
+At the cutover, `title` left the staging arms and
+`silver.class_task_field_history` (migration
+`20260912000000_task-field-history-cutover.sql`, arm heal in
+`apply-ch-migrations.sh`), and gold reads the role alone — the derived model
+emits a `summary` row for every issue, so nothing is left unnamed.
+`test_title_role` now pins the role as the only channel.
 
-Note that the "Rust owns this table" decision is referenced in code comments as
-ADR-003 but has no ADR file in the repository. Retiring the binary should record
-the reversal wherever that decision ends up living.
+The same migration retyped the four discriminators — `event_kind`,
+`field_cardinality`, `delta_action`, `value_id_type` — from `Enum8` to
+`LowCardinality(String)`. Every source contributes its own arm to the class, and
+an enum type made each arm spell out the values of all the others: adding
+`retired_field`, `unclassified_field` and `snapshot_diff` for Jira would have
+meant editing the GitHub arm. The accepted values are data tests on the class.
+
+The "Rust owns this table" decision is referenced in code comments as ADR-003 but
+has no ADR file in the repository. Its reversal is recorded here and in the
+header of `class_task_field_history.sql`: every producer of the class is a dbt
+model, and `staging.jira__task_field_history` is read by nothing.
 
 ## 11. Issue deletion
 
@@ -968,6 +996,16 @@ happen block-wise inside the aggregate so that only the small extracted tuple
 survives to the next stage; a sort or a buffer that carries whole JSON payloads
 exhausts the server. Concretely, the key/value unpivot of the issue JSON must
 sit **after** the argMax dedup, never before it.
+
+The same column must never be the build side of a join. ClickHouse hashes the
+RIGHT table of a join in memory, so `… INNER JOIN issue_json` holds every
+issue's payload at once, and that hash table alone can exceed a server's memory
+budget. A question about the JSON ("does this issue still carry this key?") is
+answered by streaming the keys out of the column (`ARRAY JOIN JSONExtractKeys`)
+on the LEFT and hashing the small set of pairs being asked about on the RIGHT,
+after every other filter has already shrunk that set. `cleared_pairs` is built
+this way; probed over a full-size dataset, the streaming form peaks well below
+the hashing one.
 
 ## 14. Tests
 
@@ -1026,19 +1064,16 @@ whole journal for the issue. That is where a parsing or reconstruction defect is
 visible, and it is strictly stronger than a metric assertion for these shapes.
 
 Their **metrics-layer** counterparts in `tests/datapath/metrics/tasks/` are deliberately
-NOT written yet, for two reasons that both dissolve at cutover:
-
-- the journal that reaches silver today is the Rust binary's, not this model's,
-  so a case seeded now would assert the behaviour being replaced;
-- the YAML rig asserts the analytics HTTP response, and its expect engine binds
-  metric-shaped payloads. None of these shapes reaches a metric — there is no
-  labels metric, no components metric — so a case could assert the request
-  succeeded and nothing more.
+NOT written: the YAML rig asserts the analytics HTTP response, and its expect
+engine binds metric-shaped payloads. None of these shapes reaches a metric —
+there is no labels metric, no components metric — so a case could assert the
+request succeeded and nothing more. The existing task metric specs do run through
+this model since the cutover, which is what pins the shapes a metric does read.
 
 The one part of this change whose consumer IS gold — the `title` role — is
-covered now, in the transformation lane, because it can be: `test_title_role`
-seeds the class table and builds `task_issue_state`, pinning the precedence
-between the role and the column it falls back to (§10.1).
+covered in the transformation lane: `test_title_role` seeds the class table and
+builds `task_issue_state`, pinning the role as the only channel the title
+reaches gold through (§10.1.1).
 
 Shapes covered, one test each:
 

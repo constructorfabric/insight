@@ -31,7 +31,7 @@ export interface RangePickerProps {
  *
  * The option list belongs to the board, so this draws what it was handed and
  * nothing else. Only a token ever leaves here: the server resolves every
- * window, including a custom one, against the newest row in the data.
+ * window, including a custom one, against the clock.
  */
 export function RangePicker({ offered, selected, onSelect }: RangePickerProps) {
   const [open, setOpen] = useState(false);

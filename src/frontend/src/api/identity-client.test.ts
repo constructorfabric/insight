@@ -13,8 +13,11 @@ import {
   getPerson,
   getPersonAccounts,
   IdentityApiError,
+  grantPersonRole,
   listPeople,
+  listPersonRoles,
   mergePersons,
+  revokePersonRole,
   searchPersons,
 } from "./identity-client";
 
@@ -461,6 +464,126 @@ describe("getPersonAccounts", () => {
 
     await expect(getPersonAccounts("p-1")).rejects.toMatchObject({
       body: { error: "malformed_accounts" },
+    });
+  });
+});
+
+describe("listPersonRoles", () => {
+  it("GETs a person's active assignments from /person-roles", async () => {
+    mockFetch.mockResolvedValueOnce(
+      response({
+        items: [
+          {
+            person_role_id: "019e27bc-0000-7000-8000-000000000001",
+            insight_tenant_id: "3f1d8f4e-6c2a-4a9b-91d7-8e5c0b2a7f36",
+            person_id: "019e27bc-dec0-7626-81a9-c5524662a6a9",
+            role_id: "a4d11000-0000-4000-8000-000000000001",
+            valid_from: "2026-09-14T10:28:18Z",
+            valid_to: null,
+            author_person_id: "019e27bc-dec0-7626-81a9-c5524662a6aa",
+            reason: null,
+            created_at: "2026-09-14T10:28:18Z",
+          },
+        ],
+        next_cursor: null,
+      })
+    );
+
+    const held = await listPersonRoles("019e27bc-dec0-7626-81a9-c5524662a6a9");
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/identity/v1/person-roles?person=019e27bc-dec0-7626-81a9-c5524662a6a9&active=true",
+      undefined
+    );
+    expect(held).toHaveLength(1);
+    expect(held[0].role_id).toBe("a4d11000-0000-4000-8000-000000000001");
+  });
+
+  it("rejects an answer whose items are not a list", async () => {
+    mockFetch.mockResolvedValueOnce(response({ items: null }));
+
+    await expect(listPersonRoles("p-1")).rejects.toMatchObject({
+      body: { error: "malformed_person_roles" },
+    });
+  });
+
+  it("raises the status when the read is refused", async () => {
+    mockFetch.mockResolvedValueOnce(
+      response({ error: "forbidden" }, { ok: false, status: 403 })
+    );
+
+    await expect(listPersonRoles("p-1")).rejects.toMatchObject({ status: 403 });
+  });
+});
+
+describe("grantPersonRole", () => {
+  it("POSTs the person and role to /person-roles", async () => {
+    mockFetch.mockResolvedValueOnce(
+      response(
+        {
+          person_role_id: "019e27bc-0000-7000-8000-000000000002",
+          person_id: "p-1",
+          role_id: "a4d11000-0000-4000-8000-000000000001",
+          valid_to: null,
+        },
+        { status: 201 }
+      )
+    );
+
+    const granted = await grantPersonRole({
+      person_id: "p-1",
+      role_id: "a4d11000-0000-4000-8000-000000000001",
+      reason: "authoring",
+    });
+
+    expect(mockFetch).toHaveBeenCalledWith("/api/identity/v1/person-roles", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        person_id: "p-1",
+        role_id: "a4d11000-0000-4000-8000-000000000001",
+        reason: "authoring",
+      }),
+    });
+    expect(granted.person_role_id).toBe("019e27bc-0000-7000-8000-000000000002");
+  });
+
+  it("raises the status when the grant is refused", async () => {
+    mockFetch.mockResolvedValueOnce(
+      response({ error: "forbidden" }, { ok: false, status: 403 })
+    );
+
+    await expect(
+      grantPersonRole({ person_id: "p-1", role_id: "r-1" })
+    ).rejects.toMatchObject({ status: 403 });
+  });
+});
+
+describe("revokePersonRole", () => {
+  it("DELETEs the assignment by its own id", async () => {
+    mockFetch.mockResolvedValueOnce(
+      response(null, { status: 204 })
+    );
+
+    await revokePersonRole("019e27bc-0000-7000-8000-000000000001");
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/identity/v1/person-roles/019e27bc-0000-7000-8000-000000000001",
+      { method: "DELETE" }
+    );
+  });
+
+  it("carries the last-admin refusal through as the error body", async () => {
+    mockFetch.mockResolvedValueOnce(
+      response(
+        { context: { reason: "last_admin_protected" } },
+        { ok: false, status: 409 }
+      )
+    );
+
+    await expect(revokePersonRole("pr-1")).rejects.toMatchObject({
+      status: 409,
+      body: { context: { reason: "last_admin_protected" } },
     });
   });
 });

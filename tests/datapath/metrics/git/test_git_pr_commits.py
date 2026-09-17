@@ -53,7 +53,7 @@ def test_median_commits_per_merged_pull_request(spec: SpecRun) -> None:
         target_value=2, p25=2, median=3, p75=5, min=1, max=6, n=5
     )
     r.row("git.pr_commits", "timeseries", entity_id=ALICE).contains(
-        points={"bucket_start": "2026-10-01", "value": 2}
+        points={"bucket_start": "2026-10-01", "value": 1.5}
     )
     r.row("git.pr_commits", "timeseries", entity_id=ALICE).contains(
         points={"bucket_start": "2026-10-02", "value": 4}

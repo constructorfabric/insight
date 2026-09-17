@@ -320,13 +320,13 @@ async fn a_metric_whose_clock_cannot_be_read_is_not_stored() {
             "broken_clock",
             json!({
                 "table": "events",
-                "time": {"json": "at", "column": "at"},
+                "time": {"json": "at", "type": "string"},
                 "fields": [{"agg": "count", "type": "int", "as_name": "total"}]
             }),
         ))
         .await;
 
-    assert_refused(&result, "time must name exactly one");
+    assert_refused(&result, "is not datetime");
 }
 
 #[tokio::test]

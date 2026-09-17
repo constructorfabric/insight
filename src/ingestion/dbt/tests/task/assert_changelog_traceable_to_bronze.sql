@@ -1,6 +1,6 @@
 -- Every changelog silver row must join back to a staging row by natural key.
--- Broken joins mean either a dbt bug upstream (dropped rows) or enrich wrote rows for a
--- changelog_id that doesn't exist in bronze — both indicate data corruption.
+-- A broken join means a producer wrote a row for a changelog_id that does not
+-- exist in bronze — data corruption, whichever model did it.
 --
 -- Jira-only for now; other sources get their own staging table checks.
 

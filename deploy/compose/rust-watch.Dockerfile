@@ -1,4 +1,4 @@
-FROM rust:1.98-bookworm
+FROM rust:1.98-bookworm@sha256:9a73a5088750b4c95158ab26629c854c3d6fc4b173cb7bc8079ad252d8ed7bfa
 
 ARG CARGO_WATCH_VERSION=8.5.3
 

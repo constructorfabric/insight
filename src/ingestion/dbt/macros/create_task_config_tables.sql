@@ -1,5 +1,5 @@
 {#-
-  Creates the two operator-authored task-tracking configuration relations. dbt
+  Creates the operator-authored task-tracking configuration relations. dbt
   does NOT own their contents: an operator writes the rows, dbt only guarantees
   the tables exist and reads them as sources. A dbt-owned model would recreate
   them on every run and wipe the decisions they hold.
@@ -7,13 +7,21 @@
   They answer what no vendor can state. `task_field_roles` binds a vendor field
   identifier to the metric role gold consumes, so gold matches a role instead of
   a vendor's literal. `task_value_map` binds a vendor value identifier to the
-  canonical value a class dimension carries — a status category, an issue kind.
+  canonical value a class dimension carries. `field_value_map` is one generic
+  mapping table for every standardized field: `field` names what is being
+  standardized (currently `issue_type`), `source_key` is the vendor's key for
+  the value, `target_value` is the canonical value (domain per field —
+  issue_type: bug, task, unknown), and `display_name` records the vendor name
+  the decision was made against, so a later rename of the vendor value is
+  detectable rather than silent. `field_value_defaults` assigns, per
+  (tenant, source, field), the value unmapped keys fall to; no default row means
+  the hardcoded `unknown` terminal, never the raw source value.
 
-  What `value_id` is depends on how the vendor keys values. GitHub issue types
-  are org-scoped, so it is the type id. Jira mints a distinct type id per
-  project while the name is what recurs, so for Jira `field_id='type'` rows it
-  is the normalized name: lower(trimBoth(coalesce(nullIf(untranslatedName, ''), name))) —
-  the form `jira__task_issuetypes` joins on.
+  What `source_key` is depends on how the vendor keys values. GitHub issue
+  types are org-scoped, so it is the type id. Jira mints a distinct type id per
+  project while the name is what recurs, so for Jira it is the normalized name:
+  lower(trimBoth(coalesce(nullIf(untranslatedName, ''), name))) — the form
+  `jira__task_issuetypes` joins on.
 
   Bitemporal by design. `valid_from` says which events a mapping applies to: the
   process genuinely changed on a date. `recorded_at` says when the decision was
@@ -81,7 +89,52 @@
         ORDER BY (unique_key)
     ") %}
 
+    {% do run_query("
+        CREATE TABLE IF NOT EXISTS config.field_value_map
+        (
+            tenant_id         String,
+            insight_source_id String,
+            data_source       LowCardinality(String),
+            field             LowCardinality(String),
+            source_key        String,
+            valid_from        DateTime64(3),
+            recorded_at       DateTime64(3),
+            unique_key        String DEFAULT concat(tenant_id, ':', insight_source_id, ':',
+                                                    data_source, ':', field, ':', source_key, ':',
+                                                    toString(valid_from), ':', toString(recorded_at)),
+            target_value      LowCardinality(String),
+            display_name      String,
+            is_deleted        UInt8  DEFAULT 0,
+            note              String DEFAULT '',
+            recorded_by       String DEFAULT '',
+            _version          DateTime64(3) DEFAULT now64(3)
+        )
+        ENGINE = ReplacingMergeTree(_version)
+        ORDER BY (unique_key)
+    ") %}
+
+    {% do run_query("
+        CREATE TABLE IF NOT EXISTS config.field_value_defaults
+        (
+            tenant_id         String,
+            insight_source_id String,
+            field             LowCardinality(String),
+            valid_from        DateTime64(3),
+            recorded_at       DateTime64(3),
+            unique_key        String DEFAULT concat(tenant_id, ':', insight_source_id, ':',
+                                                    field, ':',
+                                                    toString(valid_from), ':', toString(recorded_at)),
+            default_value     LowCardinality(String),
+            is_deleted        UInt8  DEFAULT 0,
+            note              String DEFAULT '',
+            recorded_by       String DEFAULT '',
+            _version          DateTime64(3) DEFAULT now64(3)
+        )
+        ENGINE = ReplacingMergeTree(_version)
+        ORDER BY (unique_key)
+    ") %}
+
     {% if execute %}
-        {{ log("Ensured config.task_field_roles and config.task_value_map (DDL owned here; rows authored by an operator)", info=True) }}
+        {{ log("Ensured config.task_field_roles, config.task_value_map, config.field_value_map and config.field_value_defaults (DDL owned here; rows authored by an operator)", info=True) }}
     {% endif %}
 {% endmacro %}

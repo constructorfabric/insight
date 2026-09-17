@@ -1,9 +1,9 @@
 """One spec's data path on an instance, from seeded bronze to a caller that reads it.
 
 The sequence mirrors the pipeline a connector drives in production: seed the spec's
-bronze, build the staging models that read it, run any enrich step between the two
-builds, build the silver classes above them, let the product mint the spec's people
-and publish them, then build gold and ask for the metric as a seeded persona.
+bronze, build the staging models that read it, build the silver classes above them,
+let the product mint the spec's people and publish them, then build gold and ask for
+the metric as a seeded persona.
 
 The identity inputs are rebuilt from scratch each time: the model admits only rows
 above the version it already holds, and a stand's own seed has raised that past
@@ -25,7 +25,6 @@ from insight_datapath.bindings import Bindings
 from insight_datapath.caller import StandCaller
 from insight_datapath.ch_seeder import CHSeeder
 from insight_datapath.dbt_runner import DbtRunner
-from insight_datapath.enrich import EnrichRunner
 from insight_datapath.fixture_loader import TestYaml
 from insight_datapath.metric_expect import Ledger, MetricResponse
 from insight_datapath.reset import clear
@@ -150,7 +149,6 @@ def run_spec(
     *,
     ch_seeder: CHSeeder,
     dbt_runner: DbtRunner,
-    enrich_runner: EnrichRunner,
     subjects: Subjects,
     caller: StandCaller,
     caller_email: str,
@@ -166,19 +164,7 @@ def run_spec(
     staging, silver = dbt_runner.derive_selectors(spec.touched_tables)
     tracked.build(staging, with_ancestors=True)
 
-    seeded_schemas = {schema for schema, _ in spec.touched_tables}
-    ran_enrich_steps = []
-    for step in enrich_runner.steps_for(seeded_schemas):
-        source_ids = enrich_runner.discover_source_ids(step, spec.touched_tables)
-        if not source_ids:
-            continue
-        ch_seeder.clear_and_record(dbt_runner.enrich_output_tables(step.name))
-        enrich_runner.run(step, source_ids)
-        ran_enrich_steps.append(step)
-
     silver_set = set(silver)
-    for step in ran_enrich_steps:
-        silver_set.update(dbt_runner.ephemeral_silver_targets(step.name))
     tracked.build(sorted(silver_set - _RUN_WITHOUT_TESTS))
     tracked.run(sorted(silver_set & _RUN_WITHOUT_TESTS))
     if "class_collab_meeting_activity" in silver_set:

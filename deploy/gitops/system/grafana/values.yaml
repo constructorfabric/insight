@@ -12116,6 +12116,147 @@ alerting:
           severity: warning
         annotations:
           summary: "No sealed sweep tick for over 2h \u2014 connector staleness data itself is stale"
+      - uid: insight-issue-types-unclassified
+        title: Closed issues landing unclassified
+        condition: C
+        data:
+        - refId: A
+          relativeTimeRange:
+            from: 600
+            to: 0
+          datasourceUid: clickhouse
+          model:
+            refId: A
+            editorType: sql
+            format: 1
+            rawSql: |-
+              -- Assignee-independent population: gold task_issue_state INNER JOINs task
+              -- users, so a source whose closed issues are unassigned never reaches it.
+              -- Config coverage does not depend on assignment, so the population is
+              -- rebuilt here from silver field history, and the kind is resolved the
+              -- same way gold resolves it: field_value_map -> field_value_defaults ->
+              -- 'unknown'. Close = last transition into a done-category status
+              -- (gold's final_close_at); deleted/trashed issues are excluded.
+              WITH role_bindings AS (
+                  SELECT insight_source_id, field_id, argMax(role, (valid_from, recorded_at)) AS role
+                  FROM config.task_field_roles FINAL
+                  WHERE is_deleted = 0 AND valid_from <= now64(3)
+                  GROUP BY insight_source_id, field_id
+              ),
+              hist AS (
+                  SELECT fh.insight_source_id AS insight_source_id, fh.data_source AS data_source,
+                      fh.issue_id AS issue_id, fh.event_at AS event_at, fh.value_ids[1] AS value_id,
+                      (fh.event_at, multiIf(fh.event_kind = 'synthetic_initial', 0, fh.event_kind = 'changelog', 1, 2),
+                       fh._seq, toUInt64OrZero(fh.event_id)) AS ord,
+                      -- Authored binding wins; Jira's system fields carry their built-in
+                      -- roles, the same two task_field_roles_current defaults for them.
+                      multiIf(fh.field_id = 'availability', 'availability',
+                              ifNull(nullIf(toString(b.role), ''),
+                                     if(fh.data_source = 'jira' AND fh.field_id IN ('status', 'issuetype'),
+                                        fh.field_id, ''))) AS role
+                  FROM silver.class_task_field_history AS fh FINAL
+                  LEFT JOIN role_bindings AS b
+                      ON b.insight_source_id = fh.insight_source_id AND b.field_id = fh.field_id
+                  WHERE fh.delta_action = 'set'
+                    AND (fh.field_id IN ('status', 'issuetype', 'availability')
+                         OR ifNull(toString(b.role), '') IN ('status', 'issuetype'))
+              ),
+              issues AS (
+                  SELECT h.insight_source_id AS insight_source_id, any(h.data_source) AS data_source,
+                      h.issue_id AS issue_id,
+                      maxIf(h.event_at, h.role = 'status' AND toString(st.status_category) = 'done') AS close_at,
+                      argMaxIf(h.value_id, h.ord, h.role = 'issuetype') AS issue_type_id,
+                      argMaxIf(h.value_id, h.ord, h.role = 'availability') AS availability
+                  FROM hist AS h
+                  LEFT JOIN silver.class_task_statuses AS st FINAL
+                      ON st.insight_source_id = h.insight_source_id AND st.status_id = h.value_id
+                  GROUP BY h.insight_source_id, h.issue_id
+                  HAVING close_at >= now() - INTERVAL 7 DAY
+                     AND availability NOT IN ('deleted', 'trashed')
+              ),
+              src_tenant AS (
+                  SELECT insight_source_id, ifNull(any(tenant_id), '') AS tenant_id
+                  FROM silver.class_task_users FINAL
+                  GROUP BY insight_source_id
+              ),
+              kind_map AS (
+                  SELECT tenant_id, insight_source_id, source_key, target_value
+                  FROM config.field_value_map FINAL
+                  WHERE field = 'issue_type' AND is_deleted = 0 AND valid_from <= now64(3)
+                    AND target_value IN ('bug', 'task', 'unknown')
+                  ORDER BY valid_from DESC, recorded_at DESC
+                  LIMIT 1 BY tenant_id, insight_source_id, source_key
+              ),
+              kind_default AS (
+                  SELECT tenant_id, insight_source_id, default_value
+                  FROM config.field_value_defaults FINAL
+                  WHERE field = 'issue_type' AND is_deleted = 0 AND valid_from <= now64(3)
+                    AND default_value IN ('bug', 'task', 'unknown')
+                  ORDER BY valid_from DESC, recorded_at DESC
+                  LIMIT 1 BY tenant_id, insight_source_id
+              ),
+              issues_t AS (
+                  SELECT i.*, ifNull(nullIf(toString(t.tenant_id), ''), '') AS tenant_id
+                  FROM issues AS i
+                  LEFT JOIN src_tenant AS t ON t.insight_source_id = i.insight_source_id
+              )
+              SELECT if(i.tenant_id = '', 'unknown', i.tenant_id) AS tenant, i.data_source AS data_source,
+                  i.insight_source_id AS insight_source_id,
+                  round(100 * countIf(coalesce(nullIf(toString(m.target_value), ''),
+                                               nullIf(toString(d.default_value), ''),
+                                               'unknown') = 'unknown') / count(), 2) AS unclassified_pct
+              FROM issues_t AS i
+              LEFT JOIN kind_map AS m
+                  ON m.tenant_id = i.tenant_id AND m.insight_source_id = i.insight_source_id
+                  AND m.source_key = i.issue_type_id
+              LEFT JOIN kind_default AS d
+                  ON d.tenant_id = i.tenant_id AND d.insight_source_id = i.insight_source_id
+              GROUP BY tenant, data_source, insight_source_id
+              HAVING count() >= 50
+        - refId: C
+          relativeTimeRange:
+            from: 0
+            to: 0
+          datasourceUid: __expr__
+          model:
+            refId: C
+            type: threshold
+            expression: A
+            conditions:
+            - evaluator:
+                type: gt
+                params:
+                - 10
+        noDataState: OK
+        execErrState: Error
+        for: 6h
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ \"{{ $labels.insight_source_id }}\" }} closed over 10% of its issues with no issue-type\
+            \ classification in the last 7d — bugs_fixed and closed_non_bug are undercounting"
+          description: "Issue kind comes only from operator decisions in config.field_value_map; a type\
+            \ with no row falls to the tenant's config.field_value_defaults row, else resolves to issue_kind='unknown'\
+            \ and mints neither bugs_fixed nor closed_non_bug, while tasks_closed still counts it — so\
+            \ the bug metrics degrade silently. Add the missing types to environments/<env>/clickhouse/field-value-map/*.tsv\
+            \ (insert-only, loaded on deploy) and redeploy. The population is built from silver field history,\
+            \ not gold task_issue_state, on purpose: gold keeps only assignee-resolved issues, and config\
+            \ coverage is independent of assignment — a source whose closed issues are all unassigned produces\
+            \ a series here (with noDataState=OK it would otherwise be invisible). Kind is resolved exactly\
+            \ as gold resolves it (mapping row, then tenant default, then 'unknown'); the close is gold's\
+            \ final_close_at (last transition into a done-category status), deleted/trashed issues are excluded.\
+            \ Simplifications vs gold: role bindings cover authored config.task_field_roles rows plus Jira's\
+            \ built-in status/issuetype defaults only — a non-Jira source is counted once its status/issuetype\
+            \ bindings are authored, which gold needs anyway; an issue with no observed issuetype event counts\
+            \ as unclassified, which is the honest reading. Find the offenders with: SELECT issue_type, issue_type_name,\
+            \ count() FROM insight.task_issue_state WHERE issue_kind = 'unknown' AND final_close_at >=\
+            \ now() - INTERVAL 7 DAY GROUP BY 1, 2 ORDER BY 3 DESC — noting it misses assignee-less closes;\
+            \ for those, group the alert query's population by issue_type_id. A trailing 7d window keeps\
+            \ the share stable on low-volume installs; the 50-close floor keeps a barely-used source from\
+            \ alerting on a handful of rows; for=6h rides out a backfill landing ahead of its decisions.\
+            \ A newly onboarded source with real volume and no decisions authored yet is a true positive,\
+            \ not noise. The converse also fails: a defaults row routes every unmapped type to its value\
+            \ (typically 'task'), so a low unknown share is not proof the mapping is complete."
       - uid: insight-clickhouse-failed-queries
         title: ClickHouse failed-query rate elevated
         condition: C

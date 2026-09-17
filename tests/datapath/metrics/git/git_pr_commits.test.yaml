@@ -12,8 +12,9 @@ description: >
 
   alice merges three requests with 1, 2, and 4 linked commits (one link row
   seeded twice as a re-sync duplicate) → median 2, mean 2.33 — a wrong
-  aggregation fails the equal. bob merges one request with no link rows → null,
-  and stays out of the peer pool.
+  aggregation fails the equal. Two of them merge on 2026-10-01, so that day's
+  even pool {1, 2} reads 1.5, a count no request had. bob merges one request
+  with no link rows → null, and stays out of the peer pool.
   Team (median/range = the person's department): per-person values
   alice 2, carol 3, dave 5, erin 1, heidi 6 → median 3, range [1, 6], n 5.
   Cases: alice median across views, merge-day dating, bob honest absence,

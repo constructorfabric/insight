@@ -38,7 +38,8 @@ description: >
 
   Commit size reads the same commit set: the squash pool is {10, 10, 6}
   (median 10), the surviving patch copy is 7, the partial-branch pair is
-  {3, 2} (median 3), and the cross-repository survivor keeps its 4.
+  {3, 2} (median 2.5, both middles averaged), and the cross-repository
+  survivor keeps its 4.
 
 bronze:
   bronze_bamboohr.employees:

@@ -51,6 +51,20 @@ pub(crate) const ACCOUNT_ASSIGNMENT_RELATION: &str = "identity.account_assignmen
 /// nobody and never falls through to the email map.
 const EXCLUDED_PERSON_ID: &str = "ffffffff-ffff-ffff-ffff-ffffffffffff";
 
+/// The median a reader means: the average of the two middle values on an even
+/// sample. `quantileExact` takes an index instead, so it answers with the upper
+/// middle — a person with two observations is reported at the slower of them,
+/// and on a `lower_is_better` metric that always reads unfavourably.
+/// `quantileExactInclusive` interpolates to the textbook definition and stays
+/// exact, so nothing is approximated by a sketch. A percentile keeps
+/// `quantileExact`: unlike the median it has no second definition to match.
+/// #3362
+const MEDIAN_AGGREGATE: &str = "quantileExactInclusiveIf";
+
+/// `MEDIAN_AGGREGATE` with the `OrNull` combinator, for the arms that must
+/// answer an empty window with null rather than the type's default.
+const MEDIAN_AGGREGATE_OR_NULL: &str = "quantileExactInclusiveIfOrNull";
+
 /// Columns a resolved observation subquery re-exposes to the query above it.
 /// `entity_id` is absent: the subquery replaces it with the canonical person id,
 /// so every outer clause reads unchanged.
@@ -898,7 +912,7 @@ fn grouped_value_expr(def: &MetricDefinition) -> String {
             )
         }
         ComputationSpec::Median { .. } => {
-            "quantileExactIf(0.5)(value, value IS NOT NULL)".to_owned()
+            format!("{MEDIAN_AGGREGATE}(0.5)(value, value IS NOT NULL)")
         }
         ComputationSpec::Percentile { q, .. } => {
             format!("quantileExactIf({q})(value, value IS NOT NULL)")
@@ -945,7 +959,7 @@ fn grouped_value_expr_within(
         }
         ComputationSpec::Median { .. } => {
             let window = window_term(window, params);
-            format!("quantileExactIf(0.5)(value, value IS NOT NULL{window})")
+            format!("{MEDIAN_AGGREGATE}(0.5)(value, value IS NOT NULL{window})")
         }
         ComputationSpec::Percentile { q, .. } => {
             let window = window_term(window, params);
@@ -1349,13 +1363,17 @@ fn push_peer_stat_selects(selects: &mut String, item_index: usize) {
     let aliases = peer_aliases(item_index);
     let observed = format!("peer.{value} IS NOT NULL");
     let pool = format!("uniqExactIf(peer.entity_id, {observed})");
-    let quantiles = format!("quantilesExactIf(0.25, 0.5, 0.75)(peer.{value}, {observed})");
+    // p25 and p75 are order statistics and keep `quantilesExact`; the peer
+    // median answers the same question as the period one and so reads the same
+    // textbook definition, or a cohort of an even size disagrees with itself.
+    let quantiles = format!("quantilesExactIf(0.25, 0.75)(peer.{value}, {observed})");
+    let median_expr = format!("{MEDIAN_AGGREGATE}(0.5)(peer.{value}, {observed})");
     let _ = write!(
         selects,
         ",
             if({pool} >= {min_peer_n}, toNullable({quantiles}[1]), NULL) AS {p25},
-            if({pool} >= {min_peer_n}, toNullable({quantiles}[2]), NULL) AS {median},
-            if({pool} >= {min_peer_n}, toNullable({quantiles}[3]), NULL) AS {p75},
+            if({pool} >= {min_peer_n}, toNullable({median_expr}), NULL) AS {median},
+            if({pool} >= {min_peer_n}, toNullable({quantiles}[2]), NULL) AS {p75},
             if({pool} >= {min_peer_n}, minIfOrNull(peer.{value}, {observed}), NULL) AS {min},
             if({pool} >= {min_peer_n}, maxIfOrNull(peer.{value}, {observed}), NULL) AS {max},
             toUInt64({pool}) AS {n}",
@@ -1449,7 +1467,7 @@ fn item_value_expr(
             params.push(value.measure_key.clone());
             let window = window_term(window, params);
             format!(
-                "quantileExactIfOrNull(0.5)(value, source_key = ? AND measure_key = ? AND value IS NOT NULL{window})"
+                "{MEDIAN_AGGREGATE_OR_NULL}(0.5)(value, source_key = ? AND measure_key = ? AND value IS NOT NULL{window})"
             )
         }
         ComputationSpec::Percentile { value, q } => {
@@ -3321,14 +3339,22 @@ mod tests {
             )));
             assert!(query.sql.contains(&format!("AS m{item}_target")));
         }
-        // Quartiles come from one `quantilesExactIf` per item (single sort),
-        // not three separate `quantileExactIf` calls.
+        // The two order statistics come from one `quantilesExactIf` per item
+        // (single sort), not two separate `quantileExactIf` calls, and the peer
+        // median reads the same textbook aggregate as every other median view.
         for item in 0..2 {
             assert!(query.sql.contains(&format!(
-                "quantilesExactIf(0.25, 0.5, 0.75)(peer.m{item}, peer.m{item} IS NOT NULL)"
+                "quantilesExactIf(0.25, 0.75)(peer.m{item}, peer.m{item} IS NOT NULL)"
+            )));
+            assert!(query.sql.contains(&format!(
+                "quantileExactInclusiveIf(0.5)(peer.m{item}, peer.m{item} IS NOT NULL)"
             )));
         }
         assert!(!query.sql.contains("quantileExactIf(0.25)"));
+        assert!(
+            !query.sql.contains("quantilesExactIf(0.25, 0.5, 0.75)"),
+            "the peer median must not come back as the middle order statistic"
+        );
         // The cohort relation is canonical-grained (one row per person and
         // cohort_key, contested membership already dropped), so the pool reads
         // it straight. A collapse here would repair a broken input silently.
@@ -3419,9 +3445,10 @@ mod tests {
         ] {
             assert!(
                 query.sql.contains(
-                    "quantileExactIfOrNull(0.5)(value, source_key = ? AND measure_key = ?"
+                    "quantileExactInclusiveIfOrNull(0.5)(value, source_key = ? AND measure_key = ?"
                 ),
-                "median must batch as an OrNull quantile column"
+                "median must batch as an OrNull quantile column, interpolating both \
+                 middle values on an even sample"
             );
             assert_eq!(query.sql.matches('?').count(), query.params.len());
         }
@@ -3439,13 +3466,13 @@ mod tests {
         );
         assert!(
             ts.sql
-                .contains("quantileExactIf(0.5)(value, value IS NOT NULL)")
+                .contains("quantileExactInclusiveIf(0.5)(value, value IS NOT NULL)")
         );
         assert!(ts.sql.contains("GROUP BY GROUPING SETS"));
         let bd = compile_breakdown_query(&median_metric(), &request(), &["source".to_owned()], &[]);
         assert!(
             bd.sql
-                .contains("quantileExactIf(0.5)(value, value IS NOT NULL)")
+                .contains("quantileExactInclusiveIf(0.5)(value, value IS NOT NULL)")
         );
     }
 

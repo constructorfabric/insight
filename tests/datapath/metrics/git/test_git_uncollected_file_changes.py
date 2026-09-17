@@ -71,7 +71,7 @@ def test_a_commit_with_no_file_changes_still_reports_its_own_size(spec: SpecRun)
     ).equals(value=20)
 
     r.row("git.code_lines", "period", entity_id=ALICE).equals(value=10)
-    r.row("git.commit_size", "period", entity_id=ALICE).equals(value=22)
+    r.row("git.commit_size", "period", entity_id=ALICE).equals(value=16.5)
 
 
 def test_a_commit_that_changed_nothing_reports_zero_not_an_absent_value(spec: SpecRun) -> None:
@@ -102,7 +102,7 @@ def test_a_commit_that_changed_nothing_reports_zero_not_an_absent_value(spec: Sp
 
 def test_commit_that_lost_the_content_dedup_is_not_treated_as_uncollected(spec: SpecRun) -> None:
     """carol's repeat commit lost the content dedup, so no `__unknown__` grain appears for it
-    and Commit size keeps only the 15 lines the dedup did not remove."""
+    and keeps only the 15 lines the dedup did not remove, so her sizes {11, 15} median to 13."""
     r = spec.call(
         {
             "url": "/v1/metric-results",
@@ -142,7 +142,7 @@ def test_commit_that_lost_the_content_dedup_is_not_treated_as_uncollected(spec: 
     )
     assert unknown_grain == []
 
-    r.row("git.commit_size", "period", entity_id=CAROL).equals(value=15)
+    r.row("git.commit_size", "period", entity_id=CAROL).equals(value=13)
 
 
 def test_an_uncollected_size_on_a_branch_reaches_the_lines_but_not_the_code_lines(

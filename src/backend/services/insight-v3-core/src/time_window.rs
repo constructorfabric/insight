@@ -12,7 +12,6 @@ pub(crate) enum Grain {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Bounds {
     Unbounded,
-    Empty,
     Finite {
         from: DateTime<Utc>,
         to: DateTime<Utc>,
@@ -106,14 +105,14 @@ impl RequestedRange {
         Ok(Self::Interval { from, to })
     }
 
-    pub(crate) fn resolve(&self, anchor: Option<DateTime<Utc>>) -> Result<Window, WindowError> {
+    pub(crate) fn resolve(&self, now: DateTime<Utc>) -> Result<Window, WindowError> {
         Ok(Window::Requested {
-            bounds: self.bounds(anchor)?,
+            bounds: self.bounds(now)?,
             grain: Some(self.grain()),
         })
     }
 
-    fn bounds(&self, anchor: Option<DateTime<Utc>>) -> Result<Bounds, WindowError> {
+    fn bounds(&self, now: DateTime<Utc>) -> Result<Bounds, WindowError> {
         if *self == Self::AllTime {
             return Ok(Bounds::Unbounded);
         }
@@ -125,52 +124,39 @@ impl RequestedRange {
             });
         }
 
-        // A relative window counts back from the newest row, so a source
-        // with no dated row selects nothing.
-        let Some(anchor) = anchor else {
-            return Ok(Bounds::Empty);
-        };
-        let local_anchor = anchor.naive_utc();
+        let local_now = now.naive_utc();
         let (from, to) = match *self {
             Self::PreviousDay => {
-                let to = local_anchor.date();
+                let to = local_now.date();
                 let from = to
                     .checked_sub_days(Days::new(1))
                     .ok_or(WindowError::Overflow)?;
                 (midnight(from)?, midnight(to)?)
             }
             Self::RollingDays { days, .. } => {
-                let from_naive = local_anchor
+                let from_naive = local_now
                     .checked_sub_days(Days::new(days))
                     .ok_or(WindowError::Overflow)?;
-                let from = from_naive.and_utc();
-                // The anchor IS a row: the newest one. A half-open window has
-                // to end at the next representable instant, or the row the
-                // window was cut from never appears in it.
-                let to = anchor
-                    .checked_add_signed(chrono::TimeDelta::milliseconds(1))
-                    .ok_or(WindowError::Overflow)?;
-                (from, to)
+                (from_naive.and_utc(), now)
             }
             Self::PreviousMonth => {
-                let this_month =
-                    NaiveDate::from_ymd_opt(local_anchor.year(), local_anchor.month(), 1)
-                        .ok_or(WindowError::Overflow)?;
+                let this_month = NaiveDate::from_ymd_opt(local_now.year(), local_now.month(), 1)
+                    .ok_or(WindowError::Overflow)?;
                 let previous = this_month
                     .checked_sub_months(Months::new(1))
                     .ok_or(WindowError::Overflow)?;
                 (midnight(previous)?, midnight(this_month)?)
             }
             Self::PreviousQuarter => {
-                let quarter_month = ((local_anchor.month() - 1) / 3) * 3 + 1;
-                let this_quarter = NaiveDate::from_ymd_opt(local_anchor.year(), quarter_month, 1)
+                let quarter_month = ((local_now.month() - 1) / 3) * 3 + 1;
+                let this_quarter = NaiveDate::from_ymd_opt(local_now.year(), quarter_month, 1)
                     .ok_or(WindowError::Overflow)?;
                 let previous = this_quarter
                     .checked_sub_months(Months::new(3))
                     .ok_or(WindowError::Overflow)?;
                 (midnight(previous)?, midnight(this_quarter)?)
             }
-            // Both answered above, before an anchor was needed.
+            // Both answered above, before the clock was needed.
             Self::AllTime | Self::Interval { .. } => return Ok(Bounds::Unbounded),
         };
 
@@ -233,12 +219,12 @@ impl WindowRequest {
         self.range.is_some()
     }
 
-    pub(crate) fn resolve(&self, anchor: Option<DateTime<Utc>>) -> Result<Window, WindowError> {
+    pub(crate) fn resolve(&self, now: DateTime<Utc>) -> Result<Window, WindowError> {
         let Some(range) = self.range else {
             return Ok(Window::legacy());
         };
 
-        let window = range.resolve(anchor)?;
+        let window = range.resolve(now)?;
 
         Ok(if self.bucketed {
             window
@@ -285,7 +271,6 @@ impl MaximumRange {
         };
         let (from, to) = match *bounds {
             Bounds::Unbounded => return false,
-            Bounds::Empty => return true,
             Bounds::Finite { from, to } => (from, to),
         };
 
