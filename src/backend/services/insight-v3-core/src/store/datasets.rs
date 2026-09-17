@@ -171,9 +171,7 @@ impl Datasets for MariaDatasets {
                 RECORD_TABLE,
                 [table.into(), name.as_str().into()],
             ),
-            // Publishing a new dataset and handing a kept one back are the
-            // same row: ready, held by nobody, its table where it was.
-            Finish::Ready | Finish::Released => Statement::from_sql_and_values(
+            Finish::Ready => Statement::from_sql_and_values(
                 DbBackend::MySql,
                 MARK_READY,
                 [DatasetState::Ready.as_str().into(), name.as_str().into()],

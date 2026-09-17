@@ -333,11 +333,15 @@ fn parse_name(raw: &str) -> Result<DefinitionName, CallToolResult> {
 }
 
 fn tool_error(error: &CustomError) -> CallToolResult {
-    if !error.is_about_the_caller() {
-        tracing::error!(%error, "an MCP tool call failed");
+    // A refusal the caller caused is theirs to read; a failure of ours says
+    // what the warehouse or the store said, which is not theirs to see.
+    if error.is_about_the_caller() {
+        return refuse(&error.to_string());
     }
 
-    refuse(&error.to_string())
+    tracing::error!(%error, "an MCP tool call failed");
+
+    refuse("the request could not be completed")
 }
 
 fn refuse(message: &str) -> CallToolResult {

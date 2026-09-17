@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use axum::extract::rejection::JsonRejection;
 use axum::extract::{Extension, Path, Query};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -191,9 +192,10 @@ async fn put_dataset(
     Extension(state): Extension<Arc<AppState>>,
     Path(name): Path<String>,
     headers: axum::http::HeaderMap,
-    Json(body): Json<serde_json::Value>,
+    body: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Response, CanonicalError> {
     let caller = admin_only(&state, &headers).await?;
+    let Json(body) = body.map_err(|error| DatasetApiError::unreadable_body(&error))?;
     let name = DefinitionName::parse(&name).map_err(DatasetApiError::definition_error)?;
     tracing::info!(%caller, dataset = name.as_str(), "declaring a dataset");
 
@@ -355,6 +357,14 @@ async fn dataset_dependents(
 ) -> Result<Response, CanonicalError> {
     admin_only(&state, &headers).await?;
     let name = DefinitionName::parse(&name).map_err(DatasetApiError::definition_error)?;
+
+    if crate::domain::datasets::ready(state.datasets(), name.as_str())
+        .await
+        .map_err(DatasetApiError::dataset_store_error)?
+        .is_none()
+    {
+        return Err(not_found(name.as_str()));
+    }
 
     let metrics = state
         .dataset_lifecycle()

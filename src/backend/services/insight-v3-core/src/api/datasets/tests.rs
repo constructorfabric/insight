@@ -289,10 +289,11 @@ async fn a_dataset_still_being_made_is_shown_by_nothing() {
     assert_eq!(records, StatusCode::NOT_FOUND);
 }
 
-/// A dataset whose records could not be taken away is still whole, so it goes
-/// back to its readers rather than staying hidden with no way out.
+/// A removal that could not take the table away leaves the dataset where it
+/// was: unreachable, its name unclaimable, and the request repeatable once
+/// the lease lapses.
 #[tokio::test]
-async fn a_removal_that_cannot_drop_the_table_hands_the_dataset_back() {
+async fn a_removal_that_cannot_drop_the_table_leaves_the_dataset_mid_removal() {
     let harness = TestHarness::new();
     harness.a_free_name();
     harness.put("commits", declaration()).await;
@@ -305,9 +306,16 @@ async fn a_removal_that_cannot_drop_the_table_hands_the_dataset_back() {
     assert_eq!(removed, StatusCode::INTERNAL_SERVER_ERROR);
     let (listed, listing) = harness.get("/v1/datasets").await;
     let (read_one, _) = harness.get("/v1/datasets/commits").await;
+    let (retaken, _) = harness.put("commits", declaration()).await;
+
     assert_eq!(listed, StatusCode::OK);
-    assert_eq!(read(&listing)["names"], json!(["commits"]));
-    assert_eq!(read_one, StatusCode::OK);
+    assert_eq!(read(&listing)["names"], json!([]), "nothing lists it");
+    assert_eq!(read_one, StatusCode::NOT_FOUND, "nothing reads it");
+    assert_eq!(
+        retaken,
+        StatusCode::CONFLICT,
+        "and nothing may take the name"
+    );
 }
 
 /// Replacing a dataset that stands changes its declaration where it lies; it
@@ -523,4 +531,31 @@ async fn a_declaration_wrong_in_several_ways_names_every_place() {
     let said = format!("{:?}", read(&body));
     assert!(said.contains("fields[0].type"), "{said}");
     assert!(said.contains("fields[1].colour"), "{said}");
+}
+
+/// A caller who may not write learns nothing from the body they sent: the
+/// refusal is theirs before the body is even read.
+#[tokio::test]
+async fn a_body_that_cannot_be_read_is_answered_only_after_the_role_is() {
+    let refused = TestHarness::with_caller(false);
+    let request = Request::builder()
+        .method("PUT")
+        .uri("/v1/datasets/commits")
+        .header("content-type", "application/json")
+        .body(Body::from("{"))
+        .unwrap_or_else(|error| panic!("test request must be valid: {error}"));
+
+    let (status, _) = refused.send(request).await;
+
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+/// Every other read of a dataset asks for the ready state; this one did not.
+#[tokio::test]
+async fn the_dependents_of_a_dataset_nobody_declared_are_not_found() {
+    let harness = TestHarness::new();
+
+    let (asked, _) = harness.get("/v1/datasets/commits/dependents").await;
+
+    assert_eq!(asked, StatusCode::NOT_FOUND);
 }

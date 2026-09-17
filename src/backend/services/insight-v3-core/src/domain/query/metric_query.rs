@@ -118,9 +118,6 @@ impl MetricQuery {
             for (inner, condition) in field.conditions().iter().enumerate() {
                 condition.physical_keys(&format!("{at}.when[{inner}]"), &mut reached);
             }
-            if let Some(selector) = field.selector() {
-                selector.physical_keys(&format!("{at}.where"), &mut reached);
-            }
         }
 
         for (index, filter) in self.filters.iter().enumerate() {

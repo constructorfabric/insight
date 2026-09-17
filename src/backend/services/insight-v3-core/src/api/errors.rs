@@ -29,6 +29,25 @@ pub(crate) trait ApiErrors {
         Self::invalid_field("name", error.to_string())
     }
 
+    /// A body axum would not read.
+    ///
+    /// INVARIANT: an extractor rejects before the handler runs, so a write
+    /// takes its body as a `Result` and answers this only once the caller has
+    /// proved they may write at all. Otherwise an unauthorized caller learns
+    /// the route exists from an unshaped refusal.
+    fn unreadable_body(error: &axum::extract::rejection::JsonRejection) -> CanonicalError {
+        match error.status() {
+            axum::http::StatusCode::PAYLOAD_TOO_LARGE => {
+                Self::invalid_field("body", "the request body exceeds the limit".to_owned())
+            }
+            axum::http::StatusCode::UNSUPPORTED_MEDIA_TYPE => Self::invalid_field(
+                "body",
+                "the content type must be application/json".to_owned(),
+            ),
+            _ => Self::invalid_field("body", "the request body is not a JSON object".to_owned()),
+        }
+    }
+
     /// A dataset store that did not answer.
     ///
     /// Same policy as the definitions below: only the wait is the caller's to

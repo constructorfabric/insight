@@ -97,11 +97,6 @@ impl Field {
         &self.when
     }
 
-    /// Which element of an array payload this field picks, when it picks one.
-    pub(super) fn selector(&self) -> Option<&Filter> {
-        self.r#where.as_ref()
-    }
-
     /// Where this field addresses a record itself rather than naming a
     /// declared field.
     pub(super) fn physical_keys(&self, at: &str, into: &mut Vec<(String, &'static str)>) {
@@ -113,6 +108,9 @@ impl Field {
         }
         if self.person.is_some() {
             into.push((format!("{at}.person"), "person"));
+        }
+        if self.r#where.is_some() {
+            into.push((format!("{at}.where"), "where"));
         }
     }
 
@@ -190,7 +188,7 @@ impl Field {
     }
 
     /// This field's own conditions, as one expression, binding their values.
-    fn condition(
+    pub(super) fn condition(
         &self,
         over: Option<Over<'_>>,
         qualifier: Option<&str>,
@@ -254,10 +252,12 @@ impl Field {
         }))
     }
 
-    pub(super) fn aggregated(&self, read: String) -> String {
-        match self.agg {
-            Some(agg) => format!("{}({read})", agg.sql()),
-            None => read,
+    /// The same, keeping only the rows this field's own conditions admit.
+    pub(super) fn aggregated_if(&self, read: String, condition: Option<String>) -> String {
+        match (self.agg, condition) {
+            (Some(agg), Some(condition)) => format!("{}If({read}, {condition})", agg.sql()),
+            (Some(agg), None) => format!("{}({read})", agg.sql()),
+            (None, _) => read,
         }
     }
 }

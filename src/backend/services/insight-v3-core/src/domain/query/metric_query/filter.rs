@@ -6,6 +6,7 @@ use super::MetricQueryError;
 use super::field::{FieldType, Source};
 use super::over::Over;
 use crate::domain::kinds::dataset::declaration::FieldType as DeclaredType;
+use crate::domain::kinds::dataset::read::Form;
 
 /// How a bound value is written into the condition, so a moment reads back
 /// as the same instant the record's own value was parsed into.
@@ -66,7 +67,10 @@ impl Filter {
         let operator = self.op.sql();
 
         if let Some(over) = over {
-            let read = over.read(self.declared.as_deref(), "a filter", qualifier)?;
+            // Raw: a substitute is what a reader is shown, never what a
+            // condition is judged against, or filtering on the substitute
+            // would match every record that carries no value at all.
+            let read = over.read_as(self.declared.as_deref(), "a filter", qualifier, Form::Raw)?;
             let declared = over.type_of(self.declared.as_deref(), "a filter")?;
             let named = self.declared.as_deref().unwrap_or("a filter");
             let bound = self.declared_bind(declared, named)?;

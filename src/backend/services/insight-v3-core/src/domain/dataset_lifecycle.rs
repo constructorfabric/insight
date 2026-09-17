@@ -14,6 +14,13 @@ use super::datasets::{
 use super::definition::{DefinitionKind, DefinitionName, DefinitionStoreError, Definitions};
 use super::kinds::dataset::declaration::Declaration;
 use super::kinds::dataset::shape;
+#[cfg_attr(
+    not(test),
+    expect(
+        unused_imports,
+        reason = "the tests read the state through this module"
+    )
+)]
 use super::kinds::dataset::state::{DatasetState, Operation};
 use super::kinds::dataset::validate::validate;
 use super::kinds::metric;
@@ -212,8 +219,14 @@ impl<'a> DatasetLifecycle<'a> {
     ) -> Result<Value, DatasetChangeError> {
         let table = attempt.token.table(name);
 
+        // A refusal means the name is held by a table this service never
+        // made, so there is nothing of ours to take away and dropping it
+        // would take somebody else's. Anything else leaves a table that may
+        // exist with nothing naming it.
         if let Err(error) = self.tables.provision(&table).await {
-            self.discard(&table).await;
+            if !matches!(error, DatasetTableError::NotOurs(_)) {
+                self.discard(&table).await;
+            }
 
             return Err(error.into());
         }
@@ -244,12 +257,9 @@ impl<'a> DatasetLifecycle<'a> {
         &self,
         name: &DefinitionName,
     ) -> Result<Removal, DatasetChangeError> {
-        let Some(held) = self.datasets.get(name).await? else {
+        if self.datasets.get(name).await?.is_none() {
             return Err(DatasetChangeError::NotFound);
-        };
-        // Only a dataset that stood can be handed back as one: an abandoned
-        // create has no declaration anybody published.
-        let stood = held.state == DatasetState::Ready;
+        }
 
         let readers: Vec<String> = self
             .readers(name)
@@ -277,13 +287,15 @@ impl<'a> DatasetLifecycle<'a> {
             }
         };
 
+        // INVARIANT: a removal that could not take the table away leaves the
+        // row mid-removal. The name stays held and nothing reads it, and the
+        // lease lapsing is what lets the request be repeated until it lands.
         if let Err(error) = self.drop_records(name).await {
             tracing::error!(
                 error = ?error,
                 dataset = name.as_str(),
                 "a dataset's table could not be dropped"
             );
-            self.release(name, &attempt, stood).await;
 
             return Err(error);
         }
@@ -345,31 +357,6 @@ impl<'a> DatasetLifecycle<'a> {
         }
 
         Ok(self.datasets.finish(name, token, Finish::Ready).await?)
-    }
-
-    /// Hands a dataset back to its readers when a removal could not take its
-    /// table away.
-    ///
-    /// Leaving the row mid-removal would hide a dataset that is still whole
-    /// from every surface, with no way back but a hand-written row.
-    async fn release(&self, name: &DefinitionName, attempt: &Attempt, stood: bool) {
-        if !stood {
-            return;
-        }
-
-        match self
-            .datasets
-            .finish(name, &attempt.token, Finish::Released)
-            .await
-        {
-            Ok(Owning::Held) => {}
-            Ok(Owning::Lost) => finished_stale(name, Operation::Remove),
-            Err(error) => tracing::error!(
-                error = ?error,
-                dataset = name.as_str(),
-                "a dataset could not be handed back after its removal failed"
-            ),
-        }
     }
 
     /// Takes away a table this attempt made and then lost the right to.

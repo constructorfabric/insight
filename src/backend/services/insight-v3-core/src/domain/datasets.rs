@@ -246,10 +246,6 @@ impl Taken {
 /// What an attempt writes when its work is done, or part of it is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Finish {
-    /// The dataset is left as it was found, holding its records. What a
-    /// removal writes when it could not take the table away: leaving the row
-    /// mid-removal would hide a dataset nothing can bring back.
-    Released,
     /// The table this attempt provisioned. Recorded before the create is
     /// finished, so an attempt that has since lost the dataset learns to drop
     /// what it made.

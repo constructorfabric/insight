@@ -187,7 +187,7 @@ impl Datasets for MemoryDatasets {
                     dataset.physical_table = Some(table);
                 }
             }
-            Finish::Ready | Finish::Released => {
+            Finish::Ready => {
                 if let Some(dataset) = stored.get_mut(name.as_str()) {
                     dataset.state = DatasetState::Ready;
                     dataset.held = None;

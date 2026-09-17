@@ -2,13 +2,14 @@
 
 use std::sync::Arc;
 
+use axum::extract::rejection::JsonRejection;
 use axum::extract::{Extension, Path, Query};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use toolkit::api::{OpenApiRegistry, OperationBuilder, ParamLocation, ParamSpec};
-use toolkit_canonical_errors::{CanonicalError, resource_error};
+use toolkit_canonical_errors::{CanonicalError, Http, resource_error};
 use utoipa::ToSchema;
 
 use super::AppState;
@@ -189,6 +190,7 @@ fn register_kind(
         .error_400(openapi)
         .error_403(openapi)
         .error_404(openapi)
+        .error_409(openapi)
         .error_500(openapi)
         .error_504(openapi)
         .handler(delete_definition)
@@ -248,6 +250,7 @@ pub(super) fn custom_error(error: CustomError) -> CanonicalError {
                 format!("still in use by {}", used_by.join(", ")),
                 "in_use",
             )
+            .with_override(Http::status_code(StatusCode::CONFLICT.as_u16()))
             .create(),
         CustomError::Widget(source) => widget_error(&source),
         CustomError::DatasetNotReady(named) => DefinitionApiError::invalid_field(
@@ -359,7 +362,7 @@ async fn put_definition(
     Extension(kind): Extension<DefinitionKind>,
     Path(name): Path<String>,
     headers: axum::http::HeaderMap,
-    Json(body): Json<serde_json::Value>,
+    body: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Response, CanonicalError> {
     crate::api::require_admin(&state, &headers, || {
         DefinitionApiError::permission_denied()
@@ -367,6 +370,7 @@ async fn put_definition(
             .create()
     })
     .await?;
+    let Json(body) = body.map_err(|error| DefinitionApiError::unreadable_body(&error))?;
 
     let name = DefinitionName::parse(&name).map_err(DefinitionApiError::definition_error)?;
 

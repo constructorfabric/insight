@@ -478,9 +478,9 @@ async fn a_metric_a_widget_draws_is_kept_and_the_widget_named() {
     let refused = harness.delete_json("/v1/metrics/lines_per_day").await;
 
     // A widget whose metric is gone renders an error where a chart should be.
-    // A definition in use is a failed precondition, which this error family
-    // answers as 400 - what matters is that the reply names the widget.
-    assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+    // Something still holding it is a conflict, the same answer a dataset
+    // something still reads gives, and the reply names the widget.
+    assert_eq!(refused.status(), StatusCode::CONFLICT);
     let body = refused.json().await;
     assert!(
         body.to_string().contains("lines_table"),
@@ -520,7 +520,7 @@ async fn a_widget_a_dashboard_holds_is_kept_and_the_dashboard_named() {
 
     let refused = harness.delete_json("/v1/widgets/held").await;
 
-    assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(refused.status(), StatusCode::CONFLICT);
     assert!(refused.json().await.to_string().contains("holder"));
 }
 

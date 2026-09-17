@@ -278,6 +278,16 @@ mod what_the_dataset_answers {
                 }),
                 "time.column",
             ),
+            (
+                json!({
+                    "dataset": "commits",
+                    "fields": [{
+                        "field": "actor", "type": "string", "as_name": "actor",
+                        "where": {"field": "actor", "type": "string", "op": "eq", "value": "a"}
+                    }]
+                }),
+                "fields[0].where",
+            ),
         ];
 
         for (body, at) in cases {

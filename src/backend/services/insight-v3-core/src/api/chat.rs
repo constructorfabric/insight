@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use axum::extract::Extension;
+use axum::extract::rejection::JsonRejection;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
@@ -99,7 +100,7 @@ pub(crate) fn register_routes(
 async fn handle_chat(
     Extension(state): Extension<Arc<AppState>>,
     headers: axum::http::HeaderMap,
-    Json(request): Json<ChatRequest>,
+    request: Result<Json<ChatRequest>, JsonRejection>,
 ) -> Result<Response, CanonicalError> {
     crate::api::require_admin(&state, &headers, || {
         ChatApiError::permission_denied()
@@ -107,6 +108,7 @@ async fn handle_chat(
             .create()
     })
     .await?;
+    let Json(request) = request.map_err(|error| ChatApiError::unreadable_body(&error))?;
 
     let briefing = state.assistant().briefing().await;
     let schemas = DatasetSchemas::new(state.datasets(), state.definitions());

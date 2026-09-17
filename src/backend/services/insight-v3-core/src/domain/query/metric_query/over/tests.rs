@@ -26,6 +26,7 @@ fn metric(value: serde_json::Value) -> MetricQuery {
 fn lines_per_author() -> serde_json::Value {
     json!({
         "dataset": "commits",
+        "table": "unused",
         "fields": [
             { "field": "author", "type": "string", "as_name": "author" },
             { "field": "lines", "type": "int", "agg": "sum", "as_name": "total" }
@@ -259,4 +260,151 @@ fn a_person_is_looked_up_by_the_record_s_own_value() {
         shown.contains("nobody"),
         "the reader sees the substitute: {shown}"
     );
+}
+
+/// A metric that aggregates nothing answers one row per record. The bucket
+/// tells the reader which window each row fell in; grouping by it would make
+/// the query aggregating and leave the selected columns under nothing.
+#[test]
+fn a_windowed_run_that_aggregates_nothing_reports_the_bucket_without_grouping_by_it() {
+    let listing = metric(json!({
+        "dataset": "commits",
+        "fields": [{ "field": "author", "type": "string", "as_name": "author" }]
+    }));
+    let declared = declaration();
+    let over = Over {
+        declaration: &declared,
+        database: "insight_datasets",
+        table: "ds_commits_1",
+    };
+
+    let sql = listing
+        .compile_over(&people(), &requested("P7D"), over)
+        .unwrap_or_else(|error| panic!("a listing metric compiles: {error}"))
+        .sql;
+
+    assert!(sql.contains("AS `bucket`"), "{sql}");
+    assert!(!sql.contains("GROUP BY"), "{sql}");
+}
+
+#[test]
+fn a_windowed_run_that_aggregates_groups_by_the_bucket() {
+    let counted = metric(json!({
+        "dataset": "commits",
+        "fields": [{ "agg": "count", "type": "int", "as_name": "total" }]
+    }));
+    let declared = declaration();
+    let over = Over {
+        declaration: &declared,
+        database: "insight_datasets",
+        table: "ds_commits_1",
+    };
+
+    let sql = counted
+        .compile_over(&people(), &requested("P7D"), over)
+        .unwrap_or_else(|error| panic!("a counting metric compiles: {error}"))
+        .sql;
+
+    assert!(sql.contains("GROUP BY `bucket`"), "{sql}");
+}
+
+/// A substitute is what a reader is shown. A condition judged against it
+/// would match every record that carries no value at all.
+#[test]
+fn a_filter_is_judged_against_the_record_s_own_value() {
+    let declared: Declaration = serde_json::from_value(json!({
+        "title": "Commits",
+        "fields": [{
+            "name": "team", "path": "team", "type": "string", "absent_value": "unassigned"
+        }]
+    }))
+    .unwrap_or_else(|error| panic!("the fixture declaration parses: {error}"));
+    let filtered = metric(json!({
+        "dataset": "commits",
+        "fields": [{ "field": "team", "type": "string", "as_name": "team" }],
+        "filters": [{ "field": "team", "type": "string", "op": "eq", "value": "platform" }]
+    }));
+    let over = Over {
+        declaration: &declared,
+        database: "insight_datasets",
+        table: "ds_commits_1",
+    };
+
+    let sql = filtered
+        .compile_over(&people(), &Window::legacy(), over)
+        .unwrap_or_else(|error| panic!("a filtered metric compiles: {error}"))
+        .sql;
+    let Some((selected, condition)) = sql.split_once(" WHERE ") else {
+        panic!("the filter is there: {sql}");
+    };
+
+    assert!(
+        !condition.contains("unassigned"),
+        "the condition reads the raw value: {condition}"
+    );
+    assert!(
+        selected.contains("unassigned"),
+        "the reader still sees the substitute: {selected}"
+    );
+}
+
+/// A rate over people is a count of some of the records, not all of them.
+#[test]
+fn a_condition_on_a_person_field_keeps_the_rows_it_names() {
+    let declared: Declaration = serde_json::from_value(json!({
+        "title": "Commits",
+        "fields": [
+            { "name": "author", "path": "author", "type": "string", "person": "email" },
+            { "name": "state", "path": "state", "type": "string" }
+        ]
+    }))
+    .unwrap_or_else(|error| panic!("the fixture declaration parses: {error}"));
+    let counted = metric(json!({
+        "dataset": "commits",
+        "fields": [{
+            "field": "author", "type": "string", "agg": "count", "as_name": "merged_authors",
+            "when": [{ "field": "state", "type": "string", "op": "eq", "value": "merged" }]
+        }]
+    }));
+    let over = Over {
+        declaration: &declared,
+        database: "insight_datasets",
+        table: "ds_commits_1",
+    };
+
+    let sql = counted
+        .compile_over(&people(), &Window::legacy(), over)
+        .unwrap_or_else(|error| panic!("a conditioned person field compiles: {error}"))
+        .sql;
+
+    assert!(sql.contains("countIf("), "{sql}");
+}
+
+/// A run that does not bucket produces no bucket to order by, and rows a
+/// `LIMIT` cuts still have to come back in a settled order.
+#[test]
+fn ordering_by_the_bucket_falls_back_when_the_run_does_not_bucket() {
+    let trend = metric(json!({
+        "dataset": "commits",
+        "group_by": ["author"],
+        "order_by": { "field": "bucket" },
+        "fields": [
+            { "field": "author", "type": "string", "as_name": "author" },
+            { "agg": "count", "type": "int", "as_name": "total" }
+        ]
+    }));
+    let declared = declaration();
+    let over = Over {
+        declaration: &declared,
+        database: "insight_datasets",
+        table: "ds_commits_1",
+    };
+
+    let sql = trend
+        .compile_over(&people(), &requested("P7D").unbucketed(), over)
+        .unwrap_or_else(|error| panic!("an unbucketed run compiles: {error}"))
+        .sql;
+
+    assert!(sql.contains("ORDER BY `author`"), "{sql}");
+    assert!(!sql.contains("ORDER BY `bucket`"), "{sql}");
 }

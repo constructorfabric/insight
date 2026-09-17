@@ -102,8 +102,15 @@ impl MetricQuery {
         }
 
         clock
-            .map(|field| over.read(Some(field), "time", qualifier))
+            .map(|field| over.read_as(Some(field), "time", qualifier, Form::Raw))
             .transpose()
+    }
+
+    /// Whether this metric answers one row per group rather than one per
+    /// record, which is what decides whether a windowed run buckets or merely
+    /// reports the bucket each row falls in.
+    fn groups_its_rows(&self) -> bool {
+        !self.group_by.is_empty() || self.fields.iter().any(|field| field.agg.is_some())
     }
 
     /// Both directions of the `GROUP BY`: every group names a selected
@@ -206,9 +213,11 @@ impl MetricQuery {
                     );
                     // Identity knows nobody by this handle: show what the
                     // record itself says, never a blank.
-                    field.aggregated(format!(
-                        "coalesce(nullIf(`{alias}`.`display_name`, ''), {shown})"
-                    ))
+                    let resolved =
+                        format!("coalesce(nullIf(`{alias}`.`display_name`, ''), {shown})");
+                    let condition = field.condition(over, qualifier, &mut selection.binds)?;
+
+                    field.aggregated_if(resolved, condition)
                 }
                 None => field.expression(over, qualifier, &mut selection.binds)?,
             };
@@ -304,33 +313,42 @@ impl MetricQuery {
         // A metric may name the bucket; the run injects it whenever it
         // windows. Either way it is grouped once, and a run that does not
         // window has no such column to group by.
+        //
+        // INVARIANT: the bucket joins the grouping only where there is one.
+        // Adding it to a query that selects plain columns and aggregates
+        // nothing would make that query aggregating, and leave those columns
+        // neither grouped nor under an aggregate.
         let mut groups: Vec<String> = self
             .group_by
             .iter()
             .filter(|group| *group != BUCKET_COLUMN)
             .cloned()
             .collect();
-        if bucket.is_some() {
+        if bucket.is_some() && self.groups_its_rows() {
             groups.insert(0, BUCKET_COLUMN.to_owned());
         }
+        // A metric may order by the bucket, which a run that does not window
+        // never produces. Falling back to the grouping's own order keeps the
+        // rows a `LIMIT` cuts deterministic.
+        let ordering = match &self.order_by {
+            Some(order) if as_names.contains(order.field.as_str()) => Some(order),
+            Some(order) if order.field == BUCKET_COLUMN => None,
+            Some(order) => return Err(MetricQueryError::OrderBy(order.field.clone())),
+            None => None,
+        };
+
         if !groups.is_empty() {
             let backticked: Vec<String> = groups.iter().map(|group| format!("`{group}`")).collect();
             sql.push_str(" GROUP BY ");
             sql.push_str(&backticked.join(", "));
 
-            if self.order_by.is_none() {
+            if ordering.is_none() {
                 sql.push_str(" ORDER BY ");
                 sql.push_str(&backticked.join(", "));
             }
         }
-        if let Some(order) = &self.order_by {
-            let ordered = as_names.contains(order.field.as_str());
-            if !ordered && order.field != BUCKET_COLUMN {
-                return Err(MetricQueryError::OrderBy(order.field.clone()));
-            }
-            if ordered {
-                let _ = write!(sql, " ORDER BY `{}` {}", order.field, order.direction.sql());
-            }
+        if let Some(order) = ordering {
+            let _ = write!(sql, " ORDER BY `{}` {}", order.field, order.direction.sql());
         }
         let limit = self.limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
         let _ = write!(sql, " LIMIT {limit}");
@@ -435,7 +453,7 @@ impl MetricQuery {
         };
 
         effective_clock(self, over.declaration)
-            .map(|(field, _)| over.read(Some(field), "time", None))
+            .map(|(field, _)| over.read_as(Some(field), "time", None, Form::Raw))
             .transpose()
     }
 

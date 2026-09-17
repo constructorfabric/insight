@@ -300,10 +300,11 @@ async fn replacing_a_dataset_nothing_stands_under_writes_nothing() -> R {
     Ok(())
 }
 
-/// A removal that could not take the table away gives the dataset back whole:
-/// its declaration, its table and its readers.
+/// A removal that could not take the table away leaves the row mid-removal:
+/// the name stays held, nothing reads it, and the lapsing lease is what lets
+/// the request be repeated.
 #[tokio::test]
-async fn a_released_removal_leaves_the_dataset_as_it_was_found() -> R {
+async fn a_removal_that_could_not_finish_holds_the_name_until_its_lease_lapses() -> R {
     let store = MemoryDatasets::at(at(0));
     let created = store
         .take_create(&name("commits"), &declaration())
@@ -319,19 +320,27 @@ async fn a_released_removal_leaves_the_dataset_as_it_was_found() -> R {
     store
         .finish(&name("commits"), &created.token, Finish::Ready)
         .await?;
+    store.take_remove(&name("commits")).await?;
 
-    let removal = store.take_remove(&name("commits")).await?;
-    let released = store
-        .finish(&name("commits"), &removal.token, Finish::Released)
+    // The drop failed, so nothing was finished. Nobody may take the name.
+    let refused = store.take_create(&name("commits"), &declaration()).await;
+    assert!(
+        matches!(refused, Err(DatasetStoreError::Refused(Refused::Busy(_)))),
+        "{refused:?}"
+    );
+    let Some(held) = store.get(&name("commits")).await? else {
+        panic!("the row is still there");
+    };
+    assert_eq!(held.state, DatasetState::Removing);
+
+    // Once the lease lapses the removal is repeatable, and completes.
+    store.set_now(at(LEASE_SECS + 1));
+    let again = store.take_remove(&name("commits")).await?;
+    store
+        .finish(&name("commits"), &again.token, Finish::Removed)
         .await?;
 
-    assert_eq!(released, Owning::Held);
-    let Some(held) = store.get(&name("commits")).await? else {
-        panic!("the dataset is still there");
-    };
-    assert_eq!(held.state, DatasetState::Ready);
-    assert_eq!(held.physical_table, Some("ds_commits_1".to_owned()));
-    assert!(held.held.is_none(), "nothing holds it now");
+    assert!(store.get(&name("commits")).await?.is_none());
 
     Ok(())
 }
