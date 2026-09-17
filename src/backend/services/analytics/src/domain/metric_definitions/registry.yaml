@@ -251,7 +251,10 @@ sources:
       - key: bugs_fixed
         evidence_granularity: event
         evidence_presentation: *issue_counted
-      - key: closed_non_bug
+      - key: closed_task
+        evidence_granularity: event
+        evidence_presentation: *issue_counted
+      - key: closed_unknown_type
         evidence_granularity: event
         evidence_presentation: *issue_counted
       - key: closed_fixed
@@ -2371,14 +2374,14 @@ metrics:
         measure_key: bugs_fixed
     dimensions:
       - resolution
-  - metric_key: tasks.closed_non_bug
+  - metric_key: tasks.closed_task
     source_key: task
     subject: throughput
-    label: Non-bug issues closed
-    short_label: Non-bug
-    description: Closed issues of a known non-bug type
+    label: Tasks closed
+    short_label: Tasks
+    description: Closed issues of a known task (non-bug) type
     explanation: >-
-      Issues of a known non-bug type a person closed during the period. Issues whose type cannot be determined are excluded rather than counted here.
+      Issues of a known task (non-bug) type a person closed during the period. Issues whose type cannot be determined are excluded rather than counted here.
     unit: issues
     format: integer
     direction: higher_is_better
@@ -2387,7 +2390,25 @@ metrics:
     peer_cohort_key: org_unit
     inputs:
       - input_role: value
-        measure_key: closed_non_bug
+        measure_key: closed_task
+    dimensions: []
+  - metric_key: tasks.closed_unknown
+    source_key: task
+    subject: throughput
+    label: Unclassified issues closed
+    short_label: Unclassified
+    description: Closed issues whose type is not mapped to a kind by the operator table
+    explanation: >-
+      Issues a person closed whose type the operator type table maps to no kind, so they count in neither bugs nor tasks. Completes the split of issues closed.
+    unit: issues
+    format: integer
+    direction: lower_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: closed_unknown_type
     dimensions: []
   - metric_key: tasks.closed_fixed
     source_key: task

@@ -20,10 +20,10 @@ description: >
   covers, stays its own group instead of joining the non-bug work, and the
   type-less issue reports no type id, so the issue-type dimension lookup
   misses entirely: it counts as closed under the unknown kind, in neither
-  bugs_fixed nor closed_non_bug, and falls in the reserved unknown-type
-  breakdown group. 1 bug + 3 non-bug is two short of the 6 closed; the missing
-  two are the Incident and the type-less issue. Empty window 2026-06 -> no
-  items.
+  bugs_fixed nor closed_task, and falls in the reserved unknown-type
+  breakdown group. Both join closed_unknown_type instead, so the three kind
+  subsets partition the 6 closed exactly: 1 bug + 3 task + 2 unclassified.
+  Empty window 2026-06 -> no items.
 
 bronze:
   bronze_bamboohr.employees:

@@ -2,7 +2,7 @@
 
 Gold resolves the kind as mapping row -> tenant default -> 'unknown'. This tenant
 defaults issue_type to `task`, so Carol's closed Incident (no map row) counts in
-closed_non_bug instead of staying `unknown`, while her closed Bug keeps its mapped
+closed_task instead of staying `unknown`, while her closed Bug keeps its mapped
 `bug` — the default never overrides a decision. The absent-default case is pinned by
 the *_value_map_precedence specs.
 """
@@ -32,7 +32,7 @@ def test_unmapped_type_falls_to_the_configured_default(spec: SpecRun) -> None:
                 "metrics": [
                     {"metric_key": "tasks.closed", "views": [{"view": "period"}]},
                     {"metric_key": "tasks.bugs_fixed", "views": [{"view": "period"}]},
-                    {"metric_key": "tasks.closed_non_bug", "views": [{"view": "period"}]},
+                    {"metric_key": "tasks.closed_task", "views": [{"view": "period"}]},
                 ],
             },
         }
@@ -41,4 +41,4 @@ def test_unmapped_type_falls_to_the_configured_default(spec: SpecRun) -> None:
 
     r.row("tasks.closed", "period", entity_id=CAROL).equals(value=2)
     r.row("tasks.bugs_fixed", "period", entity_id=CAROL).equals(value=1)
-    r.row("tasks.closed_non_bug", "period", entity_id=CAROL).equals(value=1)
+    r.row("tasks.closed_task", "period", entity_id=CAROL).equals(value=1)

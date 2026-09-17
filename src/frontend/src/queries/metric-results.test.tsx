@@ -104,7 +104,7 @@ describe("useMetricCollection", () => {
     const withUnknown: MetricCollectionConfig = {
       metrics: [
         { key: "m", views: [{ view: "period" }] },
-        { key: "tasks.closed_non_bug", views: [{ view: "period" }] },
+        { key: "tasks.closed_task", views: [{ view: "period" }] },
       ],
     };
     const { result } = renderHook(
@@ -115,7 +115,7 @@ describe("useMetricCollection", () => {
     expect(mock).toHaveBeenCalledTimes(1);
     expect(mock.mock.calls[0]![0].metrics.map((m) => m.metric_key)).toEqual(["m"]);
     expect(result.current.byKey.get("m")).toBeDefined();
-    expect(result.current.byKey.get("tasks.closed_non_bug")).toBeUndefined();
+    expect(result.current.byKey.get("tasks.closed_task")).toBeUndefined();
   });
 
   it("makes no request at all when the catalog offers none of the collection", async () => {
