@@ -7,6 +7,7 @@ import {
   type Paging,
 } from "@/components/custom/definition-paging";
 import { DefinitionSearch } from "@/components/custom/definition-search";
+import { EditLink } from "@/components/custom/editor/edit-link";
 import { RemoveDefinition } from "@/components/custom/remove-definition";
 import { RenameDefinition } from "@/components/custom/rename-definition";
 
@@ -33,6 +34,7 @@ export function DefinitionList({
   renderRow,
   search,
   paging,
+  create,
 }: {
   title: string;
   blurb: string;
@@ -44,12 +46,17 @@ export function DefinitionList({
   renderRow: (name: string) => ReactNode;
   search?: { label: string; value: string; onChange: (needle: string) => void };
   paging?: Paging;
+  /** What starts a new one of this kind, where one may be written by hand. */
+  create?: ReactNode;
 }) {
   return (
     <>
-      <header className="mb-3">
-        <h1 className={TEXT_TITLE}>{title}</h1>
-        <p className={cn(TEXT_BODY, "text-muted-foreground")}>{blurb}</p>
+      <header className="mb-3 flex flex-wrap items-start gap-3">
+        <div className="min-w-0 grow">
+          <h1 className={TEXT_TITLE}>{title}</h1>
+          <p className={cn(TEXT_BODY, "text-muted-foreground")}>{blurb}</p>
+        </div>
+        {create}
       </header>
       {search || paging ? (
         <div className="mb-4 flex flex-wrap items-center gap-3">
@@ -134,6 +141,7 @@ export function DefinitionActions({
 }) {
   return (
     <>
+      <EditLink kind={kind} name={name} />
       <RenameDefinition kind={kind} name={name} />
       <RemoveDefinition kind={kind} name={name} />
     </>

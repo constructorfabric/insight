@@ -8,6 +8,7 @@ import {
   type Paging,
 } from "@/components/custom/definition-paging";
 import { DefinitionSearch } from "@/components/custom/definition-search";
+import { EditLink, NewLink } from "@/components/custom/editor/edit-link";
 import { RemoveDefinition } from "@/components/custom/remove-definition";
 import { RenameDefinition } from "@/components/custom/rename-definition";
 import { Card, CardContent } from "@/components/ui/card";
@@ -27,11 +28,15 @@ function CustomDashboardIndex() {
 
   return (
     <>
-      <header className="mb-3">
-        <h1 className={TEXT_TITLE}>Custom</h1>
-        <p className={cn(TEXT_BODY, "text-muted-foreground")}>
-          Dashboards built from your own data. Ask the assistant for a new one.
-        </p>
+      <header className="mb-3 flex flex-wrap items-start gap-3">
+        <div className="min-w-0 grow">
+          <h1 className={TEXT_TITLE}>Custom</h1>
+          <p className={cn(TEXT_BODY, "text-muted-foreground")}>
+            Dashboards built from your own data. Ask the assistant for a new
+            one, or write one by hand.
+          </p>
+        </div>
+        <NewLink kind="dashboards" noun="dashboard" />
       </header>
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <DefinitionSearch
@@ -90,6 +95,7 @@ function DashboardCard({ name }: { name: string }) {
           />
         </Link>
         <span className="flex shrink-0 items-center gap-1">
+          <EditLink kind="dashboards" name={name} />
           <RenameDefinition kind="dashboards" name={name} />
           <RemoveDefinition kind="dashboards" name={name} />
         </span>

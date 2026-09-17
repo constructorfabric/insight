@@ -7,6 +7,7 @@ import {
   DefinitionList,
 } from "@/components/custom/definition-list";
 import { WidgetSummary } from "@/components/custom/definition-summary";
+import { NewLink } from "@/components/custom/editor/edit-link";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { useDefinitionCatalogue } from "@/hooks/use-definition-catalogue";
 import { widgetQuery } from "@/queries/custom";
@@ -31,6 +32,7 @@ function WidgetsCatalogue() {
       onRetry={catalogue.refetch}
       search={{ label: "Search widgets", ...catalogue.search }}
       paging={catalogue.paging}
+      create={<NewLink kind="widgets" noun="widget" />}
       emptyLabel="No widgets yet. Ask the assistant for one."
       renderRow={(name) => <WidgetRow name={name} />}
     />

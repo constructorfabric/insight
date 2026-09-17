@@ -6,6 +6,7 @@ import {
   DefinitionList,
 } from "@/components/custom/definition-list";
 import { DatasetSummary } from "@/components/custom/definition-summary";
+import { EditLink, NewLink } from "@/components/custom/editor/edit-link";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { useDefinitionCatalogue } from "@/hooks/use-definition-catalogue";
 import { datasetQuery } from "@/queries/custom";
@@ -33,6 +34,7 @@ function DatasetsCatalogue() {
       onRetry={catalogue.refetch}
       search={{ label: "Search datasets", ...catalogue.search }}
       paging={catalogue.paging}
+      create={<NewLink kind="datasets" noun="dataset" />}
       emptyLabel="No datasets yet. Declare one to send records into it."
       renderRow={(name) => <DatasetRow name={name} />}
     />
@@ -46,16 +48,19 @@ function DatasetRow({ name }: { name: string }) {
     <DefinitionCard
       name={name}
       actions={
-        <Link
-          to="/portal/custom/datasets/$name"
-          params={{ name }}
-          className={cn(
-            TEXT_BODY,
-            "underline decoration-dotted underline-offset-4"
-          )}
-        >
-          Open
-        </Link>
+        <>
+          <EditLink kind="datasets" name={name} />
+          <Link
+            to="/portal/custom/datasets/$name"
+            params={{ name }}
+            className={cn(
+              TEXT_BODY,
+              "underline decoration-dotted underline-offset-4"
+            )}
+          >
+            Open
+          </Link>
+        </>
       }
     >
       {isPending ? (

@@ -7,6 +7,7 @@ import {
   DefinitionList,
 } from "@/components/custom/definition-list";
 import { MetricSummary } from "@/components/custom/definition-summary";
+import { NewLink } from "@/components/custom/editor/edit-link";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { useDefinitionCatalogue } from "@/hooks/use-definition-catalogue";
 import { metricQuery } from "@/queries/custom";
@@ -35,6 +36,7 @@ function MetricsCatalogue() {
       onRetry={catalogue.refetch}
       search={{ label: "Search metrics", ...catalogue.search }}
       paging={catalogue.paging}
+      create={<NewLink kind="metrics" noun="metric" />}
       emptyLabel="No metrics yet. Ask the assistant for one."
       renderRow={(name) => <MetricRow name={name} />}
     />

@@ -76,6 +76,48 @@ export function definitionPagesQuery(kind: EditableKind, search = "") {
   });
 }
 
+/**
+ * A stored definition as the document that was sent to store it.
+ *
+ * Each kind hands its body back in its own envelope, and the editor writes the
+ * body: what it opens has to be what a save would send, or an untouched
+ * definition would come back changed.
+ */
+export function definitionBodyQuery(kind: EditableKind, name: string) {
+  return queryOptions({
+    queryKey: ["custom", "body", kind, name],
+    queryFn: async (): Promise<Record<string, unknown>> => {
+      if (kind === "datasets") {
+        const dataset = await fetchDataset(name);
+        return dataset.declaration as unknown as Record<string, unknown>;
+      }
+      if (kind === "metrics") {
+        const metric = await fetchMetric(name);
+        return metric.definition as unknown as Record<string, unknown>;
+      }
+      const body =
+        kind === "widgets"
+          ? await fetchWidget(name)
+          : await fetchDashboard(name);
+      return body as unknown as Record<string, unknown>;
+    },
+  });
+}
+
+/**
+ * Every name of a kind in one answer, for a form to offer a reference from.
+ *
+ * A page behind is not a refusal: a name may be typed whether or not this
+ * answer holds it, and the service decides whether it resolves.
+ */
+export function catalogueNamesQuery(kind: EditableKind) {
+  return queryOptions({
+    queryKey: ["custom", "all-names", kind],
+    queryFn: () => FETCH_NAMES[kind]({ limit: MAX_PAGE }),
+    select: (page: NamePage) => page.names,
+  });
+}
+
 /** Every dashboard in one answer, for the rail that lists them all. */
 export function dashboardNamesQuery(search = "") {
   return queryOptions({
@@ -223,8 +265,13 @@ export function useRenameDefinition() {
 
 export function useSendChat() {
   return useMutation({
-    mutationFn: ({ message, history }: { message: string; history: ChatTurn[] }) =>
-      sendChat(message, history),
+    mutationFn: ({
+      message,
+      history,
+    }: {
+      message: string;
+      history: ChatTurn[];
+    }) => sendChat(message, history),
   });
 }
 
