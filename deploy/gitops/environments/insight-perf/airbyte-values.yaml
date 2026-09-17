@@ -1,0 +1,21 @@
+workload-launcher:
+  resources:
+    requests: {cpu: 250m, memory: 512Mi}
+    limits: {cpu: "2", memory: 2Gi}
+  livenessProbe: {initialDelaySeconds: 120, periodSeconds: 15, failureThreshold: 10}
+  readinessProbe: {initialDelaySeconds: 30, periodSeconds: 15, failureThreshold: 10}
+workload-api-server:
+  resources:
+    requests: {cpu: 100m, memory: 512Mi}
+    limits: {cpu: "1", memory: 1Gi}
+# Merged over the airbyte overlay deploy-insight-stand.sh generates.
+#
+# MinIO removed RELEASE.2023-11-20T22-40-07Z from Docker Hub — a pull there now
+# returns "object not found" / insufficient_scope — while quay.io still serves the
+# same digest. insight-dev and cf-prod keep running only because their nodes cached
+# the image before the prune; any NEW stand on Airbyte 1.9.2 fails at the
+# minio-create-bucket post-install hook without this.
+minio:
+  image:
+    repository: quay.io/minio/minio
+    tag: RELEASE.2023-11-20T22-40-07Z

@@ -1,0 +1,2 @@
+This environment is hand-maintained. Source of truth: insight-workspace/env/perf.
+Do not run deploy-insight-stand.sh against it; drive the gitops Makefile directly.

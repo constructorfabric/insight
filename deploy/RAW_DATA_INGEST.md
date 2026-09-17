@@ -32,7 +32,7 @@ randomness.
 
 Inherit gateway route defaults. A custom `gateway.gateway.routes` list replaces
 the complete default list and must explicitly include `/api/core` with
-`auth: instance_token`, upstream `http://{{ .Release.Name }}-v3-core:8086`,
+`auth: instance_token`, upstream `http://{{ .claude Release.Name }}-v3-core:8086`,
 `timeoutMs: 40000`, and `stripPrefix: true`.
 
 For Docker Compose, set `INSIGHT_V3_INGEST_TOKEN` in your untracked

@@ -1,0 +1,40 @@
+# Single instance: the product's migration emits ReplacingMergeTree / MergeTree /
+# View rather than Replicated*, and no template emits ON CLUSTER, so a second
+# replica would hold no data. Revisit when the engines change.
+shards: 1
+replicaCount: 1
+zookeeper: { enabled: false }
+keeper: { enabled: false }
+
+# Sized for load, not for idle: the 2026-09-01 run put ClickHouse at 131% of a
+# 4-core request at 24 VU while every Insight service stayed under 5% of its own.
+# The 16Gi ceiling fits inside a va-8-16 worker; 20Gi did not.
+resources:
+  requests: { cpu: "4", memory: 8Gi }
+  limits:   { cpu: "8", memory: 16Gi }
+
+# 10Gi fills at ~3.5M silver rows (gold materialisation dies on errno 28).
+# Sized for 300 people x 730d with room for re-seeds.
+persistence:
+  size: 100Gi
+
+# Caches are sized from the cgroup unless told otherwise: with a 16Gi limit
+# ClickHouse would reserve 5Gi each for marks, primary index and index marks plus
+# an 8Gi uncompressed cache it never uses. Every mark in the dev warehouse totals
+# 3.14 MiB and primary-index memory 1.33 MiB, so these are 40x headroom.
+# max_concurrent_queries is deliberately left at the default — the stand bursts to
+# ~2,000 queries a minute and Altinity's low-memory value of 8 would throttle it.
+# background_pool_size is left at its default too: ClickHouse refuses to start unless
+# number_of_free_entries_in_pool_to_execute_mutation (20) <= background_pool_size *
+# background_merges_mutations_concurrency_ratio, so lowering it to 8 gives 16 and the
+# server exits with BAD_ARGUMENTS. The caches above are where the memory actually is.
+configdFiles:
+  memory-profile.xml: |
+    <clickhouse>
+      <mark_cache_size>134217728</mark_cache_size>
+      <primary_index_cache_size>67108864</primary_index_cache_size>
+      <index_mark_cache_size>33554432</index_mark_cache_size>
+      <uncompressed_cache_size>16777216</uncompressed_cache_size>
+      <background_schedule_pool_size>64</background_schedule_pool_size>
+      <max_server_memory_usage_to_ram_ratio>0.75</max_server_memory_usage_to_ram_ratio>
+    </clickhouse>
