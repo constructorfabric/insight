@@ -19,20 +19,38 @@ impl MigratorTrait for Migrator {
     }
 }
 
-/// One statement per call is all the `MySQL` wire protocol takes, so the
-/// script is split on `;`. Safe for this script: no string literal in it
-/// contains a semicolon.
+/// One statement per call is all the `MySQL` wire protocol takes, so a script
+/// is applied a statement at a time.
 async fn apply_sql(manager: &SchemaManager<'_>, script: &str) -> Result<(), DbErr> {
     let db = manager.get_connection();
-    for statement in script
-        .split(';')
-        .map(str::trim)
-        .filter(|statement| !statement.is_empty())
-    {
-        db.execute_unprepared(statement).await?;
+    for statement in statements(script) {
+        db.execute_unprepared(&statement).await?;
     }
 
     Ok(())
+}
+
+/// The statements a script holds, split on `;`.
+///
+/// INVARIANT: comments come off first. A `;` inside one would otherwise end a
+/// statement halfway through, which no test of the script's text can see and
+/// only a real server refuses. These scripts carry no string literals, so the
+/// remaining semicolons are all statement ends.
+fn statements(script: &str) -> Vec<String> {
+    let bare: String = script
+        .lines()
+        .map(|line| match line.split_once("--") {
+            Some((before, _)) => before,
+            None => line,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    bare.split(';')
+        .map(str::trim)
+        .filter(|statement| !statement.is_empty())
+        .map(str::to_owned)
+        .collect()
 }
 
 mod m20260907_000001_definitions {
@@ -98,6 +116,41 @@ mod tests {
             3
         );
         assert!(!script.contains("ReplacingMergeTree"));
+    }
+
+    /// Every script is applied a statement at a time, and a statement cut in
+    /// half is a syntax error only a real server reports. Reading the text is
+    /// not enough: the split is what the server sees.
+    #[test]
+    fn every_script_splits_into_whole_statements() {
+        let scripts = [
+            (
+                "001_definitions.sql",
+                include_str!("sql/001_definitions.sql"),
+                3,
+            ),
+            ("002_datasets.sql", include_str!("sql/002_datasets.sql"), 1),
+        ];
+
+        for (named, script, expected) in scripts {
+            let statements = super::statements(script);
+
+            assert_eq!(
+                statements.len(),
+                expected,
+                "{named} should hold {expected} statements: {statements:#?}"
+            );
+            for statement in &statements {
+                assert!(
+                    statement.starts_with("CREATE TABLE IF NOT EXISTS"),
+                    "{named} holds a statement that is not a whole one: {statement}"
+                );
+                assert!(
+                    statement.ends_with(')') || statement.contains("COLLATE=utf8mb4_unicode_ci"),
+                    "{named} holds a statement that stops early: {statement}"
+                );
+            }
+        }
     }
 
     #[test]
