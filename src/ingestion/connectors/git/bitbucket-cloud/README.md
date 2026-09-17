@@ -120,13 +120,15 @@ five. One blocking stream group per level runs
 read after the first is a cache hit rather than a race to the vendor. Each child
 still keeps its own copy of the listing's cursor in its state; when two
 children's cursors for a repository differ (one of them lagged), their URLs
-differ, both read the vendor, and nothing is shared or lost. The listing's upper
-bound is the slice end floored to the UTC hour for the same reason: a per-stream
-`now()` would give every stream its own URL and turn the one read back into five,
-and a bound fixed for the walk keeps every page of it on one window. The bound
-moves once an hour, so a sync sees pull-request updates up to the top of the hour
-it started in, and a second sync inside the same hour lists nothing new; schedule
-syncs at least an hour apart, shortly past the hour.
+differ, both read the vendor, and nothing is shared or lost. The listing request
+reads no clock for the same reason: its window opens at the cursor and has no
+upper bound, so the five streams, which start hours apart, build the same URL.
+The cursor is per repository, so a walk is one repository's few pages and the
+one-day lookback covers a request updated while they are served. Past the CDK's
+10,000-partition ceiling the cursor collapses to one global value: a walk becomes
+the whole sync, the CDK widens the next window by the previous sync's runtime on
+top of the lookback, and since each stream measures its own runtime the five
+URLs stop matching. Sharing is a per-repository-cursor property.
 
 `branches` is full refresh — bronze keeps the latest state per branch, and
 head-movement history is derived by the `snapshot` / `fields_history` dbt
@@ -135,8 +137,9 @@ collapses to current state and a head move is a tracked-column change.
 
 ### Bitbucket-specific behaviours
 
-- **Pagination** is cursor-style: the response carries an absolute `next` URL,
-  consumed via `RequestPath`.
+- **Pagination** of the per-request children is cursor-style: the response
+  carries an absolute `next` URL, consumed via `RequestPath`. The repository and
+  pull-request listings walk by keyset instead (below).
 - **`fields=`** trims the response to the used properties; the full repository
   object is large and most of it is unused here.
 - **The "updated after" bound is server-side**, expressed as
@@ -168,7 +171,7 @@ forms so an omission is visible:
 | anchor | applies to | form |
 |---|---|---|
 | `repos_since_start` | `repositories` (also the parent of every pull-request stream) and the repository listings of the branch, pipeline and deployment walks | `q=updated_on >= start_date`, server-side |
-| `prs_since_start` | `pull_requests`, the parent of the four per-PR children | `q=updated_on >= <the stream's own cursor> AND updated_on < <slice end floored to the UTC hour>` |
+| `prs_since_start` | `pull_requests`, the parent of the four per-PR children | `q=updated_on >= <the stream's own cursor>` |
 
 Filtering repositories server-side is what bounds the clone cost: an untouched
 repository is never returned, so the proxy never walks it. VERIFIED against the

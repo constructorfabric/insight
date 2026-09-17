@@ -1391,12 +1391,13 @@ def test_the_repository_listing_walks_by_created_on_not_by_page_number(http_mock
 
 
 @freezegun.freeze_time(_FROZEN)
-def test_the_pull_request_listing_walks_by_id_inside_the_slice(http_mocker: HttpMocker) -> None:
+def test_the_pull_request_listing_walks_by_id_from_the_cursor_with_no_upper_bound(
+    http_mocker: HttpMocker,
+) -> None:
     """Same walk for the requests of one repository, on the integer id the
-    vendor assigns once, with the slice end as the upper bound: a request
-    updated while the walk runs leaves this walk's set instead of moving inside
-    it, and the next sync lists it because the cursor never rises past what
-    this walk asked for."""
+    vendor assigns once, from the cursor up with no upper bound: the request
+    reads no clock, so every stream that shares the listing builds the same
+    URL whatever hour it starts in."""
     config = BitbucketCloudConfigBuilder().build()
     prs_url = f"{BB_URL}/repositories/acme/app/pullrequests"
     http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
@@ -1423,9 +1424,7 @@ def test_the_pull_request_listing_walks_by_id_inside_the_slice(http_mocker: Http
     for q in requests:
         clauses = [c.strip() for c in q["q"][0].split(" AND ")]
         assert any(c.startswith('updated_on >= "2026-06-01') for c in clauses), clauses
-        assert any(c.startswith('updated_on < "2026-07-01T00:00:00') for c in clauses), (
-            f"the slice end bounds the walk: {clauses}"
-        )
+        assert not any(c.startswith("updated_on <") for c in clauses), f"no upper bound: {clauses}"
 
 
 class _KeysetVendor:
@@ -1451,7 +1450,8 @@ class _KeysetVendor:
 
         eligible = [item for item in self.items if self._in_window(item, lower, upper) and self._past(item, bound)]
         eligible.sort(key=lambda item: item[query["sort"][0]])
-        page, rest = eligible[: self.pagelen], eligible[self.pagelen :]
+        page = [dict(item) for item in eligible[: self.pagelen]]
+        rest = eligible[self.pagelen :]
 
         self.served.append([item[self.key] for item in page])
         if self.on_page is not None:
@@ -1540,23 +1540,28 @@ def test_a_created_on_tie_across_a_page_edge_drops_the_second_repository(http_mo
     assert listed == sorted(r["slug"] for r in repos[:100]), "the tied repository past the page edge is not listed"
 
 
-def test_the_next_sync_lists_a_pull_request_updated_after_the_walk_began(http_mocker: HttpMocker) -> None:
-    """A request updated while the walk runs falls outside the slice end, so it
-    leaves this walk's set instead of moving inside it. The cursor closes at the
-    newest updated_on the walk did see, below that end, so the next sync's
-    window opens below the update and lists it."""
+def test_a_pull_request_updated_mid_walk_is_listed_now_when_its_page_is_ahead_and_next_sync_when_behind(
+    http_mocker: HttpMocker,
+) -> None:
+    """A request updated while the walk runs is listed by this walk when its
+    page is still ahead, and the cursor closes at that update. One whose page
+    was already served keeps its old row this walk; the next sync's window
+    opens one lookback below the cursor and lists it updated. A repository's
+    walk is minutes, the lookback a day."""
     config = BitbucketCloudConfigBuilder().build()
     prs_url = f"{BB_URL}/repositories/acme/app/pullrequests"
     prs = [
         _pr(i, author=None) | {"updated_on": f"2026-06-{10 + i // 10:02d}T{i % 10:02d}:00:00.000000+00:00"}
         for i in range(1, 121)
     ]
+    edited = "2026-07-01T05:00:00.000000+00:00"
 
-    def edit_an_unlisted_request(pages_served: int) -> None:
+    def edit_one_request_behind_the_walk_and_one_ahead(pages_served: int) -> None:
         if pages_served == 1:
-            prs[99]["updated_on"] = "2026-07-01T05:00:00.000000+00:00"
+            prs[9]["updated_on"] = edited
+            prs[99]["updated_on"] = edited
 
-    vendor = _KeysetVendor(prs, key="id", pagelen=50, on_page=edit_an_unlisted_request)
+    vendor = _KeysetVendor(prs, key="id", pagelen=50, on_page=edit_one_request_behind_the_walk_and_one_ahead)
     http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
     http_mocker._mocker.get(prs_url, json=vendor)
 
@@ -1564,8 +1569,11 @@ def test_the_next_sync_lists_a_pull_request_updated_after_the_walk_began(http_mo
         first = read_stream(_CONNECTOR, "pull_requests", config, sync_mode=SyncMode.incremental)
 
     assert not first.errors
-    assert sorted(r.record.data["id"] for r in first.records) == [i for i in range(1, 121) if i != 100], (
-        "the request edited mid-walk left this walk's set"
+    first_rows = {r.record.data["id"]: r.record.data for r in first.records}
+    assert sorted(first_rows) == list(range(1, 121)), "every request is listed once"
+    assert _instant(first_rows[100]["updated_on"]) == _instant(edited), "its page was ahead: listed updated"
+    assert _instant(first_rows[10]["updated_on"]) == _instant("2026-06-11T00:00:00Z"), (
+        "its page was already served: this walk keeps the old row"
     )
 
     pages_of_the_first_sync = len(vendor.served)
@@ -1574,12 +1582,14 @@ def test_the_next_sync_lists_a_pull_request_updated_after_the_walk_began(http_mo
         second = read_stream(_CONNECTOR, "pull_requests", config, state=state, sync_mode=SyncMode.incremental)
 
     assert not second.errors
-    assert 100 in [r.record.data["id"] for r in second.records], "the next sync must list it"
+    second_rows = {r.record.data["id"]: r.record.data for r in second.records}
+    assert {10, 100} <= set(second_rows), f"the next sync lists both edited requests: {sorted(second_rows)}"
+    assert _instant(second_rows[10]["updated_on"]) == _instant(edited), "the request behind the walk arrives updated"
 
     resumed = _listing_requests(http_mocker, prs_url)[pages_of_the_first_sync]
     lower, upper = _updated_on_window(resumed)
-    assert _instant(lower) == _instant("2026-06-21T00:00:00Z"), f"the cursor minus the P1D lookback: {lower}"
-    assert upper is not None and _instant(upper) == _instant("2026-07-02T00:00:00Z"), upper
+    assert _instant(lower) == _instant("2026-06-30T05:00:00Z"), f"the cursor minus the P1D lookback: {lower}"
+    assert upper is None, f"no upper bound: {upper}"
     assert _keyset_bound(resumed, "id") == "0", "the resumed walk still opens at the bottom of the id range"
 
 

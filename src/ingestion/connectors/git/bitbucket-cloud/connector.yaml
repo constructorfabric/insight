@@ -91,7 +91,7 @@ definitions:
   # operator asked for.
   #
   # `stream_interval.start_time` is the floor on the first run and stored state
-  # afterwards, which is what makes the floor affordable: the window is walked
+  # one lookback back afterwards, which is what makes the floor affordable: the window is walked
   # in full once, then only what changed. Both halves are required — the parent
   # carries a cursor so there IS state, and each child carries one plus
   # `incremental_dependency: true` so the state is persisted. VERIFIED in
@@ -99,20 +99,19 @@ definitions:
   # CHILD's, and it is keyed on the parent's own `cursor_field`, so a
   # full-refresh parent raises `unhashable type: 'list'` on the second sync.
   # Same keyset walk, on the request id (see pull_request_keyset_paginator):
-  # an integer the vendor assigns once per repository, so no ties. The upper
-  # bound keeps a request updated while the walk runs out of this walk's set
-  # (the next sync lists it, the cursor closing below the bound).
-  # INVARIANT: the bound is the slice end floored to the UTC hour, fixed for
-  # the walk. pull_requests and its four children read this listing through
-  # the response cache, keyed by URL; a per-stream `now()` would give each of
-  # them its own URL and turn one vendor read back into five.
+  # an integer the vendor assigns once per repository, so no ties. No upper
+  # bound: the cursor is per repository, so a walk is one repository's few
+  # pages, and the P1D lookback covers a request updated while they are served.
+  # INVARIANT: nothing in this request reads the clock. pull_requests and its
+  # four children read this listing through the response cache, keyed by URL,
+  # and start hours apart; one clock value here would give each of them its
+  # own URL and turn one vendor read back into five.
   prs_since_start: &prs_since_start
     # pagelen HARD CAP on /pullrequests is 50 (400 above).
     pagelen: "50"
     sort: id
     q: >-
       updated_on >= "{{ stream_interval.start_time }}"
-      AND updated_on < "{{ format_datetime(stream_interval.end_time, '%Y-%m-%dT%H') }}:00:00+00:00"
       AND id > {{ next_page_token['next_page_token'] if next_page_token else 0 }}
 
   # WORKAROUND: Bitbucket pages by number, so a listing ordered by a value the
@@ -1198,8 +1197,8 @@ streams:
           - [destination]
 
   # ── Pull request comments (Bitbucket API) ───────────────────────────────
-  # Child of a stateless sliding window of recently updated PRs. Bodies are
-  # stored trimmed to 2048 chars — the silver comments model consumes them.
+  # Child of the pull_requests listing. Bodies are stored trimmed to 2048
+  # chars — the silver comments model consumes them.
   - type: DeclarativeStream
     name: pull_request_comments
     primary_key:

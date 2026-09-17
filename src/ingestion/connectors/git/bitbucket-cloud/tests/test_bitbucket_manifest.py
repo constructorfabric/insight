@@ -403,8 +403,8 @@ def test_the_pull_request_children_read_the_pull_requests_stream_itself() -> Non
         assert by_name[name]["retriever"]["requester"].get("use_cache") is True, name
 
     bound = by_name["pull_requests"]["retriever"]["requester"]["request_parameters"]["q"]
-    assert "format_datetime(stream_interval.end_time, '%Y-%m-%dT%H')" in bound, (
-        f"the listing's upper bound must be one value for every stream in the hour: {bound}"
+    assert "updated_on <" not in bound and "now_utc" not in bound and "end_time" not in bound, (
+        f"the listing request must read no clock, or the five streams build five URLs: {bound}"
     )
 
 
