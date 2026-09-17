@@ -81,7 +81,7 @@ fix.
 - Seeder re-runs must remain idempotent — a replay of the same source
   data must not multiply rows.
 - Email and UUID-string comparisons are conventionally case-insensitive
-  across the cyberfabric platform. Forcing byte-exact comparison in
+  across the Constructor Fabric platform. Forcing byte-exact comparison in
   one storage layer creates a fragile contract no caller expects.
 - Existing indexes on `value_id` are covered (`idx_value_id`); any
   case-insensitive solution must not break the covered-index property.
