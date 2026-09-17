@@ -68,10 +68,11 @@ pub(crate) async fn check(
     body: &Value,
     definitions: &dyn Lookup,
     datasets: &dyn Datasets,
+    over: metric::CompileAgainst<'_>,
 ) -> Result<(), KindError> {
     match kind {
-        DefinitionKind::Metric => metric::check(body, datasets).await,
-        DefinitionKind::Widget => widget::check(body, definitions).await,
+        DefinitionKind::Metric => metric::check(body, datasets, over).await,
+        DefinitionKind::Widget => widget::check(body, definitions, datasets).await,
         DefinitionKind::Dashboard => dashboard::check(body),
     }
 }

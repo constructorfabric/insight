@@ -97,6 +97,25 @@ impl Field {
         &self.when
     }
 
+    /// Which element of an array payload this field picks, when it picks one.
+    pub(super) fn selector(&self) -> Option<&Filter> {
+        self.r#where.as_ref()
+    }
+
+    /// Where this field addresses a record itself rather than naming a
+    /// declared field.
+    pub(super) fn physical_keys(&self, at: &str, into: &mut Vec<(String, &'static str)>) {
+        if self.json.is_some() {
+            into.push((format!("{at}.json"), "json"));
+        }
+        if self.column.is_some() {
+            into.push((format!("{at}.column"), "column"));
+        }
+        if self.person.is_some() {
+            into.push((format!("{at}.person"), "person"));
+        }
+    }
+
     pub(super) fn source(&self) -> Result<Source<'_>, MetricQueryError> {
         Source::resolve(self.json.as_deref(), self.column.as_deref())
             .ok_or_else(|| MetricQueryError::FieldSource(format!("field `{}`", self.as_name)))
@@ -183,8 +202,8 @@ impl Field {
 
         let mut parts = Vec::with_capacity(self.when.len());
         for one in &self.when {
-            let (read, bound) = one.compare(over, qualifier)?;
-            parts.push(format!("{read} {} ?", one.op.sql()));
+            let (condition, bound) = one.predicate(over, qualifier)?;
+            parts.push(condition);
             binds.push(bound);
         }
 

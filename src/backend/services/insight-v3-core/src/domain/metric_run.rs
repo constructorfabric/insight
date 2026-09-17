@@ -5,7 +5,7 @@ use chrono::Utc;
 use super::datasets::{self, Datasets};
 use super::definition::{DefinitionKind, DefinitionName, Lookup};
 use super::kinds::dataset::declaration::Declaration;
-use super::kinds::metric::answerable::EffectiveClock;
+use super::kinds::metric::answerable::{self, EffectiveClock};
 use super::query::metric_query::over::Over;
 use super::query::metric_query::{MetricQuery, MetricQueryError, MetricRunner, RunResult};
 use super::query::time_window::{Window, WindowRequest};
@@ -143,6 +143,15 @@ impl<'a> MetricRuns<'a> {
             return Err(CustomError::Compile(MetricQueryError::NoDataset));
         };
         let (declaration, table) = self.ready_dataset(named).await?;
+
+        // Nobody stored this one, so nothing has checked it against the
+        // dataset yet. A query the declaration cannot answer is refused here
+        // rather than sent to the warehouse to fail there.
+        let violations = answerable::check(metric, &declaration);
+        if !violations.is_empty() {
+            return Err(CustomError::Unanswerable(violations));
+        }
+
         let over = Over {
             declaration: &declaration,
             database: self.datasets_database,

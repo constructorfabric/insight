@@ -825,7 +825,7 @@ async fn a_metric_offering_a_window_the_server_cannot_resolve_is_refused_on_writ
             json!({
                 "dataset": "commits",
                 "fields": [{ "field": "day", "type": "string", "as_name": "day" }],
-                "time": { "json": "committed_at" },
+                "time": { "field": "committed_at" },
                 "max_range": "for ever",
             }),
         )
@@ -843,7 +843,7 @@ async fn a_metric_offering_a_window_the_server_cannot_resolve_is_refused_on_writ
             json!({
                 "dataset": "commits",
                 "fields": [{ "field": "day", "type": "string", "as_name": "day" }],
-                "time": { "json": "committed_at" },
+                "time": { "field": "committed_at" },
                 "max_range": "P6M",
             }),
         )

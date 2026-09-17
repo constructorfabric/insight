@@ -74,7 +74,12 @@ impl Fixture {
     }
 
     fn surfaces(&self) -> Surfaces<'_> {
-        Surfaces::new(&self.definitions, &self.datasets)
+        Surfaces::new(
+            &self.definitions,
+            &self.datasets,
+            "insight_datasets",
+            self.metrics.people(),
+        )
     }
 }
 
@@ -226,6 +231,138 @@ mod what_the_dataset_answers {
                 .collect::<Vec<_>>(),
             vec!["fields[0].field", "fields[1].field"]
         );
+    }
+
+    /// Where a value sits, and whether it holds a person, are the
+    /// declaration's to answer.
+    #[tokio::test]
+    async fn a_metric_reaching_into_the_record_itself_is_refused_on_write() {
+        let cases = [
+            (
+                json!({
+                    "dataset": "commits",
+                    "fields": [{"json": "actor", "type": "string", "as_name": "actor"}]
+                }),
+                "fields[0].json",
+            ),
+            (
+                json!({
+                    "dataset": "commits",
+                    "fields": [{"column": "actor", "type": "string", "as_name": "actor"}]
+                }),
+                "fields[0].column",
+            ),
+            (
+                json!({
+                    "dataset": "commits",
+                    "fields": [{
+                        "field": "actor", "type": "string", "as_name": "actor",
+                        "person": "email"
+                    }]
+                }),
+                "fields[0].person",
+            ),
+            (
+                json!({
+                    "dataset": "commits",
+                    "fields": [{"field": "actor", "type": "string", "as_name": "actor"}],
+                    "filters": [{"json": "actor", "type": "string", "op": "eq", "value": "a"}]
+                }),
+                "filters[0].json",
+            ),
+            (
+                json!({
+                    "dataset": "commits",
+                    "time": {"column": "committed_at"},
+                    "fields": [{"field": "actor", "type": "string", "as_name": "actor"}]
+                }),
+                "time.column",
+            ),
+        ];
+
+        for (body, at) in cases {
+            let error = refusal_of(&body).await;
+
+            assert_eq!(
+                refused(&error).first().map(|(field, _)| field.clone()),
+                Some(at.to_owned()),
+                "should be refused at {at}: {body}"
+            );
+        }
+    }
+
+    /// Everything the compiler refuses, the write refuses too: a body stored
+    /// here and refused at every run is a definition nobody can act on.
+    #[tokio::test]
+    async fn a_metric_the_compiler_would_refuse_is_refused_on_write() {
+        let cases = [
+            (
+                json!({ "dataset": "commits", "fields": [] }),
+                "a metric must select at least one field",
+            ),
+            (
+                json!({
+                    "dataset": "commits",
+                    "fields": [{"type": "int", "as_name": "x"}]
+                }),
+                "must name",
+            ),
+            (
+                json!({
+                    "dataset": "commits",
+                    "fields": [
+                        {"field": "actor", "type": "string", "as_name": "actor"},
+                        {"field": "actor", "type": "string", "agg": "count", "as_name": "n"}
+                    ]
+                }),
+                "`actor` is selected beside an aggregate",
+            ),
+            (
+                json!({
+                    "dataset": "commits",
+                    "fields": [{"field": "actor", "type": "string", "as_name": "an actor"}]
+                }),
+                "1-128 characters",
+            ),
+        ];
+
+        for (body, said) in cases {
+            let fixture = Fixture::new().await;
+            let Err(error) = fixture
+                .surfaces()
+                .put(DefinitionKind::Metric, &name("asked"), &body)
+                .await
+            else {
+                panic!("the compiler would refuse this: {body}");
+            };
+
+            assert!(
+                error.to_string().contains(said),
+                "should mention {said:?}: {error}"
+            );
+        }
+    }
+
+    /// A trend metric names the bucket its windowed run injects; the same
+    /// metric answers an unwindowed run, which has no bucket to group by.
+    #[tokio::test]
+    async fn a_metric_may_group_by_the_bucket_a_window_injects() -> R {
+        let fixture = Fixture::new().await;
+        fixture
+            .surfaces()
+            .put(
+                DefinitionKind::Metric,
+                &name("per_day"),
+                &json!({
+                    "dataset": "pull_requests",
+                    "time": {"field": "opened_at"},
+                    "group_by": ["bucket"],
+                    "fields": [{"agg": "count", "type": "int", "as_name": "total"}]
+                }),
+            )
+            .await?;
+
+        Ok(())
     }
 
     #[tokio::test]

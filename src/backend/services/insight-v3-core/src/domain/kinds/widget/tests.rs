@@ -2,12 +2,13 @@ use serde_json::json;
 
 use super::*;
 
+/// A metric whose run has no date to bucket by.
 fn metric() -> MetricQuery {
     serde_json::from_value(json!({
-        "table": "events",
+        "dataset": "events",
         "fields": [
-            { "json": "day", "type": "string", "as_name": "day" },
-            { "json": "lines", "type": "int", "agg": "sum", "as_name": "total_lines" }
+            { "field": "day", "type": "string", "as_name": "day" },
+            { "field": "lines", "type": "int", "agg": "sum", "as_name": "total_lines" }
         ],
         "group_by": ["day"],
         "filters": []
@@ -15,14 +16,10 @@ fn metric() -> MetricQuery {
     .unwrap_or_else(|error| panic!("the fixture parses: {error}"))
 }
 
-fn timed_metric() -> MetricQuery {
-    serde_json::from_value(json!({
-        "table": "events",
-        "time": { "column": "occurred_at" },
-        "fields": [{ "agg": "count", "type": "int", "as_name": "total" }]
-    }))
-    .unwrap_or_else(|error| panic!("the fixture parses: {error}"))
-}
+/// The same metric read as one a window can bucket, which is what the
+/// declaration behind it decides.
+const CLOCKED: bool = true;
+const CLOCKLESS: bool = false;
 
 fn widget(value: serde_json::Value) -> Widget {
     serde_json::from_value(value).unwrap_or_else(|error| panic!("the fixture parses: {error}"))
@@ -35,7 +32,7 @@ fn every_kind_that_draws_two_columns_checks_both() {
             "type": kind, "metric": "lines_per_day", "x": "day", "y": "total_lines"
         }));
         assert!(
-            drawn.check_against(&metric()).is_ok(),
+            drawn.check_against(&metric(), CLOCKLESS).is_ok(),
             "{kind} draws its metric"
         );
 
@@ -44,7 +41,7 @@ fn every_kind_that_draws_two_columns_checks_both() {
         }));
         assert!(
             matches!(
-                wrong.check_against(&metric()),
+                wrong.check_against(&metric(), CLOCKLESS),
                 Err(WidgetError::UnknownColumn { .. })
             ),
             "{kind} refuses a column the metric has not got"
@@ -58,17 +55,30 @@ fn a_stat_reads_one_value() {
         "type": "stat", "metric": "lines_per_day", "value": "total_lines", "label": "Lines"
     }));
 
-    assert!(drawn.check_against(&metric()).is_ok());
+    assert!(drawn.check_against(&metric(), CLOCKLESS).is_ok());
 }
 
 #[test]
 fn a_chart_can_author_the_bucket_injected_by_a_clocked_metric() {
     let drawn = widget(json!({
-        "type": "line", "metric": "events_over_time", "x": "bucket", "y": "total"
+        "type": "line", "metric": "events_over_time", "x": "bucket", "y": "total_lines"
     }));
 
-    assert!(drawn.check_against(&timed_metric()).is_ok());
-    assert!(drawn.check_against(&metric()).is_err());
+    assert!(drawn.check_against(&metric(), CLOCKED).is_ok());
+}
+
+/// A metric nothing dates produces no bucket, so a chart drawing one would
+/// draw an empty column at every run.
+#[test]
+fn a_clockless_metric_has_no_bucket_to_draw() {
+    let drawn = widget(json!({
+        "type": "line", "metric": "lines_per_day", "x": "bucket", "y": "total_lines"
+    }));
+
+    assert!(matches!(
+        drawn.check_against(&metric(), CLOCKLESS),
+        Err(WidgetError::UnknownColumn { .. })
+    ));
 }
 
 #[test]
@@ -78,7 +88,7 @@ fn a_stat_naming_nothing_the_metric_returns_is_refused() {
     }));
 
     assert!(matches!(
-        drawn.check_against(&metric()),
+        drawn.check_against(&metric(), CLOCKLESS),
         Err(WidgetError::UnknownColumn { .. })
     ));
 }
@@ -89,7 +99,7 @@ fn a_pie_reads_a_label_and_a_value() {
         "type": "pie", "metric": "lines_per_day", "label": "day", "value": "total_lines"
     }));
 
-    assert!(drawn.check_against(&metric()).is_ok());
+    assert!(drawn.check_against(&metric(), CLOCKLESS).is_ok());
 }
 
 #[test]
@@ -99,7 +109,7 @@ fn a_pie_whose_label_is_not_a_column_is_refused() {
     }));
 
     assert!(matches!(
-        drawn.check_against(&metric()),
+        drawn.check_against(&metric(), CLOCKLESS),
         Err(WidgetError::UnknownColumn { .. })
     ));
 }
@@ -121,7 +131,7 @@ fn a_line_naming_the_metrics_own_columns_is_accepted() {
         "type": "line", "metric": "lines_per_day", "x": "day", "y": "total_lines"
     }));
 
-    assert!(widget.check_against(&metric()).is_ok());
+    assert!(widget.check_against(&metric(), CLOCKLESS).is_ok());
 }
 
 #[test]
@@ -133,7 +143,7 @@ fn a_line_naming_the_raw_field_instead_of_the_alias_is_refused() {
         "type": "line", "metric": "lines_per_day", "x": "day", "y": "lines"
     }));
 
-    let Err(error) = widget.check_against(&metric()) else {
+    let Err(error) = widget.check_against(&metric(), CLOCKLESS) else {
         panic!("a column the metric does not produce must be refused");
     };
 
@@ -149,14 +159,14 @@ fn a_table_column_the_metric_does_not_produce_is_refused() {
         "type": "table", "metric": "lines_per_day", "columns": ["day", "author"]
     }));
 
-    assert!(widget.check_against(&metric()).is_err());
+    assert!(widget.check_against(&metric(), CLOCKLESS).is_err());
 }
 
 #[test]
 fn a_table_naming_no_columns_is_refused() {
     let widget = widget(json!({ "type": "table", "metric": "lines_per_day" }));
 
-    let refusal = widget.check_against(&metric());
+    let refusal = widget.check_against(&metric(), CLOCKLESS);
 
     assert!(
         matches!(refusal, Err(WidgetError::NoColumns)),
@@ -170,5 +180,5 @@ fn a_table_drawing_every_column_it_names_is_accepted() {
         "type": "table", "metric": "lines_per_day", "columns": ["day", "total_lines"]
     }));
 
-    assert!(widget.check_against(&metric()).is_ok());
+    assert!(widget.check_against(&metric(), CLOCKLESS).is_ok());
 }

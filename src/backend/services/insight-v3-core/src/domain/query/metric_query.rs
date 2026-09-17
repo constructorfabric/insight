@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use serde::Deserialize;
 use thiserror::Error;
 
+use crate::domain::kinds::dataset::declaration::BUCKET_COLUMN;
 use crate::domain::query::time_window::MaximumRange;
 
 use field::FieldType;
@@ -97,6 +98,38 @@ impl MetricQuery {
     /// metrics read data before datasets and is no longer allowed.
     pub(crate) fn addresses_a_relation(&self) -> bool {
         !self.table.is_empty() || self.database.is_some()
+    }
+
+    /// Every place this metric reaches into a record itself instead of naming
+    /// a field the dataset declares.
+    ///
+    /// Where a value sits, and whether it holds a person, are the
+    /// declaration's to answer; a metric that answers them itself reads
+    /// something the dataset never promised.
+    pub(crate) fn physical_references(&self) -> Vec<(String, &'static str)> {
+        let mut reached = Vec::new();
+
+        for (index, field) in self.fields.iter().enumerate() {
+            let at = format!("fields[{index}]");
+            field.physical_keys(&at, &mut reached);
+
+            for (inner, condition) in field.conditions().iter().enumerate() {
+                condition.physical_keys(&format!("{at}.when[{inner}]"), &mut reached);
+            }
+            if let Some(selector) = field.selector() {
+                selector.physical_keys(&format!("{at}.where"), &mut reached);
+            }
+        }
+
+        for (index, filter) in self.filters.iter().enumerate() {
+            filter.physical_keys(&format!("filters[{index}]"), &mut reached);
+        }
+
+        if let Some(time) = self.time.as_ref() {
+            time.physical_keys("time", &mut reached);
+        }
+
+        reached
     }
 
     /// Every declared field this metric names: the source of each selected
@@ -213,22 +246,15 @@ impl MetricQuery {
 
     /// The columns a result carries, in order — each field's `as_name`. What
     /// a widget must name to draw anything.
-    pub(crate) fn column_names(&self) -> Vec<String> {
-        let clocked = self.valid_clock();
+    /// `clocked` says whether a window over this metric has a date to bucket
+    /// by, which for a metric over a dataset only the declaration knows.
+    pub(crate) fn column_names(&self, clocked: bool) -> Vec<String> {
         let mut names = Vec::with_capacity(self.fields.len() + usize::from(clocked));
         if clocked {
-            names.push("bucket".to_owned());
+            names.push(BUCKET_COLUMN.to_owned());
         }
         names.extend(self.fields.iter().map(|field| field.as_name.clone()));
         names
-    }
-
-    /// Whether a windowed run of this metric injects a `bucket` column.
-    ///
-    /// A metric over a dataset may inherit the dataset's main date, which only
-    /// the declaration knows, so every one of them may produce a bucket.
-    fn valid_clock(&self) -> bool {
-        self.dataset.is_some() || self.has_clock().unwrap_or(false)
     }
 
     fn maximum(&self) -> Result<Option<MaximumRange>, MetricQueryError> {

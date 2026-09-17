@@ -412,13 +412,14 @@ fn a_json_clock_reads_a_missing_key_as_no_clock_rather_than_a_failure() {
     );
 }
 
+/// Whether a run has a date to bucket by is the caller's to say: a metric
+/// over a dataset may inherit one the body never names.
 #[test]
-fn only_a_clocked_metric_exposes_the_injected_bucket_column() {
-    let clocked = timed_metric(&json!({ "column": "occurred_at" }));
-    let clockless = timed_metric(&serde_json::Value::Null);
+fn only_a_clocked_run_exposes_the_injected_bucket_column() {
+    let metric = timed_metric(&json!({ "column": "occurred_at" }));
 
-    assert_eq!(clocked.column_names(), ["bucket", "total"]);
-    assert_eq!(clockless.column_names(), ["total"]);
+    assert_eq!(metric.column_names(true), ["bucket", "total"]);
+    assert_eq!(metric.column_names(false), ["total"]);
 }
 
 fn merged_by_author(person: &str) -> MetricQuery {

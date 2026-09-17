@@ -8,7 +8,9 @@ use serde_json::Value;
 use thiserror::Error;
 
 use super::{KindError, Reference};
+use crate::domain::datasets::Datasets;
 use crate::domain::definition::{DefinitionKind, DefinitionName, Lookup};
+use crate::domain::kinds::metric::answerable::effective_clock;
 use crate::domain::query::metric_query::MetricQuery;
 
 #[derive(Debug, Deserialize)]
@@ -69,8 +71,8 @@ impl Widget {
     }
 
     /// Refuses a widget whose metric cannot supply what it draws.
-    fn check_against(&self, metric: &MetricQuery) -> Result<(), WidgetError> {
-        let available = metric.column_names();
+    fn check_against(&self, metric: &MetricQuery, clocked: bool) -> Result<(), WidgetError> {
+        let available = metric.column_names(clocked);
 
         if self.columns().is_empty() {
             return Err(WidgetError::NoColumns);
@@ -114,7 +116,11 @@ pub(crate) enum WidgetError {
 ///
 /// The metric is read because a widget names the columns that metric produces,
 /// and naming one it does not is the mistake this catches.
-pub(crate) async fn check(body: &Value, definitions: &dyn Lookup) -> Result<(), KindError> {
+pub(crate) async fn check(
+    body: &Value,
+    definitions: &dyn Lookup,
+    datasets: &dyn Datasets,
+) -> Result<(), KindError> {
     let widget: Widget =
         serde_json::from_value(body.clone()).map_err(|error| KindError::Widget(error.into()))?;
 
@@ -129,8 +135,27 @@ pub(crate) async fn check(body: &Value, definitions: &dyn Lookup) -> Result<(), 
 
     let metric: MetricQuery =
         serde_json::from_value(stored).map_err(|error| KindError::Widget(error.into()))?;
+    let clocked = clocked(&metric, datasets).await;
 
-    widget.check_against(&metric).map_err(KindError::Widget)
+    widget
+        .check_against(&metric, clocked)
+        .map_err(KindError::Widget)
+}
+
+/// Whether a windowed run of this metric has a date to bucket by, and so
+/// whether it produces a `bucket` column at all.
+///
+/// A metric over a dataset may name no date and inherit the dataset's, so the
+/// metric body alone cannot answer it.
+async fn clocked(metric: &MetricQuery, datasets: &dyn Datasets) -> bool {
+    let Some(named) = metric.dataset() else {
+        return metric.has_clock().unwrap_or(false);
+    };
+    let Some(ready) = crate::domain::datasets::ready(datasets, named).await else {
+        return false;
+    };
+
+    effective_clock(metric, &ready.declaration).is_some()
 }
 
 /// The metric a widget draws, when its body names one readably.

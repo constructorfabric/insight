@@ -23,6 +23,17 @@ pub(super) enum PersonHandle {
     Id,
 }
 
+impl From<crate::domain::kinds::dataset::declaration::PersonHandle> for PersonHandle {
+    fn from(declared: crate::domain::kinds::dataset::declaration::PersonHandle) -> Self {
+        use crate::domain::kinds::dataset::declaration::PersonHandle as Declared;
+
+        match declared {
+            Declared::Email => Self::Email,
+            Declared::Id => Self::Id,
+        }
+    }
+}
+
 impl PersonHandle {
     pub(super) fn cte(self) -> &'static str {
         match self {

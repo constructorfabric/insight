@@ -317,7 +317,7 @@ fn whole_board_proposal() -> Proposal {
                 "dataset": "commits",
                 "fields": [
                     { "field": "day", "type": "string", "as_name": "day" },
-                    { "json": "lines", "type": "int", "agg": "sum", "as_name": "lines" }
+                    { "field": "lines", "type": "int", "agg": "sum", "as_name": "lines" }
                 ],
                 "group_by": ["day"]
             }),

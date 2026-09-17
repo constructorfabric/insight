@@ -10,6 +10,7 @@ use super::over::Over;
 use super::people::{People, PersonHandle};
 use super::{CompiledQuery, FACT_ALIAS, MetricQuery, MetricQueryError, UndatedQuery};
 use crate::domain::kinds::dataset::declaration::BUCKET_COLUMN;
+use crate::domain::kinds::dataset::read::Form;
 use crate::domain::kinds::metric::answerable::effective_clock;
 use crate::domain::query::time_window::Window;
 use crate::store::catalog::TableEngine;
@@ -114,7 +115,9 @@ impl MetricQuery {
             if !is_identifier(group) {
                 return Err(MetricQueryError::Identifier(group.clone()));
             }
-            if !as_names.contains(group.as_str()) {
+            // The bucket is injected by a windowed run rather than selected,
+            // so a metric may name it whether or not this run windows.
+            if group != BUCKET_COLUMN && !as_names.contains(group.as_str()) {
                 return Err(MetricQueryError::GroupBy(group.clone()));
             }
         }
@@ -168,12 +171,32 @@ impl MetricQuery {
             }
             selection.as_names.insert(field.as_name.as_str());
 
-            let expression = match field.person {
+            let carried = match over {
+                Some(over) => over.person_of(field.declared.as_deref()),
+                None => field.person,
+            };
+            let expression = match carried {
                 Some(handle) => {
                     if !selection.handles.contains(&handle) {
                         selection.handles.push(handle);
                     }
-                    let read = field.source()?.sql(field.r#type, qualifier)?;
+                    let read = match over {
+                        // A join key reads the record's own value: a
+                        // substitute would look up a person nobody has.
+                        Some(over) => over.read_as(
+                            field.declared.as_deref(),
+                            "a person field",
+                            qualifier,
+                            Form::Raw,
+                        )?,
+                        None => field.source()?.sql(field.r#type, qualifier)?,
+                    };
+                    let shown = match over {
+                        Some(over) => {
+                            over.read(field.declared.as_deref(), "a person field", qualifier)?
+                        }
+                        None => read.clone(),
+                    };
                     let alias = format!("__p{index}");
                     let _ = write!(
                         selection.joins,
@@ -182,9 +205,9 @@ impl MetricQuery {
                         handle.key(&read)
                     );
                     // Identity knows nobody by this handle: show what the
-                    // table itself says, never a blank.
+                    // record itself says, never a blank.
                     field.aggregated(format!(
-                        "coalesce(nullIf(`{alias}`.`display_name`, ''), {read})"
+                        "coalesce(nullIf(`{alias}`.`display_name`, ''), {shown})"
                     ))
                 }
                 None => field.expression(over, qualifier, &mut selection.binds)?,
@@ -237,11 +260,11 @@ impl MetricQuery {
         // Resolving a name joins another table in, and then a bare column
         // could mean either side - so every read carries the fact table's
         // alias exactly when there is something to be ambiguous with.
-        let qualifier = self
-            .fields
-            .iter()
-            .any(|field| field.person.is_some())
-            .then_some(FACT_ALIAS);
+        let joins_a_person = self.fields.iter().any(|field| match over {
+            Some(over) => over.person_of(field.declared.as_deref()).is_some(),
+            None => field.person.is_some(),
+        });
+        let qualifier = joins_a_person.then_some(FACT_ALIAS);
         let Selection {
             mut parts,
             as_names,
@@ -253,11 +276,13 @@ impl MetricQuery {
 
         let time_expression = self.time_expression(window, over, qualifier, &as_names)?;
         let bucket = window.grain().zip(time_expression.as_deref());
+        let mut as_names = as_names;
         if let Some((grain, clock)) = bucket {
             parts.insert(
                 0,
-                format!("{} AS `bucket`", bucket_expression(grain, clock)),
+                format!("{} AS `{BUCKET_COLUMN}`", bucket_expression(grain, clock)),
             );
+            as_names.insert(BUCKET_COLUMN);
         }
 
         self.check_grouping(&as_names)?;
@@ -283,9 +308,17 @@ impl MetricQuery {
             sql.push_str(" WHERE ");
             sql.push_str(&where_parts.join(" AND "));
         }
-        let mut groups = self.group_by.clone();
+        // A metric may name the bucket; the run injects it whenever it
+        // windows. Either way it is grouped once, and a run that does not
+        // window has no such column to group by.
+        let mut groups: Vec<String> = self
+            .group_by
+            .iter()
+            .filter(|group| *group != BUCKET_COLUMN)
+            .cloned()
+            .collect();
         if bucket.is_some() {
-            groups.insert(0, "bucket".to_owned());
+            groups.insert(0, BUCKET_COLUMN.to_owned());
         }
         if !groups.is_empty() {
             let backticked: Vec<String> = groups.iter().map(|group| format!("`{group}`")).collect();
@@ -298,10 +331,13 @@ impl MetricQuery {
             }
         }
         if let Some(order) = &self.order_by {
-            if !as_names.contains(order.field.as_str()) {
+            let ordered = as_names.contains(order.field.as_str());
+            if !ordered && order.field != BUCKET_COLUMN {
                 return Err(MetricQueryError::OrderBy(order.field.clone()));
             }
-            let _ = write!(sql, " ORDER BY `{}` {}", order.field, order.direction.sql());
+            if ordered {
+                let _ = write!(sql, " ORDER BY `{}` {}", order.field, order.direction.sql());
+            }
         }
         let limit = self.limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
         let _ = write!(sql, " LIMIT {limit}");
@@ -327,8 +363,8 @@ impl MetricQuery {
         binds: &mut Vec<FilterBind>,
     ) -> Result<(), MetricQueryError> {
         for filter in &self.filters {
-            let (read, bound) = filter.compare(over, qualifier)?;
-            where_parts.push(format!("{read} {} ?", filter.op.sql()));
+            let (condition, bound) = filter.predicate(over, qualifier)?;
+            where_parts.push(condition);
             binds.push(bound);
         }
 

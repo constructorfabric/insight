@@ -30,6 +30,17 @@ impl TimeField {
         self.declared.as_deref()
     }
 
+    /// Where the clock addresses a record itself rather than naming a
+    /// declared field.
+    pub(super) fn physical_keys(&self, at: &str, into: &mut Vec<(String, &'static str)>) {
+        if self.json.is_some() {
+            into.push((format!("{at}.json"), "json"));
+        }
+        if self.column.is_some() {
+            into.push((format!("{at}.column"), "column"));
+        }
+    }
+
     pub(super) fn source(&self) -> Result<Source<'_>, MetricQueryError> {
         if self.r#type != "datetime" {
             return Err(MetricQueryError::ClockType(self.r#type.clone()));

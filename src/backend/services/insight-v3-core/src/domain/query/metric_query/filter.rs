@@ -5,6 +5,16 @@ use serde::Deserialize;
 use super::MetricQueryError;
 use super::field::{FieldType, Source};
 use super::over::Over;
+use crate::domain::kinds::dataset::declaration::FieldType as DeclaredType;
+
+/// How a bound value is written into the condition, so a moment reads back
+/// as the same instant the record's own value was parsed into.
+fn placeholder(declared: DeclaredType) -> &'static str {
+    match declared {
+        DeclaredType::Datetime => "parseDateTime64BestEffortOrNull(?, 3, 'UTC')",
+        DeclaredType::String | DeclaredType::Int | DeclaredType::Float | DeclaredType::Bool => "?",
+    }
+}
 
 #[derive(Debug, Deserialize)]
 pub(super) struct Filter {
@@ -26,34 +36,68 @@ impl Filter {
         self.declared.as_deref()
     }
 
+    /// Where this condition addresses a record itself rather than naming a
+    /// declared field.
+    pub(super) fn physical_keys(&self, at: &str, into: &mut Vec<(String, &'static str)>) {
+        if self.json.is_some() {
+            into.push((format!("{at}.json"), "json"));
+        }
+        if self.column.is_some() {
+            into.push((format!("{at}.column"), "column"));
+        }
+    }
+
     pub(super) fn source(&self) -> Result<Source<'_>, MetricQueryError> {
         Source::resolve(self.json.as_deref(), self.column.as_deref())
             .ok_or_else(|| MetricQueryError::FieldSource("a filter".to_owned()))
     }
 
-    /// What this filter reads, and the value bound against it.
-    pub(super) fn compare(
+    /// The whole condition: what this filter reads, the comparison, and the
+    /// value bound against it.
+    ///
+    /// Over a dataset the declaration decides the type, because that is what
+    /// the record was read as; the metric's own `type` describes the legacy
+    /// relation only.
+    pub(super) fn predicate(
         &self,
         over: Option<Over<'_>>,
         qualifier: Option<&str>,
     ) -> Result<(String, FilterBind), MetricQueryError> {
+        let operator = self.op.sql();
+
         if let Some(over) = over {
             let read = over.read(self.declared.as_deref(), "a filter", qualifier)?;
-            let bound = self.bind_value(self.declared.as_deref().unwrap_or("a filter"))?;
+            let declared = over.type_of(self.declared.as_deref(), "a filter")?;
+            let named = self.declared.as_deref().unwrap_or("a filter");
+            let bound = self.declared_bind(declared, named)?;
 
-            return Ok((read, bound));
+            return Ok((
+                format!("{read} {operator} {}", placeholder(declared)),
+                bound,
+            ));
         }
 
         let source = self.source()?;
+        let read = source.sql(self.r#type, qualifier)?;
 
-        Ok((source.sql(self.r#type, qualifier)?, self.bind(source)?))
+        Ok((format!("{read} {operator} ?"), self.bind(source)?))
     }
 
-    fn bind_value(&self, named: &str) -> Result<FilterBind, MetricQueryError> {
-        match self.r#type {
-            FieldType::String => self.value.as_str().map(|v| FilterBind::Str(v.to_owned())),
-            FieldType::Int => self.value.as_i64().map(FilterBind::Int),
-            FieldType::Float => self.value.as_f64().map(FilterBind::Float),
+    /// The value as the declared type takes it.
+    fn declared_bind(
+        &self,
+        declared: DeclaredType,
+        named: &str,
+    ) -> Result<FilterBind, MetricQueryError> {
+        match declared {
+            // A moment is bound as the text it was written in and parsed by
+            // the warehouse, the same way the record's own value is.
+            DeclaredType::String | DeclaredType::Datetime => {
+                self.value.as_str().map(|v| FilterBind::Str(v.to_owned()))
+            }
+            DeclaredType::Int => self.value.as_i64().map(FilterBind::Int),
+            DeclaredType::Float => self.value.as_f64().map(FilterBind::Float),
+            DeclaredType::Bool => self.value.as_bool().map(FilterBind::Bool),
         }
         .ok_or_else(|| MetricQueryError::FilterValue(named.to_owned()))
     }
@@ -103,6 +147,7 @@ pub(crate) enum FilterBind {
     Str(String),
     Int(i64),
     Float(f64),
+    Bool(bool),
 }
 
 impl FilterBind {
@@ -112,6 +157,7 @@ impl FilterBind {
             Self::Str(value) => value.clone(),
             Self::Int(value) => value.to_string(),
             Self::Float(value) => value.to_string(),
+            Self::Bool(value) => value.to_string(),
         }
     }
 
@@ -120,6 +166,8 @@ impl FilterBind {
             Self::Str(value) => query.bind(value),
             Self::Int(value) => query.bind(value),
             Self::Float(value) => query.bind(value),
+            // `Bool` is the warehouse's own one-byte number.
+            Self::Bool(value) => query.bind(u8::from(*value)),
         }
     }
 }

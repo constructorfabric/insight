@@ -10,10 +10,11 @@ use crate::domain::definition::{
     NamePage, Page,
 };
 use crate::domain::kinds::dashboard::Item;
+use crate::domain::kinds::metric::CompileAgainst;
 use crate::domain::kinds::metric::answerable::EffectiveClock;
 use crate::domain::kinds::widget::WidgetError;
 use crate::domain::kinds::{self, KindError, Reference};
-use crate::domain::query::metric_query::{MetricQuery, MetricQueryError, MetricRunError};
+use crate::domain::query::metric_query::{MetricQuery, MetricQueryError, MetricRunError, People};
 use crate::domain::query::time_window::WindowError;
 use crate::domain::violation::Violation;
 use crate::store::catalog::CatalogError;
@@ -83,13 +84,24 @@ impl CustomError {
 pub(crate) struct Surfaces<'a> {
     definitions: &'a dyn Definitions,
     datasets: &'a dyn Datasets,
+    /// What a metric is compiled against before it is stored.
+    over: CompileAgainst<'a>,
 }
 
 impl<'a> Surfaces<'a> {
-    pub(crate) fn new(definitions: &'a dyn Definitions, datasets: &'a dyn Datasets) -> Self {
+    pub(crate) fn new(
+        definitions: &'a dyn Definitions,
+        datasets: &'a dyn Datasets,
+        datasets_database: &'a str,
+        people: &'a People,
+    ) -> Self {
         Self {
             definitions,
             datasets,
+            over: CompileAgainst {
+                database: datasets_database,
+                people,
+            },
         }
     }
 
@@ -176,7 +188,7 @@ impl<'a> Surfaces<'a> {
         name: &DefinitionName,
         body: &Value,
     ) -> Result<(), CustomError> {
-        kinds::check(kind, body, self.definitions, self.datasets).await?;
+        kinds::check(kind, body, self.definitions, self.datasets, self.over).await?;
 
         self.definitions
             .put(kind, name, body)
@@ -247,6 +259,7 @@ impl<'a> Surfaces<'a> {
                 &arriving_definition.body,
                 &arriving,
                 self.datasets,
+                self.over,
             )
             .await?;
         }

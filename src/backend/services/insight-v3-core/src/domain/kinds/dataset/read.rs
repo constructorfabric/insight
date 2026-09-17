@@ -93,8 +93,19 @@ fn keys(path: &str) -> String {
 }
 
 /// A value as a string literal the warehouse reads back unchanged.
+///
+/// WORKAROUND: the ClickHouse client scans the whole statement for `?` to
+/// find its bind sites and does not know a string literal from anything else,
+/// so a `?` inside one would swallow the next bound value. `??` is its escape
+/// and emits a single `?`.
 fn literal(value: &str) -> String {
-    format!("'{}'", value.replace('\\', "\\\\").replace('\'', "\\'"))
+    format!(
+        "'{}'",
+        value
+            .replace('\\', "\\\\")
+            .replace('\'', "\\'")
+            .replace('?', "??")
+    )
 }
 
 #[cfg(test)]

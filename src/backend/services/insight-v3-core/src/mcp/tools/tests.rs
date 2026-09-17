@@ -27,7 +27,8 @@ fn surfaces() -> CustomSurfaces {
                 "title": "Commits",
                 "fields": [
                     { "name": "actor", "path": "actor", "type": "string" },
-                    { "name": "lines_added", "path": "lines_added", "type": "int" }
+                    { "name": "lines_added", "path": "lines_added", "type": "int" },
+                    { "name": "occurred_at", "path": "occurred_at", "type": "datetime" }
                 ]
             }),
         )],
@@ -69,8 +70,8 @@ fn metric_body() -> Value {
     json!({
         "dataset": "commits",
         "fields": [
-            {"json": "actor", "type": "string", "as_name": "actor"},
-            {"json": "actor", "type": "string", "agg": "count", "as_name": "total"}
+            {"field": "actor", "type": "string", "as_name": "actor"},
+            {"field": "actor", "type": "string", "agg": "count", "as_name": "total"}
         ],
         "group_by": ["actor"]
     })
@@ -361,7 +362,7 @@ async fn a_metric_whose_maximum_range_is_not_a_duration_is_not_stored() {
             "bad_cap",
             json!({
                 "dataset": "commits",
-                "time": {"column": "occurred_at"},
+                "time": {"field": "occurred_at"},
                 "max_range": "P0D",
                 "fields": [{"agg": "count", "type": "int", "as_name": "total"}]
             }),
@@ -381,7 +382,7 @@ async fn a_metric_that_declares_a_clock_and_a_cap_is_stored() -> R {
                 "opened",
                 json!({
                     "dataset": "commits",
-                    "time": {"column": "occurred_at"},
+                    "time": {"field": "occurred_at"},
                     "max_range": "P1Y",
                     "fields": [{"agg": "count", "type": "int", "as_name": "total"}]
                 }),

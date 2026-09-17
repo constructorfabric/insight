@@ -26,7 +26,6 @@ fn metric(value: serde_json::Value) -> MetricQuery {
 fn lines_per_author() -> serde_json::Value {
     json!({
         "dataset": "commits",
-        "table": "unused",
         "fields": [
             { "field": "author", "type": "string", "as_name": "author" },
             { "field": "lines", "type": "int", "agg": "sum", "as_name": "total" }
@@ -182,4 +181,79 @@ fn the_records_a_window_left_out_are_counted_over_the_same_relation_as_the_rows(
 
     assert!(counted.sql.contains("LIMIT 1 BY"), "{}", counted.sql);
     assert!(counted.sql.contains("countIf(isNull("), "{}", counted.sql);
+}
+
+/// Which field holds a person is the declaration's to say, so a metric only
+/// selects it and the join follows.
+#[test]
+fn a_declared_person_is_resolved_to_the_name_a_reader_knows() {
+    let declared: Declaration = serde_json::from_value(json!({
+        "title": "Commits",
+        "fields": [
+            { "name": "author", "path": "author", "type": "string", "person": "email" },
+            { "name": "lines", "path": "lines", "type": "int" }
+        ]
+    }))
+    .unwrap_or_else(|error| panic!("the fixture declaration parses: {error}"));
+    let written = metric(json!({
+        "dataset": "commits",
+        "fields": [
+            { "field": "author", "type": "string", "as_name": "author" },
+            { "field": "lines", "type": "int", "agg": "sum", "as_name": "total" }
+        ],
+        "group_by": ["author"]
+    }));
+    let over = Over {
+        declaration: &declared,
+        database: "insight_datasets",
+        table: "ds_commits_1",
+    };
+
+    let sql = written
+        .compile_over(&people(), &Window::legacy(), over)
+        .unwrap_or_else(|error| panic!("a declared person compiles: {error}"))
+        .sql;
+
+    assert!(sql.contains("LEFT JOIN"), "{sql}");
+    assert!(sql.contains("display_name"), "{sql}");
+}
+
+/// A substitute is what a reader is shown, never what a lookup is keyed on:
+/// two records with no author would otherwise resolve to one person.
+#[test]
+fn a_person_is_looked_up_by_the_record_s_own_value() {
+    let declared: Declaration = serde_json::from_value(json!({
+        "title": "Commits",
+        "fields": [{
+            "name": "author", "path": "author", "type": "string",
+            "person": "email", "absent_value": "nobody"
+        }]
+    }))
+    .unwrap_or_else(|error| panic!("the fixture declaration parses: {error}"));
+    let written = metric(json!({
+        "dataset": "commits",
+        "fields": [{ "field": "author", "type": "string", "as_name": "author" }]
+    }));
+    let over = Over {
+        declaration: &declared,
+        database: "insight_datasets",
+        table: "ds_commits_1",
+    };
+
+    let sql = written
+        .compile_over(&people(), &Window::legacy(), over)
+        .unwrap_or_else(|error| panic!("a declared person compiles: {error}"))
+        .sql;
+    let Some((shown, key)) = sql.split_once("LEFT JOIN") else {
+        panic!("the join is there: {sql}");
+    };
+
+    assert!(
+        !key.contains("nobody"),
+        "the join key is the raw value: {key}"
+    );
+    assert!(
+        shown.contains("nobody"),
+        "the reader sees the substitute: {shown}"
+    );
 }

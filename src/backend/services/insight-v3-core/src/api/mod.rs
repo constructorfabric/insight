@@ -205,7 +205,12 @@ impl AppState {
     }
 
     pub(crate) fn surfaces(&self) -> crate::domain::surfaces::Surfaces<'_> {
-        crate::domain::surfaces::Surfaces::new(self.definitions.as_ref(), self.datasets())
+        crate::domain::surfaces::Surfaces::new(
+            self.definitions.as_ref(),
+            self.datasets(),
+            &self.datasets.database,
+            self.warehouse.metrics.people(),
+        )
     }
 
     pub(crate) fn assistant(&self) -> crate::domain::assistant::Assistant<'_> {
