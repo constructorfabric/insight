@@ -69,7 +69,13 @@ name: jira
 # and because rows the retired producer wrote must go: the full refresh a major
 # dispatches (ADR-0015) rebuilds the class and the three incremental arms from
 # the models alone.
-version: "7.0.0"
+# 7.0.1 (patch): clear the JQL ceiling on jira_issue / jira_issue_keys. A JQL
+# datetime literal has no timezone and is read in the instance's zone, while
+# the bound is rendered from now_utc(), so on a positive-offset instance the
+# ceiling landed early and objects changing faster than that offset were never
+# collected. PATCH: collection widens, nothing needs re-deriving — the missed
+# objects arrive on the next sync and their substreams carry no date filter.
+version: "7.0.1"
 schedule: "0 3 * * *"
 workflow: sync
 # CI build metadata + runtime image refs (ADR-0016). The `images:` block is
