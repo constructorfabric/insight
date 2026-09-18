@@ -393,7 +393,7 @@ const WIDGET: Description = {
       name: "detail",
       label: "Rows behind it",
       shape: { of: "reference", to: "metrics" },
-      hint: "The rows behind the chart, when they are a different query.",
+      hint: "A metric run when a reader opens the card's rows: the records a chart's numbers were counted from. Empty, the card shows the rows of its own metric.",
     },
   ],
 };
