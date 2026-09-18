@@ -79,8 +79,26 @@ def _sync(ch_seeder: CHSeeder, dbt_runner: DbtRunner, row: Seat) -> None:
     dbt_runner.build(IDENTITY_SELECTOR)
 
 
-def _observations(ch_seeder: CHSeeder, value_type: str) -> list[tuple[str, str]]:
-    """Every observation of one identity field for the seat, oldest first."""
+def _current(ch_seeder: CHSeeder, value_type: str) -> tuple[str, str]:
+    """The observation the identity service will actually act on.
+
+    This is the consumer's own rule, not an approximation of it. The service
+    streams `identity.identity_inputs` ordered by
+    `_synced_at DESC, value_type, value` and folds it by taking the FIRST row
+    per value_type, discarding the rest (`seen_value_types` in the seed's
+    build_profiles). So "current state" is that first row.
+
+    The ordering matters here because a deactivation emits a DELETE and an
+    UPSERT for `id` at the SAME `_synced_at`: the condition revokes the binding
+    while the macro's id_upserts fires on every history row, including the one
+    that triggered the revocation. They are separated by the last sort key —
+    a DELETE carries `value = ''` by the write contract and an id UPSERT
+    carries a non-empty entity_id, and '' sorts first — so the DELETE wins.
+    That is a real guarantee, but it rests on two independent decisions: the
+    empty-value contract and `value` being part of the consumer's ORDER BY.
+    Asserting the folded state rather than the mere presence of a DELETE is
+    what makes a change to either one fail here.
+    """
     rows = clickhouse.query(
         ch_seeder.cfg,
         f"""
@@ -88,10 +106,13 @@ def _observations(ch_seeder: CHSeeder, value_type: str) -> list[tuple[str, str]]
         FROM staging.chatgpt_team__identity_inputs
         WHERE source_account_id = {clickhouse.literal(SEAT_ID)}
           AND value_type = {clickhouse.literal(value_type)}
-        ORDER BY _version, operation_type
+        ORDER BY _synced_at DESC, value_type, value
+        LIMIT 1
         """,
     )
-    return [(str(op), str(value)) for op, value in rows]
+    assert rows, f"no {value_type} observation at all for the seat"
+    op, value = rows[0]
+    return str(op), str(value)
 
 
 def test_a_seat_stops_and_resumes_asserting_its_identity(
@@ -111,48 +132,36 @@ def test_a_seat_stops_and_resumes_asserting_its_identity(
     # Active: the seat claims an address and a name.
     _sync(ch_seeder, dbt_runner, _seat(tenant, "2026-11-01T00:00:00Z", None))
 
-    email_after_active = _observations(ch_seeder, "email")
-    assert email_after_active == [("UPSERT", SEAT_EMAIL)], (
-        f"an active seat must assert its address: {email_after_active}"
-    )
+    assert _current(ch_seeder, "email") == ("UPSERT", SEAT_EMAIL)
+    assert _current(ch_seeder, "display_name") == ("UPSERT", SEAT_NAME)
+    assert _current(ch_seeder, "id") == ("UPSERT", SEAT_ID)
 
     # Deactivated: the vendor stamps deactivated_time. Nothing else changes.
-    _sync(ch_seeder, dbt_runner, _seat(tenant, "2026-11-02T00:00:00Z", "2026-11-02T08:00:00Z"))
+    _sync(ch_seeder, dbt_runner, _seat(tenant, "2026-11-02T08:00:00Z", "2026-11-02T08:00:00Z"))
 
-    email_after_deactivation = _observations(ch_seeder, "email")
-    assert email_after_deactivation[-1] == ("DELETE", ""), (
+    assert _current(ch_seeder, "email") == ("DELETE", ""), (
         "a deactivated seat must stop asserting its address, or a person keeps "
-        f"resolving through a closed seat: {email_after_deactivation}"
+        "resolving through a seat the vendor has closed"
     )
-    name_after_deactivation = _observations(ch_seeder, "display_name")
-    assert name_after_deactivation[-1] == ("DELETE", ""), (
-        f"the display name must close with the seat: {name_after_deactivation}"
+    assert _current(ch_seeder, "display_name") == ("DELETE", ""), (
+        "the display name must close with the seat"
     )
-    id_after_deactivation = _observations(ch_seeder, "id")
-    assert ("DELETE", "") in id_after_deactivation, (
-        "the ADR-0002 binding row must be revoked too — no field change can "
-        f"express that, which is what the deactivation condition is for: {id_after_deactivation}"
+    assert _current(ch_seeder, "id") == ("DELETE", ""), (
+        "the ADR-0002 binding must be revoked, and the revocation must be what "
+        "the consumer folds to — the same event also emits an id UPSERT at the "
+        "same instant, and the DELETE only wins because it carries an empty "
+        "value and the consumer orders by value last"
     )
-    # Membership, not the last row: the macro's id_upserts fires on EVERY history
-    # row, so the row that triggers the deactivation also emits an id UPSERT at
-    # the same updated_at as the id DELETE. The two share a version and their
-    # order is arbitrary. That is the shared macro's behaviour, identical for
-    # every connector declaring a deactivation_condition, not something this
-    # connector decides — so this asserts the delete was emitted, not that it
-    # won a tie. The email and display_name assertions above are the ones that
-    # carry the guarantee, and they are unambiguous.
 
-    # Reactivated: deactivated_time is cleared. The address is the SAME one, so
-    # nothing but the lifecycle signal has changed.
+    # Reactivated: deactivated_time is cleared. The address and the display name
+    # are the SAME ones, so nothing but the lifecycle signal has changed.
     _sync(ch_seeder, dbt_runner, _seat(tenant, "2026-11-03T00:00:00Z", None))
 
-    email_after_reactivation = _observations(ch_seeder, "email")
-    assert email_after_reactivation[-1] == ("UPSERT", SEAT_EMAIL), (
-        "a reactivated seat must assert its address again even though the address "
-        "never changed — a one-way delete would strand the account forever: "
-        f"{email_after_reactivation}"
+    assert _current(ch_seeder, "email") == ("UPSERT", SEAT_EMAIL), (
+        "a reactivated seat must assert its address again even though the "
+        "address never changed — a one-way delete would strand the account"
     )
-    name_after_reactivation = _observations(ch_seeder, "display_name")
-    assert name_after_reactivation[-1] == ("UPSERT", SEAT_NAME), (
-        f"the display name must come back with the seat: {name_after_reactivation}"
+    assert _current(ch_seeder, "display_name") == ("UPSERT", SEAT_NAME), (
+        "the display name must come back with the seat"
     )
+    assert _current(ch_seeder, "id") == ("UPSERT", SEAT_ID), "and the binding must be live again"
