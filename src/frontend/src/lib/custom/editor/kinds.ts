@@ -454,7 +454,7 @@ const DASHBOARD: Description = {
       name: "time_ranges",
       label: "Windows offered",
       shape: { of: "list", entry: { of: "text" }, entryLabel: "window" },
-      hint: "The windows a reader may pick, as the service names them: PDC, P7D, P30D, PMC, PQC, P1Y, inf, or two dates as YYYY-MM-DD/YYYY-MM-DD.",
+      hint: "The windows a reader may pick: PDC yesterday, P7D and P30D the last so many days, PMC the last whole month, PQC the last whole quarter, P1Y the last 365 days, inf all time, or two dates as YYYY-MM-DD/YYYY-MM-DD.",
     },
     {
       name: "default_range",

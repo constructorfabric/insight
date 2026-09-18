@@ -12,6 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { drawsBucket } from "@/lib/custom/draws-bucket";
 import { metricQuery, metricResultQuery, widgetQuery } from "@/queries/custom";
+import { RANGE_PRESETS } from "@/lib/custom/time-range";
 import { TEXT_BODY, TEXT_HEADING, TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
@@ -19,8 +20,8 @@ export const Route = createFileRoute("/portal/custom/widgets/$name")({
   component: WidgetPage,
 });
 
-/** The windows a card may be drawn over, as the service names them. */
-const WINDOWS = ["PDC", "P7D", "P30D", "PMC", "PQC", "P1Y"] as const;
+/** The windows a card may be drawn over: the board's presets, without all time, which is the run with no window. */
+const WINDOWS = RANGE_PRESETS.filter(({ token }) => token !== "inf");
 
 function widgetNameFromPath(pathname: string): string {
   const match = pathname.match(/^\/portal\/custom\/widgets\/([^/]+)/);
@@ -102,10 +103,10 @@ function Drawn({ name, widget }: { name: string; widget: Widget }) {
             chosen={range === undefined}
             onPick={() => setRange(undefined)}
           />
-          {WINDOWS.map((token) => (
+          {WINDOWS.map(({ token, label }) => (
             <Window
               key={token}
-              label={token}
+              label={label}
               chosen={range === token}
               onPick={() => setRange(token)}
             />

@@ -86,9 +86,9 @@ describe("/portal/custom/widgets/$name", () => {
     });
 
     render(<Component />, { wrapper });
-    await screen.findByRole("button", { name: "P30D" });
+    await screen.findByRole("button", { name: "Last 30 days" });
 
-    await user.click(screen.getByRole("button", { name: "P30D" }));
+    await user.click(screen.getByRole("button", { name: "Last 30 days" }));
 
     await waitFor(() =>
       expect(customClient.runMetric).toHaveBeenCalledWith("lines_by_author", {
@@ -107,7 +107,7 @@ describe("/portal/custom/widgets/$name", () => {
     render(<Component />, { wrapper });
     await screen.findByText("ada");
 
-    await user.click(screen.getByRole("button", { name: "P30D" }));
+    await user.click(screen.getByRole("button", { name: "Last 30 days" }));
 
     expect(
       await screen.findByText(/every window shows all time/)

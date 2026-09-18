@@ -80,17 +80,16 @@ describe("/portal/custom/metrics/$name", () => {
     render(<Component />, { wrapper });
     await screen.findByText("ada");
 
-    await user.click(screen.getByRole("button", { name: "P30D" }));
+    await user.click(screen.getByRole("button", { name: "Last 30 days" }));
 
     await waitFor(() =>
       expect(customClient.runMetric).toHaveBeenCalledWith("lines_by_author", {
         range: "P30D",
       })
     );
-    expect(screen.getByRole("button", { name: "P30D" })).toHaveAttribute(
-      "aria-pressed",
-      "true"
-    );
+    expect(
+      screen.getByRole("button", { name: "Last 30 days" })
+    ).toHaveAttribute("aria-pressed", "true");
   });
 
   // A window needs a date to select by; a metric with none has nothing to offer.
@@ -103,7 +102,7 @@ describe("/portal/custom/metrics/$name", () => {
     await screen.findByText("ada");
 
     expect(
-      screen.queryByRole("button", { name: "P30D" })
+      screen.queryByRole("button", { name: "Last 30 days" })
     ).not.toBeInTheDocument();
     expect(
       screen.getByText("Nothing dates this metric: every run reads all time.")

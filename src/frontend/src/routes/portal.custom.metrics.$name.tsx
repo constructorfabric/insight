@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { metricQuery, metricResultQuery } from "@/queries/custom";
+import { RANGE_PRESETS } from "@/lib/custom/time-range";
 import { TEXT_BODY, TEXT_HEADING, TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
@@ -17,8 +18,8 @@ export const Route = createFileRoute("/portal/custom/metrics/$name")({
   component: MetricPage,
 });
 
-/** The windows a look may run over, as the service names them. */
-const WINDOWS = ["PDC", "P7D", "P30D", "PMC", "PQC", "P1Y"] as const;
+/** The windows a look may run over: the board's presets, without all time, which is the run with no window. */
+const WINDOWS = RANGE_PRESETS.filter(({ token }) => token !== "inf");
 
 function metricNameFromPath(pathname: string): string {
   const match = pathname.match(/^\/portal\/custom\/metrics\/([^/]+)/);
@@ -99,10 +100,10 @@ function Run({ name, windowed }: { name: string; windowed: boolean }) {
               chosen={range === undefined}
               onPick={() => setRange(undefined)}
             />
-            {WINDOWS.map((token) => (
+            {WINDOWS.map(({ token, label }) => (
               <Window
                 key={token}
-                label={token}
+                label={label}
                 chosen={range === token}
                 onPick={() => setRange(token)}
               />
