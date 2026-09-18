@@ -246,7 +246,7 @@ describe("<DefinitionEditor> shown a refusal", () => {
 
     await user.click(screen.getByRole("button", { name: "Save" }));
     await screen.findByRole("alert");
-    await user.click(screen.getByRole("button", { name: "Text" }));
+    await user.click(screen.getByRole("button", { name: "JSON" }));
 
     expect(screen.getByRole("alert")).toHaveTextContent(
       "limit: must be positive"

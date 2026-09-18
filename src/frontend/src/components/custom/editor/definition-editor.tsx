@@ -166,7 +166,7 @@ export function DefinitionEditor({
             aria-pressed={view === each}
             onClick={() => setView(each)}
           >
-            {each === "fields" ? "Fields" : "Text"}
+            {each === "fields" ? "Editor" : "JSON"}
           </Button>
         ))}
       </div>

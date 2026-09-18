@@ -82,7 +82,7 @@ describe("<DefinitionEditor> holding one document", () => {
     const text = await showText(user);
     await user.clear(text);
     await user.type(text, '{{"dataset": "pull_requests"}');
-    await user.click(screen.getByRole("button", { name: "Fields" }));
+    await user.click(screen.getByRole("button", { name: "Editor" }));
 
     expect(screen.getByLabelText("Dataset")).toHaveValue("pull_requests");
   });

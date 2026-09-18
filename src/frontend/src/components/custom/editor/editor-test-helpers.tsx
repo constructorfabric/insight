@@ -60,6 +60,6 @@ export function rowOf(control: HTMLElement): HTMLElement {
 export async function showText(
   user: ReturnType<typeof userEvent.setup>
 ): Promise<HTMLTextAreaElement> {
-  await user.click(screen.getByRole("button", { name: "Text" }));
+  await user.click(screen.getByRole("button", { name: "JSON" }));
   return screen.getByLabelText(/as text/i) as HTMLTextAreaElement;
 }
