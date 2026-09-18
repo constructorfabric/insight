@@ -9,6 +9,6 @@
     source_ref=ref('chatgpt_team__seats_latest'),
     unique_key_col='unique_key',
     check_cols=[
-        'email', 'name'
+        'email', 'name', 'deactivated_time'
     ]
 ) }}

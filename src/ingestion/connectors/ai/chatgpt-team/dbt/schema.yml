@@ -161,11 +161,23 @@ models:
       Roster projection for the identity chain: one row per seat, deduped with
       FINAL over the promoted Bronze table. Rows without user_id are dropped;
       rows without an email are kept so the account stays bindable by hand.
+      Every tracked column is '' rather than NULL, because fields_history diffs
+      consecutive versions and a comparison against NULL yields NULL — a cleared
+      value would otherwise produce no history row at all. email and name are
+      blanked while the seat is deactivated so the departure and the return both
+      arrive as ordinary field changes.
     columns:
       - name: unique_key
         tests: [not_null, unique]
       - name: user_id
         description: "Vendor seat id — the entity the identity chain keys on."
+        tests: [not_null]
+      - name: deactivated_time
+        description: >
+          The vendor's departure signal, '' while the seat is active. Tracked in
+          the snapshot and the fields history and read by the identity model's
+          deactivation_condition; it is a lifecycle signal, never an identity
+          value of its own.
         tests: [not_null]
 
   - name: chatgpt_team__identity_inputs

@@ -59,6 +59,17 @@ name: chatgpt-team
 #   account_settings stream carries seat_type_credit_limits, the default that
 #   governs every seat without an override. Nothing reads them yet; a fact the
 #   connector never stores cannot gain a reader later.
+#   deactivated_time is the exception — it is read immediately. The identity
+#   chain tracks it and revokes the account's identity observations when the
+#   vendor stamps it, so a closed seat stops resolving to a person. It is
+#   reversible on purpose: the projection blanks email and name while the seat
+#   is deactivated, so a reactivated account restores its observations through
+#   an ordinary field change even when the address never changed. A
+#   deactivation condition alone would delete them once and never bring them
+#   back.
+#   The subscription streams additionally tolerate 401, which is what a
+#   workspace role below account-admin answers. It was previously unhandled and
+#   failed the whole sync.
 #   MAJOR per ADR-0015: the narrowed filters and the gate make rows already in
 #   staging inadmissible, and only a full refresh removes them — leaving them
 #   keeps the activity guards failing on rows no current read would produce.

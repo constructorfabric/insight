@@ -8,6 +8,6 @@
     snapshot_ref=ref('chatgpt_team__seats_snapshot'),
     entity_id_col='user_id',
     fields=[
-        'email', 'name'
+        'email', 'name', 'deactivated_time'
     ]
 ) }}
