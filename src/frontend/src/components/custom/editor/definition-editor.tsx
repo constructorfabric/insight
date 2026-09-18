@@ -96,23 +96,22 @@ export function DefinitionEditor({
         if (event.key === "Enter" && inField) event.preventDefault();
       }}
     >
-      <div className="flex flex-col gap-1">
-        <label
-          htmlFor="definition-name"
-          className={cn(TEXT_LABEL, "font-medium")}
-        >
-          Name
-        </label>
-        <Input
-          id="definition-name"
-          value={called}
-          readOnly={name !== undefined}
-          aria-invalid={taken || undefined}
-          aria-describedby="definition-name-hint"
-          className="h-9 w-72 font-mono"
-          onChange={(event) => setCalled(event.target.value)}
-        />
-        {name === undefined ? (
+      {name === undefined ? (
+        <div className="flex flex-col gap-1">
+          <label
+            htmlFor="definition-name"
+            className={cn(TEXT_LABEL, "font-medium")}
+          >
+            Name
+          </label>
+          <Input
+            id="definition-name"
+            value={called}
+            aria-invalid={taken || undefined}
+            aria-describedby="definition-name-hint"
+            className="h-9 w-72 font-mono"
+            onChange={(event) => setCalled(event.target.value)}
+          />
           <p
             id="definition-name-hint"
             className={cn(TEXT_LABEL, "text-muted-foreground")}
@@ -121,21 +120,31 @@ export function DefinitionEditor({
             sending records call this {description.noun}. Letters, digits,{" "}
             <code>_</code> and <code>-</code>.
           </p>
-        ) : null}
-        {taken ? (
-          <p role="alert" className={cn(TEXT_LABEL, "text-destructive")}>
-            A {description.noun} called <code>{given}</code> already exists.{" "}
-            <Link
-              to="/portal/custom/edit/$kind/$name"
-              params={{ kind, name: given }}
-              className="underline decoration-dotted underline-offset-4"
-            >
-              Open it
-            </Link>{" "}
-            instead of writing over it.
+          {taken ? (
+            <p role="alert" className={cn(TEXT_LABEL, "text-destructive")}>
+              A {description.noun} called <code>{given}</code> already exists.{" "}
+              <Link
+                to="/portal/custom/edit/$kind/$name"
+                params={{ kind, name: given }}
+                className="underline decoration-dotted underline-offset-4"
+              >
+                Open it
+              </Link>{" "}
+              instead of writing over it.
+            </p>
+          ) : null}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-1">
+          <span className={cn(TEXT_LABEL, "font-medium")}>Name</span>
+          <span className={cn(TEXT_BODY, "font-mono")}>{name}</span>
+          <p className={cn(TEXT_LABEL, "text-muted-foreground")}>
+            {kind === "datasets"
+              ? "A dataset keeps its name: records are sent to it by this name."
+              : "Renamed under Rename, below, so everything that names it follows."}
           </p>
-        ) : null}
-      </div>
+        </div>
+      )}
 
       {placed.loose.map((said) => (
         <p

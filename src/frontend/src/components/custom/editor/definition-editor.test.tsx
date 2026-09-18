@@ -132,7 +132,9 @@ describe("<DefinitionEditor> holding one document", () => {
     );
   });
 
-  it("will not rename a definition that already exists", async () => {
+  // A rename rewrites everything that pointed at the old name, so it is its
+  // own action; a field that looked editable and was not read as broken.
+  it("shows an existing definition's name as text, and says where it is renamed", () => {
     render(
       <DefinitionEditor
         kind="metrics"
@@ -143,7 +145,25 @@ describe("<DefinitionEditor> holding one document", () => {
       { wrapper }
     );
 
-    expect(screen.getByLabelText("Name")).toHaveAttribute("readonly");
+    expect(
+      screen.queryByRole("textbox", { name: "Name" })
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("already_there")).toBeInTheDocument();
+    expect(screen.getByText(/Renamed under Rename, below/)).toBeInTheDocument();
+  });
+
+  it("says that a dataset keeps its name", () => {
+    render(
+      <DefinitionEditor
+        kind="datasets"
+        name="commits"
+        document={{ title: "Commits", fields: [] }}
+        onStored={vi.fn()}
+      />,
+      { wrapper }
+    );
+
+    expect(screen.getByText(/A dataset keeps its name/)).toBeInTheDocument();
   });
 
   it("writes a dataset through its own path", async () => {
