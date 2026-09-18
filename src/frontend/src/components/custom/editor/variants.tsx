@@ -35,11 +35,7 @@ export function Variants({
       <Row
         id={id}
         label={field.label}
-        property={
-          shape.recorded?.toLowerCase() === field.label.toLowerCase()
-            ? undefined
-            : shape.recorded
-        }
+        property={shape.recorded}
         hint={field.hint}
         required
         said={said}

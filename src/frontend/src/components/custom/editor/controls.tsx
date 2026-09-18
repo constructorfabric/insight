@@ -187,17 +187,17 @@ export function Row({
 }) {
   return (
     <div className="flex flex-col gap-1">
-      <span className={cn(TEXT_LABEL, "flex items-baseline gap-2 font-medium")}>
+      <span className={cn(TEXT_LABEL, "flex items-baseline gap-1 font-medium")}>
         <label htmlFor={id}>{label}</label>
-        {required ? <span aria-hidden="true">*</span> : null}
         {property ? (
           <span
             aria-hidden="true"
             className="font-mono font-normal text-muted-foreground"
           >
-            {property}
+            ({property})
           </span>
         ) : null}
+        {required ? <span aria-hidden="true">*</span> : null}
       </span>
 
       {children}

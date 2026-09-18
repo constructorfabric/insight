@@ -79,10 +79,9 @@ describe("<DefinitionEditor> over a kind's shape", () => {
     expect(screen.getByLabelText("column 2")).toHaveValue("lines");
   });
 
-  // The document's key beside the label ties a row to the text view and to a
-  // refusal's path; repeated where it only echoes the label, it reads as a
-  // typo.
-  it("shows the document's key beside a label only where it says more", async () => {
+  // The document's key beside every label ties a row to the text view and to
+  // the path a refusal names.
+  it("shows each row's document key in brackets after its label", async () => {
     const user = userEvent.setup();
 
     render(<DefinitionEditor kind="datasets" onStored={vi.fn()} />, {
@@ -91,10 +90,8 @@ describe("<DefinitionEditor> over a kind's shape", () => {
     await user.click(screen.getByRole("button", { name: "Add field" }));
 
     const first = screen.getByRole("group", { name: "field 1" });
-    expect(first).toHaveTextContent("absent_value");
-    expect(first).toHaveTextContent("default_clock");
-    expect(first).not.toHaveTextContent(/Role\s*role/);
-    expect(first).not.toHaveTextContent(/Name\s*\*?\s*name/);
+    expect(first).toHaveTextContent(/Name\s*\(name\)\s*\*/);
+    expect(first).toHaveTextContent(/Main date\s*\(default_clock\)/);
   });
 
   it("names a field once, whatever it is edited with", async () => {

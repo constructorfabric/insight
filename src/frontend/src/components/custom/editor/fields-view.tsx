@@ -101,9 +101,7 @@ function FieldRow({
     <Row
       id={id}
       label={field.label}
-      property={
-        typeof last === "string" ? spelledApart(field.label, last) : undefined
-      }
+      property={typeof last === "string" ? last : undefined}
       hint={field.hint}
       required={field.required}
       said={said}
@@ -282,9 +280,4 @@ function Entry({
       keepEmpty
     />
   );
-}
-
-/** The document's key, when it would tell a reader something the label does not. */
-function spelledApart(label: string, property: string): string | undefined {
-  return label.toLowerCase() === property.toLowerCase() ? undefined : property;
 }
