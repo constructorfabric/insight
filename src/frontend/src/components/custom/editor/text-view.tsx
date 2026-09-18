@@ -1,6 +1,12 @@
-import { useRef, type UIEvent } from "react";
+import { useRef, type KeyboardEvent, type UIEvent } from "react";
 
 import { brokenLine } from "@/lib/custom/editor/document";
+import {
+  indent,
+  newline,
+  outdent,
+  type Typed,
+} from "@/lib/custom/editor/typing";
 import { TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
@@ -31,6 +37,20 @@ export function TextView({
   const follow = (event: UIEvent<HTMLTextAreaElement>) => {
     if (gutter.current)
       gutter.current.scrollTop = event.currentTarget.scrollTop;
+  };
+
+  // Tab indents rather than leaving the field; Escape is the way out for a
+  // keyboard, since the field has taken Tab.
+  const type = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    const field = event.currentTarget;
+    const typed = keystroke(event, field);
+    if (typed === undefined) return;
+
+    event.preventDefault();
+    onChange(typed.text);
+    requestAnimationFrame(() =>
+      field.setSelectionRange(typed.start, typed.end)
+    );
   };
 
   return (
@@ -71,6 +91,7 @@ export function TextView({
           aria-describedby={unparsed ? `${id}-unparsed` : undefined}
           className="min-h-96 grow resize-y bg-transparent px-3 py-2 leading-6 outline-none"
           onScroll={follow}
+          onKeyDown={type}
           onChange={(event) => onChange(event.target.value)}
         />
       </div>
@@ -86,4 +107,26 @@ export function TextView({
       ) : null}
     </div>
   );
+}
+
+function keystroke(
+  event: KeyboardEvent<HTMLTextAreaElement>,
+  field: HTMLTextAreaElement
+): Typed | undefined {
+  const { value, selectionStart, selectionEnd } = field;
+
+  if (event.key === "Escape") {
+    field.blur();
+    return undefined;
+  }
+  if (event.key === "Tab") {
+    return event.shiftKey
+      ? outdent(value, selectionStart, selectionEnd)
+      : indent(value, selectionStart, selectionEnd);
+  }
+  if (event.key === "Enter" && !event.metaKey && !event.ctrlKey) {
+    return newline(value, selectionStart, selectionEnd);
+  }
+
+  return undefined;
 }

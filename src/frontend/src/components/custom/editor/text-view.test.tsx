@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { brokenLine } from "@/lib/custom/editor/document";
@@ -36,6 +37,46 @@ describe("<TextView>", () => {
     expect(second?.className).toContain("text-destructive");
     expect(gutter?.children[0]?.className).not.toContain("text-destructive");
     expect(screen.getByRole("alert")).toHaveTextContent("line 2");
+  });
+
+  // JSON is indented by hand here, and a Tab that left the field would make
+  // that a chore.
+  it("indents on Tab instead of leaving the field", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<TextView id="t" label="as text" text="ab" onChange={onChange} />);
+
+    const field = screen.getByLabelText("as text") as HTMLTextAreaElement;
+    field.focus();
+    field.setSelectionRange(1, 1);
+    await user.keyboard("{Tab}");
+
+    expect(onChange).toHaveBeenCalledWith("a  b");
+    expect(field).toHaveFocus();
+  });
+
+  it("keeps the indent of the line Enter leaves", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<TextView id="t" label="as text" text="  a" onChange={onChange} />);
+
+    const field = screen.getByLabelText("as text") as HTMLTextAreaElement;
+    field.focus();
+    field.setSelectionRange(3, 3);
+    await user.keyboard("{Enter}");
+
+    expect(onChange).toHaveBeenCalledWith("  a\n  ");
+  });
+
+  it("lets a keyboard out on Escape, since Tab is taken", async () => {
+    const user = userEvent.setup();
+    render(<TextView id="t" label="as text" text="a" onChange={vi.fn()} />);
+
+    const field = screen.getByLabelText("as text");
+    field.focus();
+    await user.keyboard("{Escape}");
+
+    expect(field).not.toHaveFocus();
   });
 
   it("does not wrap lines, so a number always faces its line", () => {
