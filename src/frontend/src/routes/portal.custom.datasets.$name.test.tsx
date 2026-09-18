@@ -128,6 +128,19 @@ describe("/portal/custom/datasets/$name", () => {
     expect(await screen.findByText("lines_per_day")).toBeInTheDocument();
   });
 
+  it("links a metric that reads it to its page", async () => {
+    vi.mocked(customClient.fetchDataset).mockResolvedValue(COMMITS);
+    vi.mocked(customClient.fetchDatasetDependents).mockResolvedValue([
+      "lines_per_day",
+    ]);
+
+    render(<Component />, { wrapper });
+
+    expect(
+      await screen.findByRole("link", { name: "lines_per_day" })
+    ).toHaveAttribute("href", "/portal/custom/metrics/lines_per_day");
+  });
+
   // A dataset mid-create or mid-removal is not found, and the page says which
   // one rather than asking for records that are not there.
   it("says which dataset is missing rather than reading anything else", async () => {

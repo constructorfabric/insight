@@ -2,6 +2,7 @@ import { createFileRoute, Link, useRouterState } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 
 import type { DatasetRecord, DeclaredField } from "@/api/custom-client";
+import { Held } from "@/components/custom/held-by";
 import { refusal } from "@/components/custom/refusal";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -191,31 +192,15 @@ function Dependents({ name }: { name: string }) {
   const dependents = useQuery(datasetDependentsQuery(name));
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className={TEXT_HEADING}>Metrics reading it</CardTitle>
-      </CardHeader>
-      <CardContent>
-        {dependents.isPending ? (
-          <CenteredSpinner className="min-h-24" />
-        ) : dependents.isError ? (
-          <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
-            {refusal(dependents.error, "Couldn't read what reads it.")}
-          </p>
-        ) : dependents.data.length === 0 ? (
-          <p className={cn(TEXT_BODY, "text-muted-foreground")}>
-            Nothing reads it, so it can be taken away.
-          </p>
-        ) : (
-          <ul className="flex flex-col gap-1">
-            {dependents.data.map((metric) => (
-              <li key={metric}>
-                <code className={cn(TEXT_BODY, "font-mono")}>{metric}</code>
-              </li>
-            ))}
-          </ul>
-        )}
-      </CardContent>
-    </Card>
+    <Held
+      title="Metrics reading it"
+      empty="Nothing reads it, so it can be taken away."
+      pending={dependents.isPending}
+      error={dependents.error}
+      holders={dependents.data?.map((metric) => ({
+        kind: "metrics" as const,
+        name: metric,
+      }))}
+    />
   );
 }
