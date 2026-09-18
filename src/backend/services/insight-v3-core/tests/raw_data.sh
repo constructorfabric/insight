@@ -5,16 +5,17 @@ service_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 backend_dir="$(cd "$service_dir/../.." && pwd)"
 clickhouse_url="${INSIGHT_V3_CORE_TEST_CLICKHOUSE_URL:-${INTEGRATION_TESTS_CLICKHOUSE_URL:-http://127.0.0.1:18123}}"
 clickhouse_database="${INSIGHT_V3_CORE_TEST_CLICKHOUSE_DATABASE:-${INTEGRATION_TESTS_CLICKHOUSE_DATABASE:-insight}}"
+datasets_database="${INSIGHT_V3_CORE_TEST_DATASETS_DATABASE:-insight_datasets}"
 clickhouse_user="${INSIGHT_V3_CORE_TEST_CLICKHOUSE_USER:-${INTEGRATION_TESTS_CLICKHOUSE_USER:-}}"
 clickhouse_password="${INSIGHT_V3_CORE_TEST_CLICKHOUSE_PASSWORD:-${INTEGRATION_TESTS_CLICKHOUSE_PASSWORD:-}}"
 port="${INSIGHT_V3_CORE_TEST_PORT:-18086}"
 token="${INSIGHT_V3_CORE_TEST_TOKEN:-synthetic-test-token-0123456789abcdef}"
-table_name="synthetic_events_$$"
+dataset_name="synthetic_events_$$"
 log_file="$(mktemp)"
 pid=""
 identity_port="${INSIGHT_V3_CORE_TEST_IDENTITY_PORT:-18099}"
 identity_pid=""
-table_created="false"
+dataset_declared="false"
 
 cleanup() {
   status=$?
@@ -27,8 +28,11 @@ cleanup() {
     kill "$identity_pid" 2>/dev/null || true
     wait "$identity_pid" 2>/dev/null || true
   fi
-  if [[ "$table_created" == "true" ]]; then
-    clickhouse_query "DROP TABLE IF EXISTS $table_name" >/dev/null 2>&1 || true
+  if [[ "$dataset_declared" == "true" ]]; then
+    curl --silent --output /dev/null --max-time 10 \
+      --request DELETE \
+      --header "authorization: Bearer live-test-administrator" \
+      "http://127.0.0.1:$port/v1/datasets/$dataset_name" || true
   fi
   if [[ "$status" != "0" ]] && [[ -s "$log_file" ]]; then
     cat "$log_file" >&2
@@ -45,8 +49,8 @@ trap cleanup EXIT
 database_url="${INTEGRATION_TESTS_MARIADB_URL:-mysql://insight:insight@127.0.0.1:3306/insight_v3}"
 identity_url="${INTEGRATION_TESTS_IDENTITY_URL:-http://127.0.0.1:$identity_port}"
 
-# Creating a table is admin-only and the role is read from identity, which by
-# design refuses rather than permits when it cannot be reached. The stub is
+# Declaring a dataset is admin-only and the role is read from identity, which
+# by design refuses rather than permits when it cannot be reached. The stub is
 # that service for the length of this test.
 python3 "$service_dir/tests/identity-stub.py" "$identity_port" &
 identity_pid=$!
@@ -63,6 +67,7 @@ app_env=(
   env
   "APP__gears__insight_v3_core__config__clickhouse_url=$clickhouse_url"
   "APP__gears__insight_v3_core__config__clickhouse_database=$clickhouse_database"
+  "APP__gears__insight_v3_core__config__datasets_database=$datasets_database"
   "APP__gears__insight_v3_core__config__ingest_token=$token"
   "APP__gears__insight_v3_core__config__database_url=$database_url"
   "APP__gears__insight_v3_core__config__identity_url=$identity_url"
@@ -81,6 +86,14 @@ clickhouse_query() {
   curl "${clickhouse_curl[@]}" \
     --data-binary "$1" \
     "$clickhouse_url/?database=$clickhouse_database"
+}
+
+# A dataset's records are kept apart from the warehouse the rest of Insight
+# reads, in a database this service owns.
+datasets_query() {
+  curl "${clickhouse_curl[@]}" \
+    --data-binary "$1" \
+    "$clickhouse_url/?database=$datasets_database"
 }
 
 expect_equal() {
@@ -127,42 +140,59 @@ if [[ "$ready" != "true" ]]; then
   exit 1
 fi
 
-status="$(curl --silent --connect-timeout 2 --max-time 10 \
-  --output /dev/null --write-out '%{http_code}' \
-  --request PUT \
-  "http://127.0.0.1:$port/v1/tables/$table_name")"
-expect_equal "401" "$status" "table creation without a token"
+declaration='{"title":"Synthetic events","fields":[{"name":"kind","path":"kind","type":"string"}]}'
 
-# Creating a table passes two gates, not one: the instance token admits the
-# request, and the caller must hold the admin role. Ingest itself keeps the
-# token alone, which the POSTs below still assert.
 status="$(curl --silent --connect-timeout 2 --max-time 10 \
   --output /dev/null --write-out '%{http_code}' \
   --request PUT \
+  --header 'content-type: application/json' \
+  --data-binary "$declaration" \
+  "http://127.0.0.1:$port/v1/datasets/$dataset_name")"
+expect_equal "403" "$status" "declaring a dataset with no caller"
+
+# The ingest token admits a record, never a declaration: the two credentials
+# answer for different things.
+status="$(curl --silent --connect-timeout 2 --max-time 10 \
+  --output /dev/null --write-out '%{http_code}' \
+  --request PUT \
+  --header 'content-type: application/json' \
   --header "x-insight-token: $token" \
-  "http://127.0.0.1:$port/v1/tables/$table_name")"
-expect_equal "403" "$status" "table creation with the token but no caller"
+  --data-binary "$declaration" \
+  "http://127.0.0.1:$port/v1/datasets/$dataset_name")"
+expect_equal "403" "$status" "declaring a dataset with the ingest token alone"
 
+# Twice: declaring a name that stands replaces its declaration where it lies,
+# so the records and the table they are in are left alone.
 for _ in 1 2; do
   status="$(curl --silent --connect-timeout 2 --max-time 10 \
     --output /dev/null --write-out '%{http_code}' \
     --request PUT \
-    --header "x-insight-token: $token" \
+    --header 'content-type: application/json' \
     --header "authorization: Bearer live-test-administrator" \
-    "http://127.0.0.1:$port/v1/tables/$table_name")"
-  expect_equal "204" "$status" "authenticated table creation"
-  table_created="true"
+    --data-binary "$declaration" \
+    "http://127.0.0.1:$port/v1/datasets/$dataset_name")"
+  expect_equal "200" "$status" "declaring a dataset as an administrator"
+  dataset_declared="true"
 done
 
-schema="$(clickhouse_query "SELECT name, type
+# The table is named for the attempt that made it, so the name is discovered
+# rather than assumed - and there is exactly one, which is what proves the
+# replacement above made no second table.
+physical_table="$(datasets_query "SELECT name FROM system.tables
+WHERE database = currentDatabase() AND name LIKE 'ds_${dataset_name}_%'
+ORDER BY name
+FORMAT TSVRaw")"
+expect_equal "1" "$(printf '%s\n' "$physical_table" | grep -c .)" "one table per dataset"
+
+schema="$(datasets_query "SELECT name, type
 FROM system.columns
-WHERE database = currentDatabase() AND table = '$table_name'
+WHERE database = currentDatabase() AND table = '$physical_table'
 ORDER BY position
 FORMAT TSVRaw")"
 expect_equal \
   $'id\tUUID\ntable_name\tString\nraw_data\tString\nreceived_at\tDateTime64(3, \'UTC\')' \
   "$schema" \
-  "created table schema"
+  "the declared dataset's table"
 
 raw_values=(
   '{"nested":[1,true,null]}'
@@ -170,7 +200,7 @@ raw_values=(
   '"scalar"'
   '42'
 )
-request_body="{\"table\":\"$table_name\",\"raw_data\":${raw_values[0]}}"
+request_body="{\"dataset\":\"$dataset_name\",\"raw_data\":${raw_values[0]}}"
 status="$(curl --silent --connect-timeout 2 --max-time 10 \
   --output /dev/null --write-out '%{http_code}' \
   --header 'content-type: application/json' \
@@ -186,11 +216,20 @@ status="$(curl --silent --connect-timeout 2 --max-time 10 \
   "http://127.0.0.1:$port/v1/raw-data")"
 expect_equal "401" "$status" "raw-data insertion with an incorrect token"
 
-before="$(clickhouse_query "SELECT count() FROM $table_name")"
-expect_equal "0" "$before" "new table row count"
+# A record only lands in a dataset somebody declared.
+status="$(curl --silent --connect-timeout 2 --max-time 10 \
+  --output /dev/null --write-out '%{http_code}' \
+  --header 'content-type: application/json' \
+  --header "x-insight-token: $token" \
+  --data-binary "{\"dataset\":\"nobody_declared_this\",\"raw_data\":{}}" \
+  "http://127.0.0.1:$port/v1/raw-data")"
+expect_equal "404" "$status" "raw-data insertion into a dataset nobody declared"
+
+before="$(datasets_query "SELECT count() FROM $physical_table")"
+expect_equal "0" "$before" "a new dataset holds no records"
 
 for raw_value in "${raw_values[@]}"; do
-  request_body="{\"table\":\"$table_name\",\"raw_data\":$raw_value}"
+  request_body="{\"dataset\":\"$dataset_name\",\"raw_data\":$raw_value}"
   status="$(curl --silent --connect-timeout 2 --max-time 10 \
     --output /dev/null --write-out '%{http_code}' \
     --header 'content-type: application/json' \
@@ -200,12 +239,18 @@ for raw_value in "${raw_values[@]}"; do
   expect_equal "204" "$status" "authenticated raw-data insertion"
 done
 
-stored="$(clickhouse_query "SELECT
+stored="$(datasets_query "SELECT
   count(),
   countIf(raw_data = '{\"nested\":[1,true,null]}'),
   countIf(raw_data = '[1,2,3]'),
   countIf(raw_data = '\"scalar\"'),
   countIf(raw_data = '42')
-FROM $table_name
-WHERE table_name = '$table_name'")"
-expect_equal $'4\t1\t1\t1\t1' "$stored" "stored raw-data rows"
+FROM $physical_table
+WHERE table_name = '$dataset_name'")"
+expect_equal $'4\t1\t1\t1\t1' "$stored" "the records the dataset holds"
+
+# What the dataset's page reads: the same records, through the API.
+preview="$(curl --fail --silent --connect-timeout 2 --max-time 10 \
+  --header "authorization: Bearer live-test-administrator" \
+  "http://127.0.0.1:$port/v1/datasets/$dataset_name/records")"
+expect_equal "4" "$(printf '%s' "$preview" | jq '.records | length')" "the preview reads them back"

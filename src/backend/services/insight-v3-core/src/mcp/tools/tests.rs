@@ -7,18 +7,39 @@ use serde_json::{Value, json};
 
 use super::*;
 use crate::api::AppState;
-use crate::catalog::Catalog;
 use crate::chat::ChatClient;
-use crate::dashboard::{HeadingItem, TextItem, WidgetItem};
-use crate::definitions::memory::MemoryDefinitions;
-use crate::identity::IdentityClient;
-use crate::metric_query::{MetricRunner, People};
-use crate::raw_data::RawDataStore;
-use crate::tables::TableStore;
+use crate::domain::kinds::dashboard::{HeadingItem, TextItem, WidgetItem};
+use crate::domain::query::metric_query::{MetricRunner, People};
+use crate::store::definitions::memory::MemoryDefinitions;
+use crate::store::identity::IdentityClient;
 
 type R = Result<(), Box<dyn Error>>;
 
+/// A stand whose one dataset stands ready, since every stored metric reads
+/// one.
 fn surfaces() -> CustomSurfaces {
+    built(crate::api::Datasets::holding(
+        "http://offline.invalid",
+        &[(
+            "commits",
+            json!({
+                "title": "Commits",
+                "fields": [
+                    { "name": "actor", "path": "actor", "type": "string" },
+                    { "name": "lines_added", "path": "lines_added", "type": "int" },
+                    { "name": "occurred_at", "path": "occurred_at", "type": "datetime" }
+                ]
+            }),
+        )],
+    ))
+}
+
+/// A stand where nobody has declared anything.
+fn surfaces_without_a_dataset() -> CustomSurfaces {
+    built(crate::api::Datasets::offline("http://offline.invalid"))
+}
+
+fn built(datasets: crate::api::Datasets) -> CustomSurfaces {
     let client = || {
         insight_clickhouse::Client::new(insight_clickhouse::Config::new(
             "http://clickhouse.invalid",
@@ -31,13 +52,11 @@ fn surfaces() -> CustomSurfaces {
     };
 
     let state = Arc::new(AppState::new(
-        RawDataStore::new(client()),
-        TableStore::new(client()),
-        Arc::new(MemoryDefinitions::new()),
         MetricRunner::new(client(), People::new("identity")),
+        Arc::new(MemoryDefinitions::new()),
         ChatClient::keyless(),
         identity,
-        Catalog::new(client(), "insight".to_owned()),
+        datasets,
     ));
 
     CustomSurfaces::new(state)
@@ -45,10 +64,10 @@ fn surfaces() -> CustomSurfaces {
 
 fn metric_body() -> Value {
     json!({
-        "table": "events",
+        "dataset": "commits",
         "fields": [
-            {"json": "actor", "type": "string", "as_name": "actor"},
-            {"json": "actor", "type": "string", "agg": "count", "as_name": "total"}
+            {"field": "actor", "type": "string", "as_name": "actor"},
+            {"field": "actor", "type": "string", "agg": "count", "as_name": "total"}
         ],
         "group_by": ["actor"]
     })
@@ -61,7 +80,7 @@ fn put(name: &str, body: Value) -> Parameters<PutRequest> {
     })
 }
 
-fn listing(kind: ToolKind) -> Parameters<KindRequest> {
+fn listing(kind: DefinitionKind) -> Parameters<KindRequest> {
     Parameters(KindRequest {
         kind,
         limit: None,
@@ -69,7 +88,7 @@ fn listing(kind: ToolKind) -> Parameters<KindRequest> {
     })
 }
 
-fn finding(kind: ToolKind, query: &str) -> Parameters<SearchRequest> {
+fn finding(kind: DefinitionKind, query: &str) -> Parameters<SearchRequest> {
     Parameters(SearchRequest {
         kind,
         query: query.to_owned(),
@@ -78,7 +97,7 @@ fn finding(kind: ToolKind, query: &str) -> Parameters<SearchRequest> {
     })
 }
 
-fn named(kind: ToolKind, name: &str) -> Parameters<NamedRequest> {
+fn named(kind: DefinitionKind, name: &str) -> Parameters<NamedRequest> {
     Parameters(NamedRequest {
         kind,
         name: name.to_owned(),
@@ -129,8 +148,8 @@ fn the_server_announces_exactly_the_ten_custom_surface_tools() {
             "arrange_dashboard",
             "delete_definition",
             "get_definition",
+            "list_datasets",
             "list_definitions",
-            "list_tables",
             "put_dashboard",
             "put_metric",
             "put_widget",
@@ -161,7 +180,7 @@ fn the_instructions_point_a_client_at_the_discovery_tool_first() {
     let Some(instructions) = info.instructions else {
         panic!("the server carries instructions");
     };
-    assert!(instructions.contains("list_tables"), "{instructions}");
+    assert!(instructions.contains("list_datasets"), "{instructions}");
 }
 
 #[tokio::test]
@@ -170,12 +189,16 @@ async fn a_stored_metric_is_listed_and_read_back() -> R {
 
     assert_accepted(&surfaces.put_metric(put("per-actor", metric_body())).await);
 
-    let listed = assert_accepted(&surfaces.list_definitions(listing(ToolKind::Metric)).await);
+    let listed = assert_accepted(
+        &surfaces
+            .list_definitions(listing(DefinitionKind::Metric))
+            .await,
+    );
     assert_eq!(listed["names"], json!(["per-actor"]));
 
     let read = assert_accepted(
         &surfaces
-            .get_definition(named(ToolKind::Metric, "per-actor"))
+            .get_definition(named(DefinitionKind::Metric, "per-actor"))
             .await,
     );
     assert_eq!(read, metric_body());
@@ -186,7 +209,7 @@ async fn a_stored_metric_is_listed_and_read_back() -> R {
 #[tokio::test]
 async fn reading_a_definition_that_was_never_stored_says_so() {
     let result = surfaces()
-        .get_definition(named(ToolKind::Dashboard, "absent"))
+        .get_definition(named(DefinitionKind::Dashboard, "absent"))
         .await;
 
     assert_refused(&result, "was not found");
@@ -195,7 +218,7 @@ async fn reading_a_definition_that_was_never_stored_says_so() {
 #[tokio::test]
 async fn a_name_the_store_would_not_accept_is_refused_before_any_read() {
     let result = surfaces()
-        .get_definition(named(ToolKind::Metric, "not a valid name"))
+        .get_definition(named(DefinitionKind::Metric, "not a valid name"))
         .await;
 
     assert_refused(&result, "definition names");
@@ -242,7 +265,7 @@ async fn a_metric_a_widget_still_draws_is_not_deleted() -> R {
         .await;
 
     let result = surfaces
-        .delete_definition(named(ToolKind::Metric, "per-actor"))
+        .delete_definition(named(DefinitionKind::Metric, "per-actor"))
         .await;
 
     assert_refused(&result, "chart");
@@ -264,13 +287,13 @@ async fn a_dashboard_is_stored_and_then_removed() -> R {
 
     assert_accepted(
         &surfaces
-            .delete_definition(named(ToolKind::Dashboard, "board"))
+            .delete_definition(named(DefinitionKind::Dashboard, "board"))
             .await,
     );
 
     let listed = assert_accepted(
         &surfaces
-            .list_definitions(listing(ToolKind::Dashboard))
+            .list_definitions(listing(DefinitionKind::Dashboard))
             .await,
     );
     assert_eq!(listed["names"], json!([]));
@@ -281,7 +304,7 @@ async fn a_dashboard_is_stored_and_then_removed() -> R {
 #[tokio::test]
 async fn deleting_a_definition_that_was_never_stored_says_so() {
     let result = surfaces()
-        .delete_definition(named(ToolKind::Widget, "absent"))
+        .delete_definition(named(DefinitionKind::Widget, "absent"))
         .await;
 
     assert_refused(&result, "was not found");
@@ -314,19 +337,18 @@ async fn a_range_the_server_does_not_know_is_refused_by_the_tool() {
 }
 
 #[tokio::test]
-async fn a_metric_whose_clock_cannot_be_read_is_not_stored() {
+async fn a_metric_addressing_a_relation_of_its_own_is_not_stored() {
     let result = surfaces()
         .put_metric(put(
-            "broken_clock",
+            "over_a_table",
             json!({
                 "table": "events",
-                "time": {"json": "at", "type": "string"},
                 "fields": [{"agg": "count", "type": "int", "as_name": "total"}]
             }),
         ))
         .await;
 
-    assert_refused(&result, "is not datetime");
+    assert_refused(&result, "must name the `dataset` it reads");
 }
 
 #[tokio::test]
@@ -335,8 +357,8 @@ async fn a_metric_whose_maximum_range_is_not_a_duration_is_not_stored() {
         .put_metric(put(
             "bad_cap",
             json!({
-                "table": "events",
-                "time": {"column": "occurred_at"},
+                "dataset": "commits",
+                "time": {"field": "occurred_at"},
                 "max_range": "P0D",
                 "fields": [{"agg": "count", "type": "int", "as_name": "total"}]
             }),
@@ -355,8 +377,8 @@ async fn a_metric_that_declares_a_clock_and_a_cap_is_stored() -> R {
             .put_metric(put(
                 "opened",
                 json!({
-                    "table": "events",
-                    "time": {"column": "occurred_at"},
+                    "dataset": "commits",
+                    "time": {"field": "occurred_at"},
                     "max_range": "P1Y",
                     "fields": [{"agg": "count", "type": "int", "as_name": "total"}]
                 }),
@@ -368,10 +390,12 @@ async fn a_metric_that_declares_a_clock_and_a_cap_is_stored() -> R {
 }
 
 #[tokio::test]
-async fn a_catalogue_that_cannot_be_read_is_a_tool_error_rather_than_a_panic() {
-    let result = surfaces().list_tables().await;
+async fn with_nothing_declared_the_listing_says_who_declares_a_dataset() {
+    let result = surfaces_without_a_dataset().list_datasets().await;
 
-    assert_eq!(result.is_error, Some(true), "{result:?}");
+    assert_eq!(result.is_error, Some(false), "{result:?}");
+    let said = format!("{result:?}");
+    assert!(said.contains("administrator"), "{said}");
 }
 
 #[tokio::test]
@@ -384,9 +408,8 @@ async fn search_definitions_matches_a_name_and_a_body() {
             .put_metric(put(
                 "lines_per_day",
                 json!({
-                    "database": "silver",
-                    "table": "class_git_commits",
-                    "fields": [{"column": "lines_added", "type": "int", "as_name": "lines"}]
+                    "dataset": "commits",
+                    "fields": [{"field": "lines_added", "type": "int", "as_name": "lines"}]
                 }),
             ))
             .await,
@@ -395,14 +418,14 @@ async fn search_definitions_matches_a_name_and_a_body() {
 
     let by_body = assert_accepted(
         &surfaces
-            .search_definitions(finding(ToolKind::Metric, "class_git_commits"))
+            .search_definitions(finding(DefinitionKind::Metric, "lines_added"))
             .await,
     );
     assert_eq!(by_body["names"], json!(["lines_per_day"]));
 
     let by_name = assert_accepted(
         &surfaces
-            .search_definitions(finding(ToolKind::Metric, "actors"))
+            .search_definitions(finding(DefinitionKind::Metric, "actors"))
             .await,
     );
     assert_eq!(by_name["names"], json!(["actors"]));
@@ -415,7 +438,7 @@ async fn an_empty_search_returns_everything_of_that_kind() {
 
     let all = assert_accepted(
         &surfaces
-            .search_definitions(finding(ToolKind::Metric, "   "))
+            .search_definitions(finding(DefinitionKind::Metric, "   "))
             .await,
     );
 
@@ -432,7 +455,7 @@ async fn a_page_answers_its_own_slice_and_the_whole_count() {
     let first = assert_accepted(
         &surfaces
             .list_definitions(Parameters(KindRequest {
-                kind: ToolKind::Metric,
+                kind: DefinitionKind::Metric,
                 limit: Some(2),
                 offset: None,
             }))
@@ -444,7 +467,7 @@ async fn a_page_answers_its_own_slice_and_the_whole_count() {
     let second = assert_accepted(
         &surfaces
             .list_definitions(Parameters(KindRequest {
-                kind: ToolKind::Metric,
+                kind: DefinitionKind::Metric,
                 limit: Some(2),
                 offset: Some(2),
             }))
@@ -464,7 +487,7 @@ async fn a_search_pages_the_matches_and_counts_all_of_them() {
     let page = assert_accepted(
         &surfaces
             .search_definitions(Parameters(SearchRequest {
-                kind: ToolKind::Metric,
+                kind: DefinitionKind::Metric,
                 query: "git_".to_owned(),
                 limit: Some(1),
                 offset: Some(1),
@@ -483,7 +506,7 @@ async fn a_page_beyond_the_cap_is_refused_rather_than_served() {
     assert_refused(
         &surfaces
             .list_definitions(Parameters(KindRequest {
-                kind: ToolKind::Metric,
+                kind: DefinitionKind::Metric,
                 limit: Some(5_000),
                 offset: None,
             }))
