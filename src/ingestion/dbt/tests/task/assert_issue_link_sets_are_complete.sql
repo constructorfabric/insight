@@ -1,3 +1,16 @@
+{{ config(
+    severity='warn',
+    tags=['connector_quality', 'github'],
+    store_failures=true,
+    meta={
+        'title': 'Issue link sets were collected whole',
+        'domain': 'task-tracking',
+        'category': 'completeness',
+        'tier': 'error',
+        'remediation': 'The links past the page boundary were never collected and nothing re-reads them: the fold sees a shorter set and reports the missing links as removed. Raise the `first:` on the connection this row names in the github connector''s `issue_links` stream — 100 is the vendor maximum and costs the same GraphQL points as 50 — then clear that stream''s cursor so the full set is re-read. An issue that outgrows 100 cannot be fixed by a larger page: a declarative manifest cannot follow a nested cursor, so the stream has to move to a component that can.'
+    }
+) }}
+
 -- A link set that was cut off at its page boundary.
 --
 -- `issue_links` reads five nested GraphQL connections, and a declarative

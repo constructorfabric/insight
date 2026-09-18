@@ -706,7 +706,106 @@ while ms-entra used `Nullable(String)` — `silver.class_people` failed to build
 all. Note that agreement is per column: `org_unit_id` legitimately IS
 `Nullable(UUID)` in all four HR sources.
 
-### 3. Run the wiring guard before you open the PR
+### 3. Give the connector its own data checks (`connector_quality`)
+
+A dbt data test that reads the connector's own tables runs in exactly one place,
+and picking the wrong catalog means it runs NOWHERE or runs everywhere and
+fails. There are two catalogs and they are not interchangeable:
+
+| Tag | Runs | May read |
+|-----|------|----------|
+| `data_quality` | scheduled Argo CronWorkflow, install-wide, on its own clock | silver / gold ONLY |
+| `connector_quality` | the `connector-checks` step at the end of THIS connector's pipeline, right after its transform | that connector's bronze and staging as well |
+
+An **untagged** test runs nowhere at all: no cluster ever invokes a bare
+`dbt test`, only these two selectors. A bronze-reading test tagged
+`data_quality` is worse than useless — the scheduled catalog runs install-wide,
+and on a tenant where your connector is absent the test errors on a missing
+table.
+
+The file goes in `src/ingestion/dbt/tests/<domain>/assert_<subject>_<rule>.sql`
+next to the other checks of that domain (the connector's own directory when it
+has one, e.g. `tests/jira/`, otherwise the domain's — `tests/task/`,
+`tests/git/`, `tests/collab/`). Write the check with BOTH tags — the second is
+the connector's slug:
+
+```jinja
+{{ config(
+    severity='warn',
+    tags=['connector_quality', '<connector-name>'],
+    store_failures=true,
+    meta={
+        'title': '<the rule, as a statement that is true when the test passes>',
+        'domain': '<task-tracking | ai | collab | hr | ...>',
+        'category': '<completeness | consistency | coverage | grain | traceability | ...>',
+        'tier': '<error | warn>',
+        'remediation': '<what an operator does about it, and how to tell the causes apart>'
+    }
+) }}
+```
+
+The connector tag is **not optional decoration**. The step selects
+`tag:connector_quality,tag:{{data_source}}`, an INTERSECTION, and `data_source`
+is the connector slug (`data_source = args.connector` in
+`render_cronworkflow.py`) — so the tag must equal the `name:` in your
+descriptor. Miss it and your check matches nothing and runs on no sync.
+
+No chart change is needed. The `connector-checks` step is generic: it depends on
+`transform-jira-silver.Succeeded || transform-legacy.Succeeded`, and every
+connector except jira takes the `transform-legacy` path.
+
+The step is **non-blocking by construction** — bronze has landed and silver is
+rebuilt by the time it runs, so failing the workflow would undo nothing.
+Findings travel as structured log lines carrying `meta.tier`; alerting reads
+those. Write the test so it returns the violating rows (zero rows = pass) and
+`LIMIT` the output, since a systemic fault would otherwise emit every row.
+
+**Write at least one check whenever the source states a fact the connector
+could silently fail to honour.** The recurring shapes, in the order they are
+worth reaching for:
+
+- **A capped collection whose true size the vendor reports.** A nested GraphQL
+  connection read with a fixed `first:` and no cursor loses its tail in
+  silence. Collect the vendor's `totalCount` alongside the page and compare the
+  two — this is the strongest kind of check, because both numbers come from the
+  same response and cannot disagree for timing reasons.
+- **A stream that must reach every row of another.** A child whose parent
+  window can never yield it again is unreachable rather than merely late;
+  compare the key sets across the two bronze relations.
+- **A value the pipeline must parse rather than pass through.** A round-trip:
+  re-derive the parsed form from the raw payload and assert they agree.
+- **A field whose identity must hold across two of the connector's relations**
+  — the same value named by different ids on the two sides cannot be joined.
+
+Two counsels on what NOT to write. A check comparing numbers that come from
+DIFFERENT streams (therefore different moments) fires on a healthy install
+whenever the source changes between the two reads — collect the counterpart in
+the same response, or ship the number as a column and leave it to a human. And
+a check reporting a condition of the SOURCE that the pipeline cannot repair
+belongs at `severity='warn'` with the reasons enumerated in `remediation`: a
+gate that can never be made to pass stops being a signal and becomes noise
+someone routes around.
+
+Verify the selector resolves before you rely on it — both directions:
+
+```bash
+cd src/ingestion/dbt
+# must list exactly your checks
+dbt ls --profiles-dir . --select "tag:connector_quality,tag:<connector-name>"
+# must list nothing — proves the check cannot run on another connector's sync
+dbt ls --profiles-dir . --select "tag:connector_quality,tag:<other-connector>"
+```
+
+Worked example of getting this wrong: the github connector's
+`assert_issue_link_sets_are_complete` was written, left untagged, and therefore
+ran nowhere — a check that cannot report is indistinguishable from one that
+finds nothing. PR
+[#3352](https://github.com/constructorfabric/insight/pull/3352) introduced the
+`connector_quality` catalog, and commit `82552ac9` fixed the selector from a
+space-separated list (a UNION, which ran every connector's checks on every
+connector's sync) to the intersection above.
+
+### 4. Run the wiring guard before you open the PR
 
 ```bash
 python3 scripts/ci/connector_wiring.py
@@ -992,6 +1091,11 @@ issue #2048 broke bootstrap-db for everyone):
   ✓ If contributing a `silver:class_<X>` model: column types identical to the
        sibling sources (Code 386 NO_COMMON_TYPE otherwise) AND the
        `-- depends_on:` edge added to class_<X>.sql
+  ✓ At least one data check for the facts this source states about its own
+       data, tagged `['connector_quality', '<connector-name>']` — NOT
+       `data_quality`, which is install-wide and may not read bronze, and not
+       untagged, which runs nowhere. Selector verified in both directions with
+       `dbt ls` (resolves for this connector, resolves to nothing for another)
   ✓ `python3 scripts/ci/connector_wiring.py` exits 0
 
 If your connector ships a Dockerfile (CDK or enrich sidecar), also verify

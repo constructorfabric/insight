@@ -18,8 +18,15 @@
 -- in this table, once from each side, and each side is true on its own terms.
 -- Deduplicating to a single canonical direction would make the parent's
 -- history depend on whether the child was collected.
+--
+-- That is also why both timelines are read. A link made from the pull-request
+-- side is an event on the PULL REQUEST, and the two streams carry the same
+-- columns for it, so each side arrives keyed on the item it happened to. The
+-- fold downstream keys on (item, link type, target), so the two sides become
+-- two intervals rather than one duplicated interval.
 
 WITH linked AS (
+    {% for relation in ['issue_timeline_events', 'pull_request_timeline_events'] %}
     SELECT
         COALESCE(source_id, '')                                 AS insight_source_id,
         COALESCE(tenant_id, '')                                 AS tenant_id,
@@ -35,7 +42,10 @@ WITH linked AS (
         COALESCE(link_target_number, 0)                         AS target_number,
         COALESCE(is_cross_repository, false)                    AS is_cross_repository,
         _airbyte_extracted_at
-    FROM {{ source('bronze_github', 'issue_timeline_events') }} FINAL
+    FROM {{ source('bronze_github', relation) }} FINAL
+    -- One list for both relations: a type a stream never requests cannot
+    -- appear in it, and naming them per relation would be a second place to
+    -- update when a link kind is added to either query.
     WHERE event_type IN (
         'SubIssueAddedEvent', 'SubIssueRemovedEvent',
         'ParentIssueAddedEvent', 'ParentIssueRemovedEvent',
@@ -44,6 +54,8 @@ WITH linked AS (
         'ConnectedEvent', 'DisconnectedEvent',
         'MarkedAsDuplicateEvent', 'UnmarkedAsDuplicateEvent'
     )
+    {{ 'UNION ALL' if not loop.last }}
+    {% endfor %}
 )
 
 SELECT

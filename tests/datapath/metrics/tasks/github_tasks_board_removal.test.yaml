@@ -1,0 +1,75 @@
+spec_version: 1
+description: >
+  Task Delivery - stale_in_progress for GITHUB when a card is taken off its
+  board.
+
+  A board column is the only place GitHub says work is in progress, so a card
+  that leaves the board takes that statement with it. The vendor announces the
+  departure as `RemovedFromProjectV2Event` and names no new column.
+
+  `stale_in_progress` counts issues that are not done and whose last status
+  change is older than fourteen days, and it is stamped on the DATE OF THAT
+  LAST CHANGE - not on today. That is what makes the removal observable: the
+  removal is itself a status event, so with it the count lands on the 9th, and
+  without it the last thing that ever happened to this issue is the move into
+  In progress on the 6th and the count lands there instead.
+
+  The window below therefore starts on the 7th. It holds the 9th and excludes
+  the 6th, so it reads 1 only if the removal reached the journal; a run without
+  the closing row finds nothing in it at all. The issue is left OPEN and its own
+  `state` is bound to `ignored`, so the board is the only thing that can speak
+  for its status.
+
+  `dev_time` cannot be used here, and the reason is worth stating: it is a
+  closed-issue measure, stamped `toDate(final_close_at)` and summing only spans
+  that start before the close. An issue that never closes has no such date and
+  no such measure, whatever its spans look like.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/carol
+
+  bronze_github.commit_authors:
+    - { $ref: ../templates/github_task.yaml#/templates/commit_author, unique_key: gh-author-1003, _airbyte_raw_id: gh-author-1003, author_id: 1003, author_login: carol, author_email: carol@example.com }
+
+  config.task_field_roles:
+    # The board is the lifecycle source; the issue's own state says nothing here.
+    - $ref: ../templates/github_task.yaml#/templates/role_board_status
+    - $ref: ../templates/github_task.yaml#/templates/role_assignees
+    - { $ref: ../templates/github_task.yaml#/templates/role_state, unique_key: gh-role-state-ignored, role: ignored }
+    - { $ref: ../templates/github_task.yaml#/templates/role_type, unique_key: gh-role-type-ignored, role: ignored }
+
+  config.task_value_map:
+    - $ref: ../templates/github_task.yaml#/templates/value_board_todo
+    - $ref: ../templates/github_task.yaml#/templates/value_board_in_progress
+    - $ref: ../templates/github_task.yaml#/templates/value_board_done
+
+  bronze_github.issue_types: []
+  bronze_github.issue_fields: []
+
+  # Without the board's own select column the board is not bindable at all.
+  bronze_github.project_fields:
+    - $ref: ../templates/github_task.yaml#/templates/project_field_status
+
+  # The card is still here, and that is not an oversight: a ReplacingMergeTree
+  # never drops a key that stops arriving, so Bronze keeps a removed card's row
+  # indefinitely. The journal on this path is built from the timeline and reads
+  # none of it - but `assert_boards_yield_cards` does, and a source holding
+  # board fields and board events with no cards at all is exactly the shape it
+  # exists to catch.
+  bronze_github.project_items:
+    - $ref: ../templates/github_task.yaml#/templates/project_item
+
+  bronze_github.issues:
+    - { $ref: ../templates/github_task.yaml#/templates/issue, id: 1, number: 1, unique_key: gh-issue-1, _airbyte_raw_id: gh-issue-1,
+        state: open, state_reason: "", closed_at: "", closed_by_login: "", closed_by_id: 0,
+        assignee_logins: carol, assignee_ids: "1003", author_login: carol, author_id: 1003,
+        created_at: "2026-03-01T09:00:00Z", updated_at: "2026-03-09T09:00:00Z" }
+
+  bronze_github.issue_timeline_events:
+    - { $ref: ../templates/github_task.yaml#/templates/board_status_event, unique_key: gh-bev-1, event_id: PSE_1, item_number: 1, event_at: "2026-03-02T09:00:00Z", prev_value: "",     new_value: Todo }
+    - { $ref: ../templates/github_task.yaml#/templates/board_status_event, unique_key: gh-bev-2, event_id: PSE_2, item_number: 1, event_at: "2026-03-06T09:00:00Z", prev_value: Todo, new_value: "In progress" }
+    # The card leaves. The event names no column, and that is what has to reach
+    # the journal: a status the issue no longer holds must stop running.
+    - { $ref: ../templates/github_task.yaml#/templates/board_status_event, unique_key: gh-bev-3, event_id: RFP_1, item_number: 1, event_at: "2026-03-09T09:00:00Z", prev_value: "",     new_value: "",
+        event_type: RemovedFromProjectV2Event }
