@@ -453,8 +453,10 @@ fn login_denied_unknown_host(
 }
 
 /// Client attribution captured at login for the session list (PRD 5.9):
-/// the User-Agent and the client IP as the gateway saw it (first
-/// `X-Forwarded-For` hop; nginx guards the header with `set_real_ip_from`).
+/// the User-Agent and the client IP as the gateway saw it.
+///
+/// SAFETY: the LAST `X-Forwarded-For` hop -- the gateway authors that one;
+/// anything left of it is client-supplied.
 struct ClientInfo {
     user_agent: String,
     ip: String,
@@ -473,7 +475,7 @@ impl ClientInfo {
         let mut user_agent = header("user-agent").to_owned();
         user_agent.truncate(256);
         let ip = header("x-forwarded-for")
-            .split(',')
+            .rsplit(',')
             .next()
             .unwrap_or_default()
             .trim()
@@ -1771,6 +1773,33 @@ mod tests {
                 effective_roles(fetched, &defaults),
                 expected,
                 "wrong roles for: {case}"
+            );
+        }
+    }
+
+    #[test]
+    fn client_ip_is_the_gateway_authored_hop_not_a_caller_supplied_one() {
+        for (case, xff, expected) in [
+            ("gateway-authored single hop", "203.0.113.7", "203.0.113.7"),
+            (
+                "caller-supplied prefix ignored",
+                "9.9.9.9, 203.0.113.7",
+                "203.0.113.7",
+            ),
+            (
+                "spaces around hops",
+                " 9.9.9.9 , 203.0.113.7 ",
+                "203.0.113.7",
+            ),
+            ("absent header", "", ""),
+        ] {
+            let mut headers = axum::http::HeaderMap::new();
+            headers.insert("x-forwarded-for", xff.parse().unwrap());
+
+            assert_eq!(
+                ClientInfo::from_headers(&headers).ip,
+                expected,
+                "wrong client ip for: {case}"
             );
         }
     }

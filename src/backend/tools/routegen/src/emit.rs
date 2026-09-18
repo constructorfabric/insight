@@ -370,13 +370,16 @@ fn emit_server(
     // NOT fronted here: it is public, read-only, and consumed by downstream
     // services, which fetch it directly from the authenticator (the key issuer),
     // not through the edge.
+    //
+    // SAFETY: XFF is $remote_addr, not $proxy_add_x_forwarded_for -- no Lua runs
+    // here, so appending would let a client-supplied hop through as the client.
     c.push_str("        # --- auth API: plain proxy, no exchange (it IS the auth) ---\n");
     c.push_str("        location /auth/ {\n");
     c.push_str("            limit_req zone=auth_per_ip burst=120 nodelay;\n");
     c.push_str("            proxy_pass http://authenticator;\n");
     c.push_str("            proxy_set_header Connection \"\";\n");
     c.push_str("            proxy_set_header Host $host;\n");
-    c.push_str("            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n");
+    c.push_str("            proxy_set_header X-Forwarded-For $remote_addr;\n");
     c.push_str("            proxy_set_header X-Forwarded-Proto $scheme;\n");
     c.push_str("        }\n\n");
 
@@ -391,7 +394,7 @@ fn emit_server(
         c.push_str("            proxy_pass http://authenticator;\n");
         c.push_str("            proxy_set_header Connection \"\";\n");
         c.push_str("            proxy_set_header Host $host;\n");
-        c.push_str("            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n");
+        c.push_str("            proxy_set_header X-Forwarded-For $remote_addr;\n");
         c.push_str("            proxy_set_header X-Forwarded-Proto $scheme;\n");
         c.push_str("        }\n\n");
     }
@@ -426,7 +429,7 @@ fn emit_server(
     writeln!(c, "            proxy_pass {front_scheme}://$insight_front;")?;
     c.push_str("            proxy_set_header Connection \"\";\n");
     c.push_str("            proxy_set_header Host $host;\n");
-    c.push_str("            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n");
+    c.push_str("            proxy_set_header X-Forwarded-For $remote_addr;\n");
     c.push_str("            proxy_set_header X-Forwarded-Proto $scheme;\n");
     c.push_str("        }\n");
 
