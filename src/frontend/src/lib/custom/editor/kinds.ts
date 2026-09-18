@@ -74,7 +74,7 @@ const DATASET: Description = {
         entry: { of: "pick", from: { list: "fields", property: "name" } },
         entryLabel: "field name",
       },
-      hint: "Leave empty to keep every record on its own.",
+      hint: "Declared fields that make two records the same row. A record sent again replaces the earlier one instead of counting twice. Leave empty to keep every record on its own.",
     },
   ],
 };
