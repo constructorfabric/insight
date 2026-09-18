@@ -50,7 +50,11 @@ function wrapper({ children }: { children: ReactNode }) {
   );
 }
 
-/** One cache across several renders, as one session of the portal has. */
+/**
+ * One cache across several renders, as one session of the portal has - with
+ * the portal's own hour of freshness, so a reopened editor meets what a reader
+ * meets rather than a cache that always refetches.
+ */
 function sharing(client: QueryClient) {
   return ({ children }: { children: ReactNode }) =>
     createElement(QueryClientProvider, { client }, children);
@@ -70,6 +74,10 @@ beforeEach(() => {
     vi.mocked(names).mockResolvedValue(NO_NAMES);
   }
   vi.mocked(customClient.putDefinition).mockResolvedValue(undefined);
+  vi.mocked(customClient.fetchDataset).mockImplementation(async (name) => ({
+    name,
+    declaration: { title: name, fields: [] },
+  }));
 });
 
 describe("/portal/custom/edit/$kind/$name", () => {
@@ -136,7 +144,11 @@ describe("/portal/custom/edit/$kind/$name", () => {
   // last time this definition was opened would be edited and saved over
   // whatever changed it since.
   it("opens what the definition is now, not what it was last time", async () => {
-    const session = sharing(freshClient());
+    const session = sharing(
+      new QueryClient({
+        defaultOptions: { queries: { retry: false, staleTime: 60 * 60_000 } },
+      })
+    );
     vi.mocked(customClient.fetchMetric).mockResolvedValueOnce({
       definition: { dataset: "commits", fields: [] },
     });

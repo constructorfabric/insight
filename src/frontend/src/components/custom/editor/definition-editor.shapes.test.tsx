@@ -8,6 +8,7 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
     fetchWidgetNames: vi.fn(),
     fetchDashboardNames: vi.fn(),
     fetchDatasetNames: vi.fn(),
+    fetchDataset: vi.fn(),
   };
 });
 
@@ -284,6 +285,98 @@ describe("<DefinitionEditor> over a kind's shape", () => {
         })
       )
     );
+  });
+
+  // The service compares against the declared type: a filter over a `bool`
+  // field takes `true`, not `"true"`, whatever the filter's own type says.
+  it("compares a filter as the type the dataset declares for its field", async () => {
+    const user = userEvent.setup();
+    vi.mocked(customClient.fetchDataset).mockResolvedValue({
+      name: "commits",
+      declaration: {
+        title: "Commits",
+        fields: [
+          { name: "merged", path: "merged", type: "bool" },
+          { name: "lines", path: "lines", type: "int" },
+        ],
+      },
+    });
+
+    render(
+      <DefinitionEditor
+        kind="metrics"
+        name="merged_only"
+        document={{
+          dataset: "commits",
+          fields: [{ type: "int", agg: "count", as_name: "n" }],
+          filters: [{ field: "merged", type: "string", op: "eq", value: true }],
+        }}
+        onStored={vi.fn()}
+      />,
+      { wrapper }
+    );
+
+    const filter = within(screen.getByRole("group", { name: "filter 1" }));
+    const against = await filter.findByRole("combobox", { name: "Against" });
+    expect(against).toHaveValue("true");
+
+    await user.selectOptions(against, "false");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(customClient.putDefinition).toHaveBeenCalledWith(
+        "metrics",
+        "merged_only",
+        expect.objectContaining({
+          filters: [
+            { field: "merged", type: "string", op: "eq", value: false },
+          ],
+        })
+      )
+    );
+  });
+
+  it("offers the dataset's declared fields to read and to filter by", async () => {
+    const user = userEvent.setup();
+    vi.mocked(customClient.fetchDataset).mockResolvedValue({
+      name: "commits",
+      declaration: {
+        title: "Commits",
+        fields: [
+          { name: "day", path: "day", type: "datetime" },
+          { name: "author", path: "author", type: "string" },
+        ],
+      },
+    });
+
+    render(
+      <DefinitionEditor
+        kind="metrics"
+        name="by_author"
+        document={{
+          dataset: "commits",
+          fields: [{ type: "int", agg: "count", as_name: "n" }],
+        }}
+        onStored={vi.fn()}
+      />,
+      { wrapper }
+    );
+
+    const field = within(screen.getByRole("group", { name: "field 1" }));
+    await waitFor(() =>
+      expect(offeredBy(field.getByLabelText("Reads"))).toEqual([
+        "day",
+        "author",
+      ])
+    );
+
+    const filtered = within(screen.getByRole("group", { name: "Filtered" }));
+    await user.click(filtered.getByRole("button", { name: "Add filter" }));
+    const filter = within(screen.getByRole("group", { name: "filter 1" }));
+    expect(offeredBy(filter.getByLabelText("Field"))).toEqual([
+      "day",
+      "author",
+    ]);
   });
 
   it("offers a metric's own columns, and the bucket, to group by", async () => {

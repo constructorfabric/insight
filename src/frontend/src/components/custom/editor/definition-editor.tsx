@@ -1,4 +1,4 @@
-import { useQueries } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
 import type { EditableKind } from "@/api/custom-client";
@@ -17,7 +17,11 @@ import {
 } from "@/lib/custom/editor/document";
 import { DESCRIPTIONS } from "@/lib/custom/editor/kinds";
 import { place } from "@/lib/custom/editor/violations";
-import { catalogueNamesQuery, useStoreDefinition } from "@/queries/custom";
+import {
+  catalogueNamesQuery,
+  datasetQuery,
+  useStoreDefinition,
+} from "@/queries/custom";
 import { TEXT_BODY, TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
@@ -48,6 +52,13 @@ export function DefinitionEditor({
     KINDS.map((each, index) => [each, catalogues[index]?.data ?? []])
   );
   const names = (of: EditableKind) => stored.get(of) ?? [];
+
+  const reads = held.document.dataset;
+  const dataset = useQuery({
+    ...datasetQuery(typeof reads === "string" ? reads : ""),
+    enabled: typeof reads === "string" && reads !== "",
+  });
+  const declared = () => dataset.data?.declaration.fields ?? [];
 
   const placed = place(
     store.error,
@@ -133,6 +144,7 @@ export function DefinitionEditor({
             document: held.document,
             said: placed.at,
             names,
+            declared,
             onChange: (path: Path, value: unknown) =>
               setHeld((was) => change(was, path, value)),
           }}

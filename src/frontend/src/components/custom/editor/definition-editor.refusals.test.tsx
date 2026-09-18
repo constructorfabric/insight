@@ -8,6 +8,7 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
     fetchWidgetNames: vi.fn(),
     fetchDashboardNames: vi.fn(),
     fetchDatasetNames: vi.fn(),
+    fetchDataset: vi.fn(),
   };
 });
 

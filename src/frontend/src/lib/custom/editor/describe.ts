@@ -11,16 +11,21 @@ export type Shape =
   /** With `alone`, only one entry of the enclosing list may carry it. */
   | { of: "flag"; alone?: true }
   /**
-   * A value the document itself offers: what a list's entries are called
-   * under one property, plus whatever else is always admissible.
+   * A value offered rather than asked for: what a list's entries are called
+   * under one property, or the fields the dataset named at the root declares,
+   * plus whatever else is always admissible.
    */
   | {
       of: "pick";
-      from: { list: string; property: string };
+      from: { list: string; property: string } | { dataset: string };
       also?: readonly string[];
     }
-  /** A value whose kind a sibling property decides: a filter's `value` by its `type`. */
-  | { of: "typed"; by: string }
+  /**
+   * A value whose kind another property decides: a filter's `value` by its
+   * `type`, or - when the sibling `named` is a field the dataset at the root
+   * declares - by that field's declared type, which the service compares with.
+   */
+  | { of: "typed"; by: string; declared?: { dataset: string; named: string } }
   | { of: "choice"; options: readonly string[] }
   | { of: "reference"; to: EditableKind }
   | { of: "list"; entry: Shape; entryLabel: string }

@@ -48,6 +48,32 @@ describe("the document an editor holds", () => {
     expect(held.document).toEqual({ fields: [{ name: "author" }] });
   });
 
+  // `order_by: {}` is not an ordering the service will take; clearing the one
+  // property an optional record has must leave no record.
+  it("removes a record that removing its last property emptied", () => {
+    const held = hold({ dataset: "commits", order_by: { field: "total" } });
+
+    const cleared = change(held, ["order_by", "field"], undefined);
+
+    expect(cleared.document).toEqual({ dataset: "commits" });
+  });
+
+  it("keeps an entry of a list that removing its last property emptied", () => {
+    const held = hold({ fields: [{ name: "day" }, { name: "n" }] });
+
+    const cleared = change(held, ["fields", 0, "name"], undefined);
+
+    expect(cleared.document).toEqual({ fields: [{}, { name: "n" }] });
+  });
+
+  it("keeps a record that still holds something", () => {
+    const held = hold({ order_by: { field: "total", direction: "desc" } });
+
+    const cleared = change(held, ["order_by", "direction"], undefined);
+
+    expect(cleared.document).toEqual({ order_by: { field: "total" } });
+  });
+
   it("takes an entry out of a list", () => {
     const held = change(
       hold({ fields: [{ name: "a" }, { name: "b" }] }),

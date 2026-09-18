@@ -79,10 +79,17 @@ const DATASET: Description = {
   ],
 };
 
+const DECLARED = { dataset: "dataset" } as const;
+
 const CONDITION: Shape = {
   of: "record",
   fields: [
-    { name: "field", label: "Field", shape: { of: "text" }, required: true },
+    {
+      name: "field",
+      label: "Field",
+      shape: { of: "pick", from: DECLARED },
+      required: true,
+    },
     {
       name: "type",
       label: "Type",
@@ -98,7 +105,11 @@ const CONDITION: Shape = {
     {
       name: "value",
       label: "Against",
-      shape: { of: "typed", by: "type" },
+      shape: {
+        of: "typed",
+        by: "type",
+        declared: { dataset: "dataset", named: "field" },
+      },
       required: true,
     },
   ],
@@ -129,7 +140,7 @@ const METRIC: Description = {
             {
               name: "field",
               label: "Reads",
-              shape: { of: "text" },
+              shape: { of: "pick", from: DECLARED },
               hint: "A declared field. Leave empty for a count of the records.",
             },
             {
@@ -181,7 +192,11 @@ const METRIC: Description = {
       shape: {
         of: "record",
         fields: [
-          { name: "field", label: "Declared date", shape: { of: "text" } },
+          {
+            name: "field",
+            label: "Declared date",
+            shape: { of: "pick", from: DECLARED },
+          },
         ],
       },
       hint: "Leave empty to use the dataset's own main date.",

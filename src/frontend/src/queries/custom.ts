@@ -81,8 +81,11 @@ export function definitionPagesQuery(kind: EditableKind, search = "") {
 export function definitionBodyQuery(kind: EditableKind, name: string) {
   return queryOptions({
     queryKey: ["custom", "body", kind, name],
-    // The editor seeds itself from one answer and edits from there; a refetch
-    // underneath it would be neither shown nor wanted.
+    // INVARIANT: the editor waits for an answer fetched after it mounted and
+    // seeds itself from that one. The client keeps answers fresh for an hour,
+    // so without this a reopened editor would wait for a fetch that never comes.
+    refetchOnMount: "always",
+    // Once seeded, a refetch underneath it would be neither shown nor wanted.
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     queryFn: async (): Promise<Record<string, unknown>> => {

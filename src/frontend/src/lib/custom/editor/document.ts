@@ -77,10 +77,23 @@ function put(at: unknown, path: Path, value: unknown): unknown {
       ? { ...(at as Record<string, unknown>) }
       : {};
   const next = put(record[segment], rest, value);
-  if (rest.length === 0 && value === undefined) {
+  // A removal that leaves a nested record with nothing in it removes the
+  // record: `order_by: {}` is not an ordering the service will take. An entry
+  // of a list is kept, since it is a row somebody is editing.
+  const emptied = value === undefined && (rest.length === 0 || bare(next));
+  if (emptied) {
     delete record[segment];
     return record;
   }
   record[segment] = next;
   return record;
+}
+
+function bare(value: unknown): boolean {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.keys(value).length === 0
+  );
 }

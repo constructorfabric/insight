@@ -177,15 +177,31 @@ describe("a metric", () => {
     }
   });
 
-  // A filter's value is compared as the type the filter names, so the control
-  // follows that type rather than always taking text.
-  it("types a filter's value by the filter's own type", () => {
+  // The service compares a filter's value as the type the dataset declares for
+  // the field; the filter's own type only stands in until that is known.
+  it("types a filter's value by the declared type of the field it compares", () => {
     const value = walk(metric.fields).find(
       ({ path }) => path === "filters.value"
     )?.field;
 
-    expect(value?.shape).toEqual({ of: "typed", by: "type" });
+    expect(value?.shape).toEqual({
+      of: "typed",
+      by: "type",
+      declared: { dataset: "dataset", named: "field" },
+    });
   });
+
+  it.each(["fields.field", "filters.field", "fields.when.field", "time.field"])(
+    "offers the dataset's declared fields at %s",
+    (path) => {
+      const field = walk(metric.fields).find((one) => one.path === path)?.field;
+
+      expect(field?.shape).toMatchObject({
+        of: "pick",
+        from: { dataset: "dataset" },
+      });
+    }
+  );
 
   it("picks grouping and ordering from the columns the metric produces", () => {
     const named = Object.fromEntries(

@@ -86,18 +86,14 @@ export function Control({
           id={id}
           describe={describe}
           value={written}
-          names={[
-            ...called(
-              read(editing.document, [shape.from.list]),
-              shape.from.property
-            ),
-            ...(shape.also ?? []),
-          ]}
+          names={[...offered(shape.from, editing), ...(shape.also ?? [])]}
           onChange={(next) => onChange(next === "" ? emptied : next)}
         />
       );
     case "typed": {
-      const type = read(editing.document, [...at.slice(0, -1), shape.by]);
+      const type =
+        declaredType(shape.declared, at, editing) ??
+        read(editing.document, [...at.slice(0, -1), shape.by]);
 
       return (
         <Control
@@ -125,6 +121,34 @@ function typedAs(type: unknown): Shape {
   if (type === "bool") return { of: "choice", options: ["true", "false"] };
 
   return { of: "text" };
+}
+
+type PickSource = Extract<Shape, { of: "pick" }>["from"];
+
+function offered(from: PickSource, editing: Editing): string[] {
+  if ("dataset" in from) {
+    return declaration(from.dataset, editing).map((field) => field.name);
+  }
+
+  return called(read(editing.document, [from.list]), from.property);
+}
+
+/** The type the dataset declares for the field a sibling names, if it does. */
+function declaredType(
+  by: Extract<Shape, { of: "typed" }>["declared"],
+  at: Path,
+  editing: Editing
+): string | undefined {
+  if (by === undefined) return undefined;
+
+  const named = read(editing.document, [...at.slice(0, -1), by.named]);
+  return declaration(by.dataset, editing).find((field) => field.name === named)
+    ?.type;
+}
+
+function declaration(rootProperty: string, editing: Editing) {
+  const dataset = read(editing.document, [rootProperty]);
+  return typeof dataset === "string" ? editing.declared(dataset) : [];
 }
 
 function asBool(chosen: unknown): boolean | undefined {

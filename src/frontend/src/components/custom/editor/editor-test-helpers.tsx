@@ -14,13 +14,17 @@ export function wrapper({ children }: { children: ReactNode }) {
   return createElement(QueryClientProvider, { client: queryClient }, children);
 }
 
-/** Every catalogue answers empty unless a test says otherwise. */
+/** Every catalogue answers empty, and every dataset declares nothing, unless a test says otherwise. */
 export function mockCatalogues(): void {
   const none = { names: [], total: 0 };
   vi.mocked(customClient.fetchMetricNames).mockResolvedValue(none);
   vi.mocked(customClient.fetchWidgetNames).mockResolvedValue(none);
   vi.mocked(customClient.fetchDashboardNames).mockResolvedValue(none);
   vi.mocked(customClient.fetchDatasetNames).mockResolvedValue(none);
+  vi.mocked(customClient.fetchDataset).mockImplementation(async (name) => ({
+    name,
+    declaration: { title: name, fields: [] },
+  }));
 }
 
 /** A 400 as the service sends it: places in the document, each with a reason. */
