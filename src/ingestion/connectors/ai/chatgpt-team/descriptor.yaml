@@ -30,7 +30,7 @@ version: "2.2.0"
 schedule: '0 4 * * *'
 workflow: sync
 
-# Scopes the dbt run to this connector: bronze→RMT promotion + Silver staging
+# Scopes the dbt run to this connector: the Silver staging
 # models (chatgpt_team__ai_dev_usage → class_ai_dev_usage,
 # chatgpt_team__ai_assistant_usage → class_ai_assistant_usage) and their
 # downstream silver.class_ai_* unions.

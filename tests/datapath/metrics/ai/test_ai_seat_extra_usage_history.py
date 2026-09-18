@@ -1,7 +1,7 @@
 """A billing month becomes durable at the sync that reads it, and stays.
 
 The vendor reports spend as period-to-date with no month of its own, and the
-connector's `unique_key` carries no month either. Bronze is promoted to
+connector's `unique_key` carries no month either. Bronze is
 `ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key`, so it holds one
 row per seat — whatever was read last. The month enters the key in staging, which
 is where monthly history accumulates.
@@ -61,7 +61,7 @@ def _snapshot(tenant: str, read_at: str, used_credits: int) -> SeatSnapshot:
 def _sync(ch_seeder: CHSeeder, dbt_runner: DbtRunner, row: SeatSnapshot) -> None:
     """One sync: bronze is replaced by the new snapshot, then the models run.
 
-    Replaced, not added to: the promoted relation dedups by unique_key only once
+    Replaced, not added to: bronze dedups by unique_key only once
     its parts merge, so a second snapshot left beside the first would re-emit the
     first month into an appending staging model.
     """

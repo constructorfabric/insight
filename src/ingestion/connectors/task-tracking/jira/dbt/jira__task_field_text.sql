@@ -1,4 +1,3 @@
--- depends_on: {{ ref('jira__bronze_promoted') }}
 -- depends_on: {{ ref('jira__task_field_kind') }}
 -- depends_on: {{ ref('jira__changelog_items') }}
 {{ config(

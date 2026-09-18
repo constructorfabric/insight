@@ -1,4 +1,3 @@
--- depends_on: {{ ref('claude_enterprise__bronze_promoted') }}
 -- Bronze → Silver: Claude Enterprise per-user per-day assistant surface usage.
 --
 -- Source: bronze_claude_enterprise.claude_enterprise_users — per-user daily metrics.
@@ -63,7 +62,7 @@ WITH base AS (
         toUnixTimestamp64Milli(_airbyte_extracted_at) AS _version
     FROM (
         -- Bronze deduplication: see claude_enterprise__ai_dev_usage.sql for rationale.
-        -- Once promote_bronze_to_rmt is enabled (ADR-0002), this LIMIT 1 BY becomes
+        -- With bronze on ReplacingMergeTree (destination append_dedup), this LIMIT 1 BY is
         -- a no-op but stays as defensive depth.
         SELECT *
         FROM {{ source('bronze_claude_enterprise', 'claude_enterprise_users') }}

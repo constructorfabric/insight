@@ -55,7 +55,7 @@ workflow: sync               # Argo workflow template: ingestion-pipeline
 
 # Scope the dbt step to this connector's models (and their downstream) so the
 # Silver run never touches other connectors' models. Selects zendesk__* staging
-# (bronze_promoted, support_agent/ticket/activity) + the event-grain
+# (support_agent/ticket/activity) + the event-grain
 # zendesk__support_event (tagged ['zendesk','silver'] now that the Ticket
 # Audits stream is live, so it IS in tag:zendesk+) + their downstream silver
 # unions (class_support_activity, dim_support_*).

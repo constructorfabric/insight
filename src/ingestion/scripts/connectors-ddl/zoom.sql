@@ -36,13 +36,13 @@ CREATE TABLE IF NOT EXISTS bronze_zoom.meetings
     `avg_jointime_cost` Nullable(Decimal(38, 9)),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `video_quality` Nullable(String),
     `screen_share_quality` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_zoom.participants
@@ -105,11 +105,11 @@ CREATE TABLE IF NOT EXISTS bronze_zoom.participants
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `meeting_uuid` Nullable(String),
-    `unique_key` Nullable(String)
+    `unique_key` String
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_zoom.users
@@ -139,12 +139,12 @@ CREATE TABLE IF NOT EXISTS bronze_zoom.users
     `user_created_at` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `pic_url` Nullable(String),
     `phone_number` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 

@@ -201,7 +201,7 @@ pub async fn fetch_all_snapshots(
         .clone()
         .query(
             // FINAL forces ReplacingMergeTree merges on read. Bronze `jira_issue` is
-            // append-only (Airbyte destinationSyncMode='append'); without FINAL the reader
+            // append-only (Airbyte destinationSyncMode='append_dedup'); without FINAL the reader
             // can see multiple unmerged rows per issue when syncs overlap with merges.
             // INVARIANT: despite its name, `custom_fields_json` holds the issue's WHOLE
             // `fields` object (connector.yaml promotes `record['fields'] | tojson`), so the

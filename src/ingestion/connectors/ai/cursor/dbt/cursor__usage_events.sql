@@ -1,4 +1,3 @@
--- depends_on: {{ ref('cursor__bronze_promoted') }}
 -- Bronze → staging: canonical Cursor per-event usage surface.
 --
 -- The Cursor connector ingests the same events twice (issue #261):
