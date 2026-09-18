@@ -60,13 +60,22 @@ not Insight's concern.
   the envelope's `total_users`. It is the reference the completeness gate in
   `chatgpt_team__ai_dev_usage` judges a read against; the read is in its
   `unique_key` so each read keeps its own headcount.
+- **Codex `credits` is on-demand usage, not total consumption.** It matches
+  the vendor's own on-demand figure wherever one is published, and Codex
+  activity routinely records zero credits while still reporting tokens — so a
+  person-day with no credits is ordinary work, not a gap. Whether the
+  uncredited part is allowance-covered or simply unmetered is not established;
+  either way it is excluded, so never read the figure as a total. Nothing in
+  this connector turns it into money.
 - **Subscription streams** hit the same endpoint (one extracts `usage_detail`,
   the other the root `current_balance`), inject a `snapshot_date` so daily
-  snapshots accumulate, and **tolerate HTTP 403** (session lacks billing
-  visibility → stream skipped, sync stays green — watched by
-  `assert_chatgpt_subscription_stream_not_silent`). Billing-cycle alignment
-  (the cycle resets mid-month) is deferred; the request uses a fixed
-  `[-30d, today]` window that deliberately ignores `start_date`.
+  snapshots accumulate, and **tolerate HTTP 401, 403 and 404** (role below
+  account-admin, session gated out of billing, or a blank/wrong org id →
+  stream skipped, sync stays green — watched by
+  `assert_chatgpt_subscription_stream_not_silent`, with the sync log carrying
+  which of the three it was). Billing-cycle alignment (the cycle resets
+  mid-month) is deferred; the request uses a fixed `[-30d, today]` window that
+  deliberately ignores `start_date`.
 
 ## Validation
 
@@ -75,11 +84,18 @@ not Insight's concern.
 ./src/ingestion/tools/declarative-connector/source.sh check           ai/chatgpt-team <tenant>
 ```
 
-> ⚠️ **The two subscription streams are unverified.** Their fields come from
-> the `data_collector` prototype and no response has been read back, so treat
-> them as a declared shape. The roster, the leaderboard (including its
-> `total_users` envelope and `code_attribution.lines_of_code.added`) and the
-> settings endpoint have been read back from a workspace and match.
+### What has been read back from a workspace
+
+| Surface | State |
+|---|---|
+| `/api/accounts/{account_id}/users` | **Verified.** Declared fields match, including the three `credit_limits` states, `deactivated_time` and `pending_seat_type`. |
+| `/api/accounts/{account_id}/settings` | **Verified.** `seat_type_credit_limits` and `default_seat_type` present as declared. |
+| `/api/wham/analytics/usage-leaderboard` | **Verified.** The envelope carries `total_users` even at `page_size=1`; `code_attribution.lines_of_code` holds only `added`; the endpoint is 1-indexed. |
+| `/api/subscriptions/{org_id}/usage` | **Permission-limited.** A role below account-admin answers `401`, so no response body has been read. Field shapes still come from the `data_collector` prototype and are unconfirmed. |
+
+> ⚠️ Read the two subscription streams' field lists as a declared shape, not an
+> observed one. They are reachable only with an account-admin or account-owner
+> role; raising it is the only way to confirm them.
 
 ## Silver Targets
 
