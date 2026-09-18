@@ -20,12 +20,13 @@ import { Route as IcPersonPersonalRouteImport } from './routes/ic.$person.person
 import { Route as IcPersonTeamRouteImport } from './routes/ic.$person.team'
 import { Route as PortalCustomIndexRouteImport } from './routes/portal.custom.index'
 import { Route as PortalCustomNameRouteImport } from './routes/portal.custom.$name'
-import { Route as PortalCustomWidgetsRouteImport } from './routes/portal.custom.widgets'
 import { Route as PortalCustomDatasetsIndexRouteImport } from './routes/portal.custom.datasets.index'
 import { Route as PortalCustomDatasetsNameRouteImport } from './routes/portal.custom.datasets.$name'
 import { Route as PortalCustomMetricsIndexRouteImport } from './routes/portal.custom.metrics.index'
 import { Route as PortalCustomMetricsNameRouteImport } from './routes/portal.custom.metrics.$name'
 import { Route as PortalCustomNewKindRouteImport } from './routes/portal.custom.new.$kind'
+import { Route as PortalCustomWidgetsIndexRouteImport } from './routes/portal.custom.widgets.index'
+import { Route as PortalCustomWidgetsNameRouteImport } from './routes/portal.custom.widgets.$name'
 import { Route as PortalCustomEditKindNameRouteImport } from './routes/portal.custom.edit.$kind.$name'
 
 const IndexRoute = IndexRouteImport.update({
@@ -83,11 +84,6 @@ const PortalCustomNameRoute = PortalCustomNameRouteImport.update({
   path: '/$name',
   getParentRoute: () => PortalCustomRoute,
 } as any)
-const PortalCustomWidgetsRoute = PortalCustomWidgetsRouteImport.update({
-  id: '/widgets',
-  path: '/widgets',
-  getParentRoute: () => PortalCustomRoute,
-} as any)
 const PortalCustomDatasetsIndexRoute =
   PortalCustomDatasetsIndexRouteImport.update({
     id: '/datasets/',
@@ -116,6 +112,17 @@ const PortalCustomNewKindRoute = PortalCustomNewKindRouteImport.update({
   path: '/new/$kind',
   getParentRoute: () => PortalCustomRoute,
 } as any)
+const PortalCustomWidgetsIndexRoute =
+  PortalCustomWidgetsIndexRouteImport.update({
+    id: '/widgets/',
+    path: '/widgets/',
+    getParentRoute: () => PortalCustomRoute,
+  } as any)
+const PortalCustomWidgetsNameRoute = PortalCustomWidgetsNameRouteImport.update({
+  id: '/widgets/$name',
+  path: '/widgets/$name',
+  getParentRoute: () => PortalCustomRoute,
+} as any)
 const PortalCustomEditKindNameRoute =
   PortalCustomEditKindNameRouteImport.update({
     id: '/edit/$kind/$name',
@@ -133,14 +140,15 @@ export interface FileRoutesByFullPath {
   '/ic/$person/personal': typeof IcPersonPersonalRoute
   '/ic/$person/team': typeof IcPersonTeamRoute
   '/portal/custom/$name': typeof PortalCustomNameRoute
-  '/portal/custom/widgets': typeof PortalCustomWidgetsRoute
   '/ic/$person/': typeof IcPersonIndexRoute
   '/portal/custom/': typeof PortalCustomIndexRoute
   '/portal/custom/datasets/$name': typeof PortalCustomDatasetsNameRoute
   '/portal/custom/metrics/$name': typeof PortalCustomMetricsNameRoute
   '/portal/custom/new/$kind': typeof PortalCustomNewKindRoute
+  '/portal/custom/widgets/$name': typeof PortalCustomWidgetsNameRoute
   '/portal/custom/datasets/': typeof PortalCustomDatasetsIndexRoute
   '/portal/custom/metrics/': typeof PortalCustomMetricsIndexRoute
+  '/portal/custom/widgets/': typeof PortalCustomWidgetsIndexRoute
   '/portal/custom/edit/$kind/$name': typeof PortalCustomEditKindNameRoute
 }
 export interface FileRoutesByTo {
@@ -150,14 +158,15 @@ export interface FileRoutesByTo {
   '/ic/$person/personal': typeof IcPersonPersonalRoute
   '/ic/$person/team': typeof IcPersonTeamRoute
   '/portal/custom/$name': typeof PortalCustomNameRoute
-  '/portal/custom/widgets': typeof PortalCustomWidgetsRoute
   '/ic/$person': typeof IcPersonIndexRoute
   '/portal/custom': typeof PortalCustomIndexRoute
   '/portal/custom/datasets/$name': typeof PortalCustomDatasetsNameRoute
   '/portal/custom/metrics/$name': typeof PortalCustomMetricsNameRoute
   '/portal/custom/new/$kind': typeof PortalCustomNewKindRoute
+  '/portal/custom/widgets/$name': typeof PortalCustomWidgetsNameRoute
   '/portal/custom/datasets': typeof PortalCustomDatasetsIndexRoute
   '/portal/custom/metrics': typeof PortalCustomMetricsIndexRoute
+  '/portal/custom/widgets': typeof PortalCustomWidgetsIndexRoute
   '/portal/custom/edit/$kind/$name': typeof PortalCustomEditKindNameRoute
 }
 export interface FileRoutesById {
@@ -171,14 +180,15 @@ export interface FileRoutesById {
   '/ic/$person/personal': typeof IcPersonPersonalRoute
   '/ic/$person/team': typeof IcPersonTeamRoute
   '/portal/custom/$name': typeof PortalCustomNameRoute
-  '/portal/custom/widgets': typeof PortalCustomWidgetsRoute
   '/ic/$person/': typeof IcPersonIndexRoute
   '/portal/custom/': typeof PortalCustomIndexRoute
   '/portal/custom/datasets/$name': typeof PortalCustomDatasetsNameRoute
   '/portal/custom/metrics/$name': typeof PortalCustomMetricsNameRoute
   '/portal/custom/new/$kind': typeof PortalCustomNewKindRoute
+  '/portal/custom/widgets/$name': typeof PortalCustomWidgetsNameRoute
   '/portal/custom/datasets/': typeof PortalCustomDatasetsIndexRoute
   '/portal/custom/metrics/': typeof PortalCustomMetricsIndexRoute
+  '/portal/custom/widgets/': typeof PortalCustomWidgetsIndexRoute
   '/portal/custom/edit/$kind/$name': typeof PortalCustomEditKindNameRoute
 }
 export interface FileRouteTypes {
@@ -193,14 +203,15 @@ export interface FileRouteTypes {
     | '/ic/$person/personal'
     | '/ic/$person/team'
     | '/portal/custom/$name'
-    | '/portal/custom/widgets'
     | '/ic/$person/'
     | '/portal/custom/'
     | '/portal/custom/datasets/$name'
     | '/portal/custom/metrics/$name'
     | '/portal/custom/new/$kind'
+    | '/portal/custom/widgets/$name'
     | '/portal/custom/datasets/'
     | '/portal/custom/metrics/'
+    | '/portal/custom/widgets/'
     | '/portal/custom/edit/$kind/$name'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -210,14 +221,15 @@ export interface FileRouteTypes {
     | '/ic/$person/personal'
     | '/ic/$person/team'
     | '/portal/custom/$name'
-    | '/portal/custom/widgets'
     | '/ic/$person'
     | '/portal/custom'
     | '/portal/custom/datasets/$name'
     | '/portal/custom/metrics/$name'
     | '/portal/custom/new/$kind'
+    | '/portal/custom/widgets/$name'
     | '/portal/custom/datasets'
     | '/portal/custom/metrics'
+    | '/portal/custom/widgets'
     | '/portal/custom/edit/$kind/$name'
   id:
     | '__root__'
@@ -230,14 +242,15 @@ export interface FileRouteTypes {
     | '/ic/$person/personal'
     | '/ic/$person/team'
     | '/portal/custom/$name'
-    | '/portal/custom/widgets'
     | '/ic/$person/'
     | '/portal/custom/'
     | '/portal/custom/datasets/$name'
     | '/portal/custom/metrics/$name'
     | '/portal/custom/new/$kind'
+    | '/portal/custom/widgets/$name'
     | '/portal/custom/datasets/'
     | '/portal/custom/metrics/'
+    | '/portal/custom/widgets/'
     | '/portal/custom/edit/$kind/$name'
   fileRoutesById: FileRoutesById
 }
@@ -327,13 +340,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PortalCustomNameRouteImport
       parentRoute: typeof PortalCustomRoute
     }
-    '/portal/custom/widgets': {
-      id: '/portal/custom/widgets'
-      path: '/widgets'
-      fullPath: '/portal/custom/widgets'
-      preLoaderRoute: typeof PortalCustomWidgetsRouteImport
-      parentRoute: typeof PortalCustomRoute
-    }
     '/portal/custom/datasets/': {
       id: '/portal/custom/datasets/'
       path: '/datasets'
@@ -369,6 +375,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PortalCustomNewKindRouteImport
       parentRoute: typeof PortalCustomRoute
     }
+    '/portal/custom/widgets/': {
+      id: '/portal/custom/widgets/'
+      path: '/widgets'
+      fullPath: '/portal/custom/widgets/'
+      preLoaderRoute: typeof PortalCustomWidgetsIndexRouteImport
+      parentRoute: typeof PortalCustomRoute
+    }
+    '/portal/custom/widgets/$name': {
+      id: '/portal/custom/widgets/$name'
+      path: '/widgets/$name'
+      fullPath: '/portal/custom/widgets/$name'
+      preLoaderRoute: typeof PortalCustomWidgetsNameRouteImport
+      parentRoute: typeof PortalCustomRoute
+    }
     '/portal/custom/edit/$kind/$name': {
       id: '/portal/custom/edit/$kind/$name'
       path: '/edit/$kind/$name'
@@ -381,25 +401,27 @@ declare module '@tanstack/react-router' {
 
 interface PortalCustomRouteChildren {
   PortalCustomNameRoute: typeof PortalCustomNameRoute
-  PortalCustomWidgetsRoute: typeof PortalCustomWidgetsRoute
   PortalCustomIndexRoute: typeof PortalCustomIndexRoute
   PortalCustomDatasetsNameRoute: typeof PortalCustomDatasetsNameRoute
   PortalCustomMetricsNameRoute: typeof PortalCustomMetricsNameRoute
   PortalCustomNewKindRoute: typeof PortalCustomNewKindRoute
+  PortalCustomWidgetsNameRoute: typeof PortalCustomWidgetsNameRoute
   PortalCustomDatasetsIndexRoute: typeof PortalCustomDatasetsIndexRoute
   PortalCustomMetricsIndexRoute: typeof PortalCustomMetricsIndexRoute
+  PortalCustomWidgetsIndexRoute: typeof PortalCustomWidgetsIndexRoute
   PortalCustomEditKindNameRoute: typeof PortalCustomEditKindNameRoute
 }
 
 const PortalCustomRouteChildren: PortalCustomRouteChildren = {
   PortalCustomNameRoute: PortalCustomNameRoute,
-  PortalCustomWidgetsRoute: PortalCustomWidgetsRoute,
   PortalCustomIndexRoute: PortalCustomIndexRoute,
   PortalCustomDatasetsNameRoute: PortalCustomDatasetsNameRoute,
   PortalCustomMetricsNameRoute: PortalCustomMetricsNameRoute,
   PortalCustomNewKindRoute: PortalCustomNewKindRoute,
+  PortalCustomWidgetsNameRoute: PortalCustomWidgetsNameRoute,
   PortalCustomDatasetsIndexRoute: PortalCustomDatasetsIndexRoute,
   PortalCustomMetricsIndexRoute: PortalCustomMetricsIndexRoute,
+  PortalCustomWidgetsIndexRoute: PortalCustomWidgetsIndexRoute,
   PortalCustomEditKindNameRoute: PortalCustomEditKindNameRoute,
 }
 

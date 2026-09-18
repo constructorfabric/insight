@@ -140,7 +140,7 @@ export function DefinitionActions({
   return (
     <>
       <EditLink kind={kind} name={name} />
-      {kind === "metrics" ? <PreviewLink kind="metrics" name={name} /> : null}
+      {kind === "dashboards" ? null : <PreviewLink kind={kind} name={name} />}
     </>
   );
 }

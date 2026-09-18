@@ -15,7 +15,7 @@ import { TEXT_BODY } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
 /** Static, so it wins over `$name` — see the note on the metrics route. */
-export const Route = createFileRoute("/portal/custom/widgets")({
+export const Route = createFileRoute("/portal/custom/widgets/")({
   component: WidgetsCatalogue,
 });
 

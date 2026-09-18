@@ -37,6 +37,7 @@ export function NewLink({ kind, noun }: { kind: EditableKind; noun: string }) {
 const PREVIEWED = {
   datasets: "/portal/custom/datasets/$name",
   metrics: "/portal/custom/metrics/$name",
+  widgets: "/portal/custom/widgets/$name",
 } as const;
 
 export type PreviewedKind = keyof typeof PREVIEWED;
