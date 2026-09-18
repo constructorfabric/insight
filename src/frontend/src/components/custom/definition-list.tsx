@@ -7,7 +7,7 @@ import {
   type Paging,
 } from "@/components/custom/definition-paging";
 import { DefinitionSearch } from "@/components/custom/definition-search";
-import { EditLink } from "@/components/custom/editor/edit-link";
+import { EditLink, PreviewLink } from "@/components/custom/editor/edit-link";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
@@ -137,5 +137,10 @@ export function DefinitionActions({
   kind: DefinitionKind;
   name: string;
 }) {
-  return <EditLink kind={kind} name={name} />;
+  return (
+    <>
+      <EditLink kind={kind} name={name} />
+      {kind === "metrics" ? <PreviewLink kind="metrics" name={name} /> : null}
+    </>
+  );
 }

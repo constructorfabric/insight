@@ -20,7 +20,7 @@ import {
 } from "@/test/intersection-observer";
 import { portalRouter } from "@/test/portal-router";
 
-import { Route } from "./portal.custom.metrics";
+import { Route } from "./portal.custom.metrics.index";
 
 const Component = (Route as unknown as { component: () => React.ReactNode })
   .component;

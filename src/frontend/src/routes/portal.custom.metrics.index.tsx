@@ -19,7 +19,7 @@ import { cn } from "@/lib/utils";
  * literally called "metrics" would be unreachable, which is the trade for a
  * readable URL.
  */
-export const Route = createFileRoute("/portal/custom/metrics")({
+export const Route = createFileRoute("/portal/custom/metrics/")({
   component: MetricsCatalogue,
 });
 

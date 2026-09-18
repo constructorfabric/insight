@@ -32,3 +32,32 @@ export function NewLink({ kind, noun }: { kind: EditableKind; noun: string }) {
     </Button>
   );
 }
+
+/** The kinds that have a page of their own to look at, and where it is. */
+const PREVIEWED = {
+  datasets: "/portal/custom/datasets/$name",
+  metrics: "/portal/custom/metrics/$name",
+} as const;
+
+export type PreviewedKind = keyof typeof PREVIEWED;
+
+export function PreviewLink({
+  kind,
+  name,
+}: {
+  kind: PreviewedKind;
+  name: string;
+}) {
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      className="text-muted-foreground"
+      aria-label={`Preview ${name}`}
+      nativeButton={false}
+      render={<Link to={PREVIEWED[kind]} params={{ name }} />}
+    >
+      Preview
+    </Button>
+  );
+}

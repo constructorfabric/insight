@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 
 import {
@@ -6,8 +6,11 @@ import {
   DefinitionList,
 } from "@/components/custom/definition-list";
 import { DatasetSummary } from "@/components/custom/definition-summary";
-import { EditLink, NewLink } from "@/components/custom/editor/edit-link";
-import { Button } from "@/components/ui/button";
+import {
+  EditLink,
+  NewLink,
+  PreviewLink,
+} from "@/components/custom/editor/edit-link";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { useDefinitionCatalogue } from "@/hooks/use-definition-catalogue";
 import { datasetQuery } from "@/queries/custom";
@@ -49,18 +52,7 @@ function DatasetRow({ name }: { name: string }) {
       actions={
         <>
           <EditLink kind="datasets" name={name} />
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-muted-foreground"
-            aria-label={`Preview ${name}`}
-            nativeButton={false}
-            render={
-              <Link to="/portal/custom/datasets/$name" params={{ name }} />
-            }
-          >
-            Preview
-          </Button>
+          <PreviewLink kind="datasets" name={name} />
         </>
       }
     >
