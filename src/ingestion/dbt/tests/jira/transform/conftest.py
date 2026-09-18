@@ -380,8 +380,12 @@ class Scenario:
 
 
 def _truncate_bronze(warehouse: Warehouse) -> None:
-    for table in ("jira_fields", "jira_issue", "jira_issue_history"):
-        warehouse.execute(f"TRUNCATE TABLE IF EXISTS bronze_jira.{table}")
+    # Spelled out rather than looped over a tuple of names: a table name cannot
+    # be bound as a parameter, so a loop would have to format the statement, and
+    # a formatted SQL string is the shape the security gate rejects on sight.
+    warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_fields")
+    warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_issue")
+    warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_issue_history")
     warehouse.generation += 1
 
 
