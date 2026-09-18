@@ -23,15 +23,6 @@ import { cn } from "@/lib/utils";
 
 const KINDS: EditableKind[] = ["datasets", "metrics", "widgets", "dashboards"];
 
-/**
- * One definition, written by hand.
- *
- * The fields and the text are two views of one document: whichever was edited
- * last is what is held, and text that does not parse blocks sending rather
- * than being guessed at. A property the description does not know is sent
- * along with the rest — the editor offers what a kind admits, it does not
- * decide what a document may hold.
- */
 export function DefinitionEditor({
   kind,
   name,
@@ -58,7 +49,12 @@ export function DefinitionEditor({
   );
   const names = (of: EditableKind) => stored.get(of) ?? [];
 
-  const placed = place(store.error, description.fields);
+  const placed = place(
+    store.error,
+    description.fields,
+    held.document,
+    "Couldn't store it."
+  );
   const given = called.trim();
 
   const submit = () => {
@@ -76,11 +72,11 @@ export function DefinitionEditor({
         event.preventDefault();
         submit();
       }}
-      // Storing a definition claims its name and, for a dataset, builds what
-      // holds its records. Enter in a field is not that decision: only Save is.
+      // SAFETY: storing claims a name and, for a dataset, builds what holds its
+      // records. Enter in a field is not that decision; only Save is.
       onKeyDown={(event) => {
-        const inText = event.target instanceof HTMLTextAreaElement;
-        if (event.key === "Enter" && !inText) event.preventDefault();
+        const inField = event.target instanceof HTMLInputElement;
+        if (event.key === "Enter" && inField) event.preventDefault();
       }}
     >
       <div className="flex flex-col gap-1">
@@ -103,6 +99,16 @@ export function DefinitionEditor({
           </p>
         ) : null}
       </div>
+
+      {placed.loose.map((said) => (
+        <p
+          key={said}
+          role="alert"
+          className={cn(TEXT_BODY, "text-destructive")}
+        >
+          {said}
+        </p>
+      ))}
 
       <div className="flex items-center gap-2">
         {(["fields", "text"] as const).map((each) => (
@@ -150,21 +156,28 @@ export function DefinitionEditor({
               {held.unparsed}
             </p>
           ) : null}
+          {placed.at.size === 0 ? null : (
+            <ul
+              className={cn(
+                TEXT_LABEL,
+                "flex flex-col gap-0.5 text-destructive"
+              )}
+            >
+              {[...placed.at].map(([path, said]) => (
+                <li key={path} role="alert">
+                  <span className="font-mono">{path}</span>: {said}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
 
-      {placed.loose.map((said) => (
-        <p
-          key={said}
-          role="alert"
-          className={cn(TEXT_BODY, "text-destructive")}
-        >
-          {said}
-        </p>
-      ))}
-
       <div className="flex items-center gap-2">
-        <Button type="submit" disabled={given === "" || !sendable(held)}>
+        <Button
+          type="submit"
+          disabled={given === "" || !sendable(held) || store.isPending}
+        >
           {store.isPending ? <Spinner className="size-3" /> : null}
           Save
         </Button>

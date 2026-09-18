@@ -1,17 +1,10 @@
 import type { ReactNode } from "react";
 
 import { Input } from "@/components/ui/input";
+import { hintId, saidId, type Describing } from "@/lib/custom/editor/aria";
 import { Textarea } from "@/components/ui/textarea";
 import { TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
-
-/**
- * The plain controls the editor is built from.
- *
- * A choice is a native `select` and a reference a native `input` with a
- * `datalist`: both are keyboard-reachable and carry their own label, which the
- * form needs on every one of the many rows a description can produce.
- */
 
 const CONTROL = "h-9 w-full";
 
@@ -20,12 +13,14 @@ export function TextControl({
   value,
   placeholder,
   long,
+  describe,
   onChange,
 }: {
   id: string;
   value: string;
   placeholder?: string;
   long?: boolean;
+  describe?: Describing;
   onChange: (value: string) => void;
 }) {
   const Control = long ? Textarea : Input;
@@ -33,6 +28,7 @@ export function TextControl({
   return (
     <Control
       id={id}
+      {...describe}
       value={value}
       placeholder={placeholder}
       className={long ? "min-h-20 w-full" : CONTROL}
@@ -46,15 +42,18 @@ export function TextControl({
 export function NumberControl({
   id,
   value,
+  describe,
   onChange,
 }: {
   id: string;
   value: string;
+  describe?: Describing;
   onChange: (value: number | undefined) => void;
 }) {
   return (
     <Input
       id={id}
+      {...describe}
       type="number"
       value={value}
       className={CONTROL}
@@ -69,15 +68,18 @@ export function NumberControl({
 export function FlagControl({
   id,
   value,
+  describe,
   onChange,
 }: {
   id: string;
   value: boolean;
+  describe?: Describing;
   onChange: (value: boolean) => void;
 }) {
   return (
     <input
       id={id}
+      {...describe}
       type="checkbox"
       checked={value}
       className="size-4 self-start accent-primary"
@@ -86,23 +88,27 @@ export function FlagControl({
   );
 }
 
-/** A fixed set, with the empty option standing for "not said". */
+// Native rather than the kit's Select: a form draws dozens of these, and a
+// test drives a native one with `selectOptions`.
 export function ChoiceControl({
   id,
   value,
   options,
   required,
+  describe,
   onChange,
 }: {
   id: string;
   value: string;
   options: readonly string[];
   required?: boolean;
+  describe?: Describing;
   onChange: (value: string | undefined) => void;
 }) {
   return (
     <select
       id={id}
+      {...describe}
       value={value}
       className={cn(
         CONTROL,
@@ -113,6 +119,9 @@ export function ChoiceControl({
       }
     >
       {required && value !== "" ? null : <option value="">—</option>}
+      {options.includes(value) || value === "" ? null : (
+        <option value={value}>{value}</option>
+      )}
       {options.map((option) => (
         <option key={option} value={option}>
           {option}
@@ -122,22 +131,19 @@ export function ChoiceControl({
   );
 }
 
-/**
- * A stored definition's name.
- *
- * Offered from the catalogue but not restricted to it: the service decides
- * whether a name resolves, and a form that refused to let one be typed would
- * be wrong the moment the catalogue is a page behind.
- */
+// INVARIANT: a name may be typed whether or not the catalogue lists it; the
+// service decides whether it resolves, and the catalogue may be a page behind.
 export function ReferenceControl({
   id,
   value,
   names,
+  describe,
   onChange,
 }: {
   id: string;
   value: string;
   names: readonly string[];
+  describe?: Describing;
   onChange: (value: string) => void;
 }) {
   const listId = `${id}-names`;
@@ -146,6 +152,7 @@ export function ReferenceControl({
     <>
       <Input
         id={id}
+        {...describe}
         value={value}
         list={listId}
         className={cn(CONTROL, "font-mono")}
@@ -160,10 +167,10 @@ export function ReferenceControl({
   );
 }
 
-/** A label, its hint, the control, and whatever the service said about it. */
 export function Row({
   id,
   label,
+  property,
   hint,
   required,
   said,
@@ -171,6 +178,8 @@ export function Row({
 }: {
   id: string;
   label: string;
+  /** The property's name in the document, as the text view spells it. */
+  property?: string;
   hint?: string;
   required?: boolean;
   said?: string;
@@ -178,18 +187,32 @@ export function Row({
 }) {
   return (
     <div className="flex flex-col gap-1">
-      <span className={cn(TEXT_LABEL, "font-medium")}>
+      <span className={cn(TEXT_LABEL, "flex items-baseline gap-2 font-medium")}>
         <label htmlFor={id}>{label}</label>
-        {required ? <span aria-hidden="true"> *</span> : null}
+        {required ? <span aria-hidden="true">*</span> : null}
+        {property ? (
+          <span
+            aria-hidden="true"
+            className="font-mono font-normal text-muted-foreground"
+          >
+            {property}
+          </span>
+        ) : null}
       </span>
 
       {children}
 
       {hint ? (
-        <p className={cn(TEXT_LABEL, "text-muted-foreground")}>{hint}</p>
+        <p id={hintId(id)} className={cn(TEXT_LABEL, "text-muted-foreground")}>
+          {hint}
+        </p>
       ) : null}
       {said ? (
-        <p role="alert" className={cn(TEXT_LABEL, "text-destructive")}>
+        <p
+          id={saidId(id)}
+          role="alert"
+          className={cn(TEXT_LABEL, "text-destructive")}
+        >
           {said}
         </p>
       ) : null}

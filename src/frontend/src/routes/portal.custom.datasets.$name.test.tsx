@@ -134,26 +134,39 @@ describe("/portal/custom/datasets/$name", () => {
   });
 
   it("asks before taking a dataset away, and says what still reads it", async () => {
+    const user = userEvent.setup();
     vi.mocked(customClient.fetchDataset).mockResolvedValue(COMMITS);
     vi.mocked(customClient.deleteDataset).mockRejectedValue(
       new customClient.CustomApiError(409, {
         context: {
-          violations: [{ description: "still read by lines_per_day" }],
+          violations: [
+            {
+              type: "in_use",
+              subject: "commits",
+              description: "still read by lines_per_day",
+            },
+          ],
         },
       })
     );
 
     render(<Component />, { wrapper });
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Remove" })
-    );
-    await userEvent.click(
+    await user.click(await screen.findByRole("button", { name: "Remove" }));
+
+    expect(customClient.deleteDataset).not.toHaveBeenCalled();
+
+    await user.click(
       await screen.findByRole("button", { name: /Remove it, with its records/ })
     );
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "still read by lines_per_day"
     );
+    // The choice stays open: the reader may fix what reads it and try again.
+    expect(
+      screen.getByRole("button", { name: /Remove it, with its records/ })
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Keep" })).toBeInTheDocument();
   });
 
   it("goes back to the catalogue once the dataset is gone", async () => {

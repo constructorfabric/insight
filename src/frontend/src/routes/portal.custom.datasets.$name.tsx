@@ -5,14 +5,13 @@ import {
   useRouterState,
 } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
 
 import type { DatasetRecord, DeclaredField } from "@/api/custom-client";
+import { ConfirmRemove } from "@/components/custom/confirm-remove";
 import { refusal } from "@/components/custom/refusal";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Spinner } from "@/components/ui/spinner";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import {
   datasetDependentsQuery,
@@ -221,51 +220,31 @@ function Dependents({ name }: { name: string }) {
 }
 
 /**
- * Takes the dataset away, with the records it holds, in two clicks.
+ * Takes the dataset away, with the records it holds.
  *
  * The service refuses while a metric reads it and names every one, so the
  * refusal is shown as it came back — the list above says the same thing.
  */
 function RemoveDataset({ name }: { name: string }) {
-  const [asked, setAsked] = useState(false);
   const navigate = useNavigate();
   const remove = useRemoveDataset();
 
-  if (remove.isError) {
-    return (
-      <span role="alert" className={cn(TEXT_LABEL, "text-destructive")}>
-        {refusal(remove.error, "Couldn't remove it.")}
-      </span>
-    );
-  }
-
-  if (!asked) {
-    return (
-      <Button variant="ghost" size="sm" onClick={() => setAsked(true)}>
-        Remove
-      </Button>
-    );
-  }
-
   return (
-    <span className="flex items-center gap-1">
-      <Button
-        variant="ghost"
-        size="sm"
-        className="text-destructive"
-        disabled={remove.isPending}
-        onClick={() =>
-          remove.mutate(name, {
-            onSuccess: () => void navigate({ to: "/portal/custom/datasets" }),
-          })
-        }
-      >
-        {remove.isPending ? <Spinner className="size-3" /> : null}
-        Remove it, with its records
-      </Button>
-      <Button variant="ghost" size="sm" onClick={() => setAsked(false)}>
-        Keep
-      </Button>
-    </span>
+    <ConfirmRemove
+      ask={(open) => (
+        <Button variant="ghost" size="sm" onClick={open}>
+          Remove
+        </Button>
+      )}
+      confirm="Remove it, with its records"
+      pending={remove.isPending}
+      error={remove.error}
+      onRemove={() =>
+        remove.mutate(name, {
+          onSuccess: () => void navigate({ to: "/portal/custom/datasets" }),
+        })
+      }
+      onKeep={remove.reset}
+    />
   );
 }

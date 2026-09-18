@@ -76,16 +76,15 @@ export function definitionPagesQuery(kind: EditableKind, search = "") {
   });
 }
 
-/**
- * A stored definition as the document that was sent to store it.
- *
- * Each kind hands its body back in its own envelope, and the editor writes the
- * body: what it opens has to be what a save would send, or an untouched
- * definition would come back changed.
- */
+// Each kind hands its body back in its own envelope; the editor writes the body,
+// so what it opens must be what a save would send.
 export function definitionBodyQuery(kind: EditableKind, name: string) {
   return queryOptions({
     queryKey: ["custom", "body", kind, name],
+    // The editor seeds itself from one answer and edits from there; a refetch
+    // underneath it would be neither shown nor wanted.
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
     queryFn: async (): Promise<Record<string, unknown>> => {
       if (kind === "datasets") {
         const dataset = await fetchDataset(name);
@@ -104,12 +103,7 @@ export function definitionBodyQuery(kind: EditableKind, name: string) {
   });
 }
 
-/**
- * Every name of a kind in one answer, for a form to offer a reference from.
- *
- * A page behind is not a refusal: a name may be typed whether or not this
- * answer holds it, and the service decides whether it resolves.
- */
+// Every name of a kind in one answer, for a form to offer a reference from.
 export function catalogueNamesQuery(kind: EditableKind) {
   return queryOptions({
     queryKey: ["custom", "all-names", kind],

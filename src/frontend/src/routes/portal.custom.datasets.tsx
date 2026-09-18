@@ -13,10 +13,7 @@ import { datasetQuery } from "@/queries/custom";
 import { TEXT_BODY } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
-/**
- * A static segment, so it wins over `$name` in the route tree — the same
- * trade the other catalogues make for a readable URL.
- */
+// A static segment, so it wins over `$name` - the same trade the other catalogues make.
 export const Route = createFileRoute("/portal/custom/datasets")({
   component: DatasetsCatalogue,
 });

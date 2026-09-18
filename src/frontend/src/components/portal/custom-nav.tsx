@@ -16,9 +16,9 @@ import { dashboardNamesQuery, dashboardQuery } from "@/queries/custom";
 import { TEXT_LABEL } from "@/lib/type-scale";
 
 /**
- * The custom zone's pane: the three catalogues, then one row per dashboard
- * read from the same query the page reads — so a dashboard the chat just
- * built appears here as soon as the list is invalidated, with no reload.
+ * The custom zone's pane: the catalogues, then one row per dashboard read from
+ * the same query the page reads — so a dashboard the chat just built appears
+ * here as soon as the list is invalidated, with no reload.
  */
 export function CustomNav() {
   return (

@@ -1,12 +1,8 @@
 import type { Description, Field, Shape } from "./describe";
 
-/**
- * What each kind admits, said once.
- *
- * These mirror the shapes the service refuses against. Where the two drift the
- * service is right and the editor is wrong, which is why a refusal is shown
- * against the field that earned it rather than swallowed here.
- */
+// INVARIANT: these mirror the shapes the service refuses against. Where they
+// drift the service is right, and its refusal lands on the field rather than
+// being hidden here.
 
 const FIELD_TYPES = ["string", "int", "float", "bool", "datetime"] as const;
 const FIELD_ROLES = ["dimension", "measurable", "time"] as const;
@@ -52,7 +48,7 @@ const DECLARED_FIELD: Shape = {
     {
       name: "default_clock",
       label: "Main date",
-      shape: { of: "flag" },
+      shape: { of: "flag", alone: true },
       hint: "A window with no date of its own selects by this one.",
     },
   ],
@@ -73,7 +69,11 @@ const DATASET: Description = {
     {
       name: "row_identity",
       label: "One record per",
-      shape: { of: "list", entry: { of: "text" }, entryLabel: "field name" },
+      shape: {
+        of: "list",
+        entry: { of: "pick", from: { list: "fields", property: "name" } },
+        entryLabel: "field name",
+      },
       hint: "Leave empty to keep every record on its own.",
     },
   ],
@@ -95,9 +95,16 @@ const CONDITION: Shape = {
       shape: { of: "choice", options: OPERATORS },
       required: true,
     },
-    { name: "value", label: "Against", shape: { of: "text" }, required: true },
+    {
+      name: "value",
+      label: "Against",
+      shape: { of: "typed", by: "type" },
+      required: true,
+    },
   ],
 };
+
+const OWN_COLUMN = { list: "fields", property: "as_name" } as const;
 
 const METRIC: Description = {
   kind: "metrics",
@@ -142,6 +149,27 @@ const METRIC: Description = {
               shape: { of: "text" },
               required: true,
             },
+            {
+              name: "when",
+              label: "Counted only when",
+              shape: { of: "list", entry: CONDITION, entryLabel: "condition" },
+              hint: "Rows the aggregate takes in; the rest are left out of it alone.",
+            },
+            {
+              name: "divide",
+              label: "Divided",
+              shape: {
+                of: "list",
+                entry: { of: "pick", from: OWN_COLUMN },
+                entryLabel: "column",
+              },
+              hint: "Two of this metric's own columns: the numerator, then the denominator.",
+            },
+            {
+              name: "percent",
+              label: "As a percentage",
+              shape: { of: "flag" },
+            },
           ],
         },
       },
@@ -167,12 +195,16 @@ const METRIC: Description = {
     {
       name: "group_by",
       label: "Grouped by",
-      shape: { of: "list", entry: { of: "text" }, entryLabel: "column" },
+      shape: {
+        of: "list",
+        entry: { of: "pick", from: OWN_COLUMN, also: ["bucket"] },
+        entryLabel: "column",
+      },
       hint: "Names this metric produces: an `as_name`, or `bucket` for a windowed run.",
     },
     {
       name: "filters",
-      label: "Filters",
+      label: "Filtered",
       shape: { of: "list", entry: CONDITION, entryLabel: "filter" },
     },
     {
@@ -181,7 +213,11 @@ const METRIC: Description = {
       shape: {
         of: "record",
         fields: [
-          { name: "field", label: "Column", shape: { of: "text" } },
+          {
+            name: "field",
+            label: "Column",
+            shape: { of: "pick", from: OWN_COLUMN, also: ["bucket"] },
+          },
           {
             name: "direction",
             label: "Direction",
@@ -264,10 +300,10 @@ const WIDGET: Description = {
       },
       required: true,
     },
-    { name: "title", label: "Heading", shape: { of: "text" } },
+    { name: "title", label: "Title", shape: { of: "text" } },
     {
       name: "detail",
-      label: "Drilldown metric",
+      label: "Rows behind it",
       shape: { of: "reference", to: "metrics" },
       hint: "The rows behind the chart, when they are a different query.",
     },

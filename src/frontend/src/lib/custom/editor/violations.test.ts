@@ -6,8 +6,12 @@ import type { Field } from "./describe";
 import { DESCRIPTIONS } from "./kinds";
 import { offers, place } from "./violations";
 
-function refused(violations: unknown[], detail?: string): CustomApiError {
-  return new CustomApiError(400, { detail, context: { violations } });
+function refused(context: unknown, detail?: string): CustomApiError {
+  return new CustomApiError(400, { detail, context });
+}
+
+function invalid(violations: unknown[], detail?: string): CustomApiError {
+  return refused({ field_violations: violations }, detail);
 }
 
 const FORM: readonly Field[] = [
@@ -26,90 +30,182 @@ const FORM: readonly Field[] = [
   },
 ];
 
+const FALLBACK = "Couldn't store it.";
+
 describe("offers", () => {
-  it("names a path for every field, however deep", () => {
-    expect(offers(FORM)).toEqual(
-      new Set(["title", "fields", "fields[]", "fields[].type"])
+  it("names a row for every field, and for every entry the list has", () => {
+    const document = { fields: [{ type: "int" }, { type: "string" }] };
+
+    expect(offers(FORM, document)).toEqual(
+      new Set([
+        "title",
+        "fields",
+        "fields[0]",
+        "fields[0].type",
+        "fields[1]",
+        "fields[1].type",
+      ])
     );
   });
 
-  it("offers every variant's fields, since any of them may be chosen", () => {
-    const offered = offers(DESCRIPTIONS.widgets.fields);
+  it("names no entry for a list the document does not hold", () => {
+    expect(offers(FORM, {})).toEqual(new Set(["title", "fields"]));
+  });
 
-    // A variant's fields sit beside the choice, which is where they are sent.
+  // The form draws the chosen variant's rows and no other's.
+  it("names only the chosen variant's fields", () => {
+    const offered = offers(DESCRIPTIONS.widgets.fields, {
+      type: "stat",
+      columns: ["x"],
+    });
+
     expect(offered).toContain("type");
-    expect(offered).toContain("columns[]");
-    expect(offered).toContain("x");
-    expect(offered).toContain("label");
+    expect(offered).toContain("value");
+    expect(offered).not.toContain("columns");
+  });
+
+  it("names a dashboard item's row by the kind it carries", () => {
+    const offered = offers(DESCRIPTIONS.dashboards.fields, {
+      items: [{ heading: "Flow" }],
+    });
+
+    expect(offered).toContain("items[0]");
+    expect(offered).toContain("items[0].heading");
+    expect(offered).not.toContain("items[0].widget");
   });
 });
 
 describe("place", () => {
-  it("puts a violation on the field it names", () => {
+  const document = { title: "T", fields: [{ type: "moment" }] };
+
+  it("puts a violation on the row it names", () => {
     const placed = place(
-      refused([{ field: "fields[0].type", description: "unknown type" }]),
-      FORM
+      invalid([{ field: "fields[0].type", description: "unknown type" }]),
+      FORM,
+      document,
+      FALLBACK
     );
 
     expect(placed.at.get("fields[0].type")).toBe("unknown type");
     expect(placed.loose).toEqual([]);
   });
 
-  // The service checks more than the form offers; a dropped one would leave a
-  // refusal with nothing said about it.
-  it("keeps a violation the form cannot show, named", () => {
+  it("puts a violation about an entry on the entry", () => {
     const placed = place(
-      refused([{ field: "row_identity[3]", description: "no such field" }]),
-      FORM
+      invalid([{ field: "fields[0]", description: "a field is an object" }]),
+      FORM,
+      { fields: [1] },
+      FALLBACK
     );
 
-    expect(placed.at.size).toBe(0);
-    expect(placed.loose).toEqual(["row_identity[3]: no such field"]);
+    expect(placed.at.get("fields[0]")).toBe("a field is an object");
+  });
+
+  // The service checks more than the form draws; a violation with no row is
+  // still said rather than leaving a form that refuses in silence.
+  it.each([
+    ["a path the form has no field for", "row_identity[3]", document],
+    ["an entry past the list's end", "fields[4].type", document],
+    ["a field of a variant not chosen", "columns", { type: "stat" }],
+  ])("keeps %s, named", (_, field, held) => {
+    const fields = field === "columns" ? DESCRIPTIONS.widgets.fields : FORM;
+    const placed = place(
+      invalid([{ field, description: "wrong" }]),
+      fields,
+      held,
+      FALLBACK
+    );
+
+    expect(placed.at.size, `should not place: ${field}`).toBe(0);
+    expect(placed.loose).toEqual([`${field}: wrong`]);
   });
 
   it("keeps a violation that names nothing", () => {
     const placed = place(
-      refused([{ description: "a dataset needs at least one field" }]),
-      FORM
+      invalid([{ description: "a dataset needs at least one field" }]),
+      FORM,
+      document,
+      FALLBACK
     );
 
     expect(placed.loose).toEqual(["a dataset needs at least one field"]);
   });
 
-  // One field, two complaints: the first sits on it and the second is still
-  // said, rather than overwriting it or disappearing.
-  it("shows the second complaint about one field beside the form", () => {
+  // One row, two complaints: the first sits on it, the second is still said.
+  it("says the second complaint about one row beside the form", () => {
     const placed = place(
-      refused([
+      invalid([
         { field: "title", description: "must not be empty" },
         { field: "title", description: "too long" },
       ]),
-      FORM
+      FORM,
+      document,
+      FALLBACK
     );
 
     expect(placed.at.get("title")).toBe("must not be empty");
     expect(placed.loose).toEqual(["title: too long"]);
   });
 
-  it("falls back to the plain refusal when no violation was named", () => {
-    const placed = place(refused([], "the dataset is being removed"), FORM);
+  // A 409 names things outside the document - the metrics a change would
+  // break - which have no row and are said by name.
+  it("says what a precondition names, by its subject", () => {
+    const placed = place(
+      refused({
+        violations: [
+          {
+            type: "would_break",
+            subject: "lines_per_day",
+            description: "reads `day`",
+          },
+        ],
+      }),
+      FORM,
+      document,
+      FALLBACK
+    );
+
+    expect(placed.at.size).toBe(0);
+    expect(placed.loose).toEqual(["lines_per_day: reads `day`"]);
+  });
+
+  it("falls back to the plain refusal when nothing was named", () => {
+    const placed = place(
+      refused(undefined, "the dataset is being removed"),
+      FORM,
+      document,
+      FALLBACK
+    );
 
     expect(placed.loose).toEqual(["the dataset is being removed"]);
   });
 
   it("leaves the plain refusal out once a violation has been placed", () => {
     const placed = place(
-      refused([{ field: "title", description: "required" }], "invalid body"),
-      FORM
+      invalid([{ field: "title", description: "required" }], "invalid body"),
+      FORM,
+      document,
+      FALLBACK
     );
 
     expect(placed.loose).toEqual([]);
   });
 
-  it("says nothing about an error the service did not send", () => {
-    const placed = place(new Error("network down"), FORM);
+  // A save that failed and shows nothing reads as a save that worked.
+  it.each([
+    ["a network failure", new TypeError("Failed to fetch")],
+    ["a body that is not the service's", new CustomApiError(502, null)],
+    [
+      "a body with nothing readable",
+      new CustomApiError(500, { message: "boom" }),
+    ],
+  ])("says something for %s", (_, error) => {
+    const placed = place(error, FORM, document, FALLBACK);
 
-    expect(placed.at.size).toBe(0);
-    expect(placed.loose).toEqual([]);
+    expect(placed.loose).toEqual([FALLBACK]);
+  });
+
+  it("says nothing when there is no error", () => {
+    expect(place(null, FORM, document, FALLBACK).loose).toEqual([]);
   });
 });

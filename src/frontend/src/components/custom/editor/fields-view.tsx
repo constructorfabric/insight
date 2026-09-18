@@ -1,36 +1,27 @@
 import { Plus, X } from "lucide-react";
 
 import type { EditableKind } from "@/api/custom-client";
-import {
-  ChoiceControl,
-  FlagControl,
-  NumberControl,
-  ReferenceControl,
-  Row,
-  TextControl,
-} from "@/components/custom/editor/controls";
+import { Control } from "@/components/custom/editor/control";
+import { Row } from "@/components/custom/editor/controls";
 import { Variants } from "@/components/custom/editor/variants";
 import { Button } from "@/components/ui/button";
 import type { Field, Path, Shape } from "@/lib/custom/editor/describe";
 import { spell } from "@/lib/custom/editor/describe";
+import { describing } from "@/lib/custom/editor/aria";
+import { blank } from "@/lib/custom/editor/blank";
 import { read } from "@/lib/custom/editor/document";
+import { alone } from "@/lib/custom/editor/exclusive";
 import { TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
-/**
- * A document shown as the fields its kind admits.
- *
- * INVARIANT: every row is drawn from the description, never from what the
- * document happens to hold. A property the description does not know stays in
- * the document untouched — the text view is where it is seen and edited.
- */
+// INVARIANT: every row is drawn from the description, never from what the
+// document happens to hold. A property the description does not know stays in
+// the document untouched; the text view is where it is seen and edited.
 
-/** Everything a row needs: what is held, what was said, and where to send it. */
 export interface Editing {
   document: Record<string, unknown>;
-  /** What the service said about each path it named. */
+  /** What the service said, by the path it named. */
   said: ReadonlyMap<string, string>;
-  /** The stored names of a kind, for a reference to offer. */
   names: (kind: EditableKind) => readonly string[];
   onChange: (path: Path, value: unknown) => void;
 }
@@ -45,11 +36,8 @@ export function FieldsView({
   at: Path;
   editing: Editing;
   /**
-   * Fields whose emptiness is a value rather than an absence.
-   *
-   * INVARIANT: a record is told apart by the property it carries, so removing
-   * that property when it is cleared would leave a record that is no variant
-   * at all and a form with nothing left to show.
+   * INVARIANT: a record is told apart by the property it carries; removing it
+   * when cleared would leave a record that is no variant, and nothing to show.
    */
   keepEmpty?: readonly string[];
 }) {
@@ -104,11 +92,14 @@ function FieldRow({
   const id = spell(at);
   const value = read(editing.document, at);
   const said = editing.said.get(id);
+  const set = (next: unknown) => editing.onChange(at, next);
+  const last = at.at(-1);
 
   return (
     <Row
       id={id}
       label={field.label}
+      property={typeof last === "string" ? last : undefined}
       hint={field.hint}
       required={field.required}
       said={said}
@@ -116,85 +107,45 @@ function FieldRow({
       <Control
         id={id}
         shape={field.shape}
+        at={at}
         required={field.required}
         value={value}
-        names={editing.names}
+        editing={editing}
         keepEmpty={keepEmpty}
-        onChange={(next) => editing.onChange(at, next)}
+        describe={describing(id, {
+          hint: field.hint,
+          said,
+          required: field.required,
+        })}
+        onChange={
+          field.shape.of === "flag" && field.shape.alone
+            ? markAlone(at, editing)
+            : set
+        }
       />
     </Row>
   );
 }
 
-function Control({
-  id,
-  shape,
-  required,
-  value,
-  names,
-  keepEmpty,
-  onChange,
-}: {
-  id: string;
-  shape: Shape;
-  required?: boolean;
-  value: unknown;
-  names: (kind: EditableKind) => readonly string[];
-  keepEmpty?: boolean;
-  onChange: (value: unknown) => void;
-}) {
-  const written = value === undefined || value === null ? "" : String(value);
-  const emptied = keepEmpty ? "" : undefined;
+// A mark only one entry may carry moves; clearing it clears that entry alone.
+function markAlone(at: Path, editing: Editing): (next: unknown) => void {
+  const index = at.at(-2);
+  const name = at.at(-1);
+  const list = at.slice(0, -2);
 
-  switch (shape.of) {
-    case "text":
-    case "longText":
-      return (
-        <TextControl
-          id={id}
-          value={written}
-          placeholder={shape.of === "text" ? shape.placeholder : undefined}
-          long={shape.of === "longText"}
-          onChange={(next) => onChange(next === "" ? emptied : next)}
-        />
-      );
-    case "number":
-      return <NumberControl id={id} value={written} onChange={onChange} />;
-    case "flag":
-      return (
-        <FlagControl
-          id={id}
-          value={value === true}
-          onChange={(next) => onChange(next ? true : undefined)}
-        />
-      );
-    case "choice":
-      return (
-        <ChoiceControl
-          id={id}
-          value={written}
-          options={shape.options}
-          required={required}
-          onChange={onChange}
-        />
-      );
-    case "reference":
-      return (
-        <ReferenceControl
-          id={id}
-          value={written}
-          names={names(shape.to)}
-          onChange={(next) => onChange(next === "" ? emptied : next)}
-        />
-      );
-    case "list":
-    case "record":
-    case "variants":
-      return null;
-  }
+  return (next) => {
+    if (
+      next !== true ||
+      typeof index !== "number" ||
+      typeof name !== "string"
+    ) {
+      editing.onChange(at, next);
+      return;
+    }
+    editing.onChange(list, alone(read(editing.document, list), index, name));
+  };
 }
 
-/** A heading for the fields that sit under it, and what was said about them. */
 function Nested({
   field,
   at,
@@ -279,23 +230,29 @@ function ListEntries({
   );
 }
 
-/** One entry of a list, which is whatever the entry's shape is. */
 function Entry({
   called,
   shape,
   at,
   editing,
 }: {
-  /** What this entry is called: the list's own noun and its place in it. */
   called: string;
   shape: Shape;
   at: Path;
   editing: Editing;
 }) {
   if (shape.of === "record" || shape.of === "variants") {
+    const said = editing.said.get(spell(at));
+
     return (
       <fieldset className="flex flex-col gap-3 rounded-md border border-border p-3">
         <legend className={cn(TEXT_LABEL, "px-1 font-medium")}>{called}</legend>
+
+        {said ? (
+          <p role="alert" className={cn(TEXT_LABEL, "text-destructive")}>
+            {said}
+          </p>
+        ) : null}
 
         {shape.of === "record" ? (
           <FieldsView fields={shape.fields} at={at} editing={editing} />
@@ -321,24 +278,4 @@ function Entry({
       keepEmpty
     />
   );
-}
-
-/** What a new entry of a list starts as, by the shape of an entry. */
-function blank(shape: Shape): unknown {
-  switch (shape.of) {
-    case "list":
-      return [];
-    case "record":
-    case "variants":
-      return {};
-    case "flag":
-      return false;
-    case "number":
-      return 0;
-    case "text":
-    case "longText":
-    case "choice":
-    case "reference":
-      return "";
-  }
 }

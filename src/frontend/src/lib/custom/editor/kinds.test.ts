@@ -124,6 +124,27 @@ describe("a dataset", () => {
 
     expect(identity?.required).toBeFalsy();
   });
+
+  // A row identity names declared fields, so those are what it offers.
+  it("picks the row identity from the fields declared", () => {
+    const identity = dataset.fields.find(
+      (field) => field.name === "row_identity"
+    );
+    const entry = identity?.shape.of === "list" ? identity.shape.entry : null;
+
+    expect(entry).toEqual({
+      of: "pick",
+      from: { list: "fields", property: "name" },
+    });
+  });
+
+  it("lets only one field be the main date", () => {
+    const clock = walk(dataset.fields).find(
+      ({ path }) => path === "fields.default_clock"
+    )?.field;
+
+    expect(clock?.shape).toEqual({ of: "flag", alone: true });
+  });
 });
 
 describe("a metric", () => {
@@ -146,6 +167,43 @@ describe("a metric", () => {
     expect(
       read.find(({ path }) => path === "fields.field")?.field.required
     ).toBeFalsy();
+  });
+
+  it("offers what an aggregate may be told beyond its column", () => {
+    const named = new Set(walk(metric.fields).map(({ path }) => path));
+
+    for (const path of ["fields.when", "fields.divide", "fields.percent"]) {
+      expect(named, `not offered: ${path}`).toContain(path);
+    }
+  });
+
+  // A filter's value is compared as the type the filter names, so the control
+  // follows that type rather than always taking text.
+  it("types a filter's value by the filter's own type", () => {
+    const value = walk(metric.fields).find(
+      ({ path }) => path === "filters.value"
+    )?.field;
+
+    expect(value?.shape).toEqual({ of: "typed", by: "type" });
+  });
+
+  it("picks grouping and ordering from the columns the metric produces", () => {
+    const named = Object.fromEntries(
+      walk(metric.fields).map(({ path, field }) => [path, field.shape])
+    );
+
+    expect(named["group_by"]).toMatchObject({
+      of: "list",
+      entry: {
+        of: "pick",
+        from: { list: "fields", property: "as_name" },
+        also: ["bucket"],
+      },
+    });
+    expect(named["order_by.field"]).toMatchObject({
+      of: "pick",
+      from: { list: "fields", property: "as_name" },
+    });
   });
 
   it("leaves the window's field optional, for the dataset's own to serve", () => {
