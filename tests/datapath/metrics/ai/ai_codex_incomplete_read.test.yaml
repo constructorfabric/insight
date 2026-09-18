@@ -1,0 +1,92 @@
+spec_version: 1
+description: >
+  A ChatGPT Team Codex read that did not bring a day's whole roster must not
+  become that day's state.
+
+  chatgpt_team_codex_user_daily pages the leaderboard by page number over
+  sort_by=credits. That sort is not a total order — everyone who spent nothing
+  ties on it — so between two paged requests a person can cross the page
+  boundary in either direction and be returned by neither, while both requests
+  succeed. Nothing in the response says the day came back short.
+
+  The envelope does carry the day's headcount, and
+  chatgpt_team_codex_user_daily_org stores it per READ (its unique_key names the
+  read, because a day still in progress legitimately reports fewer people than
+  it ends with). The staging model admits a per-user row only when its own
+  read's distinct people equal that read's total_users.
+
+  Five days, one per branch of the gate. alice is the requested person except
+  where noted; the figure is n_threads, which reaches the class contract as
+  conversation_count and is what ai.dev_conversations sums.
+
+    Dec 01  legacy      no envelope, and read 10 — BEFORE the first read that
+                        carried one. Nothing to judge it against, so it is
+                        admitted. This keeps history predating the envelope
+                        stream servable.                                       1
+    Dec 02  complete    envelope of read 20 says 2, read 20 returned alice and
+                        bob. Admitted — the control case.          alice 2 · bob 1
+    Dec 03  short       envelope of read 30 says 2, read 30 returned alice only.
+                        Rejected WHOLE — alice's own row goes too, because a read
+                        short in an unknown place says nothing about the people
+                        it did return.                                         4
+    Dec 04  unreferenced  read 40 is after the first reference and carries none
+                        of its own. Rejected: an unreferenced later read is the
+                        silent hole the gate exists to close.                  8
+    Dec 05  no credits  envelope of read 50 says 1 and read 50 returned alice
+                        with credits = 0 and real thread activity. Admitted.
+                        `credits` is on-demand usage, not total consumption, so
+                        a credited-nothing day is ordinary work and must serve
+                        like any other — the emission filter reads n_threads.   3
+
+  alice's window therefore sums the three days admitted for her: 1 + 2 + 3 = 6.
+  With the gate removed every day would count and the same request would answer
+  18, so the case cannot pass by accident. bob's window is his single admitted
+  day: 1. The timeseries views pin which days survived rather than only totals.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/alice
+    - $ref: ../templates/people.yaml#/templates/bob
+
+  bronze_chatgpt_team.chatgpt_team_codex_user_daily_org:
+    # Dec 02's read: 2 people, and both arrived.
+    - { $ref: ../templates/chatgpt_team_codex_org.yaml#/templates/chatgpt_team_codex_org,
+        date: "2026-12-02", unique_key: cgt-org-20261202-r20, total_users: 2,
+        _airbyte_extracted_at: "2026-12-02T23:50:00Z", _airbyte_meta: '{"sync_id":20,"changes":[]}' }
+    # Dec 03's read: also 2 people — but only one of them arrived.
+    - { $ref: ../templates/chatgpt_team_codex_org.yaml#/templates/chatgpt_team_codex_org,
+        date: "2026-12-03", unique_key: cgt-org-20261203-r30, total_users: 2,
+        _airbyte_extracted_at: "2026-12-03T23:50:00Z", _airbyte_meta: '{"sync_id":30,"changes":[]}' }
+    # Dec 05's read: 1 person, who arrived having spent no credits.
+    - { $ref: ../templates/chatgpt_team_codex_org.yaml#/templates/chatgpt_team_codex_org,
+        date: "2026-12-05", unique_key: cgt-org-20261205-r50, total_users: 1,
+        _airbyte_extracted_at: "2026-12-05T23:50:00Z", _airbyte_meta: '{"sync_id":50,"changes":[]}' }
+
+  bronze_chatgpt_team.chatgpt_team_codex_user_daily:
+    # ── Dec 01 · legacy: read 10 predates the first envelope (read 20) ────────
+    - { $ref: ../templates/chatgpt_team_codex.yaml#/templates/alice, date: "2026-12-01",
+        unique_key: cgt-alice-20261201, n_threads: 1, credits: 2.5, lines_added: 10,
+        _airbyte_extracted_at: "2026-12-01T23:50:00Z", _airbyte_meta: '{"sync_id":10,"changes":[]}' }
+
+    # ── Dec 02 · complete: both people, matching the envelope's 2 ─────────────
+    - { $ref: ../templates/chatgpt_team_codex.yaml#/templates/alice, date: "2026-12-02",
+        unique_key: cgt-alice-20261202, n_threads: 2, credits: 1.25, lines_added: 20,
+        _airbyte_extracted_at: "2026-12-02T23:50:00Z", _airbyte_meta: '{"sync_id":20,"changes":[]}' }
+    - { $ref: ../templates/chatgpt_team_codex.yaml#/templates/bob, date: "2026-12-02",
+        unique_key: cgt-bob-20261202, n_threads: 1, credits: 0.5, lines_added: 5,
+        _airbyte_extracted_at: "2026-12-02T23:50:00Z", _airbyte_meta: '{"sync_id":20,"changes":[]}' }
+
+    # ── Dec 03 · short: envelope says 2, bob never arrived ────────────────────
+    - { $ref: ../templates/chatgpt_team_codex.yaml#/templates/alice, date: "2026-12-03",
+        unique_key: cgt-alice-20261203, n_threads: 4, credits: 3.0, lines_added: 40,
+        _airbyte_extracted_at: "2026-12-03T23:50:00Z", _airbyte_meta: '{"sync_id":30,"changes":[]}' }
+
+    # ── Dec 04 · unreferenced: after the first envelope, carries none ─────────
+    - { $ref: ../templates/chatgpt_team_codex.yaml#/templates/alice, date: "2026-12-04",
+        unique_key: cgt-alice-20261204, n_threads: 8, credits: 6.0, lines_added: 80,
+        _airbyte_extracted_at: "2026-12-04T23:50:00Z", _airbyte_meta: '{"sync_id":40,"changes":[]}' }
+
+    # ── Dec 05 · activity with no credits at all, and the read is complete ────
+    - { $ref: ../templates/chatgpt_team_codex.yaml#/templates/alice, date: "2026-12-05",
+        unique_key: cgt-alice-20261205, n_threads: 3, credits: 0, lines_added: 30,
+        _airbyte_extracted_at: "2026-12-05T23:50:00Z", _airbyte_meta: '{"sync_id":50,"changes":[]}' }
