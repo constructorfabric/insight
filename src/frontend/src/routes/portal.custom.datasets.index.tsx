@@ -13,8 +13,9 @@ import { datasetQuery } from "@/queries/custom";
 import { TEXT_BODY } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
-// A static segment, so it wins over `$name` - the same trade the other catalogues make.
-export const Route = createFileRoute("/portal/custom/datasets")({
+// An index route beside `$name`, not its parent: a parent would have to draw
+// the page through an Outlet, and the catalogue is a page of its own.
+export const Route = createFileRoute("/portal/custom/datasets/")({
   component: DatasetsCatalogue,
 });
 

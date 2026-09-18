@@ -16,7 +16,7 @@ import * as customClient from "@/api/custom-client";
 import { scrollEndOutOfView } from "@/test/intersection-observer";
 import { portalRouter } from "@/test/portal-router";
 
-import { Route } from "./portal.custom.datasets";
+import { Route } from "./portal.custom.datasets.index";
 
 const Component = (Route as unknown as { component: () => React.ReactNode })
   .component;
