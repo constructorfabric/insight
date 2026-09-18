@@ -550,7 +550,7 @@ seat fee, so that difference is a rounding artefact and not the money. The measu
 `ai.extra_usage_utilisation` and to the over-ceiling signal — but nothing sums it as cost.
 
 Monthly history lives in this class, not in bronze. The connector's `unique_key` carries no
-month, so the promoted bronze table — `ReplacingMergeTree(_airbyte_extracted_at)`
+month, so the bronze table — `ReplacingMergeTree(_airbyte_extracted_at)`
 `ORDER BY unique_key` — holds one row per seat, the current snapshot, and the staging
 projection extends that key with the month, as the platform rule for a version axis
 requires. A month therefore becomes durable the first time the pipeline runs inside it: a

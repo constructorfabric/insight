@@ -118,11 +118,6 @@ vars:
 #  - create_task_field_history_staging:
 #      DDL for `staging.jira__task_field_history` (Rust-owned table, ADR-003).
 #      The Rust `jira-enrich` binary has INSERT rights only; dbt owns DDL.
-#
-# Bronze MergeTree → ReplacingMergeTree promotion happens per-connector via
-# a dedicated bootstrap model using `pre_hook`,
-# so all the connector's other models depend on it via `-- depends_on:`. This
-# keeps connector-specific table lists co-located with the connector code.
 on-run-start:
   - "{{ create_task_field_history_staging() }}"
   # config.task_field_roles / config.task_value_map — operator-authored

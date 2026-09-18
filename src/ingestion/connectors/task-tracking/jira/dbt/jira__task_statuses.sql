@@ -12,7 +12,7 @@
 -- (`cpt-insightspec-dbtable-tt-silver-statuses`) and issue #1541.
 --
 -- View, not table: the current state of bronze is the current state of
--- staging. Bronze is promoted to RMT, so the read carries FINAL.
+-- staging. Bronze is ReplacingMergeTree, so the read carries FINAL.
 --
 -- Jira statusCategory is stable and locale-independent:
 --   key='new'          (id 2) -> new

@@ -13,7 +13,7 @@
 -- requires a silver rebuild.
 --
 -- View, not table: the current state of bronze is the current state of
--- staging. Bronze is promoted to RMT, so the read carries FINAL.
+-- staging. Bronze is ReplacingMergeTree, so the read carries FINAL.
 
 SELECT
     s.unique_key                                                AS unique_key,
