@@ -236,7 +236,9 @@ async fn deleting_a_definition_that_was_never_stored_reports_it_missing() {
 async fn running_a_metric_whose_body_is_not_a_query_reports_the_body() -> R {
     let fixture = Fixture::new();
     let surfaces = fixture.surfaces();
-    surfaces
+    // Past `put`, which refuses this body: ones stored before it checked remain.
+    fixture
+        .definitions
         .put(
             DefinitionKind::Metric,
             &name("broken"),
@@ -493,6 +495,95 @@ async fn a_board_that_offers_no_windows_is_stored_as_it_always_was() -> R {
             &json!({"title": "Board", "items": []}),
         )
         .await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_metric_body_that_does_not_parse_is_refused_rather_than_stored() -> R {
+    let fixture = Fixture::new();
+
+    let refusal = fixture
+        .surfaces()
+        .put(
+            DefinitionKind::Metric,
+            &name("bad-order-by"),
+            &json!({
+                "table": "events",
+                "fields": [
+                    {"json": "actor", "type": "string", "as_name": "actor"},
+                    {"json": "actor", "type": "string", "agg": "count", "as_name": "total"}
+                ],
+                "group_by": ["actor"],
+                "order_by": [{"as_name": "total", "dir": "desc"}]
+            }),
+        )
+        .await;
+
+    assert!(matches!(refusal, Err(CustomError::Body(_))), "{refusal:?}");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_metric_the_compiler_refuses_is_refused_rather_than_stored() -> R {
+    let fixture = Fixture::new();
+
+    let refusal = fixture
+        .surfaces()
+        .put(
+            DefinitionKind::Metric,
+            &name("ungrouped"),
+            &json!({
+                "table": "events",
+                "fields": [
+                    {"json": "actor", "type": "string", "as_name": "actor"},
+                    {"json": "lines", "type": "int", "agg": "sum", "as_name": "lines"}
+                ],
+                "group_by": []
+            }),
+        )
+        .await;
+
+    assert!(
+        matches!(
+            refusal,
+            Err(CustomError::Compile(
+                crate::metric_query::MetricQueryError::Ungrouped(_)
+            ))
+        ),
+        "{refusal:?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_metric_refused_at_put_time_leaves_nothing_behind() -> R {
+    let fixture = Fixture::new();
+
+    let _ = fixture
+        .surfaces()
+        .put(
+            DefinitionKind::Metric,
+            &name("ungrouped"),
+            &json!({
+                "table": "events",
+                "fields": [
+                    {"json": "actor", "type": "string", "as_name": "actor"},
+                    {"json": "lines", "type": "int", "agg": "sum", "as_name": "lines"}
+                ],
+                "group_by": []
+            }),
+        )
+        .await;
+
+    let stored = fixture
+        .definitions
+        .get(DefinitionKind::Metric, &name("ungrouped"))
+        .await?;
+
+    assert!(stored.is_none(), "{stored:?}");
 
     Ok(())
 }

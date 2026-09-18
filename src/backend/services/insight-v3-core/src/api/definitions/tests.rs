@@ -213,13 +213,25 @@ async fn put_then_get_returns_the_stored_body() {
     let harness = TestHarness::new().await;
 
     let put = harness
-        .put_json("/v1/metrics/commits_per_day", json!({ "table": "events" }))
+        .put_json(
+            "/v1/metrics/commits_per_day",
+            json!({
+                "table": "events",
+                "fields": [{ "json": "day", "type": "string", "as_name": "day" }]
+            }),
+        )
         .await;
     assert_eq!(put.status(), StatusCode::NO_CONTENT);
 
     let got = harness.get_json("/v1/metrics/commits_per_day").await;
     assert_eq!(got.status(), StatusCode::OK);
-    assert_eq!(got.json().await, json!({ "table": "events" }));
+    assert_eq!(
+        got.json().await,
+        json!({
+            "table": "events",
+            "fields": [{ "json": "day", "type": "string", "as_name": "day" }]
+        })
+    );
 }
 
 #[tokio::test]
@@ -247,7 +259,13 @@ async fn list_returns_the_stored_names_in_order() {
     // Stored out of order, listed in it.
     for name in ["lines_per_day", "commits_per_day"] {
         let put = harness
-            .put_json(&format!("/v1/metrics/{name}"), json!({ "table": "events" }))
+            .put_json(
+                &format!("/v1/metrics/{name}"),
+                json!({
+                    "table": "events",
+                    "fields": [{ "json": "day", "type": "string", "as_name": "day" }]
+                }),
+            )
             .await;
         assert_eq!(put.status(), StatusCode::NO_CONTENT);
     }
@@ -653,7 +671,13 @@ async fn a_list_answers_one_page_and_how_many_there_are() {
     let harness = TestHarness::new().await;
     for name in ["a_one", "b_two", "c_three"] {
         harness
-            .put_json(&format!("/v1/metrics/{name}"), json!({ "table": "events" }))
+            .put_json(
+                &format!("/v1/metrics/{name}"),
+                json!({
+                    "table": "events",
+                    "fields": [{ "json": "day", "type": "string", "as_name": "day" }]
+                }),
+            )
             .await;
     }
 
