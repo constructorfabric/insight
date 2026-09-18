@@ -113,17 +113,17 @@ class Warehouse:
         if code != 0:
             pytest.fail(f"dbt {' '.join(args)} failed (exit {code}):\n{output}", pytrace=False)
 
-    def build(self, selector: str = FIELD_HISTORY_SELECTOR) -> None:
+    def build(self, selector: str = FIELD_HISTORY_SELECTOR, *, full_refresh: bool = True) -> None:
         # `run`, not `build`: `build` interleaves the singular tests, so a
         # scenario written to make an invariant fail — and there is one, because
         # the failure is the point — would look like a broken model instead.
         # Invariants are asserted explicitly, per scenario, below.
         #
-        # `--full-refresh` because one model is incremental and keeps state
-        # across runs on purpose (`jira__catalogue_first_seen`): every scenario
-        # seeds its own bronze and reads its own answer. The one test that is
-        # ABOUT the persistence runs that model again without the flag.
-        self.dbt("run", "--select", *selector.split(), "--full-refresh")
+        # `--full-refresh` because two models are incremental and keep state
+        # across runs on purpose (`jira__catalogue_first_seen`, the journal):
+        # every scenario seeds its own bronze and reads its own answer. The
+        # tests that are ABOUT the persistence build again without the flag.
+        self.dbt("run", "--select", *selector.split(), *(["--full-refresh"] if full_refresh else []))
 
 
 def _apply_sql_file(warehouse: Warehouse, path: Path) -> None:
@@ -187,8 +187,8 @@ class Scenario:
         self.warehouse.insert("bronze_jira.jira_issue", issues)
         self.warehouse.insert("bronze_jira.jira_issue_history", events or [])
 
-    def build(self, selector: str = FIELD_HISTORY_SELECTOR) -> None:
-        self.warehouse.build(selector)
+    def build(self, selector: str = FIELD_HISTORY_SELECTOR, *, full_refresh: bool = True) -> None:
+        self.warehouse.build(selector, full_refresh=full_refresh)
 
     def journal(self, *, issue: str | None = None, field: str | None = None) -> list[dict[str, Any]]:
         """The journal rows, ordered the way a reader reconstructs history.
@@ -275,8 +275,8 @@ def scenario(warehouse: Warehouse) -> Scenario:
 
     Truncating bronze rather than scoping every assertion to a source id keeps
     the expectations exact: a test says which rows the journal holds, not which
-    rows it holds among others. The staging models are `table`-materialized, so
-    the next build rewrites them from the bronze this test seeded.
+    rows it holds among others. A build is a full refresh unless a test says
+    otherwise, so the next one rewrites staging from the bronze this test seeded.
     """
     warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_fields")
     warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_issue")

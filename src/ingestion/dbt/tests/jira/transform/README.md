@@ -98,6 +98,12 @@ cost is fixed: dbt re-parses the project every invocation, and
 data — window functions over four union arms. If this lane gets slow, group a
 module's issues into one build rather than trimming coverage.
 
+A build is a full refresh unless a test passes `full_refresh=False`, which runs
+the journal the way the nightly pipeline does: only the issues bronze touched
+since the previous build are recomputed. `test_incremental_recompute.py` is
+where that distinction is the subject; everywhere else the full refresh keeps a
+scenario independent of the one before it.
+
 ## The other tests in this directory
 
 The `.sql` files one level up are dbt singular tests, run by
