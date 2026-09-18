@@ -1,23 +1,15 @@
-import {
-  createFileRoute,
-  Link,
-  useNavigate,
-  useRouterState,
-} from "@tanstack/react-router";
+import { createFileRoute, Link, useRouterState } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 
 import type { DatasetRecord, DeclaredField } from "@/api/custom-client";
-import { ConfirmRemove } from "@/components/custom/confirm-remove";
 import { refusal } from "@/components/custom/refusal";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import {
   datasetDependentsQuery,
   datasetQuery,
   datasetRecordsQuery,
-  useRemoveDataset,
 } from "@/queries/custom";
 import { TEXT_BODY, TEXT_HEADING, TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
@@ -70,9 +62,6 @@ function DatasetPage() {
         <h1 className={cn(TEXT_HEADING, "font-mono")}>{name}</h1>
         <span className={cn(TEXT_BODY, "text-muted-foreground")}>
           {declaration.title}
-        </span>
-        <span className="ms-auto">
-          <RemoveDataset name={name} />
         </span>
       </header>
       {declaration.description ? (
@@ -216,35 +205,5 @@ function Dependents({ name }: { name: string }) {
         )}
       </CardContent>
     </Card>
-  );
-}
-
-/**
- * Takes the dataset away, with the records it holds.
- *
- * The service refuses while a metric reads it and names every one, so the
- * refusal is shown as it came back — the list above says the same thing.
- */
-function RemoveDataset({ name }: { name: string }) {
-  const navigate = useNavigate();
-  const remove = useRemoveDataset();
-
-  return (
-    <ConfirmRemove
-      ask={(open) => (
-        <Button variant="ghost" size="sm" onClick={open}>
-          Remove
-        </Button>
-      )}
-      confirm="Remove it, with its records"
-      pending={remove.isPending}
-      error={remove.error}
-      onRemove={() =>
-        remove.mutate(name, {
-          onSuccess: () => void navigate({ to: "/portal/custom/datasets" }),
-        })
-      }
-      onKeep={remove.reset}
-    />
   );
 }

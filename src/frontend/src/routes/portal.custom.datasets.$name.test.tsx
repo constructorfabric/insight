@@ -20,7 +20,6 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { createElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -131,56 +130,5 @@ describe("/portal/custom/datasets/$name", () => {
     );
     expect(customClient.fetchDatasetRecords).not.toHaveBeenCalled();
     expect(customClient.fetchDatasetDependents).not.toHaveBeenCalled();
-  });
-
-  it("asks before taking a dataset away, and says what still reads it", async () => {
-    const user = userEvent.setup();
-    vi.mocked(customClient.fetchDataset).mockResolvedValue(COMMITS);
-    vi.mocked(customClient.deleteDataset).mockRejectedValue(
-      new customClient.CustomApiError(409, {
-        context: {
-          violations: [
-            {
-              type: "in_use",
-              subject: "commits",
-              description: "still read by lines_per_day",
-            },
-          ],
-        },
-      })
-    );
-
-    render(<Component />, { wrapper });
-    await user.click(await screen.findByRole("button", { name: "Remove" }));
-
-    expect(customClient.deleteDataset).not.toHaveBeenCalled();
-
-    await user.click(
-      await screen.findByRole("button", { name: /Remove it, with its records/ })
-    );
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "still read by lines_per_day"
-    );
-    // The choice stays open: the reader may fix what reads it and try again.
-    expect(
-      screen.getByRole("button", { name: /Remove it, with its records/ })
-    ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Keep" })).toBeInTheDocument();
-  });
-
-  it("goes back to the catalogue once the dataset is gone", async () => {
-    vi.mocked(customClient.fetchDataset).mockResolvedValue(COMMITS);
-    vi.mocked(customClient.deleteDataset).mockResolvedValue(undefined);
-
-    render(<Component />, { wrapper });
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Remove" })
-    );
-    await userEvent.click(
-      await screen.findByRole("button", { name: /Remove it, with its records/ })
-    );
-
-    expect(portalRouter.pathname).toBe("/portal/custom/datasets");
   });
 });

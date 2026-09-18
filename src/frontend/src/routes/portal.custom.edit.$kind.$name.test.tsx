@@ -13,6 +13,7 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
     fetchWidget: vi.fn(),
     fetchDashboard: vi.fn(),
     fetchDataset: vi.fn(),
+    deleteDataset: vi.fn(),
     putDefinition: vi.fn(),
     fetchMetricNames: vi.fn(),
     fetchWidgetNames: vi.fn(),
@@ -165,6 +166,68 @@ describe("/portal/custom/edit/$kind/$name", () => {
 
     expect(await screen.findByLabelText("Dataset")).toHaveValue(
       "pull_requests"
+    );
+  });
+
+  it("asks before taking a dataset away, and says what still reads it", async () => {
+    const user = userEvent.setup();
+    portalRouter.reset("/portal/custom/edit/datasets/commits");
+    vi.mocked(customClient.fetchDataset).mockResolvedValue({
+      name: "commits",
+      declaration: { title: "Commits", fields: [] },
+    });
+    vi.mocked(customClient.deleteDataset).mockRejectedValue(
+      new CustomApiError(409, {
+        context: {
+          violations: [
+            {
+              type: "in_use",
+              subject: "commits",
+              description: "still read by lines_per_day",
+            },
+          ],
+        },
+      })
+    );
+
+    render(<Component />, { wrapper });
+    await user.click(await screen.findByRole("button", { name: "Remove" }));
+
+    expect(customClient.deleteDataset).not.toHaveBeenCalled();
+
+    await user.click(
+      screen.getByRole("button", { name: /Remove it, with its records/ })
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "still read by lines_per_day"
+    );
+    // The choice stays open: the reader may fix what reads it and try again.
+    expect(
+      screen.getByRole("button", { name: /Remove it, with its records/ })
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Keep" })).toBeInTheDocument();
+  });
+
+  it("goes back to the catalogue once the dataset is gone", async () => {
+    const user = userEvent.setup();
+    portalRouter.reset("/portal/custom/edit/datasets/commits");
+    vi.mocked(customClient.fetchDataset).mockResolvedValue({
+      name: "commits",
+      declaration: { title: "Commits", fields: [] },
+    });
+    vi.mocked(customClient.deleteDataset).mockResolvedValue(undefined);
+
+    render(<Component />, { wrapper });
+    await user.click(await screen.findByRole("button", { name: "Remove" }));
+    await user.click(
+      screen.getByRole("button", { name: /Remove it, with its records/ })
+    );
+
+    await waitFor(() =>
+      expect(portalRouter.navigations).toContainEqual({
+        to: "/portal/custom/datasets",
+      })
     );
   });
 

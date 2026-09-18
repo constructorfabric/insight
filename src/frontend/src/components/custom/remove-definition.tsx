@@ -14,9 +14,11 @@ import { useRemoveDefinition } from "@/queries/custom";
 export function RemoveDefinition({
   kind,
   name,
+  onRemoved,
 }: {
   kind: DefinitionKind;
   name: string;
+  onRemoved?: () => void;
 }) {
   const remove = useRemoveDefinition();
 
@@ -36,7 +38,7 @@ export function RemoveDefinition({
       confirm="Remove"
       pending={remove.isPending}
       error={remove.error}
-      onRemove={() => remove.mutate({ kind, name })}
+      onRemove={() => remove.mutate({ kind, name }, { onSuccess: onRemoved })}
       onKeep={remove.reset}
     />
   );

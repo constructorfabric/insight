@@ -4,10 +4,12 @@ import { useQuery } from "@tanstack/react-query";
 import type { EditableKind } from "@/api/custom-client";
 import { DefinitionEditor } from "@/components/custom/editor/definition-editor";
 import { refusal } from "@/components/custom/refusal";
+import { RemoveDataset } from "@/components/custom/remove-dataset";
+import { RemoveDefinition } from "@/components/custom/remove-definition";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { DESCRIPTIONS } from "@/lib/custom/editor/kinds";
 import { definitionBodyQuery } from "@/queries/custom";
-import { TEXT_BODY, TEXT_TITLE } from "@/lib/type-scale";
+import { TEXT_BODY, TEXT_HEADING, TEXT_TITLE } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
 const CATALOGUE: Record<EditableKind, string> = {
@@ -63,15 +65,47 @@ export function EditorPage({
           {refusal(stored.error, `That ${description.noun} is not there.`)}
         </p>
       ) : fresh ? (
-        <DefinitionEditor
-          kind={kind}
-          name={name}
-          document={stored.data}
-          onStored={done}
-        />
+        <>
+          <DefinitionEditor
+            kind={kind}
+            name={name}
+            document={stored.data}
+            onStored={done}
+          />
+          <Removal kind={kind} name={name} onRemoved={done} />
+        </>
       ) : (
         <CenteredSpinner className="min-h-40" />
       )}
     </div>
+  );
+}
+
+/** Removal lives with editing: the one place a definition is changed by hand. */
+function Removal({
+  kind,
+  name,
+  onRemoved,
+}: {
+  kind: EditableKind;
+  name: string;
+  onRemoved: () => void;
+}) {
+  return (
+    <section className="mt-6 flex flex-col gap-2 border-t border-border pt-4">
+      <h2 className={TEXT_HEADING}>Remove</h2>
+      <p className={cn(TEXT_BODY, "text-muted-foreground")}>
+        {kind === "datasets"
+          ? "Takes the dataset away with every record it holds. Refused while a metric reads it."
+          : "Refused while something else still draws it."}
+      </p>
+      <div className="self-start">
+        {kind === "datasets" ? (
+          <RemoveDataset name={name} onRemoved={onRemoved} />
+        ) : (
+          <RemoveDefinition kind={kind} name={name} onRemoved={onRemoved} />
+        )}
+      </div>
+    </section>
   );
 }
