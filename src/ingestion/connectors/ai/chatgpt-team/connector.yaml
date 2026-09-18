@@ -492,9 +492,12 @@ streams:
   # No pagination. Snapshot: a `snapshot_date` (today) is injected so daily
   # snapshots accumulate instead of overwriting.
   #
-  # NOTE: the prototype queried the billing cycle (resets on the 14th). We
-  # use a simple [start_date or -30d, today] window here; billing-cycle
-  # alignment is deferred (spec OQ — billing semantics).
+  # INVARIANT: a fixed rolling [-30d, today] window, independent of the
+  # config's start_date. The vendor's billing period does not start on the 1st
+  # and this connector does not model it, so the window is a rolling read of
+  # the current state rather than a period boundary. Nothing here loads a past
+  # billing period, and moving the analytics backfill date does not make it.
+  # Billing-cycle alignment stays deferred.
   - type: DeclarativeStream
     name: chatgpt_team_subscription_usage
     primary_key:
@@ -723,12 +726,21 @@ spec:
         order: 5
       start_date:
         type: string
-        title: Start Date (daily streams only)
+        title: Start Date (daily analytics streams only)
         description: |
-          Earliest date to backfill the per-day streams (chat_activity,
-          codex_user_daily) from (YYYY-MM-DD). Default: 7 days ago. Set to
-          "2026-01-14" for a full historical backfill (earliest observed
-          data point for the test org). Also bounds the subscription window.
+          Earliest date (YYYY-MM-DD) the per-day ANALYTICS streams backfill
+          from: chat_activity, codex_user_daily and codex_user_daily_org.
+          Default: 7 days ago. There is no floor — how far back it reaches is
+          whatever history the workspace still holds.
+
+          It does NOT reach the subscription streams. Those ask for a fixed
+          rolling 30-day window ending today, whatever this is set to, so
+          moving it back does not load historical billing periods. Historical
+          subscription backfill is not supported and has not been confirmed
+          against a live workspace.
+
+          The seat roster and account settings are full snapshots and have no
+          window at all.
         default: ""
         order: 6
     additionalProperties: true
