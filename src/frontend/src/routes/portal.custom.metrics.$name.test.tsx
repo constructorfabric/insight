@@ -85,33 +85,11 @@ describe("/portal/custom/metrics/$name", () => {
     await waitFor(() =>
       expect(customClient.runMetric).toHaveBeenCalledWith("lines_by_author", {
         range: "P30D",
-        bucket: false,
       })
     );
     expect(screen.getByRole("button", { name: "P30D" })).toHaveAttribute(
       "aria-pressed",
       "true"
-    );
-  });
-
-  // A chart draws a window sliced into buckets; the page can show that shape.
-  it("slices a window into buckets when asked, and not before a window is picked", async () => {
-    const user = userEvent.setup();
-    vi.mocked(customClient.fetchMetric).mockResolvedValue(CLOCKED);
-
-    render(<Component />, { wrapper });
-    await screen.findByText("ada");
-
-    expect(screen.getByRole("button", { name: "By bucket" })).toBeDisabled();
-
-    await user.click(screen.getByRole("button", { name: "P30D" }));
-    await user.click(screen.getByRole("button", { name: "By bucket" }));
-
-    await waitFor(() =>
-      expect(customClient.runMetric).toHaveBeenCalledWith("lines_by_author", {
-        range: "P30D",
-        bucket: true,
-      })
     );
   });
 

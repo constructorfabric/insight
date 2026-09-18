@@ -84,10 +84,9 @@ function MetricPage() {
 /** The metric run here and now, over a window the reader picks. */
 function Run({ name, windowed }: { name: string; windowed: boolean }) {
   const [range, setRange] = useState<string | undefined>(undefined);
-  const [bucketed, setBucketed] = useState(false);
-  // A bucket is a slice of a window; without a window there is nothing to slice.
-  const options = range ? { range, bucket: bucketed } : undefined;
-  const result = useQuery(metricResultQuery(name, options));
+  const result = useQuery(
+    metricResultQuery(name, range ? { range } : undefined)
+  );
 
   return (
     <Card>
@@ -108,20 +107,6 @@ function Run({ name, windowed }: { name: string; windowed: boolean }) {
                 onPick={() => setRange(token)}
               />
             ))}
-            <span
-              className="mx-1 h-4 border-s border-border"
-              aria-hidden="true"
-            />
-            <Button
-              variant={bucketed ? "secondary" : "ghost"}
-              size="sm"
-              aria-pressed={bucketed}
-              disabled={range === undefined}
-              title="Split the window into time buckets, as a chart draws it"
-              onClick={() => setBucketed((was) => !was)}
-            >
-              By bucket
-            </Button>
           </span>
         ) : null}
       </CardHeader>
