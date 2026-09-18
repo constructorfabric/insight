@@ -88,7 +88,11 @@ const TASK_DELIVERY_COLLECTION: MetricCollectionConfig = {
       views: [{ view: "period" }, { view: "peer" }],
     },
     {
-      key: "tasks.closed_non_bug",
+      key: "tasks.closed_task",
+      views: [{ view: "period" }, { view: "peer" }],
+    },
+    {
+      key: "tasks.closed_unknown",
       views: [{ view: "period" }, { view: "peer" }],
     },
     {
@@ -684,7 +688,8 @@ export const GROUPS: readonly MetricGroup[] = [
 export const HEATMAP_METRIC_KEYS: readonly string[] = [
   "tasks.closed",
   "tasks.bugs_fixed",
-  "tasks.closed_non_bug",
+  "tasks.closed_task",
+  "tasks.closed_unknown",
   "tasks.resolution_time",
   "git.prs_merged",
   "git.pr_cycle_time_h",

@@ -25,9 +25,13 @@
 -- `config.field_value_map` row for (tenant, source, field='issue_type',
 -- source_key = type id) decides it; an unmapped id falls to the tenant's
 -- `config.field_value_defaults` row for the field, then to 'unknown' — never
--- to a name or the raw value. Resolving at the gold build is what makes a
--- mapping change apply on the next run without a silver rebuild.
--- `class_task_issuetypes` stays the raw catalogue dimension for the names.
+-- to a name or the raw value. The RESOLUTION kind (fixed / duplicate /
+-- wontfix / unknown) resolves the same way under field='resolution', except
+-- an issue with no resolution value at all is 'unknown' outright — the
+-- default speaks only for unmapped values, not absent ones. Resolving at the
+-- gold build is what makes a mapping change apply on the next run without a
+-- silver rebuild. `class_task_issuetypes` stays the raw catalogue dimension
+-- for the type names.
 -- Fields are matched by ROLE, not by vendor field id: `field_id` is documented
 -- as vendor-specific, so a literal here would only ever be Jira's name for the
 -- thing. `task_field_roles_current` carries the binding. Attribution:
@@ -68,6 +72,51 @@ issue_type_default AS (
       AND default_value IN ('bug', 'task', 'unknown')
     ORDER BY valid_from DESC, recorded_at DESC
     LIMIT 1 BY tenant_id, insight_source_id
+),
+-- Operator resolution decisions; same bitemporal shape and domain guard as
+-- the issue-type pair above. INVARIANT: all four decision CTEs stay in
+-- lockstep — latest row first, tombstone/domain filter after.
+resolution_map AS (
+    SELECT
+        tenant_id,
+        insight_source_id,
+        source_key,
+        target_value
+    FROM (
+        SELECT
+            tenant_id,
+            insight_source_id,
+            source_key,
+            target_value,
+            is_deleted
+        FROM {{ source('config', 'field_value_map') }} FINAL
+        WHERE field = 'resolution'
+          AND valid_from <= now64(3)
+        ORDER BY valid_from DESC, recorded_at DESC
+        LIMIT 1 BY tenant_id, insight_source_id, source_key
+    )
+    WHERE is_deleted = 0
+      AND target_value IN ('fixed', 'duplicate', 'wontfix', 'unknown')
+),
+resolution_default AS (
+    SELECT
+        tenant_id,
+        insight_source_id,
+        default_value
+    FROM (
+        SELECT
+            tenant_id,
+            insight_source_id,
+            default_value,
+            is_deleted
+        FROM {{ source('config', 'field_value_defaults') }} FINAL
+        WHERE field = 'resolution'
+          AND valid_from <= now64(3)
+        ORDER BY valid_from DESC, recorded_at DESC
+        LIMIT 1 BY tenant_id, insight_source_id
+    )
+    WHERE is_deleted = 0
+      AND default_value IN ('fixed', 'duplicate', 'wontfix', 'unknown')
 ),
 task_users AS (
     SELECT
@@ -129,6 +178,8 @@ issue_pivot AS (
                  role = 'issuetype' AND delta_action = 'set')            AS issue_type,
         argMaxIf(value_ids[1], (event_at, {{ task_event_rank('event_kind') }}, _seq, toUInt64OrZero(event_id)),
                  role = 'issuetype' AND delta_action = 'set')            AS issue_type_id,
+        argMaxIf(value_ids[1], (event_at, {{ task_event_rank('event_kind') }}, _seq, toUInt64OrZero(event_id)),
+                 role = 'resolution' AND delta_action = 'set')           AS resolution_id_raw,
         argMaxIf(value_displays[1], (event_at, {{ task_event_rank('event_kind') }}, _seq, toUInt64OrZero(event_id)),
                  role = 'duedate' AND delta_action = 'set')              AS due_date_str,
         toFloat64OrNull(argMaxIf(value_displays[1], (event_at, {{ task_event_rank('event_kind') }}, _seq, toUInt64OrZero(event_id)),
@@ -199,6 +250,16 @@ SELECT
     coalesce(it.untranslated_name, nullIf(it.issue_type_name, ''),
              nullIf(p.issue_type, ''))                                       AS issue_type_key,
     coalesce(nullIf(it.issue_type_name, ''), nullIf(p.issue_type, ''))       AS issue_type_name,
+    -- An issue that carries no resolution value is 'unknown' outright: the
+    -- default row speaks for UNMAPPED values, and letting it claim absent
+    -- ones would classify every open issue.
+    if(nullIf(p.resolution_id_raw, '') IS NULL,
+       'unknown',
+       CAST(coalesce(
+           nullIf(toString(rm.target_value), ''),
+           nullIf(toString(rd.default_value), ''),
+           'unknown'
+       ) AS String))                                                         AS resolution_kind,
     if(p.due_date_str IS NOT NULL AND p.due_date_str != '',
        toDate(parseDateTimeBestEffortOrNull(p.due_date_str)),
        CAST(NULL AS Nullable(Date)))                                         AS due_date,
@@ -224,6 +285,13 @@ LEFT JOIN issue_type_map AS m
 LEFT JOIN issue_type_default AS d
     ON d.tenant_id = u.tenant_id
     AND d.insight_source_id = p.insight_source_id
+LEFT JOIN resolution_map AS rm
+    ON rm.tenant_id = u.tenant_id
+    AND rm.insight_source_id = p.insight_source_id
+    AND rm.source_key = p.resolution_id_raw
+LEFT JOIN resolution_default AS rd
+    ON rd.tenant_id = u.tenant_id
+    AND rd.insight_source_id = p.insight_source_id
 -- Issues deleted at the source (or in the project trash) leave every task
 -- metric: this table is the root of the gold task chain, so the filter
 -- propagates to spans, worklog flow and evidence. archived / access_lost /

@@ -153,6 +153,13 @@ templates:
     schema_type: date
     unique_key: jira-test-field-duedate
 
+  field_resolution:
+    $ref: "#/templates/jira_field"
+    field_id: resolution
+    name: Resolution
+    schema_type: resolution
+    unique_key: jira-test-field-resolution
+
   # Numeric time-tracking fields (drive estimation_accuracy). Jira tracks them in
   # seconds; the issue fixture does not carry timeoriginalestimate / timespent, so
   # a test sets them through the changelog.
@@ -453,6 +460,42 @@ templates:
     unique_key: jira-type-10005
     target_value: bug
     display_name: Bug
+
+  # ── Operator resolution decisions (config.field_value_map) ────────────────
+  # Binds a resolution id to a resolution class under field=resolution; gold
+  # resolves `resolution_kind` the same way as the issue kind. An unresolved
+  # issue is 'unknown' outright, without consulting the default.
+  jira_resolution_map:
+    $ref: "#/templates/jira_issue_type"
+    field: resolution
+
+  value_resolution_fixed:
+    $ref: "#/templates/jira_resolution_map"
+    source_key: "1"
+    unique_key: jira-resolution-1
+    target_value: fixed
+    display_name: Fixed
+
+  value_resolution_wontfix:
+    $ref: "#/templates/jira_resolution_map"
+    source_key: "2"
+    unique_key: jira-resolution-2
+    target_value: wontfix
+    display_name: "Won't Fix"
+
+  value_resolution_duplicate:
+    $ref: "#/templates/jira_resolution_map"
+    source_key: "3"
+    unique_key: jira-resolution-3
+    target_value: duplicate
+    display_name: Duplicate
+
+  # Per-tenant fallback for resolution ids with no decision.
+  jira_resolution_default:
+    $ref: "#/templates/jira_issue_type_default"
+    field: resolution
+    unique_key: jira-resolution-default
+    default_value: wontfix
 
   # ── Deletion / visibility censuses (specs/DELETION-AND-VISIBILITY.md) ────
   # jira_census: one row per issue observed alive by the id-only sweep. An

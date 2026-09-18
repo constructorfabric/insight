@@ -2,8 +2,9 @@
 
 Operator decisions binding a vendor value of a standardized field to the
 canonical value gold consumes. The file mirrors the table: one dictionary for
-every standardized field, so a future field needs no loader change and no new
-format — issue types are just the first field. Every `*.tsv` here is packed
+every standardized field, no new format per field. A new field needs one
+`FIELD_DOMAINS` entry in the loader, which rejects any field it has no domain
+for. Every `*.tsv` here is packed
 into the `insight-field-value-map` ConfigMap by `make field-value-map` (chained
 into `make deploy`) and applied by the umbrella's `clickhouse-field-value-map`
 hook Job on every upgrade. Files other than `defaults.tsv` land in

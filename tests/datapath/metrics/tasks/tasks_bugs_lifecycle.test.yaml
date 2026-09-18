@@ -18,7 +18,7 @@ description: >
   the re-close day, and the first close day serves nothing. (3) dave's Jira
   issue closes 2026-06-25 while it is a Bug, but a 2026-06-26 changelog row
   retypes it Bug -> Task and the current snapshot carries Task: issue_kind
-  joins on the CURRENT type, so the close lands in closed_non_bug and not in
+  joins on the CURRENT type, so the close lands in closed_task and not in
   bugs_fixed - pinned as current behavior (snapshot type wins), not intent.
 
 bronze:

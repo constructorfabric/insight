@@ -22,7 +22,8 @@ CAROL = "carol@example.com"
 
 def test_bug_split_across_mapped_and_unmapped_types(spec: SpecRun) -> None:
     """One bug plus one non-bug is one short of the three closed; the Incident is the
-    gap, and the type breakdown shows it as its own group rather than absorbing it."""
+    gap, counted by closed_unknown, and the type breakdown shows it as its own group
+    rather than absorbing it."""
     r = spec.call(
         {
             "url": "/v1/metric-results",
@@ -39,7 +40,8 @@ def test_bug_split_across_mapped_and_unmapped_types(spec: SpecRun) -> None:
                         ],
                     },
                     {"metric_key": "tasks.bugs_fixed", "views": [{"view": "period"}]},
-                    {"metric_key": "tasks.closed_non_bug", "views": [{"view": "period"}]},
+                    {"metric_key": "tasks.closed_task", "views": [{"view": "period"}]},
+                    {"metric_key": "tasks.closed_unknown", "views": [{"view": "period"}]},
                     {"metric_key": "tasks.bugs_ratio", "views": [{"view": "period"}]},
                 ],
             },
@@ -49,7 +51,8 @@ def test_bug_split_across_mapped_and_unmapped_types(spec: SpecRun) -> None:
 
     r.row("tasks.closed", "period", entity_id=CAROL).equals(value=3)
     r.row("tasks.bugs_fixed", "period", entity_id=CAROL).equals(value=1)
-    r.row("tasks.closed_non_bug", "period", entity_id=CAROL).equals(value=1)
+    r.row("tasks.closed_task", "period", entity_id=CAROL).equals(value=1)
+    r.row("tasks.closed_unknown", "period", entity_id=CAROL).equals(value=1)
 
     ratio = one(r.rows("tasks.bugs_ratio", "period"), entity_id=CAROL)
     assert 33.0 < float(ratio["value"]) < 34.0

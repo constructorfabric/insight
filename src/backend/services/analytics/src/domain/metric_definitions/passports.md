@@ -708,13 +708,45 @@ this file and the registry disagree.
 - Shape: integer, higher_is_better, unit issues
 - Notes: Issues of a bug type a person closed during the period. Part of issues closed, not a separate total.
 
-## tasks.closed_non_bug — Non-bug issues closed
+## tasks.closed_task — Tasks closed
 
 - Source: task (task_metric_observations)
-- Reads: closed_non_bug
-- Formula: sum(closed_non_bug)
+- Reads: closed_task
+- Formula: sum(closed_task)
 - Shape: integer, higher_is_better, unit issues
-- Notes: Issues of a known non-bug type a person closed during the period. Issues whose type cannot be determined are excluded rather than counted here.
+- Notes: Issues of a known task (non-bug) type a person closed during the period. Issues whose type cannot be determined are excluded rather than counted here.
+
+## tasks.closed_unknown — Unclassified issues closed
+
+- Source: task (task_metric_observations)
+- Reads: closed_unknown_type
+- Formula: sum(closed_unknown_type)
+- Shape: integer, lower_is_better, unit issues
+- Notes: Issues a person closed whose type the operator type table maps to no kind, so they count in neither bugs nor tasks. Completes the split of issues closed.
+
+## tasks.closed_fixed — Closed fixed
+
+- Source: task (task_metric_observations)
+- Reads: closed_fixed
+- Formula: sum(closed_fixed)
+- Shape: integer, higher_is_better, unit issues
+- Notes: Issues a person closed during the period whose resolution class is fixed — work that was really done rather than dismissed. Part of issues closed, not a separate total.
+
+## tasks.closed_duplicate — Closed duplicates
+
+- Source: task (task_metric_observations)
+- Reads: closed_duplicate
+- Formula: sum(closed_duplicate)
+- Shape: integer, neutral, unit issues
+- Notes: Issues a person closed during the period whose resolution class is duplicate. Part of issues closed, not a separate total.
+
+## tasks.closed_wontfix — Closed won't-fix
+
+- Source: task (task_metric_observations)
+- Reads: closed_wontfix
+- Formula: sum(closed_wontfix)
+- Shape: integer, neutral, unit issues
+- Notes: Issues a person closed during the period whose resolution class is wontfix. Part of issues closed, not a separate total.
 
 ## tasks.dev_time — Development time
 

@@ -101,7 +101,7 @@ def test_reopened_bug_counts_once_on_its_final_close_day(spec: SpecRun) -> None:
 def test_type_change_after_close_reclassifies_the_close(spec: SpecRun) -> None:
     """Dave's issue was a Bug when it closed, but the current snapshot says Task after
     the 2026-06-26 retype, and the kind joins on the CURRENT type: the close counts in
-    closed_non_bug, not bugs_fixed. Pins current behavior (snapshot type wins), not
+    closed_task, not bugs_fixed. Pins current behavior (snapshot type wins), not
     intent."""
     r = spec.call(
         {
@@ -112,7 +112,7 @@ def test_type_change_after_close_reclassifies_the_close(spec: SpecRun) -> None:
                 "period": {"from": "2026-06-20", "to": "2026-06-30"},
                 "metrics": [
                     {"metric_key": "tasks.bugs_fixed", "views": [{"view": "period"}]},
-                    {"metric_key": "tasks.closed_non_bug", "views": [{"view": "period"}]},
+                    {"metric_key": "tasks.closed_task", "views": [{"view": "period"}]},
                     {"metric_key": "tasks.closed", "views": [{"view": "period"}]},
                 ],
             },
@@ -121,5 +121,5 @@ def test_type_change_after_close_reclassifies_the_close(spec: SpecRun) -> None:
     assert r.status == 200
 
     r.row("tasks.bugs_fixed", "period", entity_id=DAVE).equals(value=None)
-    r.row("tasks.closed_non_bug", "period", entity_id=DAVE).equals(value=1)
+    r.row("tasks.closed_task", "period", entity_id=DAVE).equals(value=1)
     r.row("tasks.closed", "period", entity_id=DAVE).equals(value=1)
