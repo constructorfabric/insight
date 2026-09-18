@@ -23,7 +23,7 @@ CAROL = "carol@example.com"
 def test_live_rows_classify_by_id_and_anything_else_is_unknown(spec: SpecRun) -> None:
     """A live row keyed on the type id decides the kind whatever the type is named,
     including after a rename; a deleted, future or absent row leaves the type
-    `unknown`, counting in tasks.closed only."""
+    `unknown`, counted by closed_unknown and by neither kind subset."""
     r = spec.call(
         {
             "url": "/v1/metric-results",
@@ -34,7 +34,8 @@ def test_live_rows_classify_by_id_and_anything_else_is_unknown(spec: SpecRun) ->
                 "metrics": [
                     {"metric_key": "tasks.closed", "views": [{"view": "period"}]},
                     {"metric_key": "tasks.bugs_fixed", "views": [{"view": "period"}]},
-                    {"metric_key": "tasks.closed_non_bug", "views": [{"view": "period"}]},
+                    {"metric_key": "tasks.closed_task", "views": [{"view": "period"}]},
+                    {"metric_key": "tasks.closed_unknown", "views": [{"view": "period"}]},
                 ],
             },
         }
@@ -43,4 +44,5 @@ def test_live_rows_classify_by_id_and_anything_else_is_unknown(spec: SpecRun) ->
 
     r.row("tasks.closed", "period", entity_id=CAROL).equals(value=6)
     r.row("tasks.bugs_fixed", "period", entity_id=CAROL).equals(value=2)
-    r.row("tasks.closed_non_bug", "period", entity_id=CAROL).equals(value=1)
+    r.row("tasks.closed_task", "period", entity_id=CAROL).equals(value=1)
+    r.row("tasks.closed_unknown", "period", entity_id=CAROL).equals(value=3)

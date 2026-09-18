@@ -93,8 +93,8 @@ wrong.
 > and gold's existing `if(dev_seconds > 0, …)` guard omits the measure instead
 > of inventing it.
 
-Produced: `tasks_closed`, `bugs_fixed`, `closed_non_bug`, `resolution_days`,
-`close_events`, `reopened_within_14d`, `due_date_on_time`, `due_date_with_due`,
+Produced: `tasks_closed`, `bugs_fixed`, `closed_task`, `closed_unknown_type`,
+`resolution_days`, `close_events`, `reopened_within_14d`, `due_date_on_time`, `due_date_with_due`,
 `slip_days_total`, `late_count`, and `stale_in_progress` subject to the caveat
 in [section 5](#5-making-gold-source-neutral).
 
@@ -840,8 +840,9 @@ measure wants them.
 `task_non_bug_type_names` are dbt variables scoped to the whole deployment, with
 no tenant or source key. Two trackers with different type vocabularies collide,
 and an unlisted type falls to `unknown`, which is excluded from both `bugs_fixed`
-and `closed_non_bug` while still counting toward `tasks_closed` — the bug share
-moves with no signal. Migrating these lists into the value-mapping table keyed on
+and `closed_task` while still counting toward `tasks_closed`; it lands in
+`closed_unknown_type` (served as `tasks.closed_unknown`), so the bug share moves
+with a readable cause rather than silently. Migrating these lists into the value-mapping table keyed on
 the source resolves it; the current lists become the per-vendor default seed.
 
 **Three configuration guarantees are implemented but unproven.**

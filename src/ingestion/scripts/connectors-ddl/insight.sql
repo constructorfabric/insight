@@ -472,6 +472,7 @@ CREATE TABLE IF NOT EXISTS insight.task_issue_state
     `issue_kind` String,
     `issue_type_key` Nullable(String),
     `issue_type_name` Nullable(String),
+    `resolution_kind` String,
     `due_date` Nullable(Date),
     `time_estimate_seconds` Nullable(Float64),
     `time_spent_seconds` Nullable(Float64),

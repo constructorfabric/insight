@@ -12234,11 +12234,12 @@ alerting:
           severity: warning
         annotations:
           summary: "{{ \"{{ $labels.insight_source_id }}\" }} closed over 10% of its issues with no issue-type\
-            \ classification in the last 7d — bugs_fixed and closed_non_bug are undercounting"
+            \ classification in the last 7d — bugs_fixed and closed_task are undercounting"
           description: "Issue kind comes only from operator decisions in config.field_value_map; a type\
             \ with no row falls to the tenant's config.field_value_defaults row, else resolves to issue_kind='unknown'\
-            \ and mints neither bugs_fixed nor closed_non_bug, while tasks_closed still counts it — so\
-            \ the bug metrics degrade silently. Add the missing types to environments/<env>/clickhouse/field-value-map/*.tsv\
+            \ and mints closed_unknown_type (served as tasks.closed_unknown) instead of bugs_fixed\
+            \ or closed_task, while tasks_closed still counts it — so the bug metrics degrade.\
+            \ Add the missing types to environments/<env>/clickhouse/field-value-map/*.tsv\
             \ (insert-only, loaded on deploy) and redeploy. The population is built from silver field history,\
             \ not gold task_issue_state, on purpose: gold keeps only assignee-resolved issues, and config\
             \ coverage is independent of assignment — a source whose closed issues are all unassigned produces\

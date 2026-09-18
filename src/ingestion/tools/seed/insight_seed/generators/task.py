@@ -174,6 +174,18 @@ _ISSUE_TYPE_DIM = {
 _PRIORITIES = ("Highest", "High", "Medium", "Medium", "Low")
 _CLOSE_STATUSES = ("Closed", "Resolved", "Verified")
 
+# Resolution decisions for config.field_value_map. There is no raw resolution
+# catalogue: classification is id-keyed and nothing displays the Jira names.
+# Seeded issues carry no resolution field-history events (adding a draw would
+# re-deal the rng wire format), so gold classifies them 'unknown'; the rows
+# exist so stands exercise the resolution config path end to end.
+_RESOLUTION_DIM = {
+    # display_name: (resolution_id, resolution_kind)
+    "Fixed": ("1", "fixed"),
+    "Won't Fix": ("2", "wontfix"),
+    "Duplicate": ("3", "duplicate"),
+}
+
 # Status dimension. The task_issue_state gold model resolves a status to a
 # lifecycle category by joining class_task_statuses on
 # (insight_source_id, status_id), and gold detects a closed task via
@@ -548,24 +560,25 @@ def seed_field_value_map(
     for p in task_persons(roster):
         src_id = deterministic_uuid("task.source", p.uuid)
         data_source = _task_data_source(p.team)
-        for name, (issue_type_id, kind) in _ISSUE_TYPE_DIM.items():
-            rows.append(
-                (
-                    tenant_uuid,
-                    src_id,
-                    data_source,
-                    "issue_type",
-                    issue_type_id,
-                    epoch,
-                    now,
-                    deterministic_uuid("task.fieldvaluemap", src_id, issue_type_id),
-                    kind,
-                    name,
-                    0,
-                    "",
-                    "seed",
+        for field, dim in (("issue_type", _ISSUE_TYPE_DIM), ("resolution", _RESOLUTION_DIM)):
+            for name, (source_key, kind) in dim.items():
+                rows.append(
+                    (
+                        tenant_uuid,
+                        src_id,
+                        data_source,
+                        field,
+                        source_key,
+                        epoch,
+                        now,
+                        deterministic_uuid("task.fieldvaluemap", src_id, field, source_key),
+                        kind,
+                        name,
+                        0,
+                        "",
+                        "seed",
+                    )
                 )
-            )
     return bulk_insert(client, "config", "field_value_map", cols, rows)
 
 

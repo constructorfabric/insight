@@ -58,7 +58,7 @@ def test_golden_metrics_land_in_the_manifest_and_add_up() -> None:
     persona_emails = {p["email"] for p in doc["personas"]}
     for email, totals in per_person.items():
         assert email in persona_emails, f"golden entry for a non-persona: {email!r}"
-        assert totals["bugs_fixed"] + totals["closed_non_bug"] <= totals["tasks_closed"], (
+        assert totals["bugs_fixed"] + totals["closed_task"] <= totals["tasks_closed"], (
             f"should be a subset split of tasks_closed: {email!r} carries {totals}"
         )
     assert sum(t["tasks_closed"] for t in per_person.values()) > 0, (
@@ -179,17 +179,17 @@ def test_golden_totals_equal_the_rows_the_generator_writes(
     for issue_id in closed:
         totals = observed.setdefault(
             issue_author[issue_id],
-            {"tasks_closed": 0, "bugs_fixed": 0, "closed_non_bug": 0},
+            {"tasks_closed": 0, "bugs_fixed": 0, "closed_task": 0},
         )
         totals["tasks_closed"] += 1
         issue_kind = task._ISSUE_TYPE_DIM[issue_type[issue_id]][1]
-        totals["bugs_fixed" if issue_kind == "bug" else "closed_non_bug"] += 1
+        totals["bugs_fixed" if issue_kind == "bug" else "closed_task"] += 1
 
     expected = {
         email: {
             "tasks_closed": t.tasks_closed,
             "bugs_fixed": t.bugs_fixed,
-            "closed_non_bug": t.closed_non_bug,
+            "closed_task": t.closed_task,
         }
         for email, t in task_totals(roster, _DAYS, _ANCHOR).items()
         if t.tasks_closed

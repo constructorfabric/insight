@@ -9,7 +9,7 @@ description: >
   to a kind: bug / task / unknown. Per (person, close-day):
     tasks_closed   = every closed issue, bugs included;
     bugs_fixed     = the bug-kind ones;
-    closed_non_bug = the known non-bug ones (an unknown kind joins neither subset).
+    closed_task    = the known task-kind ones (an unknown kind joins neither).
   bugs_ratio = 100 * sum(bugs_fixed) / sum(tasks_closed) — a share of closed
   issues, so a bug counts in BOTH numerator and denominator and 100% is the
   ceiling.

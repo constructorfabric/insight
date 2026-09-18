@@ -12,7 +12,7 @@ description: >
 
   Carol closes two issues. Type 10000 has a live row saying `bug`, so it counts
   as a bug — the default never overrides a decision. Type 10099 has no row, so
-  it falls to the default and counts in closed_non_bug. One bug plus one
+  it falls to the default and counts in closed_task. One bug plus one
   non-bug equals the two closures: nothing lands in the unknown bucket, which
   is exactly what the default changes — a lost default moves non-bug to zero,
   a default overriding the mapping moves bugs to zero.

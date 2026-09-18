@@ -15,6 +15,7 @@ SELECT
 FROM config.field_value_map FINAL
 WHERE is_deleted = 0
   AND NOT (field = 'issue_type' AND target_value IN ('bug', 'task', 'unknown'))
+  AND NOT (field = 'resolution' AND target_value IN ('fixed', 'duplicate', 'wontfix', 'unknown'))
 
 UNION ALL
 
@@ -28,5 +29,6 @@ SELECT
 FROM config.field_value_defaults FINAL
 WHERE is_deleted = 0
   AND NOT (field = 'issue_type' AND default_value IN ('bug', 'task', 'unknown'))
+  AND NOT (field = 'resolution' AND default_value IN ('fixed', 'duplicate', 'wontfix', 'unknown'))
 
 LIMIT 100
