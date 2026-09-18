@@ -133,6 +133,14 @@ def test_a_seat_stops_and_resumes_asserting_its_identity(
         "the ADR-0002 binding row must be revoked too — no field change can "
         f"express that, which is what the deactivation condition is for: {id_after_deactivation}"
     )
+    # Membership, not the last row: the macro's id_upserts fires on EVERY history
+    # row, so the row that triggers the deactivation also emits an id UPSERT at
+    # the same updated_at as the id DELETE. The two share a version and their
+    # order is arbitrary. That is the shared macro's behaviour, identical for
+    # every connector declaring a deactivation_condition, not something this
+    # connector decides — so this asserts the delete was emitted, not that it
+    # won a tie. The email and display_name assertions above are the ones that
+    # carry the guarantee, and they are unambiguous.
 
     # Reactivated: deactivated_time is cleared. The address is the SAME one, so
     # nothing but the lifecycle signal has changed.
