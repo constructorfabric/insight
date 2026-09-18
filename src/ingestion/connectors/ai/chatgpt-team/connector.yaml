@@ -13,16 +13,18 @@
 # Proxy source code + Dockerfile + deployment docs:
 #   https://gitlab.constr.dev/insight/secure-enclave → proxies/chatgpt_team/
 #
-# Six streams:
+# Seven streams:
 #   1. chatgpt_team_seats             — full snapshot, offset-paginated
 #   2. chatgpt_team_chat_activity     — per-day, cursor-paginated; DatetimeBasedCursor
 #   3. chatgpt_team_codex_user_daily  — per-day, page-paginated; DatetimeBasedCursor
 #   4. chatgpt_team_codex_user_daily_org — the same day's envelope, headcount only
 #   5. chatgpt_team_subscription_usage   — per-model spend snapshot; tolerates 403
 #   6. chatgpt_team_subscription_balance — current balance snapshot; tolerates 403
+#   7. chatgpt_team_account_settings     — workspace seat defaults and caps
 #
-# NOTE: endpoint shapes and fields are derived from the data_collector
-# prototype (apps/openai) and are not yet confirmed against a live workspace.
+# The roster, leaderboard and settings shapes below were read back from a
+# workspace. The two subscription streams were not: their fields still come
+# from the data_collector prototype (apps/openai) and are unconfirmed.
 # The proxy handles the chatgpt.com access_token.
 
 version: "7.0.4"
@@ -154,6 +156,28 @@ streams:
           role: { type: ["string", "null"] }
           seat_type: { type: ["string", "null"] }
           added_at: { type: ["string", "null"] }
+          # INVARIANT: everything below is declared last and in this order. The
+          # reconciler appends a new column to a table that already exists, so
+          # anywhere else would give a fresh install a different column order
+          # from a reconciled one, and union_by_tag reads positionally.
+          #
+          # credit_limits is the per-member spend cap, and it carries three
+          # distinct states the reader must keep apart: absent (no override),
+          # an empty array (an override that removes the cap) and an array of
+          # {enforcement_mode, limit, limit_mode}. Kept whole rather than
+          # flattened — the cap is denominated in credits, not currency.
+          account_user_id: { type: ["string", "null"] }
+          verified_email: { type: ["string", "null"] }
+          trial_state: { type: ["string", "null"] }
+          is_trial: { type: ["boolean", "null"] }
+          is_scim_managed: { type: ["boolean", "null"] }
+          creation_source: { type: ["string", "null"] }
+          # The vendor's own departure signal. Nothing reads it yet; collecting
+          # it is what makes a seat's tenure knowable later at all.
+          deactivated_time: { type: ["string", "null"] }
+          pending_seat_type: { type: ["string", "null"] }
+          reclaimable_seat_type: { type: ["string", "null"] }
+          credit_limits: { type: ["array", "null"] }
     retriever:
       type: SimpleRetriever
       requester:
@@ -326,10 +350,10 @@ streams:
           type: PageIncrement
           page_size: 50
           start_from_page: 1
-          # INVARIANT: the first request names its page. Left implicit, page 1
-          # is whatever the endpoint defaults to and the walk continues at 2,
-          # so a first page that is not 1 is never read. Naming it is also the
-          # only paging behaviour observed against this endpoint.
+          # The endpoint is 1-indexed and an omitted `page` answers page 1 —
+          # measured: the no-page and page=1 responses are identical, page=2
+          # returns the next ranks. Naming it changes no behaviour; it removes
+          # a server default the walk would otherwise depend on silently.
           inject_on_first_request: true
         page_token_option:
           type: RequestOption
@@ -545,6 +569,61 @@ streams:
       - type: RemoveFields
         field_pointers:
           - [usage_detail]
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [snapshot_date]
+            value: "{{ now_utc().strftime('%Y-%m-%d') }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ now_utc().strftime('%Y-%m-%d') }}"
+
+  # ── Stream 7: chatgpt_team_account_settings ─────────────────────────
+  # Workspace-level seat defaults. Endpoint:
+  #   GET /backend-api/accounts/{account_id}/settings
+  # One row per run, keyed on the snapshot day.
+  #
+  # Why it is worth a stream of its own: a member's own credit_limits is an
+  # OVERRIDE. seat_type_credit_limits holds the default that actually applies
+  # to everyone without one, so the effective cap for most seats is knowable
+  # only here. Costs one request per sync on the session already open.
+  - type: DeclarativeStream
+    name: chatgpt_team_account_settings
+    primary_key:
+      - snapshot_date
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        additionalProperties: true
+        properties:
+          tenant_id: { type: string }
+          source_id: { type: string }
+          unique_key: { type: string }
+          collected_at: { type: string }
+          data_source: { type: string }
+          snapshot_date: { type: string }
+          # Keyed by seat type, each value a list of cap objects shaped like a
+          # member's credit_limits entry. Kept whole: the key set is the
+          # vendor's seat vocabulary and pinning it here would be a guess.
+          seat_type_credit_limits: { type: ["object", "null"] }
+          default_seat_type: { type: ["string", "null"] }
+          auto_approve_seat_upgrades: { type: ["boolean", "null"] }
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *base_requester
+        path: "/api/accounts/{{ config['chatgpt_account_id'] }}/settings"
+        error_handler: *session_error_handler
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+    transformations:
       - type: AddFields
         fields: *standard_fields
       - type: AddFields

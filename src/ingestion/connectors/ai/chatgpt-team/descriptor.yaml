@@ -46,13 +46,21 @@ name: chatgpt-team
 #   The subscription window stops reading config['start_date'] — that knob
 #   backfills the daily streams, and letting it reach the billing request
 #   silently redefined `amount` under an unchanged snapshot_date.
+#   The roster gains the fields the endpoint already returned and the
+#   connector discarded: credit_limits (the per-member cap override, kept
+#   whole because absent, empty and populated are three different facts),
+#   deactivated_time (the only departure signal the source offers),
+#   pending_seat_type, account_user_id and the remaining account flags. A new
+#   account_settings stream carries seat_type_credit_limits, the default that
+#   governs every seat without an override. Nothing reads them yet; a fact the
+#   connector never stores cannot gain a reader later.
 #   MAJOR per ADR-0015: the narrowed filters and the gate make rows already in
 #   staging inadmissible, and only a full refresh removes them — leaving them
 #   keeps the activity guards failing on rows no current read would produce.
-#   Upgrade note: the new Bronze table is created by the stream's first sync,
-#   which the sync workflow runs before dbt. An instance whose first run of
-#   that stream fails has no table for the gate to read, and its dbt step fails
-#   until the stream succeeds once.
+#   Upgrade note: the two new Bronze tables are created by their streams' first
+#   sync, which the sync workflow runs before dbt. An instance whose first run
+#   of the envelope stream fails has no table for the gate to read, and its dbt
+#   step fails until that stream succeeds once.
 version: "3.0.0"
 # Daily at 04:00 UTC — off-peak. The customer's proxy runs a single browser
 # instance, so we avoid scheduling chatgpt-team next to anything else that

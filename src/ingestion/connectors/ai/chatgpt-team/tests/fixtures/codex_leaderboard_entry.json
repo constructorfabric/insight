@@ -3,7 +3,7 @@
   "user_id": "user-worked-00",
   "name": "worked-00",
   "email": "worked-00@example.com",
-  "credits": 10,
+  "credits": 12.5,
   "n_threads": 2,
   "n_turns": 7,
   "current_streak": 1,

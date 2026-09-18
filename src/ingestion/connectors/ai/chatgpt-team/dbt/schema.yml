@@ -40,6 +40,7 @@ sources:
         freshness:
           warn_after: {count: 72, period: hour}
           error_after: {count: 120, period: hour}
+      - name: chatgpt_team_account_settings   # workspace defaults — sync-liveness default is correct
 
 models:
   - name: chatgpt_team__ai_dev_usage
