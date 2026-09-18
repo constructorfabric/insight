@@ -1,3 +1,7 @@
+vi.mock("@tanstack/react-router", async () => {
+  const { portalRouterMock } = await import("@/test/portal-router");
+  return portalRouterMock();
+});
 vi.mock("@/api/custom-client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/api/custom-client")>();
   return {
@@ -183,6 +187,63 @@ describe("<DefinitionEditor> holding one document", () => {
         { dataset: "commits" }
       )
     );
+  });
+
+  // The service replaces on write: a new definition under a taken name would
+  // write over the one that exists.
+  it("refuses to create under a name the catalogue already holds", async () => {
+    const user = userEvent.setup();
+    vi.mocked(customClient.fetchDatasetNames).mockResolvedValue({
+      names: ["commits"],
+      total: 1,
+    });
+
+    render(<DefinitionEditor kind="datasets" onStored={vi.fn()} />, {
+      wrapper,
+    });
+    await screen
+      .findByText("", { selector: "option[value='commits']" })
+      .catch(() => undefined);
+
+    await user.type(screen.getByLabelText("Name"), "commits");
+    await user.type(screen.getByLabelText("Title"), "Commits");
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "A dataset called commits already exists."
+    );
+    expect(screen.getByRole("link", { name: "Open it" })).toHaveAttribute(
+      "href",
+      "/portal/custom/edit/datasets/commits"
+    );
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+
+    await user.type(screen.getByLabelText("Name"), "_2");
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  });
+
+  it("does not mistake an existing definition for a clash with itself", async () => {
+    vi.mocked(customClient.fetchMetricNames).mockResolvedValue({
+      names: ["lines_per_day"],
+      total: 1,
+    });
+
+    render(
+      <DefinitionEditor
+        kind="metrics"
+        name="lines_per_day"
+        document={{ dataset: "commits" }}
+        onStored={vi.fn()}
+      />,
+      { wrapper }
+    );
+
+    await waitFor(() =>
+      expect(customClient.fetchMetricNames).toHaveBeenCalled()
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
   });
 
   it("stores nothing until Save is pressed", async () => {

@@ -1,4 +1,5 @@
 import { useQueries, useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 
 import type { EditableKind } from "@/api/custom-client";
@@ -67,9 +68,14 @@ export function DefinitionEditor({
     "Couldn't store it."
   );
   const given = called.trim();
+  // SAFETY: the service replaces on write. A new definition given a name the
+  // catalogue already holds would write over that one, so the form refuses
+  // what it can see is taken; the catalogue may run a page behind, so this is
+  // a guard against a slip, not the service's own check.
+  const taken = name === undefined && names(kind).includes(given);
 
   const submit = () => {
-    if (given === "" || !sendable(held)) return;
+    if (given === "" || taken || !sendable(held)) return;
     store.mutate(
       { kind, name: given, body: held.document },
       { onSuccess: () => onStored(given) }
@@ -101,12 +107,32 @@ export function DefinitionEditor({
           id="definition-name"
           value={called}
           readOnly={name !== undefined}
+          aria-invalid={taken || undefined}
+          aria-describedby="definition-name-hint"
           className="h-9 w-72 font-mono"
           onChange={(event) => setCalled(event.target.value)}
         />
         {name === undefined ? (
-          <p className={cn(TEXT_LABEL, "text-muted-foreground")}>
-            What everything else will call this {description.noun}.
+          <p
+            id="definition-name-hint"
+            className={cn(TEXT_LABEL, "text-muted-foreground")}
+          >
+            The identifier: what the API path, other definitions and anything
+            sending records call this {description.noun}. Letters, digits,{" "}
+            <code>_</code> and <code>-</code>.
+          </p>
+        ) : null}
+        {taken ? (
+          <p role="alert" className={cn(TEXT_LABEL, "text-destructive")}>
+            A {description.noun} called <code>{given}</code> already exists.{" "}
+            <Link
+              to="/portal/custom/edit/$kind/$name"
+              params={{ kind, name: given }}
+              className="underline decoration-dotted underline-offset-4"
+            >
+              Open it
+            </Link>{" "}
+            instead of writing over it.
           </p>
         ) : null}
       </div>
@@ -188,7 +214,7 @@ export function DefinitionEditor({
       <div className="flex items-center gap-2">
         <Button
           type="submit"
-          disabled={given === "" || !sendable(held) || store.isPending}
+          disabled={given === "" || taken || !sendable(held) || store.isPending}
         >
           {store.isPending ? <Spinner className="size-3" /> : null}
           Save
