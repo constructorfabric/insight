@@ -71,8 +71,10 @@ templates:
   # ── Operator issue-type decisions (config.field_value_map) ──────────────
   # Binds a type ID to an issue kind under field=issue_type; gold resolves
   # `issue_kind` from these rows at its own build. An id with no live row
-  # falls to the tenant's config.field_value_defaults row, then `unknown`, so
-  # a spec expecting a type classified must seed the decision too.
+  # falls to the tenant's config.field_value_defaults row. The default row is
+  # not optional: `assert_task_field_value_defaults_exist` blocks the gold
+  # build without it. So a spec seeding issues seeds a map row for each type
+  # it expects classified, and a default row for the rest.
   # `display_name` records the name it was made against.
   github_issue_type:
     tenant_id: "{{ tenant }}"
@@ -103,6 +105,24 @@ templates:
     unique_key: gh-type-kind-bug
     target_value: bug
     display_name: Bug
+
+  # Per-source fallback for type ids with no map row
+  # (config.field_value_defaults). `unknown` is the operator STATING that
+  # unmapped closures at this source are unclassified — the ordinary case, and
+  # the row every spec needs to keep
+  # `assert_task_field_value_defaults_exist` green.
+  github_issue_type_default_unknown:
+    tenant_id: "{{ tenant }}"
+    insight_source_id: github-test
+    field: issue_type
+    valid_from: "1970-01-01 00:00:00.000"
+    recorded_at: "2026-01-01 00:00:00.000"
+    unique_key: gh-issue-type-default-unknown
+    default_value: unknown
+    is_deleted: 0
+    note: ""
+    recorded_by: fixture
+    _version: "2026-01-01 00:00:00.000"
 
   # A Projects V2 board's status is its OWN field, one per board, never the
   # issue's `state`. The field identity is the board, because a status event
