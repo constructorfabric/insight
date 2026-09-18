@@ -5,41 +5,23 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerInfo};
 use rmcp::{ServerHandler, tool, tool_handler, tool_router};
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::api::AppState;
-use crate::catalog::{Layer, TableSchema};
-use crate::custom::{CustomError, Surfaces};
-use crate::dashboard::Item;
-use crate::definitions::{DefinitionKind, DefinitionName, Page};
-use crate::time_window::WindowRequest;
+use crate::domain::definition::{DefinitionKind, DefinitionName, Page};
+use crate::domain::kinds::dashboard::Item;
+use crate::domain::metric_run::MetricRuns;
+use crate::domain::query::time_window::WindowRequest;
+use crate::domain::surfaces::{CustomError, Surfaces};
 
 #[cfg(test)]
 mod tests;
 
-#[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum ToolKind {
-    Metric,
-    Widget,
-    Dashboard,
-}
-
-impl ToolKind {
-    fn kind(self) -> DefinitionKind {
-        match self {
-            Self::Metric => DefinitionKind::Metric,
-            Self::Widget => DefinitionKind::Widget,
-            Self::Dashboard => DefinitionKind::Dashboard,
-        }
-    }
-}
-
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct KindRequest {
     /// Which kind of definition to list.
-    pub(crate) kind: ToolKind,
+    pub(crate) kind: DefinitionKind,
     /// How many names to answer with: 1 to 200, 50 by default.
     pub(crate) limit: Option<u64>,
     /// How many names to skip, for the page after the first.
@@ -49,7 +31,7 @@ pub(crate) struct KindRequest {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct SearchRequest {
     /// Which kind of definition to look through.
-    pub(crate) kind: ToolKind,
+    pub(crate) kind: DefinitionKind,
     /// Text to look for in a name or in a stored body — a table name finds
     /// every metric that reads it. Blank returns everything of that kind.
     pub(crate) query: String,
@@ -62,7 +44,7 @@ pub(crate) struct SearchRequest {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct NamedRequest {
     /// Which kind of definition the name belongs to.
-    pub(crate) kind: ToolKind,
+    pub(crate) kind: DefinitionKind,
     /// Letters, digits, underscore and dash, up to 128 characters.
     pub(crate) name: String,
 }
@@ -106,20 +88,6 @@ pub(crate) struct PutRequest {
     pub(crate) body: Value,
 }
 
-#[derive(Debug, Serialize)]
-struct TableEntry {
-    database: String,
-    table: String,
-    layer: &'static str,
-    columns: Vec<ColumnEntry>,
-}
-
-#[derive(Debug, Serialize)]
-struct ColumnEntry {
-    name: String,
-    r#type: String,
-}
-
 #[derive(Clone)]
 pub(crate) struct CustomSurfaces {
     state: Arc<AppState>,
@@ -144,10 +112,14 @@ impl CustomSurfaces {
         self.state.surfaces()
     }
 
+    fn metric_runs(&self) -> MetricRuns<'_> {
+        self.state.metric_runs()
+    }
+
     /// One page of names, with how many there are to page through.
     async fn read_page(
         &self,
-        kind: ToolKind,
+        kind: DefinitionKind,
         needle: &str,
         limit: Option<u64>,
         offset: Option<u64>,
@@ -157,7 +129,7 @@ impl CustomSurfaces {
             Err(error) => return refuse(&error.to_string()),
         };
 
-        match self.surfaces().page(kind.kind(), needle, page).await {
+        match self.surfaces().page(kind, needle, page).await {
             Ok(found) => CallToolResult::structured(json!({
                 "names": found.names,
                 "total": found.total,
@@ -168,13 +140,13 @@ impl CustomSurfaces {
         }
     }
 
-    async fn write(&self, kind: ToolKind, request: PutRequest) -> CallToolResult {
+    async fn write(&self, kind: DefinitionKind, request: PutRequest) -> CallToolResult {
         let name = match parse_name(&request.name) {
             Ok(name) => name,
             Err(refusal) => return refusal,
         };
 
-        match self.surfaces().put(kind.kind(), &name, &request.body).await {
+        match self.surfaces().put(kind, &name, &request.body).await {
             Ok(()) => CallToolResult::structured(json!({"stored": request.name})),
             Err(error) => tool_error(&error),
         }
@@ -242,7 +214,7 @@ impl CustomSurfaces {
             Err(refusal) => return refusal,
         };
 
-        match self.surfaces().get(kind.kind(), &parsed).await {
+        match self.surfaces().get(kind, &parsed).await {
             Ok(body) => CallToolResult::structured(body),
             Err(error) => tool_error(&error),
         }
@@ -250,10 +222,10 @@ impl CustomSurfaces {
 
     #[tool(
         name = "put_metric",
-        description = "Creates or replaces a metric: a declarative query over an ingested table. The body names the table and the fields to read, for example {\"table\": \"events\", \"fields\": [{\"json\": \"actor\", \"type\": \"string\", \"as_name\": \"actor\"}, {\"json\": \"actor\", \"type\": \"string\", \"agg\": \"count\", \"as_name\": \"total\"}], \"group_by\": [\"actor\"]}. A field reads a typed column of the table (`column`), a key inside the row's `raw_data` payload (`json`), or a key inside any JSON column the table carries (`column` and `json` together, as in {\"column\": \"field_values_json\", \"json\": \"name\"}). A `json` key may be a dotted path into nested objects, such as \"field.name\". When the payload is an array of objects, add `where` - one filter, shaped like the others - to say which element the field means: {\"column\": \"field_values_json\", \"json\": \"name\", \"type\": \"string\", \"as_name\": \"status\", \"where\": {\"json\": \"field.name\", \"type\": \"string\", \"op\": \"eq\", \"value\": \"Status\"}}. `type` is string, int or float; `agg` is count, sum, avg, min or max. Add `time` to say which timestamp a reader may window by - {\"time\": {\"column\": \"occurred_at\"}} for a date column, or {\"json\": \"committed_at\"} for one inside the payload - and the run gains a `bucket` column ordered oldest first. `max_range` caps the widest window it will answer, as an ISO duration such as \"P1Y\". Optional `database`, `filters`, `order_by` and `limit`. Call list_tables first so the table and columns exist."
+        description = "Creates or replaces a metric: a declarative query over one dataset. The body names the dataset and the fields to read, for example {\"dataset\": \"commits\", \"fields\": [{\"field\": \"author\", \"type\": \"string\", \"as_name\": \"author\"}, {\"field\": \"lines\", \"type\": \"int\", \"agg\": \"sum\", \"as_name\": \"total\"}], \"group_by\": [\"author\"]}. Every `field` names a field the dataset declares; `group_by` and `order_by` name what this metric produces - an `as_name`, or `bucket` for a windowed run. `agg` is count, sum, avg, min or max, and only a number is summed or averaged. `count` alone counts the rows and names no field. Add `time` to window by a field other than the dataset's own main date: {\"time\": {\"field\": \"merged\"}}. `max_range` caps the widest window it will answer, as an ISO duration such as \"P1Y\". Optional `filters`, `order_by` and `limit`. Call list_datasets first so the dataset and its fields exist."
     )]
     async fn put_metric(&self, Parameters(request): Parameters<PutRequest>) -> CallToolResult {
-        self.write(ToolKind::Metric, request).await
+        self.write(DefinitionKind::Metric, request).await
     }
 
     #[tool(
@@ -261,7 +233,7 @@ impl CustomSurfaces {
         description = "Creates or replaces a widget, which draws one metric's columns by the `as_name` that metric gives them: {\"type\": \"table\", \"metric\": \"per-actor\", \"columns\": [\"actor\", \"total\"]} or {\"type\": \"line\", \"metric\": \"per-actor\", \"x\": \"actor\", \"y\": \"total\"}. A widget naming a column its metric does not produce is refused, so run_metric first if unsure what it yields."
     )]
     async fn put_widget(&self, Parameters(request): Parameters<PutRequest>) -> CallToolResult {
-        self.write(ToolKind::Widget, request).await
+        self.write(DefinitionKind::Widget, request).await
     }
 
     #[tool(
@@ -269,7 +241,7 @@ impl CustomSurfaces {
         description = "Creates or replaces a dashboard: a title, and what it draws top to bottom: {\"title\": \"Example board\", \"items\": [{\"heading\": \"Commits\"}, {\"widget\": \"chart\"}, {\"text\": \"Merge commits excluded.\"}]}. Each item names exactly one of `widget`, `heading` or `text`. Add `time_ranges` to let a reader pick the window the whole board is read over - any of `PDC`, `P7D`, `P30D`, `PMC`, `PQC`, `P1Y`, `inf` - and `default_range` for the one it opens on; a board declaring neither is read unbounded. `widgets: [\"chart\"]` is the older shorthand for a list of nothing but widgets, and is still read. To reorder or caption a board that exists, call arrange_dashboard instead."
     )]
     async fn put_dashboard(&self, Parameters(request): Parameters<PutRequest>) -> CallToolResult {
-        self.write(ToolKind::Dashboard, request).await
+        self.write(DefinitionKind::Dashboard, request).await
     }
 
     #[tool(
@@ -285,7 +257,7 @@ impl CustomSurfaces {
             Err(refusal) => return refusal,
         };
 
-        match self.surfaces().delete(kind.kind(), &parsed).await {
+        match self.surfaces().delete(kind, &parsed).await {
             Ok(()) => CallToolResult::structured(json!({"deleted": name})),
             Err(error) => tool_error(&error),
         }
@@ -313,7 +285,7 @@ impl CustomSurfaces {
             Err(error) => return refuse(&error.to_string()),
         };
 
-        match self.surfaces().run_metric(&parsed, &requested).await {
+        match self.metric_runs().run(&parsed, &requested).await {
             Ok(result) => match serde_json::to_value(&result) {
                 Ok(value) => CallToolResult::structured(value),
                 Err(error) => {
@@ -326,24 +298,13 @@ impl CustomSurfaces {
     }
 
     #[tool(
-        name = "list_tables",
-        description = "Every database and table this server can see, each with its columns and the layer it belongs to. Call this before writing a metric, so the metric names a table and columns that exist."
+        name = "list_datasets",
+        description = "Every dataset this server can read, with what each of its fields holds and which records count as one. Call this before writing a metric, so the metric names a dataset and fields that exist. Only an administrator declares a dataset; this server cannot."
     )]
-    async fn list_tables(&self) -> CallToolResult {
-        let tables = match self.surfaces().tables().await {
-            Ok(tables) => tables,
-            Err(error) => return tool_error(&error),
-        };
+    async fn list_datasets(&self) -> CallToolResult {
+        let described = self.state.assistant().briefing().await;
 
-        let entries: Vec<TableEntry> = tables.iter().map(table_entry).collect();
-
-        match serde_json::to_value(&entries) {
-            Ok(value) => CallToolResult::structured(json!({"tables": value})),
-            Err(error) => {
-                tracing::error!(%error, "the table catalogue could not be encoded");
-                refuse("the catalogue was read but could not be encoded")
-            }
-        }
+        CallToolResult::structured(json!({ "datasets": described.datasets }))
     }
 }
 
@@ -356,39 +317,14 @@ impl ServerHandler for CustomSurfaces {
                     .with_title("Insight custom surfaces"),
             )
             .with_instructions(
-                "Author the metrics, widgets and dashboards the portal reads. Call list_tables \
-                 to learn what data exists, put_metric to define a query over it, run_metric to \
-                 see the rows it yields, then put_widget to draw those rows and put_dashboard to \
-                 hold the widgets. A widget names its metric's columns by their as_name, and a \
-                 definition still in use cannot be deleted until its dependents are.",
+                "Author the metrics, widgets and dashboards the portal reads. Call \
+                 list_datasets to learn what data exists, put_metric to define a query over one \
+                 dataset, run_metric to see the rows it yields, then put_widget to draw those \
+                 rows and put_dashboard to hold the widgets. A metric names a dataset and its \
+                 declared fields; a widget names its metric's columns by their as_name; and a \
+                 definition still in use cannot be deleted until its dependents are. Datasets \
+                 themselves are declared by an administrator, not here.",
             )
-    }
-}
-
-fn table_entry(schema: &TableSchema) -> TableEntry {
-    TableEntry {
-        database: schema.database.clone(),
-        table: schema.table.clone(),
-        layer: layer_name(schema.layer),
-        columns: schema
-            .columns
-            .iter()
-            .map(|(name, kind)| ColumnEntry {
-                name: name.clone(),
-                r#type: kind.clone(),
-            })
-            .collect(),
-    }
-}
-
-fn layer_name(layer: Layer) -> &'static str {
-    match layer {
-        Layer::Bronze => "bronze",
-        Layer::Silver => "silver",
-        Layer::Gold => "gold",
-        Layer::Identity => "identity",
-        Layer::Ingest => "ingest",
-        Layer::Other => "other",
     }
 }
 
@@ -397,11 +333,15 @@ fn parse_name(raw: &str) -> Result<DefinitionName, CallToolResult> {
 }
 
 fn tool_error(error: &CustomError) -> CallToolResult {
-    if !error.is_about_the_caller() {
-        tracing::error!(%error, "an MCP tool call failed");
+    // A refusal the caller caused is theirs to read; a failure of ours says
+    // what the warehouse or the store said, which is not theirs to see.
+    if error.is_about_the_caller() {
+        return refuse(&error.to_string());
     }
 
-    refuse(&error.to_string())
+    tracing::error!(%error, "an MCP tool call failed");
+
+    refuse("the request could not be completed")
 }
 
 fn refuse(message: &str) -> CallToolResult {

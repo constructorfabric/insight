@@ -24,15 +24,22 @@ function wrapper({ children }: { children: ReactNode }) {
   return createElement(QueryClientProvider, { client: queryClient }, children);
 }
 
+/** A metric a window can select by, and the date it would use. */
 const CLOCKED = {
-  table: "demo_pull_requests",
-  time: { json: "merged_at" },
-  fields: [{ json: "id", type: "int", agg: "count", as_name: "merged" }],
+  definition: {
+    dataset: "pull_requests",
+    time: { field: "merged_at" },
+    fields: [{ field: "id", type: "int", agg: "count", as_name: "merged" }],
+  },
+  clock: { field: "merged_at", from: "metric" as const },
 };
 
+/** The same metric over a dataset that marks no date: nothing windows it. */
 const CLOCKLESS = {
-  table: "demo_pull_requests",
-  fields: [{ json: "id", type: "int", agg: "count", as_name: "total" }],
+  definition: {
+    dataset: "pull_requests",
+    fields: [{ field: "id", type: "int", agg: "count", as_name: "total" }],
+  },
 };
 
 beforeEach(() => {

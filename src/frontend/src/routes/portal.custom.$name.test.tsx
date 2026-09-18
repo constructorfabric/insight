@@ -144,14 +144,20 @@ describe("/portal/custom/$name", () => {
 });
 
 describe("/portal/custom/$name — the window it is read over", () => {
+  /** A metric a window can select by, and the date it would use. */
   const CLOCKED = {
-    table: "events",
-    time: { column: "occurred_at" },
-    fields: [{ agg: "count", type: "int", as_name: "total" }],
+    definition: {
+      dataset: "events",
+      fields: [{ agg: "count", type: "int", as_name: "total" }],
+    },
+    clock: { field: "occurred_at", from: "dataset" as const },
   };
+  /** The same metric over a dataset that marks no date. */
   const CLOCKLESS = {
-    table: "events",
-    fields: [{ agg: "count", type: "int", as_name: "total" }],
+    definition: {
+      dataset: "events",
+      fields: [{ agg: "count", type: "int", as_name: "total" }],
+    },
   };
 
   function board(extra: Record<string, unknown>) {

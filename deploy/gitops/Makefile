@@ -380,11 +380,39 @@ values-present:
 	@test -f $(VALUES) \
 		|| { echo "$(C_RED)ERROR$(C_RST): values file not found at $(VALUES)"; exit 1; }
 
+# A file, not a variable: a $(shell ...) here would run kubectl on every make
+# invocation. An explicit gateway.setRealIpFrom in the env's values wins.
+REALIP_ARGS = $(RENDER_DIR)/realip-$(ENV).args
+
+.PHONY: gateway-realip-args
+gateway-realip-args: values-present
+	@mkdir -p $(RENDER_DIR)
+	@if [ "$$(yq -r '.gateway.setRealIpFrom // "null"' $(VALUES))" = "null" ]; then \
+		CIDRS=$$(KUBE_CTX=$(KUBE_CTX) python3 scripts/gateway-realip.py) || exit 1; \
+		: > $(REALIP_ARGS); \
+		if [ -n "$$CIDRS" ]; then \
+			printf -- '--set gateway.setRealIpFrom={%s}' "$$CIDRS" > $(REALIP_ARGS); \
+		fi; \
+	else \
+		echo "gateway client-IP trust: pinned in $(VALUES)" >&2; \
+		: > $(REALIP_ARGS); \
+	fi
+
+.PHONY: show-gateway-realip
+show-gateway-realip: vpn-up kube-ctx values-present
+	@STORED=$$(yq -r '.gateway.setRealIpFrom // "null"' $(VALUES)); \
+	if [ "$$STORED" != "null" ]; then \
+		echo "pinned in $(VALUES): $$STORED"; \
+	else \
+		KUBE_CTX=$(KUBE_CTX) python3 scripts/gateway-realip.py >/dev/null; \
+	fi
+
 # ─── Diff and deploy ───────────────────────────────────────────────────
 
 .PHONY: diff
-diff: sync-clean values-present chart-present
-	@bash scripts/render-diff.sh "$(ENV)" "$(NAMESPACE)" "$(RELEASE)" \
+diff: sync-clean values-present chart-present vpn-up kube-ctx gateway-realip-args
+	@HELM_EXTRA_SET="$$(cat $(REALIP_ARGS))" \
+	bash scripts/render-diff.sh "$(ENV)" "$(NAMESPACE)" "$(RELEASE)" \
 		"$(CHART)" "$(VALUES)" "$(RENDER_DIR)" "$(INSIGHT_VERSION)"
 
 # Top-level deploy. For ENV=local (sandbox), `deploy` chains the full
@@ -567,11 +595,12 @@ validate-insight: values-present local-chart-present
 	@kubeconform -strict -summary < $(RENDER_DIR)/validate-render-$(ENV).yaml
 
 .PHONY: deploy-insight
-deploy-insight: sync-clean vpn-up kube-ctx confirm values-present chart-present apply-app-secrets keycloak-broker-realms field-value-map
+deploy-insight: sync-clean vpn-up kube-ctx confirm values-present chart-present gateway-realip-args apply-app-secrets keycloak-broker-realms field-value-map
 	@mkdir -p $(RENDER_DIR)
 	@helm template $(RELEASE) $(CHART) --version $(INSIGHT_VERSION) $(HELM_EXTRA_FLAGS) \
 		-n $(NS_APP) -f $(VALUES) \
 		--set previews.experiments.namespace=$(NS_PREVIEWS) \
+		$$(cat $(REALIP_ARGS)) \
 		> $(RENDER_DIR)/last-render-$(ENV).yaml
 	@echo "$(C_GRN)rendered$(C_RST) $(CHART):$(INSIGHT_VERSION) → $(RENDER_DIR)/last-render-$(ENV).yaml"
 	@# A release whose only revision is a failed install cannot be upgraded, and
@@ -618,6 +647,7 @@ deploy-insight: sync-clean vpn-up kube-ctx confirm values-present chart-present 
 		--namespace $(NS_APP) $(HELM_NS_FLAG) \
 		-f $(VALUES) \
 		--set previews.experiments.namespace=$(NS_PREVIEWS) \
+		$$(cat $(REALIP_ARGS)) \
 		--wait $(HELM_ATOMIC_FLAG) --timeout $(TIMEOUT) \
 		--history-max 10 \
 		2>&1 | tee $$LOG || rc=$$?; \
