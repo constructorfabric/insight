@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Pencil } from "lucide-react";
 
 import type { DefinitionKind } from "@/api/custom-client";
 import { refusal } from "@/components/custom/refusal";
@@ -21,9 +20,12 @@ import { cn } from "@/lib/utils";
 export function RenameDefinition({
   kind,
   name,
+  onRenamed,
 }: {
   kind: DefinitionKind;
   name: string;
+  /** Called with the new name once the service has taken it. */
+  onRenamed?: (to: string) => void;
 }) {
   const [asked, setAsked] = useState(false);
   const [next, setNext] = useState(name);
@@ -33,15 +35,14 @@ export function RenameDefinition({
     return (
       <Button
         variant="ghost"
-        size="icon-sm"
+        size="sm"
         aria-label={`Rename ${name}`}
-        className="text-muted-foreground"
         onClick={() => {
           setNext(name);
           setAsked(true);
         }}
       >
-        <Pencil />
+        Rename
       </Button>
     );
   }
@@ -53,7 +54,15 @@ export function RenameDefinition({
       return;
     }
 
-    rename.mutate({ kind, name, to }, { onSuccess: () => setAsked(false) });
+    rename.mutate(
+      { kind, name, to },
+      {
+        onSuccess: () => {
+          setAsked(false);
+          onRenamed?.(to);
+        },
+      }
+    );
   };
 
   return (

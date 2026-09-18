@@ -2,10 +2,12 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 
 import {
+  DefinitionActions,
   DefinitionCard,
   DefinitionList,
 } from "@/components/custom/definition-list";
 import { MetricSummary } from "@/components/custom/definition-summary";
+import { NewLink } from "@/components/custom/editor/edit-link";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { useDefinitionCatalogue } from "@/hooks/use-definition-catalogue";
 import { metricQuery } from "@/queries/custom";
@@ -17,7 +19,7 @@ import { cn } from "@/lib/utils";
  * literally called "metrics" would be unreachable, which is the trade for a
  * readable URL.
  */
-export const Route = createFileRoute("/portal/custom/metrics")({
+export const Route = createFileRoute("/portal/custom/metrics/")({
   component: MetricsCatalogue,
 });
 
@@ -34,6 +36,7 @@ function MetricsCatalogue() {
       onRetry={catalogue.refetch}
       search={{ label: "Search metrics", ...catalogue.search }}
       paging={catalogue.paging}
+      create={<NewLink kind="metrics" noun="metric" />}
       emptyLabel="No metrics yet. Ask the assistant for one."
       renderRow={(name) => <MetricRow name={name} />}
     />
@@ -44,7 +47,10 @@ function MetricRow({ name }: { name: string }) {
   const { data, isPending, isError, error } = useQuery(metricQuery(name));
 
   return (
-    <DefinitionCard name={name} kind="metrics">
+    <DefinitionCard
+      name={name}
+      actions={<DefinitionActions kind="metrics" name={name} />}
+    >
       {isPending ? (
         <CenteredSpinner className="min-h-24" />
       ) : isError ? (
@@ -52,7 +58,7 @@ function MetricRow({ name }: { name: string }) {
           {(error as Error).message}
         </p>
       ) : (
-        <MetricSummary definition={data} />
+        <MetricSummary definition={data.definition} />
       )}
     </DefinitionCard>
   );
