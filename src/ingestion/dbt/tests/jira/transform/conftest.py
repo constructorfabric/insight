@@ -23,16 +23,18 @@ warehouse. See README.md for the two commands that set it up.
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import re
-import subprocess
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import clickhouse_connect
 import pytest
+from dbt.cli.main import dbtRunner
 from helpers import SOURCE_ID
 
 # tests/jira/transform -> tests/jira -> tests -> dbt
@@ -64,6 +66,52 @@ def _env(name: str) -> str:
     return value
 
 
+@dataclass(frozen=True)
+class Invocation:
+    """What one dbt call did: whether it succeeded, what each node reported,
+    and enough of the log to read a failure from."""
+
+    success: bool
+    statuses: tuple[str, ...]
+    log: str
+
+
+class Dbt:
+    """The dbt project, invoked in the test process rather than as a command.
+
+    A subprocess pays for an interpreter start on every call — about nine
+    seconds against three of actual work, and a scenario makes two calls.
+    Invoking in-process keeps the interpreter and leaves dbt's own parse, which
+    reads the partial-parse cache and costs a couple of seconds.
+
+    INVARIANT: every call gets a freshly parsed manifest. Reusing one is
+    tempting and about a second faster, but dbt mutates it while compiling —
+    a node built once is marked compiled, so a second run of a model with an
+    ephemeral parent no longer gets the parent's CTE injected and references a
+    name that was never defined.
+    """
+
+    def __init__(self, profiles_dir: Path) -> None:
+        self._base = ["--project-dir", str(DBT_DIR), "--profiles-dir", str(profiles_dir), "--quiet"]
+        self._log: list[str] = []
+        parsed = self._invoke("parse")
+        if not parsed.success:
+            raise RuntimeError(f"dbt could not parse the project:\n{parsed.log}")
+
+    def _invoke(self, *args: str) -> Invocation:
+        self._log.clear()
+        runner = dbtRunner(callbacks=[lambda event: self._log.append(event.info.msg)])
+        result = runner.invoke([*args, *self._base])
+        statuses = tuple(str(node.status) for node in getattr(result.result, "results", ()))
+        log = "\n".join(self._log)
+        if result.exception is not None:
+            log = f"{log}\n{result.exception}"
+        return Invocation(success=result.success, statuses=statuses, log=log[-8000:])
+
+    def invoke(self, *args: str) -> Invocation:
+        return self._invoke(*args)
+
+
 class Warehouse:
     """The ClickHouse under test, plus the dbt invocation that targets it."""
 
@@ -73,6 +121,9 @@ class Warehouse:
         self.user = _env("CLICKHOUSE_USER")
         self.password = _env("CLICKHOUSE_PASSWORD")
         self.profiles_dir = profiles_dir
+        # Bumped whenever bronze is truncated, so a shared build knows its rows
+        # were taken out from under it.
+        self.generation = 0
 
     def client(self, database: str = "default"):
         return clickhouse_connect.get_client(
@@ -100,18 +151,20 @@ class Warehouse:
         with self.client() as c:
             c.raw_insert(table, column_names=columns, insert_block=payload, fmt="JSONEachRow")
 
-    def dbt_status(self, *args: str) -> tuple[int, str]:
-        """Run dbt and hand back its exit code and output, judging nothing."""
-        proc = subprocess.run(
-            ["dbt", *args, "--profiles-dir", str(self.profiles_dir)], cwd=DBT_DIR, capture_output=True, text=True
-        )
-        return proc.returncode, f"{proc.stdout[-6000:]}\n{proc.stderr[-2000:]}"
+    @functools.cached_property
+    def dbt_project(self) -> Dbt:
+        """Parsed on first use, then reused for the rest of the session."""
+        return Dbt(self.profiles_dir)
+
+    def dbt_status(self, *args: str) -> Invocation:
+        """Run dbt and hand back what it did, judging nothing."""
+        return self.dbt_project.invoke(*args)
 
     def dbt(self, *args: str) -> None:
         """Run dbt and fail the test with its output when it errors."""
-        code, output = self.dbt_status(*args)
-        if code != 0:
-            pytest.fail(f"dbt {' '.join(args)} failed (exit {code}):\n{output}", pytrace=False)
+        invocation = self.dbt_status(*args)
+        if not invocation.success:
+            pytest.fail(f"dbt {' '.join(args)} failed:\n{invocation.log}", pytrace=False)
 
     def build(self, selector: str = FIELD_HISTORY_SELECTOR) -> None:
         # `run`, not `build`: `build` interleaves the singular tests, so a
@@ -171,21 +224,76 @@ def warehouse() -> Warehouse:
         wh.execute("CREATE DATABASE IF NOT EXISTS insight")
         _apply_sql_file(wh, JIRA_BRONZE_DDL)
         _apply_sql_file(wh, SILVER_DDL)
+        # Parse here rather than inside whichever test runs first, so a broken
+        # project reads as a setup error and costs one test no seconds.
+        _ = wh.dbt_project
         yield wh
 
 
-class Scenario:
-    """One test's data: seed, build, read the journal back."""
+@dataclass(frozen=True)
+class Case:
+    """The bronze one scenario is about, declared beside the test that reads it."""
 
-    def __init__(self, warehouse: Warehouse) -> None:
+    fields: list[dict[str, Any]]
+    issues: list[dict[str, Any]]
+    events: list[dict[str, Any]]
+
+
+def case(
+    *, fields: list[dict[str, Any]], issues: list[dict[str, Any]], events: list[dict[str, Any]] | None = None
+) -> Any:
+    """Declare a test's bronze so its module can be seeded and built in one go.
+
+    A build costs about fifteen seconds whatever it builds — nearly all of it
+    ClickHouse analysing a query it then analyses again to insert — so the
+    suite's runtime is the NUMBER of builds, not their content. A decorated
+    test's rows go in with the rest of its module's, under a source id of its
+    own, and every scenario in the module reads its own answer out of one build.
+
+    A test the batch cannot hold — one that builds twice, expects a build to
+    fail, or rewrites bronze half way through — simply carries no `case` and
+    gets an exclusive warehouse, as every test used to.
+    """
+
+    def declare(test: Any) -> Any:
+        test.case = Case(fields=fields, issues=issues, events=events or [])
+        return test
+
+    return declare
+
+
+class Scenario:
+    """One test's data: seed, build, read the journal back.
+
+    `source` is the isolation: every model in the chain carries
+    `insight_source_id` through its joins and windows, so scenarios sharing a
+    build never see each other's rows.
+    """
+
+    def __init__(self, warehouse: Warehouse, source: str = SOURCE_ID) -> None:
         self.warehouse = warehouse
+        self.source = source
 
     def seed(
         self, *, fields: list[dict[str, Any]], issues: list[dict[str, Any]], events: list[dict[str, Any]] | None = None
     ) -> None:
-        self.warehouse.insert("bronze_jira.jira_fields", fields)
-        self.warehouse.insert("bronze_jira.jira_issue", issues)
-        self.warehouse.insert("bronze_jira.jira_issue_history", events or [])
+        self.warehouse.insert("bronze_jira.jira_fields", self._stamp(fields))
+        self.warehouse.insert("bronze_jira.jira_issue", self._stamp(issues))
+        self.warehouse.insert("bronze_jira.jira_issue_history", self._stamp(events or []))
+
+    def _stamp(self, records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Re-address the builders' rows to this scenario's source.
+
+        `helpers` writes one constant source id, and `unique_key` is built from
+        it — two scenarios seeding the same field id or changelog id would
+        otherwise collide in a ReplacingMergeTree and silently lose a row.
+        """
+        if self.source == SOURCE_ID:
+            return records
+        return [
+            {**r, "source_id": self.source, "unique_key": r["unique_key"].replace(SOURCE_ID, self.source, 1)}
+            for r in records
+        ]
 
     def build(self, selector: str = FIELD_HISTORY_SELECTOR) -> None:
         self.warehouse.build(selector)
@@ -217,7 +325,7 @@ class Scenario:
             "          multiIf(event_kind = 'synthetic_initial', 0,"
             "                  event_kind = 'changelog', 1, 2),"
             "          _seq, toUInt64OrZero(event_id), event_id",
-            {"src": SOURCE_ID, "issue": issue or "", "field": field or ""},
+            {"src": self.source, "issue": issue or "", "field": field or ""},
         )
 
     def invariants_hold(self, select: str = "tests/jira") -> bool:
@@ -231,27 +339,29 @@ class Scenario:
         A WARNING counts as not holding. Two tests are `severity: warn` so the
         nightly run reports an unrepairable source condition without failing on
         it (§3.4, §3.5) — but here the inputs are controlled, so anything those
-        tests find IS a pipeline fault. Reading only the exit code would make
-        every scenario that depends on them silently vacuous.
+        tests find IS a pipeline fault. Reading only success would make every
+        scenario that depends on them silently vacuous.
         """
-        code, output = self.warehouse.dbt_status("test", "--select", select)
-        if code != 0:
-            return False
-        # dbt's summary line: "Done. PASS=n WARN=n ERROR=n SKIP=n ..."
-        warns = re.search(r"\bWARN=(\d+)", output)
-        return not (warns and int(warns.group(1)) > 0)
+        invocation = self.warehouse.dbt_status("test", "--select", select)
+        return invocation.success and "warn" not in invocation.statuses
 
     def round_trip_holds(self) -> bool:
         """The oracle on its own: does replaying each field land on the value
         the issue holds?"""
         return self.invariants_hold("assert_jira_field_history_round_trip")
 
-    def text_rows(self) -> list[dict[str, Any]]:
-        """The long-text side table, addressed by content hash (§8)."""
+    def text_rows(self, text_id: str | None = None) -> list[dict[str, Any]]:
+        """The long-text side table, addressed by content hash (§8).
+
+        The table is content-addressed and carries no source, so scenarios
+        sharing a build share it: ask for the address the journal gave you.
+        """
         return self.warehouse.rows(
             "SELECT text_id, content_form, content"
             " FROM staging.jira__task_field_text FINAL"
-            " ORDER BY content_form, content"
+            " WHERE ({text:String} = '' OR text_id = {text:String})"
+            " ORDER BY content_form, content",
+            {"text": text_id or ""},
         )
 
     def states(self, field: str, *, issue: str | None = None) -> list[list[str]]:
@@ -269,16 +379,71 @@ class Scenario:
         return [row["value_ids"] for row in self.journal(issue=issue, field=field) if row["event_kind"] == "changelog"]
 
 
-@pytest.fixture
-def scenario(warehouse: Warehouse) -> Scenario:
-    """A clean warehouse per test.
-
-    Truncating bronze rather than scoping every assertion to a source id keeps
-    the expectations exact: a test says which rows the journal holds, not which
-    rows it holds among others. The staging models are `table`-materialized, so
-    the next build rewrites them from the bronze this test seeded.
-    """
+def _truncate_bronze(warehouse: Warehouse) -> None:
+    # Spelled out rather than looped over a tuple of names: a table name cannot
+    # be bound as a parameter, so a loop would have to format the statement, and
+    # a formatted SQL string is the shape the security gate rejects on sight.
     warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_fields")
     warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_issue")
     warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_issue_history")
+    warehouse.generation += 1
+
+
+def _cases(module: Any) -> dict[str, Case]:
+    """The module's declared scenarios, keyed by the test that reads each."""
+    return {
+        name: member.case
+        for name, member in vars(module).items()
+        if name.startswith("test_") and hasattr(member, "case")
+    }
+
+
+class Batch:
+    """A module's declared scenarios, seeded together and built once."""
+
+    def __init__(self, warehouse: Warehouse, module: Any) -> None:
+        self.warehouse = warehouse
+        self.scenarios = {
+            name: Scenario(warehouse, source=f"{SOURCE_ID}-{name[len('test_') :][:60]}") for name in _cases(module)
+        }
+        self._cases = _cases(module)
+        self.generation = -1
+
+    def scenario(self, test: str) -> Scenario:
+        """The scenario for one test, building the batch first if it must.
+
+        A test with no `case` truncates bronze for itself, which takes the
+        batch's rows with it — so the generation is checked rather than assumed,
+        and the batch is rebuilt if an exclusive test ran since.
+        """
+        if self.generation != self.warehouse.generation:
+            self._build()
+        return self.scenarios[test]
+
+    def _build(self) -> None:
+        _truncate_bronze(self.warehouse)
+        for name, scenario in self.scenarios.items():
+            spec = self._cases[name]
+            scenario.seed(fields=spec.fields, issues=spec.issues, events=spec.events)
+        self.warehouse.build()
+        self.generation = self.warehouse.generation
+
+
+@pytest.fixture(scope="module")
+def _batch(warehouse: Warehouse, request: pytest.FixtureRequest) -> Batch:
+    return Batch(warehouse, request.module)
+
+
+@pytest.fixture
+def scenario(warehouse: Warehouse, request: pytest.FixtureRequest, _batch: Batch) -> Scenario:
+    """This test's scenario: one of its module's batch, or a warehouse of its own.
+
+    A test that declares a `case` reads out of the single build its module
+    shares. A test that does not — one that builds twice, expects a build to
+    fail, or rewrites bronze half way through — gets bronze to itself and seeds
+    and builds as it likes, exactly as every test used to.
+    """
+    if hasattr(request.function, "case"):
+        return _batch.scenario(request.function.__name__)
+    _truncate_bronze(warehouse)
     return Scenario(warehouse)

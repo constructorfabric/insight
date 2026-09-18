@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from conftest import Scenario
+from conftest import Scenario, case
 from helpers import LATER_SYNC, SOURCE_ID, event, field, issue, item
 
 GHOST = "customfield_19001"
@@ -33,6 +33,7 @@ def _ghost_history(key: str = "TST-1") -> list[dict[str, Any]]:
     ]
 
 
+@case(fields=[POINTS_FIELD], issues=[issue("TST-1", fields={POINTS: 5})], events=_ghost_history())
 def test_an_uncatalogued_field_keeps_its_last_value(scenario: Scenario) -> None:
     """Two events, no catalogue row: exactly one row, carrying the newest `to`
     side verbatim and stamped with that event's own time.
@@ -40,9 +41,6 @@ def test_an_uncatalogued_field_keeps_its_last_value(scenario: Scenario) -> None:
     Verbatim because the shape is unknowable — parsing a list or an id side here
     would be the guess this design replaces.
     """
-    scenario.seed(fields=[POINTS_FIELD], issues=[issue("TST-1", fields={POINTS: 5})], events=_ghost_history())
-    scenario.build()
-
     rows = scenario.journal(field=GHOST)
     assert len(rows) == 1
     assert rows[0]["event_kind"] == "unclassified_field"
@@ -55,49 +53,43 @@ def test_an_uncatalogued_field_keeps_its_last_value(scenario: Scenario) -> None:
     assert rows[0]["value_id_type"] == "none"
 
 
+@case(
+    fields=[POINTS_FIELD],
+    issues=[issue("TST-1", fields={POINTS: 5})],
+    events=[event("TST-1", 101, "2026-01-06T10:00:00", [item(GHOST, to="1", to_str="x")])],
+)
 def test_the_field_keeps_the_name_the_changelog_gave_it(scenario: Scenario) -> None:
     """The item's own display name is the only naming there is, and it is
     present even when the catalogue row is not."""
-    scenario.seed(
-        fields=[POINTS_FIELD],
-        issues=[issue("TST-1", fields={POINTS: 5})],
-        events=[event("TST-1", 101, "2026-01-06T10:00:00", [item(GHOST, to="1", to_str="x")])],
-    )
-    scenario.build()
-
     # `helpers.item` puts the field id in both `field` and `fieldId`, which is
     # what Jira does for a field it can still name.
     assert scenario.journal(field=GHOST)[0]["field_id"] == GHOST
 
 
+@case(
+    fields=[POINTS_FIELD, field("votes", name="Votes", schema_type="votes")],
+    issues=[issue("TST-1", fields={POINTS: 5})],
+    events=[event("TST-1", 101, "2026-01-06T10:00:00", [item("votes", to="3", to_str="3")])],
+)
 def test_a_classified_field_never_lands_here(scenario: Scenario) -> None:
     """The exclusion is keyed on the WHOLE catalogue. A field that is `ignored`
     or `UNKNOWN` has been looked at and decided, so it must not be swept in as
     unclassifiable."""
-    scenario.seed(
-        fields=[POINTS_FIELD, field("votes", name="Votes", schema_type="votes")],
-        issues=[issue("TST-1", fields={POINTS: 5})],
-        events=[event("TST-1", 101, "2026-01-06T10:00:00", [item("votes", to="3", to_str="3")])],
-    )
-    scenario.build()
-
     kinds = {r["event_kind"] for r in scenario.journal(issue="TST-1")}
     assert "unclassified_field" not in kinds
     assert [r["field_id"] for r in scenario.journal(issue="TST-1")] == ["created", POINTS]
 
 
+@case(fields=[POINTS_FIELD], issues=[issue("TST-1", fields={POINTS: 5})], events=_ghost_history())
 def test_the_registry_records_the_exclusion(scenario: Scenario) -> None:
     """The exclusion has to be queryable, or it is just a silent drop with extra
     steps."""
-    scenario.seed(fields=[POINTS_FIELD], issues=[issue("TST-1", fields={POINTS: 5})], events=_ghost_history())
-    scenario.build()
-
     rows = scenario.warehouse.rows(
         "SELECT field_id, field_name, changelog_items, issues_affected,"
         "       toString(newest_event) AS newest_event, metadata_is_missing"
         " FROM staging.jira__task_field_unclassified"
-        " WHERE field_id = {field:String}",
-        {"field": GHOST},
+        " WHERE field_id = {field:String} AND insight_source_id = {src:String}",
+        {"field": GHOST, "src": scenario.source},
     )
     assert len(rows) == 1
     assert rows[0]["changelog_items"] == 2
@@ -130,16 +122,14 @@ def test_a_field_whose_metadata_has_not_arrived_yet_fails_the_guard(scenario: Sc
     assert not scenario.invariants_hold("assert_jira_unclassified_fields_are_old")
 
 
+@case(
+    fields=[field(POINTS, name="Story Points", schema_type="number", extracted_at="2026-06-01T00:00:00")],
+    issues=[issue("TST-1", fields={POINTS: 5})],
+    events=[event("TST-1", 101, "2020-01-06T10:00:00", [item(GHOST, to="7001", to_str="Kernel")])],
+)
 def test_an_ancient_deleted_field_passes_the_guard(scenario: Scenario) -> None:
     """The other half: events older than the catalogue's first sync are what a
     long-deleted field looks like, and the run must not fail on it."""
-    scenario.seed(
-        fields=[field(POINTS, name="Story Points", schema_type="number", extracted_at="2026-06-01T00:00:00")],
-        issues=[issue("TST-1", fields={POINTS: 5})],
-        events=[event("TST-1", 101, "2020-01-06T10:00:00", [item(GHOST, to="7001", to_str="Kernel")])],
-    )
-    scenario.build()
-
     assert scenario.invariants_hold("assert_jira_unclassified_fields_are_old")
 
 

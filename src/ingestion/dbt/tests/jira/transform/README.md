@@ -10,14 +10,16 @@ bronze_jira.jira_issue           the value the issue holds now
 bronze_jira.jira_issue_history   the changelog items
         │
         │  dbt run --select +jira__field_history_derived +jira__task_field_text
+        │                  +jira__task_field_unclassified
         ▼
 staging.jira__field_history_derived      asserted row by row
 ```
 
-`dbt run`, not `dbt build`: `build` interleaves the singular tests, and one
-scenario deliberately makes the round trip fail — a value the source changed
-without recording it cannot be reconciled, and hiding that would be worse than
-a red test. Invariants are asserted per scenario instead, through
+`dbt run`, not `dbt build`: `build` interleaves the singular tests, and two
+scenarios deliberately make the round trip fail — one names people the issue
+identifies by account id, the other holds a value the issue does not, because a
+clearing event is missing and that must stay visible. Hiding either would be
+worse than a red test. Invariants are asserted per scenario instead, through
 `scenario.invariants_hold()` and `scenario.round_trip_holds()`.
 
 The selector covers the journal, the side table and their ancestors. The
@@ -56,29 +58,31 @@ python3.12 -m venv /tmp/jira-dbt-venv
 cd src/ingestion/dbt/tests/jira/transform
 CLICKHOUSE_HOST=127.0.0.1 CLICKHOUSE_HTTP_PORT=18124 \
 CLICKHOUSE_USER=insight CLICKHOUSE_PASSWORD=insight \
-PATH=/tmp/jira-dbt-venv/bin:$PATH /tmp/jira-dbt-venv/bin/pytest -q
+/tmp/jira-dbt-venv/bin/pytest -q
 ```
 
 There are no connection defaults. A suite that falls back to localhost either
 tests nothing or writes into somebody's warehouse, and both look like a pass.
 
-The `dbt` on a developer machine may be a Fusion preview, which cannot build
-against dbt-clickhouse — hence the explicit `PATH` above rather than whatever
-`dbt` resolves to.
+The suite invokes dbt in its own process, importing it from the interpreter
+running pytest — so the venv's `pytest` above is what pins the adapter, and the
+`dbt` on a developer machine, which may be a Fusion preview that cannot build
+against dbt-clickhouse, never enters into it.
 
 ## Writing a test
 
-`helpers.py` supplies the four builders, named after what Jira calls things:
+`helpers.py` supplies the four builders, named after what Jira calls things, and
+`@case` declares the bronze the test reads:
 
 ```python
-scenario.seed(
+@case(
     fields=[field("customfield_10001", name="Story Points", schema_type="number")],
     issues=[issue("TST-1", fields={"customfield_10001": 5})],
     events=[event("TST-1", 101, "2026-01-06T10:00:00",
                   [item("customfield_10001", frm="3", frm_str="3", to="5", to_str="5")])],
 )
-scenario.build()
-assert scenario.states("customfield_10001") == [["3"], ["5"]]
+def test_the_rule_it_states(scenario: Scenario) -> None:
+    assert scenario.states("customfield_10001") == [["3"], ["5"]]
 ```
 
 Two habits worth keeping:
@@ -92,11 +96,28 @@ Two habits worth keeping:
   not in this issue's configuration, the second that it applies and is unset.
   Reach for the one the scenario means.
 
-Each test truncates bronze and builds, so expectations stay exact. Most of the
-cost is fixed: dbt re-parses the project every invocation, and
-`jira__field_history_derived` takes tens of seconds to materialize even on empty
-data — window functions over four union arms. If this lane gets slow, group a
-module's issues into one build rather than trimming coverage.
+### Why the scenarios share a build
+
+A build costs about fifteen seconds whatever it builds. Almost none of that is
+the data: `dbt-clickhouse` materializes a table as `CREATE TABLE … EMPTY AS
+(query)` followed by `INSERT … (query)`, so the query is analysed twice, and
+analysing this one takes about seven seconds on zero rows — its CTEs are
+inlined at each of their uses, and 1070 lines of SQL become 150 query-tree
+nodes. The suite's runtime is therefore the NUMBER of builds, not their content.
+
+So a module's `@case` scenarios are seeded together and built once. They do not
+see each other: every model in the chain carries `insight_source_id` through its
+joins and windows, and each scenario is seeded under one of its own.
+
+**Omit `@case` when the scenario cannot share.** It then gets bronze to itself
+and seeds and builds as it likes. Three kinds need it:
+
+- the scenario builds more than once, or rewrites bronze half way through;
+- it expects a build to FAIL;
+- its round trip is meant NOT to reconcile. `invariants_hold()` and
+  `round_trip_holds()` ask about the whole warehouse, so such a scenario would
+  report itself as a defect in every neighbour sharing its build. A test that
+  does not assert `round_trip_holds()` is the one to look at here.
 
 ## The other tests in this directory
 
