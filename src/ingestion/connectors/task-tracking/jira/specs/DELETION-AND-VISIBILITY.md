@@ -54,8 +54,8 @@ jira_issue_census        ──────────────►  jira__is
 ```
 
 Both new streams are **full-refresh censuses**: each sync re-observes the
-complete set. Bronze RMT promotion (`ReplacingMergeTree(_airbyte_extracted_at)`
-keyed by `unique_key`) collapses them to one row per entity whose
+complete set. Bronze is `ReplacingMergeTree(_airbyte_extracted_at)` keyed by
+`unique_key`, so each entity collapses to one row whose
 `_airbyte_extracted_at` is the **last time the entity was observed**. Absence
 detection is then a comparison of each entity's last-seen timestamp against
 the census high-water mark — no row diffing, no state files.

@@ -2731,8 +2731,7 @@ streams:
   # Reconcile (ADR-0015) auto-selects every discovered stream, so this lands
   # as a real (tiny: key + updated per issue) bronze_jira.jira_issue_keys
   # table. It therefore carries the standard identity stamp
-  # (tenant_id/source_id/unique_key) and is promoted to RMT in
-  # the destination (append_dedup) like every other jira bronze table.
+  # (tenant_id/source_id/unique_key) like every other jira bronze table.
   - type: DeclarativeStream
     name: jira_issue_keys
     primary_key:
@@ -2908,7 +2907,7 @@ streams:
 
   # ─── Deletion & visibility censuses (specs/DELETION-AND-VISIBILITY.md) ──
   # Both streams are full-refresh: each sync re-observes the complete visible
-  # surface. After RMT promotion (version = _airbyte_extracted_at) each row's
+  # surface. Bronze is ReplacingMergeTree(_airbyte_extracted_at), so each row's
   # extracted-at is the entity's last-seen timestamp; dbt classifies absences
   # against the census high-water mark (deleted / archived / trashed /
   # access_lost / unobserved) — see dbt/jira__issue_availability_state.sql.

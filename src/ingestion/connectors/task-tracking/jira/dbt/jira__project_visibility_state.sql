@@ -8,8 +8,8 @@
 ) }}
 
 -- Current visibility per ever-seen project (specs/DELETION-AND-VISIBILITY.md).
--- The census stream is full-refresh, so after RMT promotion each project's
--- _airbyte_extracted_at is its last observation; a project absent from the
+-- The census stream is full-refresh and bronze keeps one row per project, so
+-- its _airbyte_extracted_at is the last observation; a project absent from the
 -- latest census generation (watermark minus a one-sync tolerance) is no
 -- longer visible to the service account.
 

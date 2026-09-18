@@ -5,7 +5,7 @@ whole dbt project (staging + silver).
 
 WHY
   Every staging/silver table is RMT (project default engine in profiles.yml:
-  ReplacingMergeTree(_version)), and bronze tables are promoted to RMT too.
+  ReplacingMergeTree(_version)), and the destination creates bronze as RMT too.
   RMT only collapses duplicates during background merges — never guaranteed at
   query time. If an upstream table holds transient pre-merge duplicates (e.g.
   an erroneous Airbyte full_refresh|append re-appending every row on each
@@ -23,7 +23,7 @@ WHY
   the read's own subquery scope.
 
 WHAT IT FLAGS (a read of an RMT relation without read-time dedup):
-  * direct ref()/source() to an RMT model/promoted-bronze table, no FINAL/etc.
+  * direct ref()/source() to an RMT model or bronze table, no FINAL/etc.
   * the snapshot() macro (reads its source_ref bare — fix in the macro).
 
 LIMITATIONS (candidate generator, confirm by reading):

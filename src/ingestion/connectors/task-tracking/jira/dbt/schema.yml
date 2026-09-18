@@ -34,8 +34,8 @@ sources:
       - name: jira_issuetypes
       - name: jira_resolutions
       # Deletion/visibility censuses (specs/DELETION-AND-VISIBILITY.md):
-      # full-refresh streams; after RMT promotion each row's
-      # _airbyte_extracted_at is the entity's last-seen timestamp.
+      # full-refresh streams; bronze keeps one row per entity, whose
+      # _airbyte_extracted_at is its last-seen timestamp.
       - name: jira_project_visibility
       - name: jira_issue_census
       # Worklog deletion tombstones from /rest/api/3/worklog/deleted.
