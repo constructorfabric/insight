@@ -6,9 +6,9 @@ reported. Silver admits a read's per-user rows only when the people it returned 
 own envelope's count; a read older than the first envelope has nothing to be judged
 against and is admitted. Gold sums what silver admitted, so a rejected day serves nothing.
 
-The last day also pins the meaning of `credits`: it is on-demand usage, not total Codex
-consumption, so a day of real thread activity that consumed no credits is ordinary work
-and has to serve like any other.
+The last day pins OUR HANDLING of `credits`, not the vendor's meaning — a synthetic
+fixture cannot establish the latter. What it fixes is that zero credits alongside
+non-zero activity counters must not be read as an inactive day.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ ALICE_DAYS = [
     ("2026-12-02", 2.0, "read returning everyone its envelope counted is admitted"),
     ("2026-12-03", 0.0, "read short of its own headcount is rejected whole"),
     ("2026-12-04", 0.0, "read after the first envelope carrying none is rejected"),
-    ("2026-12-05", 3.0, "activity that consumed no credits still serves"),
+    ("2026-12-05", 3.0, "zero credits with non-zero activity is not an inactive day"),
 ]
 
 BOB_DAYS = [

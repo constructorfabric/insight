@@ -34,9 +34,11 @@ description: >
                         silent hole the gate exists to close.                  8
     Dec 05  no credits  envelope of read 50 says 1 and read 50 returned alice
                         with credits = 0 and real thread activity. Admitted.
-                        `credits` is on-demand usage, not total consumption, so
-                        a credited-nothing day is ordinary work and must serve
-                        like any other — the emission filter reads n_threads.   3
+                        This pins OUR HANDLING, not the vendor: a synthetic row
+                        cannot establish what the vendor means by `credits`.
+                        What it fixes is that zero credits alongside non-zero
+                        activity counters must not be read as an inactive day —
+                        the emission filter reads n_threads and lines_added.    3
 
   alice's window therefore sums the three days admitted for her: 1 + 2 + 3 = 6.
   With the gate removed every day would count and the same request would answer
