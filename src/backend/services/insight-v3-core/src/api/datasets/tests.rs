@@ -399,7 +399,9 @@ async fn a_dataset_page_shows_the_latest_records_as_they_arrived() {
         received_at: chrono::DateTime::UNIX_EPOCH,
         raw_data: r#"{"lines":7}"#.to_owned(),
     }]));
-    harness.mock.add(handlers::provide(vec![Counted { total: 757 }]));
+    harness
+        .mock
+        .add(handlers::provide(vec![Counted { total: 757 }]));
 
     let (looked, body) = harness.get("/v1/datasets/commits/records?limit=20").await;
 

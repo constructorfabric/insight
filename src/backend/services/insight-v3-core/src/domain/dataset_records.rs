@@ -39,7 +39,10 @@ impl<'a> DatasetRecords<'a> {
             .ok_or_else(|| PreviewError::NotReady(name.as_str().to_owned()))?;
 
         let looked = async {
-            let records = self.tables.latest(&ready.table, shown(wanted, self.cap)).await?;
+            let records = self
+                .tables
+                .latest(&ready.table, shown(wanted, self.cap))
+                .await?;
             let total = self.tables.count(&ready.table).await?;
             Ok::<_, DatasetTableError>(Preview { records, total })
         };

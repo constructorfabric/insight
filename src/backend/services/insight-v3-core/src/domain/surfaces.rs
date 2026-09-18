@@ -274,7 +274,9 @@ impl<'a> Surfaces<'a> {
         Ok(())
     }
 
-    async fn dependents_of(
+    /// Every definition that names this one: what a removal would break, and
+    /// what a rename would rewrite.
+    pub(crate) async fn dependents_of(
         &self,
         kind: DefinitionKind,
         name: &DefinitionName,

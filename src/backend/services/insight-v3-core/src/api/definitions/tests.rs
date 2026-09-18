@@ -247,6 +247,59 @@ fn metric_body() -> serde_json::Value {
     })
 }
 
+/// A reader is shown what a removal would break before they ask for one.
+#[tokio::test]
+async fn a_definition_names_what_holds_it() {
+    let harness = TestHarness::new().await;
+    harness
+        .put_json("/v1/metrics/commits_per_day", metric_body())
+        .await;
+    let drawn = harness
+        .put_json(
+            "/v1/widgets/commits_table",
+            json!({
+                "type": "table",
+                "metric": "commits_per_day",
+                "columns": ["total"]
+            }),
+        )
+        .await;
+    assert_eq!(drawn.status(), StatusCode::NO_CONTENT);
+
+    let held = harness
+        .get_json("/v1/metrics/commits_per_day/dependents")
+        .await;
+
+    assert_eq!(held.status(), StatusCode::OK);
+    assert_eq!(
+        held.json().await["holders"],
+        json!([{ "kind": "widgets", "name": "commits_table" }])
+    );
+}
+
+#[tokio::test]
+async fn a_definition_nothing_holds_names_nothing() {
+    let harness = TestHarness::new().await;
+    harness
+        .put_json("/v1/metrics/commits_per_day", metric_body())
+        .await;
+
+    let held = harness
+        .get_json("/v1/metrics/commits_per_day/dependents")
+        .await;
+
+    assert_eq!(held.json().await["holders"], json!([]));
+}
+
+#[tokio::test]
+async fn the_dependents_of_a_definition_that_is_not_there_are_not_found() {
+    let harness = TestHarness::new().await;
+
+    let held = harness.get_json("/v1/metrics/nobody/dependents").await;
+
+    assert_eq!(held.status(), StatusCode::NOT_FOUND);
+}
+
 #[tokio::test]
 async fn put_then_get_returns_the_stored_body() {
     let harness = TestHarness::new().await;

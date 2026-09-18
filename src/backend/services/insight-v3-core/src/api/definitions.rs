@@ -143,6 +143,7 @@ fn register_kind(
 
     let delete_param = name_param.clone();
     let rename_param = name_param.clone();
+    let dependents = register_dependents(openapi, &state, kind, segment, name_param.clone());
 
     let put = OperationBuilder::put(format!("/v1/{segment}/{{name}}"))
         .operation_id(format!("insight_v3_core.{segment}.put"))
@@ -223,6 +224,7 @@ fn register_kind(
         .merge(list)
         .merge(remove)
         .merge(rename)
+        .merge(dependents)
 }
 
 /// A stored definition as a reader is given it.
@@ -357,6 +359,33 @@ async fn delete_definition(
     }
 }
 
+/// Every definition that names this one, so a reader sees what a removal would
+/// break before they ask for one.
+fn register_dependents(
+    openapi: &dyn OpenApiRegistry,
+    state: &Arc<AppState>,
+    kind: DefinitionKind,
+    segment: &str,
+    name_param: ParamSpec,
+) -> Router {
+    OperationBuilder::get(format!("/v1/{segment}/{{name}}/dependents"))
+        .operation_id(format!("insight_v3_core.{segment}.dependents"))
+        .summary("Every definition that names this one")
+        .anonymous()
+        .exposed()
+        .param(name_param)
+        .json_response(StatusCode::OK, "What would break if this were removed")
+        .error_400(openapi)
+        .error_403(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_504(openapi)
+        .handler(definition_dependents)
+        .register(Router::new(), openapi)
+        .layer(Extension(Arc::clone(state)))
+        .layer(Extension(kind))
+}
+
 async fn put_definition(
     Extension(state): Extension<Arc<AppState>>,
     Extension(kind): Extension<DefinitionKind>,
@@ -387,6 +416,55 @@ fn widget_error(error: &crate::domain::kinds::widget::WidgetError) -> CanonicalE
     DefinitionApiError::invalid_argument()
         .with_field_violation("body", error.to_string(), "INVALID")
         .create()
+}
+
+/// What names a definition, as a reader is shown it.
+#[derive(Debug, Serialize)]
+struct Dependents {
+    /// Each holder, as the kind it is and the name it has.
+    holders: Vec<Holder>,
+}
+
+#[derive(Debug, Serialize)]
+struct Holder {
+    kind: String,
+    name: String,
+}
+
+/// Every definition that names this one, so a reader sees what a removal would
+/// break before they ask for one.
+async fn definition_dependents(
+    Extension(state): Extension<Arc<AppState>>,
+    Extension(kind): Extension<DefinitionKind>,
+    Path(name): Path<String>,
+    headers: axum::http::HeaderMap,
+) -> Result<Response, CanonicalError> {
+    crate::api::require_admin(&state, &headers, || {
+        DefinitionApiError::permission_denied()
+            .with_reason(crate::api::ADMIN_ONLY)
+            .create()
+    })
+    .await?;
+
+    let name = DefinitionName::parse(&name).map_err(DefinitionApiError::definition_error)?;
+    let surfaces = state.surfaces();
+
+    if let Err(CustomError::NotFound { .. }) = surfaces.get(kind, &name).await {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    }
+
+    let holders = surfaces
+        .dependents_of(kind, &name)
+        .await
+        .map_err(custom_error)?
+        .into_iter()
+        .map(|holder| Holder {
+            kind: holder.kind.plural().to_owned(),
+            name: holder.name,
+        })
+        .collect();
+
+    Ok(Json(Dependents { holders }).into_response())
 }
 
 async fn get_definition(
