@@ -16,6 +16,7 @@
 {% do promote_bronze_to_rmt(table='bronze_chatgpt_team.chatgpt_team_seats',                 order_by='unique_key') %}
 {% do promote_bronze_to_rmt(table='bronze_chatgpt_team.chatgpt_team_chat_activity',         order_by='unique_key') %}
 {% do promote_bronze_to_rmt(table='bronze_chatgpt_team.chatgpt_team_codex_user_daily',      order_by='unique_key') %}
+{% do promote_bronze_to_rmt(table='bronze_chatgpt_team.chatgpt_team_codex_user_daily_org',  order_by='unique_key') %}
 {% do promote_bronze_to_rmt(table='bronze_chatgpt_team.chatgpt_team_subscription_usage',    order_by='unique_key') %}
 {% do promote_bronze_to_rmt(table='bronze_chatgpt_team.chatgpt_team_subscription_balance',  order_by='unique_key') %}
 
