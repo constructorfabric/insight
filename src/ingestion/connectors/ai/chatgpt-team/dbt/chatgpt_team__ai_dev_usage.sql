@@ -20,6 +20,14 @@
 --   Codex-only counters (credits, n_turns, text_tokens, current_streak) are
 --   preserved in tool_action_breakdown_json so nothing is lost. They do not
 --   admit a row: see the emission filter's invariant at the foot of the model.
+--
+-- INVARIANT: `credits` is ON-DEMAND usage, not total Codex consumption — it
+--   matches the vendor's own on-demand figure wherever one is published, and
+--   Codex activity routinely records zero credits while still reporting tokens.
+--   A person-day with credits = 0 is therefore ordinary, not a gap, which is
+--   why the emission filter does not read it. Whether the uncredited part is
+--   allowance-covered or unmetered is not established; either way it is
+--   excluded from this number.
 {{ config(
     materialized='incremental',
     incremental_strategy='append',

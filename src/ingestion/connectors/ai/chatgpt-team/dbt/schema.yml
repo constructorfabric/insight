@@ -56,6 +56,9 @@ models:
       tool_action_breakdown_json. Column contract matches claude_team__ai_dev_usage.
       Gated on read completeness: a read whose distinct people do not equal the
       total_users its own envelope reported never becomes the day's state.
+      `credits` is on-demand usage rather than total Codex consumption, so a
+      person-day carrying activity with zero credits is ordinary; the emission
+      filter reads n_threads and lines_added instead.
     columns:
       - name: unique_key
         description: "Composite dedup key: tenant-source-email-day"

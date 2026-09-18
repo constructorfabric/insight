@@ -85,16 +85,20 @@ definitions:
       field_name: end_date
       inject_into: request_parameter
 
-  # Tolerate the most common failure mode for the subscription streams —
-  # the session/account lacks billing visibility. Mark the response as
-  # "no records" instead of failing the whole sync (mirrors claude-team's
-  # overage_spend handling).
-  # The subscription streams need chatgpt_org_id. When it is blank (e.g. an
-  # analytics-viewer account with no billing visibility) the request hits
-  # /subscriptions//usage → 404; a billing-gated session returns 403. Both
-  # are benign here: IGNORE them so the stream commits zero records and the
-  # sync stays GREEN (the seat/chat/Codex streams are unaffected). A real
-  # org_id with billing access starts populating rows automatically.
+  # The subscription streams are the only ones an installation can legitimately
+  # be unable to read, and there are three ways that happens. A blank
+  # chatgpt_org_id makes the path /subscriptions//usage → 404. A session the
+  # vendor gates out of billing → 403. A session whose workspace ROLE is below
+  # account-admin → 401, which is the case an analytics-viewer identity hits.
+  # All three are IGNOREd so the stream commits zero records and the seat, chat
+  # and Codex streams still sync.
+  #
+  # 401 is split into its own filter for one reason: its error_message is the
+  # only place the difference between "no billing capability" and "nothing to
+  # report" is written down. The warehouse cannot tell them apart — an empty
+  # table has no freshness to go stale — so the sync log carries it instead,
+  # and assert_chatgpt_subscription_stream_not_silent names both causes.
+  #
   # ⚠️ MONITORING: IGNORE also hides a mistyped chatgpt_org_id or a broken proxy
   # route (green-but-empty). Runbook: if chatgpt_org_id is SET but the
   # subscription streams return 0 rows for N consecutive days, alert — that is a
@@ -102,6 +106,10 @@ definitions:
   billing_error_handler: &billing_error_handler
     type: DefaultErrorHandler
     response_filters:
+      - type: HttpResponseFilter
+        http_codes: [401]
+        action: IGNORE
+        error_message: "chatgpt.com returned 401 on a subscription stream — the workspace role is below account-admin, so this installation has no billing capability at all. Stream skipped, sync continues; nothing downstream will ever populate until the role is raised."
       - type: HttpResponseFilter
         http_codes: [403, 404]
         action: IGNORE
@@ -299,6 +307,20 @@ streams:
   # Response: {data: [...], total_users}. Page-number-paginated within a
   # day; DatetimeBasedCursor walks days. lines_added comes from a nested
   # code_attribution object.
+  #
+  # INVARIANT: `credits` is ON-DEMAND usage, not total Codex consumption.
+  # Established by reading a workspace back:
+  #   - it equals the vendor's own on-demand figure at every grain that
+  #     publishes one (per user per day, per org per day, per org per month),
+  #     with no observed case of credits > 0 while on-demand is 0;
+  #   - Codex activity routinely records credits = 0 while the same rows carry
+  #     non-zero token counts, on a large share of active days and inside the
+  #     history of every user who has ever spent a credit;
+  #   - the credited/uncredited boundary does not follow the model used, so it
+  #     is not a premium-model meter.
+  # What remains unproven is WHY the uncredited usage is uncredited — covered
+  # by an allowance, or simply unmetered. Either way it is excluded, so the
+  # figure must never be read as total consumption.
   - type: DeclarativeStream
     name: chatgpt_team_codex_user_daily
     primary_key:

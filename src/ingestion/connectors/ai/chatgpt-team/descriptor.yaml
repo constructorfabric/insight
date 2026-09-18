@@ -40,9 +40,14 @@ name: chatgpt-team
 #   seat_type in surface_metrics_json resolves roster-first, falling back to
 #   the tier the usage row restates — the roster leaves it null for some
 #   members and the usage row is the only other place it appears.
-#   The Codex paginator names its first page, and the browser-session streams
-#   retry a transient 401/403 instead of failing the sync: the proxy answers
-#   those until a restarted session settles.
+#   The Codex paginator names its first page explicitly. This fixes no defect:
+#   the endpoint is 1-indexed and an omitted `page` answers page 1, measured
+#   against a workspace. It removes a server default the walk would otherwise
+#   depend on silently. The browser-session streams retry a transient 401/403
+#   instead of failing the sync: the proxy answers those until a restarted
+#   session settles. On the subscription streams 401 means something else
+#   entirely — a workspace role below account-admin — and is IGNOREd with its
+#   own message, because there the condition is permanent, not transient.
 #   The subscription window stops reading config['start_date'] — that knob
 #   backfills the daily streams, and letting it reach the billing request
 #   silently redefined `amount` under an unchanged snapshot_date.
