@@ -14,42 +14,56 @@ const DIRECTIONS = ["asc", "desc"] as const;
 const DECLARED_FIELD: Shape = {
   of: "record",
   fields: [
-    { name: "name", label: "Name", shape: { of: "text" }, required: true },
+    {
+      name: "name",
+      label: "Name",
+      shape: { of: "text" },
+      required: true,
+      hint: "The identifier metrics, filters, the window and the row identity refer to this field by.",
+    },
     {
       name: "path",
       label: "Path",
-      shape: { of: "text", placeholder: "who.email" },
+      shape: { of: "text" },
       required: true,
-      hint: "Where the value sits in a record, as dot-separated keys.",
+      hint: "Where the value sits in a record, as dot-separated keys (who.email).",
     },
     {
       name: "type",
       label: "Type",
       shape: { of: "choice", options: FIELD_TYPES },
       required: true,
+      hint: "How the value is read, which decides what a metric may do with it: sum an int or a float, window by a datetime, compare a filter as this type.",
     },
     {
       name: "role",
       label: "Role",
       shape: { of: "choice", options: FIELD_ROLES },
+      hint: "What the field is for, as a reader and the assistant are told: grouped by, counted, or a date. Advisory only.",
     },
-    { name: "description", label: "Description", shape: { of: "text" } },
+    {
+      name: "description",
+      label: "Description",
+      shape: { of: "text" },
+      hint: "One line for people and the assistant.",
+    },
     {
       name: "absent_value",
       label: "Shown when empty",
       shape: { of: "text" },
-      hint: "Presentation only: a filter and the row identity read the record's own value.",
+      hint: "What a reader sees where the record has no value. Presentation only: a filter and the row identity read the record's own value. String fields only.",
     },
     {
       name: "person",
       label: "Holds a person by",
       shape: { of: "choice", options: PERSON_HANDLES },
+      hint: "The value names a person, by email or by id, for the service to resolve. String fields only.",
     },
     {
       name: "default_clock",
       label: "Main date",
       shape: { of: "flag", alone: true },
-      hint: "A window with no date of its own selects by this one.",
+      hint: "A window with no date of its own selects by this one. One per dataset, on a datetime field.",
     },
   ],
 };
