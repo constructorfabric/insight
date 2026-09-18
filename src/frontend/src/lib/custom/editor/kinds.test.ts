@@ -76,6 +76,14 @@ describe("the kind descriptions", () => {
     }
   });
 
+  // A label names a row; the hint says what the row is for. A form built from
+  // a description alone has nowhere else to say it.
+  it.each(ALL)("$kind says under every row what it is for", (description) => {
+    for (const { path, field } of walk(description.fields)) {
+      expect(field.hint, `no hint: ${path}`).toBeTruthy();
+    }
+  });
+
   // Two fields of one name write to one property, so the second silently wins.
   it.each(ALL)("$kind names each field of a record once", (description) => {
     for (const group of siblings(description.fields)) {
