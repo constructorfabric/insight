@@ -20,7 +20,12 @@ export function RemoveDataset({
   return (
     <ConfirmRemove
       ask={(open) => (
-        <Button variant="ghost" size="sm" onClick={open}>
+        <Button
+          variant="ghost"
+          size="sm"
+          aria-label={`Remove ${name}`}
+          onClick={open}
+        >
           Remove
         </Button>
       )}

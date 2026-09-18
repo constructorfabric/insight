@@ -1,5 +1,3 @@
-import { Trash2 } from "lucide-react";
-
 import type { DefinitionKind } from "@/api/custom-client";
 import { ConfirmRemove } from "@/components/custom/confirm-remove";
 import { Button } from "@/components/ui/button";
@@ -27,15 +25,14 @@ export function RemoveDefinition({
       ask={(open) => (
         <Button
           variant="ghost"
-          size="icon-sm"
+          size="sm"
           aria-label={`Remove ${name}`}
-          className="text-muted-foreground hover:text-destructive"
           onClick={open}
         >
-          <Trash2 />
+          Remove
         </Button>
       )}
-      confirm="Remove"
+      confirm="Remove it"
       pending={remove.isPending}
       error={remove.error}
       onRemove={() => remove.mutate({ kind, name }, { onSuccess: onRemoved })}

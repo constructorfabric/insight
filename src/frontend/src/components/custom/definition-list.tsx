@@ -8,8 +8,6 @@ import {
 } from "@/components/custom/definition-paging";
 import { DefinitionSearch } from "@/components/custom/definition-search";
 import { EditLink } from "@/components/custom/editor/edit-link";
-import { RemoveDefinition } from "@/components/custom/remove-definition";
-import { RenameDefinition } from "@/components/custom/rename-definition";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
@@ -131,7 +129,7 @@ export function DefinitionCard({
   );
 }
 
-/** What a reader may do to a metric, a widget or a dashboard. */
+/** What a card offers: opening the editor, where renaming and removal live too. */
 export function DefinitionActions({
   kind,
   name,
@@ -139,11 +137,5 @@ export function DefinitionActions({
   kind: DefinitionKind;
   name: string;
 }) {
-  return (
-    <>
-      <EditLink kind={kind} name={name} />
-      <RenameDefinition kind={kind} name={name} />
-      <RemoveDefinition kind={kind} name={name} />
-    </>
-  );
+  return <EditLink kind={kind} name={name} />;
 }

@@ -9,8 +9,6 @@ import {
 } from "@/components/custom/definition-paging";
 import { DefinitionSearch } from "@/components/custom/definition-search";
 import { EditLink, NewLink } from "@/components/custom/editor/edit-link";
-import { RemoveDefinition } from "@/components/custom/remove-definition";
-import { RenameDefinition } from "@/components/custom/rename-definition";
 import { Card, CardContent } from "@/components/ui/card";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
@@ -96,8 +94,6 @@ function DashboardCard({ name }: { name: string }) {
         </Link>
         <span className="flex shrink-0 items-center gap-1">
           <EditLink kind="dashboards" name={name} />
-          <RenameDefinition kind="dashboards" name={name} />
-          <RemoveDefinition kind="dashboards" name={name} />
         </span>
       </CardContent>
     </Card>

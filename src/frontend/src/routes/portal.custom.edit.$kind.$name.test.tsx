@@ -14,6 +14,7 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
     fetchDashboard: vi.fn(),
     fetchDataset: vi.fn(),
     deleteDataset: vi.fn(),
+    renameDefinition: vi.fn(),
     putDefinition: vi.fn(),
     fetchMetricNames: vi.fn(),
     fetchWidgetNames: vi.fn(),
@@ -191,7 +192,9 @@ describe("/portal/custom/edit/$kind/$name", () => {
     );
 
     render(<Component />, { wrapper });
-    await user.click(await screen.findByRole("button", { name: "Remove" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Remove commits" })
+    );
 
     expect(customClient.deleteDataset).not.toHaveBeenCalled();
 
@@ -209,6 +212,36 @@ describe("/portal/custom/edit/$kind/$name", () => {
     expect(screen.getByRole("button", { name: "Keep" })).toBeInTheDocument();
   });
 
+  it("follows a metric to its new name once renamed", async () => {
+    const user = userEvent.setup();
+    vi.mocked(customClient.fetchMetric).mockResolvedValue({
+      definition: { dataset: "commits", fields: [] },
+    });
+    vi.mocked(customClient.renameDefinition).mockResolvedValue({
+      name: "lines_daily",
+      rewritten: [],
+    });
+
+    render(<Component />, { wrapper });
+    await screen.findByLabelText("Dataset");
+    await user.click(
+      screen.getByRole("button", { name: "Rename lines_per_day" })
+    );
+    const field = screen.getByRole("textbox", {
+      name: "New name for lines_per_day",
+    });
+    await user.clear(field);
+    await user.type(field, "lines_daily");
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+
+    await waitFor(() =>
+      expect(portalRouter.navigations).toContainEqual({
+        to: "/portal/custom/edit/$kind/$name",
+        params: { kind: "metrics", name: "lines_daily" },
+      })
+    );
+  });
+
   it("goes back to the catalogue once the dataset is gone", async () => {
     const user = userEvent.setup();
     portalRouter.reset("/portal/custom/edit/datasets/commits");
@@ -219,7 +252,9 @@ describe("/portal/custom/edit/$kind/$name", () => {
     vi.mocked(customClient.deleteDataset).mockResolvedValue(undefined);
 
     render(<Component />, { wrapper });
-    await user.click(await screen.findByRole("button", { name: "Remove" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Remove commits" })
+    );
     await user.click(
       screen.getByRole("button", { name: /Remove it, with its records/ })
     );

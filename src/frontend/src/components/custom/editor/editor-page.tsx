@@ -6,6 +6,7 @@ import { DefinitionEditor } from "@/components/custom/editor/definition-editor";
 import { refusal } from "@/components/custom/refusal";
 import { RemoveDataset } from "@/components/custom/remove-dataset";
 import { RemoveDefinition } from "@/components/custom/remove-definition";
+import { RenameDefinition } from "@/components/custom/rename-definition";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { DESCRIPTIONS } from "@/lib/custom/editor/kinds";
 import { definitionBodyQuery } from "@/queries/custom";
@@ -81,7 +82,7 @@ export function EditorPage({
   );
 }
 
-/** Removal lives with editing: the one place a definition is changed by hand. */
+/** Renaming and removal live with editing: the one place a definition is changed by hand. */
 function Removal({
   kind,
   name,
@@ -91,21 +92,43 @@ function Removal({
   name: string;
   onRemoved: () => void;
 }) {
+  const navigate = useNavigate();
+  const renamed = (to: string) =>
+    void navigate({
+      to: "/portal/custom/edit/$kind/$name",
+      params: { kind, name: to },
+    });
+
   return (
-    <section className="mt-6 flex flex-col gap-2 border-t border-border pt-4">
-      <h2 className={TEXT_HEADING}>Remove</h2>
-      <p className={cn(TEXT_BODY, "text-muted-foreground")}>
-        {kind === "datasets"
-          ? "Takes the dataset away with every record it holds. Refused while a metric reads it."
-          : "Refused while something else still draws it."}
-      </p>
-      <div className="self-start">
-        {kind === "datasets" ? (
-          <RemoveDataset name={name} onRemoved={onRemoved} />
-        ) : (
-          <RemoveDefinition kind={kind} name={name} onRemoved={onRemoved} />
-        )}
-      </div>
-    </section>
+    <>
+      {kind === "datasets" ? null : (
+        <section className="mt-6 flex flex-col gap-2 border-t border-border pt-4">
+          <h2 className={TEXT_HEADING}>Rename</h2>
+          <p className={cn(TEXT_BODY, "text-muted-foreground")}>
+            Everything that names this {DESCRIPTIONS[kind].noun} is rewritten to
+            the new name. A name already taken is refused.
+          </p>
+          <div className="self-start">
+            <RenameDefinition kind={kind} name={name} onRenamed={renamed} />
+          </div>
+        </section>
+      )}
+
+      <section className="mt-6 flex flex-col gap-2 border-t border-border pt-4">
+        <h2 className={TEXT_HEADING}>Remove</h2>
+        <p className={cn(TEXT_BODY, "text-muted-foreground")}>
+          {kind === "datasets"
+            ? "Takes the dataset away with every record it holds. Refused while a metric reads it."
+            : "Refused while something else still draws it."}
+        </p>
+        <div className="self-start">
+          {kind === "datasets" ? (
+            <RemoveDataset name={name} onRemoved={onRemoved} />
+          ) : (
+            <RemoveDefinition kind={kind} name={name} onRemoved={onRemoved} />
+          )}
+        </div>
+      </section>
+    </>
   );
 }
