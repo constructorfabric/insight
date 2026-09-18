@@ -36,6 +36,15 @@ templates:
     unique_key: gh-role-type
     role: issuetype
 
+  # Retracts `role_type`: same key and validity, recorded later — the table is
+  # bitemporal, so this is a NEWER separate row, not an overwrite.
+  role_type_retracted:
+    $ref: "#/templates/role_type"
+    unique_key: gh-role-type-retracted
+    recorded_at: "2026-02-01 00:00:00.000"
+    is_deleted: 1
+    _version: "2026-02-01 00:00:00.000"
+
   # `open` and every closure reason are distinct values an operator binds; a
   # value with no binding is what the coverage test refuses.
   value_open:

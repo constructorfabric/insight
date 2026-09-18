@@ -12194,11 +12194,18 @@ alerting:
               -- same way gold resolves it: field_value_map -> field_value_defaults ->
               -- 'unknown'. Close = last transition into a done-category status
               -- (gold's final_close_at); deleted/trashed issues are excluded.
+              -- INVARIANT: recorded_at is part of unique_key, so a retraction is a
+              -- NEWER row — filter is_deleted after the LIMIT 1 BY pick, never before.
               WITH role_bindings AS (
-                  SELECT insight_source_id, field_id, argMax(role, (valid_from, recorded_at)) AS role
-                  FROM config.task_field_roles FINAL
-                  WHERE is_deleted = 0 AND valid_from <= now64(3)
-                  GROUP BY insight_source_id, field_id
+                  SELECT insight_source_id, data_source, field_id, role
+                  FROM (
+                      SELECT insight_source_id, data_source, field_id, role, is_deleted
+                      FROM config.task_field_roles FINAL
+                      WHERE valid_from <= now64(3)
+                      ORDER BY valid_from DESC, recorded_at DESC
+                      LIMIT 1 BY insight_source_id, data_source, field_id
+                  )
+                  WHERE is_deleted = 0
               ),
               hist AS (
                   SELECT fh.insight_source_id AS insight_source_id, fh.data_source AS data_source,
@@ -12213,7 +12220,8 @@ alerting:
                                         fh.field_id, ''))) AS role
                   FROM silver.class_task_field_history AS fh FINAL
                   LEFT JOIN role_bindings AS b
-                      ON b.insight_source_id = fh.insight_source_id AND b.field_id = fh.field_id
+                      ON b.insight_source_id = fh.insight_source_id
+                      AND b.data_source = fh.data_source AND b.field_id = fh.field_id
                   WHERE fh.delta_action = 'set'
                     AND (fh.field_id IN ('status', 'issuetype', 'availability')
                          OR ifNull(toString(b.role), '') IN ('status', 'issuetype'))
