@@ -992,16 +992,23 @@ streams:
         datetime_format: "%Y-%m-%d"
       end_datetime:
         type: MinMaxDatetime
-        datetime: "{{ now_utc().strftime('%Y-%m-%d %H:%M') }}"
+        # WORKAROUND: a JQL datetime literal carries no timezone — Jira reads
+        # it in the instance's own zone, while this bound is rendered from
+        # now_utc(). A bare `updated <= <now-as-UTC>` ceiling therefore lands
+        # early on a positive-offset instance, and any object that changes
+        # more often than that offset sits above it at every sync and is never
+        # collected. +14h clears the ceiling for every possible zone (the
+        # maximum is UTC+14) without having to resolve which one applies.
+        # It cannot drag the cursor with it: the cursor advances to the newest
+        # record actually returned, and on the next sync the window floor is
+        # restored from that stored value, never from the previous ceiling
+        # (DateTimeStreamStateConverter.convert_from_sequential_state).
+        datetime: "{{ (now_utc() + duration('PT14H')).strftime('%Y-%m-%d %H:%M') }}"
         datetime_format: "%Y-%m-%d %H:%M"
       step: P30D
-      # 14h lookback (was 1h): JQL bare datetimes are evaluated in the API
-      # user's local timezone, so an `updated <= <now-as-UTC-string>` upper
-      # bound silently excludes up to 14h of fresh updates for users in
-      # positive UTC offsets (max UTC+14). Rewinding the next window start by
-      # 14h re-covers that tail. Do NOT fix this by pushing end_datetime into
-      # the future instead — that advances the cursor past the actual query
-      # time and permanently skips records updated in between.
+      # The missing timezone skews the floor the other way on a negative-offset
+      # instance, and a long sync reads early partitions before late ones. 14h
+      # covers both. Independent of the ceiling above — do not tie them.
       lookback_window: PT14H
     transformations:
       - type: AddFields
@@ -2801,16 +2808,23 @@ streams:
         datetime_format: "%Y-%m-%d"
       end_datetime:
         type: MinMaxDatetime
-        datetime: "{{ now_utc().strftime('%Y-%m-%d %H:%M') }}"
+        # WORKAROUND: a JQL datetime literal carries no timezone — Jira reads
+        # it in the instance's own zone, while this bound is rendered from
+        # now_utc(). A bare `updated <= <now-as-UTC>` ceiling therefore lands
+        # early on a positive-offset instance, and any object that changes
+        # more often than that offset sits above it at every sync and is never
+        # collected. +14h clears the ceiling for every possible zone (the
+        # maximum is UTC+14) without having to resolve which one applies.
+        # It cannot drag the cursor with it: the cursor advances to the newest
+        # record actually returned, and on the next sync the window floor is
+        # restored from that stored value, never from the previous ceiling
+        # (DateTimeStreamStateConverter.convert_from_sequential_state).
+        datetime: "{{ (now_utc() + duration('PT14H')).strftime('%Y-%m-%d %H:%M') }}"
         datetime_format: "%Y-%m-%d %H:%M"
       step: P30D
-      # 14h lookback (was 1h): JQL bare datetimes are evaluated in the API
-      # user's local timezone, so an `updated <= <now-as-UTC-string>` upper
-      # bound silently excludes up to 14h of fresh updates for users in
-      # positive UTC offsets (max UTC+14). Rewinding the next window start by
-      # 14h re-covers that tail. Do NOT fix this by pushing end_datetime into
-      # the future instead — that advances the cursor past the actual query
-      # time and permanently skips records updated in between.
+      # The missing timezone skews the floor the other way on a negative-offset
+      # instance, and a long sync reads early partitions before late ones. 14h
+      # covers both. Independent of the ceiling above — do not tie them.
       lookback_window: PT14H
     transformations:
       - type: AddFields
