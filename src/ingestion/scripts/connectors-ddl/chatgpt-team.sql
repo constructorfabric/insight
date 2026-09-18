@@ -1,5 +1,26 @@
 CREATE DATABASE IF NOT EXISTS `bronze_chatgpt_team`;
 
+CREATE TABLE IF NOT EXISTS bronze_chatgpt_team.chatgpt_team_account_settings
+(
+    `_airbyte_raw_id` String,
+    `_airbyte_extracted_at` DateTime64(3),
+    `_airbyte_meta` String,
+    `_airbyte_generation_id` UInt32,
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `unique_key` Nullable(String),
+    `collected_at` Nullable(String),
+    `data_source` Nullable(String),
+    `snapshot_date` Nullable(String),
+    `seat_type_credit_limits` Nullable(String),
+    `default_seat_type` Nullable(String),
+    `auto_approve_seat_upgrades` Nullable(Bool)
+)
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, index_granularity = 8192
+;
+
 CREATE TABLE IF NOT EXISTS bronze_chatgpt_team.chatgpt_team_chat_activity
 (
     `_airbyte_raw_id` String,
@@ -54,6 +75,25 @@ ORDER BY unique_key
 SETTINGS allow_nullable_key = 1, index_granularity = 8192
 ;
 
+CREATE TABLE IF NOT EXISTS bronze_chatgpt_team.chatgpt_team_codex_user_daily_org
+(
+    `_airbyte_raw_id` String,
+    `_airbyte_extracted_at` DateTime64(3),
+    `_airbyte_meta` String,
+    `_airbyte_generation_id` UInt32,
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `unique_key` Nullable(String),
+    `collected_at` Nullable(String),
+    `data_source` Nullable(String),
+    `date` Nullable(String),
+    `total_users` Nullable(Decimal(38, 9))
+)
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, index_granularity = 8192
+;
+
 CREATE TABLE IF NOT EXISTS bronze_chatgpt_team.chatgpt_team_seats
 (
     `_airbyte_raw_id` String,
@@ -70,7 +110,17 @@ CREATE TABLE IF NOT EXISTS bronze_chatgpt_team.chatgpt_team_seats
     `name` Nullable(String),
     `role` Nullable(String),
     `seat_type` Nullable(String),
-    `added_at` Nullable(String)
+    `added_at` Nullable(String),
+    `account_user_id` Nullable(String),
+    `verified_email` Nullable(String),
+    `trial_state` Nullable(String),
+    `is_trial` Nullable(Bool),
+    `is_scim_managed` Nullable(Bool),
+    `creation_source` Nullable(String),
+    `deactivated_time` Nullable(String),
+    `pending_seat_type` Nullable(String),
+    `reclaimable_seat_type` Nullable(String),
+    `credit_limits` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key

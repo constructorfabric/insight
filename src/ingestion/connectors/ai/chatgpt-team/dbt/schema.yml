@@ -3,11 +3,11 @@ version: 2
 sources:
   - name: bronze_chatgpt_team
     # Source freshness (TAF #1322). Source-level default = _airbyte_extracted_at
-    # (sync-liveness) for the roster table; the WINDOWED daily/snapshot tables
-    # override below to anchor on their business date. ChatGPT Team re-emits a
-    # fixed window every sync, so extracted_at is false-green for them — VERIFIED
-    # on live data (extracted_at ~8.6h fresh while `date` 60–85h stale). Report
-    # tier absorbs the vendor publish lag.
+    # (sync-liveness) for the roster table; the windowed daily/snapshot tables
+    # override below to anchor on their business date. This source re-emits a
+    # fixed window every sync, so extracted_at stays fresh while the business
+    # date it carries may not be — a false green. The thresholds allow for the
+    # vendor's publish lag.
     freshness:
       warn_after: {count: 36, period: hour}
       error_after: {count: 72, period: hour}
@@ -15,12 +15,17 @@ sources:
     schema: bronze_chatgpt_team
     tables:
       - name: chatgpt_team_seats   # roster — sync-liveness default is correct
-      - name: chatgpt_team_chat_activity      # VERIFIED windowed
+      - name: chatgpt_team_chat_activity      # windowed
         loaded_at_field: parseDateTimeBestEffortOrNull(date)
         freshness:
           warn_after: {count: 72, period: hour}
           error_after: {count: 120, period: hour}
-      - name: chatgpt_team_codex_user_daily   # VERIFIED windowed
+      - name: chatgpt_team_codex_user_daily   # windowed
+        loaded_at_field: parseDateTimeBestEffortOrNull(date)
+        freshness:
+          warn_after: {count: 72, period: hour}
+          error_after: {count: 120, period: hour}
+      - name: chatgpt_team_codex_user_daily_org  # windowed — the day's headcount
         loaded_at_field: parseDateTimeBestEffortOrNull(date)
         freshness:
           warn_after: {count: 72, period: hour}
@@ -35,6 +40,7 @@ sources:
         freshness:
           warn_after: {count: 72, period: hour}
           error_after: {count: 120, period: hour}
+      - name: chatgpt_team_account_settings   # workspace defaults — sync-liveness default is correct
 
 models:
   - name: chatgpt_team__ai_dev_usage
@@ -48,10 +54,21 @@ models:
       cost_cents NULL (credits ≠ currency).
       Codex-only counters (credits/n_turns/text_tokens/current_streak) kept in
       tool_action_breakdown_json. Column contract matches claude_team__ai_dev_usage.
+      Gated on read completeness: a read whose distinct people do not equal the
+      total_users its own envelope reported never becomes the day's state.
+      `credits` is on-demand usage rather than total Codex consumption, so a
+      person-day carrying activity with zero credits is ordinary; the emission
+      filter reads n_threads and lines_added instead.
     columns:
       - name: unique_key
         description: "Composite dedup key: tenant-source-email-day"
         tests: [not_null, unique]
+      - name: insight_tenant_id
+        description: "Tenant isolation key — required by the class contract."
+        tests: [not_null]
+      - name: source_id
+        description: "Connector instance that produced the row."
+        tests: [not_null]
       - name: email
         description: "Work email (lowercased) — identity key"
         tests: [not_null]
@@ -65,8 +82,24 @@ models:
           - accepted_values:
               arguments:
                 values: ['codex']
+      - name: session_count
+        description: "Codex threads that day. Non-nullable per the class contract."
+        tests: [not_null]
+      - name: lines_added
+        description: "AI-accepted lines. Non-nullable per the class contract."
+        tests: [not_null]
       - name: source
         description: "Always 'chatgpt_team'"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['chatgpt_team']
+      - name: data_source
+        description: "Framework discriminator carried from Bronze."
+        tests: [not_null]
+      - name: collected_at
+        description: "Extraction time of the Bronze row this was built from."
         tests: [not_null]
       - name: _version
         description: "RMT version — toUnixTimestamp64Milli(_airbyte_extracted_at) per ADR-0001"
@@ -79,12 +112,19 @@ models:
       source='chatgpt_team'). Sourced from chatgpt_team_chat_activity.
       message_count ← messages; conversation_count NULL (endpoint reports
       messages, not conversations). Per-bucket splits (gpt/tool/connector/project),
-      credits_used and seat_type kept in surface_metrics_json. Column contract
-      matches claude_enterprise__ai_assistant_usage.
+      credits_used and seat_type kept in surface_metrics_json — seat_type
+      resolved roster-first, falling back to the tier the usage row restates.
+      Column contract matches claude_enterprise__ai_assistant_usage.
     columns:
       - name: unique_key
         description: "Composite dedup key: tenant-source-email-day-chat"
         tests: [not_null, unique]
+      - name: insight_tenant_id
+        description: "Tenant isolation key — required by the class contract."
+        tests: [not_null]
+      - name: source_id
+        description: "Connector instance that produced the row."
+        tests: [not_null]
       - name: email
         tests: [not_null]
       - name: day
@@ -98,10 +138,65 @@ models:
                 values: ['chatgpt']
       - name: surface
         description: "Always 'chat'"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['chat']
+      - name: source
+        description: "Always 'chatgpt_team'"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['chatgpt_team']
+      - name: message_count
+        description: "Messages that day — the counter that admits the row."
         tests: [not_null]
       - name: _version
         tests: [not_null]
 
+  - name: chatgpt_team__seats_latest
+    description: >
+      Roster projection for the identity chain: one row per seat, deduped with
+      FINAL over the promoted Bronze table. Rows without user_id are dropped;
+      rows without an email are kept so the account stays bindable by hand.
+      Every tracked column is '' rather than NULL, because fields_history diffs
+      consecutive versions and a comparison against NULL yields NULL — a cleared
+      value would otherwise produce no history row at all. email and name are
+      blanked while the seat is deactivated so the departure and the return both
+      arrive as ordinary field changes.
+    columns:
+      - name: unique_key
+        tests: [not_null, unique]
+      - name: user_id
+        description: "Vendor seat id — the entity the identity chain keys on."
+        tests: [not_null]
+      - name: deactivated_time
+        description: >
+          The vendor's departure signal, '' while the seat is active. Tracked in
+          the snapshot and the fields history and read by the identity model's
+          deactivation_condition; it is a lifecycle signal, never an identity
+          value of its own.
+        tests: [not_null]
+
+  - name: chatgpt_team__identity_inputs
+    description: >
+      Identity observations from the ChatGPT Team roster under source_type
+      'chatgpt-team' — email and display_name, plus the ADR-0002 id binding
+      row. Observes accounts; it does not assert who exists, so it is not a
+      roster source.
+    columns:
+      - name: unique_key
+        tests: [not_null]
+      - name: insight_source_type
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['chatgpt-team']
+
 # Bronze→RMT promotion is bootstrapped by chatgpt_team__bronze_promoted.sql.
-# subscription_usage/balance have no Silver model yet (billing not in a unified
-# stream — OQ-CGT-2); collection_runs is not produced by a declarative source.
+# subscription_usage/balance have no Silver model: the class contracts are
+# per-seat and these two streams are workspace totals, so there is nothing to
+# map them onto yet.

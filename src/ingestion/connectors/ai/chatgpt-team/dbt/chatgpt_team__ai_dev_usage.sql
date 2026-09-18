@@ -18,7 +18,16 @@
 --   lines_added ← lines_added     — AI-accepted lines (from code_attribution.lines_of_code.added).
 --   cost_cents ← NULL             — `credits` are Codex usage credits, not a currency amount.
 --   Codex-only counters (credits, n_turns, text_tokens, current_streak) are
---   preserved in tool_action_breakdown_json so nothing is lost.
+--   preserved in tool_action_breakdown_json so nothing is lost. They do not
+--   admit a row: see the emission filter's invariant at the foot of the model.
+--
+-- INVARIANT: `credits` is ON-DEMAND usage, not total Codex consumption — it
+--   matches the vendor's own on-demand figure wherever one is published, and
+--   Codex activity routinely records zero credits while still reporting tokens.
+--   A person-day with credits = 0 is therefore ordinary, not a gap, which is
+--   why the emission filter does not read it. Whether the uncredited part is
+--   allowance-covered or unmetered is not established; either way it is
+--   excluded from this number.
 {{ config(
     materialized='incremental',
     incremental_strategy='append',
@@ -30,6 +39,98 @@
     schema='staging',
     tags=['chatgpt-team', 'silver:class_ai_dev_usage']
 ) }}
+
+-- Completeness gate. The per-user endpoint pages over sort_by=credits, which
+-- is not a total order — everyone who spent nothing ties on it — so a person
+-- can sit past the page boundary in one request and before it in the next,
+-- returned by neither, while every request succeeds. A read that lost somebody
+-- must not become the day's state, so it is dropped whole and the day keeps
+-- whatever the last sound read wrote.
+WITH reference AS (
+
+    -- The vendor's own headcount, as of the read that returned it. Keyed on
+    -- the read and not the day: a day still in progress reports fewer people
+    -- than it ends with, so judging an older read against a newer reference
+    -- would reject sound reads.
+    SELECT
+        coalesce(tenant_id, '')                         AS insight_tenant_id,
+        coalesce(source_id, '')                         AS source_id,
+        toDateOrNull(date)                              AS day,
+        JSONExtractInt(_airbyte_meta, 'sync_id')        AS read_id,
+        -- Not aliased `total_users`: the alias shadows the source column and
+        -- ClickHouse then resolves the outer reference to the aggregate itself.
+        max(toInt64OrNull(toString(total_users)))       AS read_total_users
+    -- FINAL: the envelope table is a ReplacingMergeTree, so an unmerged part
+    -- can still hold a superseded headcount for the same read.
+    FROM {{ source('bronze_chatgpt_team', 'chatgpt_team_codex_user_daily_org') }} FINAL
+    WHERE date IS NOT NULL
+      AND trim(date) != ''
+      AND total_users IS NOT NULL
+    GROUP BY insight_tenant_id, source_id, day, read_id
+
+),
+
+first_reference AS (
+
+    -- Which read first carried a reference on this instance. Reads before it
+    -- predate the envelope stream and cannot be judged; that read and
+    -- everything after must carry one, or they are rejected.
+    --
+    -- INVARIANT: the boundary is the READ, not its timestamp. Both streams are
+    -- written by one job but not at one instant, so on the first sync after
+    -- the upgrade the per-user rows can land a moment before the envelope that
+    -- would judge them.
+    SELECT
+        insight_tenant_id,
+        source_id,
+        min(read_id)                                    AS since_read,
+        toUInt8(1)                                      AS instance_has_references
+    FROM reference
+    GROUP BY insight_tenant_id, source_id
+
+),
+
+read_state AS (
+
+    SELECT
+        coalesce(tenant_id, '')                         AS insight_tenant_id,
+        coalesce(source_id, '')                         AS source_id,
+        toDateOrNull(date)                              AS day,
+        JSONExtractInt(_airbyte_meta, 'sync_id')        AS read_id,
+        -- Counts only rows the serving layer can attribute, so a headcount
+        -- that includes someone arriving without an email fails the gate
+        -- closed instead of passing on a body count.
+        uniqExactIf(lower(trim(email)),
+                    email IS NOT NULL AND trim(email) != '') AS people
+    FROM {{ source('bronze_chatgpt_team', 'chatgpt_team_codex_user_daily') }}
+    WHERE date IS NOT NULL
+      AND trim(date) != ''
+    GROUP BY insight_tenant_id, source_id, day, read_id
+
+),
+
+admitted_reads AS (
+
+    SELECT
+        r.insight_tenant_id                             AS insight_tenant_id,
+        r.source_id                                     AS source_id,
+        r.day                                           AS day,
+        r.read_id                                       AS read_id
+    FROM read_state AS r
+    LEFT JOIN first_reference AS f
+           ON f.insight_tenant_id = r.insight_tenant_id
+          AND f.source_id = r.source_id
+    -- coalesce, not IS NULL: without join_use_nulls an unmatched LEFT JOIN
+    -- yields the column's default rather than NULL, and both readings must
+    -- give the same verdict.
+    WHERE (r.insight_tenant_id, r.source_id, r.day, r.read_id, r.people) IN (
+              SELECT insight_tenant_id, source_id, day, read_id, read_total_users
+              FROM reference
+          )
+       OR coalesce(f.instance_has_references, 0) = 0
+       OR r.read_id < f.since_read
+
+)
 
 SELECT
     tenant_id                                           AS insight_tenant_id,
@@ -78,11 +179,21 @@ SELECT
     -- The usage endpoint carries no seat lifecycle state.
     CAST(NULL AS Nullable(String))                      AS seat_status
 FROM (
-    -- Bronze dedup: keep the latest extract per (email, date). Defensive depth —
-    -- becomes a no-op once promote_bronze_to_rmt merges (ADR-0002), but guards
-    -- against duplicate raw rows from multiple sync attempts.
+    -- Bronze dedup: keep the latest ADMITTED extract per (email, date).
+    -- INVARIANT: the gate runs inside this subquery. Deduping first would keep
+    -- a short read's row and then reject it, dropping the day altogether
+    -- instead of falling back to the last sound read.
     SELECT *
     FROM {{ source('bronze_chatgpt_team', 'chatgpt_team_codex_user_daily') }}
+    -- The read this row came from has to have brought the whole day. Rejected
+    -- whole rather than row by row: a short read is short in an unknown place,
+    -- so the people it DID return say nothing about the ones it did not.
+    WHERE (coalesce(tenant_id, ''),
+           coalesce(source_id, ''),
+           toDateOrNull(date),
+           JSONExtractInt(_airbyte_meta, 'sync_id')) IN (
+              SELECT insight_tenant_id, source_id, day, read_id FROM admitted_reads
+          )
     ORDER BY _airbyte_extracted_at DESC
     -- Dedup on the SAME normalized key the unique_key uses (lower(trim(email))),
     -- else two case-variant spellings of one address both survive and then
@@ -92,12 +203,16 @@ FROM (
 WHERE email IS NOT NULL
   AND trim(email) != ''
   AND date IS NOT NULL
-  -- Only emit rows with real Codex activity so codex_active (the DAU marker)
-  -- is not inflated by zero-usage users (mirrors the chat model's filter).
+  -- toDate throws on '' where it returns NULL on a NULL, so the emptiness
+  -- guard is not redundant with the IS NOT NULL above.
+  AND trim(date) != ''
+  -- INVARIANT: every term is a counter this model emits into the class. The
+  -- contract derives active_day from row existence, so a row admitted on a
+  -- counter that only reaches tool_action_breakdown_json would assert activity
+  -- none of its class columns can evidence — which is what
+  -- assert_ai_dev_usage_rows_active fails on.
   AND (
-        coalesce(credits, 0) > 0
-     OR coalesce(toUInt32OrNull(toString(n_turns)),   0) > 0
-     OR coalesce(toUInt32OrNull(toString(n_threads)), 0) > 0
+        coalesce(toUInt32OrNull(toString(n_threads)), 0) > 0
      OR coalesce(toUInt32OrNull(toString(lines_added)), 0) > 0
   )
 {% if is_incremental() %}
