@@ -145,10 +145,13 @@ export function datasetQuery(name: string) {
 }
 
 /** The latest records a dataset holds, as a reader sees them on its page. */
+/** How many of the latest records a dataset's page shows. */
+export const PREVIEW_ROWS = 20;
+
 export function datasetRecordsQuery(name: string) {
   return queryOptions({
-    queryKey: [...DATASET_PREFIX, name, "records"],
-    queryFn: () => fetchDatasetRecords(name),
+    queryKey: [...DATASET_PREFIX, name, "records", PREVIEW_ROWS],
+    queryFn: () => fetchDatasetRecords(name, PREVIEW_ROWS),
   });
 }
 

@@ -7,7 +7,7 @@ export type * from "@/api/custom-types";
 import type {
   Dashboard,
   Dataset,
-  DatasetRecord,
+  DatasetRecords,
   MetricResult,
   StoredMetric,
   Widget,
@@ -181,14 +181,14 @@ export async function fetchDataset(name: string): Promise<Dataset> {
 
 /** The latest records the dataset holds, newest first, capped by the service. */
 export async function fetchDatasetRecords(
-  name: string
-): Promise<DatasetRecord[]> {
+  name: string,
+  limit: number
+): Promise<DatasetRecords> {
   const res = await fetchWithAuth(
-    `${BASE}/datasets/${encodeURIComponent(name)}/records`
+    `${BASE}/datasets/${encodeURIComponent(name)}/records?limit=${limit}`
   );
-  const read = await readJson<{ records: DatasetRecord[] }>(res);
 
-  return read.records;
+  return readJson<DatasetRecords>(res);
 }
 
 /**

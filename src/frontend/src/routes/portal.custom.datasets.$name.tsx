@@ -145,20 +145,32 @@ function Records({ name }: { name: string }) {
           <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
             {refusal(records.error, "Couldn't read the records.")}
           </p>
-        ) : records.data.length === 0 ? (
+        ) : records.data.total === 0 ? (
           <p className={cn(TEXT_BODY, "text-muted-foreground")}>
             Nothing has arrived yet.
           </p>
         ) : (
-          <ul className="flex flex-col gap-2">
-            {records.data.map((record) => (
-              <RecordRow key={record.id} record={record} />
-            ))}
-          </ul>
+          <>
+            <p className={cn(TEXT_LABEL, "mb-3 text-muted-foreground")}>
+              {shownOf(records.data.records.length, records.data.total)}
+            </p>
+            <ul className="flex flex-col gap-2">
+              {records.data.records.map((record) => (
+                <RecordRow key={record.id} record={record} />
+              ))}
+            </ul>
+          </>
         )}
       </CardContent>
     </Card>
   );
+}
+
+/** What the list is a slice of: a re-sent record counts again, as it arrived. */
+function shownOf(shown: number, total: number): string {
+  return shown === total
+    ? `All ${total} records received, newest first.`
+    : `The latest ${shown} of ${total} records received.`;
 }
 
 function RecordRow({ record }: { record: DatasetRecord }) {

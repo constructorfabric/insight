@@ -143,6 +143,13 @@ export interface DatasetRecord {
   raw_data: unknown;
 }
 
+/** A look at a dataset: its latest few records, and how many it holds in all. */
+export interface DatasetRecords {
+  records: DatasetRecord[];
+  /** Every record that arrived, a re-sent one counted again. */
+  total: number;
+}
+
 export interface MetricResult {
   columns: string[];
   rows: unknown[][];

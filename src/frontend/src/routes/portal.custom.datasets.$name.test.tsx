@@ -69,7 +69,10 @@ beforeEach(() => {
   vi.resetAllMocks();
   portalRouter.reset();
   onDataset();
-  vi.mocked(customClient.fetchDatasetRecords).mockResolvedValue([]);
+  vi.mocked(customClient.fetchDatasetRecords).mockResolvedValue({
+    records: [],
+    total: 0,
+  });
   vi.mocked(customClient.fetchDatasetDependents).mockResolvedValue([]);
 });
 
@@ -90,17 +93,28 @@ describe("/portal/custom/datasets/$name", () => {
 
   it("shows the latest records as they arrived", async () => {
     vi.mocked(customClient.fetchDataset).mockResolvedValue(COMMITS);
-    vi.mocked(customClient.fetchDatasetRecords).mockResolvedValue([
-      {
-        id: "1",
-        received_at: "2026-09-17 10:00:00",
-        raw_data: { lines: 7 },
-      },
-    ]);
+    vi.mocked(customClient.fetchDatasetRecords).mockResolvedValue({
+      records: [
+        {
+          id: "1",
+          received_at: "2026-09-17 10:00:00",
+          raw_data: { lines: 7 },
+        },
+      ],
+      total: 757,
+    });
 
     render(<Component />, { wrapper });
 
     expect(await screen.findByText('{"lines":7}')).toBeInTheDocument();
+    // The list is a slice; the page says of how much.
+    expect(
+      await screen.findByText("The latest 1 of 757 records received.")
+    ).toBeInTheDocument();
+    expect(customClient.fetchDatasetRecords).toHaveBeenCalledWith(
+      "commits",
+      20
+    );
   });
 
   it("names the metrics that read it", async () => {
