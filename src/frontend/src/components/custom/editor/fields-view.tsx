@@ -44,7 +44,7 @@ export function FieldsView({
   keepEmpty?: readonly string[];
 }) {
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col divide-y divide-border [&>*]:py-3 [&>*:first-child]:pt-0 [&>*:last-child]:pb-0">
       {fields.map((field) =>
         field.shape.of === "variants" ? (
           <Variants
