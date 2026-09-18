@@ -33,10 +33,13 @@ export function FieldsView({
   at,
   editing,
   keepEmpty,
+  ruled,
 }: {
   fields: readonly Field[];
   at: Path;
   editing: Editing;
+  /** Rows of one group, set apart from each other by a hairline. */
+  ruled?: boolean;
   /**
    * INVARIANT: a record is told apart by the property it carries; removing it
    * when cleared would leave a record that is no variant, and nothing to show.
@@ -44,7 +47,14 @@ export function FieldsView({
   keepEmpty?: readonly string[];
 }) {
   return (
-    <div className="flex flex-col divide-y divide-border [&>*]:py-3 [&>*:first-child]:pt-0 [&>*:last-child]:pb-0">
+    <div
+      className={cn(
+        "flex flex-col",
+        ruled
+          ? "divide-y divide-border [&>*]:py-3 [&>*:first-child]:pt-0 [&>*:last-child]:pb-0"
+          : "gap-4"
+      )}
+    >
       {fields.map((field) =>
         field.shape.of === "variants" ? (
           <Variants
@@ -83,7 +93,12 @@ function FieldRow({
     return (
       <Nested field={field} at={at} editing={editing}>
         {field.shape.of === "record" ? (
-          <FieldsView fields={field.shape.fields} at={at} editing={editing} />
+          <FieldsView
+            fields={field.shape.fields}
+            at={at}
+            editing={editing}
+            ruled
+          />
         ) : (
           <ListEntries shape={field.shape} at={at} editing={editing} />
         )}
@@ -257,7 +272,7 @@ function Entry({
         ) : null}
 
         {shape.of === "record" ? (
-          <FieldsView fields={shape.fields} at={at} editing={editing} />
+          <FieldsView fields={shape.fields} at={at} editing={editing} ruled />
         ) : (
           <Variants
             field={{ name: called, label: "Kind", shape }}
