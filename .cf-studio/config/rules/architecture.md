@@ -86,7 +86,7 @@ Evidence: `docs/CONNECTORS_REFERENCE.md:333–347` — `github_collection_runs`.
 3. **`unique_key` formula** — `{insight_tenant_id}-{insight_source_id}-{natural_key_parts}` everywhere (Airbyte AddFields, Python CDK helpers, SQL concat in explode models, Rust `format!`). Every natural key part MUST be an identifier the source never reissues. A renameable display value (an issue's `owner/repo#7` or `PROJ-12`, a repository path, a login) is an attribute, never a key part: when it changes, the record keeps its `unique_key` and the new value is written under it, so RMT collapses the versions. A key built from such a value would write the record again under the new key, and RMT would collapse neither copy.
 4. **Bronze tables MUST be promoted** to `ReplacingMergeTree(_airbyte_extracted_at)` on first dbt run via `promote_bronze_to_rmt` macro. Each connector has a `<connector>__bronze_promoted` bootstrap model.
 5. **Connector → silver via `union_by_tag`** — connectors write to per-connector staging models tagged `silver:<class>`; silver class models do `union_by_tag('silver:<class>')`. Never write directly to silver from a connector.
-6. **Rust-owned staging tables** — wrap on the dbt side as `materialized='ephemeral'` (no DB object; dbt inlines as CTE).
+6. **Staging tables not owned by dbt** — wrap on the dbt side as `materialized='ephemeral'` (no DB object; dbt inlines as CTE). None exist today: the Jira field history, once written by a Rust binary, is derived in dbt.
 7. **Read pattern** — silver consumers MUST use `SELECT … FROM silver.X FINAL` or `argMax(... ORDER BY _version)`. RMT tables hold multiple versions per `unique_key` until background merge.
 8. **Airbyte sync mode** — always `destinationSyncMode='append'`. `append_dedup` and `overwrite` are forbidden (OOM, data loss on retry). See `cpt-dataflow-constraint-airbyte-append`.
 
@@ -105,7 +105,6 @@ Evidence: `docs/CONNECTORS_REFERENCE.md:333–347` — `github_collection_runs`.
 |---|---|
 | `union_by_tag(tag)` | Generates `UNION ALL` over all dbt models tagged with `tag`. Patched to handle ephemeral models (no DB relation check). |
 | `promote_bronze_to_rmt(table, order_by)` | Idempotent migration of a bronze MergeTree to ReplacingMergeTree(_airbyte_extracted_at). |
-| `create_task_field_history_staging()` | `on-run-start` macro: DDL of `staging.jira__task_field_history` (Rust-populated). |
 | `snapshot()` | Append-only SCD2 helper. |
 | `fields_history()` | Per-(entity, field) change log derived from a snapshot. |
 | `identity_inputs_from_history()` | Emits UPSERT/DELETE observation rows for `identity.identity_inputs`. |

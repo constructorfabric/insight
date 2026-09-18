@@ -251,7 +251,19 @@ sources:
       - key: bugs_fixed
         evidence_granularity: event
         evidence_presentation: *issue_counted
-      - key: closed_non_bug
+      - key: closed_task
+        evidence_granularity: event
+        evidence_presentation: *issue_counted
+      - key: closed_unknown_type
+        evidence_granularity: event
+        evidence_presentation: *issue_counted
+      - key: closed_fixed
+        evidence_granularity: event
+        evidence_presentation: *issue_counted
+      - key: closed_duplicate
+        evidence_granularity: event
+        evidence_presentation: *issue_counted
+      - key: closed_wontfix
         evidence_granularity: event
         evidence_presentation: *issue_counted
       - key: due_date_on_time
@@ -298,6 +310,7 @@ sources:
     dimensions:
       - type
       - source
+      - resolution
   - source:
       key: wiki
       kind: managed_observation
@@ -2341,6 +2354,7 @@ metrics:
     dimensions:
       - type
       - source
+      - resolution
   - metric_key: tasks.bugs_fixed
     source_key: task
     subject: quality
@@ -2358,15 +2372,16 @@ metrics:
     inputs:
       - input_role: value
         measure_key: bugs_fixed
-    dimensions: []
-  - metric_key: tasks.closed_non_bug
+    dimensions:
+      - resolution
+  - metric_key: tasks.closed_task
     source_key: task
     subject: throughput
-    label: Non-bug issues closed
-    short_label: Non-bug
-    description: Closed issues of a known non-bug type
+    label: Tasks closed
+    short_label: Tasks
+    description: Closed issues of a known task (non-bug) type
     explanation: >-
-      Issues of a known non-bug type a person closed during the period. Issues whose type cannot be determined are excluded rather than counted here.
+      Issues of a known task (non-bug) type a person closed during the period. Issues whose type cannot be determined are excluded rather than counted here.
     unit: issues
     format: integer
     direction: higher_is_better
@@ -2375,7 +2390,79 @@ metrics:
     peer_cohort_key: org_unit
     inputs:
       - input_role: value
-        measure_key: closed_non_bug
+        measure_key: closed_task
+    dimensions: []
+  - metric_key: tasks.closed_unknown
+    source_key: task
+    subject: throughput
+    label: Unclassified issues closed
+    short_label: Unclassified
+    description: Closed issues whose type is not mapped to a kind by the operator table
+    explanation: >-
+      Issues a person closed whose type the operator type table maps to no kind, so they count in neither bugs nor tasks. Completes the split of issues closed.
+    unit: issues
+    format: integer
+    direction: lower_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: closed_unknown_type
+    dimensions: []
+  - metric_key: tasks.closed_fixed
+    source_key: task
+    subject: quality
+    label: Closed fixed
+    short_label: Fixed
+    description: Closed issues resolved as really done
+    explanation: >-
+      Issues a person closed during the period whose resolution class is fixed — work that was really done rather than dismissed. Part of issues closed, not a separate total.
+    unit: issues
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: closed_fixed
+    dimensions: []
+  - metric_key: tasks.closed_duplicate
+    source_key: task
+    subject: quality
+    label: Closed duplicates
+    short_label: Duplicates
+    description: Closed issues resolved as duplicates
+    explanation: >-
+      Issues a person closed during the period whose resolution class is duplicate. Part of issues closed, not a separate total.
+    unit: issues
+    format: integer
+    direction: neutral
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: closed_duplicate
+    dimensions: []
+  - metric_key: tasks.closed_wontfix
+    source_key: task
+    subject: quality
+    label: Closed won't-fix
+    short_label: Won't fix
+    description: Closed issues resolved as won't-fix
+    explanation: >-
+      Issues a person closed during the period whose resolution class is wontfix. Part of issues closed, not a separate total.
+    unit: issues
+    format: integer
+    direction: neutral
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: closed_wontfix
     dimensions: []
   - metric_key: tasks.dev_time
     source_key: task

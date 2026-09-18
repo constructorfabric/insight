@@ -3,7 +3,7 @@ description: >
   Task Delivery - resolution time and reopen rate for GITHUB, both read from a
   history the connector never received.
 
-  This fixture pins the part of the ingest that replaces the Rust enrich. A
+  This fixture pins the GitHub half of the field-history derivation. A
   GitHub timeline records changes, so an issue's creation is not in it: the
   staging model synthesises a creation marker from the snapshot, and gold reads
   that marker as `created_at`. Nothing else supplies it.
@@ -40,7 +40,9 @@ bronze:
   config.task_value_map:
     - $ref: ../templates/github_task.yaml#/templates/value_open
     - $ref: ../templates/github_task.yaml#/templates/value_closed_completed
-    - { $ref: ../templates/github_task.yaml#/templates/value_open, field_id: type, value_id: IT_task, unique_key: gh-value-type-task, canonical_value: other, value_display: Task }
+
+  config.field_value_map:
+    - $ref: ../templates/github_task.yaml#/templates/issue_type_kind_task
 
   bronze_github.issue_types:
     - $ref: ../templates/github_task.yaml#/templates/issue_type_task

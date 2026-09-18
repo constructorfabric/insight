@@ -17,9 +17,9 @@
 ) }}
 
 -- One row per (issue, field) with the field's current value, for EVERY field the
--- issue actually carries — not a hand-picked list. Consumed by `jira-enrich` to
--- populate `IssueSnapshot.current_fields`, so a field that never appears in the
--- changelog still produces a `synthetic_initial` row.
+-- issue actually carries — not a hand-picked list. Read by
+-- `jira__field_history_derived`, so a field that never appears in the changelog
+-- still produces a `synthetic_initial` row.
 --
 -- Fields are classified by `jira__task_field_kind` and read by the
 -- `jira_norm_value` macros; see

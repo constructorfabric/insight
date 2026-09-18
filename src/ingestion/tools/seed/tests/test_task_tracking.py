@@ -1,10 +1,10 @@
 """Tests for the task-tracking generator (`generators/task.py`).
 
 The trap these tests pin: `task_issue_state` gold classifies an issue by
-joining its issuetype field-history value_id against the
-`class_task_issuetypes` dimension. A missing dimension row — or a
-history event without a value_id — leaves the bug / non-bug measures
-empty while every row still "looks" seeded.
+joining its issuetype field-history value_id against the operator's
+`config.field_value_map` rows (the `class_task_issuetypes` dimension carries
+the names). A missing mapping row — or a history event without a value_id —
+leaves the bug / non-bug measures empty while every row still "looks" seeded.
 """
 
 from __future__ import annotations
@@ -36,6 +36,7 @@ _TABLES = (
     "silver.class_task_field_history",
     "silver.class_task_statuses",
     "silver.class_task_issuetypes",
+    "config.field_value_map",
 )
 
 _INITIAL_FIELDS = {
@@ -130,10 +131,10 @@ def test_every_issue_opens_with_an_issuetype_event_that_carries_a_value_id(
         typed = _issuetype_initial(events)
         assert len(typed) == 1, f"issue {issue_id} has {len(typed)} issuetype initials"
         event = typed[0]
-        assert event["delta_value_id"], f"issue {issue_id}: issuetype event has no value_id"
-        assert event["value_ids"] == [event["delta_value_id"]], (
-            f"issue {issue_id}: value_ids diverges from delta_value_id"
+        assert len(event["value_ids"]) == 1, (
+            f"issue {issue_id}: issuetype event carries {event['value_ids']}"
         )
+        assert event["value_ids"][0], f"issue {issue_id}: issuetype event has no value_id"
         assert event["value_id_type"] == "string_literal", issue_id
 
 
@@ -153,9 +154,9 @@ def test_a_close_event_flips_status_to_a_done_status_with_its_dimension_id(
     for issue_id, events in issues.items():
         for event in _close_events(events):
             assert event["field_id"] == "status", f"issue {issue_id} changelog is not a status"
-            display = event["delta_value_display"]
+            display = event["value_displays"][0]
             assert display in task._CLOSE_STATUSES, f"issue {issue_id} closes to {display!r}"
-            assert event["delta_value_id"] == task._STATUS_DIM[display][0], (
+            assert event["value_ids"][0] == task._STATUS_DIM[display][0], (
                 f"issue {issue_id}: close value_id does not match the {display!r} dimension row"
             )
             assert event["event_at"].date() < _ANCHOR, f"issue {issue_id} closes after the anchor"
@@ -184,7 +185,7 @@ def test_roughly_the_configured_share_of_old_enough_issues_is_closed(
 
 def _issue_types(issues: Issues) -> dict[str, str]:
     return {
-        issue_id: _issuetype_initial(events)[0]["delta_value_id"]
+        issue_id: _issuetype_initial(events)[0]["value_ids"][0]
         for issue_id, events in issues.items()
     }
 
@@ -220,29 +221,55 @@ def test_closed_bugs_exist_so_bugs_fixed_is_non_zero(issues: Issues) -> None:
 def test_the_issuetype_dimension_emits_exactly_the_declared_rows_per_source(
     rows: Rows,
 ) -> None:
-    by_source: dict[str, dict[str, tuple[str, str]]] = {}
+    by_source: dict[str, dict[str, str]] = {}
     for row in rows["silver.class_task_issuetypes"]:
         per_source = by_source.setdefault(row["insight_source_id"], {})
         assert row["issue_type_id"] not in per_source, (
             f"source {row['insight_source_id']} duplicates type {row['issue_type_id']}"
         )
-        per_source[row["issue_type_id"]] = (row["issue_type_name"], row["issue_kind"])
+        per_source[row["issue_type_id"]] = row["issue_type_name"]
 
-    declared = {type_id: (name, kind) for name, (type_id, kind) in task._ISSUE_TYPE_DIM.items()}
+    declared = {type_id: name for name, (type_id, _kind) in task._ISSUE_TYPE_DIM.items()}
     for source_id, per_source in by_source.items():
         assert per_source == declared, f"source {source_id} diverges from _ISSUE_TYPE_DIM"
 
 
-def test_the_dimension_carries_a_bug_kind_row_keyed_by_the_history_value_id(
+@pytest.mark.parametrize(
+    ("field", "dim"),
+    [("issue_type", task._ISSUE_TYPE_DIM), ("resolution", task._RESOLUTION_DIM)],
+    ids=["issue_type", "resolution"],
+)
+def test_the_value_map_emits_exactly_the_declared_decisions_per_source(
+    rows: Rows, field: str, dim: dict[str, tuple[str, str]]
+) -> None:
+    by_source: dict[str, dict[str, tuple[str, str]]] = {}
+    for row in rows["config.field_value_map"]:
+        assert row["tenant_id"] == _TENANT
+        assert row["field"] in ("issue_type", "resolution")
+        assert row["is_deleted"] == 0
+        if row["field"] != field:
+            continue
+        per_source = by_source.setdefault(row["insight_source_id"], {})
+        assert row["source_key"] not in per_source, (
+            f"source {row['insight_source_id']} duplicates decision {row['source_key']}"
+        )
+        per_source[row["source_key"]] = (row["display_name"], row["target_value"])
+
+    declared = {source_key: (name, kind) for name, (source_key, kind) in dim.items()}
+    for source_id, per_source in by_source.items():
+        assert per_source == declared, f"source {source_id} diverges from the {field} dimension"
+
+
+def test_the_value_map_carries_a_bug_decision_keyed_by_the_history_value_id(
     rows: Rows,
 ) -> None:
-    bug_rows = [r for r in rows["silver.class_task_issuetypes"] if r["issue_kind"] == "bug"]
-    assert bug_rows, "no bug-kind dimension row — gold cannot classify any bug"
+    bug_rows = [r for r in rows["config.field_value_map"] if r["target_value"] == "bug"]
+    assert bug_rows, "no bug decision — gold cannot classify any bug"
     for row in bug_rows:
-        assert row["issue_type_id"] == _BUG_TYPE_ID, (
-            f"bug row keyed {row['issue_type_id']!r}, history events use {_BUG_TYPE_ID!r}"
+        assert row["source_key"] == _BUG_TYPE_ID, (
+            f"bug decision keyed {row['source_key']!r}, history events use {_BUG_TYPE_ID!r}"
         )
-        assert row["issue_type_name"] == "Bug"
+        assert row["display_name"] == "Bug"
 
 
 # ─── Referential integrity of the seed itself ────────────────────────────
@@ -258,7 +285,7 @@ def test_every_issuetype_value_id_in_history_exists_in_the_dimension(
     for event in history:
         if event["field_id"] != "issuetype":
             continue
-        key = (event["insight_source_id"], event["delta_value_id"])
+        key = (event["insight_source_id"], event["value_ids"][0])
         assert key in dimension, f"issue {event['issue_id']} references unseeded type {key}"
 
 
@@ -273,5 +300,5 @@ def test_every_status_value_id_in_history_exists_in_the_status_dimension(
     for event in history:
         if event["field_id"] != "status":
             continue
-        key = (event["insight_source_id"], event["delta_value_id"])
+        key = (event["insight_source_id"], event["value_ids"][0])
         assert key in dimension, f"issue {event['issue_id']} references unseeded status {key}"

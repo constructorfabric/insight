@@ -244,8 +244,8 @@ describe("headline (rules 1–2: per-capita + PoP delta)", () => {
     expect(screen.getByText("100 commits")).toBeInTheDocument();
     expect(screen.getByText(/25 commits per active person/)).toBeInTheDocument();
     expect(screen.getByText("-50%")).toBeInTheDocument();
-    // header carries the scope size + tagline
-    expect(screen.getByText(/4 people · test lens/)).toBeInTheDocument();
+    // header carries the scope size + tagline — the lead and their 4 reports
+    expect(screen.getByText(/5 people · test lens/)).toBeInTheDocument();
   });
 
   it("divides by ACTIVE people only — zeros don't dilute the denominator", () => {
@@ -307,7 +307,7 @@ describe("headline cards open the records behind them", () => {
     // asked for as one selection over every member.
     expect(targets[0].selection.entity).toEqual({
       type: "persons",
-      ids: [...IDS].sort(),
+      ids: [...IDS, pid("boss")].sort(),
     });
   });
 
@@ -342,10 +342,17 @@ describe("rule 6: honest not-ingested gate", () => {
 
 describe("org-scope gates", () => {
   it("shows the empty-roster label instead of a fabricated dashboard", () => {
-    mocks.tree = person("boss");
-    mocks.roster = peopleFromIdentityTree(mocks.tree);
+    mocks.tree = undefined;
+    mocks.roster = [];
     render(<DomainLensView config={HEADLINE_CONFIG} />);
     expect(screen.getByText(/No people in the current scope/)).toBeInTheDocument();
+  });
+
+  it("counts the lead with their reports, as the People roster does", () => {
+    mocks.tree = person("boss", {}, [person("a")]);
+    mocks.roster = peopleFromIdentityTree(mocks.tree);
+    render(<DomainLensView config={HEADLINE_CONFIG} />);
+    expect(screen.getByText(/2 people · test lens/)).toBeInTheDocument();
   });
 
   it("surfaces a grid failure as retryable error", () => {
@@ -884,8 +891,8 @@ describe("participation (rule 8 variant: N of M active)", () => {
       />,
     );
     expect(screen.getByText("People using AI")).toBeInTheDocument();
-    expect(screen.getByText("2 of 4")).toBeInTheDocument();
-    expect(screen.getByText(/50% of the team/)).toBeInTheDocument();
+    expect(screen.getByText("2 of 5")).toBeInTheDocument();
+    expect(screen.getByText(/40% of the team/)).toBeInTheDocument();
   });
 });
 
@@ -949,7 +956,7 @@ describe("direction-cards / attention sections", () => {
         }}
       />,
     );
-    expect(screen.getByText(/1 of 8 people stands out this period/)).toBeInTheDocument();
+    expect(screen.getByText(/1 of 9 people stands out this period/)).toBeInTheDocument();
     // The metric leads; the person is named once it is opened.
     fireEvent.click(screen.getByRole("button", { name: /Commits\s*1 person/ }));
     // Identity owns the display name now.
@@ -1110,7 +1117,7 @@ describe("trend section", () => {
 
     const state = openedDrilldown();
     expect(state.metricKey).toBe("t.commits");
-    expect(state.members.map((m) => m.name).length).toBe(4);
+    expect(state.members.map((m) => m.name).length).toBe(5);
     expect(state.breakdown.map((b) => b.total)).toEqual([3, 7]);
   });
 

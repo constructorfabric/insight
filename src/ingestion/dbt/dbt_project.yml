@@ -96,16 +96,6 @@ vars:
     - '(^|/)mix\\.lock$'
     - '(^|/)flake\\.lock$'
 
-  # Issue-type names the shared `task_issue_kind` macro maps to bug / other,
-  # compared case-insensitively. Anything else is `unknown`.
-  task_bug_type_names:
-    - bug
-    - defect
-    - regression
-    - exception
-    - cosmetics
-    - usability problem
-    - performance problem
   # Custom-field names carrying the issue type, for sources that model it as a
   # field rather than a global type table (YouTrack). Canonical field names,
   # compared case-insensitively — never a localized name.
@@ -123,17 +113,6 @@ vars:
   # goes unreported instead of failing the build. Flip this on once binding
   # boards is something an operator can actually do.
   task_board_bindings_enforced: false
-  task_non_bug_type_names:
-    - task
-    - sub-task
-    - subtask
-    - story
-    - user story
-    - epic
-    - improvement
-    - feature
-    - new feature
-    - meeting
 
 # on-run-start hooks:
 #  - create_task_field_history_staging:

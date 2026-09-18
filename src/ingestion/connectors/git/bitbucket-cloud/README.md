@@ -137,8 +137,11 @@ collapses to current state and a head move is a tracked-column change.
   `q=updated_on >= start_date` (the `repos_since_start` anchor). It has to be:
   a cursor's `start_datetime` filters no records unless the stream also sets
   `is_client_side_incremental`, and none of these do. The listing is requested
-  `sort=updated_on` (ascending) so the cursor still advances monotonically
-  across pages.
+  `sort=created_on` with a `created_on > <last seen>` bound in `q` instead of
+  the vendor's page numbers (the `repository_keyset_paginator` anchor): a
+  repository pushed while a long walk runs would otherwise shift the pages
+  under the reader and hide a neighbour. The cursor takes the newest
+  `updated_on` seen, whatever the order.
 
 ### Cold repositories
 
