@@ -150,6 +150,25 @@ fn real_ip_emitted_only_when_trusted_cidrs_configured() {
 }
 
 #[test]
+fn locations_without_lua_hygiene_never_append_to_a_client_supplied_xff() {
+    let conf = generate(&fixture("full.routes.yaml"), &Settings::default()).unwrap();
+    for block in conf.split("        location ").skip(1) {
+        let head = block.lines().next().unwrap_or_default();
+        if block.contains("access_by_lua_block") || !block.contains("X-Forwarded-For") {
+            continue;
+        }
+        assert!(
+            block.contains("proxy_set_header X-Forwarded-For $remote_addr;"),
+            "location without Lua hygiene must author XFF from $remote_addr: {head}"
+        );
+        assert!(
+            !block.contains("$proxy_add_x_forwarded_for"),
+            "location without Lua hygiene must not append to a client XFF: {head}"
+        );
+    }
+}
+
+#[test]
 fn stub_status_is_loopback_only() {
     let conf = generate(&fixture("full.routes.yaml"), &Settings::default()).unwrap();
     let status_server = conf
