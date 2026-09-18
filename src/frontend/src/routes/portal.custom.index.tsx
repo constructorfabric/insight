@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRight, LayoutDashboard } from "lucide-react";
+import { LayoutDashboard } from "lucide-react";
 
 import {
   DefinitionCount,
@@ -9,6 +9,7 @@ import {
 } from "@/components/custom/definition-paging";
 import { DefinitionSearch } from "@/components/custom/definition-search";
 import { EditLink, NewLink } from "@/components/custom/editor/edit-link";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
@@ -66,8 +67,6 @@ function DashboardCard({ name }: { name: string }) {
   return (
     <Card size="sm">
       <CardContent className="flex items-center gap-3">
-        {/* The link covers the name, not the whole card, so the remove
-            button beside it stays clickable. */}
         <Link
           to="/portal/custom/$name"
           params={{ name }}
@@ -87,13 +86,19 @@ function DashboardCard({ name }: { name: string }) {
               </span>
             ) : null}
           </span>
-          <ChevronRight
-            className="ms-auto size-4 shrink-0 text-muted-foreground"
-            aria-hidden
-          />
         </Link>
         <span className="flex shrink-0 items-center gap-1">
           <EditLink kind="dashboards" name={name} />
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-muted-foreground"
+            aria-label={`View ${name}`}
+            nativeButton={false}
+            render={<Link to="/portal/custom/$name" params={{ name }} />}
+          >
+            View
+          </Button>
         </span>
       </CardContent>
     </Card>
