@@ -12116,6 +12116,63 @@ alerting:
           severity: warning
         annotations:
           summary: "No sealed sweep tick for over 2h \u2014 connector staleness data itself is stale"
+      # INVARIANT: the config.* coverage rules below cannot detect their own missing
+      # tables: ClickHouse resolves names at analysis time, so the whole query throws.
+      # They run execErrState: OK and this rule reports the gap via system.tables.
+      - uid: insight-task-config-tables-missing
+        title: Task config tables absent
+        condition: C
+        data:
+        - refId: A
+          relativeTimeRange:
+            from: 600
+            to: 0
+          datasourceUid: clickhouse
+          model:
+            refId: A
+            editorType: sql
+            format: 1
+            rawSql: |-
+              SELECT arrayStringConcat(arraySort(groupArray(t)), ', ') AS missing_tables,
+                  toUInt8(count()) AS missing_count
+              FROM (
+                  SELECT arrayJoin(['field_value_map', 'field_value_defaults', 'task_field_roles']) AS t
+              )
+              WHERE t NOT IN (SELECT name FROM system.tables WHERE database = 'config')
+              HAVING count() > 0
+        - refId: C
+          relativeTimeRange:
+            from: 0
+            to: 0
+          datasourceUid: __expr__
+          model:
+            refId: C
+            type: threshold
+            expression: A
+            conditions:
+            - evaluator:
+                type: gt
+                params:
+                - 0
+        noDataState: OK
+        execErrState: Error
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "config.{{ \"{{ $labels.missing_tables }}\" }} missing \u2014 issue-type coverage is\
+            \ UNMEASURED, not clean"
+          description: "The DDL for these tables is owned by the dbt on-run-start macro create_task_config_tables,\
+            \ which reached the umbrella in chart 0.7.36 (backported to the 0.6 line as 0.6.102). An install\
+            \ pinned below that floor has no config.field_value_map and no config.field_value_defaults,\
+            \ so the issue-type coverage rule (insight-issue-types-unclassified) cannot evaluate at all.\
+            \ Read the two states apart: while THIS rule fires, a silent coverage rule means nothing was\
+            \ measured \u2014 it does NOT mean every closed issue is classified. Fix by raising the environment's\
+            \ chartVersion to \u2265 0.7.36 (or \u2265 0.6.102 on the 0.6 line) and redeploying; dbt creates\
+            \ the tables on its next run. Tables present but empty is a different, honest condition: coverage\
+            \ then reads 100% unclassified, which is a true positive until an operator authors environments/<env>/clickhouse/field-value-map/*.tsv\
+            \ and enables clickhouse.fieldValueMap. for=15m rides out the window between a chart upgrade\
+            \ and the first dbt run that creates them."
       - uid: insight-issue-types-unclassified
         title: Closed issues landing unclassified
         condition: C
@@ -12228,7 +12285,10 @@ alerting:
                 params:
                 - 10
         noDataState: OK
-        execErrState: Error
+        # OK: a missing config table is reported by insight-task-config-tables-missing,
+        # which reads only system.tables and keeps execErrState: Error, so a
+        # datasource outage still pages there.
+        execErrState: OK
         for: 6h
         labels:
           severity: warning
@@ -12257,7 +12317,12 @@ alerting:
             \ alerting on a handful of rows; for=6h rides out a backfill landing ahead of its decisions.\
             \ A newly onboarded source with real volume and no decisions authored yet is a true positive,\
             \ not noise. The converse also fails: a defaults row routes every unmapped type to its value\
-            \ (typically 'task'), so a low unknown share is not proof the mapping is complete."
+            \ (typically 'task'), so a low unknown share is not proof the mapping is complete. Silence\
+            \ here is only evidence of coverage while insight-task-config-tables-missing is quiet: below\
+            \ chart 0.7.36 (0.6.102 on the 0.6 line) the config tables do not exist and this query cannot\
+            \ evaluate at all, so nothing was measured. execErrState=OK makes that true of any evaluation\
+            \ error, not just a missing table: an errored evaluation yields no series, so this rule reads\
+            \ silent rather than clean. It is never on its own proof the mapping is complete."
       - uid: insight-clickhouse-failed-queries
         title: ClickHouse failed-query rate elevated
         condition: C
