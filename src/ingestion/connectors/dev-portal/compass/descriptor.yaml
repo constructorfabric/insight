@@ -1,8 +1,8 @@
 # Atlassian Compass — service catalog, ownership, scorecards, deployment events.
 #
-# Bronze-only for now: no silver models beyond the bronze→RMT promotion, so
-# `dbt_select` currently resolves to that promotion view alone. Silver class
-# families are sketched in SPEC.md §7 and deliberately deferred.
+# No silver yet: `dbt_select` resolves to the single staging model
+# `compass__components` and nothing downstream of it. Silver class families are
+# sketched in SPEC.md §7 and deliberately deferred.
 name: compass
 type: nocode
 # Strict semver per ADR-0015 — three components, no leading zeros.
