@@ -17,3 +17,18 @@ sources:
       - name: teams
       - name: team_members
       - name: deployment_events
+
+models:
+  - name: compass__components
+    description: "Deduplicated Compass component catalog — one row per component, with its owning team id and the raw JSON columns (labels, links, event sources, dependency edges) that silver will flatten."
+    columns:
+      - name: unique_key
+        tests:
+          - not_null
+          - unique
+      - name: component_id
+        tests:
+          - not_null
+      - name: name
+        tests:
+          - not_null
