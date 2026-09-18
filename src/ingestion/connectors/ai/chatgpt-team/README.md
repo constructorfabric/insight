@@ -41,6 +41,7 @@ not Insight's concern.
 | `chatgpt_team_codex_user_daily_org` | `/api/wham/analytics/usage-leaderboard` | Incremental (`date`) | none (`page_size=1`) | `{tenant}-{source}-{date}-{read_at}` |
 | `chatgpt_team_subscription_usage` | `/api/subscriptions/{org_id}/usage` | Full refresh (snapshot) | none | `{tenant}-{source}-{snapshot_date}-{model}` |
 | `chatgpt_team_subscription_balance` | `/api/subscriptions/{org_id}/usage` | Full refresh (snapshot) | none | `{tenant}-{source}-{snapshot_date}` |
+| `chatgpt_team_account_settings` | `/api/accounts/{account_id}/settings` | Full refresh (snapshot) | none | `{tenant}-{source}-{snapshot_date}` |
 
 ### Notes
 
@@ -49,6 +50,12 @@ not Insight's concern.
   `date` (the per-user objects don't carry it). Backfill from `start_date`
   (default 7 days ago), with no floor — the reachable history is whatever the
   workspace has.
+- **Seat caps.** `credit_limits` on the roster is an *override* with three
+  distinct states — absent, an empty array that removes the cap, and an array
+  holding `{enforcement_mode, limit, limit_mode}`. The default that governs
+  everyone without an override lives in `account_settings`
+  (`seat_type_credit_limits`, keyed by seat type). Caps are denominated in
+  credits, not currency.
 - **`codex_user_daily_org`** asks the same endpoint for one row and keeps only
   the envelope's `total_users`. It is the reference the completeness gate in
   `chatgpt_team__ai_dev_usage` judges a read against; the read is in its
@@ -68,10 +75,11 @@ not Insight's concern.
 ./src/ingestion/tools/declarative-connector/source.sh check           ai/chatgpt-team <tenant>
 ```
 
-> ⚠️ **Unverified against a live workspace.** Endpoint shapes, fields, and the
-> proxy's access-token flow are derived from the `data_collector` prototype
-> and must be confirmed once workspace credentials are available. Read every
-> field list here as a declared shape, not an observed one.
+> ⚠️ **The two subscription streams are unverified.** Their fields come from
+> the `data_collector` prototype and no response has been read back, so treat
+> them as a declared shape. The roster, the leaderboard (including its
+> `total_users` envelope and `code_attribution.lines_of_code.added`) and the
+> settings endpoint have been read back from a workspace and match.
 
 ## Silver Targets
 
