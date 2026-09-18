@@ -4,10 +4,10 @@ import { useState } from "react";
 
 import type { EditableKind } from "@/api/custom-client";
 import { FieldsView } from "@/components/custom/editor/fields-view";
+import { TextView } from "@/components/custom/editor/text-view";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
-import { Textarea } from "@/components/ui/textarea";
 import type { Path } from "@/lib/custom/editor/describe";
 import {
   change,
@@ -177,23 +177,13 @@ export function DefinitionEditor({
         />
       ) : (
         <div className="flex flex-col gap-1">
-          <label htmlFor="definition-text" className="sr-only">
-            {description.noun} as text
-          </label>
-          <Textarea
+          <TextView
             id="definition-text"
-            value={held.text}
-            spellCheck={false}
-            className="min-h-96 font-mono"
-            onChange={(event) =>
-              setHeld((was) => retype(was, event.target.value))
-            }
+            label={`${description.noun} as text`}
+            text={held.text}
+            unparsed={held.unparsed}
+            onChange={(text) => setHeld((was) => retype(was, text))}
           />
-          {held.unparsed ? (
-            <p role="alert" className={cn(TEXT_LABEL, "text-destructive")}>
-              {held.unparsed}
-            </p>
-          ) : null}
           {placed.at.size === 0 ? null : (
             <ul
               className={cn(

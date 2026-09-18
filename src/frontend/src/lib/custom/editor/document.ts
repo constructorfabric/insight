@@ -45,6 +45,12 @@ export function sendable(held: Held): boolean {
   return held.unparsed === undefined;
 }
 
+/** The line a parser's message points at, when it names one. */
+export function brokenLine(unparsed: string | undefined): number | undefined {
+  const named = unparsed?.match(/line (\d+)/);
+  return named ? Number(named[1]) : undefined;
+}
+
 export function read(document: unknown, path: Path): unknown {
   return path.reduce<unknown>((at, segment) => {
     if (at === null || typeof at !== "object") return undefined;
