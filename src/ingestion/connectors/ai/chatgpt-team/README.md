@@ -38,6 +38,7 @@ not Insight's concern.
 | `chatgpt_team_seats` | `/api/accounts/{account_id}/users` | Full refresh | offset/limit | `{tenant}-{source}-{user_id}` |
 | `chatgpt_team_chat_activity` | `/api/accounts/{account_id}/analytics/user_list` | Incremental (`date`) | cursor (`after_cursor`) | `{tenant}-{source}-{date}-{email}` |
 | `chatgpt_team_codex_user_daily` | `/api/wham/analytics/usage-leaderboard` | Incremental (`date`) | page-number | `{tenant}-{source}-{date}-{email}` |
+| `chatgpt_team_codex_user_daily_org` | `/api/wham/analytics/usage-leaderboard` | Incremental (`date`) | none (`page_size=1`) | `{tenant}-{source}-{date}-{read_at}` |
 | `chatgpt_team_subscription_usage` | `/api/subscriptions/{org_id}/usage` | Full refresh (snapshot) | none | `{tenant}-{source}-{snapshot_date}-{model}` |
 | `chatgpt_team_subscription_balance` | `/api/subscriptions/{org_id}/usage` | Full refresh (snapshot) | none | `{tenant}-{source}-{snapshot_date}` |
 
@@ -46,14 +47,19 @@ not Insight's concern.
 - **Per-day streams** (`chat_activity`, `codex_user_daily`) walk one day per
   request via a `DatetimeBasedCursor` (`step: P1D`), injecting the day as
   `date` (the per-user objects don't carry it). Backfill from `start_date`
-  (default 7 days ago); `min_datetime: 2026-01-14` is the earliest observed
-  data point — verify per tenant.
+  (default 7 days ago), with no floor — the reachable history is whatever the
+  workspace has.
+- **`codex_user_daily_org`** asks the same endpoint for one row and keeps only
+  the envelope's `total_users`. It is the reference the completeness gate in
+  `chatgpt_team__ai_dev_usage` judges a read against; the read is in its
+  `unique_key` so each read keeps its own headcount.
 - **Subscription streams** hit the same endpoint (one extracts `usage_detail`,
   the other the root `current_balance`), inject a `snapshot_date` so daily
   snapshots accumulate, and **tolerate HTTP 403** (session lacks billing
-  visibility → stream skipped, sync stays green). Billing-cycle alignment
-  (resets on the 14th) is simplified to a `[start_date or -30d, today]`
-  window — see spec OQ.
+  visibility → stream skipped, sync stays green — watched by
+  `assert_chatgpt_subscription_stream_not_silent`). Billing-cycle alignment
+  (the cycle resets mid-month) is deferred; the request uses a fixed
+  `[-30d, today]` window that deliberately ignores `start_date`.
 
 ## Validation
 
@@ -62,10 +68,10 @@ not Insight's concern.
 ./src/ingestion/tools/declarative-connector/source.sh check           ai/chatgpt-team <tenant>
 ```
 
-> ⚠️ **Unverified against a live instance.** Endpoint shapes, fields, and the
+> ⚠️ **Unverified against a live workspace.** Endpoint shapes, fields, and the
 > proxy's access-token flow are derived from the `data_collector` prototype
-> and must be confirmed once workspace credentials are available
-> (spec OQ-CGT-3/4/6).
+> and must be confirmed once workspace credentials are available. Read every
+> field list here as a declared shape, not an observed one.
 
 ## Silver Targets
 
@@ -73,10 +79,16 @@ Shipped (this connector's `dbt/`):
 - `chatgpt_team_codex_user_daily` → `chatgpt_team__ai_dev_usage` → **`class_ai_dev_usage`** (`tool='codex'`, alongside Claude Code / Cursor).
 - `chatgpt_team_chat_activity` → `chatgpt_team__ai_assistant_usage` → **`class_ai_assistant_usage`** (`tool='chatgpt'`, `surface='chat'`).
 
-Plus the bronze→RMT promotion (`chatgpt_team__bronze_promoted`). The keys then flow to Gold (`ai_bullet_rows`) and the analytics query_ref / `metric_catalog`.
+- `chatgpt_team_seats` → `chatgpt_team__seats_latest` → snapshot → fields
+  history → `chatgpt_team__identity_inputs` → **`identity_inputs`**
+  (`source_type='chatgpt-team'`, contributing `email` and `display_name`).
+
+Plus the bronze→RMT promotion (`chatgpt_team__bronze_promoted`). The class
+relations then feed the `ai_usage` gold models and the metric registry.
 
 ## Related
 
 - `claude-team` — the reference browser-proxy connector (same architecture).
-- `openai` — the OpenAI **Admin API** connector (`class_ai_api_usage`); distinct
-  programmatic surface, not collected here.
+- The OpenAI **Admin API** (`api.openai.com`) is a distinct programmatic
+  surface measuring API-key spend rather than workspace seats. No connector
+  for it ships today.
