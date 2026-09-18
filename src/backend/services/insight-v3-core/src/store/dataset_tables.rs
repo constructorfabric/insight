@@ -29,6 +29,7 @@ const DROP_TABLE: &str = "DROP TABLE IF EXISTS ?";
 const READ_LATEST: &str = "SELECT id, received_at, raw_data FROM ?
 ORDER BY received_at DESC, id DESC
 LIMIT ?";
+const COUNT_ROWS: &str = "SELECT count() AS total FROM ?";
 const READ_SHAPE: &str = "SELECT sorting_key FROM system.tables
 WHERE database = currentDatabase() AND name = ?";
 /// Creating or dropping a table waits on a cluster-wide lock, so it gets a
@@ -139,6 +140,22 @@ impl DatasetTables {
             .map_err(|_| DatasetTableError::Timeout)??;
 
         Ok(found.into_iter().map(PreviewRow::into_record).collect())
+    }
+
+    /// How many records the table holds, as they arrived: a re-sent record
+    /// counts again here, since this is the count of what arrived.
+    pub(crate) async fn count(&self, table: &str) -> Result<u64, DatasetTableError> {
+        let rows = self
+            .client
+            .inner()
+            .query(COUNT_ROWS)
+            .bind(Identifier(table))
+            .fetch_all::<CountRow>();
+        let found = tokio::time::timeout(self.read_timeout, rows)
+            .await
+            .map_err(|_| DatasetTableError::Timeout)??;
+
+        Ok(found.first().map_or(0, |row| row.total))
     }
 
     /// What, if anything, holds this name in the datasets database.
@@ -254,6 +271,11 @@ struct RecordRow {
     raw_data: String,
     #[serde(with = "clickhouse::serde::chrono::datetime64::millis")]
     received_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, Deserialize, clickhouse::Row)]
+struct CountRow {
+    total: u64,
 }
 
 /// A record as the preview reads it back: the columns the preview selects,

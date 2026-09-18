@@ -383,6 +383,12 @@ struct StoredRecord {
     raw_data: String,
 }
 
+/// What the table answers when asked how many records it holds.
+#[derive(Debug, Serialize, clickhouse::Row)]
+struct Counted {
+    total: u64,
+}
+
 #[tokio::test]
 async fn a_dataset_page_shows_the_latest_records_as_they_arrived() {
     let harness = TestHarness::new();
@@ -393,11 +399,14 @@ async fn a_dataset_page_shows_the_latest_records_as_they_arrived() {
         received_at: chrono::DateTime::UNIX_EPOCH,
         raw_data: r#"{"lines":7}"#.to_owned(),
     }]));
+    harness.mock.add(handlers::provide(vec![Counted { total: 757 }]));
 
-    let (looked, body) = harness.get("/v1/datasets/commits/records").await;
+    let (looked, body) = harness.get("/v1/datasets/commits/records?limit=20").await;
 
     assert_eq!(looked, StatusCode::OK);
     assert_eq!(read(&body)["records"][0]["raw_data"], json!({"lines": 7}));
+    // The look is a slice; the count says how much lies behind it.
+    assert_eq!(read(&body)["total"], json!(757));
 }
 
 /// The table is not asked about at all: there is none to ask.

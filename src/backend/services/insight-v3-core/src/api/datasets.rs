@@ -59,10 +59,18 @@ struct DatasetNames {
     total: u64,
 }
 
-/// What a dataset holds, as a reader is shown it.
+/// What a dataset holds, as a reader is shown it: the latest few records,
+/// and how many have arrived in all.
 #[derive(Debug, Serialize)]
 struct DatasetRecords {
     records: Vec<Record>,
+    total: u64,
+}
+
+/// How many of the latest records a look asks for.
+#[derive(Debug, Deserialize)]
+struct Look {
+    limit: Option<u64>,
 }
 
 /// Everything that would go with this dataset.
@@ -302,7 +310,12 @@ fn register_reads(router: Router, openapi: &dyn OpenApiRegistry, state: &Arc<App
         .anonymous()
         .exposed()
         .param(name_param.clone())
-        .json_response(StatusCode::OK, "The latest records")
+        .param(query_param(
+            "limit",
+            "integer",
+            "How many of the latest records to show, up to the service's cap",
+        ))
+        .json_response(StatusCode::OK, "The latest records, and how many there are")
         .error_400(openapi)
         .error_403(openapi)
         .error_404(openapi)
@@ -334,18 +347,23 @@ fn register_reads(router: Router, openapi: &dyn OpenApiRegistry, state: &Arc<App
 async fn dataset_records(
     Extension(state): Extension<Arc<AppState>>,
     Path(name): Path<String>,
+    Query(look): Query<Look>,
     headers: axum::http::HeaderMap,
 ) -> Result<Response, CanonicalError> {
     admin_only(&state, &headers).await?;
     let name = DefinitionName::parse(&name).map_err(DatasetApiError::definition_error)?;
 
-    let records = state
+    let preview = state
         .dataset_records()
-        .latest(&name)
+        .latest(&name, look.limit)
         .await
         .map_err(preview_error)?;
 
-    Ok(Json(DatasetRecords { records }).into_response())
+    Ok(Json(DatasetRecords {
+        records: preview.records,
+        total: preview.total,
+    })
+    .into_response())
 }
 
 /// Every metric that reads this dataset, so a reader sees what a removal

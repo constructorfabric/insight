@@ -1037,6 +1037,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "description": "How many of the latest records to show, up to the service's cap",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
           }
         ],
         "responses": {
@@ -1048,7 +1057,7 @@
                 }
               }
             },
-            "description": "The latest records"
+            "description": "The latest records, and how many there are"
           },
           "400": {
             "content": {
