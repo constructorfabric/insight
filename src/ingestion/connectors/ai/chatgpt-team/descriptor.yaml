@@ -23,7 +23,37 @@ name: chatgpt-team
 #   stays inside one day and a day's rows stop landing under the previous date.
 #   MINOR per ADR-0015: the manifest has to reach Airbyte, and a full refresh
 #   would not undo the rows already stored under the wrong date.
-version: "2.2.0"
+# 3.0.0: hardening pass. Five changes ship together:
+#   chatgpt_team_codex_user_daily_org declares total_users, the day's headcount
+#   the leaderboard envelope already carried and the per-user stream threw
+#   away, and its unique_key carries the read so each read keeps its own
+#   reference. On the back of it chatgpt_team__ai_dev_usage gains a
+#   completeness gate: the per-user stream pages over sort_by=credits, which is
+#   not a total order, so a person could sit past the page boundary in one
+#   request and before it in the next, returned by neither while both requests
+#   succeeded. A read whose distinct people do not equal its own total_users no
+#   longer becomes the day's state.
+#   Both emission filters narrow to the counters their model actually emits
+#   into the class. A row admitted on a counter that only reaches a JSON blob
+#   asserts activity none of its class columns can evidence, which is what
+#   assert_ai_dev_usage_rows_active and its assistant sibling fail on.
+#   seat_type in surface_metrics_json resolves roster-first, falling back to
+#   the tier the usage row restates — the roster leaves it null for some
+#   members and the usage row is the only other place it appears.
+#   The Codex paginator names its first page, and the browser-session streams
+#   retry a transient 401/403 instead of failing the sync: the proxy answers
+#   those until a restarted session settles.
+#   The subscription window stops reading config['start_date'] — that knob
+#   backfills the daily streams, and letting it reach the billing request
+#   silently redefined `amount` under an unchanged snapshot_date.
+#   MAJOR per ADR-0015: the narrowed filters and the gate make rows already in
+#   staging inadmissible, and only a full refresh removes them — leaving them
+#   keeps the activity guards failing on rows no current read would produce.
+#   Upgrade note: the new Bronze table is created by the stream's first sync,
+#   which the sync workflow runs before dbt. An instance whose first run of
+#   that stream fails has no table for the gate to read, and its dbt step fails
+#   until the stream succeeds once.
+version: "3.0.0"
 # Daily at 04:00 UTC — off-peak. The customer's proxy runs a single browser
 # instance, so we avoid scheduling chatgpt-team next to anything else that
 # may also hit it (same rationale as claude-team).
