@@ -1,5 +1,4 @@
 import { Link } from "@tanstack/react-router";
-import { Braces } from "lucide-react";
 
 import type { EditableKind } from "@/api/custom-client";
 import { Button } from "@/components/ui/button";
@@ -8,7 +7,7 @@ export function EditLink({ kind, name }: { kind: EditableKind; name: string }) {
   return (
     <Button
       variant="ghost"
-      size="icon-sm"
+      size="sm"
       className="text-muted-foreground"
       aria-label={`Edit ${name}`}
       nativeButton={false}
@@ -16,7 +15,7 @@ export function EditLink({ kind, name }: { kind: EditableKind; name: string }) {
         <Link to="/portal/custom/edit/$kind/$name" params={{ kind, name }} />
       }
     >
-      <Braces />
+      Edit
     </Button>
   );
 }

@@ -7,6 +7,7 @@ import {
 } from "@/components/custom/definition-list";
 import { DatasetSummary } from "@/components/custom/definition-summary";
 import { EditLink, NewLink } from "@/components/custom/editor/edit-link";
+import { Button } from "@/components/ui/button";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { useDefinitionCatalogue } from "@/hooks/use-definition-catalogue";
 import { datasetQuery } from "@/queries/custom";
@@ -48,16 +49,18 @@ function DatasetRow({ name }: { name: string }) {
       actions={
         <>
           <EditLink kind="datasets" name={name} />
-          <Link
-            to="/portal/custom/datasets/$name"
-            params={{ name }}
-            className={cn(
-              TEXT_BODY,
-              "underline decoration-dotted underline-offset-4"
-            )}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-muted-foreground"
+            aria-label={`Preview ${name}`}
+            nativeButton={false}
+            render={
+              <Link to="/portal/custom/datasets/$name" params={{ name }} />
+            }
           >
-            Open
-          </Link>
+            Preview
+          </Button>
         </>
       }
     >
