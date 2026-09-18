@@ -833,11 +833,26 @@ versions its rows the same way.
 
 The freshness is floored at the **catalogue epoch**: the catalogue's own
 extraction stamp at the last full rebuild, kept in the same record as the hash.
-Between rebuilds the floor is constant and moves no version. A rebuild forced
-by a catalogue shift or by a full refresh takes the current stamp as its epoch,
-so every row it writes is newer than anything the class holds and the class
-re-ingests the whole Jira journal once — which is what a rebuild that changed
-rows of untouched issues requires.
+Between rebuilds the floor is constant and moves no version. A rebuild takes
+the current stamp as its epoch, so the rows it writes for issues whose own
+inputs never moved still carry something newer than the run before it
+delivered, and the class re-ingests the Jira journal once.
+
+Every quantity the model compares — freshness, the floor, the mark of how far
+the last completed run read — is an extraction stamp, never a clock reading.
+Mixing the two breaks the comparison outright on a warehouse whose bronze is
+older than the machine's idea of now: a wall-clock floor sits above every
+extraction stamp, and the scope stops selecting anything at all.
+
+The cost of staying in bronze's time is one exposure worth naming. The class
+admits by a watermark its other arms set from their build time, so a Jira row
+reaches it only when its extraction stamp is newer than the previous silver
+build — true of every ordinary row, since the sync that produced it ran after
+that build, and true of a rebuild dispatched by a sync. It is NOT true of a
+staging run started by hand with no sync before it: the catalogue stamp is then
+older than the watermark, and the rebuilt rows wait in staging until something
+newer arrives. The durable fix is a per-source watermark in the class rather
+than one global maximum, which is a change to a model every source shares.
 
 The floor cannot hide a later change from the touched set. A rebuild's epoch is
 an extraction stamp the run has already read, so every extraction after it is
@@ -850,6 +865,22 @@ and no operator step. That first rebuild raises every row's version to its
 epoch, so the class re-ingests the Jira journal once, exactly as it does after
 any full refresh; from the next run on, only touched issues move.
 
+**The journal a run arrives at is the one a rebuild of the same bronze would
+produce.** That is the property the design rests on, and it holds because no
+part of the derivation reads across issues: every window, group and join is
+partitioned by the issue, so recomputing one from its own bronze — which is
+append-only, and therefore complete — yields what a rebuild would have written
+for it, while an issue nothing arrived for keeps rows a rebuild would reproduce
+unchanged. `tests/jira/transform/test_incremental_recompute.py` asserts it
+directly: it follows bronze forward in two steps and compares the result with a
+rebuild over that same bronze, row for row.
+
+One column is deliberately outside that comparison. `collected_at` stamps when
+a row was derived, so an untouched issue keeps the stamp of the build that last
+derived it rather than the stamp of the latest run. It is not a fact about the
+issue and nothing reads it from the class; the freshness a consumer wants is
+`_version`, which is the issue's own input freshness.
+
 Two limits of the composition, stated rather than solved here:
 
 - the class deletes only the keys the incoming batch carries. A row that
@@ -857,10 +888,12 @@ Two limits of the composition, stated rather than solved here:
   a `retired_field` that came back — is gone from staging but stays in the
   class until a full refresh. This was equally true of the full nightly rebuild;
 - the delete of a touched issue and the insert of its new rows are two
-  statements. A run that fails between them leaves the issue with no rows, which
-  the next run treats as touched and repairs; a run that fails inside the insert
-  can leave part of an issue, and its version then reads as current. A full
-  refresh, or any catalogue shift, repairs that too.
+  statements, so a run that dies between them leaves an issue short of rows.
+  The rows it did write carry the version the complete set would have carried,
+  which is why the scope is not decided by them alone: the record on the table
+  also carries how far into bronze the last run whose replacement **completed**
+  had read, and everything delivered since is in scope again. A failed run
+  therefore repairs itself on the next one rather than waiting for a rebuild.
 
 ## 8. Long text in a side table
 

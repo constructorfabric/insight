@@ -76,15 +76,9 @@ WITH kinds AS (
 
 {% if touched_only %}
 -- ── the issues this run recomputes ──────────────────────────────────────────
--- An issue is touched when bronze holds something newer about it than the
--- version its journal rows carry: its own row or a changelog entry extracted
--- since. A row's `_version` is at least the issue's input freshness, so an
--- issue whose inputs did not move compares equal and is left alone. An issue
--- with no rows at all — new, or emptied by a build that did not finish — has
--- nothing to compare against and is recomputed.
---
--- Narrow columns only: this reads every issue in bronze and every row of the
--- journal, and neither the JSON nor the value arrays.
+-- When bronze last delivered anything about an issue — its own row or one of
+-- its changelog entries. Narrow columns only: this reads every issue in bronze
+-- and every row of the journal, and neither the JSON nor the value arrays.
 input_freshness AS (
     SELECT
         insight_source_id,
@@ -119,6 +113,20 @@ journal_versions AS (
     GROUP BY insight_source_id, issue_id
 ),
 
+-- Two ways of knowing an issue is stale, and the union of them is the scope.
+--
+-- The issue's own rows are one: bronze holds an extraction the version those
+-- rows carry does not cover. This is what catches an issue whose rows a run
+-- never wrote at all, including one bronze re-delivered under an OLDER
+-- extraction stamp than the journal already held — a restore does that.
+--
+-- How far the last COMPLETED run had read is the other, and it is what makes a
+-- failed run recoverable. `delete+insert` is two statements: an insert that
+-- dies partway leaves an issue holding some of its rows, and those rows carry
+-- the version the complete set would have carried, so the issue reads as
+-- current and the first test alone would skip it forever. `processed_ms` is
+-- written only after a replacement completed, so everything bronze delivered
+-- since then is in scope again, the half-written issue with it.
 touched AS (
     SELECT
         f.insight_source_id                               AS insight_source_id,
@@ -128,6 +136,7 @@ touched AS (
         ON v.insight_source_id = f.insight_source_id
        AND v.issue_id = f.issue_id
     WHERE toUnixTimestamp64Milli(f.fresh_at) > toInt64(COALESCE(v.journal_version, 0))
+       OR toUnixTimestamp64Milli(f.fresh_at) > toInt64({{ catalogue.processed_ms }})
 ),
 
 -- The set as ONE scalar, computed once for the whole statement. A CTE named in
@@ -1063,14 +1072,15 @@ LEFT JOIN issues AS i
 -- others.
 --
 -- `_version` is the issue's input freshness (`issue_freshness`), not the build
--- time. A build-time stamp would make every rebuild of this table look new to
+-- time. A build-time stamp would make every rebuild look new to
 -- `class_task_field_history`, whose incremental filter admits rows above its
--- newest version, and the class would rewrite the whole Jira journal on every
--- run. It is floored at the catalogue epoch — the catalogue's extraction stamp
--- at the last full rebuild — so a rebuild forced by a catalogue shift or a full
--- refresh reaches the class for every issue, and between rebuilds the floor is
--- constant and moves nothing. A change to the models alone still needs a full
--- refresh, which a major descriptor bump dispatches.
+-- newest version, and the class would rewrite the whole Jira journal.
+--
+-- It is floored at the catalogue's extraction stamp as of the last rebuild, so
+-- rows a rebuild changed for issues whose own inputs never moved still carry
+-- something newer than the run before it delivered. Between rebuilds the floor
+-- is constant and moves nothing. A change to the models alone still needs a
+-- full refresh, which a major descriptor bump dispatches.
 SELECT
     j.unique_key,
     j.insight_source_id,

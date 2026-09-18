@@ -264,3 +264,89 @@ def test_a_table_carrying_no_catalogue_record_is_rebuilt_not_patched(scenario: S
         "SELECT comment FROM system.tables WHERE database = 'staging' AND name = 'jira__field_history_derived'"
     )[0]["comment"].startswith("jira-journal-catalogue fingerprint=")
     assert scenario.invariants_hold()
+
+
+def test_rolling_forward_lands_where_a_full_rebuild_of_the_same_bronze_lands(scenario: Scenario) -> None:
+    """The property the whole design rests on, asserted directly.
+
+    Build at one point in the history, let bronze grow twice, follow it
+    incrementally, and the journal must be the one a rebuild over that same
+    bronze produces — row for row, version for version. Every other scenario
+    here checks a hand-written expectation, which says the models agree with
+    what someone wrote down; this says the two paths agree with each other.
+
+    Two columns stand outside the comparison. `collected_at` stamps when a row
+    was derived, and under incrementality an untouched issue keeps the stamp of
+    the build that last derived it; nothing reads it from the class. `_version`
+    is a publication version, and a rebuild deliberately raises it so rows it
+    changed for issues bronze never touched reach the class — so the rule for
+    it is that a rebuild never lowers one, asserted below.
+    """
+    _seed_two_issues(scenario)
+    scenario.build()
+
+    # First step: an entry re-emitted without one of its items, a second entry,
+    # and the issue as the later sync sees it.
+    scenario.warehouse.insert(
+        "bronze_jira.jira_issue",
+        [issue("TST-1", jira_id="1001", fields={STORY_POINTS: 5, LABELS: ["b"]}, extracted_at=LATER_SYNC)],
+    )
+    scenario.warehouse.insert(
+        "bronze_jira.jira_issue_history",
+        [
+            event(
+                "TST-1",
+                101,
+                "2026-01-06T10:00:00",
+                [item(LABELS, frm_str="a", to_str="a b")],
+                jira_id="1001",
+                extracted_at=LATER_SYNC,
+            ),
+            event(
+                "TST-1",
+                102,
+                "2026-01-08T10:00:00",
+                [item(LABELS, frm_str="a b", to_str="b")],
+                jira_id="1001",
+                extracted_at=LATER_SYNC,
+            ),
+        ],
+    )
+    scenario.build(full_refresh=False)
+
+    # Second step: an issue that did not exist at the first build, and an
+    # element-wise field losing an element on one that did.
+    scenario.warehouse.insert(
+        "bronze_jira.jira_issue",
+        [
+            issue("TST-3", jira_id="1003", fields={STORY_POINTS: 2}, extracted_at=LATER_SYNC),
+            issue("TST-2", jira_id="1002", fields={STORY_POINTS: 8}, extracted_at=LATER_SYNC),
+        ],
+    )
+    scenario.warehouse.insert(
+        "bronze_jira.jira_issue_history",
+        [
+            event(
+                "TST-2",
+                202,
+                "2026-01-09T10:00:00",
+                [item(COMPONENTS, frm="10", frm_str="core")],
+                jira_id="1002",
+                extracted_at=LATER_SYNC,
+            )
+        ],
+    )
+    scenario.build(full_refresh=False)
+    rolled_forward = _journal(scenario)
+
+    # Two empty journals would compare equal and prove nothing.
+    assert {v[0] for v in rolled_forward.values()} == {"TST-1", "TST-2", "TST-3"}
+
+    scenario.build()
+    rebuilt = _journal(scenario)
+
+    assert {k: v[:-1] for k, v in rolled_forward.items()} == {k: v[:-1] for k, v in rebuilt.items()}
+    assert all(rebuilt[k][-1] >= v[-1] for k, v in rolled_forward.items()), (
+        "a rebuild lowered a row's publication version"
+    )
+    assert scenario.invariants_hold()
