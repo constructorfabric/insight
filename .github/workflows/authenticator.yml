@@ -8,7 +8,7 @@ name: Authenticator — e2e, endpoint coverage
 # the committed OpenAPI spec — a documented operation no test exercises fails
 # the gate. Same gate script and report as the analytics/identity lanes
 # (scripts/ci/api_coverage.py); the spec universe is kept
-# fresh by the openapi-specs drift gate.
+# fresh by the authenticator's own drift test.
 on:
   pull_request:
     branches: [main]
@@ -117,7 +117,7 @@ jobs:
     timeout-minutes: 10
     steps:
       # Checkout only for the gate script + the committed OpenAPI spec (the
-      # coverage universe — kept fresh by the openapi-specs drift gate).
+      # coverage universe — kept fresh by the authenticator's own drift test).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false

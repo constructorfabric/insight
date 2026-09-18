@@ -50,7 +50,8 @@ services:
     image: insight-authenticator:e2e-prebuilt
     build:
       context: ../../..
-      dockerfile: services/authenticator/Dockerfile
+      dockerfile: Dockerfile
+      target: authenticator
     depends_on:
       redis: {condition: service_healthy}
       keycloak: {condition: service_started}

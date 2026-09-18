@@ -1,0 +1,54 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "insight-v3-core.fullname" . }}-migrate
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "10"
+    helm.sh/hook-delete-policy: before-hook-creation
+  labels:
+    {{- include "insight-v3-core.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        {{- include "insight-v3-core.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      enableServiceLinks: false
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: migrate
+          image: "{{ required "image.repository is required" .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - bash
+            - -ec
+            - |
+              printf 'gears:\n  insight-v3-core:\n    config: {}\n' > /tmp/migrate.yaml
+              exec /app/insight-v3-core -c /tmp/migrate.yaml migrate
+          envFrom:
+            - secretRef:
+                name: {{ required "existingSecret is required" .Values.existingSecret | quote }}
+                optional: true
+            {{- with .Values.migrateEnvSecret }}
+            - secretRef:
+                name: {{ . | quote }}
+                optional: true
+            {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}

@@ -12,9 +12,10 @@
 ) }}
 
 -- Unified, source-neutral issue-type dimension: one row per source issue type,
--- carrying the reconciled `issue_kind` (bug / other / unknown). Each per-source
--- projection tagged `silver:class_task_issuetypes` reconciles its native type
--- naming to the same enum, so Gold reads one column and matches no type name.
+-- raw vendor identity only (id and names). Each per-source projection tagged
+-- `silver:class_task_issuetypes` carries the same columns; classification into
+-- an issue kind is NOT here — gold resolves it from `config.field_value_map`
+-- at its own build, so a mapping change never requires a silver rebuild.
 
 SELECT * FROM (
     {{ union_by_tag('silver:class_task_issuetypes') }}

@@ -34,7 +34,7 @@ The list lives HERE; do not mirror it elsewhere.
 ==============================================================================
 */}}
 {{- $kcdb := .Values.keycloak.deploy }}
-{{- if or .Values.identityResolution.deploy $kcdb }}
+{{- if or .Values.identityResolution.deploy $kcdb (((.Values.global).insightV3Core).deploy) }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -107,6 +107,13 @@ spec:
                 "$IDENTITY_DB" "$IDENTITY_DB" "$MARIADB_USER")
               mariadb -h"$MARIADB_HOST" -P"$MARIADB_PORT" -uroot -e "$SQL"
               echo "Provisioned ${IDENTITY_DB} (granted to ${MARIADB_USER}@%)."
+              {{- end }}
+              {{- if (((.Values.global).insightV3Core).deploy) }}
+              CORE_DB={{ required "insightV3Core.databaseName is required" .Values.insightV3Core.databaseName | quote }}
+              SQL=$(printf 'CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; GRANT ALL PRIVILEGES ON `%s`.* TO `%s`@`%%`; FLUSH PRIVILEGES;' \
+                "$CORE_DB" "$CORE_DB" "$MARIADB_USER")
+              mariadb -h"$MARIADB_HOST" -P"$MARIADB_PORT" -uroot -e "$SQL"
+              echo "Provisioned ${CORE_DB} (granted to ${MARIADB_USER}@%)."
               {{- end }}
               {{- if $kcdb }}
               KC_DB={{ .Values.keycloak.database.name | quote }}

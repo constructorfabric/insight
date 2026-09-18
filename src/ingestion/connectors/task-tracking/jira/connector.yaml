@@ -1027,7 +1027,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['key'] }}
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - jira_id
@@ -1253,6 +1253,10 @@ streams:
               $ref: "#/streams/13"
             parent_key: id_readable
             partition_field: id_readable
+            # INVARIANT: the parent's immutable id travels with every child row; the
+            # key is what Jira showed at fetch time and changes on a project move.
+            extra_fields:
+              - [id]
             incremental_dependency: true
     incremental_sync:
       type: DatetimeBasedCursor
@@ -1292,6 +1296,10 @@ streams:
             path:
               - id_readable
             value: "{{ stream_partition.id_readable }}"
+          - type: AddedFieldDefinition
+            path:
+              - jira_id
+            value: "{{ stream_slice.extra_fields['id'] }}"
           - type: AddedFieldDefinition
             path:
               - author_account_id
@@ -1406,6 +1414,10 @@ streams:
             type:
               - string
               - "null"
+          jira_id:
+            type:
+              - string
+              - "null"
           author_account_id:
             type:
               - string
@@ -1456,6 +1468,10 @@ streams:
               $ref: "#/streams/13"
             parent_key: id_readable
             partition_field: id_readable
+            # INVARIANT: the parent's immutable id travels with every child row; the
+            # key is what Jira showed at fetch time and changes on a project move.
+            extra_fields:
+              - [id]
             incremental_dependency: true
     incremental_sync:
       type: DatetimeBasedCursor
@@ -1499,6 +1515,10 @@ streams:
             path:
               - id_readable
             value: "{{ stream_partition.id_readable }}"
+          - type: AddedFieldDefinition
+            path:
+              - jira_id
+            value: "{{ stream_slice.extra_fields['id'] }}"
           - type: AddedFieldDefinition
             path:
               - author_account_id
@@ -1675,6 +1695,10 @@ streams:
             type:
               - string
               - "null"
+          jira_id:
+            type:
+              - string
+              - "null"
           author_account_id:
             type:
               - string
@@ -1728,6 +1752,10 @@ streams:
               $ref: "#/streams/13"
             parent_key: id_readable
             partition_field: id_readable
+            # INVARIANT: the parent's immutable id travels with every child row; the
+            # key is what Jira showed at fetch time and changes on a project move.
+            extra_fields:
+              - [id]
             incremental_dependency: true
     incremental_sync:
       type: DatetimeBasedCursor
@@ -1771,6 +1799,10 @@ streams:
             path:
               - id_readable
             value: "{{ stream_partition.id_readable }}"
+          - type: AddedFieldDefinition
+            path:
+              - jira_id
+            value: "{{ stream_slice.extra_fields['id'] }}"
           - type: AddedFieldDefinition
             path:
               - author_account_id
@@ -1953,6 +1985,10 @@ streams:
               - number
               - "null"
           id_readable:
+            type:
+              - string
+              - "null"
+          jira_id:
             type:
               - string
               - "null"
@@ -2807,7 +2843,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['key'] }}
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - id_readable

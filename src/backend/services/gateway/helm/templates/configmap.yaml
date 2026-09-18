@@ -23,11 +23,15 @@ data:
       {{- $mcpOk := or (not (.mcpOnly | default false)) $.Values.global.mcp.enabled }}
       {{- $sqlApiOk := or (not (.sqlApiOnly | default false)) $.Values.global.sqlApi.enabled }}
       {{- $previewsOk := or (not (.previewsOnly | default false)) $.Values.global.previews.enabled }}
-      {{- if and $mcpOk $sqlApiOk $previewsOk }}
+      {{- $v3Ok := or (not (.v3Only | default false)) ((($.Values.global).insightV3Core).deploy) }}
+      {{- if and $mcpOk $sqlApiOk $previewsOk $v3Ok }}
       - prefix: {{ .prefix }}
         upstream: {{ tpl .upstream $ | quote }}
         {{- with .auth }}
         auth: {{ . }}
+        {{- end }}
+        {{- with .mcpScope }}
+        mcp_scope: {{ . | quote }}
         {{- end }}
         {{- with .timeoutMs }}
         timeout_ms: {{ . }}

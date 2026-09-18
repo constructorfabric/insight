@@ -97,12 +97,12 @@ session cookie.
 
 ## CI required gate
 
-`.github/workflows/e2e-stand.yml` starts on every pull request so its stable
-`Stand E2E` context always reports. Its cheap `changes` job decides whether
-the diff can affect this suite: relevant changes run both `api-smoke` and
-`ui-journeys`, and the umbrella fails unless both succeed; irrelevant changes
-skip both lanes and the umbrella reports success. Branch protection should
-therefore require `Stand E2E`, not either conditional lane directly.
+`.github/workflows/e2e-stand.yml` runs the suite in the merge queue. It
+starts on every pull request too, with every job skipped, so the required
+`api-smoke` and `ui-journeys` contexts exist there and pass as skipped. In the
+queue its `changes` job decides whether the diff can affect this suite:
+relevant changes run both lanes, irrelevant changes skip them and the lane
+checks report success.
 
 ## Reading PROFILE.md before writing a test
 

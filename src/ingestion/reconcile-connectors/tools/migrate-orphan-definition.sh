@@ -10,15 +10,24 @@
 # Flow (idempotent at API level — reusing existing ab_* helpers):
 #   1. Resolve the orphan definition (custom: true) by connector_name.
 #   2. List sources attached to it; export per-connection state.
-#   3. Create new builder project + publish manifest → new_def_id.
-#   4. For each source: read its connectionConfiguration, delete (cascades
-#      connections), recreate against new_def_id, then recreate each
-#      preserved connection on the new source and restore its state.
+#   3. Create new builder project + publish manifest → new_def_id, at the
+#      OLD definition's version: the next reconcile tick then sees the
+#      descriptor's version as drift and runs its bump path — catalog
+#      refresh, and the one-shot `dbt --full-refresh` sync on a major.
+#   4. For each source: read its connectionConfiguration, add the fields the
+#      platform owns (git-cli-proxy address and token when the descriptor
+#      asks for them), delete (cascades connections), recreate against
+#      new_def_id, then recreate each preserved connection on the new
+#      source. State is restored only across a patch or minor bump: a major
+#      or migration changes the stream contract, and an old cursor would
+#      resume the new streams mid-history.
 #   5. Patch reconcile tags on each new connection.
 #   6. Delete the old orphan source_definition.
 #
 # Required env: KUBECONFIG, INSIGHT_NAMESPACE, AIRBYTE_URL,
-#               INSIGHT_TENANT_ID, CONNECTORS_DIR.
+#               INSIGHT_TENANT_ID, CONNECTORS_DIR; GIT_PROXY_URL and
+#               GIT_PROXY_TOKEN when the descriptor sets
+#               platform_config.git_proxy.
 # Workspace UUID is auto-discovered via ab_workspace_id (ADR-0009).
 # Destination is resolved via reconcile_resolve_destination_id (ADR-0012):
 # either RECONCILE_DESTINATION_ID is set (legacy override) or the
@@ -73,6 +82,13 @@ if [[ -z "${OLD_DEF_ID}" ]]; then
   exit 1
 fi
 
+OLD_DEF_VERSION="$(printf '%s' "${DEFS_JSON}" | python3 -c '
+import sys, json
+target = sys.argv[1]
+for d in json.load(sys.stdin):
+    if d.get("sourceDefinitionId") == target:
+        print(d.get("dockerImageTag", "")); break
+' "${OLD_DEF_ID}")"
 BUILDER_ID="$(ab_builder_find_by_definition "${WORKSPACE_ID}" "${OLD_DEF_ID}")"
 if [[ -n "${BUILDER_ID}" ]]; then
   printf 'definition %s already has builder project %s — not orphan; aborting\n' \
@@ -139,16 +155,35 @@ print(json.dumps({"src_name": src_name, "conn": conn, "state": state}))
   done < "${WORKDIR}/conns_${src_id}.ndjson"
 done < "${WORKDIR}/old_sources.ndjson"
 
-# 3. Create new builder project + publish.
+# 3. Create new builder project + publish at the old version. Reconcile owns
+#    the move to the descriptor's version: republishing there runs the same
+#    bump path a version drift does, catalog refresh and full-refresh included.
 DESC_VERSION="$(python3 "${PY_DIR}/parse_descriptor.py" \
   --descriptor "${CONNECTORS_DIR}/${CONNECTOR_NAME}/descriptor.yaml" \
   --field version 2>/dev/null || printf 'migrated')"
+if ! BUMP_KIND="$(python3 "${PY_DIR}/classify_bump.py" "${DESC_VERSION}" "${OLD_DEF_VERSION}")"; then
+  BUMP_KIND="major"
+fi
+PUBLISH_VERSION="${OLD_DEF_VERSION:-${DESC_VERSION}}"
+printf 'definition version %s -> %s (bump_kind=%s)\n' \
+  "${OLD_DEF_VERSION:-?}" "${DESC_VERSION}" "${BUMP_KIND}" >&2
+DESCRIPTOR_PATH="${CONNECTORS_DIR}/${CONNECTOR_NAME}/descriptor.yaml"
+USES_GIT_PROXY="$(python3 "${PY_DIR}/parse_descriptor.py" \
+  --descriptor "${DESCRIPTOR_PATH}" --field platform_config.git_proxy 2>/dev/null \
+  | tr '[:upper:]' '[:lower:]')"
+INJECTED_JSON="{}"
+if [[ "${USES_GIT_PROXY}" == "true" ]]; then
+  : "${GIT_PROXY_URL:?descriptor sets platform_config.git_proxy; GIT_PROXY_URL must be set}"
+  : "${GIT_PROXY_TOKEN:?descriptor sets platform_config.git_proxy; GIT_PROXY_TOKEN must be set}"
+  INJECTED_JSON="$(GIT_PROXY_URL_VAL="${GIT_PROXY_URL}" GIT_PROXY_TOKEN_VAL="${GIT_PROXY_TOKEN}" \
+    python3 -c 'import os, json; print(json.dumps({"git_proxy_url": os.environ["GIT_PROXY_URL_VAL"], "git_proxy_token": os.environ["GIT_PROXY_TOKEN_VAL"]}))')"
+fi
 NEW_BUILDER_ID="$(ab_builder_create_with_manifest \
   "${WORKSPACE_ID}" "${CONNECTOR_NAME}" "${MANIFEST_PATH}")"
 [[ -n "${NEW_BUILDER_ID}" ]] || { printf 'builder create failed\n' >&2; exit 1; }
 NEW_DEF_ID="$(ab_builder_publish \
   "${WORKSPACE_ID}" "${NEW_BUILDER_ID}" "${CONNECTOR_NAME}" \
-  "${DESC_VERSION}" "${MANIFEST_PATH}")"
+  "${PUBLISH_VERSION}" "${MANIFEST_PATH}")"
 [[ -n "${NEW_DEF_ID}" ]] || { printf 'builder publish failed\n' >&2; exit 1; }
 printf 'created new builder=%s new_def=%s\n' "${NEW_BUILDER_ID}" "${NEW_DEF_ID}" >&2
 
@@ -166,7 +201,12 @@ while IFS= read -r src_line; do
   [[ -n "${src_line}" ]] || continue
   old_src_id="$(printf '%s' "${src_line}" | python3 -c 'import sys,json;print(json.load(sys.stdin)["sourceId"])')"
   src_name="$(printf '%s' "${src_line}" | python3 -c 'import sys,json;print(json.load(sys.stdin)["name"])')"
-  cfg_json="$(printf '%s' "${src_line}" | python3 -c 'import sys,json;print(json.dumps(json.load(sys.stdin).get("connectionConfiguration",{})))')"
+  cfg_json="$(printf '%s' "${src_line}" | python3 -c '
+import sys, json
+cfg = json.load(sys.stdin).get("connectionConfiguration", {})
+cfg.update(json.loads(sys.argv[1]))
+print(json.dumps(cfg))
+' "${INJECTED_JSON}")"
   tmp_name="${src_name}-migrating-$$"
   if ! new_src_json="$(ab_create_source "${WORKSPACE_ID}" "${NEW_DEF_ID}" \
         "${tmp_name}" "${cfg_json}")"; then
@@ -190,6 +230,7 @@ done < "${WORKDIR}/old_sources.ndjson"
 
 # 5. Per preserved connection: recreate on matching new source + restore state.
 CONN_MIGRATED=0
+STATE_RESTORED="no"
 while IFS= read -r snap_line; do
   [[ -n "${snap_line}" ]] || continue
   src_name="$(printf '%s' "${snap_line}" | python3 -c 'import sys,json;print(json.load(sys.stdin)["src_name"])')"
@@ -229,7 +270,13 @@ for t in c.get("tags") or []:
     "${tags_json}" "${sync_catalog}")"
   new_conn_id="$(printf '%s' "${new_conn_json}" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("connectionId",""))')"
   if [[ -n "${new_conn_id}" && "${state_json}" != '{}' ]]; then
-    ab_create_or_update_state "${new_conn_id}" "${state_json}" >/dev/null
+    if [[ "${BUMP_KIND}" =~ ^(none|patch|minor)$ ]]; then
+      ab_create_or_update_state "${new_conn_id}" "${state_json}" >/dev/null
+      STATE_RESTORED="yes"
+    else
+      printf '  state not restored for %s: bump_kind=%s changes the stream contract\n' \
+        "${conn_name}" "${BUMP_KIND}" >&2
+    fi
   fi
   if [[ -n "${new_conn_id}" ]]; then
     ab_patch_connection_tags "${new_conn_id}" "${tags_json}" >/dev/null
@@ -262,5 +309,7 @@ ab_delete_source_definition "${OLD_DEF_ID}" >/dev/null
 printf 'deleted old orphan definition: %s\n' "${OLD_DEF_ID}" >&2
 
 # 8. Summary.
-printf 'migration done: connector=%s sources_migrated=%s connections_migrated=%s state_restored=yes\n' \
-  "${CONNECTOR_NAME}" "${SRC_MIGRATED}" "${CONN_MIGRATED}"
+printf 'migration done: connector=%s sources_migrated=%s connections_migrated=%s state_restored=%s\n' \
+  "${CONNECTOR_NAME}" "${SRC_MIGRATED}" "${CONN_MIGRATED}" "${STATE_RESTORED}"
+printf 'next: run reconcile; it moves the definition from %s to %s (bump_kind=%s)\n' \
+  "${PUBLISH_VERSION}" "${DESC_VERSION}" "${BUMP_KIND}"

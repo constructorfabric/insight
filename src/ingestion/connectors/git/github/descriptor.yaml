@@ -46,7 +46,16 @@ name: github
 #   scoped `dbt --full-refresh` a major bump dispatches re-materializes them.
 #   Safe: both dates have been in Bronze all along, and the author date falls
 #   back to the committer date where a source left it empty. #3153
-version: "8.0.1"
+# 8.1.0: `commit_authors` carries the author's `last_committed_date` and an
+#   incremental cursor over it, so the author list's `since` survives between
+#   syncs and a later run resolves only the authors who committed inside one
+#   lookback window of the saved date. An e-mail GitHub matches to nobody is
+#   therefore retried only when that author commits again. The proxy-fed
+#   cursors and `pull_request_commits` bound records client-side so a
+#   future-dated commit cannot become the saved cursor. MINOR: one additive
+#   bronze column the reconciler adds at sync time; no downstream model reads
+#   it.
+version: "8.1.0"
 schedule: "0 */4 * * *"
 workflow: sync
 

@@ -31,13 +31,15 @@ description: >
     * indep-a / indep-b: the same patch id on commits in two unrelated
       repositories — two independent authored changes, both count. Patch
       identity folds within a repository only.
-    * xr-fork / xr-upstream: one hash in two repositories, file rows recorded
-      only under the repository that loses the commit collapse. The lines
-      count once, under the surviving repository.
+    * xr-fork / xr-upstream: one hash in two repositories, neither copy
+      flagged or listed by a merged request, file rows recorded only under
+      the repository that loses the commit collapse to repository order. The
+      lines count once, under the surviving repository.
 
   Commit size reads the same commit set: the squash pool is {10, 10, 6}
   (median 10), the surviving patch copy is 7, the partial-branch pair is
-  {3, 2} (median 3), and the cross-repository survivor keeps its 4.
+  {3, 2} (median 2.5, both middles averaged), and the cross-repository
+  survivor keeps its 4.
 
 bronze:
   bronze_bamboohr.employees:
@@ -93,7 +95,7 @@ bronze:
     - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: wi-f-ia, repository: "https://github.com/constructor/indep-a.git", sha: wi-ia-1, filename: src/a.rs, status: modified, additions: 2, deletions: 0, pre_image_oid: 88888888888888888888888888888888888888b0, post_image_oid: 88888888888888888888888888888888888888b1}
     - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: wi-f-ib, repository: "https://github.com/constructor/indep-b.git", sha: wi-ib-1, filename: src/b.rs, status: modified, additions: 2, deletions: 0, pre_image_oid: 99999999999999999999999999999999999999c0, post_image_oid: 99999999999999999999999999999999999999c1}
     # xr: rows recorded ONLY under xr-upstream, which loses the commit
-    # collapse to xr-fork (lexicographic repo order).
+    # collapse to xr-fork: neither copy landed, so repository order decides.
     - {$ref: ../templates/git_activity.yaml#/templates/file_change, unique_key: wi-f-xr, repository: "https://github.com/constructor/xr-upstream.git", sha: wi-xr-1, filename: src/x.rs, status: added, additions: 4, deletions: 0, pre_image_oid: null, post_image_oid: 66666666666666666666666666666666666666f1}
 
   bronze_github.pull_requests:

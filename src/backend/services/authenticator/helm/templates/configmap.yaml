@@ -152,6 +152,7 @@ data:
           mcp_oauth:
             enabled: {{ .Values.global.mcp.enabled }}
             public_url: {{ if .Values.global.mcp.enabled }}{{ required "global.mcp.publicUrl is required when MCP is enabled" .Values.global.mcp.publicUrl | quote }}{{ else }}""{{ end }}
+            allow_insecure_private_network: {{ (((.Values.global).mcp).allowInsecurePrivateNetwork) | default false }}
           # Audit events to the platform Redpanda topic (PRD nfr-auth-audit).
           audit:
             brokers: {{ .Values.audit.brokers | quote }}

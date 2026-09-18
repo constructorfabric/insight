@@ -70,6 +70,7 @@ secrets:
     - { name: redis-creds,      enabled: true }
   services:
     - { name: insight-db-creds,                  enabled: true  }
+    - { name: insight-v3-core-token,             enabled: true  }
     # ES256 gateway-JWT signing key (current.pem) mounted by the authenticator.
     - { name: insight-authenticator-signing-keys, enabled: true }
     # Real-IdP OIDC secret. Off for local — the authenticator logs in against the

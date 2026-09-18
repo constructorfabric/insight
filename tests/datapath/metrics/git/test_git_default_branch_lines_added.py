@@ -106,6 +106,36 @@ def test_one_repository_answers_with_one_row_whichever_path_its_lines_came_from(
     ).equals(value=61)
 
 
+def test_an_uncollected_size_on_the_default_branch_reaches_the_lines_but_not_the_code_lines(
+    spec: SpecRun,
+) -> None:
+    """dbla-blind's thirty lines are inside the lines measure above and must be absent
+    here: with no file rows there is no path to classify, so the code-lines measure is
+    src/a.rs alone. The other scope's half of this rule lives in
+    git_uncollected_file_changes; a fallback emitted into this measure reads 41."""
+    r = spec.call(
+        {
+            "url": "/v1/metric-results",
+            "method": "POST",
+            "body": {
+                "entity": {"type": "person", "ids": [ERIN]},
+                "period": {"from": "2026-10-01", "to": "2026-10-02"},
+                "metrics": [
+                    {"metric_key": "git.default_branch_code_lines", "views": [{"view": "period"}]},
+                    {
+                        "metric_key": "git.non_default_branch_code_lines",
+                        "views": [{"view": "period"}],
+                    },
+                ],
+            },
+        }
+    )
+    assert r.status == 200
+
+    r.row("git.default_branch_code_lines", "period", entity_id=ERIN).equals(value=11)
+    r.row("git.non_default_branch_code_lines", "period", entity_id=ERIN).equals(value=7)
+
+
 def test_an_empty_window_is_null_not_zero(spec: SpecRun) -> None:
     r = spec.call(
         {

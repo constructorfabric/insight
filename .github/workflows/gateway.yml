@@ -25,6 +25,8 @@ on:
       - "src/backend/services/gateway/**"
       - "src/backend/services/authenticator/**"
       - "src/backend/libs/authenticator-sdk/**"
+      - "src/backend/Dockerfile"
+      - "src/backend/.dockerignore"
       - "src/backend/Cargo.toml"
       - "src/backend/Cargo.lock"
       - "src/ingestion/tools/seed/insight_seed/**"
@@ -105,6 +107,7 @@ jobs:
             --add-host identity-resolution:127.0.0.1 \
             --add-host authenticator:127.0.0.1 \
             --add-host insight-front:127.0.0.1 \
+            --add-host insight-v3-core:127.0.0.1 \
             -e GATEWAY_VALIDATE_ONLY=1 \
             -e GATEWAY_AUTHENTICATOR_URL=http://authenticator:8083 \
             -e GATEWAY_FRONT_URL=http://insight-front:8080 \
@@ -124,6 +127,7 @@ jobs:
           cat rendered-routes.yaml
           docker run --rm \
             --add-host insight-analytics:127.0.0.1 --add-host insight-identity-resolution:127.0.0.1 \
+            --add-host insight-v3-core:127.0.0.1 \
             --add-host insight-previews:127.0.0.1 \
             --add-host insight-authenticator:127.0.0.1 --add-host insight-frontend:127.0.0.1 \
             -e GATEWAY_VALIDATE_ONLY=1 \

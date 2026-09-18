@@ -52,10 +52,12 @@ function _M.unauthorized()
     )
 end
 
-function _M.bearer_unauthorized(resource_metadata_url)
-    local challenge = 'Bearer scope="mcp:query"'
+function _M.bearer_unauthorized(resource_metadata_url, scope)
+    local required_scope = scope or "mcp:query"
+    local challenge = 'Bearer scope="' .. required_scope .. '"'
     if resource_metadata_url then
-        challenge = 'Bearer resource_metadata="' .. resource_metadata_url .. '", scope="mcp:query"'
+        challenge = 'Bearer resource_metadata="' .. resource_metadata_url
+            .. '", scope="' .. required_scope .. '"'
     end
     ngx.header["WWW-Authenticate"] = challenge
     return problem(

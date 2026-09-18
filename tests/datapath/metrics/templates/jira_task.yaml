@@ -48,8 +48,8 @@ templates:
   # ── Issues closed by Alice ───────────────────────────────────────────────
   alice_task_1:
     $ref: "#/templates/jira_issue"
-    id: T-1
-    jira_id: T-1
+    id: "10001"
+    jira_id: "10001"
     unique_key: jira-test-T-1
     id_readable: TST-1
     created: "2026-01-15T09:00:00"
@@ -57,8 +57,8 @@ templates:
 
   alice_task_2:
     $ref: "#/templates/jira_issue"
-    id: T-2
-    jira_id: T-2
+    id: "10002"
+    jira_id: "10002"
     unique_key: jira-test-T-2
     id_readable: TST-2
     created: "2026-01-15T11:30:00"
@@ -74,13 +74,14 @@ templates:
 
   # ── Changelog (bronze_jira.jira_issue_history) ───────────────────────────
   # jira__changelog_items explodes `items` (JSON array of field changes). Each
-  # issue records the status transition into Closed on 2026-01-15; jira-enrich
-  # reverse-applies it onto the snapshot (Closed) so final_close_at = this event.
+  # issue records the status transition into Closed on 2026-01-15; the derived
+  # journal reads its `to` side as the state after it, so final_close_at = this event.
   jira_history:
     unique_key: null
     source_id: jira-test
     tenant_id: "{{ tenant }}"
     id_readable: null
+    jira_id: null
     changelog_id: null
     created_at: ""
     author_account_id: alice-jira-acct
@@ -93,6 +94,7 @@ templates:
   alice_task_1_closed:
     $ref: "#/templates/jira_history"
     id_readable: TST-1
+    jira_id: "10001"
     changelog_id: "10001"
     unique_key: jira-test-TST-1-10001
     created_at: "2026-01-15T14:00:00.000+0000"
@@ -101,6 +103,7 @@ templates:
   alice_task_2_closed:
     $ref: "#/templates/jira_history"
     id_readable: TST-2
+    jira_id: "10002"
     changelog_id: "10002"
     unique_key: jira-test-TST-2-10002
     created_at: "2026-01-15T16:30:00.000+0000"
@@ -150,9 +153,16 @@ templates:
     schema_type: date
     unique_key: jira-test-field-duedate
 
+  field_resolution:
+    $ref: "#/templates/jira_field"
+    field_id: resolution
+    name: Resolution
+    schema_type: resolution
+    unique_key: jira-test-field-resolution
+
   # Numeric time-tracking fields (drive estimation_accuracy). Jira tracks them in
-  # seconds; jira-enrich only sees them via the changelog (the issue snapshot does
-  # not carry timeoriginalestimate / timespent), so a test must set them there.
+  # seconds; the issue fixture does not carry timeoriginalestimate / timespent, so
+  # a test sets them through the changelog.
   field_timeoriginalestimate:
     $ref: "#/templates/jira_field"
     field_id: timeoriginalestimate
@@ -175,6 +185,7 @@ templates:
     source_id: jira-test
     worklog_id: null
     id_readable: null
+    jira_id: null
     author_account_id: alice-jira-acct
     started: ""
     time_spent_seconds: null
@@ -202,6 +213,30 @@ templates:
     account_id: carol-jira-acct
     email: carol@example.com
     display_name: Carol Gamma
+
+  # unique_key avoids the `-jira-acct` suffix: at 24 characters the short form
+  # is exactly token-shaped and trips secret scanners near "jira" — and heidi's
+  # key also avoids any hyphen-aligned 24-character substring.
+  dave_user:
+    $ref: "#/templates/jira_user"
+    unique_key: jira-test-dave-jira-account
+    account_id: dave-jira-acct
+    email: dave@example.com
+    display_name: Dave Delta
+
+  erin_user:
+    $ref: "#/templates/jira_user"
+    unique_key: jira-test-erin-jira-account
+    account_id: erin-jira-acct
+    email: erin@example.com
+    display_name: Erin Epsilon
+
+  heidi_user:
+    $ref: "#/templates/jira_user"
+    unique_key: jira-test-heidi-account
+    account_id: heidi-jira-acct
+    email: heidi@example.com
+    display_name: Heidi Eta
 
   closed_task_alice:
     $ref: "#/templates/jira_issue"
@@ -280,7 +315,7 @@ templates:
   jira_issuetype:
     unique_key: null
     source_id: jira-test
-    tenant_id: "00000000-0000-0000-0000-000000000000"
+    tenant_id: "{{ tenant }}"
     id: null
     name: null
     untranslatedName: null
@@ -312,6 +347,155 @@ templates:
     id: "10099"
     name: Incident
     untranslatedName: Incident
+
+  # Extra bug-kind types; `value_type_defect` / `value_type_regression` bind them.
+  issuetype_defect:
+    $ref: "#/templates/jira_issuetype"
+    unique_key: jira-test-issuetype-10002
+    id: "10002"
+    name: Defect
+    untranslatedName: Defect
+
+  issuetype_regression:
+    $ref: "#/templates/jira_issuetype"
+    unique_key: jira-test-issuetype-10003
+    id: "10003"
+    name: Regression
+    untranslatedName: Regression
+
+  # Empty untranslatedName and a padded display name: neither reaches
+  # classification, which keys on the id alone.
+  issuetype_defect_padded:
+    $ref: "#/templates/jira_issuetype"
+    unique_key: jira-test-issuetype-10004
+    id: "10004"
+    name: "  DEFECT  "
+    untranslatedName: ""
+
+  # Localized display name; the untranslated name is what `display_name`
+  # records, so the drift check stays quiet.
+  issuetype_bug_translated:
+    $ref: "#/templates/jira_issuetype"
+    unique_key: jira-test-issuetype-10005
+    id: "10005"
+    name: "Ошибка"
+    untranslatedName: Bug
+
+  # ── Operator issue-type decisions (config.field_value_map) ────────────────
+  # Binds a type ID to an issue kind under field=issue_type; gold resolves
+  # `issue_kind` from these rows at its own build. An id with no live row falls
+  # to the tenant's config.field_value_defaults row, then `unknown`, so every
+  # spec seeding an issue type it expects classified must seed the decision
+  # too. `display_name` records the name the decision was made against.
+  jira_issue_type:
+    tenant_id: "{{ tenant }}"
+    insight_source_id: jira-test
+    data_source: jira
+    field: issue_type
+    source_key: null
+    valid_from: "1970-01-01 00:00:00.000"
+    recorded_at: "2026-01-01 00:00:00.000"
+    unique_key: null
+    target_value: null
+    display_name: ""
+    is_deleted: 0
+    note: ""
+    recorded_by: fixture
+    _version: "2026-01-01 00:00:00.000"
+
+  # Per-tenant fallback for type ids with no decision (config.field_value_defaults).
+  jira_issue_type_default:
+    tenant_id: "{{ tenant }}"
+    insight_source_id: jira-test
+    field: issue_type
+    valid_from: "1970-01-01 00:00:00.000"
+    recorded_at: "2026-01-01 00:00:00.000"
+    unique_key: jira-issue-type-default
+    default_value: task
+    is_deleted: 0
+    note: ""
+    recorded_by: fixture
+    _version: "2026-01-01 00:00:00.000"
+
+  # One row per issue type above, keyed by its id. `issuetype_unclassified`
+  # (10099) deliberately has none: it is the unmapped-stays-unknown case.
+  value_type_task:
+    $ref: "#/templates/jira_issue_type"
+    source_key: "10001"
+    unique_key: jira-type-10001
+    target_value: task
+    display_name: Task
+
+  value_type_bug:
+    $ref: "#/templates/jira_issue_type"
+    source_key: "10000"
+    unique_key: jira-type-10000
+    target_value: bug
+    display_name: Bug
+
+  value_type_defect:
+    $ref: "#/templates/jira_issue_type"
+    source_key: "10002"
+    unique_key: jira-type-10002
+    target_value: bug
+    display_name: Defect
+
+  value_type_regression:
+    $ref: "#/templates/jira_issue_type"
+    source_key: "10003"
+    unique_key: jira-type-10003
+    target_value: bug
+    display_name: Regression
+
+  value_type_defect_padded:
+    $ref: "#/templates/jira_issue_type"
+    source_key: "10004"
+    unique_key: jira-type-10004
+    target_value: bug
+    display_name: "  DEFECT  "
+
+  value_type_bug_translated:
+    $ref: "#/templates/jira_issue_type"
+    source_key: "10005"
+    unique_key: jira-type-10005
+    target_value: bug
+    display_name: Bug
+
+  # ── Operator resolution decisions (config.field_value_map) ────────────────
+  # Binds a resolution id to a resolution class under field=resolution; gold
+  # resolves `resolution_kind` the same way as the issue kind. An unresolved
+  # issue is 'unknown' outright, without consulting the default.
+  jira_resolution_map:
+    $ref: "#/templates/jira_issue_type"
+    field: resolution
+
+  value_resolution_fixed:
+    $ref: "#/templates/jira_resolution_map"
+    source_key: "1"
+    unique_key: jira-resolution-1
+    target_value: fixed
+    display_name: Fixed
+
+  value_resolution_wontfix:
+    $ref: "#/templates/jira_resolution_map"
+    source_key: "2"
+    unique_key: jira-resolution-2
+    target_value: wontfix
+    display_name: "Won't Fix"
+
+  value_resolution_duplicate:
+    $ref: "#/templates/jira_resolution_map"
+    source_key: "3"
+    unique_key: jira-resolution-3
+    target_value: duplicate
+    display_name: Duplicate
+
+  # Per-tenant fallback for resolution ids with no decision.
+  jira_resolution_default:
+    $ref: "#/templates/jira_issue_type_default"
+    field: resolution
+    unique_key: jira-resolution-default
+    default_value: wontfix
 
   # ── Deletion / visibility censuses (specs/DELETION-AND-VISIBILITY.md) ────
   # jira_census: one row per issue observed alive by the id-only sweep. An

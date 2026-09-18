@@ -112,7 +112,16 @@ WITH fixtures AS (
             ('option_array no id','option_array', '','','','GOAL-1',
                  CAST([] AS Array(String)), CAST([] AS Array(String)), ['GOAL-1'], ['GOAL-1']),
             ('option_array id gone','option_array', '','PREV-1','','GOAL-2',
-                 ['PREV-1'], ['PREV-1'], ['GOAL-2'], ['GOAL-2'])
+                 ['PREV-1'], ['PREV-1'], ['GOAL-2'], ['GOAL-2']),
+            -- clearing the field: the id side is PRESENT and empty. It must not
+            -- fall back to the display side, which renders an empty list as the
+            -- literal text `[]` and would land in the journal as one option
+            -- named "[]".
+            ('option_array cleared','option_array', '[13027]','Alpha','[]','[]',
+                 ['13027'], ['Alpha'], CAST([] AS Array(String)), CAST([] AS Array(String))),
+            ('option_array both empty lists','option_array', '[]','[]','[]','[]',
+                 CAST([] AS Array(String)), CAST([] AS Array(String)),
+                 CAST([] AS Array(String)), CAST([] AS Array(String)))
         ]) AS t
     )
 )

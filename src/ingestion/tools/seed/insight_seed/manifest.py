@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, TypedDict
 
 from . import config, profiles
+from .golden_metrics import GoldenMetricsDoc, build_golden_metrics
 from .manifest_sentinel import emit_manifest_sentinel
 
 
@@ -63,7 +64,10 @@ class Manifest(TypedDict):
     """The seeded stand's description, as it travels on the wire.
 
     INVARIANT: `tests/lib/insight_stand/manifest.py` parses this shape. Changing
-    the field set is a wire change — bump `MANIFEST_VERSION` with it.
+    or retyping an existing field is a wire change — bump `MANIFEST_VERSION`
+    with it. A purely ADDITIVE field the reader treats as optional
+    (`golden_metrics`, like `tenants.other` and `capabilities.service_principals`
+    before it) keeps the version, so manifests written before it still load.
     """
 
     manifest_version: int
@@ -77,6 +81,7 @@ class Manifest(TypedDict):
     seed_revision: str
     data_window: str
     anchor_date: str
+    golden_metrics: GoldenMetricsDoc
     seeded: list[str]
 
 
@@ -329,6 +334,9 @@ def build_manifest(
         "seed_revision": seed_revision(),
         "data_window": f"{window_start.isoformat()}..{anchor.isoformat()}",
         "anchor_date": anchor.isoformat(),
+        # The exact per-person totals the seeded rows imply, re-derived from
+        # the generators' own deterministic plan — see `golden_metrics`.
+        "golden_metrics": build_golden_metrics(roster, days=days, anchor=anchor),
         "seeded": sorted(seeded or []),
     }
 

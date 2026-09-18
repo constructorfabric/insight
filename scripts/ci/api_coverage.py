@@ -3,7 +3,7 @@
 
 The ledger is written by the Rust harness (`src/backend/services/authenticator/tests/`,
 `common/mod.rs`) as `{method, path, statuses}` rows; the universe is the committed OpenAPI
-document, kept fresh by the openapi-specs drift gate. This half is pure and stdlib-only.
+document, kept fresh by the service's drift test. This half is pure and stdlib-only.
 
 The gate FAILS when a documented operation is exercised by no test, or when a SKIP_LIST
 entry rots. Per-status-code coverage is REPORTED, not enforced: each declared code is

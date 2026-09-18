@@ -358,6 +358,7 @@ write_watch_override() {
     build:
       context: deploy/compose
       dockerfile: rust-watch.Dockerfile
+      target: !reset null
     entrypoint: !reset null
     working_dir: /workspace
     environment:
@@ -387,6 +388,7 @@ write_watch_override() {
     build:
       context: deploy/compose
       dockerfile: rust-watch.Dockerfile
+      target: !reset null
     entrypoint: !reset null
     working_dir: /workspace
     environment:
@@ -1089,6 +1091,8 @@ Targets:
   analytics            Rust analytics binary only.
   authenticator        Rust authenticator binary only.
   identity-resolution  Rust identity-resolution binary only.
+  insight-v3-core      insight-v3-core image (it runs from an image, not a
+                       bind-mounted binary like the three above).
   frontend             pnpm build → dist/.
   rust                 All Rust services.
   all                  Everything (Rust + frontend).
@@ -1151,21 +1155,25 @@ cmd_build() {
 
   # Accept MULTIPLE targets, e.g. `build authenticator identity-resolution`.
   # Rust bins are batched into one build; frontend runs once if requested.
-  local rust_bins="" want_frontend=false t
+  local rust_bins="" want_frontend=false want_v3_image=false t
   for t in "$@"; do
     case "$t" in
       analytics)           rust_bins="$rust_bins analytics" ;;
       authenticator)       rust_bins="$rust_bins authenticator" ;;
       identity-resolution) rust_bins="$rust_bins identity-resolution" ;;
-      rust)                rust_bins="$rust_bins analytics authenticator identity-resolution" ;;
+      insight-v3-core)     want_v3_image=true ;;
+      rust)                rust_bins="$rust_bins analytics authenticator identity-resolution"; want_v3_image=true ;;
       frontend)            want_frontend=true ;;
-      all)                 rust_bins="$rust_bins analytics authenticator identity-resolution"; want_frontend=true ;;
+      all)                 rust_bins="$rust_bins analytics authenticator identity-resolution"; want_v3_image=true; want_frontend=true ;;
       *) echo "ERROR: unknown target: $t" >&2; cmd_build_help; return 2 ;;
     esac
   done
   rust_bins="$(trim "$rust_bins")"
   # shellcheck disable=SC2086 # word-split the bin list intentionally
   [[ -n "$rust_bins" ]] && build_rust_bins $rust_bins
+  # insight-v3-core runs from its image (unlike the bind-mounted binaries
+  # above), so rebuilding it is a compose image build.
+  [[ "$want_v3_image" == true ]] && "${compose_cmd[@]}" build insight-v3-core
   [[ "$want_frontend" == true ]] && "${compose_cmd[@]}" run --rm build-frontend
   echo "Done. If a runtime container has ENABLE_AUTO_RELOAD=true it will restart automatically."
 }
@@ -1267,7 +1275,8 @@ cmd_seed() {
   # the wrong directory — it surfaces as an EACCES on /app/manifest.json after
   # the whole seed has run. The source is bind-mounted anyway, so the rebuild
   # is layer-cached and only refreshes entrypoint/WORKDIR/deps.
-  "${compose_cmd[@]}" --profile seed run --build --rm seed-sample "${args[@]}"
+  # --no-deps: --build would otherwise also rebake every depends_on image.
+  "${compose_cmd[@]}" --profile seed run --build --no-deps --rm seed-sample "${args[@]}"
   local seed_status=$?
   if [[ $seed_status -ne 0 ]]; then
     return $seed_status
@@ -1281,7 +1290,7 @@ cmd_seed() {
       seed_identity_projection "$env_file" "${compose_cmd[@]}" || return $?
       echo
       echo "=== rebuilding gold over the refreshed identity map ==="
-      "${compose_cmd[@]}" --profile seed run --rm seed-sample gold || return $?
+      "${compose_cmd[@]}" --profile seed run --no-deps --rm seed-sample gold || return $?
 
       # Restart analytics when ClickHouse data was touched. Its schema
       # validator caches schema_status at startup and never re-checks; without
@@ -1593,16 +1602,16 @@ for dbt-built gold data rather than for containers to report healthy.
           block until EVERY gold observation table the seed populates proves
           dbt rebuilt it for this run and left a positive observation in it.
 
-          The four backend services (analytics, authenticator,
-          identity-resolution, gateway) and the frontend are PULLED, each
-          pinned to its own chart's appVersion — never :latest.
+          The backend services (analytics, authenticator,
+          identity-resolution, gateway, insight-v3-core) and the frontend are
+          PULLED, each pinned to its own chart's appVersion — never :latest.
 
           An appVersion names what main released, so pass the flag for whatever
           tree this checkout changes, or the stand will not run it:
 
           --build-backend    Compile the Rust services from this tree. Adds
                              ~28 min (measured across CI's build-path runs).
-          --prebuilt-backend Use backend images already loaded under the four
+          --prebuilt-backend Use backend images already loaded under the
                              *_IMAGE environment variables. Never builds or
                              pulls a fallback image.
           --build-frontend   Build the SPA from this tree with pnpm, served by
@@ -1610,9 +1619,11 @@ for dbt-built gold data rather than for containers to report healthy.
           --build            Both.
           --skip-build       With --build-backend: mount binaries already in
                              deploy/compose/build/ instead of compiling, over
-                             runtime images taken from the chart pins (the
-                             gateway image still builds from this tree). The
-                             caller owns the binaries' freshness.
+                             runtime images taken from the chart pins. The
+                             gateway and insight-v3-core run a locally loaded
+                             image named by GATEWAY_IMAGE / INSIGHT_V3_CORE_IMAGE,
+                             or bake from this tree when those are unset. The
+                             caller owns the binaries' and images' freshness.
 
           `up` refuses to pin a tree that differs from origin/main and names
           the flag to pass — but only when origin/main is in the checkout. A
@@ -1683,14 +1694,16 @@ test_stand_frontend_image() {
 # The backend services the stand runs from published images rather than from
 # source, as "<compose env var>|<chart path>|<image name>".
 #
-# Building these four compiles the Rust workspace twice — once on the host for
-# the bind-mounted binaries, then again inside each service image — which is
-# where the stand's wall-clock went.
+# Building these compiles the Rust workspace inside each service image (and
+# once more on the host for the bind-mounted binaries) — which is where the
+# stand's wall-clock went. test_stand_assert_no_source_bakes catches a backend
+# service missing from this list before `up` starts compiling it.
 TEST_STAND_PINNED_BACKENDS=(
   "ANALYTICS_IMAGE|src/backend/services/analytics/helm/Chart.yaml|analytics"
   "AUTHENTICATOR_IMAGE|src/backend/services/authenticator/helm/Chart.yaml|authenticator"
   "IDENTITY_RESOLUTION_IMAGE|src/backend/services/identity-resolution/helm/Chart.yaml|identity-resolution"
   "GATEWAY_IMAGE|src/backend/services/gateway/helm/Chart.yaml|gateway"
+  "INSIGHT_V3_CORE_IMAGE|src/backend/services/insight-v3-core/helm/Chart.yaml|v3-core"
 )
 
 # Pin and pull every backend image, or fail.
@@ -1711,20 +1724,41 @@ test_stand_pull_backends() {
       echo "       --build to build from source deliberately." >&2
       return 1; }
     update_env_var "$TEST_STAND_ENV_FILE" "$var" "$image"
+    # WORKAROUND: compose lets the process environment override --env-file,
+    # and a set-but-empty var counts as set — CI exports these as '' outside
+    # the prebuilt path, dropping every service to its :dev fallback. Export
+    # the pin so compose resolves the image the env file records.
+    export "$var=$image"
   done
 }
 
 # With --skip-build the caller supplies the binaries, and compose must not
 # bake the dev images just to produce a compiled-in binary the bind-mount
 # shadows. Tag the chart-pinned images under the compose default names so
-# `up` finds them and skips the build. The gateway stays out: routegen bakes
-# routes.yaml into nginx.conf at image-build time, so a routing change is
-# only exercised by an image built from this tree.
+# `up` finds them and skips the build. Gateway and insight-v3-core run from
+# their images rather than bind-mounted binaries, so a source change to either
+# is only exercised by an image built from this tree: they take a caller-loaded
+# image named by GATEWAY_IMAGE / INSIGHT_V3_CORE_IMAGE, or bake from source.
 test_stand_prime_dev_images() {
   local entry var chart name image local_tag
   for entry in "${TEST_STAND_PINNED_BACKENDS[@]}"; do
     IFS='|' read -r var chart name <<<"$entry"
-    [[ "$name" == "gateway" ]] && continue
+    case "$name" in
+      gateway|v3-core)
+        # INVARIANT: cmd_up sources the env file over the process env, so a
+        # caller-supplied image only reaches compose written into the file.
+        image="${!var:-}"
+        [[ -n "$image" ]] || continue
+        docker image inspect "$image" >/dev/null 2>&1 || {
+          echo "ERROR: $var=$image is not loaded locally." >&2
+          echo "       Load it (docker load), or unset $var to bake ${name} from source." >&2
+          return 1
+        }
+        echo "    ${name}: ${image} (pre-built from this tree)"
+        update_env_var "$TEST_STAND_ENV_FILE" "$var" "$image"
+        continue
+        ;;
+    esac
     local_tag="insight-${name}:dev"
     docker image inspect "$local_tag" >/dev/null 2>&1 && continue
     image="$(test_stand_pinned_image "$chart" "$name")" || return 1
@@ -1753,6 +1787,40 @@ test_stand_use_prebuilt_backends() {
     update_env_var "$TEST_STAND_ENV_FILE" "$var" "$image"
   done
   echo "=== the backend uses pre-built images from this ref ==="
+}
+
+# When no source build was asked for, no service `up` raises may be about to
+# be built from source. Asks compose itself — every service in the up set that
+# still carries a build: section must resolve to an image that already exists
+# locally, so a backend service missing from TEST_STAND_PINNED_BACKENDS (the
+# way a newly added compose service lands) fails loudly here instead of
+# silently compiling the Rust workspace inside `docker compose up`.
+test_stand_assert_no_source_bakes() {
+  local buildable offenders="" svc image
+  buildable="$(docker compose --env-file "$TEST_STAND_ENV_FILE" -f docker-compose.yml config --format json |
+    python3 -c '
+import json, sys
+services = json.load(sys.stdin)["services"]
+for name, svc in sorted(services.items()):
+    if "build" in svc:
+        print(name, svc.get("image", "<no-image-tag>"))
+')" || { echo "ERROR: cannot resolve the compose up set to check for source builds." >&2; return 1; }
+
+  while read -r svc image; do
+    [[ -n "$svc" ]] || continue
+    docker image inspect "$image" >/dev/null 2>&1 && continue
+    offenders+="         ${svc} -> ${image}"$'\n'
+  done <<<"$buildable"
+  [[ -z "$offenders" ]] && return 0
+
+  echo "ERROR: \`up\` would compile these services from source, in a run that did" >&2
+  echo "       not ask for a source build:" >&2
+  printf '%s' "$offenders" >&2
+  echo "       Every backend service must run a published image here. Add the" >&2
+  echo "       service's \"<VAR>|<chart path>|<name>\" entry to" >&2
+  echo "       TEST_STAND_PINNED_BACKENDS, or pass --build to build from source" >&2
+  echo "       deliberately." >&2
+  return 1
 }
 
 # Refuse to pin when the working tree differs from what a chart describes.
@@ -1825,6 +1893,7 @@ test_stand_write_env() {
   update_env_var "$TEST_STAND_ENV_FILE" FRONTEND_IMAGE  "$image"
   update_env_var "$TEST_STAND_ENV_FILE" SEEDED_LOCAL_MARIA ""
   update_env_var "$TEST_STAND_ENV_FILE" SEEDED_LOCAL_CH    ""
+  update_env_var "$TEST_STAND_ENV_FILE" ANALYTICS_PERIODIC_VALIDATION_ENABLED "false"
   # Point the authenticator at the same origin the realm registers and the
   # browser runner drives, so the callback lands where the session cookie
   # can be set. Left at its .env.compose.example default
@@ -2195,6 +2264,9 @@ cmd_test_stand() {
           test_stand_pull_backends || return 1
           ;;
       esac
+      if [[ "$backend_mode" != "source" ]]; then
+        test_stand_assert_no_source_bakes || return 1
+      fi
 
       local up_args=(--env-file "$TEST_STAND_ENV_FILE"
                      --authenticator-redirect "$(test_stand_origin)/auth/callback")
@@ -2264,6 +2336,9 @@ cmd_test_stand() {
         pinned)   test_stand_backend_matches_charts || return 1
                   test_stand_pull_backends || return 1 ;;
       esac
+      if [[ "$mbackend_mode" != "source" ]]; then
+        test_stand_assert_no_source_bakes || return 1
+      fi
 
       local mup_args=(--env-file "$TEST_STAND_ENV_FILE" --seed-target identity
                       --authenticator-redirect "$(test_stand_origin)/auth/callback")

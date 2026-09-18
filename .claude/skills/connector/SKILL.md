@@ -31,7 +31,7 @@ mode does not show up on the PR, so it cannot be caught by review alone.
 | Shared `silver:class_<X>` column types identical across sources | staging model | `union_by_tag` UNION ALLs the branches; one mismatched type raises `Code: 386 NO_COMMON_TYPE` and the shared class fails for ALL sources. |
 
 ALWAYS run the guard before opening a PR — it is the only one of these that
-fails *before* merge (CI job `connector-wiring-guard`):
+fails *before* merge (the `Guards` job in CI):
 
 ```bash
 python3 scripts/ci/connector_wiring.py

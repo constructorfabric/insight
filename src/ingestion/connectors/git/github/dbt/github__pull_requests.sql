@@ -55,7 +55,17 @@ SELECT
     COALESCE(pr.base_ref, '') AS destination_branch,
     parseDateTimeBestEffortOrNull(pr.created_at) AS created_on,
     parseDateTimeBestEffortOrNull(pr.updated_at) AS updated_on,
-    parseDateTimeBestEffortOrNull(COALESCE(pr.closed_at, pr.merged_at)) AS closed_on,
+    -- A request that merged closed when it merged. `closed_at` describes one
+    -- closed WITHOUT merging, and a request closed, reopened and then merged
+    -- keeps that earlier close — taking it would end the interval before the
+    -- merge and date the merge to the wrong day.
+    parseDateTimeBestEffortOrNull(
+        COALESCE(nullIf(pr.merged_at, ''), nullIf(pr.closed_at, ''))
+    ) AS closed_on,
+    -- GitHub reports the close time itself, so there is nothing to derive.
+    parseDateTimeBestEffortOrNull(
+        COALESCE(nullIf(pr.merged_at, ''), nullIf(pr.closed_at, ''))
+    ) AS closed_on_reported,
     COALESCE(pr.merge_commit_sha, '') AS merge_commit_hash,
     -- An unmatched join partner and a genuinely empty pull request both read
     -- as 0 through COALESCE; only the marker separates "not collected yet"

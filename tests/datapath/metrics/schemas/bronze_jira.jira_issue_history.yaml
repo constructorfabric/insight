@@ -11,6 +11,7 @@ schemas:
       source_id: {type: string}
       tenant_id: {type: string}
       id_readable: {type: string}
+      jira_id: {type: [string, "null"]}
       # changelog id is a JSON number → Decimal(38,9) in the real bronze; accept
       # number|string|null so the string-valued fixture matches via coercion.
       changelog_id: {type: [number, string, "null"]}

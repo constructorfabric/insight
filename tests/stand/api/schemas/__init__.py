@@ -9,8 +9,8 @@ Two halves, and a reader should be able to tell which one they are in:
   generated document by design.
 * `analytics.py`, `authenticator.py`, `identity.py`, `previews.py` — GENERATED
   from documents
-  the services emit themselves (`cargo run -p <service> -- openapi`) and CI
-  drift-gates in `.github/workflows/openapi-specs.yml`, so the models describe
+  the services emit themselves (`cargo run -p <service> -- openapi`) and each
+  service's test suite drift-gates, so the models describe
   the very structs that serialize the wire. `authenticator.py` is currently just
   the error envelope, because that document declares every `/auth/*` success
   body as a bare `type: object`.

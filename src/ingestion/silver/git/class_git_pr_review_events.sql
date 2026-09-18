@@ -1,4 +1,5 @@
 -- depends_on: {{ ref('github__pr_review_events') }}
+-- depends_on: {{ ref('gitlab__pr_review_events') }}
 -- depends_on: {{ ref('bitbucket_cloud__pr_review_events') }}
 {{ config(
     materialized='incremental',

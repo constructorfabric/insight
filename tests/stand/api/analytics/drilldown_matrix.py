@@ -234,7 +234,11 @@ MATRIX: Sequence[Expectation] = (
     Expectation("tasks.bugs_fixed", "task", Tier.EXACT_COUNT),
     Expectation("tasks.bugs_ratio", "task", Tier.EXACT_RATIO, scale=100.0),
     Expectation("tasks.closed", "task", Tier.EXACT_COUNT),
-    Expectation("tasks.closed_non_bug", "task", Tier.EXACT_COUNT),
+    Expectation("tasks.closed_task", "task", Tier.EXACT_COUNT),
+    Expectation("tasks.closed_unknown", "task", Tier.EXACT_COUNT),
+    Expectation("tasks.closed_fixed", "task", Tier.EXACT_COUNT),
+    Expectation("tasks.closed_duplicate", "task", Tier.EXACT_COUNT),
+    Expectation("tasks.closed_wontfix", "task", Tier.EXACT_COUNT),
     Expectation("tasks.dev_time", "task", Tier.EXACT_MEDIAN),
     Expectation("tasks.due_date_compliance", "task", Tier.EXACT_RATIO, scale=100.0),
     Expectation(

@@ -17,9 +17,9 @@
 ) }}
 
 -- One row per (issue, field) with the field's current value, for EVERY field the
--- issue actually carries — not a hand-picked list. Consumed by `jira-enrich` to
--- populate `IssueSnapshot.current_fields`, so a field that never appears in the
--- changelog still produces a `synthetic_initial` row.
+-- issue actually carries — not a hand-picked list. Read by
+-- `jira__field_history_derived`, so a field that never appears in the changelog
+-- still produces a `synthetic_initial` row.
 --
 -- Fields are classified by `jira__task_field_kind` and read by the
 -- `jira_norm_value` macros; see
@@ -46,12 +46,16 @@
 -- of an issue.
 
 WITH winner AS (
+    -- Read-time dedup of the ReplacingMergeTree by the issue's stable key
+    -- within a source, (source_id, jira_id): unmerged parts hold several rows
+    -- per issue, and `unique_key` exists for the merge alone.
     SELECT
-        unique_key,
+        source_id,
+        jira_id,
         argMax(_airbyte_raw_id, _airbyte_extracted_at) AS raw_id
     FROM {{ source('bronze_jira', 'jira_issue') }}
-    WHERE unique_key IS NOT NULL
-    GROUP BY unique_key
+    WHERE jira_id IS NOT NULL
+    GROUP BY source_id, jira_id
 ),
 
 -- One row per (issue, field key present in the issue JSON).

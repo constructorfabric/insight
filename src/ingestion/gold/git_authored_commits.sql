@@ -12,6 +12,11 @@
 -- carries. Materialized so the FINAL read of the commit class and the hash
 -- collapse run once per build in their own query budget, and so the file
 -- change models attach to the surviving commit row without repeating it.
+--
+-- The same hash can sit in more than one connected repository (a fork and its
+-- upstream), each copy with its own `is_default_branch`. Branch scope belongs
+-- to the commit: it landed if any copy did, by flag or by membership, and the
+-- default branch of any connected repository counts. #3354
 
 SELECT
     tenant_id,
@@ -33,11 +38,13 @@ SELECT
     lines_removed,
     -- A semi-join by tuple rather than a LEFT JOIN: the answer is
     -- membership, and a nullable joined column would need guarding under
-    -- either join_use_nulls setting.
+    -- either join_use_nulls setting. Keyed by hash, not by repository copy:
+    -- the copy a merged request lists and the copy that was collected may
+    -- sit in different repositories.
     if(
-        is_default_branch = 1
-            OR (tenant_id, source_id, project_key, repo_slug, commit_hash) IN (
-                SELECT tenant_id, source_id, project_key, repo_slug, commit_hash
+        {{ git_on_default_branch('is_default_branch') }}
+            OR (tenant_id, data_source, commit_hash) IN (
+                SELECT tenant_id, data_source, commit_hash
                 FROM {{ ref('git_default_branch_commits') }}
             ),
         'default',
@@ -73,5 +80,22 @@ WHERE trimBoth(author_email) != ''
       SELECT tenant_id, data_source, commit_hash
       FROM {{ ref('git_derived_commits') }}
   )
-ORDER BY tenant_id, data_source, commit_hash, source_id, project_key, repo_slug
+-- INVARIANT: a copy whose own repository shows the landing (its flag, or a
+-- request or content match there) outranks the other copies, so the
+-- repository dimension names where the work went whenever a copy can say;
+-- repository coordinates only break the remaining ties.
+ORDER BY
+    tenant_id,
+    data_source,
+    commit_hash,
+    (
+        {{ git_on_default_branch('is_default_branch') }}
+            OR (tenant_id, source_id, project_key, repo_slug, commit_hash) IN (
+                SELECT tenant_id, source_id, project_key, repo_slug, commit_hash
+                FROM {{ ref('git_default_branch_commits') }}
+            )
+    ) DESC,
+    source_id,
+    project_key,
+    repo_slug
 LIMIT 1 BY tenant_id, data_source, commit_hash

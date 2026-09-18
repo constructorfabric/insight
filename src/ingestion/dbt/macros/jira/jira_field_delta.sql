@@ -180,13 +180,17 @@
             if(COALESCE({{ to_str }},   '') = '', [], [CAST({{ jira_text_prefix(to_str) }} AS String)])
         ),
 
+        {#- The display side stands in only when the id side is ABSENT. An id side
+            that is present and empty (`[]`) is a real value — the field was
+            cleared — and falling back there yields the display of an empty
+            list, which is the literal text `[]` parsed as one option. -#}
         {{ kind }} = 'option_array',
         (
-            CAST(if(length({{ f_ids }}) = 0, {{ f_disp }}, {{ f_ids }}) AS Array(String)),
-            CAST(if(length({{ f_ids }}) = 0, {{ f_disp }},
+            CAST(if(COALESCE({{ from_id }}, '') = '', {{ f_disp }}, {{ f_ids }}) AS Array(String)),
+            CAST(if(COALESCE({{ from_id }}, '') = '', {{ f_disp }},
                     if(length({{ f_disp }}) = length({{ f_ids }}), {{ f_disp }}, {{ f_ids }})) AS Array(String)),
-            CAST(if(length({{ t_ids }}) = 0, {{ t_disp }}, {{ t_ids }}) AS Array(String)),
-            CAST(if(length({{ t_ids }}) = 0, {{ t_disp }},
+            CAST(if(COALESCE({{ to_id }}, '') = '', {{ t_disp }}, {{ t_ids }}) AS Array(String)),
+            CAST(if(COALESCE({{ to_id }}, '') = '', {{ t_disp }},
                     if(length({{ t_disp }}) = length({{ t_ids }}), {{ t_disp }}, {{ t_ids }})) AS Array(String))
         ),
 

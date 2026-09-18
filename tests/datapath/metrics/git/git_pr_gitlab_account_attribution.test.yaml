@@ -40,7 +40,7 @@ bronze:
     - $ref: ../templates/people.yaml#/templates/carol
     - $ref: ../templates/people.yaml#/templates/dave
 
-  bronze_gitlab.projects:
+  bronze_gitlab.repositories:
     - {$ref: ../templates/gitlab_git.yaml#/templates/project, unique_key: gl-proj-101}
 
   bronze_gitlab.users:
@@ -49,19 +49,19 @@ bronze:
     - {$ref: ../templates/gitlab_git.yaml#/templates/user, unique_key: gl-user-bob, id: 700, username: bob-gl, name: Bob Beta}
     - {$ref: ../templates/gitlab_git.yaml#/templates/user, unique_key: gl-user-carol, id: 701, username: carol-gl, name: Carol Gamma}
 
-  bronze_gitlab.merge_requests:
+  bronze_gitlab.pull_requests:
     # Squash-merged, source branch gone: no merge-request commits were ever
     # collected, so no commit address can stand in for the missing profile one.
-    - {$ref: ../templates/gitlab_git.yaml#/templates/merge_request, unique_key: gl-mr-201, iid: 201, id: 90201, author_id: 700, author_username: bob-gl, created_at: "2026-09-20T08:00:00Z", merged_at: "2026-10-01T09:00:00Z", merge_commit_sha: gl-squash-201}
+    - {$ref: ../templates/gitlab_git.yaml#/templates/merge_request, unique_key: gl-mr-201, iid: 201, id: 90201, author_id: 700, author_username: bob-gl, author_name: Bob Beta, created_at: "2026-09-20T08:00:00Z", merged_at: "2026-10-01T09:00:00Z", merge_commit_sha: gl-squash-201}
     # Bob's request, dave's commit. The address the request can borrow names
     # dave, and the account it carries names bob — only one of them opened it.
-    - {$ref: ../templates/gitlab_git.yaml#/templates/merge_request, unique_key: gl-mr-202, iid: 202, id: 90202, author_id: 700, author_username: bob-gl, created_at: "2026-09-20T08:00:00Z", merged_at: "2026-10-01T11:00:00Z", merge_commit_sha: gl-merge-202}
+    - {$ref: ../templates/gitlab_git.yaml#/templates/merge_request, unique_key: gl-mr-202, iid: 202, id: 90202, author_id: 700, author_username: bob-gl, author_name: Bob Beta, created_at: "2026-09-20T08:00:00Z", merged_at: "2026-10-01T11:00:00Z", merge_commit_sha: gl-merge-202}
     # Same shape as 201, but account 701 is bound to nobody.
-    - {$ref: ../templates/gitlab_git.yaml#/templates/merge_request, unique_key: gl-mr-301, iid: 301, id: 90301, author_id: 701, author_username: carol-gl, created_at: "2026-09-20T08:00:00Z", merged_at: "2026-10-01T10:00:00Z", merge_commit_sha: gl-squash-301}
+    - {$ref: ../templates/gitlab_git.yaml#/templates/merge_request, unique_key: gl-mr-301, iid: 301, id: 90301, author_id: 701, author_username: carol-gl, author_name: Carol Gamma, created_at: "2026-09-20T08:00:00Z", merged_at: "2026-10-01T10:00:00Z", merge_commit_sha: gl-squash-301}
 
-  bronze_gitlab.merge_request_commits:
+  bronze_gitlab.pull_request_commits:
     # The link that makes dave's address reachable from bob's request.
-    - {$ref: ../templates/gitlab_git.yaml#/templates/merge_request_commit, unique_key: gl-mc-202, mr_iid: 202, id: gl-commit-dave, author_name: Dave Delta, author_email: dave@example.com}
+    - {$ref: ../templates/gitlab_git.yaml#/templates/merge_request_commit, unique_key: gl-mc-202, mr_iid: 202, sha: gl-commit-dave, author_name: Dave Delta, author_email: dave@example.com}
 
   bronze_gitlab.commits:
-    - {$ref: ../templates/gitlab_git.yaml#/templates/commit, unique_key: gl-commit-dave, id: gl-commit-dave, short_id: gl-commi, author_name: Dave Delta, author_email: dave@example.com, committer_name: Dave Delta, committer_email: dave@example.com, stats_additions: 5, stats_total: 5}
+    - {$ref: ../templates/gitlab_git.yaml#/templates/commit, unique_key: gl-commit-dave, sha: gl-commit-dave, author_name: Dave Delta, author_email: dave@example.com, committer_name: Dave Delta, committer_email: dave@example.com, additions: 5, changed_files: 1}

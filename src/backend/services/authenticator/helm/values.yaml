@@ -4,6 +4,9 @@ global:
   mcp:
     enabled: false
     publicUrl: ""
+    # An http:// publicUrl on a private address, for a cluster with no TLS at
+    # its edge. The service refuses one otherwise.
+    allowInsecurePrivateNetwork: false
 
 podAnnotations: {}
 

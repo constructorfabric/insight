@@ -31,3 +31,9 @@ GRANT SELECT, INSERT ON product_usage.* TO presentation_ro;
 -- the database exists on a fresh install (apply-ch-migrations.sh provisions the
 -- role first); ClickHouse grants by name, so that ordering is fine.
 GRANT SELECT ON ingestion_history.* TO presentation_ro;
+
+-- insight_v3_ro: the custom assistant's query path. *.* covers the bronze
+-- databases this file cannot enumerate (a stand adds one per source) and
+-- system.columns, which the catalogue reads.
+CREATE ROLE IF NOT EXISTS insight_v3_ro;
+GRANT SELECT ON *.* TO insight_v3_ro;

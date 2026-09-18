@@ -20,8 +20,18 @@
 -- per measure branch (ClickHouse re-inlines every WITH reference).
 --
 -- Lifecycle comes from class_task_statuses.status_category ('done' = closed)
--- joined on the status id — never match status display names; issue type is the
--- same shape, via class_task_issuetypes.issue_kind.
+-- joined on the status id — never match status display names. The issue KIND
+-- (bug / task / unknown) is resolved HERE, not in silver: the operator's
+-- `config.field_value_map` row for (tenant, source, field='issue_type',
+-- source_key = type id) decides it; an unmapped id falls to the tenant's
+-- `config.field_value_defaults` row for the field, then to 'unknown' — never
+-- to a name or the raw value. The RESOLUTION kind (fixed / duplicate /
+-- wontfix / unknown) resolves the same way under field='resolution', except
+-- an issue with no resolution value at all is 'unknown' outright — the
+-- default speaks only for unmapped values, not absent ones. Resolving at the
+-- gold build is what makes a mapping change apply on the next run without a
+-- silver rebuild. `class_task_issuetypes` stays the raw catalogue dimension
+-- for the type names.
 -- Fields are matched by ROLE, not by vendor field id: `field_id` is documented
 -- as vendor-specific, so a literal here would only ever be Jira's name for the
 -- thing. `task_field_roles_current` carries the binding. Attribution:
@@ -31,6 +41,100 @@
 -- a stale version would skew the pivot.
 
 WITH
+-- Operator issue-type decisions: bitemporal latest row per key FIRST, the
+-- tombstone/domain filter AFTER. INVARIANT: unique_key includes recorded_at,
+-- so a retraction (is_deleted=1) or a typo is a NEWER separate row — filtering
+-- before LIMIT 1 BY would resurrect the older live decision. When the newest
+-- row is a tombstone or outside the domain, the key classifies as unmapped;
+-- `assert_field_values_are_canonical` reports the typo row itself.
+issue_type_map AS (
+    SELECT
+        tenant_id,
+        insight_source_id,
+        source_key,
+        target_value
+    FROM (
+        SELECT
+            tenant_id,
+            insight_source_id,
+            source_key,
+            target_value,
+            is_deleted
+        FROM {{ source('config', 'field_value_map') }} FINAL
+        WHERE field = 'issue_type'
+          AND valid_from <= now64(3)
+        ORDER BY valid_from DESC, recorded_at DESC
+        LIMIT 1 BY tenant_id, insight_source_id, source_key
+    )
+    WHERE is_deleted = 0
+      AND target_value IN ('bug', 'task', 'unknown')
+),
+-- Per (tenant, source) fallback for unmapped type ids; same shape, same guard.
+issue_type_default AS (
+    SELECT
+        tenant_id,
+        insight_source_id,
+        default_value
+    FROM (
+        SELECT
+            tenant_id,
+            insight_source_id,
+            default_value,
+            is_deleted
+        FROM {{ source('config', 'field_value_defaults') }} FINAL
+        WHERE field = 'issue_type'
+          AND valid_from <= now64(3)
+        ORDER BY valid_from DESC, recorded_at DESC
+        LIMIT 1 BY tenant_id, insight_source_id
+    )
+    WHERE is_deleted = 0
+      AND default_value IN ('bug', 'task', 'unknown')
+),
+-- Operator resolution decisions; same bitemporal shape and domain guard as
+-- the issue-type pair above. INVARIANT: all four decision CTEs stay in
+-- lockstep — latest row first, tombstone/domain filter after.
+resolution_map AS (
+    SELECT
+        tenant_id,
+        insight_source_id,
+        source_key,
+        target_value
+    FROM (
+        SELECT
+            tenant_id,
+            insight_source_id,
+            source_key,
+            target_value,
+            is_deleted
+        FROM {{ source('config', 'field_value_map') }} FINAL
+        WHERE field = 'resolution'
+          AND valid_from <= now64(3)
+        ORDER BY valid_from DESC, recorded_at DESC
+        LIMIT 1 BY tenant_id, insight_source_id, source_key
+    )
+    WHERE is_deleted = 0
+      AND target_value IN ('fixed', 'duplicate', 'wontfix', 'unknown')
+),
+resolution_default AS (
+    SELECT
+        tenant_id,
+        insight_source_id,
+        default_value
+    FROM (
+        SELECT
+            tenant_id,
+            insight_source_id,
+            default_value,
+            is_deleted
+        FROM {{ source('config', 'field_value_defaults') }} FINAL
+        WHERE field = 'resolution'
+          AND valid_from <= now64(3)
+        ORDER BY valid_from DESC, recorded_at DESC
+        LIMIT 1 BY tenant_id, insight_source_id
+    )
+    WHERE is_deleted = 0
+      AND default_value IN ('fixed', 'duplicate', 'wontfix', 'unknown')
+),
 task_users AS (
     SELECT
         tenant_id,
@@ -47,13 +151,15 @@ history AS (
         fh.data_source                                                        AS data_source,
         fh.issue_id                                                           AS issue_id,
         fh.id_readable                                                        AS id_readable,
-        fh.title                                                              AS title,
         fh.event_at                                                           AS event_at,
         fh.event_kind                                                         AS event_kind,
         fh.delta_action                                                       AS delta_action,
         fh.value_ids                                                          AS value_ids,
         fh.value_displays                                                     AS value_displays,
         fh._version                                                           AS _version,
+        -- Part of the ordering key below, not payload: see `task_event_rank`.
+        fh._seq                                                               AS _seq,
+        fh.event_id                                                           AS event_id,
         -- Null-proof under EITHER join_use_nulls setting: an unbound field must
         -- read as "no role", never as NULL propagating through the filter.
         -- `availability` is a contract sentinel (the jira deletion spec), not a
@@ -81,53 +187,43 @@ issue_pivot AS (
     SELECT
         insight_source_id,
         issue_id,
-        argMaxIf(value_ids[1], (event_at, _version),
+        argMaxIf(value_ids[1], (event_at, {{ task_event_rank('event_kind') }}, _seq, toUInt64OrZero(event_id)),
                  role = 'status' AND delta_action = 'set')               AS status_id,
-        argMaxIf(value_ids[1], (event_at, _version),
+        argMaxIf(value_ids[1], (event_at, {{ task_event_rank('event_kind') }}, _seq, toUInt64OrZero(event_id)),
                  role = 'assignee' AND delta_action = 'set')             AS assignee_account_id,
-        argMaxIf(value_displays[1], (event_at, _version),
+        argMaxIf(value_displays[1], (event_at, {{ task_event_rank('event_kind') }}, _seq, toUInt64OrZero(event_id)),
                  role = 'issuetype' AND delta_action = 'set')            AS issue_type,
-        argMaxIf(value_ids[1], (event_at, _version),
+        argMaxIf(value_ids[1], (event_at, {{ task_event_rank('event_kind') }}, _seq, toUInt64OrZero(event_id)),
                  role = 'issuetype' AND delta_action = 'set')            AS issue_type_id,
-        argMaxIf(value_displays[1], (event_at, _version),
+        argMaxIf(value_ids[1], (event_at, {{ task_event_rank('event_kind') }}, _seq, toUInt64OrZero(event_id)),
+                 role = 'resolution' AND delta_action = 'set')           AS resolution_id_raw,
+        argMaxIf(value_displays[1], (event_at, {{ task_event_rank('event_kind') }}, _seq, toUInt64OrZero(event_id)),
                  role = 'duedate' AND delta_action = 'set')              AS due_date_str,
-        toFloat64OrNull(argMaxIf(value_displays[1], (event_at, _version),
+        toFloat64OrNull(argMaxIf(value_displays[1], (event_at, {{ task_event_rank('event_kind') }}, _seq, toUInt64OrZero(event_id)),
                  role = 'estimate' AND delta_action = 'set'))
-            * argMaxIf(unit_multiplier, (event_at, _version),
+            * argMaxIf(unit_multiplier, (event_at, {{ task_event_rank('event_kind') }}, _seq, toUInt64OrZero(event_id)),
                  role = 'estimate' AND delta_action = 'set')                 AS time_estimate_seconds,
-        toFloat64OrNull(argMaxIf(value_displays[1], (event_at, _version),
+        toFloat64OrNull(argMaxIf(value_displays[1], (event_at, {{ task_event_rank('event_kind') }}, _seq, toUInt64OrZero(event_id)),
                  role = 'spent' AND delta_action = 'set'))
-            * argMaxIf(unit_multiplier, (event_at, _version),
+            * argMaxIf(unit_multiplier, (event_at, {{ task_event_rank('event_kind') }}, _seq, toUInt64OrZero(event_id)),
                  role = 'spent' AND delta_action = 'set')                    AS time_spent_seconds,
         minIf(event_at, event_kind = 'synthetic_initial')                    AS created_at,
         -- The key the tracker itself shows a human ('owner/repo#12', 'PROJ-7');
         -- the only field an issue's own page can be addressed from.
-        -- INVARIANT: argMax, never any() — `id_readable` is part of `unique_key`,
-        -- so a renamed repository or an issue moved between projects leaves rows
-        -- under BOTH keys and FINAL collapses neither. The latest event wins.
-        argMax(id_readable, (event_at, _version))                            AS id_readable,
-        -- The role first, the denormalized column as the fallback.
-        --
-        -- The role is where the title belongs: an ordinary field, so a source
-        -- that renames an issue has rename history. GitHub is served by it
-        -- already. Jira is not yet — while the Rust binary writes the journal,
-        -- a `summary` row exists only for an issue whose summary actually
-        -- changed, because the snapshot model that binary reads does not list
-        -- `summary`. The binary does fill the COLUMN for every row, so the
-        -- fallback is what keeps a never-renamed Jira issue named.
-        --
-        -- Both the column and this fallback go with the binary. `nullIf` keeps
-        -- the result `Nullable(String)`: `argMaxIf` returns '' when nothing
-        -- matches, and this is a serving table whose type the backend reads.
-        coalesce(
-            nullIf(argMaxIf(value_displays[1], (event_at, _version),
-                            role = 'title'), ''),
-            argMax(title, (event_at, _version))
-        )                                                                    AS title,
+        -- INVARIANT: argMax, never any() — a renamed repository or an issue moved
+        -- between projects carries the OLD key on its older rows, and rows written
+        -- before the key moved to `issue_id` exist under both. The latest event wins.
+        argMax(id_readable, (event_at, {{ task_event_rank('event_kind') }}, _seq, toUInt64OrZero(event_id)))                            AS id_readable,
+        -- The title is an ordinary field read through its role, so a source
+        -- that renames an issue has rename history. `nullIf` keeps the result
+        -- `Nullable(String)`: `argMaxIf` returns '' when nothing matches, and
+        -- this is a serving table whose type the backend reads.
+        nullIf(argMaxIf(value_displays[1], (event_at, {{ task_event_rank('event_kind') }}, _seq, toUInt64OrZero(event_id)),
+                        role = 'title'), '')                                 AS title,
         maxIf(event_at, role = 'status' AND delta_action = 'set')        AS last_status_event_at,
         -- Availability lives in the same history as every other field
         -- (synthetic 'availability' events; see the jira deletion spec).
-        argMaxIf(value_ids[1], (event_at, _version),
+        argMaxIf(value_ids[1], (event_at, {{ task_event_rank('event_kind') }}, _seq, toUInt64OrZero(event_id)),
                  role = 'availability')                                      AS availability,
         any(data_source)                                                     AS data_source
     FROM history
@@ -158,9 +254,29 @@ SELECT
     p.title                                                                  AS title,
     cur.status_category                                                      AS status_category,
     p.issue_type                                                             AS issue_type,
-    ifNull(it.issue_kind, 'unknown')                                         AS issue_kind,
-    coalesce(it.untranslated_name, it.issue_type_name, nullIf(p.issue_type, '')) AS issue_type_key,
-    coalesce(it.issue_type_name, nullIf(p.issue_type, ''))                   AS issue_type_name,
+    -- Mapping row → tenant default → 'unknown'. A join miss reads as ''
+    -- under join_use_nulls=0 (the non-Nullable String default) and NULL
+    -- under =1 — nullIf folds both into the next fallback, so the chain is
+    -- regime-independent. CAST off the LowCardinality the config columns
+    -- carry: this is a serving table whose type the backend reads.
+    CAST(coalesce(
+        nullIf(toString(m.target_value), ''),
+        nullIf(toString(d.default_value), ''),
+        'unknown'
+    ) AS String)                                                             AS issue_kind,
+    coalesce(it.untranslated_name, nullIf(it.issue_type_name, ''),
+             nullIf(p.issue_type, ''))                                       AS issue_type_key,
+    coalesce(nullIf(it.issue_type_name, ''), nullIf(p.issue_type, ''))       AS issue_type_name,
+    -- An issue that carries no resolution value is 'unknown' outright: the
+    -- default row speaks for UNMAPPED values, and letting it claim absent
+    -- ones would classify every open issue.
+    if(nullIf(p.resolution_id_raw, '') IS NULL,
+       'unknown',
+       CAST(coalesce(
+           nullIf(toString(rm.target_value), ''),
+           nullIf(toString(rd.default_value), ''),
+           'unknown'
+       ) AS String))                                                         AS resolution_kind,
     if(p.due_date_str IS NOT NULL AND p.due_date_str != '',
        toDate(parseDateTimeBestEffortOrNull(p.due_date_str)),
        CAST(NULL AS Nullable(Date)))                                         AS due_date,
@@ -179,6 +295,20 @@ LEFT JOIN {{ ref('class_task_statuses') }} AS cur FINAL
     ON cur.insight_source_id = p.insight_source_id AND cur.status_id = p.status_id
 LEFT JOIN {{ ref('class_task_issuetypes') }} AS it FINAL
     ON it.insight_source_id = p.insight_source_id AND it.issue_type_id = p.issue_type_id
+LEFT JOIN issue_type_map AS m
+    ON m.tenant_id = u.tenant_id
+    AND m.insight_source_id = p.insight_source_id
+    AND m.source_key = p.issue_type_id
+LEFT JOIN issue_type_default AS d
+    ON d.tenant_id = u.tenant_id
+    AND d.insight_source_id = p.insight_source_id
+LEFT JOIN resolution_map AS rm
+    ON rm.tenant_id = u.tenant_id
+    AND rm.insight_source_id = p.insight_source_id
+    AND rm.source_key = p.resolution_id_raw
+LEFT JOIN resolution_default AS rd
+    ON rd.tenant_id = u.tenant_id
+    AND rd.insight_source_id = p.insight_source_id
 -- Issues deleted at the source (or in the project trash) leave every task
 -- metric: this table is the root of the gold task chain, so the filter
 -- propagates to spans, worklog flow and evidence. archived / access_lost /

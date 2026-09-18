@@ -23,6 +23,7 @@ describe("zone item defaults", () => {
       aicost: "overview",
       scorecard: "fixed",
       reports: "delivery-trend",
+      custom: null,
       manage: "metric-catalog",
     });
   });

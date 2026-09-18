@@ -1,4 +1,5 @@
 -- depends_on: {{ ref('github__item_events') }}
+-- depends_on: {{ ref('gitlab__item_events') }}
 -- depends_on: {{ ref('bitbucket_cloud__item_events') }}
 {{ config(
     materialized='incremental',
@@ -19,7 +20,7 @@
 -- value set. Reconstructing the state of a multi-valued field (label,
 -- assignee, reviewer) is a fold the consumer performs; for the single-valued
 -- fields the delta IS the state. `class_task_field_history` carries the folded
--- arrays instead because a dedicated enrich binary computes them.
+-- arrays instead because its producers derive the state after every event.
 --
 -- `prev_value_id` is NULL throughout: no pull-request event reports where its
 -- change came from. An empty string would claim the previous value was empty.

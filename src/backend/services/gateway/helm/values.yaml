@@ -71,10 +71,30 @@ gateway:
       auth: bearer
       timeoutMs: 40000
       mcpOnly: true
+    - prefix: /mcp/v3
+      upstream: 'http://{{ .Release.Name }}-v3-core:8087'
+      auth: bearer
+      mcpScope: "mcp:author"
+      timeoutMs: 40000
+      mcpOnly: true
+      v3Only: true
     - prefix: /api/analytics
       upstream: 'http://{{ .Release.Name }}-analytics:8081'
       timeoutMs: 135000
       stripPrefix: true
+    - prefix: /api/core
+      upstream: 'http://{{ .Release.Name }}-v3-core:8086'
+      auth: instance_token
+      timeoutMs: 40000
+      stripPrefix: true
+      v3Only: true
+    # Same service, browser session: the portal's custom surfaces. Ingest is
+    # not reachable through it — raw_data carries its own instance-token check.
+    - prefix: /api/v3
+      upstream: 'http://{{ .Release.Name }}-v3-core:8086'
+      timeoutMs: 40000
+      stripPrefix: true
+      v3Only: true
     - prefix: /api/identity
       upstream: 'http://{{ .Release.Name }}-identity-resolution:8082'
       stripPrefix: true

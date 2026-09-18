@@ -26,7 +26,11 @@ def main() -> int:
         node = nodes.get(result["unique_id"])
         if not node or node.get("resource_type") != "test":
             continue
-        if "data_quality" not in (node.get("tags") or []):
+        # `connector_quality` is the per-connector catalog: checks that need a
+        # connector's own bronze/staging and so cannot live in `data_quality`,
+        # which must pass on a tenant where that connector is absent. Findings
+        # from both carry the same shape.
+        if not ({"data_quality", "connector_quality"} & set(node.get("tags") or [])):
             continue
 
         config = node.get("config") or {}

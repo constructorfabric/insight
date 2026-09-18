@@ -12,6 +12,9 @@ drilldown sweep reconciles:
 * the row therefore has to name the month it bills for, and the ceiling the
   amount is judged against, or a reader cannot place either.
 
+It also asserts which of the two overage quantities is served: the amount the
+vendor billed, and not the excess over the ceiling that caps it.
+
 Every expectation is derived from what the stand serves — the date and the
 billing month come out of the evidence itself — so the suite keeps working when
 the seed is anchored to another date.
@@ -169,6 +172,47 @@ def test_the_usage_priced_and_the_billed_key_are_served_side_by_side(
 
 @pytest.mark.requires_seed("dev_lead")
 @pytest.mark.reliability
+def test_the_billed_amount_is_not_the_excess_over_the_ceiling(
+    session_for: Callable[[str], PersonaSession], stand_manifest: Manifest
+) -> None:
+    """Which of the two overage quantities is served, told from a single row.
+
+    Two quantities sit one word apart in this family: what the vendor bills once
+    a seat exhausts the usage its fee included, and the excess over the ceiling
+    that caps that spend. They differ by orders of magnitude and both answer to
+    "overage", so which one is served has to be observable.
+
+    A seat-month row carries both the amount and the ceiling that amount is
+    judged against, so a seat that spent something and stayed under its ceiling
+    separates them with no second request: the vendor's billed amount is
+    positive there, while the excess over the ceiling is exactly zero.
+
+    A SECOND key arriving that computes the other quantity is not this test's
+    job — `test_drilldown.py` already compares the whole served catalogue against
+    the drilldown matrix, so a metric added without an entry there fails.
+    """
+    session = session_for("dev_lead")
+    start, end = query_window(stand_manifest)
+
+    rows = _evidence(session.client, session.person.uuid, start, end)
+    assert rows, "no seat-month evidence over the seeded window"
+
+    spending_under_a_ceiling = [
+        row
+        for row in rows
+        if row.get("ceiling_usd") is not None
+        and 0 < float(row["value"]) < float(row["ceiling_usd"])  # type: ignore[arg-type]
+    ]
+
+    assert spending_under_a_ceiling, (
+        f"none of the {len(rows)} seat-months spends a non-zero amount below its ceiling, so "
+        "nothing here tells the billed amount apart from the excess over the ceiling — the "
+        "seed stopped covering the case this asserts"
+    )
+
+
+@pytest.mark.requires_seed("dev_lead")
+@pytest.mark.reliability
 def test_the_seat_tier_breakdown_adds_up_to_the_period_value(
     session_for: Callable[[str], PersonaSession], stand_manifest: Manifest
 ) -> None:
@@ -210,10 +254,13 @@ def test_the_seat_tier_breakdown_adds_up_to_the_period_value(
 def test_a_seat_month_row_names_its_billing_month_and_its_ceiling(
     session_for: Callable[[str], PersonaSession], stand_manifest: Manifest
 ) -> None:
-    """The row's own date is the day it was read, so the month has to be a column.
+    """The evidence row's own shape: the month it bills for, and the ceiling beside it.
 
-    Without it a month read late is indistinguishable from the next month's, and
-    the amount has nothing to be judged against.
+    A seat-month is dated at the first day of the month it bills for, so the
+    row's date and its billing month are one fact stated twice. A row where they
+    differ has taken its date from the day it was read instead, which moves with
+    the sync schedule. The ceiling sits beside the amount because the amount has
+    nothing to be judged against without it.
     """
     session = session_for("dev_lead")
     start, end = query_window(stand_manifest)
@@ -227,8 +274,8 @@ def test_a_seat_month_row_names_its_billing_month_and_its_ceiling(
 
         billing_month = _dt.date.fromisoformat(str(row["billing_month"]))
         assert billing_month.day == 1, f"the billing month is not a month start: {billing_month}"
-        # A month is read while it runs or after it closes, never before it
-        # opens — the one ordering that holds however late the read was.
-        assert billing_month <= _dt.date.fromisoformat(str(row["date"])), (
-            f"a row dated {row['date']} bills for {billing_month}, which had not started"
+        # Equal, not merely ordered: the row is dated AT the month it bills for,
+        # so any difference means the date came from the day of the read.
+        assert billing_month == _dt.date.fromisoformat(str(row["date"])), (
+            f"a row dated {row['date']} says it bills for {billing_month}"
         )

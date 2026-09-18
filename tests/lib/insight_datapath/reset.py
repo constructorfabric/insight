@@ -36,12 +36,13 @@ SEED_OWNED: frozenset[Relation] = frozenset(
     {
         ("bronze_bamboohr", "employees"),
         ("bronze_bitbucket_cloud", "repositories"),
+        ("config", "field_value_map"),
         ("bronze_claude_team_invoices", "claude_team_invoice_lines"),
         ("bronze_github", "deployment_statuses"),
         ("bronze_github", "deployments"),
         ("bronze_github", "repositories"),
         ("bronze_github", "workflow_runs"),
-        ("bronze_gitlab", "projects"),
+        ("bronze_gitlab", "repositories"),
         ("silver", "class_ai_assistant_usage"),
         ("silver", "class_ai_dev_usage"),
         ("silver", "class_ai_invoice"),
@@ -91,7 +92,11 @@ SERVICE_OWNED: frozenset[Relation] = frozenset(
 #: The seed step that leaves the warehouse empty.
 WAREHOUSE_IS_OURS: frozenset[str] = frozenset({"identity"})
 
-FIXTURE_DATABASES = "^(bronze_.*|staging|silver)$"
+#: `config` is fixture data too: specs seed task_field_roles / task_value_map there,
+#: and rows outliving a session feed the next session's closure build (e.g.
+#: github__task_statuses reads them), whose fresh `_version` then starves the next
+#: spec's own rows out of the silver watermark.
+FIXTURE_DATABASES = "^(bronze_.*|staging|silver|config)$"
 
 
 class SeededWarehouseError(RuntimeError):

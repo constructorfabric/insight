@@ -150,11 +150,15 @@ function _M.exchange()
     set_request_context()
 end
 
-function _M.pass_bearer()
+function _M.pass_bearer(resource_metadata_url, scope)
     local authorization = ngx.var.http_authorization
     local scheme, token = string.match(authorization or "", "^(%S+) (%S+)$")
     if not scheme or string.lower(scheme) ~= "bearer" or not token then
-        return errors.bearer_unauthorized(cfg.mcp_resource_metadata_url)
+        local metadata = resource_metadata_url
+        if metadata == nil or metadata == "" then
+            metadata = cfg.mcp_resource_metadata_url
+        end
+        return errors.bearer_unauthorized(metadata, scope)
     end
 
     ngx.req.clear_header("Cookie")

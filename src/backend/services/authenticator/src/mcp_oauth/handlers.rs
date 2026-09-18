@@ -26,9 +26,9 @@ use crate::session::SessionRecord;
 use super::store::McpOAuthStoreError;
 use super::types::{
     AuthorizationCodeGrant, AuthorizationDecision, AuthorizeQuery, ClientRegistrationRequest,
-    GRANT_LIFETIME_SECONDS, MCP_SCOPE, OAuthError, PendingAuthorization, RefreshGrant,
-    RegisteredClient, RevocationRequest, TokenRequest, TokenResponse, redirect_uri_matches,
-    valid_code_verifier, validated_registration,
+    GRANT_LIFETIME_SECONDS, MCP_RESOURCES, OAuthError, PendingAuthorization, RefreshGrant,
+    RegisteredClient, RevocationRequest, TokenRequest, TokenResponse, mcp_resource_for, mcp_scopes,
+    redirect_uri_matches, valid_code_verifier, validated_registration,
 };
 
 const ADMIN_ROLE: &str = "admin";
@@ -129,23 +129,41 @@ pub async fn authorization_server_metadata(Extension(state): Extension<Arc<AppSt
             "code_challenge_methods_supported": ["S256"],
             "token_endpoint_auth_methods_supported": ["none"],
             "revocation_endpoint_auth_methods_supported": ["none"],
-            "scopes_supported": [MCP_SCOPE],
+            "scopes_supported": mcp_scopes(),
         }),
     )
 }
 
-pub async fn protected_resource_metadata(Extension(state): Extension<Arc<AppState>>) -> Response {
+pub async fn protected_resource_metadata(
+    Extension(state): Extension<Arc<AppState>>,
+    uri: axum::http::Uri,
+) -> Response {
     if !state.cfg.mcp_oauth.enabled {
         return StatusCode::NOT_FOUND.into_response();
     }
+
+    // The unsuffixed path is the read-only server's document, as it was before
+    // a second server existed.
+    let suffix = uri
+        .path()
+        .strip_prefix("/.well-known/oauth-protected-resource")
+        .unwrap_or_default();
+    let requested = if suffix.is_empty() { "/mcp" } else { suffix };
+
+    let Some(resource) = MCP_RESOURCES
+        .iter()
+        .find(|candidate| candidate.path == requested)
+    else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
 
     let origin = public_origin(&state);
     json_response(
         StatusCode::OK,
         &json!({
-            "resource": resource_url(&state),
+            "resource": resource.url(&origin),
             "authorization_servers": [origin],
-            "scopes_supported": [MCP_SCOPE],
+            "scopes_supported": [resource.scope],
             "bearer_methods_supported": ["header"],
         }),
     )
@@ -405,11 +423,11 @@ fn validate_authorize_query(
         return Err(failure("invalid_request", "state is too long"));
     }
     let resource = required(query.resource, "resource")?;
-    if resource != resource_url(state) {
+    let Some(known) = mcp_resource_for(&public_origin(state), &resource) else {
         return Err(failure("invalid_target", "resource is not supported"));
-    }
-    let scope = query.scope.unwrap_or_else(|| MCP_SCOPE.to_owned());
-    if scope != MCP_SCOPE {
+    };
+    let scope = query.scope.unwrap_or_else(|| known.scope.to_owned());
+    if scope != known.scope {
         return Err(failure("invalid_scope", "scope is not supported"));
     }
 
@@ -944,10 +962,6 @@ fn public_origin(state: &AppState) -> String {
         .public_url
         .trim_end_matches('/')
         .to_owned()
-}
-
-fn resource_url(state: &AppState) -> String {
-    endpoint(&public_origin(state), "/mcp")
 }
 
 fn endpoint(origin: &str, path: &str) -> String {

@@ -4,6 +4,7 @@
 --   event_kind='lifecycle'         ⇔ event_id LIKE 'comment:%' OR 'worklog:%'
 --   event_kind='retired_field'     ⇔ event_id LIKE 'retired:%'
 --   event_kind='unclassified_field'⇔ event_id LIKE 'unclassified:%'
+--   event_kind='snapshot_diff'    ⇔ event_id LIKE 'snapshot_diff:%'
 --   event_kind='changelog'         ⇔ event_id matches no prefix above
 -- Any violation means the writer got the kind vs id wrong.
 
@@ -19,9 +20,11 @@ WHERE (event_kind = 'synthetic_initial' AND event_id NOT LIKE 'initial:%')
    OR (event_kind = 'changelog'         AND (event_id LIKE 'initial:%' OR event_id LIKE 'availability:%'
                                              OR event_id LIKE 'comment:%' OR event_id LIKE 'worklog:%'
                                              OR event_id LIKE 'retired:%'
-                                             OR event_id LIKE 'unclassified:%'))
+                                             OR event_id LIKE 'unclassified:%'
+                                             OR event_id LIKE 'snapshot_diff:%'))
    OR (event_kind = 'retired_field'     AND event_id NOT LIKE 'retired:%')
    OR (event_kind = 'unclassified_field' AND event_id NOT LIKE 'unclassified:%')
+   OR (event_kind = 'snapshot_diff'     AND event_id NOT LIKE 'snapshot_diff:%')
    OR (event_kind = 'availability'      AND event_id NOT LIKE 'availability:%')
    OR (event_kind = 'lifecycle'         AND event_id NOT LIKE 'comment:%' AND event_id NOT LIKE 'worklog:%')
 LIMIT 100

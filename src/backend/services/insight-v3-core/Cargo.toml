@@ -1,0 +1,65 @@
+[package]
+name = "insight-v3-core"
+version = "0.1.0"
+description = "Insight v3 Core"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+toolkit = { workspace = true, features = ["bootstrap"] }
+toolkit-canonical-errors = { workspace = true }
+insight-clickhouse = { workspace = true }
+insight-log-context = { workspace = true }
+insight-openapi = { workspace = true }
+
+api_gateway = { workspace = true }
+authn-resolver = { workspace = true }
+authz-resolver = { workspace = true }
+oidc-authn-plugin = { workspace = true }
+tenant-resolver = { workspace = true }
+single-tenant-tr-plugin = { workspace = true }
+static-authz-plugin = { workspace = true }
+grpc_hub = { workspace = true }
+gear_orchestrator = { workspace = true }
+types_registry = { workspace = true }
+
+anyhow = { workspace = true }
+jsonwebtoken = { workspace = true }
+rmcp = { workspace = true }
+schemars = { workspace = true }
+tokio-util = { workspace = true }
+url = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }
+async-trait = { workspace = true }
+axum = { workspace = true }
+chrono = { workspace = true }
+chrono-tz = { workspace = true }
+clickhouse = { workspace = true }
+reqwest = { workspace = true }
+sea-orm = { workspace = true }
+sea-orm-migration = { workspace = true }
+secrecy = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+subtle = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+utoipa = { workspace = true, features = ["uuid"] }
+uuid = { workspace = true }
+
+[dev-dependencies]
+base64 = { workspace = true }
+insight-log-context = { workspace = true, features = ["test-support"] }
+p256 = { version = "0.14", features = ["pkcs8", "pem", "ecdsa", "getrandom"] }
+clickhouse = { workspace = true, features = ["test-util"] }
+futures = { workspace = true }
+tower = { version = "0.5", features = ["util"] }

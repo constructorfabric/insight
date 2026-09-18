@@ -127,11 +127,21 @@ async fn main() -> Result<()> {
     }
 }
 
-/// Print the authenticator `OpenAPI` document as pretty JSON. Offline — see
+/// Print the authenticator `OpenAPI` document in canonical JSON. Offline — see
 /// [`api::openapi_document`]. No config or backends are touched, and no logging
 /// subscriber is initialized on this path, so stdout stays pure JSON.
 fn print_openapi() -> Result<()> {
     let doc = api::openapi_document()?;
-    println!("{}", serde_json::to_string_pretty(&doc)?);
+    print!("{}", insight_openapi::canonical_json(&doc)?);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn committed_openapi_document_is_current() -> anyhow::Result<()> {
+        let doc = super::api::openapi_document()?;
+        insight_openapi::check_committed(&doc, env!("CARGO_MANIFEST_DIR"), env!("CARGO_PKG_NAME"))?;
+        Ok(())
+    }
 }

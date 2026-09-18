@@ -2,45 +2,131 @@ version: 2
 
 sources:
   - name: bronze_gitlab
+    # Source freshness: the newest Airbyte row must be recent, else the sync
+    # silently stopped and dashboards go stale with no error.
+    freshness:
+      warn_after: {count: 36, period: hour}
+      error_after: {count: 72, period: hour}
+    loaded_at_field: _airbyte_extracted_at
     schema: bronze_gitlab
     tables:
-      - name: projects
+      # Required streams inherit the source-level 72h freshness SLA above.
+      - name: repositories
       - name: branches
       - name: commits
-      - name: commit_file_changes
-      - name: merge_requests
-      - name: merge_request_commits
-      - name: merge_request_notes
-      - name: merge_request_approvals
+      - name: file_changes
+      - name: pull_requests
+      - name: pull_request_diff_stats
+      - name: pull_request_notes
+      - name: pull_request_commits
+      # Optional streams: opt-in (users), configuration-dependent (members),
+      # feature-dependent (CI, deployments, labels) or empty on a project
+      # nobody has committed to since the start date (authors). An empty
+      # bronze table has no newest row, so the source-level SLA would raise a
+      # false staleness error — freshness is disabled per table instead.
+      - name: pull_request_state_events
+        freshness: null
+      - name: pull_request_label_events
+        freshness: null
+      - name: pipelines
+        freshness: null
+      - name: environments
+        freshness: null
+      - name: deployments
+        freshness: null
+      - name: group_members
+        freshness: null
       - name: users
+        freshness: null
+      - name: commit_authors
+        freshness: null
 
 models:
+  - name: gitlab__bronze_promoted
+    description: "Promotes every GitLab bronze table to ReplacingMergeTree keyed on unique_key"
+
   - name: gitlab__repositories
     description: "GitLab projects -> staging, feeds class_git_repositories"
 
   - name: gitlab__repository_branches
-    description: "GitLab branches -> staging, feeds class_git_repository_branches"
+    description: "GitLab branches (git-cli-proxy) -> staging, feeds class_git_repository_branches"
 
   - name: gitlab__commits
-    description: "GitLab commits -> staging, feeds class_git_commits"
+    description: "GitLab commits (git-cli-proxy) -> staging, feeds class_git_commits"
 
   - name: gitlab__file_changes
-    description: "GitLab commit file changes -> staging, feeds class_git_file_changes"
+    description: "GitLab per-file commit changes (git-cli-proxy) -> staging, feeds class_git_file_changes"
 
   - name: gitlab__pull_requests
-    description: "GitLab merge requests -> staging, feeds class_git_pull_requests"
-
-  - name: gitlab__pull_requests_comments
-    description: "GitLab merge-request notes (human, non-system) -> staging, feeds class_git_pull_requests_comments"
-
-  - name: gitlab__pull_requests_commits
-    description: "GitLab merge-request commits -> staging, feeds class_git_pull_requests_commits"
+    description: "GitLab merge requests with GraphQL diff totals -> staging, feeds class_git_pull_requests"
 
   - name: gitlab__pull_requests_reviewers
-    description: "GitLab merge-request approvals -> staging, feeds class_git_pull_requests_reviewers"
+    description: "Requested reviewers and review verdicts from system notes -> staging, feeds class_git_pull_requests_reviewers"
+
+  - name: gitlab__pull_requests_comments
+    description: "User-written merge-request notes -> staging, feeds class_git_pull_requests_comments"
+
+  - name: gitlab__pull_requests_commits
+    description: "Merge request <-> commit membership -> staging, feeds class_git_pull_requests_commits"
+
+  - name: gitlab__pr_review_events
+    description: "Review verdicts and comments as one event stream -> staging, feeds class_git_pr_review_events"
+
+  - name: gitlab__item_events
+    description: "Merge-request state and label events -> staging, feeds class_git_item_events"
+
+  - name: gitlab__ci_runs
+    description: "GitLab pipelines -> staging, feeds class_git_ci_runs (gate + outcome semantics live here)"
+
+  - name: gitlab__deployments
+    description: "GitLab deployments, newest status per deployment -> staging, feeds class_git_deployments"
+
+  - name: gitlab__deployment_events
+    description: "Every observed deployment status -> staging, feeds class_git_deployment_events"
+
+  - name: gitlab__account_emails
+    description: "Every (GitLab account, e-mail) pair the connector observed, one row per pair"
+    columns:
+      - name: account_id
+        description: "GitLab's immutable numeric user id the e-mail was observed under, stringified (ADR-0002 binding key)"
+        data_tests:
+          - not_null
+      - name: email
+        description: "Lowercased e-mail address the account committed under or published"
+        data_tests:
+          - not_null
+      - name: observed_in
+        description: "Bronze field that first named this pair, carried onto the claim as provenance"
+      - name: observed_at
+        description: "Earliest time the pair was observed"
+
+  - name: gitlab__account_names
+    description: "The display name GitLab shows for each account, from the most recent stream that carried it"
+    columns:
+      - name: account_id
+        description: "GitLab's immutable numeric user id, stringified"
+        data_tests:
+          - not_null
+      - name: name
+        description: "Most recently observed display name"
+        data_tests:
+          - not_null
+
+  - name: gitlab__unowned_commit_emails
+    description: "Commit author e-mails no GitLab account claims, with the name their commits carry"
+    columns:
+      - name: email
+        description: "Lowercased commit author e-mail, and the account id it is published under"
+        data_tests:
+          - not_null
+          - unique
+      - name: author_name
+        description: "Name from the author's most recent commit, so an operator can recognise them"
+      - name: last_committed_at
+        description: "Most recent commit authored under this address"
 
   - name: gitlab__identity_inputs
-    description: "What GitLab reports about a user account — its published e-mail addresses and its name -> staging, feeds silver.identity_inputs"
+    description: "E-mail and display-name claims against GitLab accounts -> staging, feeds silver.identity_inputs"
     columns:
       - name: unique_key
         description: "One claim per (tenant, source, account, value_type, operation, value)"
@@ -48,47 +134,11 @@ models:
           - not_null
           - unique
       - name: insight_source_type
-        description: "`gitlab` — the numeric user id is the binding key"
+        description: "`gitlab` for an id-keyed account, `gitlab-commit-email` for an unowned e-mail"
         data_tests:
           - accepted_values:
-              values: ["gitlab"]
-      - name: insight_tenant_id
-        description: "The tenant the claim belongs to, hashed from the connector's tenant_id"
-        data_tests:
-          - not_null
-      - name: insight_source_id
-        description: "The connector instance the claim came from, hashed from its source_id — the same id names different accounts under two GitLab connections"
-        data_tests:
-          - not_null
+              values: ["gitlab", "gitlab-commit-email"]
       - name: source_account_id
-        description: "The numeric GitLab user id, stringified"
-      - name: value_type
-        description: "`email` for an address the account publishes, `display_name` for the user's name"
-        data_tests:
-          - accepted_values:
-              values: ["email", "display_name"]
+        description: "The account's numeric GitLab id as a string, or the e-mail itself when no account claims it"
       - name: value
-        description: "An address the account itself publishes, or the user's name for a display_name row"
-        data_tests:
-          - not_null
-      - name: value_field_name
-        description: "The bronze field the claim was read from, for provenance. `email` outranks `public_email` when a user publishes one address in both"
-        data_tests:
-          - accepted_values:
-              values:
-                - bronze_gitlab.users.email
-                - bronze_gitlab.users.public_email
-                - bronze_gitlab.users.name
-      - name: operation_type
-        description: "`UPSERT` — GitLab reports what an account currently states, never a retraction"
-        data_tests:
-          - accepted_values:
-              values: ["UPSERT"]
-      - name: _synced_at
-        description: "Insertion time, not the observation time: the shared union admits only rows above its global max(_version) watermark"
-        data_tests:
-          - not_null
-      - name: _version
-        description: "`_synced_at` in epoch milliseconds — the ReplacingMergeTree version the shared union orders by"
-        data_tests:
-          - not_null
+        description: "The claimed e-mail address or display name"

@@ -68,8 +68,8 @@ def test_connector_inventory_tracks_covered_and_missing() -> None:
     jira = rows["task-tracking/jira"]
     assert jira["type"] == "nocode"
     assert jira["covered"], "the jira reference suite must be visible as covered"
-    gitlab = rows["git/gitlab"]
-    assert gitlab["type"] == "cdk"
+    bamboohr = rows["hr-directory/bamboohr"]
+    assert bamboohr["type"] == "cdk"
     assert any(
         r["type"] == "nocode" and not r["covered"] for r in rows.values()
     ), "connectors without a suite must be reported as missing"

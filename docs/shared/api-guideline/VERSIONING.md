@@ -1,6 +1,6 @@
 # API Versioning & Compatibility
 
-> Source: [cyberfabric/DNA — REST/VERSIONING.md](https://github.com/cyberfabric/DNA/blob/main/REST/VERSIONING.md)
+> Source: [constructorfabric/DNA — REST/VERSIONING.md](https://github.com/constructorfabric/DNA/blob/main/REST/VERSIONING.md)
 
 This document defines the versioning strategy, compatibility rules, and deprecation practices for all Insight REST APIs.
 

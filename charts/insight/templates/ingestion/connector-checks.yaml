@@ -1,0 +1,87 @@
+{{- if .Values.ingestion.templates.enabled }}
+{{- /* Runs a connector's own dbt checks right after its transform, where that
+       connector's bronze and staging are guaranteed to exist because the
+       pipeline building them is what invoked this step.
+
+       Why this is not the `data_quality` catalog: that catalog runs on a
+       schedule across the whole install and must therefore read silver/gold
+       only — a check touching one connector's bronze would fail on a tenant
+       where that connector is absent. Checks tagged `connector_quality` are
+       exactly the ones that need those tables, so they run here instead.
+
+       NON-BLOCKING by design: the sync has already landed bronze and rebuilt
+       silver by the time this runs, so failing the workflow would not undo
+       anything — it would only turn a data condition into a red pipeline that
+       nobody can fix from here. Findings travel as structured log lines with
+       their `meta.tier`; alerting reads those. An operational failure (dbt
+       cannot reach ClickHouse) is a different matter and is reported as such
+       in the logs, but still does not fail the sync. */}}
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: connector-checks
+  labels:
+    {{- include "insight.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ingestion-template
+spec:
+  serviceAccountName: argo-workflow
+  entrypoint: run
+  templates:
+    - name: run
+      # SECURITY: same convention as dbt-run.yaml and data-quality-test.yaml —
+      # every parameter reaches the shell through an env var and is referenced
+      # as "$ENV_VAR", never spliced into shell, Python or YAML source.
+      inputs:
+        parameters:
+          - name: dbt_select
+          - name: toolbox_image
+            default: {{ required "ingestion.toolboxImage is required when ingestion.templates.enabled=true" .Values.ingestion.toolboxImage | quote }}
+          - name: clickhouse_host
+            default: {{ include "insight.clickhouse.fqdn" . | quote }}
+          - name: clickhouse_port
+            default: {{ include "insight.clickhouse.port" . | quote }}
+          - name: clickhouse_user
+            default: {{ required "clickhouse.username is required" .Values.clickhouse.username | quote }}
+      activeDeadlineSeconds: 1800
+      script:
+        image: {{ `"{{inputs.parameters.toolbox_image}}"` }}
+        imagePullPolicy: IfNotPresent
+        command: [bash]
+        env:
+          - name: CLICKHOUSE_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: {{ required "clickhouse.passwordSecret.name is required" .Values.clickhouse.passwordSecret.name | quote }}
+                key:  {{ required "clickhouse.passwordSecret.key is required"  .Values.clickhouse.passwordSecret.key  | quote }}
+          - name: DBT_SELECT
+            value: {{ `"{{inputs.parameters.dbt_select}}"` }}
+          - name: CLICKHOUSE_HOST
+            value: {{ `"{{inputs.parameters.clickhouse_host}}"` }}
+          - name: CLICKHOUSE_PORT
+            value: {{ `"{{inputs.parameters.clickhouse_port}}"` }}
+          - name: CLICKHOUSE_USER
+            value: {{ `"{{inputs.parameters.clickhouse_user}}"` }}
+          - name: INSIGHT_LOG_LEVEL
+            valueFrom:
+              configMapKeyRef:
+                name: {{ .Release.Name }}-platform
+                key: INSIGHT_LOG_LEVEL
+        source: |
+          set -euo pipefail
+          cd /ingestion/dbt
+          python3 /ingestion/scripts/dbt_profiles.py
+          # `dbt test --select ""` matches NOTHING rather than everything, and a
+          # selector that resolves to no tests exits 0 — so an empty parameter
+          # would make this step a silent no-op. Refuse it instead.
+          : "${DBT_SELECT:?dbt_select must be set — an empty selector silently tests nothing}"
+          # Findings must not fail the sync (see the header), so the exit code is
+          # captured and discarded. The emitter reads dbt's artifacts, so it
+          # reports whatever the run produced, including tests that errored.
+          RC=0
+          # shellcheck disable=SC2086 -- a dbt selector may be several words; splitting is intended
+          dbt test --profiles-dir . --select $DBT_SELECT --log-format json --log-level "${INSIGHT_LOG_LEVEL:-info}" || RC=$?
+          python3 /ingestion/scripts/data_quality_findings.py
+          if [ "$RC" -ne 0 ]; then
+            echo "connector checks reported findings or errored (dbt exit ${RC}); see the finding lines above — this step does not fail the sync" >&2
+          fi
+{{- end }}

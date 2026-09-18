@@ -185,6 +185,9 @@ jobs:
             --from-literal=mariadb-root-password="${MARIADB_ROOT_PASSWORD}" \
             --from-literal=redis-password="${REDIS_PASSWORD}" \
             --dry-run=client -o yaml > "${secret_dir}/insight-db-creds.yaml"
+          kubectl -n "${INSIGHT_NAMESPACE}" create secret generic insight-v3-core-token \
+            --from-literal=token="$(openssl rand -hex 32)" \
+            --dry-run=client -o yaml > "${secret_dir}/insight-v3-core-token.yaml"
 
           # The chart never generates the gateway signing key — it is BYO on
           # every environment (authenticator ADR 0002). This cluster lives for
@@ -199,6 +202,7 @@ jobs:
           make -C deploy/gitops seal-from-file ENV="${GITOPS_ENV}" NAMESPACE="${INFRA_NAMESPACE}" NAME=mariadb-creds VALUE_FILE="${secret_dir}/mariadb-creds.yaml"
           make -C deploy/gitops seal-from-file ENV="${GITOPS_ENV}" NAMESPACE="${INFRA_NAMESPACE}" NAME=redis-creds VALUE_FILE="${secret_dir}/redis-creds.yaml"
           make -C deploy/gitops seal-from-file ENV="${GITOPS_ENV}" NAMESPACE="${INSIGHT_NAMESPACE}" NAME=insight-db-creds VALUE_FILE="${secret_dir}/insight-db-creds.yaml"
+          make -C deploy/gitops seal-from-file ENV="${GITOPS_ENV}" NAMESPACE="${INSIGHT_NAMESPACE}" NAME=insight-v3-core-token VALUE_FILE="${secret_dir}/insight-v3-core-token.yaml"
           make -C deploy/gitops seal-from-file ENV="${GITOPS_ENV}" NAMESPACE="${INSIGHT_NAMESPACE}" NAME=insight-authenticator-signing-keys VALUE_FILE="${secret_dir}/insight-authenticator-signing-keys.yaml"
 
           rm -rf "${secret_dir}"
@@ -293,6 +297,32 @@ jobs:
 
           echo "edge never answered (last status: ${code:-none})" >&2
           exit 1
+
+      - name: Verify Insight v3 Core raw-data flow
+        run: |
+          set -euo pipefail
+          core_token=$(kubectl -n "${INSIGHT_NAMESPACE}" get secret insight-v3-core-token \
+            -o jsonpath='{.data.token}' | base64 -d)
+          test -n "${core_token}"
+
+          # No table is created first: creating one is admin-only, and a
+          # connector holds a token rather than a session. The write brings the
+          # stream's table into being, which is the whole path a connector has.
+          curl -fsS -X POST \
+            -H "X-Insight-Token: ${core_token}" \
+            -H 'Content-Type: application/json' \
+            --data '{"table":"functional_ci_events","raw_data":{"source":"functional-ci","value":42}}' \
+            "http://localhost:${EDGE_PORT}/api/core/v1/raw-data"
+
+          clickhouse_pod=$(kubectl -n "${INFRA_NAMESPACE}" get pods \
+            -l app.kubernetes.io/instance=clickhouse \
+            -o jsonpath='{.items[0].metadata.name}')
+          test -n "${clickhouse_pod}"
+          row_count=$(kubectl -n "${INFRA_NAMESPACE}" exec "${clickhouse_pod}" -- \
+            clickhouse-client --user insight --password "${CLICKHOUSE_PASSWORD}" \
+            --database insight --format TSVRaw \
+            --query "SELECT count() FROM functional_ci_events WHERE table_name = 'functional_ci_events'")
+          test "${row_count}" = "1"
 
       - name: Dump diagnostics on failure
         if: failure()

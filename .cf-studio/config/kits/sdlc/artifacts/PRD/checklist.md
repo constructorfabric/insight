@@ -365,9 +365,14 @@ Mark review as "PARTIAL" if not all domains completed.
 > **New in v1.3**: Added to gate the 6.1 Quality Vector Analysis table introduced alongside it.
 
 - [ ] All five quality vectors (Efficiency, Reliability, Performance, Security, Versatility) are present in the Quality Vector Analysis table
-- [ ] Each row's Show-Stopper cell takes one of four forms, each held to its own bar: a show-stopper requirement that is specific and measurable, citing the NFR that carries the obligation; an explicit `None — no show-stopper; obligations covered by {NFR IDs}` that names the actual NFR IDs from 6.2; an explicit `None — not material because {reason}` where the reason cites a concrete scope, scale, deployment or exclusion fact (not a restatement of immateriality); or an explicit `None — no obligation; {vector} is material and 6.2 carries no covering NFR (gap)`, valid only where the vector is genuinely material and no NFR in 6.2 covers it — this form records a real gap for the PRD's owner to close, not a satisfied requirement, and a reviewer seeing it should flag the gap rather than pass the row (the dash in all four forms follows the document's own dash convention — em dash or double hyphen — not a fixed one)
-- [ ] Every row carries a rationale
-- [ ] Where a show-stopper row corresponds to an NFR defined in 6.2, the two agree in modal strength (a show-stopper is not backed by a `SHOULD` bullet)
+- [ ] Each row's Show-Stopper cell either states a specific, measurable, MUST-strength show-stopper requirement traceable to the NFR that carries it in 6.2, or states why no show-stopper obligation was produced
+- [ ] Each row's cell is classified first by which half of the rule above it took, and, within the reason half, by the kind of reason stated; a bar below applies to that row only where its premise actually held, never by default
+- [ ] Where the cell states the show-stopper, the NFR ID it cites is the actual identifier used in 6.2, not a paraphrase or a general gesture at existing NFRs
+- [ ] Where the stated reason is that the vector's obligations are already covered without rising to a show-stopper, it names the actual covering NFR IDs from 6.2, not a paraphrase or a general gesture at them
+- [ ] Where the stated reason is that the vector is not material, it cites a concrete scope, scale, deployment or exclusion fact, and does not merely restate immateriality
+- [ ] Where the stated reason is that the vector is material but 6.2 carries no covering NFR, that reading applies only when the vector is genuinely material and no NFR in 6.2 in fact covers it; the cell is well-formed once it says so, but the row still carries an open gap, and a reviewer applying this item flags the gap rather than passing the row
+- [ ] Where the cell states the show-stopper, the NFR it cites in 6.2 itself carries MUST strength (a show-stopper is not backed by a `SHOULD` bullet)
+- [ ] Every row's Rationale is distinct from its Show-Stopper cell text: for a material vector it states the business consequence, and for a vector that is not material it explains why the vector is immaterial
 - [ ] The analysis is presented as one consolidated table, not expanded into per-vector subsections
 
 ---

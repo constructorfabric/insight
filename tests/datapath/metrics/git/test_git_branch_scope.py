@@ -5,7 +5,9 @@ disclosure threshold, each reach their default-branch total a different way: ali
 bob by the connector's flag, carol by a merged pull request into the default branch
 while her flag still says otherwise. The merged-request heal is what makes the split
 mean "did this work land"; her second request merges into a release branch and must
-not promote its commit.
+not promote its commit. Dave's repository calls `master` its default and keeps a `main`
+that is not: the heal compares a request's destination with the repository's OWN
+default branch name, never with a conventional one.
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ SPEC = "git_branch_scope"
 
 ALICE = "alice@example.com"
 CAROL = "carol@example.com"
+DAVE = "dave@example.com"
 
 
 def test_branch_scope_splits_partition_their_totals(spec: SpecRun) -> None:
@@ -394,3 +397,36 @@ def test_a_merged_request_into_the_default_branch_promotes_its_commit(spec: Spec
     r.row("git.non_default_branch_commits", "period", entity_id=CAROL).equals(value=1)
     r.row("git.default_branch_lines_added", "period", entity_id=CAROL).equals(value=10)
     r.row("git.non_default_branch_lines_added", "period", entity_id=CAROL).equals(value=20)
+
+
+def test_a_request_lands_only_when_its_destination_is_its_own_repositorys_default(
+    spec: SpecRun,
+) -> None:
+    """Dave's repository calls `master` its default and keeps a `main` that is not. Both
+    his commits are flagged outside the default branch; the request merged into `master`
+    lands its ten lines, the request merged into `main` leaves its twenty where they are.
+    A comparison against a conventional name reads the two the other way round."""
+    r = spec.call(
+        {
+            "url": "/v1/metric-results",
+            "method": "POST",
+            "body": {
+                "entity": {"type": "person", "ids": [DAVE]},
+                "period": {"from": "2026-10-01", "to": "2026-10-02"},
+                "metrics": [
+                    {"metric_key": "git.default_branch_commits", "views": [{"view": "period"}]},
+                    {"metric_key": "git.non_default_branch_commits", "views": [{"view": "period"}]},
+                    {"metric_key": "git.default_branch_code_lines", "views": [{"view": "period"}]},
+                    {
+                        "metric_key": "git.non_default_branch_code_lines",
+                        "views": [{"view": "period"}],
+                    },
+                ],
+            },
+        }
+    )
+    assert r.status == 200
+    r.row("git.default_branch_commits", "period", entity_id=DAVE).equals(value=1)
+    r.row("git.non_default_branch_commits", "period", entity_id=DAVE).equals(value=1)
+    r.row("git.default_branch_code_lines", "period", entity_id=DAVE).equals(value=10)
+    r.row("git.non_default_branch_code_lines", "period", entity_id=DAVE).equals(value=20)

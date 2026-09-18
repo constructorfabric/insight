@@ -87,10 +87,7 @@ class DbtRunner:
             ]
         )
         if not res.success:
-            failed = self._extract_failed_model_summary()
-            raise DbtError(
-                f"closure build failed\nfailed models: {failed}\nexception: {res.exception!r}"
-            )
+            raise DbtError(self._failure_message("closure build failed", res.exception))
 
     def build(self, selector: str) -> None:
         """Build the selected models via the in-process runner.
@@ -117,9 +114,8 @@ class DbtRunner:
             ]
         )
         if not res.success:
-            failed = self._extract_failed_model_summary()
             raise DbtError(
-                f"dbt build failed for selector {selector!r}\nfailed models: {failed}\nexception: {res.exception!r}"
+                self._failure_message(f"dbt build failed for selector {selector!r}", res.exception)
             )
 
     def run(self, selector: str, *, full_refresh: bool = False) -> None:
@@ -140,9 +136,8 @@ class DbtRunner:
             ]
         )
         if not res.success:
-            failed = self._extract_failed_model_summary()
             raise DbtError(
-                f"dbt run failed for selector {selector!r}\nfailed models: {failed}\nexception: {res.exception!r}"
+                self._failure_message(f"dbt run failed for selector {selector!r}", res.exception)
             )
 
     def derive_selectors(self, tables: set[tuple[str, str]]) -> tuple[list[str], list[str]]:
@@ -164,7 +159,12 @@ class DbtRunner:
         }
         existing_tables = set(
             ch.query(
-                self.cfg, "SELECT database, name FROM system.tables WHERE database LIKE 'bronze_%'"
+                # config tables are created by dbt's own on-run-start hook, so a
+                # staging model reading one must stay selected even when the spec
+                # seeds no config rows.
+                self.cfg,
+                "SELECT database, name FROM system.tables"
+                " WHERE database LIKE 'bronze_%' OR database = 'config'",
             )
         )
         available_sources = {
@@ -255,70 +255,6 @@ class DbtRunner:
             out.add((schema, identifier))
         return sorted(out)
 
-    def ephemeral_silver_targets(self, tag: str) -> list[str]:
-        """Silver class identifiers produced from an EPHEMERAL staging model tagged `tag`.
-
-        `derive_selectors` only follows non-ephemeral staging whose `source()` is a
-        seeded bronze table, so it misses silver targets fed by an enrich step: the
-        enrich binary writes a `staging.*` table that a THIN EPHEMERAL view
-        (e.g. `jira__task_field_history`, tag `jira` + `silver:class_task_field_history`)
-        exposes to `union_by_tag`. Returns the `<class>` part of each `silver:<class>`
-        tag on those ephemeral, connector-tagged models — exactly the silver tables the
-        enrich output feeds (e.g. `class_task_field_history`). Generic: no per-connector
-        hardcoding.
-        """
-        manifest = json.loads((self.target_dir / "manifest.json").read_text(encoding="utf-8"))
-        out: set[str] = set()
-        for n in manifest.get("nodes", {}).values():
-            if n.get("resource_type") != "model":
-                continue
-            if n.get("config", {}).get("materialized") != "ephemeral":
-                continue
-            tags = n.get("tags", [])
-            if tag not in tags:
-                continue
-            for t in tags:
-                if t.startswith("silver:"):
-                    out.add(t.split(":", 1)[1])
-        return sorted(out)
-
-    def enrich_output_tables(self, tag: str) -> list[tuple[str, str]]:
-        """`(schema, table)` of the staging tables an enrich step WRITES.
-
-        The enrich binary writes `staging.*` tables that are declared as dbt
-        SOURCES (not models) and exposed to silver via a thin EPHEMERAL view
-        tagged `tag` + `silver:<class>` (e.g. `jira__task_field_history` reading
-        `source('staging_jira', 'jira__task_field_history')`). dbt never rebuilds
-        these (they are sources), and the binary INSERTs (appends), so without
-        explicit truncation their rows accumulate across tests and inflate
-        absolute-count metrics (e.g. tasks_completed counted 10 instead of 2 when
-        three jira tests ran back-to-back). Resolve them from the ephemeral
-        models' `source()` dependencies so the caller can truncate per test.
-        Generic: no per-connector hardcoding.
-        """
-        manifest = json.loads((self.target_dir / "manifest.json").read_text(encoding="utf-8"))
-        sources = manifest.get("sources", {})
-        out: set[tuple[str, str]] = set()
-        for n in manifest.get("nodes", {}).values():
-            if n.get("resource_type") != "model":
-                continue
-            if n.get("config", {}).get("materialized") != "ephemeral":
-                continue
-            tags = n.get("tags", [])
-            if tag not in tags or not any(t.startswith("silver:") for t in tags):
-                continue
-            for dep in n.get("depends_on", {}).get("nodes", []):
-                if not dep.startswith("source."):
-                    continue
-                src = sources.get(dep)
-                if not src:
-                    continue
-                schema = src.get("schema")
-                table = src.get("identifier") or src.get("name")
-                if schema and table:
-                    out.add((schema, table))
-        return sorted(out)
-
     # ----------------------------------------------------------------------
     # internals
     # ----------------------------------------------------------------------
@@ -406,21 +342,34 @@ class DbtRunner:
         if not manifest.exists():
             raise DbtError(f"dbt parse did not produce {manifest}")
 
-    def _extract_failed_model_summary(self) -> str:
-        """Read target/run_results.json and return a one-liner per failed model."""
+    def _failure_message(self, prefix: str, exception: object) -> str:
+        """Compose a DbtError message from run_results.json.
+
+        Every failed node id (models AND tests) goes on the FIRST line —
+        pytest's short summary keeps only that line, so a multi-line list
+        below the fold reads as an empty failure.
+        """
+        failed = self._extract_failed_nodes()
+        if not failed:
+            return f"{prefix}: no failed nodes in run_results.json; exception: {exception!r}"
+        names = ", ".join(node for node, _ in failed)
+        details = "\n".join(f"  - {node}: {message}" for node, message in failed)
+        return f"{prefix}: {names}\n{details}\nexception: {exception!r}"
+
+    def _extract_failed_nodes(self) -> list[tuple[str, str]]:
+        """(unique_id, message) for every non-passing node in run_results.json."""
         run_results = self.target_dir / "run_results.json"
         if not run_results.exists():
-            return "(no run_results.json)"
+            return [("(no run_results.json)", "")]
         try:
             data = json.loads(run_results.read_text(encoding="utf-8"))
         except Exception as e:
-            return f"(failed to parse run_results.json: {e})"
-        failed = [
-            f"  - {r.get('unique_id', '?')}: {r.get('message') or r.get('status')}"
+            return [("(unparsable run_results.json)", str(e))]
+        return [
+            (r.get("unique_id", "?"), str(r.get("message") or r.get("status")))
             for r in data.get("results", [])
             if r.get("status") not in (None, "success", "pass")
         ]
-        return "\n" + "\n".join(failed) if failed else "(none)"
 
     def cleanup(self) -> None:
         """Remove generated profiles + target. Called by session teardown."""

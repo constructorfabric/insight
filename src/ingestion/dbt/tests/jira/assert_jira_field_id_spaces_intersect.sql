@@ -1,4 +1,15 @@
-{{ config(severity='warn') }}
+{{ config(
+    severity='warn',
+    tags=['connector_quality', 'jira'],
+    store_failures=true,
+    meta={
+        'title': 'Task field ids agree between changelog and snapshot',
+        'domain': 'task-tracking',
+        'category': 'consistency',
+        'tier': 'warn',
+        'remediation': 'The changelog and the issue resource name the same value with different identifiers, so history cannot be reconciled with current state by id for this field. The usual cause is outside the pipeline: migrating an instance recreates option values under fresh ids while the imported changelog keeps the originals, which also shows up as a field named "(migrated)". Nothing here can map the two id spaces without guessing; treat it as a property of the field and reconcile such fields by display instead. A field that is NOT expected to be in this state is a real finding — check whether the kind rules read the id side of the changelog item at all.'
+    }
+) }}
 
 -- A field whose changelog ids and current-value ids are two disjoint spaces.
 --

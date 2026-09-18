@@ -21,6 +21,7 @@ import { usePortalSearch, useSetPortalSearch } from "@/lib/portal/portal-search"
 export function usePortalZone(): string | null {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const { zone } = usePortalSearch();
+  if (/^\/portal\/custom(\/|$)/.test(pathname)) return "custom";
   if (/^\/ic\/[^/]+\/team\/?$/.test(pathname)) return "people";
   if (/^\/ic\/[^/]+\/personal\/?$/.test(pathname)) return "person";
   return zone ?? null;

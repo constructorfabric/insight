@@ -18,8 +18,8 @@ document describes bodies a service does not implement, and no amount of them
 makes generating from it right — only the real document arriving does.
 
 Generating is sound for analytics because its document is itself generated from
-the handlers' own types (`cargo run -p analytics -- openapi`) and drift-gated in
-CI by `.github/workflows/openapi-specs.yml`. There is no second source of truth
+the handlers' own types (`cargo run -p analytics -- openapi`) and drift-gated by
+the service's own test suite. There is no second source of truth
 — the models describe the very structs that serialize the wire.
 
 The output is COMMITTED. A test run must never need the generator, which is a

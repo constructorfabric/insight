@@ -2,6 +2,45 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 pub const MCP_SCOPE: &str = "mcp:query";
+pub const MCP_AUTHOR_SCOPE: &str = "mcp:author";
+
+/// One MCP server this deployment fronts, with the only scope a grant for it
+/// may carry. Pairing them here is what stops a grant for the read-only
+/// warehouse server carrying authoring scope, or the reverse.
+#[derive(Debug, Clone, Copy)]
+pub struct McpResource {
+    pub path: &'static str,
+    pub scope: &'static str,
+}
+
+impl McpResource {
+    pub fn url(&self, origin: &str) -> String {
+        format!("{}{}", origin.trim_end_matches('/'), self.path)
+    }
+}
+
+pub const MCP_RESOURCES: [McpResource; 2] = [
+    McpResource {
+        path: "/mcp",
+        scope: MCP_SCOPE,
+    },
+    McpResource {
+        path: "/mcp/v3",
+        scope: MCP_AUTHOR_SCOPE,
+    },
+];
+
+/// The resource a client asked to be authorized for, if this deployment serves
+/// it. A resource belonging to another origin is not one of ours.
+pub fn mcp_resource_for(origin: &str, resource: &str) -> Option<&'static McpResource> {
+    MCP_RESOURCES
+        .iter()
+        .find(|candidate| candidate.url(origin) == resource)
+}
+
+pub fn mcp_scopes() -> [&'static str; MCP_RESOURCES.len()] {
+    MCP_RESOURCES.map(|resource| resource.scope)
+}
 pub const GRANT_LIFETIME_SECONDS: u64 = 30 * 24 * 60 * 60;
 
 #[derive(Debug, Deserialize)]
@@ -276,5 +315,90 @@ mod tests {
         assert!(!valid_code_verifier(&"a".repeat(42)));
         assert!(!valid_code_verifier(&"a".repeat(129)));
         assert!(!valid_code_verifier(&format!("{}+", "a".repeat(42))));
+    }
+}
+
+#[cfg(test)]
+mod mcp_resource_tests {
+    use super::*;
+
+    const ORIGIN: &str = "https://insight.example.invalid";
+
+    #[test]
+    fn every_declared_resource_pairs_with_exactly_one_scope() {
+        let mut pairs: Vec<(&str, &str)> = MCP_RESOURCES
+            .iter()
+            .map(|resource| (resource.path, resource.scope))
+            .collect();
+        pairs.sort_unstable();
+
+        assert_eq!(pairs, [("/mcp", "mcp:query"), ("/mcp/v3", "mcp:author")]);
+    }
+
+    #[test]
+    fn the_read_only_resource_does_not_carry_the_authoring_scope() {
+        let Some(resource) = mcp_resource_for(ORIGIN, &format!("{ORIGIN}/mcp")) else {
+            panic!("the read-only resource is declared");
+        };
+
+        assert_eq!(resource.scope, MCP_SCOPE);
+        assert_ne!(resource.scope, MCP_AUTHOR_SCOPE);
+    }
+
+    #[test]
+    fn the_authoring_resource_carries_the_authoring_scope() {
+        let Some(resource) = mcp_resource_for(ORIGIN, &format!("{ORIGIN}/mcp/v3")) else {
+            panic!("the authoring resource is declared");
+        };
+
+        assert_eq!(resource.scope, MCP_AUTHOR_SCOPE);
+    }
+
+    #[test]
+    fn a_resource_that_is_not_declared_is_not_found() {
+        for candidate in [
+            format!("{ORIGIN}/mcp/v4"),
+            format!("{ORIGIN}/mcp/"),
+            ORIGIN.to_owned(),
+            "https://elsewhere.example.invalid/mcp".to_owned(),
+            format!("{ORIGIN}/mcp?query=1"),
+        ] {
+            assert!(
+                mcp_resource_for(ORIGIN, &candidate).is_none(),
+                "should not resolve: {candidate:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_resource_is_matched_against_this_deployment_s_own_origin() {
+        assert!(mcp_resource_for(ORIGIN, "https://other.example.invalid/mcp/v3").is_none());
+        assert!(
+            mcp_resource_for(
+                "https://other.example.invalid",
+                "https://other.example.invalid/mcp/v3"
+            )
+            .is_some()
+        );
+    }
+
+    #[test]
+    fn the_supported_scopes_are_the_declared_ones() {
+        let mut scopes = mcp_scopes();
+        scopes.sort_unstable();
+
+        assert_eq!(scopes, ["mcp:author", "mcp:query"]);
+    }
+
+    #[test]
+    fn resource_url_joins_the_origin_and_the_path() {
+        let Some(resource) = mcp_resource_for(ORIGIN, &format!("{ORIGIN}/mcp/v3")) else {
+            panic!("the authoring resource is declared");
+        };
+
+        assert_eq!(
+            resource.url(ORIGIN),
+            "https://insight.example.invalid/mcp/v3"
+        );
     }
 }

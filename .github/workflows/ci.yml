@@ -1,4 +1,4 @@
-name: Lint, Test & Coverage Gate
+name: Lint and test
 
 on:
   # PR gate with trusted main cache warming (+ manual dispatch). Coverage is reported self-contained via the
@@ -14,24 +14,42 @@ on:
     branches: [main]
     paths:
       - "src/backend/**"
+      # Each service's drift test pins its committed OpenAPI contract.
+      - "docs/components/backend/*/openapi.json"
       - "src/frontend/**"
       - "src/ingestion/connectors/**"
       - "scripts/ci/**"
       - ".github/workflows/ci.yml"
-      # Inputs to connector-wiring-guard beyond the connector tree itself: the
-      # bootstrap connector registry and the shared class_people union.
-      - "src/ingestion/scripts/bootstrap-db/connectors-config.yaml"
+      # The rust matrix boots live_ch entries' ClickHouse through this script.
+      - ".github/workflows/scripts/start-clickhouse.sh"
+      # The ingestion-scripts component root; also holds connectors-config.yaml
+      # and pins.env, inputs to the connector wiring guard and the live ClickHouse.
+      - "src/ingestion/scripts/**"
+      # The other input to the connector wiring guard beyond the connector tree
+      # itself: the shared class_people union.
       - "src/ingestion/silver/_shared/**"
+      # connector-tests-harness / connector-mock-tests component root.
+      - "src/ingestion/tests/connectors/**"
+      # insight-seed component root.
+      - "src/ingestion/tools/seed/**"
+      # The guards job runs the reconcile renderer's contract tests.
+      - "src/ingestion/reconcile-connectors/**"
   push:
     branches: [main]
     paths:
       - "src/backend/**"
+      # Each service's drift test pins its committed OpenAPI contract.
+      - "docs/components/backend/*/openapi.json"
       - "src/frontend/**"
       - "src/ingestion/connectors/**"
       - "scripts/ci/**"
       - ".github/workflows/ci.yml"
-      - "src/ingestion/scripts/bootstrap-db/connectors-config.yaml"
+      - ".github/workflows/scripts/start-clickhouse.sh"
+      - "src/ingestion/scripts/**"
       - "src/ingestion/silver/_shared/**"
+      - "src/ingestion/tests/connectors/**"
+      - "src/ingestion/tools/seed/**"
+      - "src/ingestion/reconcile-connectors/**"
   workflow_dispatch:
     inputs:
       full:
@@ -68,7 +86,7 @@ jobs:
       rust: ${{ steps.detect.outputs.rust }}
       python: ${{ steps.detect.outputs.python }}
       js: ${{ steps.detect.outputs.js }}
-    timeout-minutes: 60
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -101,13 +119,12 @@ jobs:
             echo "js=$(echo "$changed" | jq -c .js)"
           } >> "$GITHUB_OUTPUT"
 
-  # Guard the jsonwebtoken crypto-provider invariant: >1 backend active makes
-  # verify() panic on every call (#1725, #1727). cargo tree only reads the
-  # resolved graph — no compile.
-  jwt-provider-guard:
-    name: JWT crypto-provider invariant
+  # Three file-inspection guards in one job; each step runs even when an
+  # earlier one failed, so every verdict lands on the same run.
+  guards:
+    name: Guards
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -115,7 +132,17 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: "1.95.0"
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install PyYAML and pytest
+        run: python3 -m pip install --quiet pyyaml pytest
+
+      # The jsonwebtoken crypto-provider invariant: >1 backend active makes
+      # verify() panic on every call (#1725, #1727). cargo tree only reads the
+      # resolved graph — no compile.
       - name: Exactly one jsonwebtoken crypto provider
+        if: ${{ !cancelled() }}
         run: |
           # Providers = jsonwebtoken's enabled features minus the known
           # non-crypto ones, so an unknown future backend still counts (fail-safe).
@@ -128,48 +155,30 @@ jobs:
             exit 1
           fi
 
-  # Catches half-landed connectors on the PR instead of after the merge.
-  # bump-descriptors runs only on the push to main, so a non-semver
-  # descriptor.version passes the PR and then aborts that job post-merge,
-  # leaving images.<key>.image unpatched — which is how #2048 also took
-  # silver.class_people out of every bootstrap-db run. Cheap and dependency-
-  # light: pure file inspection, no ClickHouse and no dbt.
-  connector-wiring-guard:
-    name: Connector wiring invariants
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.12"
-      - name: Install PyYAML and pytest
-        run: python3 -m pip install --quiet pyyaml pytest
+      # Catches half-landed connectors on the PR instead of after the merge.
+      # bump-descriptors runs only on the push to main, so a non-semver
+      # descriptor.version passes the PR and then aborts that job post-merge,
+      # leaving images.<key>.image unpatched — which is how #2048 also took
+      # silver.class_people out of every bootstrap-db run.
       - name: Connector wiring invariants
+        if: ${{ !cancelled() }}
         run: python3 scripts/ci/connector_wiring.py
       - name: Reconcile renderer contract
+        if: ${{ !cancelled() }}
         run: python3 -m pytest src/ingestion/reconcile-connectors/tests -q
 
-  # The per-service logging bar (#2488 AC-6): every Rust service is judged
-  # against shape / level / fields / leaks and one below the bar is reported,
-  # not skipped. Pure file inspection - stdlib only, no cargo, no helm.
-  logging-bar:
-    name: Logging bar - per-service verdict
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Judge every service against the bar
+      # The per-service logging bar (#2488 AC-6): every Rust service is judged
+      # against shape / level / fields / leaks and one below the bar is reported,
+      # not skipped.
+      - name: Judge every service against the logging bar
+        if: ${{ !cancelled() }}
         run: |
           python3 scripts/ci/logging_bar.py | tee logging_bar.md
           rc=${PIPESTATUS[0]}
           if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then cat logging_bar.md >> "$GITHUB_STEP_SUMMARY"; fi
           exit "$rc"
-      - name: Check self-test
+      - name: Logging bar self-test
+        if: ${{ !cancelled() }}
         run: python3 -m unittest discover -s scripts/ci/tests -p "test_logging_bar.py" -q
 
   # One unified job per Rust crate: fmt + clippy (when entry.lint) and coverage
@@ -233,7 +242,7 @@ jobs:
           if [ "${{ matrix.entry.all_features }}" = "true" ]; then feats="--all-features"; fi
           cargo clippy -p ${{ matrix.entry.package }} --all-targets $feats
 
-      - uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2
+      - uses: taiki-e/install-action@d438492cf8a250514fa2d34b30bc3c0dc37c65ff # v2
         if: ${{ matrix.entry.cover }}
         with:
           tool: cargo-llvm-cov
@@ -337,11 +346,28 @@ jobs:
             # idempotency. The gear name may contain a dash
             # (identity-resolution), so the env override is passed via
             # `env` — a plain NAME=VALUE prefix is not a valid sh assignment.
+            # A service whose migrator also owns ClickHouse tables
+            # (insight-v3-core) validates both connections before it runs, so
+            # the URL goes in whenever the entry asked for a warehouse. Empty
+            # for an entry that did not, which leaves the config's own value.
             env "APP__gears__${{ matrix.entry.name }}__config__database_url=$INTEGRATION_TESTS_MARIADB_URL" \
+              ${INTEGRATION_TESTS_CLICKHOUSE_URL:+"APP__gears__${{ matrix.entry.name }}__config__clickhouse_url=$INTEGRATION_TESTS_CLICKHOUSE_URL"} \
+              ${INTEGRATION_TESTS_CLICKHOUSE_USER:+"APP__gears__${{ matrix.entry.name }}__config__clickhouse_user=$INTEGRATION_TESTS_CLICKHOUSE_USER"} \
+              ${INTEGRATION_TESTS_CLICKHOUSE_PASSWORD:+"APP__gears__${{ matrix.entry.name }}__config__clickhouse_password=$INTEGRATION_TESTS_CLICKHOUSE_PASSWORD"} \
               cargo run -p ${{ matrix.entry.package }} $feats -- \
                 -c "services/${{ matrix.entry.name }}/config/insight.yaml" migrate
           fi
           cargo test -p ${{ matrix.entry.package }} $feats
+
+      - name: Live integration test (${{ matrix.entry.name }})
+        if: ${{ matrix.entry.test && matrix.entry.live_test != '' }}
+        working-directory: ${{ matrix.entry.root }}
+        env:
+          INTEGRATION_TESTS_CLICKHOUSE_URL: ${{ matrix.entry.live_ch && 'http://127.0.0.1:8123' || '' }}
+          INTEGRATION_TESTS_CLICKHOUSE_DATABASE: ${{ matrix.entry.live_ch && 'insight' || '' }}
+          INTEGRATION_TESTS_CLICKHOUSE_USER: ${{ matrix.entry.live_ch && 'insight' || '' }}
+          INTEGRATION_TESTS_CLICKHOUSE_PASSWORD: ${{ matrix.entry.live_ch && 'insight' || '' }}
+        run: ${{ matrix.entry.live_test }}
 
       - name: Upload Cobertura
         if: ${{ matrix.entry.cover }}
@@ -393,13 +419,18 @@ jobs:
             echo "::notice::[dev] extra unavailable — installing base deps + pytest"
             uv pip install --python "$PY" -e . pytest pytest-cov
           fi
+          # collect=false components run plain pytest: their report would bucket
+          # to themselves and gate below the overall minimum (insight-seed).
+          cov_args=()
+          if [ "${{ matrix.entry.collect }}" = "true" ]; then
+            cov_args=(--cov="${{ matrix.entry.cov_package }}"
+              --cov-report "xml:$GITHUB_WORKSPACE/coverage/python-${{ matrix.entry.name }}.cobertura.xml")
+          fi
           # pytest exit 5 = "no tests collected" — legitimate for a connector
           # without tests; treat as success. Capture rc via `|| rc=$?` so the
           # runner's default `set -e` shell can't abort before we inspect it.
           rc=0
-          "$PY" -m pytest ${{ matrix.entry.pytest_args }} \
-            --cov="${{ matrix.entry.cov_package }}" \
-            --cov-report "xml:$GITHUB_WORKSPACE/coverage/python-${{ matrix.entry.name }}.cobertura.xml" || rc=$?
+          "$PY" -m pytest ${{ matrix.entry.pytest_args }} "${cov_args[@]}" || rc=$?
           if [ "$rc" -eq 5 ]; then
             echo "::notice::no tests collected for ${{ matrix.entry.name }} — component stays at 0"
             exit 0
@@ -407,6 +438,7 @@ jobs:
           exit "$rc"
 
       - name: Upload Cobertura
+        if: ${{ matrix.entry.collect }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: cobertura-python-${{ matrix.entry.name }}
@@ -441,7 +473,7 @@ jobs:
       # Both actions default to the workspace root, which has no package.json or
       # lock file — hence the explicit component paths. pnpm first, so
       # setup-node's `cache: pnpm` can resolve the store.
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           package_json_file: ${{ matrix.entry.root }}/package.json
 
@@ -521,7 +553,7 @@ jobs:
     needs: [changes, rust, python, js]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 15
     steps:
       # If detection failed, or any CHANGED component's producer job failed
       # (compile error, test failure, crash), the report set is incomplete — fail

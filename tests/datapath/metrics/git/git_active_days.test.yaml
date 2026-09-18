@@ -68,10 +68,10 @@ bronze:
   bronze_bitbucket_cloud.commits:
     - {$ref: ../templates/bitbucket_git.yaml#/templates/commit, unique_key: ad-mob-1, repository: "https://bitbucket.org/acme/mobile.git", sha: ad-mob-1, authored_date: "2026-10-01T12:00:00Z", committed_date: "2026-10-01T12:00:00Z", author_name: Erin Epsilon, author_email: erin@example.com, committer_name: Erin Epsilon, committer_email: erin@example.com}
 
-  bronze_gitlab.projects:
+  bronze_gitlab.repositories:
     # Resolves the gitlab commit's project and repository keys; the join is a
     # LEFT one, so without this row they read `__unknown__`.
     - {$ref: ../templates/gitlab_git.yaml#/templates/project, unique_key: "ad-proj:101"}
 
   bronze_gitlab.commits:
-    - {$ref: ../templates/gitlab_git.yaml#/templates/commit, unique_key: "ad-gl:1", id: ad-gl-1, authored_date: "2026-10-02T14:00:00Z", committed_date: "2026-10-02T14:00:00Z", author_name: Erin Epsilon, author_email: erin@example.com, committer_name: Erin Epsilon, committer_email: erin@example.com}
+    - {$ref: ../templates/gitlab_git.yaml#/templates/commit, unique_key: "ad-gl:1", sha: ad-gl-1, authored_date: "2026-10-02T14:00:00Z", committed_date: "2026-10-02T14:00:00Z", author_name: Erin Epsilon, author_email: erin@example.com, committer_name: Erin Epsilon, committer_email: erin@example.com}

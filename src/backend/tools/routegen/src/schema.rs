@@ -8,6 +8,15 @@ use serde::Deserialize;
 /// The only schema version this configurator understands.
 pub const SUPPORTED_VERSION: u32 = 1;
 
+/// The MCP server paths the edge may front, and the scope a route carries when
+/// it does not declare one.
+///
+/// INVARIANT: mirrors the authenticator's `MCP_RESOURCES`. A path here that the
+/// authenticator does not declare cannot be authorized, and the reverse cannot
+/// be reached.
+pub const MCP_PREFIXES: [&str; 2] = ["/mcp", "/mcp/v3"];
+pub const DEFAULT_MCP_SCOPE: &str = "mcp:query";
+
 /// Top-level `routes.yaml` document.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -79,6 +88,9 @@ pub struct Route {
     pub strip_prefix: Option<bool>,
     #[serde(default)]
     pub websocket: Option<bool>,
+    /// The scope a challenge from this route asks for. Bearer routes only.
+    #[serde(default)]
+    pub mcp_scope: Option<String>,
 }
 
 /// A route with its defaults folded in -- the shape the emitter consumes.
@@ -90,6 +102,7 @@ pub struct ResolvedRoute {
     pub timeout_ms: u64,
     pub strip_prefix: bool,
     pub websocket: bool,
+    pub mcp_scope: String,
 }
 
 impl Route {
@@ -103,6 +116,10 @@ impl Route {
             timeout_ms: self.timeout_ms.unwrap_or(defaults.timeout_ms),
             strip_prefix: self.strip_prefix.unwrap_or(defaults.strip_prefix),
             websocket: self.websocket.unwrap_or(defaults.websocket),
+            mcp_scope: self
+                .mcp_scope
+                .clone()
+                .unwrap_or_else(|| DEFAULT_MCP_SCOPE.to_owned()),
         }
     }
 }

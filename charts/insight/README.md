@@ -8,6 +8,9 @@ revocation, and upgrade behavior.
 For token-authenticated, read-only SQL execution, see the
 [SQL query API guide](../../deploy/SQL_QUERY_API.md).
 
+For raw-data ingestion and rotating its instance token, see the
+[raw-data ingest guide](../../deploy/RAW_DATA_INGEST.md).
+
 - **Chart**: `insight`
 - **Version**: see `Chart.yaml` → `version`
 - **App version**: see `Chart.yaml` → `appVersion` (matches image tags)
@@ -22,6 +25,7 @@ local `file://` subchart:
 | Gateway (edge)       | `src/backend/services/gateway/helm`                 | mandatory (no flag)          | on      |
 | Authenticator        | `src/backend/services/authenticator/helm`           | mandatory (no flag)          | on      |
 | Analytics            | `src/backend/services/analytics/helm`               | mandatory (no flag)          | on      |
+| Insight v3 Core      | `src/backend/services/insight-v3-core/helm`         | `global.insightV3Core.deploy` | off     |
 | Identity Resolution  | `src/backend/services/identity-resolution/helm`     | `identityResolution.deploy`  | on — the validator refuses `false` |
 | Keycloak (broker)    | `src/backend/services/keycloak/helm`                | `keycloak.deploy`            | off     |
 | Previews             | `src/backend/services/previews/helm`                | `global.previews.enabled`    | on      |
@@ -44,6 +48,25 @@ local `file://` subchart:
 See [`deploy/HELM_DEPLOY.md`](../../deploy/HELM_DEPLOY.md) for the full
 external-consumer runbook and [`deploy/gitops/README.md`](../../deploy/gitops/README.md)
 for the Makefile-driven deployment pipeline.
+
+## Airbyte sync monitoring
+
+The sync poller waits for Airbyte to report `succeeded`, `failed`, or `cancelled`.
+Pending and queued jobs, retries (`incomplete`), and running jobs continue to be monitored
+even when their record counters remain unchanged. Airbyte owns job liveness,
+retry policy, and maximum duration; the poll pod has no independent job deadline.
+
+`ingestion.airbyteSync.pollIntervalSeconds` controls polling frequency (default
+30 seconds). `ingestion.airbyteSync.statusUnreadableThresholdSeconds` bounds
+continuous failure to read a recognized job status (default 1800 seconds).
+Every readable status resets that timer. On expiry, the poll step fails with
+`sync.poll_failed`; the Airbyte job's outcome remains unknown and the job is not
+cancelled. Downstream transforms do not run without confirmed sync success.
+
+When upgrading, replace `ingestion.airbyteSync.idleThresholdSeconds` overrides
+with `statusUnreadableThresholdSeconds` if an API outage timeout override is
+needed. The old idle setting is no longer used. Deploy the chart with its matching
+toolbox image because the poller's environment variable also changed.
 
 ## Release name convention
 
@@ -90,6 +113,7 @@ Before going to prod:
   - Rendering under a GitOps controller (`helm template`): set `deploymentMode: gitops` and `autoGenerate: false`, and supply the config Secrets out-of-band — the validator refuses `gitops` + `autoGenerate: true`.
 - [ ] Configure OIDC under `authenticator.oidc.*`: `issuerUrl`, `clientId`, `redirectUri`, and the client secret via a Secret (never inline in a committed values file).
 - [ ] Provide `insight-authenticator-signing-keys` (ES256 `current.pem`) — not auto-generated.
+- [ ] With `global.insightV3Core.deploy` on, on every install path — GitOps or imperative — provide `insight-v3-core-token` with a `token` key of at least 32 bytes (`openssl rand -hex 32`). The v3 Deployment reads it by `secretKeyRef` (`insightV3Core.ingest.tokenSecret` / `.tokenKey`); without the Secret the pod does not start. Rotation: [raw-data ingest guide](../../deploy/RAW_DATA_INGEST.md).
 - [ ] Attach routes to the shared Gateway: `gateway.route`, `frontend.route` (TLS terminates at the Gateway listener)
 - [ ] Bump resources where needed (default `requests` are conservative)
 - [ ] Provision the L2 infra (ClickHouse / MariaDB / Redis / Redpanda) out-of-chart and fill `<dep>.host` / `.port` / `.passwordSecret`. App-service URLs follow automatically (resolved by helpers).
@@ -116,9 +140,11 @@ Key groups:
 - `global.*` — cluster-wide defaults (pull secrets, storage class, `tenantDefaultId`, `observability.logs.{level,format}`, `observability.otlp.endpoint`)
 - `<dep>.host` / `<dep>.port` / `<dep>.passwordSecret` (Redpanda: `<dep>.brokers`) — external-infra wiring for ClickHouse, MariaDB, Redis, Redpanda
 - `gateway` / `authenticator` / `analytics` — **mandatory** app services (no deploy flag; the gateway is the single entrance and the product is one unit)
+- `global.insightV3Core.deploy` + `insightV3Core.*` — insight-v3-core, off by default (it needs `insightV3Core.ingest.tokenSecret` to exist first); the same flag drops the gateway's v3 routes
 - `authenticator.oidc.*` — OIDC upstream and login-resolution mode (`resolveBy: external_id | email`)
 - `identityResolution.*` — identity-resolution service (must stay deployed; `rosterSourceType` for email-mode logins)
 - `keycloak.deploy` + `keycloakConfig.*` — the in-stack identity broker and its realms-as-code hook
+- `clickhouse.fieldValueMap.*` — insert-only seed of operator-authored `config.field_value_map` / `config.field_value_defaults` rows from a TSV ConfigMap (post-upgrade hook, weight 300)
 - `previews.*`, `gitCliProxy.*`, `frontend.*` — optional services, on by default
 - `ingestion.templates.enabled` — whether to ship Argo WorkflowTemplates; requires Argo CRDs to be present in the cluster
 

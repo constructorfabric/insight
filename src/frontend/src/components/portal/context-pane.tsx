@@ -11,6 +11,7 @@ import { useTranslation } from "react-i18next";
 
 import { AppSidebarFooter } from "@/components/app-sidebar-footer";
 import { useFeedbackDialog } from "@/components/feedback-context";
+import { CustomNav } from "@/components/portal/custom-nav";
 import { OrgTree } from "@/components/org-tree";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
@@ -83,6 +84,7 @@ const ZONE_SUB: Record<string, string> = {
   scorecard: "By unit and quarter",
   reports: "Generated & custom",
   manage: "Catalog, identity & governance",
+  custom: "Your dashboards, built by chat",
 };
 
 const BADGE_TONE: Record<string, string> = {
@@ -138,7 +140,9 @@ export function ContextPane() {
       )}
       <SidebarContent>
         {isPhone ? <MobileZoneNav /> : null}
-        {activeZone === "directions" ? (
+        {activeZone === "custom" ? (
+          <CustomNav />
+        ) : activeZone === "directions" ? (
           <DirectionsNav />
         ) : activeZone === "people" ? (
           <PeopleNav active={active} />

@@ -41,6 +41,44 @@ name = "Previews Service PRD"
 traceability = "DOCS-ONLY"
 
 [[systems.artifacts]]
+kind = "PRD"
+path = "docs/domain/insight-v3/specs/PRD.md"
+name = "Insight v3 Core PRD"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/domain/insight-v3/specs/DESIGN.md"
+name = "Insight v3 Core Design"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "DECOMPOSITION"
+path = "docs/domain/insight-v3/specs/DECOMPOSITION.md"
+name = "Insight v3 Core Decomposition"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/insight-v3/specs/ADR/0001-separate-service.md"
+name = "ADR-0001: A Separate Service Instead of Extending Analytics"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/insight-v3/specs/ADR/0002-static-ingest-token.md"
+name = "ADR-0002: A Static Ingest Token Instead of the Platform OIDC Path"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/insight-v3/specs/ADR/0003-frontend-left-untouched.md"
+name = "ADR-0003: Leave the Existing Frontend Untouched"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/insight-v3/specs/ADR/0004-schema-driven-widgets.md"
+name = "ADR-0004: Widgets Are Described by a Schema, Not Written as Code"
+
+[[systems.artifacts]]
 kind = "DESIGN"
 path = "docs/components/backend/gateway/DESIGN.md"
 name = "Gateway (nginx edge) Design"

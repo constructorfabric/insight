@@ -141,6 +141,10 @@ stringData:
 ### Source control & CI
 
 ```yaml
+# Declarative GitLab connector on the git-cli-proxy: commit-level data comes
+# from a bare clone served by the proxy instead of one vendor API call per
+# commit. Needs a deployed git-cli-proxy (gitCliProxy.deploy); its address and
+# token are injected by reconcile, so this Secret carries neither.
 apiVersion: v1
 kind: Secret
 metadata:
@@ -150,8 +154,10 @@ metadata:
   annotations: { insight.cyberfabric.com/connector: gitlab, insight.cyberfabric.com/source-id: gitlab-main }
 type: Opaque
 stringData:
-  gitlab_url:   "https://gitlab.com"
-  gitlab_token: "CHANGE_ME"
+  gitlab_url:        "https://gitlab.example.com"
+  gitlab_token:      "CHANGE_ME"
+  gitlab_groups:     '["acme"]'
+  gitlab_start_date: "2026-01-01"
 ```
 
 ```yaml

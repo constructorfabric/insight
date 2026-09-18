@@ -137,16 +137,23 @@ collapses to current state and a head move is a tracked-column change.
   `q=updated_on >= start_date` (the `repos_since_start` anchor). It has to be:
   a cursor's `start_datetime` filters no records unless the stream also sets
   `is_client_side_incremental`, and none of these do. The listing is requested
-  `sort=updated_on` (ascending) so the cursor still advances monotonically
-  across pages.
+  `sort=created_on` with a `created_on > <last seen>` bound in `q` instead of
+  the vendor's page numbers (the `repository_keyset_paginator` anchor): a
+  repository pushed while a long walk runs would otherwise shift the pages
+  under the reader and hide a neighbour. The cursor takes the newest
+  `updated_on` seen, whatever the order.
 
 ### Cold repositories
 
-The first request for an uncached repository gets `429` + `Retry-After` while
-the proxy clones it in the background; every proxy stream retries on `429`.
-`409` (the pinned snapshot was superseded) and `413` (repository over the
-proxy's size cap) fail the stream instead — retrying the same page token would
-loop.
+The first request for an uncached repository is held in-connection while the
+proxy clones it, and while it waits for cache headroom; a `429` +
+`Retry-After` is the exception (headroom exhausted for the whole wait) and
+every proxy stream retries it. Every proxy request carries
+`X-Repo-Size-Hint`, the repository's reported size, so the proxy reserves
+that much cache instead of its per-repository cap. `409` (the pinned snapshot
+was superseded) restarts the walk from the last record already seen; `413`
+(repository over the proxy's size cap) fails the stream; `401` is the proxy
+token and fails as a config error.
 
 ## The start-date bound
 

@@ -15,6 +15,7 @@ workspace = true
 insight-clickhouse = { workspace = true }
 insight-http-metrics = { workspace = true }
 insight-log-context = { workspace = true }
+insight-openapi = { workspace = true }
 insight-migration = { workspace = true }
 # Direct `clickhouse` dep is for the `Row` derive on `system.columns` probe
 # rows (Refs #521 schema-validator). `insight-clickhouse` wraps the client
@@ -64,7 +65,7 @@ url = { workspace = true }
 # `json_response_with_schema`) is compiled against (already in Cargo.lock via
 # the toolkit). `chrono` + `uuid` features cover the timestamp / UUID fields on
 # the DTOs; no `time` types are used here.
-utoipa = { version = "5.5", features = ["chrono", "uuid"] }
+utoipa = { workspace = true, features = ["chrono", "uuid"] }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 tokio = { workspace = true }
@@ -90,6 +91,7 @@ clap = { workspace = true }
 
 [dev-dependencies]
 insight-log-context = { workspace = true, features = ["test-support"] }
+sea-orm = { workspace = true, features = ["mock"] }
 # `tower::ServiceExt::oneshot` for driving the Axum router in the HTTP
 # integration tests. Same dev-dep pattern as api-gateway's proxy tests.
 tower = { version = "0.5", features = ["util"] }

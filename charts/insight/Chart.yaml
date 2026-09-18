@@ -6,7 +6,8 @@
 ##
 ## What is INCLUDED here:
 ##   - Edge / auth: gateway (nginx+auth), authenticator, keycloak
-##   - Application: analytics, identity-resolution, previews, frontend
+##   - Application: analytics, insight-v3-core, identity-resolution, previews,
+##     frontend
 ##
 ## What is NOT included (deployed separately):
 ##   - L2 infra (ClickHouse, MariaDB, Redis, Redpanda) — deployed as
@@ -25,8 +26,8 @@ type: application
 # version    — packaging version of the chart. Bump on EVERY chart change.
 # appVersion — product version. Matches the image tag of all insight-* images.
 # Release pipeline: git tag v0.1.0 → version=0.1.0, appVersion="0.1.0".
-version: 0.7.8
-appVersion: "2026.09.09.01.26-fe57378"
+version: 0.7.45
+appVersion: "2026.09.18.09.29-136d335"
 kubeVersion: ">=1.27.0-0"
 home: https://github.com/constructorfabric/insight
 sources:
@@ -84,6 +85,16 @@ dependencies:
     alias: analytics
     version: "0.3.0"
     repository: "file://../../src/backend/services/analytics/helm"
+  # The one app service with a flag, and off by default: it cannot boot until
+  # its instance's ingest token is sealed, so an instance opts in once that
+  # exists. Global, like previews, so the same switch drops the gateway's three
+  # v3 routes — a route pointing at a Service the release does not create keeps
+  # nginx from loading its config.
+  - name: insight-v3-core
+    alias: insightV3Core
+    version: "0.1.0"
+    repository: "file://../../src/backend/services/insight-v3-core/helm"
+    condition: global.insightV3Core.deploy
   # Identity Resolution — Rust identity service (epic #1602). Reads from the
   # MariaDB `persons` table (per identity ADR-0002). Gated because it needs
   # `persons` populated by the seed pipeline.

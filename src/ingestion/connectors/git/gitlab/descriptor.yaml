@@ -1,71 +1,28 @@
+# Strict semver per ADR-0015. 4.0.0: declarative connector on the git-cli-proxy
+# replaces the CDK source. Every stream, column and key changes shape, so the
+# major bump dispatches the scoped `dbt --full-refresh` that rebuilds the
+# staging models; bronze tables the CDK connector wrote carry a different
+# contract and are dropped before the first sync.
 name: gitlab
-# Strict semver per ADR-0015. 1.15.0: dbt staging declares the class-contract
-#   column is_default_branch. MINOR, not MAJOR: the commits stream reported no
-#   branch membership, so the column was NULL whether a row re-materialized or
-#   not and nothing had to be rebuilt.
-# 1.16.0: bump-descriptors, for the rebuilt image alone — the dbt change in
-#   1.15.0 sits inside this connector's build context, so the CI job rebuilt
-#   the image and took the next MINOR itself. No connector behaviour of its own.
-# 1.17.0: the commits stream now projects is_in_default_branch, taken from the
-#   ref it walked — the default branch whole, every other branch only as
-#   `default_head..head`. MINOR, not MAJOR: additive in Bronze, and a
-#   `dbt --full-refresh` would buy nothing, because rows already in Bronze do
-#   not carry the field and no dbt operation can invent it. Only re-reading the
-#   commits stream from its start date labels history, which a version bump
-#   does not do.
-# 1.18.0: commit_file_changes walks non-default branches too, the same
-#   `default_head..head` ranges the commits stream uses. Until now it walked
-#   only the default ref, so a commit outside it reached the class with no file
-#   rows at all and contributed nothing to any lines measure while still
-#   counting as a commit. MINOR per ADR-0015: additive, nothing re-materializes.
-#   Branch history arrives as the stream reaches each branch; commits on a
-#   branch whose head has not moved since the last sync are not re-walked.
-# 1.21.0: dbt staging declares the class-contract column patch_id. MINOR, not
-#   MAJOR: the commits stream reports no patch id, so the column is NULL
-#   whether a row re-materializes or not and nothing has to be rebuilt.
-# 2.0.0: the class-contract column `date` now carries the AUTHOR date rather
-#   than the committer date, and `committer_date` joins it as its own column.
-#   A rebase, an amend and a cherry-pick rewrite the committer date and keep
-#   the author date, so a branch rebased before merging used to collapse every
-#   day of work on it onto the day of the last rewrite. MAJOR for the same
-#   reason as the patch id: staging is incremental on _airbyte_extracted_at and
-#   never re-reads Bronze, so already-materialized commits keep the committer
-#   date forever and the install would run in two regimes.
-#   ROLLOUT: this connector is type=cdk, and reconcile emits bump_kind=patch for
-#   a CDK image change (ADR-0015 §Bump-kind storage scope, lib/reconcile.sh) —
-#   so unlike the nocode git connectors, the bump alone dispatches NO full
-#   refresh. An operator has to run the scoped `dbt --full-refresh` for
-#   `tag:gitlab+` once, or this install keeps the committer date on every
-#   commit it has already materialized.
-#   Safe: both dates have been in Bronze all along, and the author date falls
-#   back to the committer date where a source left it empty. #3153
-# 3.0.0: the class-contract column `author_account_id` now carries the merge
-#   request's author id instead of the empty string, so a request attributes
-#   through the account binding rather than through an address GitLab may never
-#   expose. MAJOR for the same reason as 2.0.0: staging is incremental on
-#   _airbyte_extracted_at and never re-reads Bronze, so every merge request
-#   already materialized keeps the empty string forever and the install runs in
-#   two regimes — recent requests attribute by account, older ones do not.
-#   ROLLOUT: type=cdk, so reconcile emits bump_kind=patch and the bump alone
-#   dispatches NO full refresh (ADR-0015 §Bump-kind storage scope). An operator
-#   has to run the scoped `dbt --full-refresh` for `tag:gitlab+` once, or this
-#   install keeps attributing its history the old way.
-#   Safe: author_id has been in Bronze all along, and the model falls back to
-#   the address map where a request reports no author. #3142
-version: "3.1.0"
-type: cdk
+version: "4.0.1"
 schedule: "0 2 * * *"
 workflow: sync
-images:
-  cdk:
-    name: source-gitlab-insight
-    dockerfile: ./Dockerfile
-    context: .
-    image: "ghcr.io/constructorfabric/source-gitlab-insight:2026.09.04.08.40-c532484"
+
+# Silver routing via dbt tags on the staging models. The connector slug is
+# the dbt tag, and the pipeline's silver step hardcodes `tag:<slug>+`.
 dbt_select: "tag:gitlab+"
-connection:
-  namespace: "bronze_gitlab"
+
+platform_config:
+  git_proxy: true
+
 secret:
+  # The pre-flight Secret validator reads this list and nothing else, so it
+  # carries every field the operator must supply — the proxy address and token
+  # are not among them, because platform_config.git_proxy injects those.
   required_fields:
     - gitlab_url
     - gitlab_token
+    - gitlab_start_date
+
+connection:
+  namespace: bronze_gitlab

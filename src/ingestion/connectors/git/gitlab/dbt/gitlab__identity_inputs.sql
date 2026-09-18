@@ -5,60 +5,51 @@
     tags=['gitlab', 'silver', 'silver:identity_inputs']
 ) }}
 
--- What GitLab itself reports about a user account, unioned into
--- silver.identity_inputs via the `silver:identity_inputs` tag.
+-- Claims against GitLab accounts, unioned into silver.identity_inputs via the
+-- `silver:identity_inputs` tag.
 --
--- The account id is the numeric GitLab user id, stringified — the same key
--- `gitlab__pull_requests` puts on a merge request's author (ADR-0002 binding
--- key), so the two meet in the join.
+-- Two kinds of account, distinguished by source_type:
 --
--- Two value types, from two different questions:
---   `email`        — which addresses the account itself publishes, the edge
---                    that lets an e-mail-keyed fact reach a person
---   `display_name` — who the account is, so an operator reviewing an unbound
---                    account can recognise it. GitLab returns `email` only to
---                    a token with admin scope and `public_email` only where the
---                    user filled it in, so for many accounts this is the only
---                    thing an operator has to go on.
+--   `gitlab`              — a real account, keyed on its immutable numeric
+--                           GitLab user id, stringified (ADR-0002 binding key)
+--                           — the same key gitlab__pull_requests puts on a
+--                           merge request's author, so the two meet in the join.
+--   `gitlab-commit-email` — an e-mail no account claims, keyed on the e-mail
+--                           itself. Not a vendor account and never matched at
+--                           sign-in: it exists so an operator can see the
+--                           address in the console and merge it into the person
+--                           it belongs to.
 --
--- INVARIANT: every claim here is a fact GitLab states about the account itself.
--- A merge request's commits are NOT evidence about its author — the author of a
--- request and the author of a commit it carries are different identities, and
--- `git.prs_merged` counts the request for the former. Inferring an address for
--- an account from a request's commits would hand one person's address to
--- another, and the claim is append-only, so it could not be withdrawn later.
+-- INVARIANT: every claim here is a fact GitLab states about the account
+-- itself. A merge request's commits are NOT evidence about its author — the
+-- author of a request and the author of a commit it carries are different
+-- identities. The claim is append-only, so a wrong one could not be withdrawn.
 --
--- No `value_type='id'` binding: what an account means is the persons-seed's
--- decision, not this model's. The seed attaches a claimed e-mail to whichever
--- person its roster binding or e-mail match names, and mints a new person for
--- an unmatched active account.
+-- Only `email` and `display_name` rows, never the `value_type='id'` binding
+-- the shared macro also emits: what an account means is the persons-seed's
+-- decision, not this model's.
 --
 -- Column order matches the macro's output — silver.identity_inputs is a
 -- positional UNION ALL, and check-field-parity.py audits the shape.
 
-WITH claims AS (
+WITH observations AS (
     SELECT
         toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, '')))) AS insight_tenant_id,
         toUUID(UUIDNumToString(sipHash128(coalesce(source_id, '')))) AS insight_source_id,
         'gitlab' AS insight_source_type,
-        toString(COALESCE(id, 0)) AS source_account_id,
+        account_id AS source_account_id,
         'email' AS value_type,
-        lower(trimBoth(COALESCE(email, ''))) AS value,
-        'bronze_gitlab.users.email' AS value_field_name,
+        email AS value,
+        observed_in AS value_field_name,
         'UPSERT' AS operation_type,
         -- Insertion time, NOT the historical observation time: the shared
         -- identity_inputs model admits only rows above its global max(_version)
         -- watermark, so a claim versioned by a past instant would be silently
-        -- dropped whenever any other feeder has already stamped a newer version.
-        now64(3) AS _synced_at,
-        -- Which field the claim is preferred from when two carry the same
-        -- address. `email` is what GitLab hands an admin token and is the one
-        -- the account is reachable at; `public_email` is what the user chose to
-        -- show, and the same address often sits in both.
-        1 AS field_rank
-    FROM {{ source('bronze_gitlab', 'users') }} FINAL
-    WHERE COALESCE(id, 0) > 0
-      AND COALESCE(email, '') != ''
+        -- dropped whenever any other feeder has already stamped a newer
+        -- version. The observation time survives on
+        -- gitlab__account_emails.observed_at.
+        now64(3) AS _synced_at
+    FROM {{ ref('gitlab__account_emails') }}
 
     UNION ALL
 
@@ -66,62 +57,46 @@ WITH claims AS (
         toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, '')))) AS insight_tenant_id,
         toUUID(UUIDNumToString(sipHash128(coalesce(source_id, '')))) AS insight_source_id,
         'gitlab' AS insight_source_type,
-        toString(COALESCE(id, 0)) AS source_account_id,
-        'email' AS value_type,
-        lower(trimBoth(COALESCE(public_email, ''))) AS value,
-        'bronze_gitlab.users.public_email' AS value_field_name,
-        'UPSERT' AS operation_type,
-        now64(3) AS _synced_at,
-        2 AS field_rank
-    FROM {{ source('bronze_gitlab', 'users') }} FINAL
-    WHERE COALESCE(id, 0) > 0
-      AND COALESCE(public_email, '') != ''
-
-    UNION ALL
-
-    SELECT
-        toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, '')))) AS insight_tenant_id,
-        toUUID(UUIDNumToString(sipHash128(coalesce(source_id, '')))) AS insight_source_id,
-        'gitlab' AS insight_source_type,
-        toString(COALESCE(id, 0)) AS source_account_id,
+        account_id AS source_account_id,
         'display_name' AS value_type,
-        COALESCE(name, '') AS value,
-        'bronze_gitlab.users.name' AS value_field_name,
+        name AS value,
+        observed_in AS value_field_name,
         'UPSERT' AS operation_type,
-        now64(3) AS _synced_at,
-        1 AS field_rank
-    FROM {{ source('bronze_gitlab', 'users') }} FINAL
-    WHERE COALESCE(id, 0) > 0
-      AND COALESCE(name, '') != ''
-),
+        now64(3) AS _synced_at
+    FROM {{ ref('gitlab__account_names') }}
 
--- INVARIANT: one row per claim key, and the key is exactly what `unique_key`
--- below hashes. A user may publish the SAME address as both `email` and
--- `public_email`, which are two rows here and one key — a collision the anti
--- join against the target cannot see, because neither row is in the target yet.
--- `field_rank` decides which survives, so the provenance a claim carries does
--- not depend on the order rows happen to arrive in.
-distinct_claims AS (
+    UNION ALL
+
+    -- The unowned e-mail claims itself, so the console has an account to show
+    -- and a value to search on.
     SELECT
-        insight_tenant_id,
-        insight_source_id,
-        insight_source_type,
-        source_account_id,
-        value_type,
-        value,
-        value_field_name,
-        operation_type,
-        _synced_at
-    FROM claims
-    ORDER BY field_rank
-    LIMIT 1 BY
-        insight_tenant_id,
-        insight_source_id,
-        insight_source_type,
-        source_account_id,
-        value_type,
-        value,
-        operation_type
+        toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, '')))) AS insight_tenant_id,
+        toUUID(UUIDNumToString(sipHash128(coalesce(source_id, '')))) AS insight_source_id,
+        'gitlab-commit-email' AS insight_source_type,
+        email AS source_account_id,
+        'email' AS value_type,
+        email AS value,
+        'bronze_gitlab.commits.author_email' AS value_field_name,
+        'UPSERT' AS operation_type,
+        now64(3) AS _synced_at
+    FROM {{ ref('gitlab__unowned_commit_emails') }}
+
+    UNION ALL
+
+    -- The git author name, so the operator recognises whose address it is
+    -- rather than deciding on an e-mail alone.
+    SELECT
+        toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, '')))) AS insight_tenant_id,
+        toUUID(UUIDNumToString(sipHash128(coalesce(source_id, '')))) AS insight_source_id,
+        'gitlab-commit-email' AS insight_source_type,
+        email AS source_account_id,
+        'display_name' AS value_type,
+        author_name AS value,
+        'bronze_gitlab.commits.author_name' AS value_field_name,
+        'UPSERT' AS operation_type,
+        now64(3) AS _synced_at
+    FROM {{ ref('gitlab__unowned_commit_emails') }}
+    WHERE author_name != ''
 )
 
 SELECT
@@ -147,7 +122,7 @@ SELECT
     o.operation_type,
     o._synced_at,
     toUnixTimestamp64Milli(o._synced_at) AS _version
-FROM distinct_claims AS o
+FROM observations AS o
 {% if is_incremental() %}
 LEFT ANTI JOIN {{ this }} AS existing
     ON  o.value_type                 = existing.value_type

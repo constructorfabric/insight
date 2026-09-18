@@ -94,8 +94,11 @@ models:
     description: >
       One row per authored commit that reaches a git measure: the surviving row
       of the commit-hash collapse, with branch scope, repository, project and
-      source dimensions already resolved. Materialized so the commit class read
-      and the collapse run once per build in their own query budget.
+      source dimensions already resolved. Branch scope belongs to the commit,
+      not to the copy: a hash held by several repositories lands if any copy
+      did, and a copy whose own repository shows the landing is the one that
+      survives. Materialized so the commit class read and the collapse run
+      once per build in their own query budget.
     columns:
       - name: commit_hash
         description: "Commit identifier; one row per tenant, data source and hash"
@@ -158,13 +161,19 @@ models:
     description: >
       Commits that reached a repository's default branch, either through a
       merged pull request or by carrying content a default-branch commit also
-      carries at the same path: one row per tenant/source/project/repo/commit.
+      carries at the same path, unless the default branch already held that
+      content when the commit was written: one row per
+      tenant/source/project/repo/commit.
       Materialized so the membership joins run once per build in their own
-      query budget; the git evidence build reads it as a semi-join set
-      alongside the sync-time is_default_branch flag.
+      query budget; the commit collapse reads it by tenant, data source and
+      hash alongside the sync-time is_default_branch flag.
     columns:
       - name: commit_hash
         description: "Commit identifier within the repository"
+        tests:
+          - not_null
+      - name: data_source
+        description: "Git source discriminator (insight_github, insight_gitlab, ...)"
         tests:
           - not_null
 
@@ -847,7 +856,11 @@ models:
                 values:
                   - tasks_closed
                   - bugs_fixed
-                  - closed_non_bug
+                  - closed_task
+                  - closed_unknown_type
+                  - closed_fixed
+                  - closed_duplicate
+                  - closed_wontfix
                   - due_date_on_time
                   - due_date_with_due
                   - slip_days_total
@@ -881,6 +894,37 @@ models:
           add back up to it. An issue whose type is not reported at all falls in
           `__unknown__`. Empty for the day-grain and duration measures.
 
+  - name: task_field_roles_current
+    description: >
+      Which vendor field plays which metric role, resolved to one row per
+      (source, field): operator-authored bindings from config.task_field_roles
+      merged over the built-in vendor defaults, with an authored row always
+      winning. Rows whose role is 'ignored' are filtered out. Ephemeral —
+      inlined wherever it is joined, so its tests compile it as a CTE.
+    columns:
+      - name: insight_source_id
+        description: "Source instance identifier"
+        tests:
+          - not_null
+      - name: data_source
+        description: "Source system discriminator (e.g. 'jira')"
+        tests:
+          - not_null
+      - name: field_id
+        description: "Vendor field identifier the role is bound to"
+        tests:
+          - not_null
+      - name: role
+        description: "Metric role the field plays (status, assignee, issuetype, estimate, ...)"
+        tests:
+          - not_null
+      - name: precedence
+        description: "Authored tie-break between fields bound to the same role; 0 for a vendor default"
+      - name: value_unit
+        description: "Unit the field's value is stated in; 'none' when it is not a quantity"
+      - name: unit_multiplier
+        description: "Factor converting the stated unit to the canonical one; 1 for a vendor default"
+
   - name: task_issue_state
     description: >
       Per-issue lifecycle state for the task-delivery observation pipeline:
@@ -901,6 +945,32 @@ models:
         description: "Source issue identifier; unique per insight_source_id"
         tests:
           - not_null
+      - name: issue_kind
+        description: >
+          Issue kind resolved at this build from the operator's
+          config.field_value_map row for (tenant, source, field='issue_type',
+          type id); an unmapped id falls to the tenant's
+          config.field_value_defaults row, then to 'unknown' — never to a name
+          or the raw value, and never an empty string, whichever
+          join_use_nulls regime built the table.
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['bug', 'task', 'unknown']
+      - name: resolution_kind
+        description: >
+          Resolution class resolved at this build from the operator's
+          config.field_value_map row for (tenant, source, field='resolution',
+          resolution id); an unmapped id falls to the tenant's
+          config.field_value_defaults row, then to 'unknown'. An issue with no
+          resolution value at all is 'unknown' outright — the default speaks
+          only for unmapped values, not absent ones.
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['fixed', 'duplicate', 'wontfix', 'unknown']
 
   - name: task_status_spans
     description: >
@@ -917,6 +987,31 @@ models:
         description: "Span start (status event time)"
         tests:
           - not_null
+
+  - name: task_worklog_flow
+    description: >
+      Per-person per-day time flow for the task-delivery observation pipeline:
+      in-progress seconds split from the status spans by calendar day, full
+      outer joined with the worklog seconds logged per author. One row per
+      (tenant, entity, date); either figure is 0 on a day the other side has
+      no rows for.
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: entity_id
+        description: "Lowercased email of the assignee or worklog author"
+        tests:
+          - not_null
+      - name: metric_date
+        description: "Calendar day the seconds fall on"
+        tests:
+          - not_null
+      - name: in_progress_seconds
+        description: "Seconds of the day the person's issues sat in an in-progress status"
+      - name: worklog_seconds
+        description: "Seconds of work the person logged on the day (deleted worklogs excluded)"
 
   - name: ci_metric_observations
     description: >

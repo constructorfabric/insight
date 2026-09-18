@@ -15,6 +15,7 @@ workspace = true
 authenticator-sdk = { workspace = true }
 insight-http-metrics = { workspace = true }
 insight-log-context = { workspace = true }
+insight-openapi = { workspace = true }
 
 # ToolKit host runtime. The authenticator runs as a gears-rust host: routes are
 # declared via `OperationBuilder` and served by the `api-gateway` system gear
@@ -44,7 +45,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 # OpenAPI schemas for request/response DTOs; version tracks the `utoipa` the
 # toolkit's `OperationBuilder` is compiled against (see analytics).
-utoipa = { version = "5.5", features = ["chrono", "uuid"] }
+utoipa = { workspace = true, features = ["chrono", "uuid"] }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 tokio = { workspace = true }

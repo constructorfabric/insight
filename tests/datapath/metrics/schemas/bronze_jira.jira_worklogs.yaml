@@ -14,6 +14,7 @@ schemas:
       # number|string|null to match the real column via the seeder's coercion.
       worklog_id: {type: [number, string, "null"]}
       id_readable: {type: string}
+      jira_id: {type: [string, "null"]}
       author_account_id: {type: string}
       started: {type: string}
       time_spent_seconds: {type: [number, string, "null"]}

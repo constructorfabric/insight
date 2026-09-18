@@ -1,4 +1,5 @@
 -- depends_on: {{ ref('github__deployments') }}
+-- depends_on: {{ ref('gitlab__deployments') }}
 {{ config(
     materialized='incremental',
     full_refresh=false,

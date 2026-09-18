@@ -16,10 +16,12 @@ transformations (None-guard).
 from __future__ import annotations
 
 import json
+from datetime import datetime
+from urllib.parse import parse_qs, urlparse
 
 import freezegun
 import pytest
-from airbyte_cdk.models import SyncMode
+from airbyte_cdk.models import FailureType, SyncMode
 from config import GH_URL, PROXY_URL, GithubConfigBuilder
 from connector_tests import ANY_QUERY_PARAMS, HttpMocker, HttpRequest, HttpResponse, assert_records_conform, read_stream
 from connector_tests.source import load_manifest
@@ -43,6 +45,10 @@ def _graphql_body(stream_name: str, variables: dict, cursor: str | None = None) 
     return body
 
 
+def _instant(stamp: str) -> datetime:
+    return datetime.strptime(stamp.replace("Z", "+00:00"), "%Y-%m-%dT%H:%M:%S%z")
+
+
 def _no_literal_none(records) -> None:
     for r in records:
         for key, value in r.record.data.items():
@@ -60,6 +66,7 @@ def _repo() -> dict:
         "private": True,
         "clone_url": "https://github.com/acme/app.git",
         "pushed_at": "2026-06-20T10:00:00Z",
+        "size": 716800,
         "created_at": "2020-01-01T00:00:00Z",
         "updated_at": "2026-06-20T10:00:00Z",
     }
@@ -141,36 +148,17 @@ def test_proxy_429_then_success(http_mocker: HttpMocker) -> None:
         HttpRequest(f"{PROXY_URL}/v1/commits", query_params=ANY_QUERY_PARAMS),
         [
             HttpResponse(body="", status_code=429, headers={"Retry-After": "0"}),
-            HttpResponse(
-                body=json.dumps(
-                    {
-                        "items": [
-                            {
-                                "sha": "d" * 40,
-                                "message": "m",
-                                "committed_date": "2026-06-15T10:00:00Z",
-                                "authored_date": "2026-06-15T10:00:00Z",
-                                "author_name": "Dev",
-                                "author_email": "dev@example.com",
-                                "committer_name": "Dev",
-                                "committer_email": "dev@example.com",
-                                "parent_hashes": [],
-                                "is_merge": False,
-                                "is_in_default_branch": True,
-                                "patch_id": None,
-                            }
-                        ],
-                        "next_page_token": None,
-                    }
-                ),
-                status_code=200,
-            ),
+            _commits_page(_commit_row("d" * 40, "2026-06-15T10:00:00Z")),
         ],
     )
 
     output = read_stream(_CONNECTOR, "commits", config)
 
     assert not output.errors
+    hints = {r.headers.get("X-Repo-Size-Hint") for r in http_mocker._mocker.request_history if "/v1/commits" in r.url}
+    assert hints == {"734003200"}, (
+        f"every proxy call carries the repository's size in bytes (GitHub reports KiB): {hints}"
+    )
     assert len(output.records) == 1
     _no_literal_none(output.records)
 
@@ -932,14 +920,51 @@ def _authors_page(*rows: dict) -> HttpResponse:
     return HttpResponse(body=json.dumps({"items": list(rows), "next_page_token": None}), status_code=200)
 
 
-def _author(email: str, sha: str, name: str = "Dev") -> dict:
+def _author(email: str, sha: str, name: str = "Dev", committed: str = "2026-06-15T10:00:00+00:00") -> dict:
     return {
         "author_email": email,
         "author_name": name,
         "sample_sha": sha,
-        "last_committed_date": "2026-06-15T10:00:00+00:00",
+        "last_committed_date": committed,
         "commit_count": 3,
     }
+
+
+def _commit_row(sha: str, committed: str) -> dict:
+    return {
+        "sha": sha,
+        "message": "m",
+        "committed_date": committed,
+        "authored_date": committed,
+        "author_name": "Dev",
+        "author_email": "dev@example.com",
+        "committer_name": "Dev",
+        "committer_email": "dev@example.com",
+        "parent_hashes": [],
+        "is_merge": False,
+        "is_in_default_branch": True,
+        "patch_id": None,
+    }
+
+
+def _commits_page(*rows: dict) -> HttpResponse:
+    return HttpResponse(body=json.dumps({"items": list(rows), "next_page_token": None}), status_code=200)
+
+
+def _resolved_commit(sha: str, email: str, login: str, account_id: int) -> HttpResponse:
+    return HttpResponse(
+        body=json.dumps(
+            {
+                "sha": sha,
+                "node_id": "C_1",
+                "commit": {"author": {"name": "Dev", "email": email}},
+                "author": {"login": login, "id": account_id, "type": "User"},
+                "committer": {"login": login, "id": account_id, "type": "User"},
+                "parents": [],
+            }
+        ),
+        status_code=200,
+    )
 
 
 @freezegun.freeze_time(_FROZEN)
@@ -955,19 +980,7 @@ def test_commit_authors_resolve_a_proxy_author_to_an_account(http_mocker: HttpMo
     )
     http_mocker.get(
         HttpRequest(f"{GH_URL}/repos/acme/app/commits/{'a' * 40}", query_params=ANY_QUERY_PARAMS),
-        HttpResponse(
-            body=json.dumps(
-                {
-                    "sha": "a" * 40,
-                    "node_id": "C_1",
-                    "commit": {"author": {"name": "Ada", "email": "ada@example.com"}},
-                    "author": {"login": "ada", "id": 4242, "type": "User"},
-                    "committer": {"login": "ada", "id": 4242, "type": "User"},
-                    "parents": [],
-                }
-            ),
-            status_code=200,
-        ),
+        _resolved_commit("a" * 40, "ada@example.com", "ada", 4242),
     )
 
     output = read_stream(_CONNECTOR, "commit_authors", config)
@@ -1015,6 +1028,138 @@ def test_commit_authors_drops_an_email_github_matches_to_nobody(http_mocker: Htt
 
     assert not output.errors
     assert len(output.records) == 0, "an unmatched e-mail claims no account"
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_commit_authors_state_carries_the_authors_since_date(http_mocker: HttpMocker) -> None:
+    """The child carries a cursor so the author list's state persists. Without
+    it every sync re-lists every author since the start date and re-resolves
+    each one against GitHub; with it, the run emits the date the next run
+    lists from."""
+    config = GithubConfigBuilder().build()
+    committed = "2026-06-15T10:00:00+00:00"
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(f"{PROXY_URL}/v1/authors", query_params=ANY_QUERY_PARAMS),
+        _authors_page(_author("ada@example.com", "a" * 40)),
+    )
+    http_mocker.get(
+        HttpRequest(f"{GH_URL}/repos/acme/app/commits/{'a' * 40}", query_params=ANY_QUERY_PARAMS),
+        _resolved_commit("a" * 40, "ada@example.com", "ada", 4242),
+    )
+
+    output = read_stream(_CONNECTOR, "commit_authors", config)
+
+    assert not output.errors
+    assert len(output.records) == 1
+    # The record has no date of its own; it carries the author's last commit
+    # date, which is what the cursor observes.
+    assert output.records[0].record.data["last_committed_date"] == committed
+    assert output.state_messages, "an incremental child must emit state"
+    state = output.state_messages[-1].state.stream.stream_state.__dict__
+    resumed = state["parent_state"]["repository_authors"]["state"]["last_committed_date"]
+    assert _instant(resumed) == _instant(committed), f"parent state must carry the author's date: {state}"
+    assert_records_conform(output.records, _CONNECTOR, "commit_authors", strict=True)
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_a_resumed_commit_authors_sync_lists_from_one_window_before_the_saved_date(http_mocker: HttpMocker) -> None:
+    """The start date is a floor paid once. A run carrying state asks the proxy
+    for the authors who committed since one lookback window before the saved
+    date — a commit can be pushed days after it was made — so the GitHub
+    lookups it spends follow recent activity rather than the whole history."""
+    config = GithubConfigBuilder().build()
+    # Far enough back that one window before the saved date is not clamped to it.
+    config["github_start_date"] = "2026-01-01"
+    one_window_before = "2026-05-15T10:00:00+00:00"
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(f"{PROXY_URL}/v1/authors", query_params=ANY_QUERY_PARAMS),
+        _authors_page(_author("ada@example.com", "a" * 40)),
+    )
+    http_mocker.get(
+        HttpRequest(f"{GH_URL}/repos/acme/app/commits/{'a' * 40}", query_params=ANY_QUERY_PARAMS),
+        _resolved_commit("a" * 40, "ada@example.com", "ada", 4242),
+    )
+    first = read_stream(_CONNECTOR, "commit_authors", config)
+    assert not first.errors
+    state = [m.state for m in first.state_messages][-1:]
+
+    resume_mocker = HttpMocker()
+    with resume_mocker:
+        resume_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+        # The proxy bound is inclusive, so the author on the boundary is listed again.
+        resume_mocker.get(
+            HttpRequest(f"{PROXY_URL}/v1/authors", query_params=ANY_QUERY_PARAMS),
+            _authors_page(_author("ada@example.com", "a" * 40)),
+        )
+        resume_mocker.get(
+            HttpRequest(f"{GH_URL}/repos/acme/app/commits/{'a' * 40}", query_params=ANY_QUERY_PARAMS),
+            _resolved_commit("a" * 40, "ada@example.com", "ada", 4242),
+        )
+
+        second = read_stream(_CONNECTOR, "commit_authors", config, state=state)
+
+        assert not second.errors
+        since = [
+            parse_qs(urlparse(r.url).query)["since"][0]
+            for r in resume_mocker._mocker.request_history
+            if r.url.startswith(f"{PROXY_URL}/v1/authors")
+        ]
+        assert since, "the resumed run must list authors"
+        assert all(_instant(value) == _instant(one_window_before) for value in since), since
+        lookups = [r.url for r in resume_mocker._mocker.request_history if "/commits/" in r.url]
+        assert len(lookups) == 1, f"one author listed, one lookup: {lookups}"
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_a_future_dated_commit_never_becomes_the_commits_cursor(http_mocker: HttpMocker) -> None:
+    """A committer clock set ahead would otherwise become the saved cursor, and
+    every later sync would ask for commits since a date that has not come. The
+    row is dropped at the client and the cursor stays on the newest real date."""
+    config = GithubConfigBuilder().build()
+    sane, future = "2026-06-15T10:00:00+00:00", "2099-01-01T00:00:00+00:00"
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(f"{PROXY_URL}/v1/commits", query_params=ANY_QUERY_PARAMS),
+        _commits_page(_commit_row("a" * 40, sane), _commit_row("b" * 40, future)),
+    )
+
+    output = read_stream(_CONNECTOR, "commits", config)
+
+    assert not output.errors
+    assert [r.record.data["sha"] for r in output.records] == ["a" * 40]
+    saved = json.dumps(output.state_messages[-1].state.stream.stream_state.__dict__)
+    assert "2099" not in saved, f"the future date leaked into state: {saved}"
+    assert "2026-06-15T10:00:00" in saved, f"the newest real date must be the cursor: {saved}"
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_a_future_dated_author_never_becomes_the_authors_since(http_mocker: HttpMocker) -> None:
+    """The author list is what a later sync bounds with `since`; an author whose
+    last commit is dated ahead would push that bound past now and the list
+    would come back empty forever. The author is dropped before the cursor
+    sees them, and the others are still resolved."""
+    config = GithubConfigBuilder().build()
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(f"{PROXY_URL}/v1/authors", query_params=ANY_QUERY_PARAMS),
+        _authors_page(
+            _author("ada@example.com", "a" * 40),
+            _author("zed@example.com", "b" * 40, committed="2099-01-01T00:00:00+00:00"),
+        ),
+    )
+    http_mocker.get(
+        HttpRequest(f"{GH_URL}/repos/acme/app/commits/{'a' * 40}", query_params=ANY_QUERY_PARAMS),
+        _resolved_commit("a" * 40, "ada@example.com", "ada", 4242),
+    )
+
+    output = read_stream(_CONNECTOR, "commit_authors", config)
+
+    assert not output.errors
+    assert [r.record.data["author_email"] for r in output.records] == ["ada@example.com"]
+    saved = json.dumps(output.state_messages[-1].state.stream.stream_state.__dict__)
+    assert "2099" not in saved, f"the future date leaked into state: {saved}"
 
 
 @freezegun.freeze_time(_FROZEN)
@@ -2011,6 +2156,35 @@ _PROXY_RESET_ACTIONS = {
     "/v1/branches": "RESET",
     "/v1/authors": "RESET",
 }
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_a_proxy_401_is_the_proxy_token_and_fails_as_a_config_error(http_mocker: HttpMocker) -> None:
+    config = GithubConfigBuilder().build()
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(f"{PROXY_URL}/v1/branches", query_params=ANY_QUERY_PARAMS), HttpResponse(body="", status_code=401)
+    )
+
+    output = read_stream(_CONNECTOR, "branches", config, expecting_exception=True)
+
+    assert output.errors
+    assert output.errors[-1].trace.error.failure_type == FailureType.config_error
+
+
+def test_every_proxy_request_carries_the_repository_size_hint() -> None:
+    """The proxy reserves cache headroom from the hint instead of its per-repository
+    cap; a proxy requester without it, or a proxy parent that does not pass the size
+    along, silently falls back to the cap."""
+    retrievers = _proxy_retrievers(load_manifest(_CONNECTOR)["streams"])
+    assert retrievers
+    for retriever in retrievers:
+        hint = (retriever["requester"].get("request_headers") or {}).get("X-Repo-Size-Hint", "")
+        assert "extra_fields.get('size')" in hint, retriever["requester"]["path"]
+        parents = retriever["partition_router"]["parent_stream_configs"]
+        for parent in parents:
+            if parent.get("partition_field") == "repo_clone_url":
+                assert ["size"] in (parent.get("extra_fields") or []), retriever["requester"]["path"]
 
 
 def _proxy_retrievers(node, out=None):

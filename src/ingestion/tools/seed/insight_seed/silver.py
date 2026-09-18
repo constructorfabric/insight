@@ -32,9 +32,11 @@ All steps are idempotent — re-running converges on the same end state.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import subprocess
+import tempfile
 from pathlib import Path
 
 import clickhouse_connect
@@ -121,6 +123,48 @@ def apply_create_bronze_placeholders() -> None:
         )
     subprocess.run(["bash", str(script)], env=_script_env(), check=True)
     LOG.info("placeholders: %s applied", script.name)
+
+
+def ensure_task_config_tables() -> None:
+    """Create the operator-config relations (config.field_value_map & co).
+
+    INVARIANT: the generators INSERT into config.field_value_map BEFORE dbt's
+    first run on a fresh stand, and dbt's on-run-start macro
+    `create_task_config_tables` is the single owner of that DDL — so run the
+    macro itself (dbt run-operation), never a DDL copy.
+    """
+    dbt_dir = _ingestion_scripts_dir().parent / "dbt"
+    target = config.parse_clickhouse(os.environ)
+    profile = {
+        "ingestion": {
+            "target": "seed",
+            "outputs": {
+                "seed": {
+                    "type": "clickhouse",
+                    "host": target.host,
+                    "port": target.http_port,
+                    "schema": "silver",
+                    "user": target.user,
+                    "password": target.password,
+                    "secure": False,
+                    "send_receive_timeout": 1500,
+                    "query_limit": 0,
+                    "connect_timeout": 30,
+                }
+            },
+        }
+    }
+    with tempfile.TemporaryDirectory() as profiles_dir:
+        # SAFETY: JSON is a YAML subset dbt's loader reads; credentials are
+        # never interpolated into YAML text (same rule as apply-ch-migrations.sh).
+        (Path(profiles_dir) / "profiles.yml").write_text(json.dumps(profile))
+        subprocess.run(
+            ["dbt", "run-operation", "create_task_config_tables", "--profiles-dir", profiles_dir],
+            cwd=dbt_dir,
+            env=_script_env(),
+            check=True,
+        )
+    LOG.info("config tables: create_task_config_tables ensured")
 
 
 # The persons-seed's input, selected by the UNION model's name: the
@@ -237,6 +281,9 @@ def run() -> None:
     )
     # 1. Real deploy mechanism: create the placeholder tables.
     apply_create_bronze_placeholders()
+    # config.* tables are dbt-owned (on-run-start macro) but the generators
+    # write config.field_value_map before dbt's first run on a fresh stand.
+    ensure_task_config_tables()
     client = _ch_client()
     try:
         LOG.info("ClickHouse version: %s", client.server_version)

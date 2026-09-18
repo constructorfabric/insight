@@ -335,7 +335,8 @@ CREATE TABLE IF NOT EXISTS insight.git_default_branch_commits
     `source_id` Nullable(String),
     `project_key` String,
     `repo_slug` String,
-    `commit_hash` String
+    `commit_hash` String,
+    `data_source` String
 )
 ENGINE = MergeTree
 ORDER BY (tenant_id, source_id, project_key, repo_slug, commit_hash)
@@ -491,6 +492,7 @@ CREATE TABLE IF NOT EXISTS insight.task_issue_state
     `issue_kind` String,
     `issue_type_key` Nullable(String),
     `issue_type_name` Nullable(String),
+    `resolution_kind` String,
     `due_date` Nullable(Date),
     `time_estimate_seconds` Nullable(Float64),
     `time_spent_seconds` Nullable(Float64),

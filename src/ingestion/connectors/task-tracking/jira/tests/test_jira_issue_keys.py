@@ -8,7 +8,8 @@ PT14H, global substream cursor) and nextPageToken pagination.
 
 Coverage matrix rows: substream_partition, incremental_state (state emission +
 resume-read request filtering), pagination_multi_page (CursorPagination),
-tenant_source_stamping (unique_key from issue key), transformations (cursor
+tenant_source_stamping (unique_key from the immutable issue id),
+transformations (cursor
 hoist). schema_conformance is explicitly SKIPPED — the rig found a real
 manifest<->schema type drift (see the skip reason).
 
@@ -114,7 +115,8 @@ def test_cursor_hoist_and_stamping(http_mocker: HttpMocker) -> None:
     # CDK interpolation literal-evals the rendered value: numeric-string id -> int.
     assert rec["jira_id"] == 10001
     assert rec["id_readable"] == "PROJ1-1"
-    assert rec["unique_key"] == (f"{config['insight_tenant_id']}-{config['insight_source_id']}-PROJ1-1")
+    # The immutable id, not the renameable key — see test_jira_issue.
+    assert rec["unique_key"] == (f"{config['insight_tenant_id']}-{config['insight_source_id']}-10001")
 
 
 @pytest.mark.skip(

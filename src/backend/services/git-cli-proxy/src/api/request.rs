@@ -17,6 +17,9 @@ pub const SOURCE_HEADER: &str = "x-source-id";
 pub const GIT_USER_HEADER: &str = "x-git-username";
 pub const GIT_TOKEN_HEADER: &str = "x-git-token";
 pub const STALENESS_HEADER: &str = "x-max-staleness";
+/// Optional: the repository's size in bytes as its host reports it. A cold
+/// clone reserves cache headroom from it instead of the per-repository cap.
+pub const SIZE_HINT_HEADER: &str = "x-repo-size-hint";
 
 /// Ceiling and default are the same on purpose. Every memory bound on the
 /// request path scales linearly with the page, so headroom above the default
@@ -161,6 +164,7 @@ pub struct RequestContext {
     pub key: CacheKey,
     pub creds: GitCredentials,
     pub max_staleness: Option<Duration>,
+    pub size_hint: Option<u64>,
 }
 
 impl RequestContext {
@@ -186,6 +190,7 @@ impl RequestContext {
             },
             creds: GitCredentials { username, token },
             max_staleness: staleness(headers)?,
+            size_hint: optional_u64(headers, SIZE_HINT_HEADER)?,
         })
     }
 }
@@ -242,18 +247,22 @@ fn required_header(headers: &HeaderMap, name: &'static str) -> Result<String, Ba
 }
 
 fn staleness(headers: &HeaderMap) -> Result<Option<Duration>, BadRequest> {
+    Ok(optional_u64(headers, STALENESS_HEADER)?.map(Duration::from_secs))
+}
+
+/// An optional numeric header: absent or blank is `None`, anything else must
+/// parse as an unsigned integer.
+fn optional_u64(headers: &HeaderMap, name: &'static str) -> Result<Option<u64>, BadRequest> {
     let Some(raw) = headers
-        .get(STALENESS_HEADER)
+        .get(name)
         .and_then(|value| value.to_str().ok())
         .map(str::trim)
         .filter(|value| !value.is_empty())
     else {
         return Ok(None);
     };
-    let seconds: u64 = raw
-        .parse()
-        .map_err(|_| BadRequest::NotANumber(STALENESS_HEADER))?;
-    Ok(Some(Duration::from_secs(seconds)))
+    let value: u64 = raw.parse().map_err(|_| BadRequest::NotANumber(name))?;
+    Ok(Some(value))
 }
 
 #[cfg(test)]
@@ -338,6 +347,34 @@ mod tests {
                 matches!(outcome, Err(BadRequest::BadRepoUrl(_))),
                 "should reject: {raw:?}"
             );
+        }
+    }
+
+    #[test]
+    fn size_hint_header_is_optional_and_must_be_a_number() {
+        let repo = "https://example.com/a.git";
+        let Ok(without) = RequestContext::from_parts(&full_headers(), repo, HTTP_ONLY) else {
+            panic!("complete headers must build a context")
+        };
+        assert_eq!(without.size_hint, None, "absent means no hint");
+
+        let mut headers = full_headers();
+        headers.insert(SIZE_HINT_HEADER, HeaderValue::from_static("  "));
+        let Ok(blank) = RequestContext::from_parts(&headers, repo, HTTP_ONLY) else {
+            panic!("a blank hint must read as absent")
+        };
+        assert_eq!(blank.size_hint, None);
+
+        headers.insert(SIZE_HINT_HEADER, HeaderValue::from_static("734003200"));
+        let Ok(hinted) = RequestContext::from_parts(&headers, repo, HTTP_ONLY) else {
+            panic!("a numeric hint must build a context")
+        };
+        assert_eq!(hinted.size_hint, Some(734_003_200));
+
+        headers.insert(SIZE_HINT_HEADER, HeaderValue::from_static("big"));
+        match RequestContext::from_parts(&headers, repo, HTTP_ONLY) {
+            Err(BadRequest::NotANumber(name)) => assert_eq!(name, SIZE_HINT_HEADER),
+            other => panic!("a non-numeric hint must be refused, got {other:?}"),
         }
     }
 

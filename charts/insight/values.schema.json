@@ -136,6 +136,7 @@
     },
 
     "analytics":          { "$ref": "#/definitions/appService" },
+    "insightV3Core":      { "$ref": "#/definitions/appService" },
     "identity":           { "$ref": "#/definitions/appService" },
     "frontend":           { "$ref": "#/definitions/appService" },
 

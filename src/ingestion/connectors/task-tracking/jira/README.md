@@ -90,6 +90,7 @@ The `jira_boards` stream (`GET /rest/agile/1.0/board`) is the substream parent f
 ### Identity Key
 
 - `jira_user.email_address` — primary identity key
+- `jira_issue_history.jira_id`, `jira_comments.jira_id`, `jira_worklogs.jira_id` — the parent issue's immutable numeric id, taken from the parent slice (`id_readable` is the key at fetch time and changes when an issue moves between projects).
 - `jira_issue.reporter_id`, `jira_issue_history.author_account_id`, `jira_comments.author_account_id`, `jira_worklogs.author_account_id` — Atlassian `accountId` resolved to `email` downstream via `jira_user` JOIN in Silver.
 
 ## Silver Targets

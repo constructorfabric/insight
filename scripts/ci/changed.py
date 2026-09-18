@@ -24,7 +24,9 @@ from components import COMPARE_BRANCH, COMPONENTS, ROOT, component_for
 # but linting has cross-crate reach: a change to a workspace-level Rust file
 # (clippy.toml, Cargo.*) or a shared lib/plugin should re-lint EVERY backend
 # crate (catches a shared change breaking a dependent), while a service change
-# lints only itself. Coverage stays strictly per-changed-crate regardless.
+# lints only itself. A crate with `drift_test` also runs its tests on such a
+# change: the committed OpenAPI document it pins depends on shared crates and
+# on the dependency graph. Coverage stays strictly per-changed-crate regardless.
 BACKEND_RUST_ROOT = "src/backend"
 _SHARED_RUST_SUFFIXES = (".rs", ".toml", ".lock")
 _SHARED_BACKEND_DIRS = ("src/backend/libs/", "src/backend/plugins/")
@@ -44,6 +46,7 @@ def _matrix_entry(comp: dict, *, lint: bool = False, cover: bool = True, test: b
         entry["clippy"] = comp.get("clippy", True)  # False ⇒ fmt-only (see #1512)
         entry["live_db"] = comp.get("live_db", False)  # DB-backed live_tests (see #1564)
         entry["live_ch"] = comp.get("live_ch", False)  # ClickHouse-backed live_tests (see #1564)
+        entry["live_test"] = comp.get("live_test", "")  # optional executable integration-test script
         # MariaDB database the CI provisions for live_db entries (defaults to
         # the component name — analytics owns `analytics`, identity-resolution
         # owns `identity`).
@@ -62,6 +65,9 @@ def _matrix_entry(comp: dict, *, lint: bool = False, cover: bool = True, test: b
         # another component's coverage), but the gate must not require this
         # component to have measured lines of its own (connector-mock-tests).
         entry["cover"] = comp.get("cover", True)
+        # False ⇒ plain pytest: no report is produced or uploaded at all, so a
+        # suite below the overall minimum still gates on test results (insight-seed).
+        entry["collect"] = comp.get("collect", True)
     return entry
 
 
@@ -75,7 +81,7 @@ def changed_components(compare_branch: str, components: list[dict]) -> dict[str,
     ).stdout
     by_name = {c["name"]: c for c in components}
     changed: set[str] = set()
-    fanout_lint = False  # a shared-config / lib / plugin change re-lints all backend crates
+    fanout_lint = False  # a shared-config / lib / plugin change re-lints all backend crates and re-runs drift tests
     for line in out.splitlines():
         path = line.strip()
         if not path:
@@ -112,8 +118,9 @@ def changed_components(compare_branch: str, components: list[dict]) -> dict[str,
             # in-process tests yet; 0% would hard-fail the overall gate).
             cover = name in changed and comp.get("cover", True)
             lint = name in changed or (fanout_lint and is_backend)
+            test = name in changed or (fanout_lint and is_backend and comp.get("drift_test", False))
             if lint or cover:
-                result["rust"].append(_matrix_entry(comp, lint=lint, cover=cover, test=name in changed))
+                result["rust"].append(_matrix_entry(comp, lint=lint, cover=cover, test=test))
         elif name in changed:  # python / js: in the matrix iff changed
             result[lang].append(_matrix_entry(comp))
     return result

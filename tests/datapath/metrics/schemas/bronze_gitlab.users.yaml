@@ -1,4 +1,6 @@
-# Derived from the bronze_gitlab DDL snapshot.
+# Derived from the bronze_gitlab DDL snapshot. Array/object fields
+# land in bronze as JSON strings (the staging models toString() them), so they
+# are typed string here.
 schemas:
   bronze_gitlab.users:
     $schema: http://json-schema.org/draft-07/schema#
@@ -16,8 +18,12 @@ schemas:
       state: { type: [string, "null"] }
       email: { type: [string, "null"] }
       public_email: { type: [string, "null"] }
+      commit_email: { type: [string, "null"] }
       bot: { type: [boolean, "null"] }
-      web_url: { type: [string, "null"] }
+      external: { type: [boolean, "null"] }
+      is_admin: { type: [boolean, "null"] }
+      created_at: { type: [string, "null"] }
+      last_activity_on: { type: [string, "null"] }
       _airbyte_raw_id: { type: string }
       _airbyte_extracted_at: { type: string, format: date-time }
       _airbyte_meta: { type: string }

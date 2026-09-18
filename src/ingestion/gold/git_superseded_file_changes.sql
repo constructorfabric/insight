@@ -47,17 +47,20 @@ pull_request_links AS (
         source_id,
         project_key,
         repo_slug,
+        data_source,
         pr_id,
         groupUniqArray(commit_hash) AS linked_hashes,
+        -- Collected in any repository of the connector family: a fork's copy
+        -- of a branch commit is the same commit, and its rows carry the work.
         uniqExactIf(
             commit_hash,
-            (tenant_id, source_id, project_key, repo_slug, commit_hash) IN (
-                SELECT tenant_id, source_id, project_key, repo_slug, commit_hash
+            (tenant_id, data_source, commit_hash) IN (
+                SELECT tenant_id, data_source, commit_hash
                 FROM collected_branch_commits
             )
         ) AS collected_branch_commit_count
     FROM {{ ref('class_git_pull_requests_commits') }} FINAL
-    GROUP BY tenant_id, source_id, project_key, repo_slug, pr_id
+    GROUP BY tenant_id, source_id, project_key, repo_slug, data_source, pr_id
 ),
 -- The requests that produced a result commit at all. Narrowed before the
 -- resolution below, whose prefix test is a residual predicate: the join's only

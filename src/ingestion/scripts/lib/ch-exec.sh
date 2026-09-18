@@ -50,6 +50,10 @@ _ch_http_query() {
 # or /* */ blocks, and no inline `-- ...; ...` trailer. Every migration +
 # placeholder honours this (same simplification silver.py relies on). A
 # future migration with an in-string `;` MUST not use this path unguarded.
+#
+# Returns non-zero at the FIRST statement ClickHouse rejects and sends nothing
+# after it. A block that swaps or drops a table must never reach the swap when
+# the statement that filled the replacement failed.
 run_ch() {
   local sql stmt
   sql="$(sed -E '/^[[:space:]]*--/d')"
@@ -58,8 +62,18 @@ run_ch() {
     # tolerates leading/trailing whitespace, so non-empty segments are sent
     # as-is — no fragile per-line trim needed.
     [[ "$stmt" =~ [^[:space:]] ]] || continue
-    printf '%s' "$stmt" | _ch_http_query
+    printf '%s' "$stmt" | _ch_http_query || return 1
   done < <(printf '%s;' "$sql")
+}
+
+# One numeric scalar from a SELECT, or failure. A guard that reads an empty
+# or non-numeric answer must stop the deploy, not fall through as "nothing to
+# do" — and never as "safe to proceed".
+ch_scalar() {
+  local value
+  value="$(printf '%s' "$1" | _ch_http_query | tr -d '[:space:]')" || return 1
+  [[ "${value}" =~ ^[0-9]+$ ]] || return 1
+  printf '%s' "${value}"
 }
 
 # NB: callers use `if ! ch_table_exists ...`, which disables `set -e` for

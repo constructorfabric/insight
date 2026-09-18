@@ -66,26 +66,26 @@ bronze:
   bronze_github.commits:
     - {$ref: ../templates/git_activity.yaml#/templates/commit, unique_key: commit-dave, sha: hash-dave, author_name: dave, author_email: dave@example.com, committer_name: dave, committer_email: dave@example.com, additions: 7}
 
-  bronze_gitlab.projects:
+  bronze_gitlab.repositories:
     - {$ref: ../templates/gitlab_git.yaml#/templates/project, unique_key: gl-proj-101}
 
   bronze_gitlab.users:
-    # A merge request carries only the username; this row is what turns it into
-    # an address the metric can attribute.
+    # A merge request carries only its author's account; this row is what turns
+    # it into an address the metric can attribute.
     - {$ref: ../templates/gitlab_git.yaml#/templates/user, unique_key: gl-user-bob, id: 700, username: bob-gl, name: Bob Beta, email: bob@example.com}
 
-  bronze_gitlab.merge_requests:
+  bronze_gitlab.pull_requests:
     # Merged: GitLab reports merged_at and leaves closed_at empty.
-    - {$ref: ../templates/gitlab_git.yaml#/templates/merge_request, unique_key: gl-mr-201, iid: 201, id: 90201, author_id: 700, author_username: bob-gl, created_at: "2026-09-20T08:00:00Z", merged_at: "2026-10-01T09:00:00Z", merge_commit_sha: gl-merge-201}
+    - {$ref: ../templates/gitlab_git.yaml#/templates/merge_request, unique_key: gl-mr-201, iid: 201, id: 90201, author_id: 700, author_username: bob-gl, author_name: Bob Beta, created_at: "2026-09-20T08:00:00Z", merged_at: "2026-10-01T09:00:00Z", merge_commit_sha: gl-merge-201}
     # Abandoned: a close time, but no merge.
-    - {$ref: ../templates/gitlab_git.yaml#/templates/merge_request, unique_key: gl-mr-202, iid: 202, id: 90202, state: closed, author_id: 700, author_username: bob-gl, created_at: "2026-09-20T08:00:00Z", closed_at: "2026-10-01T10:00:00Z"}
+    - {$ref: ../templates/gitlab_git.yaml#/templates/merge_request, unique_key: gl-mr-202, iid: 202, id: 90202, state: closed, author_id: 700, author_username: bob-gl, author_name: Bob Beta, created_at: "2026-09-20T08:00:00Z", closed_at: "2026-10-01T10:00:00Z"}
     # Still open.
-    - {$ref: ../templates/gitlab_git.yaml#/templates/merge_request, unique_key: gl-mr-203, iid: 203, id: 90203, state: opened, author_id: 700, author_username: bob-gl, created_at: "2026-09-20T08:00:00Z"}
+    - {$ref: ../templates/gitlab_git.yaml#/templates/merge_request, unique_key: gl-mr-203, iid: 203, id: 90203, state: opened, author_id: 700, author_username: bob-gl, author_name: Bob Beta, created_at: "2026-09-20T08:00:00Z"}
     # Reported merged with neither timestamp. GitLab copies the state straight
     # from the source and derives the close time from those two fields alone,
     # so the state a Bitbucket request reaches by losing its terminal event is
     # reachable here too — nothing in the connector forbids this shape.
-    - {$ref: ../templates/gitlab_git.yaml#/templates/merge_request, unique_key: gl-mr-204, iid: 204, id: 90204, author_id: 700, author_username: bob-gl, created_at: "2026-09-20T08:00:00Z", updated_at: "2026-10-02T13:00:00Z", merge_commit_sha: gl-merge-204}
+    - {$ref: ../templates/gitlab_git.yaml#/templates/merge_request, unique_key: gl-mr-204, iid: 204, id: 90204, author_id: 700, author_username: bob-gl, author_name: Bob Beta, created_at: "2026-09-20T08:00:00Z", updated_at: "2026-10-02T13:00:00Z", merge_commit_sha: gl-merge-204}
 
   bronze_bitbucket_cloud.pull_requests:
     # `updated_on` deliberately sits on a LATER day than the merge event, so the
@@ -105,4 +105,3 @@ bronze:
     # update event in its activity is the only one there is.
     - {$ref: ../templates/bitbucket_git.yaml#/templates/activity, unique_key: "bb-ac:301", pr_id: 301, update_state: MERGED, event_date: "2026-10-01T09:00:00Z"}
     - {$ref: ../templates/bitbucket_git.yaml#/templates/activity, unique_key: "bb-ac:302", pr_id: 302, update_state: DECLINED, event_date: "2026-10-01T10:00:00Z"}
-

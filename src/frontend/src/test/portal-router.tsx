@@ -118,6 +118,9 @@ export function portalRouterMock(): Record<string, unknown> {
       );
       return select({ location: { pathname: path, search } });
     },
+    // The shell hosts child routes, so a test that renders the shell alone
+    // gets the slot rather than a page.
+    Outlet: () => <div data-testid="route-outlet" />,
     // A guard's redirect is a navigation too — recorded so a test can assert
     // that a disabled preview or an invalid param sends the reader away.
     Navigate: ({ to, replace }: { to: string; replace?: boolean }) => {

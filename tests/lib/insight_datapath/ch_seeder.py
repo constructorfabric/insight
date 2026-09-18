@@ -22,6 +22,7 @@ from typing import Any
 
 from insight_datapath import clickhouse as ch
 from insight_datapath.instance import InstanceConfig
+from insight_datapath.reset import Relation, clear
 
 LOG = logging.getLogger("datapath.seeder")
 
@@ -55,6 +56,19 @@ class CHSeeder:
     # ------------------------------------------------------------------
     # Per-test API
     # ------------------------------------------------------------------
+
+    def clear_and_record(self, relations: Iterable[Relation]) -> None:
+        """Empty `relations` and register them in the truncate ledger.
+
+        INVARIANT: recording precedes any later write to these relations, so a
+        run that raises partway still leaves them registered for the next
+        test's reset; the ledger truncates `IF EXISTS`, so over-recording is
+        harmless.
+        """
+        targets = list(relations)
+        for schema, table in targets:
+            self.ledger.record(schema, table)
+        clear(self.cfg, targets)
 
     def seed_bronze(self, bronze: dict[str, list[dict]], schemas: dict[str, dict]) -> None:
         """Seed every `<db>.<table>: [records]` entry of a TestYaml."""

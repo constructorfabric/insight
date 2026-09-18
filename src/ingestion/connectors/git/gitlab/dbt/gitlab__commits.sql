@@ -9,82 +9,47 @@
     tags=['gitlab', 'silver:class_git_commits']
 ) }}
 
--- lines_added / lines_removed come from the commit's own stats (present for
--- every commit). files_changed is the per-commit count from commit_file_changes,
--- which the connector collects for non-merge commits on every branch — so it is
--- 0 only for a merge commit. branch is not stored on the commit row;
--- membership is, from the ref the stream walked.
--- INVARIANT: is_in_default_branch is NULL for rows written before the connector
--- projected it, and no dbt rebuild can fill them — the value is not in Bronze.
--- Only a re-read of the commits stream from its start date supplies it.
-WITH proj AS (
-    SELECT
-        tenant_id,
-        source_id,
-        id AS project_id,
-        COALESCE(namespace_full_path, '') AS project_key,
-        COALESCE(path, '') AS repo_slug
-    FROM {{ source('bronze_gitlab', 'projects') }} FINAL
-),
-fc AS (
-    SELECT
-        tenant_id,
-        source_id,
-        project_id,
-        commit_sha,
-        count() AS files_changed
-    -- FINAL: dedup file_changes before count() so bronze dupes don't inflate
-    -- files_changed (baked into one row). See ADR-0001.
-    FROM {{ source('bronze_gitlab', 'commit_file_changes') }} FINAL
-    GROUP BY tenant_id, source_id, project_id, commit_sha
-)
+-- branch is '' by construction: the proxy walks a project once rather than
+-- once per branch, so a commit carries no branch name, only the membership
+-- flag below.
+-- INVARIANT: is_in_default_branch is reachability AT SYNC TIME. A commit first
+-- seen on a feature branch stays 0 unless a later sync re-reads it, so a merge
+-- outside the connector's lookback_window never corrects it.
 SELECT
-    c.tenant_id AS tenant_id,
-    c.source_id AS source_id,
-    c.unique_key AS unique_key,
-    COALESCE(p.project_key, '') AS project_key,
-    COALESCE(p.repo_slug, '') AS repo_slug,
-    COALESCE(c.id, '') AS commit_hash,
+    tenant_id,
+    source_id,
+    unique_key,
+    arrayStringConcat(arrayPopBack(splitByChar('/', COALESCE(repo_path, ''))), '/') AS project_key,
+    arrayElement(splitByChar('/', COALESCE(repo_path, '')), -1) AS repo_slug,
+    COALESCE(sha, '') AS commit_hash,
     '' AS branch,
-    CAST(c.is_in_default_branch AS Nullable(UInt8)) AS is_default_branch,
-    COALESCE(c.author_name, '') AS author_name,
-    COALESCE(c.author_email, '') AS author_email,
-    COALESCE(c.committer_name, '') AS committer_name,
-    COALESCE(c.committer_email, '') AS committer_email,
-    COALESCE(c.message, '') AS message,
+    CAST(is_in_default_branch AS Nullable(UInt8)) AS is_default_branch,
+    COALESCE(author_name, '') AS author_name,
+    COALESCE(author_email, '') AS author_email,
+    COALESCE(committer_name, '') AS committer_name,
+    COALESCE(committer_email, '') AS committer_email,
+    COALESCE(message, '') AS message,
     -- INVARIANT: the AUTHOR date, with the committer date as a fallback, and
     -- the two PARSES coalesced rather than the two strings — an unparseable
-    -- author date must fall through, not win and yield NULL. The fallback is
-    -- load-bearing: committed_date is the stream's cursor and always present,
-    -- so without it a bad author date drops the commit from every metric. #3153
+    -- author date must fall through, not win and yield NULL. committed_date is
+    -- the stream's cursor and always present.
     coalesce(
-        parseDateTimeBestEffortOrNull(c.authored_date),
-        parseDateTimeBestEffortOrNull(c.committed_date)
+        parseDateTimeBestEffortOrNull(authored_date),
+        parseDateTimeBestEffortOrNull(committed_date)
     ) AS date,
-    toNullable(toInt64(COALESCE(f.files_changed, 0))) AS files_changed,
-    toNullable(COALESCE(c.stats_additions, 0)) AS lines_added,
-    toNullable(COALESCE(c.stats_deletions, 0)) AS lines_removed,
-    if(COALESCE(c.parent_count, 0) > 1, 1, 0) AS is_merge_commit,
+    toNullable(COALESCE(changed_files, 0)) AS files_changed,
+    toNullable(COALESCE(additions, 0)) AS lines_added,
+    toNullable(COALESCE(deletions, 0)) AS lines_removed,
+    if(COALESCE(is_merge, false), 1, 0) AS is_merge_commit,
     'insight_gitlab' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,
-    c._airbyte_extracted_at,
-    CAST(NULL AS Nullable(String)) AS patch_id,
-    parseDateTimeBestEffortOrNull(c.committed_date) AS committer_date
--- FINAL: a re-walk re-emits a commit under the same unique_key with the
--- membership flag set, so Bronze holds the old row and the new one. Without
--- FINAL a full-refresh build inserts both into staging under one now64()
--- _version, and union_by_tag's dedup orders by that column — a tie it cannot
--- break. See ADR-0001.
-FROM {{ source('bronze_gitlab', 'commits') }} AS c FINAL
-LEFT JOIN proj AS p
-    ON p.project_id = c.project_id
-    AND p.tenant_id = c.tenant_id
-    AND p.source_id = c.source_id
-LEFT JOIN fc AS f
-    ON f.project_id = c.project_id
-    AND f.commit_sha = c.id
-    AND f.tenant_id = c.tenant_id
-    AND f.source_id = c.source_id
+    _airbyte_extracted_at,
+    patch_id,
+    parseDateTimeBestEffortOrNull(committed_date) AS committer_date
+-- FINAL: the lookback window re-reads a commit under the same unique_key, and
+-- its membership flag can differ between the two rows; union_by_tag's dedup
+-- cannot break a tie between two rows staged under one _version.
+FROM {{ source('bronze_gitlab', 'commits') }} FINAL
 {% if is_incremental() %}
-WHERE c._airbyte_extracted_at > (SELECT max(_airbyte_extracted_at) FROM {{ this }})
+WHERE _airbyte_extracted_at > (SELECT max(_airbyte_extracted_at) FROM {{ this }})
 {% endif %}

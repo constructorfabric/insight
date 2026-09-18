@@ -1,6 +1,6 @@
 -- Every changelog silver row must join back to a staging row by natural key.
--- Broken joins mean either a dbt bug upstream (dropped rows) or enrich wrote rows for a
--- changelog_id that doesn't exist in bronze — both indicate data corruption.
+-- A broken join means a producer wrote a row for a changelog_id that does not
+-- exist in bronze — data corruption, whichever model did it.
 --
 -- Jira-only for now; other sources get their own staging table checks.
 
@@ -13,7 +13,7 @@ FROM silver.class_task_field_history fh FINAL
 -- staging.jira_changelog_items is plain MergeTree (append-only dbt incremental), no FINAL needed
 LEFT JOIN staging.jira_changelog_items ci
     ON fh.insight_source_id = ci.insight_source_id
-   AND fh.id_readable       = ci.id_readable
+   AND fh.issue_id          = ci.jira_id
    AND fh.event_id          = ci.changelog_id
    AND fh.field_id          = ci.field_id
 WHERE fh.data_source = 'jira'

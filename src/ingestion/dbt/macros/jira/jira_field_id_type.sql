@@ -56,8 +56,3 @@
     — so the newest state of such a field reads as the empty state it had before
     the event. The contract's claim that `(event_at, _seq)` is a total order
     holds only when no two kinds share an instant. -#}
-{% macro jira_event_rank(event_kind) %}
-    multiIf({{ event_kind }} = 'synthetic_initial', 0,
-            {{ event_kind }} = 'changelog',         1,
-                                                   2)
-{% endmacro %}

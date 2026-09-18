@@ -47,26 +47,26 @@ fn golden_strip_prefix() {
 }
 
 #[test]
-fn instance_token_routes_reject_effective_prefix_stripping() {
-    for (defaults, route, accepted) in [
-        ("", "", true),
-        ("", "    strip_prefix: true\n", false),
-        ("defaults:\n  strip_prefix: true\n", "", false),
-        (
-            "defaults:\n  strip_prefix: true\n",
-            "    strip_prefix: false\n",
-            true,
-        ),
-    ] {
-        let routes = format!(
-            "version: 1\n{defaults}routes:\n  - prefix: /api/sql/query\n    upstream: http://analytics:8086\n    auth: instance_token\n{route}"
-        );
-        let result = generate(&routes, &Settings::default());
-        assert_eq!(result.is_ok(), accepted, "route configuration: {routes}");
-        if let Err(error) = result {
-            assert!(error.to_string().contains("must not enable strip_prefix"));
-        }
-    }
+fn instance_token_prefix_route_can_strip_its_platform_prefix() {
+    let routes = "version: 1\nroutes:\n  - prefix: /api/core\n    upstream: http://core:8086\n    auth: instance_token\n    strip_prefix: true\n";
+
+    let conf = generate(routes, &Settings::default())
+        .unwrap_or_else(|error| panic!("core instance-token route should generate: {error}"));
+
+    assert!(conf.contains("location = /api/core {"));
+    assert!(conf.contains("location ^~ /api/core/ {"));
+    assert!(!conf.contains("location /api/core {"));
+    assert_eq!(
+        conf.matches("require(\"gateway\").pass_instance_token()")
+            .count(),
+        2
+    );
+    assert_eq!(
+        conf.matches("rewrite ^/api/core/?(.*)$ /$1 break;").count(),
+        2
+    );
+    assert!(!conf.contains("require(\"gateway\").exchange()"));
+    assert!(!conf.contains("require(\"gateway\").pass_bearer()"));
 }
 
 #[test]
@@ -94,16 +94,13 @@ fn instance_token_route_bypasses_session_and_mcp_oauth() {
     ] {
         assert!(sql_location.contains(directive), "missing: {directive}");
     }
-    for path in ["/mcp", "/api/analytics", "/api/sql/query/extra"] {
-        assert!(
-            generate(
-                &routes.replace("/api/sql/query", path),
-                &Settings::default()
-            )
-            .is_err(),
-            "path: {path}"
-        );
-    }
+    assert!(
+        generate(
+            &routes.replace("/api/sql/query", "/mcp"),
+            &Settings::default()
+        )
+        .is_err()
+    );
 }
 
 /// Every generated `/api/` location must carry the full hygiene block (DESIGN

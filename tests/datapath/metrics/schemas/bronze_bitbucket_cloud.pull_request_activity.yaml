@@ -18,8 +18,15 @@ schemas:
       event_date: { type: [string, "null"] }
       actor_uuid: { type: [string, "null"] }
       actor_display_name: { type: [string, "null"] }
+      actor_account_id: { type: [string, "null"] }
+      actor_nickname: { type: [string, "null"] }
       update_state: { type: [string, "null"] }
       update_source_commit: { type: [string, "null"] }
+      update_destination_commit: { type: [string, "null"] }
+      update_title: { type: [string, "null"] }
+      update_reason: { type: [string, "null"] }
+      update_draft: { type: [boolean, "null"] }
+      changes: { type: [string, "null"] }
       comment_id: { type: [integer, "null"] }
       _airbyte_raw_id: { type: string }
       _airbyte_extracted_at: { type: string, format: date-time }

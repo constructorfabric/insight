@@ -71,6 +71,16 @@ async fn main() -> Result<()> {
 /// on this path, so stdout stays pure JSON for the drift gate to consume.
 fn print_openapi() -> Result<()> {
     let doc = git_cli_proxy::api::openapi_document()?;
-    println!("{}", serde_json::to_string_pretty(&doc)?);
+    print!("{}", insight_openapi::canonical_json(&doc)?);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn committed_openapi_document_is_current() -> anyhow::Result<()> {
+        let doc = git_cli_proxy::api::openapi_document()?;
+        insight_openapi::check_committed(&doc, env!("CARGO_MANIFEST_DIR"), env!("CARGO_PKG_NAME"))?;
+        Ok(())
+    }
 }

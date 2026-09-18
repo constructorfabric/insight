@@ -81,16 +81,21 @@ def test_the_withdrawal_is_dated_by_the_observation(scenario: Scenario) -> None:
 def test_a_present_but_empty_key_is_not_a_withdrawal(scenario: Scenario) -> None:
     """The field still applies to the issue and is unset — an ordinary state.
 
-    If the journal disagrees with it, a clearing event is missing and that must
-    surface as a round-trip failure. Absorbing it into a synthetic row would
-    blind the only oracle that catches a mis-parsed event.
+    Not a withdrawal: the key is present, so the field did not leave the issue's
+    context. It gets a `snapshot_diff` row instead, which records the state as
+    observed without claiming an event happened.
+
+    The oracle must not be blinded by that row. A missing clearing event is
+    still a round-trip failure, because `snapshot_diff` is derived FROM the
+    snapshot and the round trip asks whether the EVENTS reach the current value.
     """
     scenario.seed(fields=[SEVERITY_FIELD], issues=[issue("TST-1", fields={SEVERITY: None})], events=_severity_history())
     scenario.build()
 
     kinds = [r["event_kind"] for r in scenario.journal(field=SEVERITY)]
     assert "retired_field" not in kinds
-    assert kinds == ["synthetic_initial", "changelog"]
+    assert kinds == ["synthetic_initial", "changelog", "snapshot_diff"]
+    assert not scenario.round_trip_holds()
 
 
 def test_a_withdrawal_keeps_the_field_identifier_type(scenario: Scenario) -> None:

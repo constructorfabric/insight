@@ -2,6 +2,7 @@ import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useCallback } from "react";
 
 import { validateDateRange } from "@/api/period-to-date-range";
+import { isRangeToken } from "@/lib/custom/time-range";
 import type { PeriodValue } from "@/types/insight";
 
 /**
@@ -61,6 +62,13 @@ export interface PortalSearch {
   direct?: boolean;
   /** Person-attribute that groups rosters and defines peer cohorts. */
   slice?: string;
+  /**
+   * The window a custom dashboard is read over, as the token the server
+   * understands: a preset like `P30D` or an ISO interval. Separate from
+   * `period` on purpose — that union is shared by every other zone, and only
+   * this one speaks these tokens.
+   */
+  range?: string;
   /** Period preset. A custom range rides in `from`/`to` beside it. */
   period?: PeriodValue;
   from?: string;
@@ -122,6 +130,9 @@ export function validatePortalSearch(raw: Record<string, unknown>): PortalSearch
       ? { direct: true as const }
       : {}),
     slice: str(raw.slice),
+    // The same check the run endpoint makes, so a hand-edited token
+    // degrades to the board's default.
+    range: isRangeToken(str(raw.range) ?? "") ? str(raw.range) : undefined,
     period: period && PERIODS.has(period) ? (period as PeriodValue) : undefined,
     ...(custom ? { from, to } : {}),
   };
@@ -145,6 +156,7 @@ export const PORTAL_SEARCH_KEYS = [
   "from",
   "to",
   "conn",
+  "range",
 ] satisfies Array<keyof PortalSearch>;
 
 /** The validated portal params for the current route. */

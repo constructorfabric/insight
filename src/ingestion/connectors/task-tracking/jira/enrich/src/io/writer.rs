@@ -19,7 +19,7 @@ use serde::Serialize;
 #[derive(Row, Serialize, Debug)]
 pub struct FieldHistoryInsert {
     /// Project-wide convention key for ReplacingMergeTree dedup. Synthesized from
-    /// (insight_source_id, data_source, id_readable, field_id, event_id) — these
+    /// (insight_source_id, data_source, issue_id, field_id, event_id) — these
     /// five components together uniquely identify one (issue × field × event)
     /// per ADR-005. Same formula as connector AddFields would produce if the
     /// staging table were Airbyte-managed.
@@ -59,7 +59,7 @@ impl From<FieldHistoryRecord> for FieldHistoryInsert {
         let data_source = data_source_str(r.data_source);
         let unique_key = format!(
             "{}-{}-{}-{}-{}",
-            r.insight_source_id, data_source, r.id_readable, r.field_id, r.event_id
+            r.insight_source_id, data_source, r.issue_id, r.field_id, r.event_id
         );
         Self {
             unique_key,

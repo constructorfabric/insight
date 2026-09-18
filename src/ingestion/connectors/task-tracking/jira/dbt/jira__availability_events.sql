@@ -20,7 +20,7 @@
 -- (here: the census streams); other task trackers emit the same events from
 -- whatever deletion signal their API exposes.
 --
--- Column order must match staging.jira__task_field_history exactly:
+-- Column order must match silver.class_task_field_history exactly:
 -- union_by_tag concatenates the arms positionally.
 
 SELECT
@@ -30,29 +30,24 @@ SELECT
     CAST('jira' AS String)                                      AS data_source,
     COALESCE(h.entity_id, '')                                   AS issue_id,
     COALESCE(st.id_readable, '')                                AS id_readable,
-    CAST(NULL AS Nullable(String))                              AS title,
     event_id                                                    AS event_id,
     toDateTime64(h.updated_at, 3)                               AS event_at,
-    CAST('availability', 'Enum8(\'changelog\' = 1, \'synthetic_initial\' = 2, \'availability\' = 3, \'lifecycle\' = 4)')
-                                                                AS event_kind,
+    CAST('availability' AS LowCardinality(String))             AS event_kind,
     toUInt32(0)                                                 AS _seq,
     CAST(NULL AS Nullable(String))                              AS author_id,
     CAST('availability' AS String)                              AS field_id,
     CAST('Availability' AS String)                              AS field_name,
-    CAST('single', 'Enum8(\'single\' = 1, \'multi\' = 2)')      AS field_cardinality,
-    CAST('set', 'Enum8(\'set\' = 1, \'add\' = 2, \'remove\' = 3)') AS delta_action,
+    CAST('single' AS LowCardinality(String))                   AS field_cardinality,
+    CAST('set' AS LowCardinality(String))                      AS delta_action,
     CAST([h.new_value] AS Array(String))                        AS value_ids,
     CAST([h.new_value] AS Array(String))                        AS value_displays,
-    CAST('string_literal', 'Enum8(\'opaque_id\' = 1, \'account_id\' = 2, \'string_literal\' = 3, \'path\' = 4, \'none\' = 5)')
-                                                                AS value_id_type,
+    CAST('string_literal' AS LowCardinality(String))           AS value_id_type,
     toDateTime64(h.updated_at, 3)                               AS collected_at,
-    -- UInt64 like the Rust-written staging table; the union arms must agree.
     toUInt64(toUnixTimestamp64Milli(now64(3)))                  AS _version
 FROM (
-    -- event_id carries the issue id: the ADR-005 audit grain is
-    -- (insight_source_id, data_source, id_readable, field_id, event_id), and
-    -- census-only issues have an empty id_readable — without the issue id in
-    -- event_id, every detection of one run would collapse into one grain.
+    -- event_id carries the issue id so that a detection is one grain per issue
+    -- even where two issues share a detection instant (ADR-005 audit grain:
+    -- insight_source_id, data_source, issue_id, field_id, event_id).
     SELECT
         *,
         concat('availability:', COALESCE(entity_id, ''), ':',

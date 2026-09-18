@@ -38,7 +38,8 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.commit_authors
     `author_uuid` Nullable(String),
     `author_nickname` Nullable(String),
     `author_display_name` Nullable(String),
-    `sample_sha` Nullable(String)
+    `sample_sha` Nullable(String),
+    `last_committed_date` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key

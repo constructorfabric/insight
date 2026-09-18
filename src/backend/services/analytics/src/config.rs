@@ -171,7 +171,7 @@ impl Default for GearConfig {
 }
 
 /// Per-environment knobs for the metric read path.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct MetricCatalogConfig {
     /// Permit authenticated callers to read tenant-level metric definitions,
@@ -188,6 +188,21 @@ pub struct MetricCatalogConfig {
     ///
     /// Env: `APP__gears__analytics__config__metric_catalog__enforce_tenant_scope`.
     pub enforce_tenant_scope: bool,
+
+    /// Revalidate managed metric definitions every five minutes after the startup pass.
+    ///
+    /// Env: `APP__gears__analytics__config__metric_catalog__periodic_validation_enabled`.
+    pub periodic_validation_enabled: bool,
+}
+
+impl Default for MetricCatalogConfig {
+    fn default() -> Self {
+        Self {
+            tenant_metrics_enabled: false,
+            enforce_tenant_scope: false,
+            periodic_validation_enabled: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -373,6 +388,23 @@ mod tests {
 
         assert!(!config.ai_assist.enabled);
         assert_eq!(config.ai_assist.model, "claude-sonnet-5");
+        Ok(())
+    }
+
+    #[test]
+    fn metric_validation_repeats_unless_disabled() -> anyhow::Result<()> {
+        let omitted: GearConfig = serde_json::from_value(serde_json::json!({
+            "metric_catalog": {
+                "tenant_metrics_enabled": false,
+                "enforce_tenant_scope": false
+            }
+        }))?;
+        assert!(omitted.metric_catalog.periodic_validation_enabled);
+
+        let one_shot: GearConfig = serde_json::from_value(serde_json::json!({
+            "metric_catalog": { "periodic_validation_enabled": false }
+        }))?;
+        assert!(!one_shot.metric_catalog.periodic_validation_enabled);
         Ok(())
     }
 

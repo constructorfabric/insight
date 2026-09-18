@@ -43,14 +43,17 @@ impl MetricDefinitionValidator {
         Self { db, ch }
     }
 
-    /// Periodic sweep: validates immediately, then every [`SWEEP_INTERVAL`].
-    /// Never returns; run it on a spawned task.
-    pub async fn run(self) {
+    /// Validates immediately, then every [`SWEEP_INTERVAL`] when periodic validation is enabled.
+    pub async fn run(self, periodic_validation_enabled: bool) {
         let mut ticks = tokio::time::interval(SWEEP_INTERVAL);
         ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             ticks.tick().await;
             self.validate_all().await;
+
+            if !periodic_validation_enabled {
+                return;
+            }
         }
     }
 
@@ -1530,6 +1533,28 @@ mod tests {
             matching_rows: 4,
         }];
         assert!(!all_measures_covered(&windows, missing));
+    }
+
+    #[tokio::test]
+    async fn disabled_periodic_validation_returns_after_startup_pass() {
+        let db = sea_orm::MockDatabase::new(sea_orm::DatabaseBackend::MySql)
+            .append_query_results([Vec::<std::collections::BTreeMap<&str, sea_orm::Value>>::new()])
+            .into_connection();
+        let validator = MetricDefinitionValidator::new(
+            db,
+            insight_clickhouse::Client::new(insight_clickhouse::Config::new(
+                "http://unused",
+                "silver",
+            )),
+        );
+
+        let completed =
+            tokio::time::timeout(std::time::Duration::from_secs(1), validator.run(false)).await;
+
+        assert!(
+            completed.is_ok(),
+            "one-shot validation must return after its startup pass"
+        );
     }
 
     // A custom_observation_sql source is executed at query time and

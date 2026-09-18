@@ -51,7 +51,13 @@ import {
 
 /* ── Rail zones ──────────────────────────────────────────────────────── */
 
-export type ZoneKind = "person" | "directions" | "theme" | "manage" | "people";
+export type ZoneKind =
+  | "person"
+  | "directions"
+  | "theme"
+  | "manage"
+  | "people"
+  | "custom";
 
 export type Readiness = "planned";
 
@@ -70,6 +76,7 @@ export const ZONES: readonly Zone[] = [
   { id: "aicost", label: "AI & Cost", icon: DollarSign, kind: "theme" },
   { id: "scorecard", label: "Scorecard", icon: BarChart3, kind: "theme" },
   { id: "reports", label: "Reports", icon: FileText, kind: "theme" },
+  { id: "custom", label: "Custom", icon: Sparkles, kind: "custom" },
   { id: "manage", label: "Manage", icon: Settings2, kind: "manage" },
 ];
 

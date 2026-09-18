@@ -97,10 +97,10 @@ def seed_github_repositories(
     return bulk_insert(client, "bronze_github", "repositories", cols, rows)
 
 
-def seed_gitlab_projects(
+def seed_gitlab_repositories(
     client: clickhouse_connect.driver.client.Client, grid: Sequence[Repo], tenant_uuid: str
 ) -> int:
-    truncate(client, "bronze_gitlab", "projects")
+    truncate(client, "bronze_gitlab", "repositories")
     truncate(client, "staging", "gitlab__repositories")
     cols = [
         "_airbyte_raw_id",
@@ -150,7 +150,7 @@ def seed_gitlab_projects(
                 },
             )
         )
-    return bulk_insert(client, "bronze_gitlab", "projects", cols, rows)
+    return bulk_insert(client, "bronze_gitlab", "repositories", cols, rows)
 
 
 def seed_bitbucket_repositories(
@@ -218,7 +218,7 @@ def generate(
     grid = repo_grid(roster)
     return {
         "bronze_github.repositories": seed_github_repositories(client, grid, tenant_uuid),
-        "bronze_gitlab.projects": seed_gitlab_projects(client, grid, tenant_uuid),
+        "bronze_gitlab.repositories": seed_gitlab_repositories(client, grid, tenant_uuid),
         "bronze_bitbucket_cloud.repositories": seed_bitbucket_repositories(
             client, grid, tenant_uuid
         ),

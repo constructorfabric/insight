@@ -19,8 +19,9 @@
 -- Measured on the CLASS relations, not the gold commit set, and grouped per
 -- source_id: collection is a property of a connector instance, and by the time
 -- a commit reaches git_authored_commits the same hash from a fork and its
--- upstream is deliberately collapsed to one row carrying whichever source
--- sorted first. A healthy instance would hide a broken one.
+-- upstream is deliberately collapsed to one row carrying the copy that
+-- landed, else whichever source sorted first. A healthy instance would hide
+-- a broken one.
 --
 -- Three size classes, because "no file change" is not one condition:
 --   * requires — the source reported a non-zero size, so a diff must exist.

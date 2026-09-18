@@ -41,12 +41,16 @@ export function useZoneNav(): {
   // a rail entry that vanishes is worse than one that appears a beat late.
   const { isAdmin } = useIsAdmin();
 
-  const zones = ZONES.filter(
-    (z) =>
-      !zoneHidden(z.id) &&
-      (orgZonesVisible || IC_ZONES.has(z.id) || (z.id === "manage" && isAdmin)) &&
-      (!zonePlanned(z.id) || showPlanned),
-  );
+  const zones = ZONES.filter((z) => {
+    if (zoneHidden(z.id) || (zonePlanned(z.id) && !showPlanned)) return false;
+    // Custom writes definitions and spends the model budget, so the role
+    // decides on its own: having a cohort does not open it, and the service
+    // refuses the surfaces either way. (Manage keeps its older rule below,
+    // where a viewer with a cohort sees the entry and its view refuses them.)
+    if (z.id === "custom") return isAdmin;
+
+    return orgZonesVisible || IC_ZONES.has(z.id) || (z.id === "manage" && isAdmin);
+  });
 
   function selectZone(zone: Zone) {
     // ONE navigation per click. Three separate writes (clear item, clear zone,
@@ -54,6 +58,19 @@ export function useZoneNav(): {
     // half-states nobody chose.
     const entity = zone.kind === "person" || zone.kind === "people";
     if (entity && !activePerson) return;
+    // Custom is route-driven like the entity zones, but needs no person.
+    if (zone.kind === "custom") {
+      void navigate({
+        to: "/portal/custom",
+        search: (prev: Record<string, unknown>) => ({
+          ...prev,
+          item: undefined,
+          acct: undefined,
+          zone: undefined,
+        }),
+      });
+      return;
+    }
     void navigate({
       ...(entity
         ? {

@@ -252,6 +252,28 @@ cp docker-compose.yml docker-compose.override.yml
 docker compose up -d --build
 ```
 
+#### After changing a dependency
+
+`insight-front-dev` keeps `node_modules` in a named volume
+(`insight_frontend-node-modules`), not in the bind-mounted checkout, so a
+`pnpm install` on the host does not reach it. Bumping a dependency needs both:
+
+```bash
+pnpm install                                  # the host, for tsc/eslint/vitest
+docker exec insight-front sh -c 'cd /app && pnpm install'
+docker exec insight-front rm -rf /app/node_modules/.vite   # Vite's pre-bundle
+docker restart insight-front
+```
+
+Without the second install the page fails on an export the older package does
+not have, and without clearing `.vite` it fails the same way from the
+pre-bundled copy.
+
+The container also serves whichever checkout last ran `./dev-compose.sh up` —
+with several worktrees sharing one stack, `docker inspect insight-front` says
+whose source is on `localhost:3000`. Vite's watcher can miss edits made
+through the bind mount; `docker restart insight-front` re-reads from disk.
+
 ### With Insight Backend (Kind cluster)
 
 From the repository root:

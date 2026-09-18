@@ -21,7 +21,11 @@ export type DateRangeValidation =
       days?: number;
     };
 
-function parseISOCalendarDate(value: string): Date | null {
+/**
+ * A real calendar date, or null. `2026-02-30` is well-formed and not a date,
+ * so the round trip through `Date` is what tells them apart.
+ */
+export function parseISOCalendarDate(value: string): Date | null {
   if (!ISO_DATE_RE.test(value)) return null;
 
   const [year, month, day] = value.split("-").map(Number);

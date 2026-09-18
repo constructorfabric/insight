@@ -197,8 +197,9 @@ make system-status       ENV=local   # what's installed in insight-infra
 
 # L3 — the umbrella app. Only touches the `insight` namespace. Applies
 # every L3 sealed manifest, waits for `insight-db-creds` to materialise,
-# composes the derived `insight-analytics-config` +
-# `insight-identity-resolution-config` Secrets, then helm-upgrades. Image tags are
+# composes the derived `insight-analytics-config`,
+# `insight-identity-resolution-config`, and `insight-v3-core-config` Secrets,
+# then helm-upgrades. Image tags are
 # inherited from the umbrella chart's appVersion — no per-service tag
 # overrides are needed in values.yaml for the sandbox path.
 make diff   ENV=local                # inspect what would change

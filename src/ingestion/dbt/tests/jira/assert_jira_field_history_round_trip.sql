@@ -1,4 +1,15 @@
-{{ config(severity='warn') }}
+{{ config(
+    severity='warn',
+    tags=['connector_quality', 'jira'],
+    store_failures=true,
+    meta={
+        'title': 'Task field history reconciles with the issue snapshot',
+        'domain': 'task-tracking',
+        'category': 'reconciliation',
+        'tier': 'error',
+        'remediation': 'Replaying a field\'s history forward must land on the value the issue holds now. A finding is one of three things, and the fix differs: (1) the pipeline mis-parses the field — check the kind rules in FIELD-HISTORY-IN-DBT.md §3.3 against the field\'s `schema_type` / `schema_custom`, and note that a separator or bracketed-id rule written for one shape silently corrupts another; (2) the source and its own changelog disagree — automation and read-only fields change a value without recording an event, and a migrated instance can carry values that differ from the events that set them (a date off by a day, an instant off by a fixed offset, both sides already normalized). No transformation recovers an event the source never wrote, so the journal legitimately lags; before suspecting the date handling here, compare the RAW `value_to` of the newest changelog item with the raw issue JSON — if those two already differ, the pipeline is faithful; (3) the value\'s identifier is not stable across the two sides, which `assert_jira_field_id_spaces_intersect` reports separately and which happens when an instance is migrated and its option values are recreated under new ids. Compare the DISPLAY sides of a sample to tell (3) from (1): equal displays with different ids is (3).'
+    }
+) }}
 
 -- The oracle this pipeline has never had.
 --
@@ -44,7 +55,7 @@
 WITH latest_state AS (
     SELECT
         insight_source_id,
-        id_readable,
+        issue_id,
         field_id,
         -- Ordering key, and none of its three parts is optional.
         --
@@ -62,13 +73,20 @@ WITH latest_state AS (
         --
         -- The event id last, numerically: two changelog rows of one millisecond
         -- both carry `_seq` 0, and as text '101' sorts before '99'.
-        argMax(value_ids,      (event_at, {{ jira_event_rank('event_kind') }},
+        argMax(value_ids,      (event_at, {{ task_event_rank('event_kind') }},
                                 _seq, toUInt64OrZero(event_id))) AS value_ids,
-        argMax(value_displays, (event_at, {{ jira_event_rank('event_kind') }},
+        argMax(value_displays, (event_at, {{ task_event_rank('event_kind') }},
                                 _seq, toUInt64OrZero(event_id))) AS value_displays,
         max(event_at)                            AS latest_event_at
     FROM {{ ref('jira__field_history_derived') }} FINAL
     WHERE field_id != 'created'
+      -- `snapshot_diff` is the snapshot's own value written back as an observed
+      -- state, so counting it here would compare the snapshot with itself and
+      -- report agreement no matter what the events say. The events are the
+      -- side under test; a pair that needed a `snapshot_diff` row is exactly a
+      -- pair whose events do NOT reach the current value, and it must keep
+      -- showing up here.
+      AND event_kind != 'snapshot_diff'
       -- A field the catalogue does not contain (§3.2) carries ONE best-effort
       -- row, and the snapshot cannot hold a value for it at all: the snapshot
       -- model joins the catalogue, so an unclassifiable field never reaches it.
@@ -82,7 +100,7 @@ WITH latest_state AS (
           SELECT field_id FROM {{ ref('jira__task_field_kind') }}
           WHERE field_kind = 'long_text'
       )
-    GROUP BY insight_source_id, id_readable, field_id
+    GROUP BY insight_source_id, issue_id, field_id
 ),
 
 -- How fresh the issue side is. A pair whose history has moved past this point
@@ -90,16 +108,16 @@ WITH latest_state AS (
 issue_freshness AS (
     SELECT
         COALESCE(source_id, '')                     AS insight_source_id,
-        COALESCE(toString(id_readable), '')         AS id_readable,
+        COALESCE(toString(jira_id), '')             AS issue_id,
         max(_airbyte_extracted_at)                  AS issue_seen_at
     FROM {{ source('bronze_jira', 'jira_issue') }}
-    GROUP BY insight_source_id, id_readable
+    GROUP BY insight_source_id, issue_id
 ),
 
 snapshot AS (
     SELECT
         insight_source_id,
-        id_readable,
+        issue_id,
         field_id,
         value_ids,
         value_displays
@@ -108,7 +126,7 @@ snapshot AS (
 
 SELECT
     h.insight_source_id,
-    h.id_readable,
+    h.issue_id,
     h.field_id,
     arraySort(h.value_ids)      AS history_ids,
     arraySort(s.value_ids)      AS snapshot_ids,
@@ -118,10 +136,10 @@ SELECT
 FROM latest_state AS h
 INNER JOIN issue_freshness AS f
     ON f.insight_source_id = h.insight_source_id
-   AND f.id_readable = h.id_readable
+   AND f.issue_id = h.issue_id
 LEFT JOIN snapshot AS s
     ON s.insight_source_id = h.insight_source_id
-   AND s.id_readable = h.id_readable
+   AND s.issue_id = h.issue_id
    AND s.field_id = h.field_id
 WHERE h.latest_event_at <= f.issue_seen_at
   AND arraySort(h.value_ids) != arraySort(s.value_ids)

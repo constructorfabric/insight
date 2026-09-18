@@ -1,4 +1,4 @@
-name: E2E — Bronze to API
+name: E2E bronze to API
 
 # End-to-end data-path tests: a spec seeds bronze, dbt builds staging, silver
 # and gold on a ClickHouse the stand raised, identity mints the spec's people
@@ -21,7 +21,8 @@ name: E2E — Bronze to API
 # MINIMAL compose stand of its own (`dev-compose.sh test-stand minimal` —
 # identity and the realm seeded, the warehouse empty), pulls the chart-pinned
 # backend images or, when the diff touched the backend, mounts the binaries
-# `build-backend` compiled once for every shard, runs its
+# and loads the gateway/insight-v3-core images `build-backend` produced once
+# for every shard, runs its
 # directories of the suite host-side with uv, and the metric legs upload that
 # session's `.artifacts/` for `metric-coverage-gate`, a pure-Python check over
 # two JSON files: the builtin metric catalogue the run read from analytics, and
@@ -32,14 +33,24 @@ name: E2E — Bronze to API
 on:
   # Merge-queue builds: the queue's gh-readonly-queue/* branches emit merge_group,
   # and the required "Run E2E suite" check must report there or every queued PR
-  # times out and is evicted. On a pull request the umbrella below emits the same
-  # check as a deferral to the queue, so one workflow owns the name in both places.
+  # times out and is evicted.
   merge_group:
-  # No `paths:` filter: GitHub leaves a required check whose workflow never ran
-  # pending forever, so every pull request runs the cheap `changes` job and the
-  # umbrella, which defers the suite itself to the queue.
+  # The suite runs in the queue, not on the pull request. The trigger stays, with
+  # no `paths:` filter, so the required check exists on every PR: every job is
+  # skipped there, and a skipped required check counts as passed. A workflow
+  # that never ran would leave the check pending forever.
   pull_request:
     branches: [main]
+  # Cache-warm runs only: merge-queue refs cannot restore caches saved by
+  # earlier queue entries, so main is the only warm source build-backend has.
+  # Only `changes` + `build-backend` run on push; every other job skips.
+  push:
+    branches: [main]
+    paths:
+      - "src/backend/**"
+      - "docker-compose.yml"
+      - "dev-compose.sh"
+      - ".github/workflows/e2e-bronze-to-api.yml"
   workflow_dispatch:
 
 # A new push obsoletes any run still in flight for the same ref — cancel it so a
@@ -50,6 +61,8 @@ concurrency:
 
 env:
   CI: "true"
+  # Same cache image and tag scheme build-images.yml writes; read-only here.
+  BUILDCACHE: ghcr.io/constructorfabric/insight-buildcache
 
 permissions:
   contents: read
@@ -57,8 +70,7 @@ permissions:
   actions: read
 
 jobs:
-  # `e2e-suite` is the aggregate that emits the stable "Run E2E suite" check:
-  # a deferral on a pull request, the verdict in the merge queue.
+  # `e2e-suite` is the aggregate that emits the stable "Run E2E suite" check.
   #
   # Skipping cascades by default `needs` semantics: `changes` says irrelevant →
   # `e2e-datapath` skips → `metric-coverage-gate` skips. The umbrella tells that
@@ -87,7 +99,8 @@ jobs:
   #
   # src/frontend/ and docs/ are absent on purpose: nothing here loads them.
   changes:
-    name: changes
+    name: Detect changes
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -106,6 +119,14 @@ jobs:
           HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
+          # A push run exists only to warm the backend build cache; the paths:
+          # filter already scoped it, so compile unconditionally and skip the diff.
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "backend=true" >> "$GITHUB_OUTPUT"
+            echo "push to main — cache-warm run"
+            exit 0
+          fi
           # No base to diff against (a merge_group without one, or a manual
           # dispatch): assume relevant rather than skipping a required gate on
           # a guess.
@@ -128,54 +149,156 @@ jobs:
           fi
           changed="$(git diff --name-only "$base_point" "$HEAD")"
           echo "$changed" | sed 's/^/  /'
-          if echo "$changed" | grep -qE '^(src/ingestion/|src/backend/|tests/datapath/|tests/lib/|tests/pyproject\.toml|tests/uv\.lock|dev-compose\.sh|docker-compose\.yml|\.env\.compose\.example|deploy/compose/|\.github/workflows/e2e-bronze-to-api\.yml)'; then
+
+          # Ignored because nothing in this suite reads these paths.
+          # INVARIANT: services/*/helm/Chart.yaml is NOT ignored — dev-compose.sh
+          # takes the image the stand pulls from its appVersion.
+          IGNORED_PATHS='^src/backend/services/[^/]+/helm/|^src/ingestion/tests/|^src/ingestion/tools/seed/tests/|^(src/backend|tests)/.*\.md$'
+          IMAGE_PIN_PATHS='^src/backend/services/[^/]+/helm/Chart\.yaml$'
+          # `|| true`: a grep selecting nothing exits 1 — set -e fails the step.
+          changes_to_test="$(printf '%s\n' "$changed" | grep -vE "$IGNORED_PATHS" || true)"
+          image_pins="$(printf '%s\n' "$changed" | grep -E "$IMAGE_PIN_PATHS" || true)"
+          changes_to_test="$(printf '%s\n%s\n' "$changes_to_test" "$image_pins" | grep -v '^$' || true)"
+          if [ -n "$changes_to_test" ]; then
+            printf '%s\n' "$changes_to_test" | sed 's/^/  affects this run: /'
+          else
+            echo "  affects this run: nothing — no changed file can reach this suite"
+          fi
+
+          if echo "$changes_to_test" | grep -qE '^(src/ingestion/|src/backend/|tests/datapath/|tests/lib/|tests/pyproject\.toml|tests/uv\.lock|dev-compose\.sh|docker-compose\.yml|\.env\.compose\.example|deploy/compose/|\.github/workflows/e2e-bronze-to-api\.yml)'; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
           else
             echo "relevant=false" >> "$GITHUB_OUTPUT"
             echo "nothing on the bronze → dbt → ClickHouse → analytics path changed"
           fi
           # A backend change means the pinned images no longer describe this
-          # tree, so the stand compiles the backend instead of pulling it. A
-          # service's own test tree is not in its image, so it does not count.
-          if echo "$changed" | grep -vE '^src/backend/services/[^/]+/tests/' | grep -qE '^src/backend/'; then
+          # tree, so the stand compiles the backend instead of pulling it.
+          if echo "$changes_to_test" | grep -qE '^src/backend/'; then
             echo "backend=true" >> "$GITHUB_OUTPUT"
           else
             echo "backend=false" >> "$GITHUB_OUTPUT"
           fi
 
   # ─── Build the backend once, shared by every shard ────────────────────────
-  # One `cargo build` for all three binaries; the shards mount them via
-  # `--prebuilt` semantics (`--build-backend --skip-build`) instead of each
-  # compiling the same workspace. Five identical compiles per queue entry is
-  # what pushed backend-touching entries past the merge queue's check timeout.
+  # One `cargo build` for all three bind-mounted binaries, plus one image build
+  # each for gateway and insight-v3-core — the two services that run from
+  # images; the shards mount/load them (`--build-backend --skip-build`) instead
+  # of each compiling the same workspace and baking the same two images.
   build-backend:
-    name: Build backend binaries
+    name: Build backend
     needs: changes
-    if: ${{ needs.changes.outputs.relevant == 'true' && needs.changes.outputs.backend == 'true' && github.event_name != 'pull_request' }}
+    if: ${{ needs.changes.outputs.relevant == 'true' && needs.changes.outputs.backend == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      contents: read
+      # ghcr login for the read-only registry build cache.
+      packages: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
+      # The compile runs inside the compose build-rust container, so the key
+      # tracks that image's toolchain, not the runner's.
+      - name: Read the builder toolchain for the cache key
+        id: toolchain
+        run: |
+          set -euo pipefail
+          image="$(grep -m1 -oE 'image: rust:[^ ]+' docker-compose.yml | cut -d' ' -f2 | tr ':' '-')"
+          [ -n "$image" ] || { echo "::error::no rust builder image found in docker-compose.yml"; exit 1; }
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+
+      # Plain actions/cache, not Swatinem/rust-cache: rust-cache keys and
+      # prunes against the RUNNER's rustc/cargo, and the compile happens in a
+      # container with its own toolchain and paths. Trade-off: no pruning, so
+      # the target dir grows under the prefix restore-key until Cargo.lock
+      # rotates the exact key and a fresh save resets it.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .ci-cargo/target
+            .ci-cargo/registry
+          key: e2e-backend-${{ steps.toolchain.outputs.image }}-${{ hashFiles('src/backend/Cargo.lock') }}
+          restore-keys: |
+            e2e-backend-${{ steps.toolchain.outputs.image }}-
+
       - name: Compile the Rust services
-        run: ./dev-compose.sh build rust
+        env:
+          RUST_TARGET_SOURCE: ${{ github.workspace }}/.ci-cargo/target
+          CARGO_REGISTRY_SOURCE: ${{ github.workspace }}/.ci-cargo/registry
+        run: |
+          mkdir -p .ci-cargo/target .ci-cargo/registry
+          ./dev-compose.sh build rust
+
+      # The build container runs as root; the post-job cache tar runs as the
+      # runner user and must be able to read (and later restore over) it all.
+      - name: Reclaim cache dir ownership from the build container
+        run: sudo chown -R "$(id -u):$(id -g)" .ci-cargo
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: github.event_name != 'push'
         with:
           name: backend-binaries
           path: deploy/compose/build/
           retention-days: 1
           if-no-files-found: error
 
+      # Gateway and insight-v3-core run from images, not bind-mounted binaries,
+      # so the queue entry's code only runs in images built from this tree —
+      # built once here instead of once per shard. cache-from reuses the layer
+      # cache build-images.yml maintains; no cache-to — queue refs are transient
+      # and main's push to build-images owns the cache writes.
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+        if: github.event_name != 'push'
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        if: github.event_name != 'push'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Prepare the image export directory
+        if: github.event_name != 'push'
+        run: mkdir -p /tmp/e2e-images
+      - name: Build the gateway image for the shards
+        if: github.event_name != 'push'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: src/backend
+          file: src/backend/services/gateway/Dockerfile
+          # The shards run on ubuntu-latest amd64; nothing else loads these tars.
+          platforms: linux/amd64
+          tags: insight-gateway:e2e-prebuilt
+          outputs: type=docker,dest=/tmp/e2e-images/insight-gateway.tar
+          cache-from: type=registry,ref=${{ env.BUILDCACHE }}:gateway-amd64
+      - name: Build the insight-v3-core image for the shards
+        if: github.event_name != 'push'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: src/backend
+          file: src/backend/Dockerfile
+          target: insight-v3-core
+          platforms: linux/amd64
+          tags: insight-v3-core:e2e-prebuilt
+          outputs: type=docker,dest=/tmp/e2e-images/insight-v3-core.tar
+          cache-from: |
+            type=registry,ref=${{ env.BUILDCACHE }}:insight-v3-core-amd64
+            type=registry,ref=${{ env.BUILDCACHE }}:backend-deps-amd64
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: github.event_name != 'push'
+        with:
+          name: backend-images
+          path: /tmp/e2e-images/
+          retention-days: 1
+          if-no-files-found: error
+
   e2e-datapath:
-    name: data path (shard ${{ matrix.shard }})
+    name: Data path (${{ matrix.shard }})
     needs: [changes, build-backend]
     # `!cancelled()` so a skipped build-backend (backend untouched → pinned
     # images) does not skip the shards along with it; the result check keeps a
     # FAILED build from letting them run against stale binaries.
-    if: ${{ !cancelled() && needs.changes.outputs.relevant == 'true' && github.event_name != 'pull_request' && (needs.build-backend.result == 'success' || needs.build-backend.result == 'skipped') }}
+    if: ${{ !cancelled() && github.event_name != 'push' && needs.changes.outputs.relevant == 'true' && (needs.build-backend.result == 'success' || needs.build-backend.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -229,6 +352,18 @@ jobs:
         if: ${{ needs.changes.outputs.backend == 'true' }}
         run: find deploy/compose/build -type f -exec chmod 0755 {} +
 
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: ${{ needs.changes.outputs.backend == 'true' }}
+        with:
+          name: backend-images
+          path: /tmp/e2e-images
+
+      - name: Load the pre-built gateway and insight-v3-core images
+        if: ${{ needs.changes.outputs.backend == 'true' }}
+        run: |
+          set -euo pipefail
+          for tar in /tmp/e2e-images/*.tar; do docker load --input "$tar"; done
+
       # `minimal` seeds identity and the realm and leaves the warehouse empty:
       # the suite writes its own bronze and clears it between specs, and the
       # guard at its door refuses an instance whose seed shares those tables.
@@ -239,7 +374,13 @@ jobs:
         run: |
           set -euo pipefail
           flags=()
-          if [ "$BUILD_BACKEND" = "true" ]; then flags+=(--build-backend --skip-build); fi
+          if [ "$BUILD_BACKEND" = "true" ]; then
+            flags+=(--build-backend --skip-build)
+            # The two image-run services take the images build-backend built
+            # from this tree instead of baking them here, once per shard.
+            export GATEWAY_IMAGE=insight-gateway:e2e-prebuilt
+            export INSIGHT_V3_CORE_IMAGE=insight-v3-core:e2e-prebuilt
+          fi
           ./dev-compose.sh test-stand minimal "${flags[@]}"
 
       # A reused workspace could carry a previous run's ledger; the gate must
@@ -249,7 +390,7 @@ jobs:
 
       # `test-stand test` picks the suite's own dependency group for a tree
       # under tests/datapath and aims it at the stand it just raised.
-      - name: Data-path suite — shard
+      - name: Run the data-path shard
         id: suite
         env:
           SHARD: ${{ matrix.shard }}
@@ -377,7 +518,7 @@ jobs:
       - build-backend
       - e2e-datapath
       - metric-coverage-gate
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'push' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -389,7 +530,6 @@ jobs:
       # two apart, and it would also fold in `changes`'s own result.
       - name: Require every data-path shard and the gate to have succeeded
         env:
-          EVENT: ${{ github.event_name }}
           CHANGES: ${{ needs.changes.result }}
           RELEVANT: ${{ needs.changes.outputs.relevant }}
           BACKEND: ${{ needs.changes.outputs.backend }}
@@ -401,7 +541,7 @@ jobs:
           GATE: ${{ needs.metric-coverage-gate.result }}
         run: |
           set -euo pipefail
-          echo "event=$EVENT changes=$CHANGES relevant=$RELEVANT backend=$BACKEND build=$BUILD suite=$SUITE gate=$GATE"
+          echo "changes=$CHANGES relevant=$RELEVANT backend=$BACKEND build=$BUILD suite=$SUITE gate=$GATE"
 
           # Fail closed. A `changes` job that did not succeed leaves `relevant`
           # empty, which would otherwise read as "irrelevant" and green a
@@ -411,9 +551,7 @@ jobs:
             exit 1
           fi
 
-          if [ "$EVENT" = "pull_request" ]; then
-            echo "the data-path suite runs in the merge queue; deferred there."
-          elif [ "$RELEVANT" != "true" ]; then
+          if [ "$RELEVANT" != "true" ]; then
             echo "nothing on the bronze → dbt → ClickHouse → analytics path changed — nothing to prove."
           else
             if [ "$BACKEND" = "true" ] && [ "$BUILD" != "success" ]; then

@@ -26,3 +26,16 @@ routes:
   - prefix: /api/identity
     upstream: http://identity-resolution:8082
     strip_prefix: true
+  # No `auth` key -> defaults to session. /v1/raw-data is NOT routed here:
+  # ingest uses its own token and is reached on the published host port.
+  - prefix: /api/v3
+    upstream: http://insight-v3-core:8086
+    strip_prefix: true
+    timeout_ms: 40000
+  # The custom-surface MCP server, on its own listener with its own scope. Not
+  # strip_prefix: the streamable-http endpoint answers on this exact path.
+  - prefix: /mcp/v3
+    upstream: http://insight-v3-core:8087
+    auth: bearer
+    mcp_scope: "mcp:author"
+    timeout_ms: 40000

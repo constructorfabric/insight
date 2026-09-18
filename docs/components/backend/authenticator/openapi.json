@@ -140,6 +140,28 @@
         "x-toolkit-visibility": "exposed"
       }
     },
+    "/.well-known/oauth-protected-resource/mcp/v3": {
+      "get": {
+        "operationId": "authenticator.mcp_oauth.protected_resource_mcp_v3",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Protected resource metadata"
+          }
+        },
+        "summary": "Protected resource metadata for the custom-surface MCP endpoint",
+        "tags": [
+          "mcp-oauth"
+        ],
+        "x-toolkit-visibility": "exposed"
+      }
+    },
     "/.well-known/openid-configuration": {
       "get": {
         "operationId": "authenticator.openid_configuration",

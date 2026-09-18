@@ -1,4 +1,4 @@
-name: E2E — Compose stand
+name: E2E compose stand
 
 # The deployed-stand suite (tests/stand) run against a real compose stack: ghcr
 # images pinned to each component's chart appVersion, a real Keycloak login, and
@@ -22,10 +22,10 @@ name: E2E — Compose stand
 #                what executes.
 #
 # The two lane names are stable required contexts. The workflow starts on every
-# pull request so those contexts report as skipped, but the stand runs only for
-# merge groups, nightly runs, and manual dispatches. Superseded PR runs are
-# cancelled by the concurrency group. Wall-clock and flake history are in
-# .cf-studio/.plans/stage1-compose-e2e-suite/out/ci-wiring.md.
+# pull request so those contexts exist there; every job is skipped on a pull
+# request, a skipped required check counts as passed, and the stand runs only
+# for merge groups, nightly runs, and manual dispatches. Wall-clock and flake
+# history are in .cf-studio/.plans/stage1-compose-e2e-suite/out/ci-wiring.md.
 #
 # Every stand operation goes through ./dev-compose.sh test-stand — never the
 # bare up/down/seed a human developer uses. The pinned frontend, Keycloak auth
@@ -36,9 +36,9 @@ name: E2E — Compose stand
 on:
   pull_request:
     branches: [main]
-    # Deliberately NO `paths:` filter. This workflow emits the required
-    # `Stand E2E` check, and GitHub leaves a required check whose workflow never
-    # ran pending forever. Relevance is decided by the cheap `changes` job.
+    # Deliberately NO `paths:` filter. This workflow emits the required lane
+    # checks, and GitHub leaves a required check whose workflow never ran
+    # pending forever; a skipped job reports and passes.
   # Merge-queue builds: the queue's gh-readonly-queue/* branches emit
   # merge_group, and a required check must report there or every queued PR
   # times out and is evicted.
@@ -76,16 +76,16 @@ jobs:
   # Stages 2 (CI stand) and 3 (E2E stand) are meant to add a target to
   # `resolve-target` below rather than copy this file.
   # ─── changes ──────────────────────────────────────────────────────────────
-  # What an `on: paths:` filter would have done, moved into a job so the
-  # workflow always runs and the required umbrella below always reports. The
-  # same filter also covers events such as merge_group that support no paths.
+  # What an `on: paths:` filter would have done, moved into a job because
+  # events such as merge_group support no paths.
   #
   # `src/backend/**` is in the list, and its absence was the reason making this
   # required would have gated nothing that matters: the endpoint contracts this
   # suite asserts are implemented there, so a PR changing an analytics handler
   # has to run the stand or the gate is decorative.
   changes:
-    name: changes
+    name: Detect changes
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -150,6 +150,21 @@ jobs:
           fi
           changed="$(git diff --name-only "$base_point" "$HEAD")"
           printf '  %s\n' "${changed//$'\n'/$'\n  '}"
+
+          # Ignored because nothing this stand raises or runs reads these paths.
+          # INVARIANT: */helm/Chart.yaml is NOT ignored — dev-compose.sh takes
+          # the image the stand pulls from its appVersion.
+          IGNORED_PATHS='^src/(backend/services/[^/]+|frontend)/helm/|^src/ingestion/tools/seed/tests/|^tests/datapath/|^(src/backend|src/frontend|tests|deploy/compose)/.*\.md$'
+          IMAGE_PIN_PATHS='^src/(backend/services/[^/]+|frontend)/helm/Chart\.yaml$'
+          # `|| true`: a grep selecting nothing exits 1 — set -e fails the step.
+          changes_to_test="$(printf '%s\n' "$changed" | grep -vE "$IGNORED_PATHS" || true)"
+          image_pins="$(printf '%s\n' "$changed" | grep -E "$IMAGE_PIN_PATHS" || true)"
+          changes_to_test="$(printf '%s\n%s\n' "$changes_to_test" "$image_pins" | grep -v '^$' || true)"
+          if [ -n "$changes_to_test" ]; then
+            printf '%s\n' "$changes_to_test" | sed 's/^/  affects this run: /'
+          else
+            echo "  affects this run: nothing — no changed file can reach this stand"
+          fi
           relevant="$forced"
           backend=false
           frontend=false
@@ -159,20 +174,23 @@ jobs:
           identity_resolution=false
           gateway=false
           gateway_checks=false
-          if echo "$changed" | grep -qE '^(tests/|deploy/compose/|src/ingestion/tools/seed/|docker-compose\.yml|dev-compose\.sh|src/backend/|src/frontend/|docs/components/backend/.*/openapi\.json|\.github/workflows/(build-images|e2e-stand)\.yml|\.github/workflows/scripts/redact-playwright-trace\.py|scripts/ci/prebuilt_images\.py)'; then
+          if echo "$changes_to_test" | grep -qE '^(tests/|deploy/compose/|src/ingestion/tools/seed/|docker-compose\.yml|dev-compose\.sh|src/backend/|src/frontend/|docs/components/backend/.*/openapi\.json|\.github/workflows/(build-images|e2e-stand)\.yml|\.github/workflows/scripts/redact-playwright-trace\.py|scripts/ci/prebuilt_images\.py)'; then
             relevant=true
           elif [ "$forced" = true ]; then
             echo "nothing the stand covers changed — running anyway, this event has no pull request to filter"
           else
             echo "nothing the stand covers changed"
           fi
-          if echo "$changed" | grep -q '^src/backend/'; then backend=true; fi
-          if echo "$changed" | grep -q '^src/frontend/'; then frontend=true; fi
-          if echo "$changed" | grep -qE '^(src/backend/services/analytics/|src/backend/libs/insight-clickhouse/|src/backend/docker-entrypoint\.sh$|src/backend/Cargo\.(toml|lock)$|\.github/workflows/(build-images|e2e-stand)\.yml$)'; then analytics=true; fi
-          if echo "$changed" | grep -qE '^(src/backend/services/authenticator/|src/backend/libs/authenticator-sdk/|src/backend/Cargo\.(toml|lock)$|\.github/workflows/(gateway|build-images|e2e-stand)\.yml$|scripts/ci/prebuilt_images\.py$)'; then authenticator=true; fi
-          if echo "$changed" | grep -qE '^(src/backend/services/identity-resolution/|src/backend/libs/insight-clickhouse/|src/backend/docker-entrypoint\.sh$|src/backend/Cargo\.(toml|lock)$|\.github/workflows/(build-images|e2e-stand)\.yml$)'; then identity_resolution=true; fi
+          if echo "$changes_to_test" | grep -q '^src/backend/'; then backend=true; fi
+          if echo "$changes_to_test" | grep -q '^src/frontend/'; then frontend=true; fi
+          if echo "$changes_to_test" | grep -qE '^(src/backend/services/analytics/|src/backend/Dockerfile$|src/backend/\.dockerignore$|src/backend/libs/insight-clickhouse/|src/backend/docker-entrypoint\.sh$|src/backend/Cargo\.(toml|lock)$|\.github/workflows/(build-images|e2e-stand)\.yml$)'; then analytics=true; fi
+          # INVARIANT: these three cross into gateway.yml, which lints the chart
+          # and runs its own e2e suite from these trees — so they read the raw
+          # diff, not the stand's filtered list.
+          if echo "$changed" | grep -qE '^(src/backend/services/authenticator/|src/backend/Dockerfile$|src/backend/\.dockerignore$|src/backend/libs/authenticator-sdk/|src/backend/Cargo\.(toml|lock)$|\.github/workflows/(gateway|build-images|e2e-stand)\.yml$|scripts/ci/prebuilt_images\.py$)'; then authenticator=true; fi
+          if echo "$changes_to_test" | grep -qE '^(src/backend/services/identity-resolution/|src/backend/Dockerfile$|src/backend/\.dockerignore$|src/backend/libs/insight-clickhouse/|src/backend/docker-entrypoint\.sh$|src/backend/Cargo\.(toml|lock)$|\.github/workflows/(build-images|e2e-stand)\.yml$)'; then identity_resolution=true; fi
           if echo "$changed" | grep -qE '^(src/backend/services/gateway/|src/backend/tools/routegen/|src/backend/Cargo\.(toml|lock)$|\.github/workflows/(gateway|build-images|e2e-stand)\.yml$|scripts/ci/prebuilt_images\.py$)'; then gateway=true; fi
-          if echo "$changed" | grep -qE '^(src/backend/tools/routegen/|src/backend/services/gateway/|src/backend/services/authenticator/|src/backend/libs/authenticator-sdk/|src/backend/Cargo\.(toml|lock)$|src/ingestion/tools/seed/insight_seed/|\.github/workflows/(gateway|build-images|e2e-stand)\.yml$|scripts/ci/(prebuilt_images|test_prebuilt_images)\.py$)'; then gateway_checks=true; fi
+          if echo "$changed" | grep -qE '^(src/backend/tools/routegen/|src/backend/services/gateway/|src/backend/services/authenticator/|src/backend/Dockerfile$|src/backend/\.dockerignore$|src/backend/libs/authenticator-sdk/|src/backend/Cargo\.(toml|lock)$|src/ingestion/tools/seed/insight_seed/|\.github/workflows/(gateway|build-images|e2e-stand)\.yml$|scripts/ci/(prebuilt_images|test_prebuilt_images)\.py$)'; then gateway_checks=true; fi
           if [[ "$GITHUB_EVENT_NAME" == merge_group ]] && \
              [[ "$analytics" == true || "$authenticator" == true || "$identity_resolution" == true || "$gateway" == true ]]; then
             backend_artifacts=true
@@ -180,7 +198,7 @@ jobs:
           emit
 
   build-pr-images:
-    name: Build PR images
+    name: Build images
     needs: changes
     if: github.event_name == 'merge_group'
     permissions:
@@ -207,7 +225,7 @@ jobs:
       authenticator_changed: ${{ needs.changes.outputs.authenticator == 'true' }}
 
   resolve-target:
-    name: resolve-target
+    name: Resolve target
     needs: changes
     if: ${{ github.event_name != 'pull_request' && needs.changes.outputs.relevant == 'true' }}
     runs-on: ubuntu-latest
@@ -237,7 +255,7 @@ jobs:
   # passes `tests/stand` to pytest and forwards this on top, so naming a
   # subdirectory would ADD to the full collection instead of narrowing it.
   stand-runner:
-    name: shared stand runner
+    name: Stand runner
     needs: [changes, resolve-target, build-pr-images]
     if: |
       !cancelled()
@@ -286,7 +304,29 @@ jobs:
             --image "insight-analytics:${ANALYTICS_POLICY}" \
             --image "insight-authenticator:${AUTHENTICATOR_POLICY}" \
             --image "insight-identity-resolution:${IDENTITY_POLICY}" \
-            --image "insight-gateway:${GATEWAY_POLICY}"
+            --image "insight-gateway:${GATEWAY_POLICY}" \
+            --image "insight-v3-core:unchanged" # build-images exports no insight-v3-core artifact — always the published image
+
+      # Restore-only warm start for the --build-backend fallback: the cache is
+      # saved by e2e-bronze-to-api.yml's push-to-main run; nothing here saves.
+      - name: Read the builder toolchain for the cache key
+        id: toolchain
+        if: needs.changes.outputs.backend == 'true' && needs.changes.outputs.backend_artifacts != 'true'
+        run: |
+          set -euo pipefail
+          image="$(grep -m1 -oE 'image: rust:[^ ]+' docker-compose.yml | cut -d' ' -f2 | tr ':' '-')"
+          [ -n "$image" ] || { echo "::error::no rust builder image found in docker-compose.yml"; exit 1; }
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: needs.changes.outputs.backend == 'true' && needs.changes.outputs.backend_artifacts != 'true'
+        with:
+          path: |
+            .ci-cargo/target
+            .ci-cargo/registry
+          key: e2e-backend-${{ steps.toolchain.outputs.image }}-${{ hashFiles('src/backend/Cargo.lock') }}
+          restore-keys: |
+            e2e-backend-${{ steps.toolchain.outputs.image }}-
 
       # `up` writes .env.compose.test-stand, forces the pinned frontend and
       # Keycloak, seeds, and then blocks until EVERY gold observation table the
@@ -309,6 +349,7 @@ jobs:
           AUTHENTICATOR_IMAGE: ${{ needs.changes.outputs.backend_artifacts == 'true' && 'insight-authenticator:e2e-prebuilt' || '' }}
           IDENTITY_RESOLUTION_IMAGE: ${{ needs.changes.outputs.backend_artifacts == 'true' && 'insight-identity-resolution:e2e-prebuilt' || '' }}
           GATEWAY_IMAGE: ${{ needs.changes.outputs.backend_artifacts == 'true' && 'insight-gateway:e2e-prebuilt' || '' }}
+          INSIGHT_V3_CORE_IMAGE: ${{ needs.changes.outputs.backend_artifacts == 'true' && 'insight-v3-core:e2e-prebuilt' || '' }}
         run: |
           set -euo pipefail
           # `if` blocks, not `[ … ] && flags+=(…)`: under set -e a false test as
@@ -318,6 +359,9 @@ jobs:
             flags+=(--prebuilt-backend)
           elif [ "$BUILD_BACKEND" = "true" ]; then
             flags+=(--build-backend)
+            mkdir -p .ci-cargo/target .ci-cargo/registry
+            export RUST_TARGET_SOURCE="$PWD/.ci-cargo/target"
+            export CARGO_REGISTRY_SOURCE="$PWD/.ci-cargo/registry"
           fi
           if [ "$BUILD_FRONTEND" = "true" ]; then flags+=(--build-frontend); fi
           ./dev-compose.sh test-stand up "${flags[@]}"
@@ -578,7 +622,7 @@ jobs:
 
   # ─── aggregate result ─────────────────────────────────────────────────────
   # Merge groups and explicit stand runs get one aggregate result in addition
-  # to the stable lane contexts. Pull requests defer the aggregate with them.
+  # to the stable lane contexts.
   #
   # A skipped lane passes only when `changes` reported the diff irrelevant.
   stand-suite:

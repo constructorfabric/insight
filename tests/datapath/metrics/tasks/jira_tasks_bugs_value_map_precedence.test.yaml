@@ -1,0 +1,123 @@
+spec_version: 1
+description: >
+  Task Delivery - `tasks.bugs_fixed` for JIRA, and the exact conditions under
+  which an operator's issue-type decision classifies a type.
+
+  Bronze issue types flow through the Jira type dimension into
+  `silver.class_task_issuetypes` carrying raw identity only; GOLD resolves
+  `issue_kind` from the operator's live `config.field_value_map` row for the
+  type id and nothing else, and counts a closure as a fixed bug when that kind
+  says `bug`. There is no name-list fallback, and this tenant configures no
+  `config.field_value_defaults` row either, so an id with no live row is
+  `unknown`. The row counts only while it is alive: `is_deleted = 0` and
+  `valid_from` not in the future.
+
+  Carol closes six issues, one per branch of that matrix. Type 10000 is named
+  `Bug` but its live row says `task`, so it counts as a non-bug — the name is
+  not consulted. Type 10011 has a live row saying `bug`, so it counts as a bug.
+  Type 10014 was RENAMED in the catalogue to `Task` after the decision was made
+  against the name `Bug`; the id is unchanged, so it stays a bug. Type 10003 has
+  a row saying `task`, but the row is deleted — `unknown`. Type 10013 has a row
+  saying `bug` that starts in 2099 — `unknown`. Type 10012 has no row at all —
+  `unknown` too, the safety net for a new type. The three unknowns count in
+  tasks.closed only.
+
+  Two bugs and one non-bug out of six closures is the only total all six
+  branches produce together, and each wrong branch moves it in a distinct
+  direction: a name-list fallback coming back makes bugs three (10000 named
+  Bug) or four (10003 Regression); a rename re-bucketing 10014 by its new name
+  makes bugs one; a dead row honoured makes non-bug two; a future row honoured
+  makes bugs three.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/alice
+    - $ref: ../templates/people.yaml#/templates/bob
+    - $ref: ../templates/people.yaml#/templates/carol
+
+  bronze_jira.jira_user:
+    - $ref: ../templates/jira_task.yaml#/templates/carol_user
+
+  bronze_jira.jira_statuses:
+    - $ref: ../templates/jira_task.yaml#/templates/status_open
+    - $ref: ../templates/jira_task.yaml#/templates/status_in_progress
+    - $ref: ../templates/jira_task.yaml#/templates/status_closed
+
+  bronze_jira.jira_fields:
+    - $ref: ../templates/jira_task.yaml#/templates/field_status
+    - $ref: ../templates/jira_task.yaml#/templates/field_assignee
+    - $ref: ../templates/jira_task.yaml#/templates/field_issuetype
+
+  config.field_value_map:
+    # Live row on a type NAMED `Bug`: the row decides, the name never does.
+    - { $ref: ../templates/jira_task.yaml#/templates/value_type_bug, target_value: task }
+    # Live row on a custom type.
+    - { $ref: ../templates/jira_task.yaml#/templates/jira_issue_type, source_key: "10011", unique_key: jira-type-10011, target_value: bug, display_name: Mapped Custom }
+    # Decision recorded against the name `Bug`; the catalogue now says `Task`.
+    # Same id, so the kind holds — display_name is only the drift signal.
+    - { $ref: ../templates/jira_task.yaml#/templates/jira_issue_type, source_key: "10014", unique_key: jira-type-10014, target_value: bug, display_name: Bug }
+    # Deleted row: must be ignored, and nothing else classifies 10003.
+    - { $ref: ../templates/jira_task.yaml#/templates/value_type_regression, target_value: task, is_deleted: 1 }
+    # Future row: must be ignored.
+    - { $ref: ../templates/jira_task.yaml#/templates/jira_issue_type, source_key: "10013", unique_key: jira-type-10013, target_value: bug, display_name: Future Custom, valid_from: "2099-01-01 00:00:00.000" }
+
+  bronze_jira.jira_issuetypes:
+    - $ref: ../templates/jira_task.yaml#/templates/issuetype_bug
+    - $ref: ../templates/jira_task.yaml#/templates/issuetype_regression
+    - { $ref: ../templates/jira_task.yaml#/templates/jira_issuetype, unique_key: jira-test-issuetype-10011, id: "10011", name: Mapped Custom, untranslatedName: Mapped Custom }
+    - { $ref: ../templates/jira_task.yaml#/templates/jira_issuetype, unique_key: jira-test-issuetype-10012, id: "10012", name: Unmapped Custom, untranslatedName: Unmapped Custom }
+    - { $ref: ../templates/jira_task.yaml#/templates/jira_issuetype, unique_key: jira-test-issuetype-10013, id: "10013", name: Future Custom, untranslatedName: Future Custom }
+    # Renamed since the decision: mapped as `Bug`, now called `Task`.
+    - { $ref: ../templates/jira_task.yaml#/templates/jira_issuetype, unique_key: jira-test-issuetype-10014, id: "10014", name: Task, untranslatedName: Task }
+
+  bronze_jira.jira_issue:
+    - $ref: ../templates/jira_task.yaml#/templates/jira_issue
+      id: "10003"
+      jira_id: "10003"
+      unique_key: jira-test-JVM-1
+      id_readable: JVM1
+      created: "2026-03-01T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10000","name":"Bug"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
+    - $ref: ../templates/jira_task.yaml#/templates/jira_issue
+      id: "10004"
+      jira_id: "10004"
+      unique_key: jira-test-JVM-2
+      id_readable: JVM2
+      created: "2026-03-01T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10011","name":"Mapped Custom"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
+    - $ref: ../templates/jira_task.yaml#/templates/jira_issue
+      id: "10005"
+      jira_id: "10005"
+      unique_key: jira-test-JVM-3
+      id_readable: JVM3
+      created: "2026-03-01T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10003","name":"Regression"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
+    - $ref: ../templates/jira_task.yaml#/templates/jira_issue
+      id: "10006"
+      jira_id: "10006"
+      unique_key: jira-test-JVM-4
+      id_readable: JVM4
+      created: "2026-03-01T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10012","name":"Unmapped Custom"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
+    - $ref: ../templates/jira_task.yaml#/templates/jira_issue
+      id: "10007"
+      jira_id: "10007"
+      unique_key: jira-test-JVM-5
+      id_readable: JVM5
+      created: "2026-03-01T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10013","name":"Future Custom"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
+    - $ref: ../templates/jira_task.yaml#/templates/jira_issue
+      id: JVM-6
+      jira_id: JVM-6
+      unique_key: jira-test-JVM-6
+      id_readable: JVM6
+      created: "2026-03-01T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10014","name":"Task"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
+
+  bronze_jira.jira_issue_history:
+    - { $ref: ../templates/jira_task.yaml#/templates/closed_hist, id_readable: JVM1, jira_id: "10003", changelog_id: "51000", unique_key: jira-test-JVM1-51000, created_at: "2026-03-25T14:00:00.000+0000", author_account_id: carol-jira-acct }
+    - { $ref: ../templates/jira_task.yaml#/templates/closed_hist, id_readable: JVM2, jira_id: "10004", changelog_id: "51001", unique_key: jira-test-JVM2-51001, created_at: "2026-03-25T14:00:00.000+0000", author_account_id: carol-jira-acct }
+    - { $ref: ../templates/jira_task.yaml#/templates/closed_hist, id_readable: JVM3, jira_id: "10005", changelog_id: "51002", unique_key: jira-test-JVM3-51002, created_at: "2026-03-25T14:00:00.000+0000", author_account_id: carol-jira-acct }
+    - { $ref: ../templates/jira_task.yaml#/templates/closed_hist, id_readable: JVM4, jira_id: "10006", changelog_id: "51003", unique_key: jira-test-JVM4-51003, created_at: "2026-03-25T14:00:00.000+0000", author_account_id: carol-jira-acct }
+    - { $ref: ../templates/jira_task.yaml#/templates/closed_hist, id_readable: JVM5, jira_id: "10007", changelog_id: "51004", unique_key: jira-test-JVM5-51004, created_at: "2026-03-25T14:00:00.000+0000", author_account_id: carol-jira-acct }
+    - { $ref: ../templates/jira_task.yaml#/templates/closed_hist, id_readable: JVM6, jira_id: "JVM-6", changelog_id: "51005", unique_key: jira-test-JVM6-51005, created_at: "2026-03-25T14:00:00.000+0000", author_account_id: carol-jira-acct }

@@ -18,6 +18,7 @@ pytestmark = pytest.mark.fixture
 SPEC = "git_default_branch_code_lines"
 
 ERIN = "erin@example.com"
+DAVE = "dave@example.com"
 
 
 def test_a_line_counts_only_if_it_is_code_and_its_commit_landed(spec: SpecRun) -> None:
@@ -142,6 +143,34 @@ def test_an_extension_counts_only_the_landed_lines_of_the_code_files_sharing_it(
         r.breakdown("git.default_branch_code_lines"),
         dimensions={"key": "file_extension", "value": "__unknown__"},
     ), "every landed row has its extension"
+
+
+def test_a_commit_counts_on_the_day_its_work_was_written_not_the_day_it_was_committed(
+    spec: SpecRun,
+) -> None:
+    """dbcl-late was written on the 2nd and committed on the 5th. Its eleven lines belong
+    to the window holding the 2nd, and the window holding the 5th has nothing — a build
+    dating commits by the committer reads the two the other way round."""
+    for window, lines in ((("2026-10-01", "2026-10-02"), 11), (("2026-10-05", "2026-10-06"), None)):
+        r = spec.call(
+            {
+                "url": "/v1/metric-results",
+                "method": "POST",
+                "body": {
+                    "entity": {"type": "person", "ids": [DAVE]},
+                    "period": {"from": window[0], "to": window[1]},
+                    "metrics": [
+                        {
+                            "metric_key": "git.default_branch_code_lines",
+                            "views": [{"view": "period"}],
+                        }
+                    ],
+                },
+            }
+        )
+        assert r.status == 200
+
+        r.row("git.default_branch_code_lines", "period", entity_id=DAVE).equals(value=lines)
 
 
 def test_an_empty_window_is_null_not_zero(spec: SpecRun) -> None:

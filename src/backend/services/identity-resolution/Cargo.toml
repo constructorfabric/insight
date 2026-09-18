@@ -62,6 +62,7 @@ base64 = { workspace = true }
 insight-clickhouse = { workspace = true }
 insight-http-metrics = { workspace = true }
 insight-log-context = { workspace = true }
+insight-openapi = { workspace = true }
 insight-migration = { workspace = true }
 clickhouse = { workspace = true }
 
@@ -76,7 +77,7 @@ opentelemetry-otlp = { workspace = true }
 toolkit-security = { workspace = true }
 toolkit-canonical-errors = { workspace = true }
 # utoipa pinned to match the `ToSchema` the toolkit OperationBuilder compiles against.
-utoipa = { version = "5.5", features = ["chrono", "uuid"] }
+utoipa = { workspace = true, features = ["chrono", "uuid"] }
 
 [dev-dependencies]
 insight-log-context = { workspace = true, features = ["test-support"] }

@@ -11,8 +11,7 @@ use super::openapi_document;
 
 #[test]
 fn openapi_document_covers_the_route_table() -> anyhow::Result<()> {
-    // Build offline (no DB / listener) and inspect the serialized form — the
-    // same JSON `print_openapi` emits and the drift gate diffs.
+    // Build offline (no DB / listener) and inspect the serialized form.
     let doc = openapi_document()?;
     let json = serde_json::to_value(&doc)?;
 

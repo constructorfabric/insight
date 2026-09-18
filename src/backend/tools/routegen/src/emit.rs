@@ -82,7 +82,10 @@ enum McpPublicUrlError {
     InvalidOrigin,
 }
 
-fn mcp_resource_metadata_url(raw: Option<&str>) -> Result<Option<String>, McpPublicUrlError> {
+fn mcp_resource_metadata_url(
+    raw: Option<&str>,
+    path: &str,
+) -> Result<Option<String>, McpPublicUrlError> {
     let Some(raw) = raw else {
         return Ok(None);
     };
@@ -99,7 +102,7 @@ fn mcp_resource_metadata_url(raw: Option<&str>) -> Result<Option<String>, McpPub
     }
 
     Ok(Some(format!(
-        "{}/.well-known/oauth-protected-resource/mcp",
+        "{}/.well-known/oauth-protected-resource{path}",
         url.as_str().trim_end_matches('/')
     )))
 }
@@ -181,7 +184,8 @@ pub fn emit(config: &RouteConfig, settings: &Settings) -> anyhow::Result<String>
         settings.authenticator_url.trim_end_matches('/'),
         settings.authz_path
     );
-    let mcp_resource_metadata_url = mcp_resource_metadata_url(settings.mcp_public_url.as_deref())?;
+    let mcp_resource_metadata_url =
+        mcp_resource_metadata_url(settings.mcp_public_url.as_deref(), "/mcp")?;
 
     let mut c = String::new();
 
@@ -380,12 +384,23 @@ fn emit_server(
     c.push_str("            proxy_set_header X-Forwarded-Proto $scheme;\n");
     c.push_str("        }\n\n");
 
-    for path in [
-        "/.well-known/oauth-authorization-server",
-        "/.well-known/oauth-protected-resource",
-        "/.well-known/oauth-protected-resource/mcp",
-        "/.well-known/jwks.json",
-    ] {
+    let mut well_known = vec![
+        "/.well-known/oauth-authorization-server".to_owned(),
+        "/.well-known/oauth-protected-resource".to_owned(),
+        "/.well-known/oauth-protected-resource/mcp".to_owned(),
+        "/.well-known/jwks.json".to_owned(),
+    ];
+    for route in routes {
+        if route.auth != Authentication::Bearer {
+            continue;
+        }
+        let path = format!("/.well-known/oauth-protected-resource{}", route.prefix);
+        if !well_known.contains(&path) {
+            well_known.push(path);
+        }
+    }
+
+    for path in &well_known {
         writeln!(c, "        location = {path} {{")?;
         c.push_str("            limit_req zone=auth_per_ip burst=120 nodelay;\n");
         c.push_str("            proxy_pass http://authenticator;\n");
@@ -398,7 +413,7 @@ fn emit_server(
 
     c.push_str("        # --- generated /api routes: full auth + hygiene block per location ---\n");
     for (route, ident) in routes.iter().zip(route_upstream) {
-        emit_api_location(c, route, ident, upstreams, config)?;
+        emit_api_location(c, route, ident, upstreams, config, settings)?;
     }
 
     // Unmatched /api, /internal, SPA.
@@ -452,31 +467,81 @@ fn emit_stub_status(c: &mut String) -> anyhow::Result<()> {
 }
 
 /// Emit one configured location with the complete hygiene block.
+/// What every generated `location` block needs, so the emitters pass one
+/// borrow instead of six.
+struct LocationContext<'a> {
+    route: &'a ResolvedRoute,
+    ident: &'a str,
+    scheme: &'a str,
+    config: &'a RouteConfig,
+    settings: &'a Settings,
+}
+
 fn emit_api_location(
     c: &mut String,
     route: &ResolvedRoute,
     ident: &str,
     upstreams: &[Upstream],
     config: &RouteConfig,
+    settings: &Settings,
 ) -> anyhow::Result<()> {
     let scheme = upstreams
         .iter()
         .find(|u| u.ident == *ident)
         .map_or("http", |u| u.scheme.as_str());
+    let ctx = LocationContext {
+        route,
+        ident,
+        scheme,
+        config,
+        settings,
+    };
 
     writeln!(c, "        # route: {} -> {}", route.prefix, route.upstream)?;
     match route.auth {
-        Authentication::Session => writeln!(c, "        location {} {{", route.prefix)?,
+        Authentication::Session => {
+            emit_api_location_block(c, &ctx, "", "")?;
+        }
+        Authentication::InstanceToken if route.strip_prefix => {
+            emit_api_location_block(c, &ctx, "= ", "")?;
+            emit_api_location_block(c, &ctx, "^~ ", "/")?;
+        }
         Authentication::Bearer | Authentication::InstanceToken => {
-            writeln!(c, "        location = {} {{", route.prefix)?;
+            emit_api_location_block(c, &ctx, "= ", "")?;
         }
     }
+
+    Ok(())
+}
+
+fn emit_api_location_block(
+    c: &mut String,
+    ctx: &LocationContext<'_>,
+    modifier: &str,
+    suffix: &str,
+) -> anyhow::Result<()> {
+    let LocationContext {
+        route,
+        ident,
+        scheme,
+        config,
+        settings,
+    } = ctx;
+    writeln!(c, "        location {modifier}{}{suffix} {{", route.prefix)?;
     match route.auth {
         Authentication::Session => {
             c.push_str("            access_by_lua_block { require(\"gateway\").exchange() }\n");
         }
         Authentication::Bearer => {
-            c.push_str("            access_by_lua_block { require(\"gateway\").pass_bearer() }\n");
+            let metadata =
+                mcp_resource_metadata_url(settings.mcp_public_url.as_deref(), &route.prefix)
+                    .map_err(|error| anyhow::anyhow!("route '{}': {error}", route.prefix))?
+                    .map_or_else(|| "nil".to_owned(), |url| format!("\"{url}\""));
+            writeln!(
+                c,
+                "            access_by_lua_block {{ require(\"gateway\").pass_bearer({metadata}, \"{}\") }}",
+                route.mcp_scope
+            )?;
         }
         Authentication::InstanceToken => {
             c.push_str(

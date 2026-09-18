@@ -20,8 +20,8 @@ from insight_datapath.instance import InstanceConfig
 pytestmark = pytest.mark.fixture
 
 USERS = "bronze_gitlab.users"
-REQUESTS = "bronze_gitlab.merge_requests"
-COMMITS = "bronze_gitlab.merge_request_commits"
+REQUESTS = "bronze_gitlab.pull_requests"
+COMMITS = "bronze_gitlab.pull_request_commits"
 
 type BronzeValue = str | int | bool | None
 type BronzeRow = dict[str, BronzeValue]
@@ -58,6 +58,7 @@ def _user(
         "state": "active",
         "email": email,
         "public_email": public_email,
+        "commit_email": "",
         "bot": False,
     }
 
@@ -71,6 +72,10 @@ def _request(envelope: Envelope, iid: int, author_id: int) -> BronzeRow:
         "state": "merged",
         "author_id": author_id,
         "author_username": f"user-{author_id}",
+        "author_name": "Request Author",
+        "reviewers": "[]",
+        "labels": "[]",
+        "assignee_ids": "[]",
         "source_branch": "feature",
         "target_branch": "main",
         "created_at": "2026-10-01T08:00:00Z",
@@ -83,7 +88,8 @@ def _commit(envelope: Envelope, sha: str, iid: int, author_email: str) -> Bronze
     return envelope.row(f"mc-{sha}") | {
         "project_id": 101,
         "mr_iid": iid,
-        "id": sha,
+        "mr_updated_at": "2026-10-01T13:00:00Z",
+        "sha": sha,
         "short_id": sha[:8],
         "title": "change",
         "message": "change",
@@ -93,6 +99,7 @@ def _commit(envelope: Envelope, sha: str, iid: int, author_email: str) -> Bronze
         "committer_name": "Someone Else",
         "committer_email": author_email,
         "committed_date": "2026-10-01T08:30:00Z",
+        "parent_ids": "[]",
     }
 
 

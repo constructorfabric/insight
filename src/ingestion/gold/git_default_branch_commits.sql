@@ -22,7 +22,11 @@
 -- squash rewrites history, so the originals are unreachable from the default
 -- branch for good. The second half of this model reads the content instead: a
 -- change whose object id sits on a default-branch commit at the same path
--- landed, whichever commit carries it there.
+-- landed, whichever commit carries it there — unless the default branch
+-- already held that content when the commit was written, which makes the
+-- match no evidence about the commit at all. One change is enough and scope
+-- lives on the commit, so without that test a restored file carries a whole
+-- commit across. #3340
 --
 -- INVARIANT: content can only heal what SURVIVED into the default branch. A
 -- path a branch touched more than once keeps its intermediate versions
@@ -30,9 +34,8 @@
 -- carries the span's end, not its steps.
 --
 -- INVARIANT: this cannot see a branch merged by a fast-forward push with no
--- pull request. GitLab still corrects those itself (advancing the default head
--- re-walks the range), the proxy-backed sources only within their lookback
--- window.
+-- pull request. The proxy-backed sources correct membership for those only
+-- inside their lookback window.
 WITH
 -- The default branch NAME per repository, which is what a pull request's
 -- destination has to be compared against. Every git connector reports it.
@@ -50,40 +53,74 @@ repository_default_branches AS (
     GROUP BY tenant_id, source_id, project_key, repo_slug
 ),
 
--- The content that reached the default branch, by path. Object ids only: a
--- source that reports none says nothing about where its content is, and an
--- empty identity would match every such row to every other.
+-- The content that reached the default branch, by path, and the FIRST time it
+-- got there. Object ids only: a source that reports none says nothing about
+-- where its content is, and an empty identity would match every such row to
+-- every other.
+--
+-- INVARIANT: the earliest carrier, so the comparison below reads "the default
+-- branch did not already hold this". A later carrier of content the branch
+-- already had proves nothing about a commit written in between, and taking the
+-- latest would let an unrelated trunk commit decide.
+--
+-- INVARIANT: committer_date over the author date, because that is when the
+-- object was written — a rebase and a cherry-pick both preserve the author
+-- date. It arrived on the class after the column it falls back to and is not
+-- backfilled, so a row synced before then answers with the author date.
+--
+-- SAFETY: one undated carrier makes the whole arrival unknown. `min` SKIPS
+-- nulls, so without the guard an undated carrier would be invisible and a
+-- later dated one would answer for it — promoting a commit the default branch
+-- may well have preceded. Unknown must refuse, not guess.
 landed_content AS (
-    SELECT DISTINCT
+    SELECT
         landed_change.tenant_id AS tenant_id,
         landed_change.source_id AS source_id,
         landed_change.project_key AS project_key,
         landed_change.repo_slug AS repo_slug,
         landed_change.file_path AS file_path,
-        {{ git_file_content_identity('landed_change.post_image_oid', 'landed_change.pre_image_oid') }} AS content_identity
+        {{ git_file_content_identity('landed_change.post_image_oid', 'landed_change.pre_image_oid') }} AS content_identity,
+        if(
+            countIf(coalesce(carrier.committer_date, carrier.date) IS NULL) > 0,
+            CAST(NULL AS Nullable(DateTime)),
+            min(coalesce(carrier.committer_date, carrier.date))
+        ) AS arrived_at
     FROM {{ ref('class_git_file_changes') }} AS landed_change FINAL
-    WHERE (landed_change.tenant_id, landed_change.source_id, landed_change.project_key, landed_change.repo_slug, landed_change.commit_hash) IN (
-        SELECT tenant_id, source_id, project_key, repo_slug, commit_hash
-        FROM {{ ref('class_git_commits') }} FINAL
-        WHERE is_default_branch = 1
-    )
+    INNER JOIN {{ ref('class_git_commits') }} AS carrier FINAL
+        ON carrier.tenant_id IS NOT DISTINCT FROM landed_change.tenant_id
+        AND carrier.source_id IS NOT DISTINCT FROM landed_change.source_id
+        AND carrier.project_key = landed_change.project_key
+        AND carrier.repo_slug = landed_change.repo_slug
+        AND carrier.commit_hash = landed_change.commit_hash
+    WHERE {{ git_on_default_branch('carrier.is_default_branch') }}
       AND NOT (
           coalesce(landed_change.pre_image_oid, '') = ''
               AND coalesce(landed_change.post_image_oid, '') = ''
       )
+    GROUP BY
+        landed_change.tenant_id,
+        landed_change.source_id,
+        landed_change.project_key,
+        landed_change.repo_slug,
+        landed_change.file_path,
+        content_identity
 ),
--- The candidates: commits the default branch does not reach. Narrowing here
--- rather than filtering afterwards is what keeps a commit from matching its
--- own content and reporting itself as healed.
+-- The candidates: commits the default branch does not reach, each with the
+-- time it was written. Narrowing here rather than filtering afterwards is what
+-- keeps a commit from matching its own content and reporting itself as healed.
+--
+-- INVARIANT: a commit no source dated compares with nothing, and an unknown
+-- order promotes nothing — the comparison below is false for it.
 unlanded_commits AS (
     SELECT
         tenant_id,
         source_id,
         project_key,
         repo_slug,
-        commit_hash
+        commit_hash,
+        coalesce(committer_date, date) AS made_at
     FROM {{ ref('class_git_commits') }} FINAL
-    WHERE coalesce(is_default_branch, 0) != 1
+    WHERE NOT ({{ git_on_default_branch('is_default_branch') }})
       AND is_merge_commit = 0
 )
 SELECT DISTINCT
@@ -91,14 +128,16 @@ SELECT DISTINCT
     source_id,
     project_key,
     repo_slug,
-    commit_hash
+    commit_hash,
+    data_source
 FROM (
     SELECT
         links.tenant_id AS tenant_id,
         links.source_id AS source_id,
         links.project_key AS project_key,
         links.repo_slug AS repo_slug,
-        links.commit_hash AS commit_hash
+        links.commit_hash AS commit_hash,
+        links.data_source AS data_source
     FROM {{ ref('class_git_pull_requests_commits') }} AS links FINAL
     INNER JOIN {{ ref('class_git_pull_requests') }} AS prs FINAL
         ON prs.tenant_id = links.tenant_id
@@ -121,8 +160,15 @@ FROM (
         branch_change.source_id AS source_id,
         branch_change.project_key AS project_key,
         branch_change.repo_slug AS repo_slug,
-        branch_change.commit_hash AS commit_hash
+        branch_change.commit_hash AS commit_hash,
+        branch_change.data_source AS data_source
     FROM {{ ref('class_git_file_changes') }} AS branch_change FINAL
+    INNER JOIN unlanded_commits AS candidate
+        ON candidate.tenant_id IS NOT DISTINCT FROM branch_change.tenant_id
+        AND candidate.source_id IS NOT DISTINCT FROM branch_change.source_id
+        AND candidate.project_key = branch_change.project_key
+        AND candidate.repo_slug = branch_change.repo_slug
+        AND candidate.commit_hash = branch_change.commit_hash
     INNER JOIN landed_content AS landed
         ON landed.tenant_id IS NOT DISTINCT FROM branch_change.tenant_id
         AND landed.source_id IS NOT DISTINCT FROM branch_change.source_id
@@ -130,8 +176,5 @@ FROM (
         AND landed.repo_slug = branch_change.repo_slug
         AND landed.file_path = branch_change.file_path
         AND landed.content_identity = {{ git_file_content_identity('branch_change.post_image_oid', 'branch_change.pre_image_oid') }}
-    WHERE (branch_change.tenant_id, branch_change.source_id, branch_change.project_key, branch_change.repo_slug, branch_change.commit_hash) IN (
-        SELECT tenant_id, source_id, project_key, repo_slug, commit_hash
-        FROM unlanded_commits
-    )
+    WHERE landed.arrived_at >= candidate.made_at
 )

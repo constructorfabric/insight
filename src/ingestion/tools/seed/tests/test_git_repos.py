@@ -45,7 +45,7 @@ def test_each_vendor_gets_its_own_bronze_relation(emitted: Emitted) -> None:
     git_repos.generate(_NO_CLIENT, profiles.build_roster("dev@company.nonpresent"), _TENANT)
     assert set(emitted) == {
         "bronze_github.repositories",
-        "bronze_gitlab.projects",
+        "bronze_gitlab.repositories",
         "bronze_bitbucket_cloud.repositories",
     }
 
@@ -54,7 +54,7 @@ def test_each_vendor_gets_its_own_bronze_relation(emitted: Emitted) -> None:
     ("table", "column"),
     [
         ("bronze_github.repositories", "default_branch"),
-        ("bronze_gitlab.projects", "default_branch"),
+        ("bronze_gitlab.repositories", "default_branch"),
         ("bronze_bitbucket_cloud.repositories", "default_branch"),
     ],
 )

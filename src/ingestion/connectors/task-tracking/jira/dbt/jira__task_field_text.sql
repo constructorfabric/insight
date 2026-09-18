@@ -52,10 +52,13 @@ WITH long_text_fields AS (
 
 -- Current bodies, from the issue JSON.
 issue_winner AS (
-    SELECT unique_key, argMax(_airbyte_raw_id, _airbyte_extracted_at) AS raw_id
+    -- Read-time dedup of the ReplacingMergeTree by the issue's stable key
+    -- within a source, (source_id, jira_id): unmerged parts hold several rows
+    -- per issue, and `unique_key` exists for the merge alone.
+    SELECT source_id, jira_id, argMax(_airbyte_raw_id, _airbyte_extracted_at) AS raw_id
     FROM {{ source('bronze_jira', 'jira_issue') }}
-    WHERE unique_key IS NOT NULL
-    GROUP BY unique_key
+    WHERE jira_id IS NOT NULL
+    GROUP BY source_id, jira_id
 ),
 
 from_snapshot AS (

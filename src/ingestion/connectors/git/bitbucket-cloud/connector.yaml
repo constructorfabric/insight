@@ -41,12 +41,27 @@ definitions:
   # Repository listings: VERIFIED that the vendor filters server-side, so a
   # repository nobody has touched since the bound is never returned and its
   # clone is never walked.
+  #
+  # Ordered by created_on and bounded below by the previous page's last
+  # created_on (see repository_keyset_paginator). Strict `>`: two repositories
+  # created in the same microsecond that straddle a page boundary lose the
+  # second; `>=` would loop on a page of ties. Accepted.
   repos_since_start: &repos_since_start
     pagelen: "100"
-    # Ascending, so a cursor over this listing advances monotonically.
-    sort: updated_on
+    sort: created_on
     q: >-
       updated_on >= "{{ config['bitbucket_start_date'] }}"
+      AND created_on > "{{ next_page_token['next_page_token'] if next_page_token else '1970-01-01T00:00:00+00:00' }}"
+
+  # The same listing bounded by the stream's own cursor instead of the start
+  # date: a parent that carries state visits only the repositories touched
+  # since the last sync (one lookback window earlier, see the parent).
+  repos_since_cursor: &repos_since_cursor
+    pagelen: "100"
+    sort: created_on
+    q: >-
+      updated_on >= "{{ stream_interval.start_time }}"
+      AND created_on > "{{ next_page_token['next_page_token'] if next_page_token else '1970-01-01T00:00:00+00:00' }}"
 
   # Repository listings are also where an operator's exclusions apply. The
   # vendor's `q` cannot express a pattern — only case-insensitive substring —
@@ -81,16 +96,48 @@ definitions:
   # SubstreamPartitionRouter.set_initial_state: parent state is seeded from the
   # CHILD's, and it is keyed on the parent's own `cursor_field`, so a
   # full-refresh parent raises `unhashable type: 'list'` on the second sync.
+  # Same keyset walk, on the request id (see pull_request_keyset_paginator):
+  # an integer the vendor assigns once per repository, so no ties. The upper
+  # bound is the slice end: a request updated while the walk runs leaves this
+  # walk's set instead of moving inside it, and the next sync lists it, because
+  # the cursor closes at the newest updated_on seen, below that end.
   prs_since_start: &prs_since_start
+    # pagelen HARD CAP on /pullrequests is 50 (400 above).
     pagelen: "50"
+    sort: id
     q: >-
       updated_on >= "{{ stream_interval.start_time }}"
+      AND updated_on < "{{ stream_interval.end_time }}"
+      AND id > {{ next_page_token['next_page_token'] if next_page_token else 0 }}
+
+  # WORKAROUND: Bitbucket pages by number, so a listing ordered by a value the
+  # walk itself moves loses the item that slides across a page boundary. The
+  # fan-out listings order by an immutable key and ask each page for what lies
+  # past the previous page's last value, carried in `q` through
+  # next_page_token; no page number reaches the vendor.
+  # INVARIANT: the bound is read from the raw page, not the last selected
+  # record. A page whose every item the record filter drops must still advance.
+  repository_keyset_paginator: &repository_keyset_paginator
+    type: DefaultPaginator
+    pagination_strategy:
+      type: CursorPagination
+      cursor_value: "{{ response['values'][-1]['created_on'] if response.get('values') else '' }}"
+      stop_condition: "{{ not response.get('values') or not response.get('next') }}"
+
+  pull_request_keyset_paginator: &pull_request_keyset_paginator
+    type: DefaultPaginator
+    pagination_strategy:
+      type: CursorPagination
+      cursor_value: "{{ response['values'][-1]['id'] if response.get('values') else '' }}"
+      stop_condition: "{{ not response.get('values') or not response.get('next') }}"
 
   proxy_error_handler: &proxy_error_handler
     type: DefaultErrorHandler
-    # Generous on purpose: a cold blobless clone of a large repository runs
-    # for many Retry-After cycles before the first page can be served.
-    max_retries: 100
+    # The proxy holds a cold request in-connection while it clones, so a 429
+    # is the exception: cache headroom that stayed exhausted for the whole
+    # in-connection wait. 200 x the 30 s the proxy asks for outlasts a cold
+    # clone queue on a large installation.
+    max_retries: 200
     backoff_strategies:
       - type: WaitTimeFromHeader
         header: Retry-After
@@ -104,6 +151,11 @@ definitions:
     response_filters:
       # The repository is being cloned in the background: the proxy is
       # working, the caller waits.
+      - type: HttpResponseFilter
+        http_codes: [401]
+        action: FAIL
+        failure_type: config_error
+        error_message: The git-cli-proxy rejected git_proxy_token; it must match the token the proxy was started with
       - type: HttpResponseFilter
         http_codes: [429]
         action: RETRY
@@ -251,6 +303,9 @@ definitions:
       X-Source-Id: "{{ config['insight_source_id'] }}"
       X-Git-Username: "{{ 'x-bitbucket-api-token-auth' if config.get('bitbucket_username') else 'x-token-auth' }}"
       X-Git-Token: "{{ config['bitbucket_token'] }}"
+      # The proxy reserves cache headroom from the repository's reported size
+      # instead of its per-repository cap.
+      X-Repo-Size-Hint: "{{ stream_slice.extra_fields.get('size') or '' }}"
     error_handler: *proxy_error_handler
 
 check:
@@ -331,14 +386,7 @@ streams:
             next,values.uuid,values.slug,values.name,values.full_name,values.is_private,values.has_issues,values.has_wiki,values.language,values.size,values.created_on,values.updated_on,values.mainbranch.name,values.workspace.slug,values.workspace.uuid,values.links.clone,values.description,values.website,values.scm,values.fork_policy,values.enforced_signed_commits,values.owner.username,values.owner.uuid,values.parent.full_name,values.project.key,values.project.name,values.project.uuid
         error_handler: *discovery_error_handler
       record_selector: *repos_selector
-      paginator:
-        type: DefaultPaginator
-        pagination_strategy:
-          type: CursorPagination
-          cursor_value: "{{ response.get('next', '') }}"
-          stop_condition: "{{ not response.get('next') }}"
-        page_token_option:
-          type: RequestPath
+      paginator: *repository_keyset_paginator
       partition_router:
         type: ListPartitionRouter
         values: "{{ config['bitbucket_workspaces'] }}"
@@ -608,6 +656,8 @@ streams:
           - type: ParentStreamConfig
             parent_key: clone_url
             partition_field: repo_clone_url
+            extra_fields:
+              - [size]
             # `incremental_dependency` is what keeps the sync proportional to
             # activity: the parent is itself incremental, so only repositories
             # touched since the last sync are visited. The CDK persists parent
@@ -628,6 +678,7 @@ streams:
                   properties:
                     uuid: {type: [string, "null"]}
                     clone_url: {type: [string, "null"]}
+                    size: {type: [integer, "null"]}
                     updated_on: {type: [string, "null"]}
                   additionalProperties: true
               retriever:
@@ -648,19 +699,12 @@ streams:
                   path: "/repositories/{{ stream_partition.workspace }}"
                   http_method: GET
                   request_parameters:
-                    <<: *repos_since_start
+                    <<: *repos_since_cursor
                     fields: >-
-                      next,values.uuid,values.slug,values.updated_on,values.links.clone
+                      next,values.uuid,values.slug,values.updated_on,values.links.clone,values.created_on
                   error_handler: *discovery_error_handler
                 record_selector: *repos_selector
-                paginator:
-                  type: DefaultPaginator
-                  pagination_strategy:
-                    type: CursorPagination
-                    cursor_value: "{{ response.get('next', '') }}"
-                    stop_condition: "{{ not response.get('next') }}"
-                  page_token_option:
-                    type: RequestPath
+                paginator: *repository_keyset_paginator
                 partition_router:
                   # INSIDE `retriever`: at stream level the CDK silently
                   # ignores it — one empty partition, an empty workspace in
@@ -671,10 +715,13 @@ streams:
               incremental_sync:
                 type: DatetimeBasedCursor
                 cursor_field: updated_on
-                datetime_format: "%Y-%m-%dT%H:%M:%S.%f%z"
+                datetime_format: "%Y-%m-%dT%H:%M:%SZ"
                 cursor_datetime_formats:
                   - "%Y-%m-%dT%H:%M:%S.%f%z"
                   - "%Y-%m-%dT%H:%M:%S%z"
+                # A push lands on the vendor a little after the commit it
+                # carries, and the listing is bounded by the vendor's clock.
+                lookback_window: P1D
                 start_datetime:
                   type: MinMaxDatetime
                   datetime: "{{ config['bitbucket_start_date'] }}"
@@ -692,6 +739,10 @@ streams:
       type: DatetimeBasedCursor
       cursor_field: committed_date
       datetime_format: "%Y-%m-%dT%H:%M:%S%z"
+      # A future-dated commit would otherwise become the cursor and silence the
+      # stream: a `since` past now yields no slice on every later sync. Bounding
+      # records client-side drops such a row before the cursor observes it.
+      is_client_side_incremental: true
       # `git log --since` is a traversal cutoff: after a rebase the
       # replacement commits can carry dates BELOW the stored cursor and
       # would never be visited again. Re-enumerating one window each
@@ -808,6 +859,8 @@ streams:
           - type: ParentStreamConfig
             parent_key: clone_url
             partition_field: repo_clone_url
+            extra_fields:
+              - [size]
             incremental_dependency: true
             stream:
               type: DeclarativeStream
@@ -822,6 +875,7 @@ streams:
                   properties:
                     uuid: {type: [string, "null"]}
                     clone_url: {type: [string, "null"]}
+                    size: {type: [integer, "null"]}
                     updated_on: {type: [string, "null"]}
                   additionalProperties: true
               retriever:
@@ -842,19 +896,12 @@ streams:
                   path: "/repositories/{{ stream_partition.workspace }}"
                   http_method: GET
                   request_parameters:
-                    <<: *repos_since_start
+                    <<: *repos_since_cursor
                     fields: >-
-                      next,values.uuid,values.slug,values.updated_on,values.links.clone
+                      next,values.uuid,values.slug,values.updated_on,values.links.clone,values.created_on
                   error_handler: *discovery_error_handler
                 record_selector: *repos_selector
-                paginator:
-                  type: DefaultPaginator
-                  pagination_strategy:
-                    type: CursorPagination
-                    cursor_value: "{{ response.get('next', '') }}"
-                    stop_condition: "{{ not response.get('next') }}"
-                  page_token_option:
-                    type: RequestPath
+                paginator: *repository_keyset_paginator
                 partition_router:
                   # INSIDE `retriever`: at stream level the CDK silently
                   # ignores it — one empty partition, an empty workspace in
@@ -865,10 +912,13 @@ streams:
               incremental_sync:
                 type: DatetimeBasedCursor
                 cursor_field: updated_on
-                datetime_format: "%Y-%m-%dT%H:%M:%S.%f%z"
+                datetime_format: "%Y-%m-%dT%H:%M:%SZ"
                 cursor_datetime_formats:
                   - "%Y-%m-%dT%H:%M:%S.%f%z"
                   - "%Y-%m-%dT%H:%M:%S%z"
+                # A push lands on the vendor a little after the commit it
+                # carries, and the listing is bounded by the vendor's clock.
+                lookback_window: P1D
                 start_datetime:
                   type: MinMaxDatetime
                   datetime: "{{ config['bitbucket_start_date'] }}"
@@ -886,6 +936,10 @@ streams:
       type: DatetimeBasedCursor
       cursor_field: committed_date
       datetime_format: "%Y-%m-%dT%H:%M:%S%z"
+      # A future-dated commit would otherwise become the cursor and silence the
+      # stream: a `since` past now yields no slice on every later sync. Bounding
+      # records client-side drops such a row before the cursor observes it.
+      is_client_side_incremental: true
       # `git log --since` is a traversal cutoff: after a rebase the
       # replacement commits can carry dates BELOW the stored cursor and
       # would never be visited again. Re-enumerating one window each
@@ -982,6 +1036,8 @@ streams:
           - type: ParentStreamConfig
             parent_key: clone_url
             partition_field: repo_clone_url
+            extra_fields:
+              - [size]
             # No `incremental_dependency` here: this stream is full refresh, so
             # the CDK would not persist parent state anyway. Branch heads are
             # cheap and must be re-read for every repository each sync.
@@ -998,6 +1054,7 @@ streams:
                   properties:
                     uuid: {type: [string, "null"]}
                     clone_url: {type: [string, "null"]}
+                    size: {type: [integer, "null"]}
                   additionalProperties: true
               retriever:
                 type: SimpleRetriever
@@ -1019,17 +1076,10 @@ streams:
                   request_parameters:
                     <<: *repos_since_start
                     fields: >-
-                      next,values.uuid,values.slug,values.links.clone
+                      next,values.uuid,values.slug,values.links.clone,values.created_on
                   error_handler: *discovery_error_handler
                 record_selector: *repos_selector
-                paginator:
-                  type: DefaultPaginator
-                  pagination_strategy:
-                    type: CursorPagination
-                    cursor_value: "{{ response.get('next', '') }}"
-                    stop_condition: "{{ not response.get('next') }}"
-                  page_token_option:
-                    type: RequestPath
+                paginator: *repository_keyset_paginator
                 partition_router:
                   # INSIDE `retriever`: at stream level the CDK silently
                   # ignores it — one empty partition, an empty workspace in
@@ -1137,13 +1187,7 @@ streams:
         path: "/repositories/{{ stream_partition.repo_full_name }}/pullrequests?state=OPEN&state=MERGED&state=DECLINED&state=SUPERSEDED"
         http_method: GET
         request_parameters:
-          # pagelen HARD CAP on /pullrequests is 50 (400 above). No sort:
-          # combined with the state filters it 500s deterministically on large
-          # repositories, and the `next`-link pagination and per-slice cursor
-          # close are both order-independent.
-          pagelen: "50"
-          q: >-
-            updated_on >= "{{ stream_interval.start_time }}"
+          <<: *prs_since_start
           fields: >-
             next,values.id,values.title,values.state,values.draft,values.author.uuid,values.author.display_name,values.author.account_id,values.author.nickname,values.created_on,values.updated_on,values.description,values.reason,values.close_source_branch,values.merge_commit.hash,values.closed_by.uuid,values.closed_by.account_id,values.closed_by.display_name,values.source.branch.name,values.source.commit.hash,values.source.repository.full_name,values.destination.branch.name,values.destination.commit.hash,values.destination.repository.full_name,values.participants.role,values.participants.state,values.participants.approved,values.participants.participated_on,values.participants.user.uuid,values.participants.user.display_name,values.comment_count,values.task_count
         error_handler: *prs_listing_error_handler
@@ -1152,14 +1196,7 @@ streams:
         extractor:
           type: DpathExtractor
           field_path: [values]
-      paginator:
-        type: DefaultPaginator
-        pagination_strategy:
-          type: CursorPagination
-          cursor_value: "{{ response.get('next', '') }}"
-          stop_condition: "{{ not response.get('next') }}"
-        page_token_option:
-          type: RequestPath
+      paginator: *pull_request_keyset_paginator
       partition_router:
         type: SubstreamPartitionRouter
         parent_stream_configs:
@@ -1200,17 +1237,10 @@ streams:
                   http_method: GET
                   request_parameters:
                     <<: *repos_since_start
-                    fields: next,values.uuid,values.slug,values.full_name,values.updated_on
+                    fields: next,values.uuid,values.slug,values.full_name,values.updated_on,values.created_on
                   error_handler: *discovery_error_handler
                 record_selector: *repos_selector
-                paginator:
-                  type: DefaultPaginator
-                  pagination_strategy:
-                    type: CursorPagination
-                    cursor_value: "{{ response.get('next', '') }}"
-                    stop_condition: "{{ not response.get('next') }}"
-                  page_token_option:
-                    type: RequestPath
+                paginator: *repository_keyset_paginator
                 partition_router:
                   type: ListPartitionRouter
                   values: "{{ config['bitbucket_workspaces'] }}"
@@ -1485,12 +1515,6 @@ streams:
                   path: "/repositories/{{ stream_partition.repo_full_name }}/pullrequests?state=OPEN&state=MERGED&state=DECLINED&state=SUPERSEDED"
                   http_method: GET
                   request_parameters:
-                    # pagelen HARD CAP on /pullrequests is 50 (400 above). No
-                    # sort: with the state filters it 500s deterministically on
-                    # large repositories; pagination is order-independent.
-                    # Stateless sliding window: the children have no cursor of their
-                    # own, so parent state would never persist. RMT dedups the
-                    # re-read window.
                     <<: *prs_since_start
                     fields: next,values.id,values.updated_on
                   error_handler: *prs_listing_error_handler
@@ -1499,14 +1523,7 @@ streams:
                   extractor:
                     type: DpathExtractor
                     field_path: [values]
-                paginator:
-                  type: DefaultPaginator
-                  pagination_strategy:
-                    type: CursorPagination
-                    cursor_value: "{{ response.get('next', '') }}"
-                    stop_condition: "{{ not response.get('next') }}"
-                  page_token_option:
-                    type: RequestPath
+                paginator: *pull_request_keyset_paginator
                 partition_router:
                   type: SubstreamPartitionRouter
                   parent_stream_configs:
@@ -1547,17 +1564,10 @@ streams:
                             http_method: GET
                             request_parameters:
                               <<: *repos_since_start
-                              fields: next,values.uuid,values.slug,values.full_name,values.updated_on
+                              fields: next,values.uuid,values.slug,values.full_name,values.updated_on,values.created_on
                             error_handler: *discovery_error_handler
                           record_selector: *repos_selector
-                          paginator:
-                            type: DefaultPaginator
-                            pagination_strategy:
-                              type: CursorPagination
-                              cursor_value: "{{ response.get('next', '') }}"
-                              stop_condition: "{{ not response.get('next') }}"
-                            page_token_option:
-                              type: RequestPath
+                          paginator: *repository_keyset_paginator
                           partition_router:
                             type: ListPartitionRouter
                             values: "{{ config['bitbucket_workspaces'] }}"
@@ -1808,12 +1818,6 @@ streams:
                   path: "/repositories/{{ stream_partition.repo_full_name }}/pullrequests?state=OPEN&state=MERGED&state=DECLINED&state=SUPERSEDED"
                   http_method: GET
                   request_parameters:
-                    # pagelen HARD CAP on /pullrequests is 50 (400 above). No
-                    # sort: with the state filters it 500s deterministically on
-                    # large repositories; pagination is order-independent.
-                    # Stateless sliding window: the children have no cursor of their
-                    # own, so parent state would never persist. RMT dedups the
-                    # re-read window.
                     <<: *prs_since_start
                     fields: next,values.id,values.updated_on
                   error_handler: *prs_listing_error_handler
@@ -1822,14 +1826,7 @@ streams:
                   extractor:
                     type: DpathExtractor
                     field_path: [values]
-                paginator:
-                  type: DefaultPaginator
-                  pagination_strategy:
-                    type: CursorPagination
-                    cursor_value: "{{ response.get('next', '') }}"
-                    stop_condition: "{{ not response.get('next') }}"
-                  page_token_option:
-                    type: RequestPath
+                paginator: *pull_request_keyset_paginator
                 partition_router:
                   type: SubstreamPartitionRouter
                   parent_stream_configs:
@@ -1870,17 +1867,10 @@ streams:
                             http_method: GET
                             request_parameters:
                               <<: *repos_since_start
-                              fields: next,values.uuid,values.slug,values.full_name,values.updated_on
+                              fields: next,values.uuid,values.slug,values.full_name,values.updated_on,values.created_on
                             error_handler: *discovery_error_handler
                           record_selector: *repos_selector
-                          paginator:
-                            type: DefaultPaginator
-                            pagination_strategy:
-                              type: CursorPagination
-                              cursor_value: "{{ response.get('next', '') }}"
-                              stop_condition: "{{ not response.get('next') }}"
-                            page_token_option:
-                              type: RequestPath
+                          paginator: *repository_keyset_paginator
                           partition_router:
                             type: ListPartitionRouter
                             values: "{{ config['bitbucket_workspaces'] }}"
@@ -1997,9 +1987,8 @@ streams:
             path: [is_merge]
             value: "{{ ((record.get('parents') or []) | length) > 1 }}"
             value_type: boolean
-          # No date of its own, so it carries the parent pull request's — which
-          # is monotonic because the parent's own cursor is, and which the
-          # cursor can observe because RecordSelector transforms BEFORE
+          # No date of its own, so it carries the parent pull request's, which
+          # the cursor can observe because RecordSelector transforms BEFORE
           # cursor.observe (VERIFIED in record_selector.filter_and_transform).
           - type: AddedFieldDefinition
             path: [pr_updated_on]
@@ -2169,12 +2158,6 @@ streams:
                   path: "/repositories/{{ stream_partition.repo_full_name }}/pullrequests?state=OPEN&state=MERGED&state=DECLINED&state=SUPERSEDED"
                   http_method: GET
                   request_parameters:
-                    # pagelen HARD CAP on /pullrequests is 50 (400 above). No
-                    # sort: with the state filters it 500s deterministically on
-                    # large repositories; pagination is order-independent.
-                    # Stateless sliding window: the children have no cursor of their
-                    # own, so parent state would never persist. RMT dedups the
-                    # re-read window.
                     <<: *prs_since_start
                     fields: next,values.id,values.updated_on
                   error_handler: *prs_listing_error_handler
@@ -2183,14 +2166,7 @@ streams:
                   extractor:
                     type: DpathExtractor
                     field_path: [values]
-                paginator:
-                  type: DefaultPaginator
-                  pagination_strategy:
-                    type: CursorPagination
-                    cursor_value: "{{ response.get('next', '') }}"
-                    stop_condition: "{{ not response.get('next') }}"
-                  page_token_option:
-                    type: RequestPath
+                paginator: *pull_request_keyset_paginator
                 partition_router:
                   type: SubstreamPartitionRouter
                   parent_stream_configs:
@@ -2231,17 +2207,10 @@ streams:
                             http_method: GET
                             request_parameters:
                               <<: *repos_since_start
-                              fields: next,values.uuid,values.slug,values.full_name,values.updated_on
+                              fields: next,values.uuid,values.slug,values.full_name,values.updated_on,values.created_on
                             error_handler: *discovery_error_handler
                           record_selector: *repos_selector
-                          paginator:
-                            type: DefaultPaginator
-                            pagination_strategy:
-                              type: CursorPagination
-                              cursor_value: "{{ response.get('next', '') }}"
-                              stop_condition: "{{ not response.get('next') }}"
-                            page_token_option:
-                              type: RequestPath
+                          paginator: *repository_keyset_paginator
                           partition_router:
                             type: ListPartitionRouter
                             values: "{{ config['bitbucket_workspaces'] }}"
@@ -2312,9 +2281,8 @@ streams:
             path: [old_path]
             value: "{{ (record.get('old') or {}).get('path') or '' }}"
             value_type: string
-          # No date of its own, so it carries the parent pull request's — which
-          # is monotonic because the parent's own cursor is, and which the
-          # cursor can observe because RecordSelector transforms BEFORE
+          # No date of its own, so it carries the parent pull request's, which
+          # the cursor can observe because RecordSelector transforms BEFORE
           # cursor.observe (VERIFIED in record_selector.filter_and_transform).
           - type: AddedFieldDefinition
             path: [pr_updated_on]
@@ -2477,12 +2445,6 @@ streams:
                   path: "/repositories/{{ stream_partition.repo_full_name }}/pullrequests?state=OPEN&state=MERGED&state=DECLINED&state=SUPERSEDED"
                   http_method: GET
                   request_parameters:
-                    # pagelen HARD CAP on /pullrequests is 50 (400 above). No
-                    # sort: with the state filters it 500s deterministically on
-                    # large repositories; pagination is order-independent.
-                    # Stateless sliding window: the children have no cursor of their
-                    # own, so parent state would never persist. RMT dedups the
-                    # re-read window.
                     <<: *prs_since_start
                     fields: next,values.id,values.updated_on
                   error_handler: *prs_listing_error_handler
@@ -2491,14 +2453,7 @@ streams:
                   extractor:
                     type: DpathExtractor
                     field_path: [values]
-                paginator:
-                  type: DefaultPaginator
-                  pagination_strategy:
-                    type: CursorPagination
-                    cursor_value: "{{ response.get('next', '') }}"
-                    stop_condition: "{{ not response.get('next') }}"
-                  page_token_option:
-                    type: RequestPath
+                paginator: *pull_request_keyset_paginator
                 partition_router:
                   type: SubstreamPartitionRouter
                   parent_stream_configs:
@@ -2539,17 +2494,10 @@ streams:
                             http_method: GET
                             request_parameters:
                               <<: *repos_since_start
-                              fields: next,values.uuid,values.slug,values.full_name,values.updated_on
+                              fields: next,values.uuid,values.slug,values.full_name,values.updated_on,values.created_on
                             error_handler: *discovery_error_handler
                           record_selector: *repos_selector
-                          paginator:
-                            type: DefaultPaginator
-                            pagination_strategy:
-                              type: CursorPagination
-                              cursor_value: "{{ response.get('next', '') }}"
-                              stop_condition: "{{ not response.get('next') }}"
-                            page_token_option:
-                              type: RequestPath
+                          paginator: *repository_keyset_paginator
                           partition_router:
                             type: ListPartitionRouter
                             values: "{{ config['bitbucket_workspaces'] }}"
@@ -2956,17 +2904,10 @@ streams:
                   http_method: GET
                   request_parameters:
                     <<: *repos_since_start
-                    fields: next,values.uuid,values.slug,values.full_name,values.updated_on
+                    fields: next,values.uuid,values.slug,values.full_name,values.updated_on,values.created_on
                   error_handler: *discovery_error_handler
                 record_selector: *repos_selector
-                paginator:
-                  type: DefaultPaginator
-                  pagination_strategy:
-                    type: CursorPagination
-                    cursor_value: "{{ response.get('next', '') }}"
-                    stop_condition: "{{ not response.get('next') }}"
-                  page_token_option:
-                    type: RequestPath
+                paginator: *repository_keyset_paginator
                 partition_router:
                   type: ListPartitionRouter
                   values: "{{ config['bitbucket_workspaces'] }}"
@@ -2994,6 +2935,13 @@ streams:
     transformations:
       - type: AddFields
         fields:
+          # WORKAROUND: the vendor stamps created_on with nine fractional
+          # digits; the CDK parses six, so the raw value never becomes the
+          # cursor and every sync re-reads the history. Truncate first.
+          - type: AddedFieldDefinition
+            path: [created_on]
+            value: "{{ format_datetime(record['created_on'], '%Y-%m-%dT%H:%M:%S.%fZ') if record.get('created_on') else '' }}"
+            value_type: string
           - type: AddedFieldDefinition
             path: [tenant_id]
             value: "{{ config['insight_tenant_id'] }}"
@@ -3146,6 +3094,9 @@ streams:
         extractor:
           type: DpathExtractor
           field_path: [values]
+        # The client-side bound reads created_on; it must see the truncated
+        # value the transformation writes, not the raw one.
+        transform_before_filtering: true
       paginator:
         type: DefaultPaginator
         pagination_strategy:
@@ -3194,17 +3145,10 @@ streams:
                   http_method: GET
                   request_parameters:
                     <<: *repos_since_start
-                    fields: next,values.uuid,values.slug,values.full_name,values.updated_on
+                    fields: next,values.uuid,values.slug,values.full_name,values.updated_on,values.created_on
                   error_handler: *discovery_error_handler
                 record_selector: *repos_selector
-                paginator:
-                  type: DefaultPaginator
-                  pagination_strategy:
-                    type: CursorPagination
-                    cursor_value: "{{ response.get('next', '') }}"
-                    stop_condition: "{{ not response.get('next') }}"
-                  page_token_option:
-                    type: RequestPath
+                paginator: *repository_keyset_paginator
                 partition_router:
                   type: ListPartitionRouter
                   values: "{{ config['bitbucket_workspaces'] }}"
@@ -3266,7 +3210,11 @@ streams:
             value_type: string
           - type: AddedFieldDefinition
             path: [created_on]
-            value: "{{ record.get('created_on') or (record.get('deployable') or {}).get('created_on') or '' }}"
+            # WORKAROUND: nine fractional digits from the vendor, six parsed
+            # by the CDK — truncate or the cursor never advances.
+            value: >-
+              {%- set created = record.get('created_on') or (record.get('deployable') or {}).get('created_on') or '' -%}
+              {{ format_datetime(created, '%Y-%m-%dT%H:%M:%S.%fZ') if created else '' }}
             value_type: string
           - type: AddedFieldDefinition
             path: [unique_key]
@@ -3312,6 +3260,7 @@ streams:
           author_nickname: {type: [string, "null"]}
           author_display_name: {type: [string, "null"]}
           sample_sha: {type: [string, "null"]}
+          last_committed_date: {type: [string, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -3374,9 +3323,14 @@ streams:
           - type: ParentStreamConfig
             parent_key: sample_sha
             partition_field: commit_sha
+            # `incremental_dependency` keeps the sync proportional to activity:
+            # the author list's `since` persists only because this child is
+            # itself incremental.
+            incremental_dependency: true
             extra_fields:
               - [repo_full_name]
               - [author_email]
+              - [last_committed_date]
             stream:
               type: DeclarativeStream
               name: repository_authors
@@ -3429,6 +3383,7 @@ streams:
                       partition_field: repo_clone_url
                       extra_fields:
                         - [full_name]
+                        - [size]
                       incremental_dependency: true
                       stream:
                         type: DeclarativeStream
@@ -3443,6 +3398,7 @@ streams:
                             properties:
                               uuid: {type: [string, "null"]}
                               clone_url: {type: [string, "null"]}
+                              size: {type: [integer, "null"]}
                               full_name: {type: [string, "null"]}
                               updated_on: {type: [string, "null"]}
                             additionalProperties: true
@@ -3462,25 +3418,33 @@ streams:
                             path: "/repositories/{{ stream_partition.workspace }}"
                             http_method: GET
                             request_parameters:
-                              <<: *repos_since_start
+                              <<: *repos_since_cursor
                               fields: >-
-                                next,values.uuid,values.slug,values.full_name,values.updated_on,values.links.clone
+                                next,values.uuid,values.slug,values.full_name,values.updated_on,values.links.clone,values.created_on
                             error_handler: *discovery_error_handler
                           record_selector: *repos_selector
-                          paginator:
-                            type: DefaultPaginator
-                            pagination_strategy:
-                              type: CursorPagination
-                              cursor_value: "{{ response.get('next', '') }}"
-                              stop_condition: "{{ not response.get('next') }}"
-                            page_token_option:
-                              type: RequestPath
+                          paginator: *repository_keyset_paginator
                           partition_router:
                             # INSIDE `retriever`, as in the sibling repository
                             # parents: at stream level the CDK ignores it.
                             type: ListPartitionRouter
                             values: "{{ config['bitbucket_workspaces'] }}"
                             cursor_field: workspace
+                        incremental_sync:
+                          type: DatetimeBasedCursor
+                          cursor_field: updated_on
+                          datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+                          cursor_datetime_formats:
+                            - "%Y-%m-%dT%H:%M:%S.%f%z"
+                            - "%Y-%m-%dT%H:%M:%S%z"
+                          # A push lands on the vendor a little after the commit
+                          # it carries, and the listing is bounded by the
+                          # vendor's clock.
+                          lookback_window: P1D
+                          start_datetime:
+                            type: MinMaxDatetime
+                            datetime: "{{ config['bitbucket_start_date'] }}"
+                            datetime_format: "%Y-%m-%d"
                         transformations:
                           - type: AddFields
                             fields:
@@ -3497,6 +3461,16 @@ streams:
                 cursor_datetime_formats:
                   - "%Y-%m-%dT%H:%M:%S%z"
                   - "%Y-%m-%dT%H:%M:%SZ"
+                # A future-dated commit would otherwise become the cursor and silence the
+                # stream: a `since` past now yields no slice on every later sync. Bounding
+                # records client-side drops such a row before the cursor observes it.
+                is_client_side_incremental: true
+                # An author's last commit can predate its push by days, and another
+                # author's push moves `since` past it in the meantime. Re-listing one
+                # window each sync recovers them; bronze dedups the re-read rows. Every
+                # author listed costs one vendor lookup per repository, so the window
+                # is as short as a late push allows.
+                lookback_window: "P7D"
                 # An author already resolved keeps their claim, so a later sync
                 # only needs the ones who have committed since — which is what
                 # keeps this O(active authors) rather than O(authors).
@@ -3515,6 +3489,22 @@ streams:
                       path: [repo_full_name]
                       value: "{{ stream_slice.extra_fields['full_name'] }}"
                       value_type: string
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: last_committed_date
+      datetime_format: "%Y-%m-%dT%H:%M:%S%z"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S%z"
+        - "%Y-%m-%dT%H:%M:%SZ"
+      # The partition is one author's sample commit and changes with every
+      # commit, so per-partition state would grow by one entry per (repository,
+      # author) and never shrink. Nothing reads this cursor's value; it exists so
+      # the parent's `since` persists.
+      global_substream_cursor: true
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['bitbucket_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
     transformations:
       - type: AddFields
         fields:
@@ -3544,6 +3534,10 @@ streams:
           - type: AddedFieldDefinition
             path: [sample_sha]
             value: "{{ stream_partition.commit_sha }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [last_committed_date]
+            value: "{{ stream_slice.extra_fields['last_committed_date'] }}"
             value_type: string
           - type: AddedFieldDefinition
             path: [author_account_id]

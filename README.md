@@ -152,9 +152,10 @@ docs/
     └── identity-resolution/      ← DESIGN, PRD, 14 ADRs, openapi.json
 ```
 
-The `openapi.json` files are generated, not hand-written. CI regenerates each from
-its service and fails the build on drift, so treat them as build output that happens
-to be committed.
+The `openapi.json` files are generated, not hand-written. Each service's test suite
+regenerates its document and fails on drift, so treat them as build output that happens
+to be committed. Regenerate one with
+`(cd src/backend && cargo run -p <service> -- openapi) > docs/components/backend/<service>/openapi.json`.
 
 Design intent for everything else lives with the code it describes: the connector
 `README.md` beside each `descriptor.yaml`, module docs under `src/backend/services/`,

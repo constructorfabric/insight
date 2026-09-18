@@ -1,0 +1,71 @@
+spec_version: 1
+description: >
+  Metric: git.non_default_branch_prs_merged and its default-branch twin — the
+  date they are counted on, #3063.
+
+  How it's computed (bronze → silver → gold):
+    • bronze: one row per pull request with its destination, creation and merge
+      times, plus the branch list its repository reported
+    • silver: one class row per request and per branch
+    • gold:   a merged request contributes one unit on the day it MERGED, to
+      the default side when its destination is its own repository's default
+      branch and to the other side otherwise
+
+  The pair's own rule is owned by `git_default_branch_prs_created.test.yaml`,
+  which settles which destination lands where. What nothing asserted is the
+  DATE: every request in every fixture that touches these keys is created and
+  merged on the same day, so a rule dating a merge by the request's creation
+  reads identically. This spec separates the two.
+
+  carol's seven requests in one repository whose default branch is `main`,
+  with `release/2026.10` beside it:
+
+    #201 main             created 10-20  merged 11-05
+    #202 main             created 10-22  merged 11-07
+    #203 release/2026.10  created 10-21  merged 11-06
+    #204 main             created 11-25  merged 12-03
+    #205 release/2026.10  created 11-26  merged 12-04
+    #206 release/2026.10  created 11-27  merged 12-05
+    #207 release/2026.10  created 11-10  still open
+
+  So November's merges are 2 into the default branch and 1 elsewhere, while
+  November's CREATIONS are 1 and 3 — disjoint sets of requests, and the two
+  metrics disagree about which period each request belongs to. That is the
+  point: date a merge by its creation instead and November reads 1 and 2, with
+  October and December moving too.
+
+  INVARIANT: the merged counts (2 and 1) must stay DIFFERENT from the created
+  counts on the same side (1 and 3). Equal numbers on both metrics let a rule
+  reading the wrong date pass unnoticed, which is how this gap survived.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/carol
+
+  bronze_github.branches:
+    - {$ref: ../templates/git_activity.yaml#/templates/base, unique_key: bpw-br-main, repository: "https://github.com/acme/window.git", name: main, head_sha: head-main, is_default: true}
+    - {$ref: ../templates/git_activity.yaml#/templates/base, unique_key: bpw-br-rel, repository: "https://github.com/acme/window.git", name: release/2026.10, head_sha: head-rel, is_default: false}
+
+  bronze_github.pull_requests:
+    # Opened in October, merged in November: this pair is what a creation-dated
+    # rule would file in the wrong month.
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: bpw-pr-201, repo_full_name: acme/window, id: 201, number: 201, author_login: carol, base_ref: main, created_at: "2026-10-20T09:00:00Z", closed_at: "2026-11-05T12:00:00Z", merged_at: "2026-11-05T12:00:00Z", merge_commit_sha: bpw-m-201}
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: bpw-pr-202, repo_full_name: acme/window, id: 202, number: 202, author_login: carol, base_ref: main, created_at: "2026-10-22T09:00:00Z", closed_at: "2026-11-07T12:00:00Z", merged_at: "2026-11-07T12:00:00Z", merge_commit_sha: bpw-m-202}
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: bpw-pr-203, repo_full_name: acme/window, id: 203, number: 203, author_login: carol, base_ref: release/2026.10, created_at: "2026-10-21T09:00:00Z", closed_at: "2026-11-06T12:00:00Z", merged_at: "2026-11-06T12:00:00Z", merge_commit_sha: bpw-m-203}
+    # Opened in November, merged in December: the mirror case.
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: bpw-pr-204, repo_full_name: acme/window, id: 204, number: 204, author_login: carol, base_ref: main, created_at: "2026-11-25T09:00:00Z", closed_at: "2026-12-03T12:00:00Z", merged_at: "2026-12-03T12:00:00Z", merge_commit_sha: bpw-m-204}
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: bpw-pr-205, repo_full_name: acme/window, id: 205, number: 205, author_login: carol, base_ref: release/2026.10, created_at: "2026-11-26T09:00:00Z", closed_at: "2026-12-04T12:00:00Z", merged_at: "2026-12-04T12:00:00Z", merge_commit_sha: bpw-m-205}
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: bpw-pr-206, repo_full_name: acme/window, id: 206, number: 206, author_login: carol, base_ref: release/2026.10, created_at: "2026-11-27T09:00:00Z", closed_at: "2026-12-05T12:00:00Z", merged_at: "2026-12-05T12:00:00Z", merge_commit_sha: bpw-m-206}
+    # Never merged: it counts among November's creations and among no merges.
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: bpw-pr-207, repo_full_name: acme/window, id: 207, number: 207, author_login: carol, base_ref: release/2026.10, created_at: "2026-11-10T09:00:00Z", state: open, closed_at: "", merged_at: "", merge_commit_sha: ""}
+
+  bronze_github.pull_request_diff_stats:
+    # A request reaches a person only through this row: bronze pull_requests
+    # carries the author's login and no address.
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: bpw-ds-201, repo_full_name: acme/window, pull_number: 201, author_email: carol@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: bpw-ds-202, repo_full_name: acme/window, pull_number: 202, author_email: carol@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: bpw-ds-203, repo_full_name: acme/window, pull_number: 203, author_email: carol@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: bpw-ds-204, repo_full_name: acme/window, pull_number: 204, author_email: carol@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: bpw-ds-205, repo_full_name: acme/window, pull_number: 205, author_email: carol@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: bpw-ds-206, repo_full_name: acme/window, pull_number: 206, author_email: carol@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: bpw-ds-207, repo_full_name: acme/window, pull_number: 207, author_email: carol@example.com}

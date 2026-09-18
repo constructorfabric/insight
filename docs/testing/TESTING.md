@@ -101,7 +101,7 @@ Components against a real store, and the API contract:
 
 **CI:** `e2e-bronze-to-api.yml` — one shard per metric class plus one for identity, each on a minimal stand of
 its own, and a blocking metric-coverage gate (`tests/lib/insight_datapath/metric_coverage.py`: every builtin
-metric the catalogue serves is asserted by some spec). OpenAPI drift is a separate workflow (`openapi-specs.yml`);
+metric the catalogue serves is asserted by some spec). OpenAPI drift is a unit test in each service crate (`ci.yml`);
 the HTTP contract lanes live on the deployed stand (`e2e-stand.yml`) with the endpoint coverage gate.
 
 ---
@@ -146,7 +146,7 @@ Neither blocks merge — both stand up a full stack against a live IdP and their
 - [ ] the affected `tests/datapath` shard green if you touched a metric, a gold view, identity resolution or the API
 - [ ] new / changed code stays **≥ 80 %** covered
 - [ ] a new `metric_key` is value-tested or skip-listed (metric-coverage gate)
-- [ ] committed OpenAPI regenerated if the router changed (`python3 scripts/ci/openapi_spec.py update`)
+- [ ] committed OpenAPI regenerated if the router changed (`(cd src/backend && cargo run -p <service> -- openapi) > docs/components/backend/<service>/openapi.json`)
 
 ---
 

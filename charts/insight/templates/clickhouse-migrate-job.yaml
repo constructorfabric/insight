@@ -118,6 +118,19 @@ spec:
                   name: {{ required "analytics.mcp.credentialsSecret is required when MCP is enabled" .Values.analytics.mcp.credentialsSecret | quote }}
                   key: {{ required "analytics.mcp.clickhousePasswordKey is required when MCP is enabled" .Values.analytics.mcp.clickhousePasswordKey | quote }}
             {{- end }}
+            {{- if (((.Values.global).insightV3Core).deploy) }}
+            # Grant-less `insight_v3_reader`'s password. Optional: unset on a
+            # Secret predating this key -> the script provisions the role only,
+            # and the service queries as its own user.
+            - name: CLICKHOUSE_V3_READER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default "insight-db-creds" .Values.clickhouse.passwordSecret.name | quote }}
+                  key:  "clickhouse-v3-reader-password"
+                  optional: true
+            - name: CLICKHOUSE_V3_READER_USER
+              value: {{ required "insightV3Core.clickhouseReaderUsername is required" .Values.insightV3Core.clickhouseReaderUsername | quote }}
+            {{- end }}
             # Grant-less SELECT-only `grafana` user's password (#2888), shared
             # with the Grafana datasource secret in insight-infra. Optional:
             # unset -> the script provisions the role only.

@@ -27,37 +27,37 @@
 WITH issue_created AS (
     SELECT
         COALESCE(source_id, '')                                       AS insight_source_id,
-        COALESCE(toString(id_readable), '')                           AS id_readable,
+        COALESCE(toString(jira_id), '')                               AS issue_id,
         argMax(parseDateTime64BestEffortOrNull(created, 3),
                _airbyte_extracted_at)                                 AS created_at
     FROM {{ source('bronze_jira', 'jira_issue') }}
-    WHERE id_readable IS NOT NULL
-    GROUP BY insight_source_id, id_readable
+    WHERE jira_id IS NOT NULL
+    GROUP BY insight_source_id, issue_id
 ),
 
 initial_rows AS (
     SELECT
         insight_source_id,
         data_source,
-        id_readable,
+        issue_id,
         field_id,
         min(event_at) AS first_initial
     FROM {{ ref('jira__field_history_derived') }} FINAL
     WHERE event_kind = 'synthetic_initial'
-    GROUP BY insight_source_id, data_source, id_readable, field_id
+    GROUP BY insight_source_id, data_source, issue_id, field_id
 )
 
 SELECT
     r.insight_source_id,
     r.data_source,
-    r.id_readable,
+    r.issue_id,
     r.field_id,
     r.first_initial,
     c.created_at
 FROM initial_rows AS r
 INNER JOIN issue_created AS c
     ON c.insight_source_id = r.insight_source_id
-   AND c.id_readable = r.id_readable
+   AND c.issue_id = r.issue_id
 -- One-second tolerance: the journal stores milliseconds and the source string is
 -- parsed, so an exact equality would fail on rounding alone.
 WHERE c.created_at IS NOT NULL

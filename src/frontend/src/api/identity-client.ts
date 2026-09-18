@@ -32,7 +32,6 @@ export interface MeResponse {
   /** Absent from an older service; readers treat that as `org_chart`. */
   visibility_policy?: VisibilityPolicy;
 }
-
 /**
  * The caller's identity and active roles. Live on every call: granting or
  * revoking a role is visible on the next fetch, no re-login needed.
@@ -668,4 +667,76 @@ export async function getPerson(
     throw new IdentityApiError(res.status, { error: "malformed_person" });
   }
   return toIdentityPerson(person);
+}
+
+export interface PersonRole {
+  person_role_id: string;
+  person_id: string;
+  role_id: string;
+  valid_from?: string;
+  valid_to?: string | null;
+  reason?: string | null;
+}
+
+/** Admin-gated: a caller who may not ask gets 403, never an empty list. */
+export async function listPersonRoles(
+  personId: string,
+  signal?: AbortSignal
+): Promise<PersonRole[]> {
+  const url = `${BASE}/person-roles?person=${encodeURIComponent(
+    personId
+  )}&active=true`;
+  const res = await fetchWithAuth(url, signal ? { signal } : undefined);
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new IdentityApiError(res.status, body);
+  }
+  let held: { items?: unknown };
+  try {
+    held = (await res.json()) as { items?: unknown };
+  } catch {
+    throw new IdentityApiError(res.status, { error: "invalid_json" });
+  }
+  if (!Array.isArray(held.items)) {
+    throw new IdentityApiError(res.status, {
+      error: "malformed_person_roles",
+    });
+  }
+  return held.items as PersonRole[];
+}
+
+export async function grantPersonRole(args: {
+  person_id: string;
+  role_id: string;
+  reason?: string;
+}): Promise<PersonRole> {
+  const res = await fetchWithAuth(`${BASE}/person-roles`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(args),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new IdentityApiError(res.status, body);
+  }
+  let granted: PersonRole;
+  try {
+    granted = (await res.json()) as PersonRole;
+  } catch {
+    throw new IdentityApiError(res.status, { error: "invalid_json" });
+  }
+  return granted;
+}
+
+/** Revoking a tenant's last active admin is refused with
+ *  `context.reason: "last_admin_protected"`, which reaches the caller intact. */
+export async function revokePersonRole(personRoleId: string): Promise<void> {
+  const res = await fetchWithAuth(
+    `${BASE}/person-roles/${encodeURIComponent(personRoleId)}`,
+    { method: "DELETE" }
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new IdentityApiError(res.status, body);
+  }
 }

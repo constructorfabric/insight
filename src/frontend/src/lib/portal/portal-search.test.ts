@@ -148,3 +148,34 @@ describe("applySearchPatch", () => {
     expect(patched.direct).toBeUndefined();
   });
 });
+
+describe("the picked time range", () => {
+  it("keeps a preset and an interval the server would accept", () => {
+    expect(validatePortalSearch({ range: "P30D" }).range).toBe("P30D");
+    expect(validatePortalSearch({ range: "2026-08-01/2026-09-01" }).range).toBe(
+      "2026-08-01/2026-09-01",
+    );
+  });
+
+  it("drops what the server would refuse, leaving the board's own default", () => {
+    for (const range of [
+      "P14D",
+      "2026-09-02/2026-09-01",
+      "2026-02-30/2026-03-01",
+      "2026-09-01/2026-09-02/2026-09-03",
+      "",
+    ]) {
+      expect(validatePortalSearch({ range }).range, range).toBeUndefined();
+    }
+  });
+
+  it("does not disturb the rest of the search", () => {
+    expect(
+      validatePortalSearch({ range: "nonsense", zone: "custom", item: "x" }),
+    ).toMatchObject({ zone: "custom", item: "x" });
+  });
+
+  it("is carried across a route change like every other portal key", () => {
+    expect(PORTAL_SEARCH_KEYS).toContain("range");
+  });
+});

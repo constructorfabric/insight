@@ -42,7 +42,7 @@ def test_tasks_closed_via_github(spec: SpecRun) -> None:
                         ],
                     },
                     {"metric_key": "tasks.bugs_fixed", "views": [{"view": "period"}]},
-                    {"metric_key": "tasks.closed_non_bug", "views": [{"view": "period"}]},
+                    {"metric_key": "tasks.closed_task", "views": [{"view": "period"}]},
                     {"metric_key": "tasks.dev_time", "views": [{"view": "period"}]},
                 ],
             },
@@ -65,7 +65,7 @@ def test_tasks_closed_via_github(spec: SpecRun) -> None:
     )
 
     r.row("tasks.bugs_fixed", "period", entity_id=ERIN).equals(value=1)
-    r.row("tasks.closed_non_bug", "period", entity_id=ERIN).equals(value=4)
+    r.row("tasks.closed_task", "period", entity_id=ERIN).equals(value=4)
 
     dev_time = some(r.rows("tasks.dev_time", "period"), entity_id=ERIN)
     assert [row for row in dev_time if row.get("value") is not None] == []

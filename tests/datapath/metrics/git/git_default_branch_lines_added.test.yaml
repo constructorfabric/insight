@@ -28,8 +28,9 @@ description: >
   and the rig registers none. The row count is what stands in.
 
   Cases: the two paths summing into one figure and one category split; the
-  repository split, where both paths must answer with a single row; and an
-  empty window.
+  repository split, where both paths must answer with a single row; the
+  code-lines twin, which the fallback must NOT reach — a size with no file
+  grain is lines, never code lines; and an empty window.
 
   The API rejects a metric that requests the same view twice, so each split
   needs its own case.
@@ -46,6 +47,11 @@ description: >
 
   So the metric reads 11 + 20 + 30 = 61, its category split is code 11, docs
   20 and unknown 30, and the repository holding all of it is one repository.
+  `git.default_branch_code_lines` reads 11 alone: the blind commit's thirty
+  lines have no path to classify, so nothing may call them code. The other
+  scope's half of that rule lives in `git_uncollected_file_changes`; this is
+  the default side, which a build emitting the fallback into the code measure
+  left green everywhere.
 
 bronze:
   bronze_bamboohr.employees:

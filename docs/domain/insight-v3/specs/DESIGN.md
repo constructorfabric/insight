@@ -167,7 +167,7 @@ The contract is the OpenAPI spec the service serves and commits, not a list in t
 
 **Technology**: OpenAPI, served by the api-gateway gear
 
-**Location**: `docs/components/backend/insight-v3-core/openapi.json`, drift-checked against the live spec by [scripts/ci/openapi_spec.py](../../../../scripts/ci/openapi_spec.py).
+**Location**: `docs/components/backend/insight-v3-core/openapi.json`, drift-checked against the emitted document by the service's `committed_openapi_document_is_current` test.
 
 ### 3.4 Internal Dependencies
 
@@ -194,6 +194,11 @@ TBD
 **ID**: `cpt-insightspec-v3-dbtable-raw-data`
 
 The schema lives in the migration, not here: [src/backend/services/insight-v3-core/src/migration.rs](../../../../src/backend/services/insight-v3-core/src/migration.rs).
+
+`raw_data` is the stream the migration brings up. A further ingest stream gets
+a physical table of its own with the identical columns, requested by an
+administrator through `PUT /v1/tables/{table}` — see
+[ADR-0006](./ADR/0006-a-table-per-ingest-stream.md).
 
 ### 3.8 Deployment Topology
 

@@ -5,8 +5,11 @@ the CI matrix). Pure data + lookup: no CLI, no side effects, never runs tests.
 
 Per component: name, lang, root (collection cwd), paths (repo-relative prefixes
 for bucketing), plus per-language extras consumed by the CI producer jobs:
-  rust   -> package (cargo package name); all_features (default True)
-  python -> cov_package (the source_* package to measure)
+  rust   -> package (cargo package name); all_features (default True);
+            drift_test (the crate pins a committed OpenAPI document, so its
+            tests also run on a shared backend change)
+  python -> cov_package (the source_* package to measure); collect (False ⇒
+            plain pytest, no Cobertura produced or uploaded)
   js     -> none (the package.json scripts under `root` carry the collection)
 
 Nocode (declarative-YAML) connectors are excluded — no first-party code to
@@ -51,6 +54,13 @@ COMPONENTS = [
         "paths": ["src/backend/libs/insight-migration"],
     },
     {
+        "name": "insight-openapi",
+        "lang": "rust",
+        "root": "src/backend",
+        "package": "insight-openapi",
+        "paths": ["src/backend/libs/insight-openapi"],
+    },
+    {
         "name": "analytics",
         "lang": "rust",
         "root": "src/backend",
@@ -68,8 +78,28 @@ COMPONENTS = [
         # would let this service's report drag their number down to whatever this
         # service happens to exercise. Scope the report to this service's code.
         "cover_ignore_regex": "src/backend/libs/",
-        "paths": ["src/backend/services/analytics"],
+        "paths": ["src/backend/services/analytics", "docs/components/backend/analytics/openapi.json"],
+        "drift_test": True,
         "triggered_by": ["insight-migration"],
+    },
+    # cover=False: readiness and real ClickHouse migration/insert behavior are
+    # exercised by the live shell test below rather than llvm-cov. Formatting,
+    # Clippy, package tests, and the live test still gate every service change.
+    {
+        "name": "insight-v3-core",
+        "lang": "rust",
+        "root": "src/backend",
+        "package": "insight-v3-core",
+        "cover": False,
+        "live_ch": True,
+        # The definition store is MariaDB, and the service refuses to start
+        # without it — the live test boots the real binary, so it needs one.
+        "live_db": True,
+        "live_db_name": "insight_v3",
+        "live_test": "services/insight-v3-core/tests/ci.sh",
+        "paths": ["src/backend/services/insight-v3-core", "docs/components/backend/insight-v3-core/openapi.json"],
+        "drift_test": True,
+        "triggered_by": ["insight-clickhouse"],
     },
     # cover=False: the api/ and repository layers are still thin on tests, so the
     # 80% gate would block every change to this crate rather than the ones that
@@ -89,7 +119,11 @@ COMPONENTS = [
         "live_db": True,
         "live_db_name": "identity",
         "cover_ignore_regex": "src/backend/libs/",
-        "paths": ["src/backend/services/identity-resolution"],
+        "paths": [
+            "src/backend/services/identity-resolution",
+            "docs/components/backend/identity-resolution/openapi.json",
+        ],
+        "drift_test": True,
         # insight-clickhouse is compiled in as a path dependency: a lib change
         # must re-run this crate's tests too. A shared path in `paths` would
         # NOT do that (component_for() picks a single owner — always the lib's
@@ -107,7 +141,8 @@ COMPONENTS = [
         "root": "src/backend",
         "package": "previews",
         "cover": False,
-        "paths": ["src/backend/services/previews"],
+        "paths": ["src/backend/services/previews", "docs/components/backend/previews/openapi.json"],
+        "drift_test": True,
     },
     # git-cli-proxy shells out to the git CLI; its integration tests build
     # fixture repos with `git init` + file:// origins in tempdirs (hermetic —
@@ -117,7 +152,9 @@ COMPONENTS = [
         "lang": "rust",
         "root": "src/backend",
         "package": "git-cli-proxy",
-        "paths": ["src/backend/services/git-cli-proxy"],
+        "paths": ["src/backend/services/git-cli-proxy", "docs/components/backend/git-cli-proxy/openapi.json"],
+        "drift_test": True,
+        "cover_ignore_regex": "src/backend/libs/",
     },
     # routegen is the build-time gateway config compiler (gateway DESIGN
     # DD-GW-02); fmt + clippy + coverage run here. Golden + rejection tests cover
@@ -148,7 +185,8 @@ COMPONENTS = [
         # Linked dependency crates (authenticator-sdk, workspace libs/plugins)
         # self-report in their own jobs; scope this component to its own code.
         "cover_ignore_regex": "src/backend/(libs|plugins)/",
-        "paths": ["src/backend/services/authenticator"],
+        "paths": ["src/backend/services/authenticator", "docs/components/backend/authenticator/openapi.json"],
+        "drift_test": True,
     },
     # authenticator-sdk is the inter-gear contract crate (a trait + models, no
     # runtime logic to exercise); lint + build only.
@@ -176,13 +214,6 @@ COMPONENTS = [
         "paths": ["src/ingestion/connectors/task-tracking/jira/enrich"],
     },
     # Python CDK connectors
-    {
-        "name": "gitlab",
-        "lang": "python",
-        "root": "src/ingestion/connectors/git/gitlab",
-        "cov_package": "source_gitlab",
-        "paths": ["src/ingestion/connectors/git/gitlab"],
-    },
     {
         "name": "hubspot",
         "lang": "python",
@@ -252,16 +283,32 @@ COMPONENTS = [
         "triggered_by": ["connector-tests-harness"],
         # Every nocode connector that ships a tests/ suite belongs here, or a
         # change to that connector does not re-run its own mock tests. CDK
-        # connectors with suites (hubspot, gitlab, bamboohr, …) are covered by
+        # connectors with suites (hubspot, bamboohr, …) are covered by
         # their own components instead.
         "paths": [
             "src/ingestion/connectors/task-tracking/jira",
             "src/ingestion/connectors/git/github",
             "src/ingestion/connectors/git/bitbucket-cloud",
+            "src/ingestion/connectors/git/gitlab",
             "src/ingestion/connectors/git/github-directory",
             "src/ingestion/connectors/collaboration/zoom",
             "src/ingestion/connectors/dev-portal/compass",
         ],
+    },
+    # The sample-data seeder. Its pytest suite otherwise runs only inside the
+    # seed image build (release-** PRs / main pushes), while dependabot bumps
+    # its pinned deps on ordinary PRs — those need the suite as a PR gate.
+    # collect=False (and cover=False, mirroring the rust no-cover crates): the
+    # CLI/DB shells are exercised by seeding a real stand, not by unit tests,
+    # so a Cobertura upload would gate the component below the overall minimum.
+    {
+        "name": "insight-seed",
+        "lang": "python",
+        "root": "src/ingestion/tools/seed",
+        "cov_package": "insight_seed",
+        "cover": False,
+        "collect": False,
+        "paths": ["src/ingestion/tools/seed"],
     },
     # `src/frontend/helm` falls under this path but has no measured lines, so it
     # never moves the number.

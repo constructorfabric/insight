@@ -156,6 +156,7 @@ data:
             public_url: {{ if .Values.global.mcp.enabled }}{{ required "global.mcp.publicUrl is required when MCP is enabled" .Values.global.mcp.publicUrl | quote }}{{ else }}""{{ end }}
             max_concurrent_queries: {{ .Values.mcp.maxConcurrentQueries }}
             clickhouse_user: {{ .Values.mcp.clickhouseUser | quote }}
+            allow_insecure_private_network: {{ (((.Values.global).mcp).allowInsecurePrivateNetwork) | default false }}
           metric_catalog:
             tenant_metrics_enabled: {{ .Values.metricCatalog.tenantMetricsEnabled }}
           reports:

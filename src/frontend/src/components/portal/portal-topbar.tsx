@@ -26,8 +26,8 @@ import { cn } from "@/lib/utils";
  */
 export function PortalTopBar() {
   const { activeZone } = useActiveZone();
-  // Nothing under Manage reads scope, cohort or period.
-  const filtered = activeZone !== "manage";
+  // Nothing under Manage or Custom reads scope, cohort or period.
+  const filtered = activeZone !== "manage" && activeZone !== "custom";
 
   return (
     // Sticky to the scroll container (`SidebarInset` owns the overflow): scope,

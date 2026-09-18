@@ -352,9 +352,23 @@ fn register_well_known_routes(router: Router, openapi: &dyn OpenApiRegistry) -> 
         .handler(crate::mcp_oauth::handlers::protected_resource_metadata)
         .register(router, openapi);
 
-    OperationBuilder::get("/.well-known/oauth-protected-resource/mcp")
+    let router = OperationBuilder::get("/.well-known/oauth-protected-resource/mcp")
         .operation_id("authenticator.mcp_oauth.protected_resource_mcp")
         .summary("Path-specific protected resource metadata for the MCP endpoint")
+        .tag("mcp-oauth")
+        .anonymous()
+        .exposed()
+        .text_response(
+            StatusCode::OK,
+            "Protected resource metadata",
+            "application/json",
+        )
+        .handler(crate::mcp_oauth::handlers::protected_resource_metadata)
+        .register(router, openapi);
+
+    OperationBuilder::get("/.well-known/oauth-protected-resource/mcp/v3")
+        .operation_id("authenticator.mcp_oauth.protected_resource_mcp_v3")
+        .summary("Protected resource metadata for the custom-surface MCP endpoint")
         .tag("mcp-oauth")
         .anonymous()
         .exposed()

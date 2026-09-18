@@ -200,6 +200,15 @@ The chat **MUST** be able to create a metric, a widget, a dashboard or an alert.
 
 **Actors**: `cpt-insightspec-v3-actor-dashboard-author`
 
+#### Add Your Own Context
+
+- [ ] `p2` - **ID**: `cpt-insightspec-v3-fr-ai-context`
+
+The chat **MUST** read context a team writes for itself — what its metrics mean, which tables to
+prefer, the words it uses — and answer in those terms.
+
+**Actors**: `cpt-insightspec-v3-actor-dashboard-author`
+
 ### 5.6 Ingestion Status
 
 TBD

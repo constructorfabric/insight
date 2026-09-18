@@ -605,3 +605,15 @@ coverage.md
 
 # pnpm's local content-addressable store, when configured beside the repo
 .pnpm-store/
+
+# Screenshots, recordings and other review media produced while driving the UI.
+screenshots-and-etc/
+
+# Plans and design notes an agent writes while working. Working state for one
+# change, not a description of the system: the specs under docs/domain say what
+# it is, and the commit says why it changed.
+docs/superpowers/
+
+# CI-side cargo cache dirs bind-mounted into the build-rust container when
+# RUST_TARGET_SOURCE / CARGO_REGISTRY_SOURCE are set.
+.ci-cargo/

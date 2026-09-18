@@ -38,6 +38,10 @@
 ##    only entrance to the cluster internals; the other services are
 ##    reachable only through it. This matches the Constructor Platform
 ##    integration contract.
+##    `global.insightV3Core.deploy` is OPTIONAL and off by default: the service
+##    cannot boot until its instance's ingest token is sealed, so an instance
+##    opts in once that exists. The switch also drops the gateway's three v3
+##    routes.
 ##    Identity Resolution (`identityResolution`) is OPTIONAL (deploy-flag,
 ##    off by default) — it is the Rust persons-store service that owns the
 ##    `identity` MariaDB database (per ADR-0006), reads observation history
@@ -99,6 +103,13 @@ global:
     enabled: false
     # Public origin of this Insight instance, for example https://insight.example.com.
     publicUrl: ""
+    # Permits an http:// publicUrl on a private address. Both the authenticator,
+    # which issues the tokens, and insight-v3-core, which verifies them, refuse
+    # one otherwise — so a cluster with no TLS at its edge cannot serve MCP
+    # without this.
+    allowInsecurePrivateNetwork: false
+  insightV3Core:
+    deploy: false
   # Global (not `previews.deploy`) so one knob controls both the previews
   # subchart and the gateway's /api/previews route: a route left pointing at a
   # Service the release does not create keeps nginx from loading its config.
@@ -207,23 +218,17 @@ ingestion:
   # `serviceaccount "argo-workflow" not found`.
   templates:
     enabled: true
-  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.09.09.10.03-3196b84" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
+  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.09.18.12.02-cbb2097" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
   # The sample-data seeder's image, for TEST stands only. Nothing in the chart
   # runs it: `src/ingestion/tools/seed/seed-stand.sh` reads this value to render
   # a one-shot Job. Its own image rather than the toolbox on purpose — the
   # toolbox runs migrations on real stands and does not carry demo data. Empty
   # (the default) means the stand cannot be seeded until an operator names an
   # image, either here or with the script's `--image` flag.
-  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.09.09.10.03-3196b84" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
-  # airbyte-sync poll-job tunables — see templates/ingestion/airbyte-sync.yaml.
-  # The poll loop replaces a wall-clock deadline with a progress watchdog:
-  # it tracks (status, bytesEmitted, recordsEmitted, stateMessagesEmitted)
-  # on the latest attempt and resets a timer whenever any of those move.
-  # If the timer exceeds `idleThresholdSeconds`, the step exits with a
-  # "no-progress" failure (exit 2), distinct from SIGTERM (exit 143).
+  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.09.18.12.02-cbb2097" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
   airbyteSync:
     pollIntervalSeconds: 30
-    idleThresholdSeconds: 1800 # 30 min without any byte/record/state movement → fail
+    statusUnreadableThresholdSeconds: 1800
   # jira-enrich (templates/ingestion/tt-enrich-jira-run.yaml). Phase 1 of the
   # binary holds the whole reference set in memory — field metadata, every
   # issue snapshot, and the last known value of each field it must diff
@@ -316,6 +321,9 @@ clickhouse:
     # Adoption events (#2573). Here rather than in the migration alone because
     # the presentation_ro grant references it before that migration runs.
     - product_usage
+    # Dataset record tables (insight-v3-core). The service's migrate step
+    # creates it too; listed so the database stands before the first deploy.
+    - insight_datasets
   # When true (default), a post-install/post-upgrade Hook Job
   # (clickhouse-migrate-job) applies the gold-view migrations
   # (src/ingestion/scripts/migrations/*.sql) + ADR-0007 placeholders against
@@ -323,6 +331,26 @@ clickhouse:
   # CH migrations out-of-band (e.g. a managed-warehouse change process).
   # The Job also no-ops if an overlay explicitly clears ingestion.toolboxImage.
   runMigrations: true
+  # Operator-authored mapping seed for config.field_value_map (and
+  # config.field_value_defaults from defaults.tsv), applied by a post-install/
+  # post-upgrade Hook Job (weight 300, after clickhouse-migrate) from a TSV
+  # ConfigMap the gitops `field-value-map` target builds out of
+  # environments/<env>/clickhouse/field-value-map/. Insert-only: a key that
+  # already carries a decision is never rewritten, and an empty or absent
+  # bundle is a no-op.
+  fieldValueMap:
+    enabled: false
+    # Pre-created ConfigMap (empty = <insight.fullname>-field-value-map, which
+    # is what the gitops `field-value-map` target creates). Set it explicitly
+    # under a fullnameOverride, as keycloakConfig.realmsConfigMap is set.
+    configMap: ""
+    # `recorded_by` stamp on the rows this loader writes, so a seeded decision
+    # is distinguishable from a hand-authored one.
+    recordedBy: "gitops"
+    # Per-request ClickHouse timeout, seconds. Bounds the hook: a stalled
+    # endpoint fails the Job instead of holding the release open.
+    timeoutSeconds: 30
+    resources: {}
 # ─── MariaDB ─────────────────────────────────────────────────────────────
 mariadb:
   host: "" # MUST be set (external L2 MariaDB host)
@@ -620,6 +648,35 @@ analytics:
     caCertSecret: "insight-authenticator-authn-tls-cert"
     caCertPaths:
       - /etc/insight/authn-ca/ca.crt
+# ─── Insight v3 Core ─────────────────────────────────────────────────────
+# Token-authenticated ingestion into caller-selected ClickHouse tables. The
+# API may create new physical tables, but every table uses the service's fixed
+# raw-data envelope; callers do not define ClickHouse columns or types.
+insightV3Core:
+  replicaCount: 2
+  image:
+    repository: ghcr.io/constructorfabric/insight-v3-core
+    tag: ""
+    pullPolicy: IfNotPresent
+  resources:
+    requests: {cpu: 100m, memory: 128Mi, ephemeral-storage: 64Mi}
+    limits: {cpu: 500m, memory: 512Mi, ephemeral-storage: 256Mi}
+  databaseName: insight_v3
+  clickhouseReaderUsername: insight_v3_reader
+  # The raw-data ingest token. Operator-supplied like
+  # `analytics.sqlApi.tokenSecret` — create it before enabling the service
+  # (`openssl rand -hex 32`; under 32 bytes is refused at boot).
+  ingest:
+    tokenSecret: "insight-v3-core-token"
+    tokenKey: "token"
+  existingSecret: "insight-v3-core-config"
+  # Hook-rendered twin for fresh imperative installs. GitOps pre-creates the
+  # main config Secret, so this reference is optional there.
+  migrateEnvSecret: "insight-v3-core-migrate-env"
+  # The custom-surface MCP server, served when global.mcp.enabled is set.
+  mcp:
+    port: 8087
+    allowInsecurePrivateNetwork: false
 # ─── Identity Resolution (Rust identity service, epic #1602) ─────────────
 # The persons-store API. Reads from MariaDB `persons`, written by the seed
 # CronJob (the service's own `seed` subcommand) fed off ClickHouse
@@ -676,7 +733,9 @@ gitCliProxy:
     # steady-state run length so no walk refetches mid-flight.
     defaultMaxStalenessSeconds: 43200
     # A fetch holds its entry's write lock while queued for a slot, so one
-    # slow clone must not convoy every other repository's refresh.
+    # slow clone must not convoy every other repository's refresh. Cache
+    # headroom is reserved only once a slot is held, so queued requests wait
+    # in-connection rather than being refused.
     heavyOpsConcurrency: 2
     # Concurrent page serves; the pod's peak memory is roughly this times the
     # heaviest window's blob bytes, so this is the cap that bounds proxy

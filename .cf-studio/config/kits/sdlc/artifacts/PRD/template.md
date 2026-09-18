@@ -100,17 +100,21 @@ The system **MUST** {do something specific and verifiable}.
 
 {For each quality vector, name the show-stopper requirement — what would make this
 module unviable on that vector, not what would merely be good to have — and the
-business rationale behind it. The Show-Stopper cell takes one of four forms:
-a show-stopper requirement citing the NFR that carries the obligation; if the
-vector is material and covered in 6.2 but no obligation rises to unviability,
-`None — no show-stopper; obligations covered by {NFR IDs}`; if the vector
-cannot break this module at all, `None — not material because {reason}`, with
-a reason citing a concrete scope, scale, deployment or exclusion fact; or, if
-the vector is material and 6.2 carries no obligation covering it at all,
-`None — no obligation; {vector} is material and 6.2 carries no covering NFR
-(gap)` — an explicit recorded gap, not a substitute for doing the analysis.
-Silence is not a valid entry. The order is a display convention, not a
-ranking. See the [quality-vector guide](../../guides/quality-vectors.md).}
+business rationale behind it. Every row applies one generative rule, and each
+of the four cell forms is one of its outcomes: if the vector is material and
+the module is unviable without it, the rule produces a MUST-strength
+show-stopper requirement citing the actual NFR ID that carries the obligation
+in 6.2; if the vector is material and its 6.2 obligations are covered but none
+rises to unviability, the rule produces `None — no show-stopper; obligations
+covered by {NFR IDs}` — name the actual covering NFR IDs from 6.2, not a
+paraphrase; if the vector cannot break this module at all, the rule produces
+`None — not material because {reason}`, with a reason citing a concrete scope,
+scale, deployment or exclusion fact; or, if the vector is material and 6.2
+carries no obligation covering it at all, the rule produces `None — no
+obligation; {vector} is material and 6.2 carries no covering NFR (gap)` — an
+explicit recorded gap, not a substitute for doing the analysis. Silence is not
+a valid entry. The order is a display convention, not a ranking. See the
+[quality-vector guide](../../guides/quality-vectors.md).}
 
 | Quality Vector | Show-Stopper Requirement | Rationale |
 |-----------------|---------------------------|-----------|

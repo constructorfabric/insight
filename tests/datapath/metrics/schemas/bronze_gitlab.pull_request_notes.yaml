@@ -1,0 +1,38 @@
+# Derived from the bronze_gitlab DDL snapshot. Array/object fields
+# land in bronze as JSON strings (the staging models toString() them), so they
+# are typed string here.
+schemas:
+  bronze_gitlab.pull_request_notes:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      unique_key: { type: [string, "null"] }
+      tenant_id: { type: [string, "null"] }
+      source_id: { type: [string, "null"] }
+      data_source: { type: [string, "null"] }
+      collected_at: { type: [string, "null"] }
+      project_id: { type: [integer, "null"] }
+      mr_iid: { type: [integer, "null"] }
+      mr_updated_at: { type: [string, "null"] }
+      id: { type: [integer, "null"] }
+      body: { type: [string, "null"] }
+      type: { type: [string, "null"] }
+      system: { type: [boolean, "null"] }
+      internal: { type: [boolean, "null"] }
+      resolvable: { type: [boolean, "null"] }
+      resolved: { type: [boolean, "null"] }
+      resolved_by_id: { type: [integer, "null"] }
+      author_id: { type: [integer, "null"] }
+      author_username: { type: [string, "null"] }
+      author_name: { type: [string, "null"] }
+      position_new_path: { type: [string, "null"] }
+      position_old_path: { type: [string, "null"] }
+      position_new_line: { type: [integer, "null"] }
+      position_old_line: { type: [integer, "null"] }
+      created_at: { type: [string, "null"] }
+      updated_at: { type: [string, "null"] }
+      _airbyte_raw_id: { type: string }
+      _airbyte_extracted_at: { type: string, format: date-time }
+      _airbyte_meta: { type: string }
+      _airbyte_generation_id: { type: integer }
