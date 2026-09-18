@@ -6,6 +6,7 @@ import type { RunOptions, Widget } from "@/api/custom-client";
 import { CustomWidget } from "@/components/custom/custom-widget";
 import { WidgetSummary } from "@/components/custom/definition-summary";
 import { EditLink } from "@/components/custom/editor/edit-link";
+import { HeldBy } from "@/components/custom/held-by";
 import { refusal } from "@/components/custom/refusal";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -75,6 +76,8 @@ function WidgetPage() {
       </Card>
 
       <Drawn name={name} widget={widget.data} />
+
+      <HeldBy kind="widgets" name={name} />
     </div>
   );
 }

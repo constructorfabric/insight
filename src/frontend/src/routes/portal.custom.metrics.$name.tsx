@@ -5,6 +5,7 @@ import { useState } from "react";
 import { CustomTable } from "@/components/custom/custom-table";
 import { MetricSummary } from "@/components/custom/definition-summary";
 import { EditLink } from "@/components/custom/editor/edit-link";
+import { HeldBy } from "@/components/custom/held-by";
 import { refusal } from "@/components/custom/refusal";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -78,6 +79,8 @@ function MetricPage() {
       </Card>
 
       <Run name={name} windowed={metric.data.clock !== undefined} />
+
+      <HeldBy kind="metrics" name={name} />
     </div>
   );
 }

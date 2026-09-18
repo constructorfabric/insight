@@ -8,6 +8,7 @@ import type {
   Dashboard,
   Dataset,
   DatasetRecords,
+  Holder,
   MetricResult,
   StoredMetric,
   Widget,
@@ -189,6 +190,19 @@ export async function fetchDatasetRecords(
   );
 
   return readJson<DatasetRecords>(res);
+}
+
+/** Every definition that names this one: what a removal would break. */
+export async function fetchDependents(
+  kind: DefinitionKind,
+  name: string
+): Promise<Holder[]> {
+  const res = await fetchWithAuth(
+    `${BASE}/${kind}/${encodeURIComponent(name)}/dependents`
+  );
+  const read = await readJson<{ holders: Holder[] }>(res);
+
+  return read.holders;
 }
 
 /**

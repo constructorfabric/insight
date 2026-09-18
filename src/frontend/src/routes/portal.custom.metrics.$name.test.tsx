@@ -7,7 +7,12 @@ vi.mock("@tanstack/react-router", async () => {
 });
 vi.mock("@/api/custom-client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/api/custom-client")>();
-  return { ...actual, fetchMetric: vi.fn(), runMetric: vi.fn() };
+  return {
+    ...actual,
+    fetchMetric: vi.fn(),
+    runMetric: vi.fn(),
+    fetchDependents: vi.fn(),
+  };
 });
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -47,6 +52,7 @@ const CLOCKED = {
 beforeEach(() => {
   vi.resetAllMocks();
   portalRouter.reset("/portal/custom/metrics/lines_by_author");
+  vi.mocked(customClient.fetchDependents).mockResolvedValue([]);
   vi.mocked(customClient.runMetric).mockResolvedValue({
     columns: ["author", "lines"],
     rows: [
@@ -106,6 +112,32 @@ describe("/portal/custom/metrics/$name", () => {
     ).not.toBeInTheDocument();
     expect(
       screen.getByText("Nothing dates this metric: every run reads all time.")
+    ).toBeInTheDocument();
+  });
+
+  // What a removal would break, before a reader asks for one.
+  it("names what draws it", async () => {
+    vi.mocked(customClient.fetchMetric).mockResolvedValue(CLOCKED);
+    vi.mocked(customClient.fetchDependents).mockResolvedValue([
+      { kind: "widgets", name: "lines_table" },
+    ]);
+
+    render(<Component />, { wrapper });
+
+    expect(await screen.findByText("lines_table")).toBeInTheDocument();
+    expect(customClient.fetchDependents).toHaveBeenCalledWith(
+      "metrics",
+      expect.any(String)
+    );
+  });
+
+  it("says when nothing draws it", async () => {
+    vi.mocked(customClient.fetchMetric).mockResolvedValue(CLOCKED);
+
+    render(<Component />, { wrapper });
+
+    expect(
+      await screen.findByText("Nothing draws it yet.")
     ).toBeInTheDocument();
   });
 

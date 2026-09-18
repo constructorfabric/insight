@@ -143,6 +143,13 @@ export interface DatasetRecord {
   raw_data: unknown;
 }
 
+/** One definition that names another: what a removal would break. */
+export interface Holder {
+  /** The kind it is, as the API path spells it. */
+  kind: "metrics" | "widgets" | "dashboards";
+  name: string;
+}
+
 /** A look at a dataset: its latest few records, and how many it holds in all. */
 export interface DatasetRecords {
   records: DatasetRecord[];

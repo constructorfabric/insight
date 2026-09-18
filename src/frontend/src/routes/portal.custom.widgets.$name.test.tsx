@@ -12,6 +12,7 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
     fetchWidget: vi.fn(),
     fetchMetric: vi.fn(),
     runMetric: vi.fn(),
+    fetchDependents: vi.fn(),
   };
 });
 
@@ -57,6 +58,7 @@ beforeEach(() => {
   portalRouter.reset("/portal/custom/widgets/lines_table");
   vi.mocked(customClient.fetchWidget).mockResolvedValue(TABLE);
   vi.mocked(customClient.fetchMetric).mockResolvedValue(CLOCKED);
+  vi.mocked(customClient.fetchDependents).mockResolvedValue([]);
   vi.mocked(customClient.runMetric).mockResolvedValue({
     columns: ["author", "lines"],
     rows: [["ada", 120]],
@@ -113,6 +115,29 @@ describe("/portal/custom/widgets/$name", () => {
       await screen.findByText(/every window shows all time/)
     ).toBeInTheDocument();
     expect(customClient.runMetric).toHaveBeenCalledTimes(1);
+  });
+
+  // What a removal would break, before a reader asks for one.
+  it("names what draws it", async () => {
+    vi.mocked(customClient.fetchDependents).mockResolvedValue([
+      { kind: "dashboards", name: "engineering" },
+    ]);
+
+    render(<Component />, { wrapper });
+
+    expect(await screen.findByText("engineering")).toBeInTheDocument();
+    expect(customClient.fetchDependents).toHaveBeenCalledWith(
+      "widgets",
+      expect.any(String)
+    );
+  });
+
+  it("says when nothing draws it", async () => {
+    render(<Component />, { wrapper });
+
+    expect(
+      await screen.findByText("Nothing draws it yet.")
+    ).toBeInTheDocument();
   });
 
   it("shows the service's refusal when the metric cannot run", async () => {

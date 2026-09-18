@@ -22,6 +22,7 @@ import {
   fetchDatasetDependents,
   fetchDatasetNames,
   fetchDatasetRecords,
+  fetchDependents,
   fetchMetric,
   fetchMetricNames,
   fetchWidget,
@@ -156,6 +157,13 @@ export function datasetRecordsQuery(name: string) {
 }
 
 /** Every metric that reads this dataset, which a removal would break. */
+export function dependentsQuery(kind: DefinitionKind, name: string) {
+  return queryOptions({
+    queryKey: ["custom", "dependents", kind, name],
+    queryFn: () => fetchDependents(kind, name),
+  });
+}
+
 export function datasetDependentsQuery(name: string) {
   return queryOptions({
     queryKey: [...DATASET_PREFIX, name, "dependents"],
