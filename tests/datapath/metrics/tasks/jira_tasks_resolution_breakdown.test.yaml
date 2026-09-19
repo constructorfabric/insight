@@ -54,6 +54,8 @@ bronze:
     # Unmapped resolution ids at this source fall to `wontfix`; an issue with
     # no resolution at all must stay `unknown` in spite of it.
     - $ref: ../templates/jira_task.yaml#/templates/jira_resolution_default
+    # The issue-type field is standardized here too, so it needs its own row.
+    - $ref: ../templates/jira_task.yaml#/templates/jira_issue_type_default_unknown
 
   bronze_jira.jira_issue:
     - $ref: ../templates/jira_task.yaml#/templates/jira_issue

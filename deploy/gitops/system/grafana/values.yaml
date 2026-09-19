@@ -12164,10 +12164,12 @@ alerting:
             \ UNMEASURED, not clean"
           description: "The DDL for these tables is owned by the dbt on-run-start macro create_task_config_tables,\
             \ which reached the umbrella in chart 0.7.36 (backported to the 0.6 line as 0.6.102). An install\
-            \ pinned below that floor has no config.field_value_map and no config.field_value_defaults,\
-            \ so the issue-type coverage rule (insight-issue-types-unclassified) cannot evaluate at all.\
-            \ Read the two states apart: while THIS rule fires, a silent coverage rule means nothing was\
-            \ measured \u2014 it does NOT mean every closed issue is classified. Fix by raising the environment's\
+            \ pinned below that floor has no config.field_value_map, no config.field_value_defaults and\
+            \ no config.task_field_roles, so neither the issue-type coverage rule (insight-issue-types-unclassified)\
+            \ nor the missing-default rule (insight-field-value-defaults-missing) can evaluate at all.\
+            \ Read the two states apart: while THIS rule fires, either rule's silence means nothing was\
+            \ measured \u2014 it does NOT mean every closed issue is classified or every standardized field\
+            \ decided. Fix by raising the environment's\
             \ chartVersion to \u2265 0.7.36 (or \u2265 0.6.102 on the 0.6 line) and redeploying; dbt creates\
             \ the tables on its next run. Tables present but empty is a different, honest condition: coverage\
             \ then reads 100% unclassified, which is a true positive until an operator authors environments/<env>/clickhouse/field-value-map/*.tsv\
@@ -12192,7 +12194,9 @@ alerting:
               -- Config coverage does not depend on assignment, so the population is
               -- rebuilt here from silver field history, and the kind is resolved the
               -- same way gold resolves it: field_value_map -> field_value_defaults ->
-              -- 'unknown'. Close = last transition into a done-category status
+              -- 'unknown'. This rule measures classification coverage; a source with
+              -- no default row at all is insight-field-value-defaults-missing.
+              -- Close = last transition into a done-category status
               -- (gold's final_close_at); deleted/trashed issues are excluded.
               -- INVARIANT: recorded_at is part of unique_key, so a retraction is a
               -- NEWER row — filter is_deleted after the LIMIT 1 BY pick, never before.
@@ -12244,21 +12248,31 @@ alerting:
                   FROM silver.class_task_users FINAL
                   GROUP BY insight_source_id
               ),
+              -- Bitemporal latest row per key FIRST, the tombstone/domain filter
+              -- AFTER, exactly as gold does it: unique_key includes recorded_at,
+              -- so a retraction or a typo is a NEWER separate row and filtering
+              -- before LIMIT 1 BY would resurrect the older live decision.
               kind_map AS (
                   SELECT tenant_id, insight_source_id, source_key, target_value
-                  FROM config.field_value_map FINAL
-                  WHERE field = 'issue_type' AND is_deleted = 0 AND valid_from <= now64(3)
-                    AND target_value IN ('bug', 'task', 'unknown')
-                  ORDER BY valid_from DESC, recorded_at DESC
-                  LIMIT 1 BY tenant_id, insight_source_id, source_key
+                  FROM (
+                      SELECT tenant_id, insight_source_id, source_key, target_value, is_deleted
+                      FROM config.field_value_map FINAL
+                      WHERE field = 'issue_type' AND valid_from <= now64(3)
+                      ORDER BY valid_from DESC, recorded_at DESC
+                      LIMIT 1 BY tenant_id, insight_source_id, source_key
+                  )
+                  WHERE is_deleted = 0 AND target_value IN ('bug', 'task', 'unknown')
               ),
               kind_default AS (
                   SELECT tenant_id, insight_source_id, default_value
-                  FROM config.field_value_defaults FINAL
-                  WHERE field = 'issue_type' AND is_deleted = 0 AND valid_from <= now64(3)
-                    AND default_value IN ('bug', 'task', 'unknown')
-                  ORDER BY valid_from DESC, recorded_at DESC
-                  LIMIT 1 BY tenant_id, insight_source_id
+                  FROM (
+                      SELECT tenant_id, insight_source_id, default_value, is_deleted
+                      FROM config.field_value_defaults FINAL
+                      WHERE field = 'issue_type' AND valid_from <= now64(3)
+                      ORDER BY valid_from DESC, recorded_at DESC
+                      LIMIT 1 BY tenant_id, insight_source_id
+                  )
+                  WHERE is_deleted = 0 AND default_value IN ('bug', 'task', 'unknown')
               ),
               issues_t AS (
                   SELECT i.*, ifNull(nullIf(toString(t.tenant_id), ''), '') AS tenant_id
@@ -12331,6 +12345,136 @@ alerting:
             \ evaluate at all, so nothing was measured. execErrState=OK makes that true of any evaluation\
             \ error, not just a missing table: an errored evaluation yields no series, so this rule reads\
             \ silent rather than clean. It is never on its own proof the mapping is complete."
+      - uid: insight-field-value-defaults-missing
+        title: Task field with no default decision
+        condition: C
+        data:
+        - refId: A
+          relativeTimeRange:
+            from: 600
+            to: 0
+          datasourceUid: clickhouse
+          model:
+            refId: A
+            editorType: sql
+            format: 1
+            rawSql: |-
+              -- Every (tenant, source, field) the task pipeline standardizes must carry
+              -- a live config.field_value_defaults row. With none, an unmapped key falls
+              -- to the hardcoded 'unknown' terminal in gold and reads exactly like a
+              -- decision an operator made. Config-only: no issue rows are counted, so
+              -- the rule fires on the fault itself rather than on its consequences.
+              -- INVARIANT: recorded_at is part of unique_key, so a retraction is a
+              -- NEWER row — filter is_deleted after the LIMIT 1 BY pick, never before.
+              WITH role_bindings AS (
+                  SELECT insight_source_id, data_source, field_id, role
+                  FROM (
+                      SELECT insight_source_id, data_source, field_id, role, is_deleted
+                      FROM config.task_field_roles FINAL
+                      WHERE valid_from <= now64(3)
+                      ORDER BY valid_from DESC, recorded_at DESC
+                      LIMIT 1 BY insight_source_id, data_source, field_id
+                  )
+                  WHERE is_deleted = 0
+              ),
+              observed AS (
+                  SELECT DISTINCT insight_source_id, data_source
+                  FROM silver.class_task_field_history FINAL
+              ),
+              src_tenant AS (
+                  SELECT insight_source_id, ifNull(any(tenant_id), '') AS tenant_id
+                  FROM silver.class_task_users FINAL
+                  GROUP BY insight_source_id
+              ),
+              authored_roles AS (
+                  SELECT insight_source_id, data_source, role
+                  FROM role_bindings
+                  WHERE role IN ('issuetype', 'resolution')
+              ),
+              -- Jira's system fields are fixed by the product, so both roles resolve
+              -- there without an authored row; every other vendor binds them itself.
+              -- A field nothing binds is not standardized and needs no default.
+              bound AS (
+                  SELECT DISTINCT o.insight_source_id AS insight_source_id,
+                      o.data_source AS data_source, f.2 AS field
+                  FROM observed AS o
+                  ARRAY JOIN [tuple('issuetype', 'issue_type'), tuple('resolution', 'resolution')] AS f
+                  LEFT JOIN authored_roles AS a
+                      ON a.insight_source_id = o.insight_source_id
+                      AND a.data_source = o.data_source AND a.role = f.1
+                  WHERE o.data_source = 'jira' OR ifNull(toString(a.role), '') != ''
+              ),
+              bound_t AS (
+                  SELECT b.insight_source_id AS insight_source_id, b.data_source AS data_source,
+                      b.field AS field, ifNull(nullIf(toString(t.tenant_id), ''), '') AS tenant_id
+                  FROM bound AS b
+                  LEFT JOIN src_tenant AS t ON t.insight_source_id = b.insight_source_id
+              ),
+              -- INVARIANT: recorded_at is part of unique_key, so a retraction is a
+              -- NEWER row — filter is_deleted after the LIMIT 1 BY pick, never before.
+              -- A default outside the field's domain never reaches gold, so it counts as
+              -- missing here; assert_field_values_are_canonical reports the value itself.
+              defaults AS (
+                  SELECT tenant_id, insight_source_id, field
+                  FROM (
+                      SELECT tenant_id, insight_source_id, field, default_value, is_deleted
+                      FROM config.field_value_defaults FINAL
+                      WHERE field IN ('issue_type', 'resolution') AND valid_from <= now64(3)
+                      ORDER BY valid_from DESC, recorded_at DESC
+                      LIMIT 1 BY tenant_id, insight_source_id, field
+                  )
+                  WHERE is_deleted = 0
+                    AND ((field = 'issue_type' AND default_value IN ('bug', 'task', 'unknown'))
+                         OR (field = 'resolution'
+                             AND default_value IN ('fixed', 'duplicate', 'wontfix', 'unknown')))
+              )
+              SELECT if(i.tenant_id = '', 'unknown', i.tenant_id) AS tenant,
+                  i.data_source AS data_source, i.insight_source_id AS insight_source_id,
+                  i.field AS field, toUInt8(1) AS missing_default
+              FROM bound_t AS i
+              LEFT ANTI JOIN defaults AS d
+                  ON d.tenant_id = i.tenant_id AND d.insight_source_id = i.insight_source_id
+                  AND d.field = i.field
+        - refId: C
+          relativeTimeRange:
+            from: 0
+            to: 0
+          datasourceUid: __expr__
+          model:
+            refId: C
+            type: threshold
+            expression: A
+            conditions:
+            - evaluator:
+                type: gt
+                params:
+                - 0
+        noDataState: OK
+        # OK for the same reason as insight-issue-types-unclassified above: the
+        # missing-table case is reported by insight-task-config-tables-missing,
+        # which keeps execErrState: Error.
+        execErrState: OK
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ \"{{ $labels.insight_source_id }}\" }} has no default decision for {{ \"{{ $labels.field\
+            \ }}\" }} — unmapped keys silently read as 'unknown'"
+          description: "Issue kind and resolution class come only from operator decisions. A key with no\
+            \ config.field_value_map row falls to the source's config.field_value_defaults row; with no\
+            \ defaults row either, gold's hardcoded 'unknown' terminal stands in, and a lost decision is\
+            \ indistinguishable from an operator who decided the value IS unknown. That is a configuration\
+            \ fault, not a data condition, so there is no share and no floor — any occurrence fires.\
+            \ Kept separate from insight-issue-types-unclassified, which measures how much of a source\
+            \ lands unclassified once the decisions exist. Fix by adding a defaults.tsv row for the (source,\
+            \ field) in environments/<env>/clickhouse/field-value-map/ and redeploying; a tenant that genuinely\
+            \ wants unmapped keys unclassified records that as default_value = 'unknown' rather than leaving\
+            \ the row out. The gold build asserts the same condition (assert_task_field_value_defaults_exist),\
+            \ so seeded and fixture environments fail pre-merge and this rule is the deployed half. for=5m\
+            \ rides out the window between a deploy and the first sync that populates silver; the condition\
+            \ does not otherwise flap. Silence here is evidence only while insight-task-config-tables-missing\
+            \ is quiet: execErrState=OK means any evaluation error, a missing config table included, leaves\
+            \ this rule silent rather than clean."
       - uid: insight-clickhouse-failed-queries
         title: ClickHouse failed-query rate elevated
         condition: C

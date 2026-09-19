@@ -43,6 +43,12 @@ bronze:
     - $ref: ../templates/jira_task.yaml#/templates/field_assignee
     - $ref: ../templates/jira_task.yaml#/templates/field_issuetype
 
+  config.field_value_defaults:
+    # Unmapped type ids are unclassified by decision, not by accident:
+    # `assert_task_field_value_defaults_exist` requires this row.
+    - $ref: ../templates/jira_task.yaml#/templates/jira_issue_type_default_unknown
+    - $ref: ../templates/jira_task.yaml#/templates/jira_resolution_default_unknown
+
   bronze_jira.jira_issue:
     # Each member closes on 2026-12-25T09:00; created = close minus r days -> lead = r days.
     - { $ref: ../templates/jira_task.yaml#/templates/jira_issue, id: "10153", jira_id: "10153", unique_key: jira-test-MRA-1, id_readable: MRA1, created: "2026-12-24T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}' }

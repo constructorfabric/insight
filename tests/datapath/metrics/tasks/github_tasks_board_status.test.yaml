@@ -66,6 +66,11 @@ bronze:
     - { $ref: ../templates/github_task.yaml#/templates/project_item, unique_key: gh-project-item-2, _airbyte_raw_id: gh-project-item-2,
         project_id: PVT_board2, project_number: 41, item_id: PVTI_card2 }
 
+  config.field_value_defaults:
+    # Unmapped type ids are unclassified by decision, not by accident:
+    # `assert_task_field_value_defaults_exist` requires this row.
+    - $ref: ../templates/github_task.yaml#/templates/github_issue_type_default_unknown
+
   bronze_github.issues:
     - { $ref: ../templates/github_task.yaml#/templates/issue, id: 1, number: 1, unique_key: gh-issue-1, assignee_logins: carol, assignee_ids: "1003", author_id: 1003,
         created_at: "2026-03-01T09:00:00Z", closed_at: "2026-03-11T09:00:00Z", updated_at: "2026-03-11T09:00:00Z" }
