@@ -7,6 +7,7 @@ import { CustomLineChart } from "@/components/custom/custom-line-chart";
 import { CustomPieChart } from "@/components/custom/custom-pie-chart";
 import { CustomStat } from "@/components/custom/custom-stat";
 import { CustomTable } from "@/components/custom/custom-table";
+import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 
 export interface CustomWidgetProps {
@@ -16,6 +17,8 @@ export interface CustomWidgetProps {
   error?: unknown;
   /** Whether a time range was asked for, which changes what empty means. */
   windowed?: boolean;
+  /** Whether the run is still in flight, which is not the same as empty. */
+  pending?: boolean;
 }
 
 export function CustomWidget({
@@ -23,6 +26,7 @@ export function CustomWidget({
   result,
   error,
   windowed,
+  pending,
 }: CustomWidgetProps) {
   if (error) {
     return (
@@ -34,7 +38,13 @@ export function CustomWidget({
     );
   }
 
-  if (!result || result.rows.length === 0) {
+  // A run in flight has no result yet, which is not the same as a result with
+  // nothing in it: saying "No data" while waiting reads as an answer.
+  if (pending || !result) {
+    return <CenteredSpinner className="min-h-40" />;
+  }
+
+  if (result.rows.length === 0) {
     return (
       <ComingSoon
         variant="card"

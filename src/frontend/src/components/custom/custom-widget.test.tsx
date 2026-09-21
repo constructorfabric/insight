@@ -176,12 +176,23 @@ describe("<CustomWidget>", () => {
     expect(screen.getByText(/unknown widget type/i)).toBeInTheDocument();
   });
 
-  it("says there is no data when neither a result nor an error was passed", () => {
-    render(
+  // Switching boards leaves a card with no result for a moment. Saying "No
+  // data" there reads as an answer, and then the answer changes.
+  it("waits rather than saying there is no data while the run is in flight", () => {
+    const { rerender } = render(
+      <CustomWidget
+        widget={{ type: "table", metric: "m", columns: ["day"] }}
+        pending
+      />
+    );
+
+    expect(screen.queryByText(/no data/i)).not.toBeInTheDocument();
+
+    rerender(
       <CustomWidget widget={{ type: "table", metric: "m", columns: ["day"] }} />
     );
 
-    expect(screen.getByText(/no data/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no data/i)).not.toBeInTheDocument();
   });
 
   it("pads a short row with empty cells instead of misaligning columns", () => {

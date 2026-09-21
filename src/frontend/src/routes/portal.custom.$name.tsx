@@ -288,6 +288,7 @@ function DashboardWidgetSlot({
           result={resultState.data}
           error={resultState.error}
           windowed={Boolean(options)}
+          pending={!known || resultState.isPending || resultState.isFetching}
         />
       </CardContent>
       <WidgetDrilldown

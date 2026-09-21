@@ -122,16 +122,13 @@ function Drawn({ name, widget }: { name: string; widget: Widget }) {
             Nothing dates this widget's metric, so every window shows all time.
           </p>
         ) : null}
-        {metric.isPending || result.isPending ? (
-          <CenteredSpinner className="min-h-40" />
-        ) : (
-          <CustomWidget
-            widget={widget}
-            result={result.data}
-            error={result.error ?? metric.error}
-            windowed={Boolean(options)}
-          />
-        )}
+        <CustomWidget
+          widget={widget}
+          result={result.data}
+          error={result.error ?? metric.error}
+          windowed={Boolean(options)}
+          pending={metric.isPending || result.isPending || result.isFetching}
+        />
       </CardContent>
     </Card>
   );
