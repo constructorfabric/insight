@@ -403,12 +403,19 @@ async fn a_dataset_page_shows_the_latest_records_as_they_arrived() {
         .mock
         .add(handlers::provide(vec![Counted { total: 757 }]));
 
-    let (looked, body) = harness.get("/v1/datasets/commits/records?limit=20").await;
+    let (looked, body) = harness
+        .get(&format!(
+            "/v1/datasets/commits/records?limit={PREVIEW_ROWS}"
+        ))
+        .await;
 
     assert_eq!(looked, StatusCode::OK);
     assert_eq!(read(&body)["records"][0]["raw_data"], json!({"lines": 7}));
     // The look is a slice; the count says how much lies behind it.
     assert_eq!(read(&body)["total"], json!(757));
+    // And how wide the slice was, so a reader stepping by offset does not
+    // have to assume the limit it asked for was the one applied.
+    assert_eq!(read(&body)["limit"], json!(PREVIEW_ROWS));
 }
 
 /// A page is a window on what arrived: how many, from where, in what order.
@@ -429,6 +436,32 @@ async fn a_page_is_ordered_by_a_declared_field_when_one_is_named() {
         .await;
 
     assert_eq!(looked, StatusCode::OK);
+}
+
+/// A page cut down to the cap without saying so would let a reader paging by
+/// the size it asked for step over the records the smaller page left behind.
+#[tokio::test]
+async fn a_page_wider_than_this_installation_allows_is_refused() {
+    let harness = TestHarness::new();
+    harness.a_free_name();
+    harness.put("commits", declaration()).await;
+
+    let (looked, body) = harness
+        .get(&format!(
+            "/v1/datasets/commits/records?limit={}",
+            PREVIEW_ROWS + 1
+        ))
+        .await;
+
+    assert_eq!(looked, StatusCode::BAD_REQUEST);
+    let violation = &read(&body)["context"]["field_violations"][0];
+    assert_eq!(violation["field"], json!("limit"));
+    assert!(
+        violation["description"]
+            .as_str()
+            .is_some_and(|said| said.contains(&PREVIEW_ROWS.to_string())),
+        "should name the cap: {violation}"
+    );
 }
 
 /// The reader names a field; the declaration says how it is read. A name it

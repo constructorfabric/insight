@@ -125,10 +125,11 @@ impl DatasetTables {
     /// what arrived, so a payload is never reshaped on the way out.
     ///
     /// SAFETY: `order` is an expression, not a value, so it is written into
-    /// the statement rather than bound. It is built from the declaration by
-    /// [`crate::domain::kinds::dataset::read`], never from what a caller
-    /// typed: a caller names a declared field, and the field says how it is
-    /// read.
+    /// the statement rather than bound. A caller only names a declared field;
+    /// the expression itself is built by
+    /// [`crate::domain::kinds::dataset::read`], whose `literal` escapes every
+    /// declared path segment into a ClickHouse string literal — including the
+    /// `?` that would otherwise shift this statement's bindings.
     pub(crate) async fn page(
         &self,
         table: &str,

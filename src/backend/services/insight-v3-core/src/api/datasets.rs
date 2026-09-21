@@ -59,12 +59,15 @@ struct DatasetNames {
     total: u64,
 }
 
-/// What a dataset holds, as a reader is shown it: the latest few records,
-/// and how many have arrived in all.
+/// What a dataset holds, as a reader is shown it: one page of records, how
+/// many have arrived in all, and how wide the page was.
 #[derive(Debug, Serialize)]
 struct DatasetRecords {
     records: Vec<Record>,
     total: u64,
+    /// The page size this installation applied. A reader stepping by offset
+    /// reads it rather than assuming the limit it asked for was the one used.
+    limit: u64,
 }
 
 /// What a reader asked one page of records for.
@@ -320,7 +323,7 @@ fn register_reads(router: Router, openapi: &dyn OpenApiRegistry, state: &Arc<App
 
     let records = OperationBuilder::get("/v1/datasets/{name}/records")
         .operation_id("insight_v3_core.datasets.records")
-        .summary("The latest records a dataset holds, newest first")
+        .summary("One page of the records a dataset holds")
         .anonymous()
         .exposed()
         .param(name_param.clone())
@@ -335,8 +338,15 @@ fn register_reads(router: Router, openapi: &dyn OpenApiRegistry, state: &Arc<App
             "string",
             "A declared field, or `received_at`; absent means arrival order",
         ))
-        .param(query_param("direction", "string", "asc or desc"))
-        .json_response(StatusCode::OK, "The latest records, and how many there are")
+        .param(query_param(
+            "direction",
+            "string",
+            "`asc` or `desc`; defaults to `desc`",
+        ))
+        .json_response(
+            StatusCode::OK,
+            "This page of records, and how many the dataset holds",
+        )
         .error_400(openapi)
         .error_403(openapi)
         .error_404(openapi)
@@ -391,6 +401,7 @@ async fn dataset_records(
     Ok(Json(DatasetRecords {
         records: preview.records,
         total: preview.total,
+        limit: preview.limit,
     })
     .into_response())
 }
@@ -431,7 +442,14 @@ fn preview_error(error: PreviewError) -> CanonicalError {
                     "`{named}` is not a field of this dataset; it declares {}",
                     declared.join(", ")
                 ),
-                "NOT_ADMISSIBLE",
+                "UNKNOWN",
+            )
+            .create(),
+        PreviewError::PageTooWide { asked, cap } => DatasetApiError::invalid_argument()
+            .with_field_violation(
+                "limit",
+                format!("a page holds at most {cap} records; {asked} were asked for"),
+                "OUT_OF_RANGE",
             )
             .create(),
         PreviewError::NotReady(named) => not_found(&named),

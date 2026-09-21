@@ -1146,7 +1146,7 @@
             }
           },
           {
-            "description": "asc or desc",
+            "description": "`asc` or `desc`; defaults to `desc`",
             "in": "query",
             "name": "direction",
             "required": false,
@@ -1164,7 +1164,7 @@
                 }
               }
             },
-            "description": "The latest records, and how many there are"
+            "description": "This page of records, and how many the dataset holds"
           },
           "400": {
             "content": {
@@ -1217,7 +1217,7 @@
             "description": "Gateway Timeout"
           }
         },
-        "summary": "The latest records a dataset holds, newest first",
+        "summary": "One page of the records a dataset holds",
         "x-toolkit-visibility": "exposed"
       }
     },
