@@ -132,14 +132,14 @@ pub(crate) struct Preview {
 /// How many records a look shows: what was asked for, or the cap when nothing
 /// was asked.
 ///
-/// SAFETY: more than the cap is refused rather than quietly cut down. A caller
-/// paging by the size it asked for would step over the records a smaller page
-/// left behind, and nothing in the answer would say so.
+/// SAFETY: a size outside the range is refused rather than quietly brought
+/// into it. A caller paging by the size it asked for would step over the
+/// records a smaller page left behind, and nothing in the answer would say so.
 fn shown(wanted: Option<u64>, cap: u64) -> Result<u64, PreviewError> {
     match wanted {
         None => Ok(cap),
         Some(asked) if asked >= 1 && asked <= cap => Ok(asked),
-        Some(asked) => Err(PreviewError::PageTooWide { asked, cap }),
+        Some(asked) => Err(PreviewError::PageSize { asked, cap }),
     }
 }
 
@@ -230,9 +230,10 @@ mod tests {
     }
 
     /// Cutting a page down quietly would let a caller paging by the size it
-    /// asked for step over the records the smaller page left behind.
+    /// asked for step over the records the smaller page left behind. A page
+    /// of none is no page at all, and the catalogue refuses it too.
     #[test]
-    fn a_page_wider_than_the_cap_is_refused_rather_than_cut_down() {
+    fn a_page_of_a_size_this_installation_does_not_serve_is_refused() {
         for asked in [0, 51, 10_000] {
             assert!(shown(Some(asked), 50).is_err(), "asked {asked}");
         }
@@ -246,8 +247,8 @@ pub(crate) enum PreviewError {
         named: String,
         declared: Vec<String>,
     },
-    #[error("a page holds at most {cap} records; {asked} were asked for")]
-    PageTooWide { asked: u64, cap: u64 },
+    #[error("a page holds 1 to {cap} records; {asked} were asked for")]
+    PageSize { asked: u64, cap: u64 },
     #[error("no dataset named `{0}` is ready to be read")]
     NotReady(String),
     #[error(transparent)]

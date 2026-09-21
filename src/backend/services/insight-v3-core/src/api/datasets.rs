@@ -330,7 +330,7 @@ fn register_reads(router: Router, openapi: &dyn OpenApiRegistry, state: &Arc<App
         .param(query_param(
             "limit",
             "integer",
-            "How many records this page holds, up to the service's cap",
+            "How many records this page holds, from 1 to the service's cap",
         ))
         .param(query_param("offset", "integer", "Records to skip"))
         .param(query_param(
@@ -445,10 +445,10 @@ fn preview_error(error: PreviewError) -> CanonicalError {
                 "UNKNOWN",
             )
             .create(),
-        PreviewError::PageTooWide { asked, cap } => DatasetApiError::invalid_argument()
+        PreviewError::PageSize { asked, cap } => DatasetApiError::invalid_argument()
             .with_field_violation(
                 "limit",
-                format!("a page holds at most {cap} records; {asked} were asked for"),
+                format!("a page holds 1 to {cap} records; {asked} were asked for"),
                 "OUT_OF_RANGE",
             )
             .create(),

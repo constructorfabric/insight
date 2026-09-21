@@ -189,8 +189,10 @@ export async function fetchDatasetRecords(
   const query = new URLSearchParams();
   if (page.limit !== undefined) query.set("limit", String(page.limit));
   if (page.offset) query.set("offset", String(page.offset));
-  if (page.orderBy) {
-    query.set("order_by", page.orderBy);
+  // The direction stands on its own: with no field named the service orders
+  // by the instant a record arrived, and honours the direction there too.
+  if (page.orderBy) query.set("order_by", page.orderBy);
+  if (page.descending !== undefined) {
     query.set("direction", page.descending ? "desc" : "asc");
   }
   const res = await fetchWithAuth(

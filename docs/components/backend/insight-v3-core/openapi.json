@@ -1119,7 +1119,7 @@
             }
           },
           {
-            "description": "How many records this page holds, up to the service's cap",
+            "description": "How many records this page holds, from 1 to the service's cap",
             "in": "query",
             "name": "limit",
             "required": false,

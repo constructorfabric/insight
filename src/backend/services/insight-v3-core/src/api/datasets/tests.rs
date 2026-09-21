@@ -440,28 +440,28 @@ async fn a_page_is_ordered_by_a_declared_field_when_one_is_named() {
 
 /// A page cut down to the cap without saying so would let a reader paging by
 /// the size it asked for step over the records the smaller page left behind.
+/// A page of none is no page at all, and is refused against the same field.
 #[tokio::test]
-async fn a_page_wider_than_this_installation_allows_is_refused() {
-    let harness = TestHarness::new();
-    harness.a_free_name();
-    harness.put("commits", declaration()).await;
+async fn a_page_of_a_size_this_installation_does_not_serve_is_refused() {
+    for asked in [0, PREVIEW_ROWS + 1] {
+        let harness = TestHarness::new();
+        harness.a_free_name();
+        harness.put("commits", declaration()).await;
 
-    let (looked, body) = harness
-        .get(&format!(
-            "/v1/datasets/commits/records?limit={}",
-            PREVIEW_ROWS + 1
-        ))
-        .await;
+        let (looked, body) = harness
+            .get(&format!("/v1/datasets/commits/records?limit={asked}"))
+            .await;
 
-    assert_eq!(looked, StatusCode::BAD_REQUEST);
-    let violation = &read(&body)["context"]["field_violations"][0];
-    assert_eq!(violation["field"], json!("limit"));
-    assert!(
-        violation["description"]
-            .as_str()
-            .is_some_and(|said| said.contains(&PREVIEW_ROWS.to_string())),
-        "should name the cap: {violation}"
-    );
+        assert_eq!(looked, StatusCode::BAD_REQUEST, "asked {asked}");
+        let violation = &read(&body)["context"]["field_violations"][0];
+        assert_eq!(violation["field"], json!("limit"));
+        assert!(
+            violation["description"]
+                .as_str()
+                .is_some_and(|said| said.contains(&PREVIEW_ROWS.to_string())),
+            "should name the range: {violation}"
+        );
+    }
 }
 
 /// The reader names a field; the declaration says how it is read. A name it
