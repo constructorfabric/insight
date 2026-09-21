@@ -1,0 +1,25 @@
+# JSON schema for bronze_chatgpt_team.chatgpt_team_codex_user_daily_org (all real
+# columns). Mirrors the connector InlineSchemaLoader (connectors/ai/chatgpt-team/
+# connector.yaml — stream chatgpt_team_codex_user_daily_org, the envelope half of
+# the same GET /api/wham/analytics/usage-leaderboard response asked for one row)
+# plus the 4 _airbyte_* CDK columns. total_users is the day's headcount AS OF THE
+# READ that returned it, which is what the completeness gate in
+# chatgpt_team__ai_dev_usage compares against; the read is in unique_key so one
+# read never overwrites another's.
+schemas:
+  bronze_chatgpt_team.chatgpt_team_codex_user_daily_org:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      _airbyte_raw_id: { type: string }
+      _airbyte_extracted_at: { type: string, format: date-time }
+      _airbyte_meta: { type: string }
+      _airbyte_generation_id: { type: integer }
+      tenant_id: { type: [string, "null"] }
+      source_id: { type: [string, "null"] }
+      unique_key: { type: string }
+      collected_at: { type: [string, "null"] }
+      data_source: { type: [string, "null"] }
+      date: { type: [string, "null"] }
+      total_users: { type: [number, "null"] }

@@ -39,8 +39,15 @@ bronze:
     - $ref: ../templates/github_task.yaml#/templates/value_open
     - $ref: ../templates/github_task.yaml#/templates/value_closed_completed
     - $ref: ../templates/github_task.yaml#/templates/value_closed_not_planned
-    - { $ref: ../templates/github_task.yaml#/templates/value_open, field_id: type, value_id: IT_task, unique_key: gh-value-type-task, canonical_value: other, value_display: Task }
-    - { $ref: ../templates/github_task.yaml#/templates/value_open, field_id: type, value_id: IT_bug, unique_key: gh-value-type-bug, canonical_value: bug, value_display: Bug }
+
+  config.field_value_map:
+    - $ref: ../templates/github_task.yaml#/templates/issue_type_kind_task
+    - $ref: ../templates/github_task.yaml#/templates/issue_type_kind_bug
+
+  config.field_value_defaults:
+    # Unmapped type ids are unclassified by decision, not by accident:
+    # `assert_task_field_value_defaults_exist` requires this row.
+    - $ref: ../templates/github_task.yaml#/templates/github_issue_type_default_unknown
 
   # Without a (account, e-mail) pair there is no `class_task_users` row, and
   # gold's inner join drops every issue — a GitHub fixture that seeds only

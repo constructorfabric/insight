@@ -7,8 +7,7 @@ import {
   type Paging,
 } from "@/components/custom/definition-paging";
 import { DefinitionSearch } from "@/components/custom/definition-search";
-import { RemoveDefinition } from "@/components/custom/remove-definition";
-import { RenameDefinition } from "@/components/custom/rename-definition";
+import { EditLink, PreviewLink } from "@/components/custom/editor/edit-link";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
@@ -33,6 +32,7 @@ export function DefinitionList({
   renderRow,
   search,
   paging,
+  create,
 }: {
   title: string;
   blurb: string;
@@ -44,12 +44,17 @@ export function DefinitionList({
   renderRow: (name: string) => ReactNode;
   search?: { label: string; value: string; onChange: (needle: string) => void };
   paging?: Paging;
+  /** What starts a new one of this kind, where one may be written by hand. */
+  create?: ReactNode;
 }) {
   return (
     <>
-      <header className="mb-3">
-        <h1 className={TEXT_TITLE}>{title}</h1>
-        <p className={cn(TEXT_BODY, "text-muted-foreground")}>{blurb}</p>
+      <header className="mb-3 flex flex-wrap items-start gap-3">
+        <div className="min-w-0 grow">
+          <h1 className={TEXT_TITLE}>{title}</h1>
+          <p className={cn(TEXT_BODY, "text-muted-foreground")}>{blurb}</p>
+        </div>
+        {create}
       </header>
       {search || paging ? (
         <div className="mb-4 flex flex-wrap items-center gap-3">
@@ -94,14 +99,19 @@ export function DefinitionList({
   );
 }
 
-/** One definition's card, with its name as the identifier it is. */
+/**
+ * One definition's card, with its name as the identifier it is.
+ *
+ * What may be done to it is passed in rather than assumed: a dataset owns
+ * records and cannot be renamed, so the actions differ by kind.
+ */
 export function DefinitionCard({
   name,
-  kind,
+  actions,
   children,
 }: {
   name: string;
-  kind: DefinitionKind;
+  actions: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -111,11 +121,26 @@ export function DefinitionCard({
           {name}
         </CardTitle>
         <span className="ms-auto flex shrink-0 items-center gap-1">
-          <RenameDefinition kind={kind} name={name} />
-          <RemoveDefinition kind={kind} name={name} />
+          {actions}
         </span>
       </CardHeader>
       <CardContent>{children}</CardContent>
     </Card>
+  );
+}
+
+/** What a card offers: opening the editor, where renaming and removal live too. */
+export function DefinitionActions({
+  kind,
+  name,
+}: {
+  kind: DefinitionKind;
+  name: string;
+}) {
+  return (
+    <>
+      <EditLink kind={kind} name={name} />
+      {kind === "dashboards" ? null : <PreviewLink kind={kind} name={name} />}
+    </>
   );
 }

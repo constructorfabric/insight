@@ -30,12 +30,12 @@ from . import MAX_QUERY_SPAN_DAYS
 METRIC_RESULTS = analytics_path("/v1/metric-results")
 
 #: metric_key → the golden per-person field it must equal. The three keys read
-#: the `tasks_closed` / `bugs_fixed` / `closed_non_bug` evidence measures, which
+#: the `tasks_closed` / `bugs_fixed` / `closed_task` evidence measures, which
 #: are the family the seed derives exact expectations for.
 GOLDEN_TASK_METRICS = {
     "tasks.closed": "tasks_closed",
     "tasks.bugs_fixed": "bugs_fixed",
-    "tasks.closed_non_bug": "closed_non_bug",
+    "tasks.closed_task": "closed_task",
 }
 
 #: Both inside a development lead's visible set, so one session answers for

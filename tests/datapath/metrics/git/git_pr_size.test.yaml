@@ -1,0 +1,167 @@
+spec_version: 1
+description: >
+  Metric: git.pr_size — typical diff size per pull request, #3066.
+  How it's computed (bronze → silver → gold):
+    • bronze: pull requests, and per-source diff totals — GitHub reports one
+      total per request, Bitbucket reports one row per changed FILE and carries
+      the parent request's last-update stamp on each, GitLab reports one total
+      per request in a stream of its own that lands only once GitLab has
+      computed the summary
+    • silver: one class row per request, whose line counts are null when the
+      source never reported them and a number when it did
+    • gold:   lines added plus lines removed, one value per request, dated by
+      the day the request was OPENED — the state it reached is irrelevant, so an
+      open, a merged and a closed-unmerged request all contribute
+    • serve:  quantileExactInclusive(0.5) over the period's values
+
+  A request whose line counts were never collected contributes nothing. A
+  request whose counts WERE collected and are zero contributes a real zero: it
+  is an observed diff of no lines, not an absence, and the class columns are
+  nullable precisely to keep the two apart. #3362
+
+  The median is the textbook one — on an even sample both middle values are
+  averaged, so the answer need not be a size any request had. #3362
+
+  Bitbucket's per-file rows accumulate: the key is the file path, so a
+  ReplacingMergeTree replaces a file's row and never removes one. A request
+  re-collected after a rebase dropped a file therefore holds that file's row
+  for ever, and only the parent's last-update stamp says which rows belong to
+  the diff the request has NOW. Size is the newest stamp's rows, whole — taking
+  each file's own newest row instead keeps the dropped file, since that file has
+  no newer row to displace it. #3066
+
+  alice opens five requests sized 12, 24, 36, 48 and 100 lines, so her period
+  median is 36 and a mean (44) fails it. The 2026-12-01 bucket holds the EVEN
+  set [12, 24, 36, 48] and serves 30, both middle values averaged; the upper
+  middle alone would read 36.
+  carol opens three sized 0, 10 and 30, so her median is 10 while dropping the
+  observed zero would serve 30.
+  heidi's Bitbucket requests: one summing three current file rows to 40, one
+  whose current diff is 30 lines beside a stale 70-line row, and one whose
+  diffstat was never collected at all — so her period medians [30, 40] to 35,
+  where summing the stale row would reach 70.
+  bob opens one GitLab request on each of 12-01 and 12-02, so each day isolates
+  one of them: 602 has a computed summary and serves 24 lines, 601 has none yet
+  and serves nothing while still counting as created. Over both days his median
+  stays 24 — a pending summary read as a zero would halve it to 12.
+
+  dave and erin carry one request each, sized 50 and 60, so the department
+  cohort is six people deep over 12-01..12-13 — an EVEN peer pool, whose sorted
+  values are [10, 24, 35, 36, 50, 60]. Its median averages the two middles to
+  35.5; the middle order statistic alone would read 36. p25 and p75 stay order
+  statistics and are not asked to interpolate. #3362
+
+  heidi is reached the way a real installation reaches her, not by a seeded
+  binding: her requests name her by account id alone, the connector states that
+  account as a workspace participant, and the seed attaches it to the person her
+  collected commit address names (#3423). A Bitbucket assertion here therefore
+  fails if that path breaks, instead of passing over it.
+
+  Cases: the median across views and the even-bucket boundary; a collected zero
+  is a value; GitLab serves the summary it has; GitLab stays silent on the one
+  it has not computed, without dropping the request; Bitbucket sums the current
+  file rows, ignores a stale one, and stays silent with no rows at all; the peer
+  view's median over an even cohort; the window holding every close and merge
+  holds no creation; an empty window.
+
+identity_accounts:
+  # GitLab exposes a user's address only to an admin-scoped token, so its
+  # request reaches a person through the account alone. Bitbucket is NOT bound
+  # here: it walks the real path — the connector states the account as a
+  # workspace participant and the seed attaches it to the person its commit
+  # address names (#3423) — so this spec exercises that path instead of
+  # standing in for it.
+  - {source_type: gitlab, source_id: gitlab-test, account_id: "730", person: bob@example.com}
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/alice
+    - $ref: ../templates/people.yaml#/templates/bob
+    - $ref: ../templates/people.yaml#/templates/carol
+    - $ref: ../templates/people.yaml#/templates/dave
+    - $ref: ../templates/people.yaml#/templates/erin
+    - $ref: ../templates/people.yaml#/templates/heidi
+
+  bronze_github.pull_requests:
+    # alice: four opened on 12-01, one on 12-02, every close and merge landing
+    # days later — so a window over the closes must hold nothing.
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: ps-a1, id: 501, number: 501, author_login: alice, created_at: "2026-12-01T08:00:00Z", closed_at: "2026-12-05T10:00:00Z", merged_at: "2026-12-05T10:00:00Z", merge_commit_sha: ps-merge-a1}
+    # Still open: no close, no merge, and it counts all the same.
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: ps-a2, id: 502, number: 502, state: open, author_login: alice, created_at: "2026-12-01T09:00:00Z"}
+    # Closed without ever merging: also counts.
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: ps-a3, id: 503, number: 503, author_login: alice, created_at: "2026-12-01T10:00:00Z", closed_at: "2026-12-04T10:00:00Z"}
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: ps-a4, id: 504, number: 504, author_login: alice, created_at: "2026-12-01T11:00:00Z", closed_at: "2026-12-06T10:00:00Z", merged_at: "2026-12-06T10:00:00Z", merge_commit_sha: ps-merge-a4}
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: ps-a5, id: 505, number: 505, author_login: alice, created_at: "2026-12-02T08:00:00Z", closed_at: "2026-12-07T10:00:00Z", merged_at: "2026-12-07T10:00:00Z", merge_commit_sha: ps-merge-a5}
+    # carol: the zero-line request sits between her other two, so the median
+    # moves if it is dropped.
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: ps-c1, id: 511, number: 511, author_login: carol, created_at: "2026-12-01T08:00:00Z", closed_at: "2026-12-05T10:00:00Z", merged_at: "2026-12-05T10:00:00Z", merge_commit_sha: ps-merge-c1}
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: ps-c2, id: 512, number: 512, author_login: carol, created_at: "2026-12-01T09:00:00Z", closed_at: "2026-12-05T11:00:00Z", merged_at: "2026-12-05T11:00:00Z", merge_commit_sha: ps-merge-c2}
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: ps-c3, id: 513, number: 513, author_login: carol, created_at: "2026-12-01T10:00:00Z", closed_at: "2026-12-05T12:00:00Z", merged_at: "2026-12-05T12:00:00Z", merge_commit_sha: ps-merge-c3}
+    # dave and erin exist to make the department cohort six, so the peer view
+    # has an EVEN pool and its median has two middles to average.
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: ps-d1, id: 521, number: 521, author_login: dave, created_at: "2026-12-03T08:00:00Z", closed_at: "2026-12-05T10:00:00Z", merged_at: "2026-12-05T10:00:00Z", merge_commit_sha: ps-merge-d1}
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: ps-e1, id: 531, number: 531, author_login: erin, created_at: "2026-12-03T09:00:00Z", closed_at: "2026-12-05T11:00:00Z", merged_at: "2026-12-05T11:00:00Z", merge_commit_sha: ps-merge-e1}
+
+  bronze_github.pull_request_diff_stats:
+    # GitHub reports a request's totals in one row, and staging reads the
+    # author's address from here and nowhere else.
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ps-ds-a1, pull_number: 501, additions: 10, deletions: 2, author_email: alice@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ps-ds-a2, pull_number: 502, additions: 20, deletions: 4, author_email: alice@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ps-ds-a3, pull_number: 503, additions: 30, deletions: 6, author_email: alice@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ps-ds-a4, pull_number: 504, additions: 40, deletions: 8, author_email: alice@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ps-ds-a5, pull_number: 505, additions: 80, deletions: 20, author_email: alice@example.com}
+    # Collected, and both counts are zero: an observed diff of no lines. The
+    # shape a rename-only or mode-only request leaves.
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ps-ds-c1, pull_number: 511, additions: 0, deletions: 0, author_email: carol@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ps-ds-c2, pull_number: 512, additions: 8, deletions: 2, author_email: carol@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ps-ds-c3, pull_number: 513, additions: 25, deletions: 5, author_email: carol@example.com}
+    # 50 and 60 sit ABOVE the two middles of the cohort, so they decide its size
+    # without moving which values the median has to average.
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ps-ds-d1, pull_number: 521, additions: 40, deletions: 10, author_email: dave@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ps-ds-e1, pull_number: 531, additions: 50, deletions: 10, author_email: erin@example.com}
+
+  bronze_gitlab.repositories:
+    - {$ref: ../templates/gitlab_git.yaml#/templates/project, unique_key: ps-gl-proj-101}
+
+  bronze_gitlab.users:
+    - {$ref: ../templates/gitlab_git.yaml#/templates/user, unique_key: ps-gl-user-bob, id: 730, username: bob-gl-size, name: Bob Beta}
+
+  bronze_gitlab.pull_requests:
+    # 602 — GitLab computed the summary, so this one carries a real size. It
+    # opens on 12-01 and 601 on 12-02, so each day isolates one of the two.
+    - {$ref: ../templates/gitlab_git.yaml#/templates/merge_request, unique_key: ps-gl-mr-602, iid: 602, id: 96602, author_id: 730, author_username: bob-gl-size, created_at: "2026-12-01T09:00:00Z", merged_at: "2026-12-06T09:00:00Z", merge_commit_sha: ps-gl-merge-602}
+    # 601 — no diff-stats row exists for it, so the summary is still pending
+    # and no line count can reach the class row.
+    - {$ref: ../templates/gitlab_git.yaml#/templates/merge_request, unique_key: ps-gl-mr-601, iid: 601, id: 96601, author_id: 730, author_username: bob-gl-size, created_at: "2026-12-02T08:00:00Z", merged_at: "2026-12-05T09:00:00Z", merge_commit_sha: ps-gl-merge-601}
+
+  bronze_gitlab.pull_request_diff_stats:
+    # Only 602. A pending summary has no row at all, which is what keeps 601
+    # out of the metric instead of handing it a zero.
+    - {$ref: ../templates/gitlab_git.yaml#/templates/diff_stats, unique_key: ps-gl-ds-602, mr_iid: 602, additions: 18, deletions: 6, files_changed: 3}
+
+  bronze_bitbucket_cloud.commit_authors:
+    # The one edge that turns heidi's account into a person: the connector
+    # states the account as a workspace participant, and the seed attaches it
+    # to whoever this verified address names. Nothing else binds her here.
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/commit_author, unique_key: "ps-bb-ca:heidi", repo_full_name: acme/size, author_email: heidi@example.com, author_account_id: bb-size-01, author_uuid: "{bb-size-01}", author_nickname: heidi-bb, author_display_name: Heidi Eta}
+
+  bronze_bitbucket_cloud.pull_requests:
+    # Left OPEN on purpose: size ignores the state, and an open request cannot
+    # engage the close-time derivation, so nothing here depends on it.
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/pull_request, unique_key: "ps-bb-pr:801", repo_full_name: acme/size, id: 801, state: OPEN, author_display_name: Heidi Eta, author_account_id: bb-size-01, created_on: "2026-12-11T08:00:00Z", updated_on: "2026-12-11T09:00:00Z"}
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/pull_request, unique_key: "ps-bb-pr:802", repo_full_name: acme/size, id: 802, state: OPEN, author_display_name: Heidi Eta, author_account_id: bb-size-01, created_on: "2026-12-12T08:00:00Z", updated_on: "2026-12-12T12:00:00Z"}
+    # No diffstat row exists for this one: the size was never collected.
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/pull_request, unique_key: "ps-bb-pr:803", repo_full_name: acme/size, id: 803, state: OPEN, author_display_name: Heidi Eta, author_account_id: bb-size-01, created_on: "2026-12-13T08:00:00Z", updated_on: "2026-12-13T09:00:00Z"}
+
+  bronze_bitbucket_cloud.pull_request_diffstat:
+    # 801 — three files, all carrying the request's current update stamp:
+    # 6 + 12 + 22 = 40 lines.
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/diffstat, unique_key: "ps-bb-ds:801:one", repo_full_name: acme/size, pr_id: 801, file_path: one.py, lines_added: 5, lines_removed: 1, pr_updated_on: "2026-12-11T09:00:00Z"}
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/diffstat, unique_key: "ps-bb-ds:801:two", repo_full_name: acme/size, pr_id: 801, file_path: two.py, lines_added: 10, lines_removed: 2, pr_updated_on: "2026-12-11T09:00:00Z"}
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/diffstat, unique_key: "ps-bb-ds:801:three", repo_full_name: acme/size, pr_id: 801, file_path: three.py, lines_added: 20, lines_removed: 2, pr_updated_on: "2026-12-11T09:00:00Z"}
+    # 802 — the current diff is kept.py alone, 30 lines, collected when the
+    # request last moved.
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/diffstat, unique_key: "ps-bb-ds:802:kept", repo_full_name: acme/size, pr_id: 802, file_path: kept.py, lines_added: 25, lines_removed: 5, pr_updated_on: "2026-12-12T12:00:00Z"}
+    # dropped.py left the diff in a rebase. Its row was written under the
+    # earlier stamp and nothing replaces or removes it.
+    - {$ref: ../templates/bitbucket_git.yaml#/templates/diffstat, unique_key: "ps-bb-ds:802:dropped", repo_full_name: acme/size, pr_id: 802, file_path: dropped.py, lines_added: 70, lines_removed: 0, pr_updated_on: "2026-12-12T09:00:00Z"}

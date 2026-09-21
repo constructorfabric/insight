@@ -2,9 +2,9 @@
 """The identity answer the admin-only surfaces ask for.
 
 `GET /v1/me` is the only call this service makes of identity: it forwards the
-caller's authorization and reads the roles off the answer. The seeded admin
-role id is a migration constant of the identity service, mirrored here — see
-ADMIN_ROLE_ID in src/identity.rs.
+caller's authorization and reads the caller and their roles off the answer.
+The seeded admin role id is a migration constant of the identity service,
+mirrored here — see ADMIN_ROLE_ID in src/store/identity.rs.
 
 Anything else 404s, so a test that starts calling a second endpoint fails
 here rather than passing on a stub that answered everything.
@@ -17,6 +17,8 @@ import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 ADMIN_ROLE_ID = "a4d11000-0000-4000-8000-000000000001"
+# Who the caller is, which every write that changes a dataset records.
+PERSON_ID = "00000000-0000-4000-8000-0000000000aa"
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -31,7 +33,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(401, "no authorization forwarded")
             return
 
-        body = json.dumps({"roles": [{"role_id": ADMIN_ROLE_ID}]}).encode()
+        body = json.dumps(
+            {"person_id": PERSON_ID, "roles": [{"role_id": ADMIN_ROLE_ID}]}
+        ).encode()
         self.send_response(200)
         self.send_header("content-type", "application/json")
         self.send_header("content-length", str(len(body)))

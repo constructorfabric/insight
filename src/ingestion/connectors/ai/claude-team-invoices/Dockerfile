@@ -1,4 +1,4 @@
-FROM airbyte/python-connector-base:4.1.1
+FROM airbyte/python-connector-base:4.1.1@sha256:a268b44c733ae699a60f5fbc06a324945dba98945c6e2ab7f8609f2f895b0d28
 
 COPY . /airbyte/integration_code
 RUN pip install /airbyte/integration_code

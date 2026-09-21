@@ -17,7 +17,6 @@ from insight_datapath.bindings import Bindings
 from insight_datapath.caller import StandCaller
 from insight_datapath.ch_seeder import CHSeeder
 from insight_datapath.dbt_runner import DbtRunner
-from insight_datapath.enrich import EnrichRunner
 from insight_datapath.instance import InstanceConfig, resolve_instance
 from insight_datapath.reset import refuse_a_seeded_warehouse, session_floor
 from insight_datapath.schema import apply_all, restart_analytics
@@ -145,18 +144,6 @@ def dbt_runner(instance_cfg: InstanceConfig, warehouse_floor: int) -> Iterator[D
     runner.build_closure()
     yield runner
     runner.cleanup()
-
-
-@pytest.fixture(scope="session")
-def enrich_runner(instance_cfg: InstanceConfig) -> EnrichRunner:
-    runner = EnrichRunner(
-        instance_cfg,
-        repo_root=REPO_ROOT,
-        project=_instance_name(),
-        env_file=_env_file(),
-    )
-    runner.pull_images()
-    return runner
 
 
 @pytest.fixture(scope="session")

@@ -2,21 +2,22 @@
 
 use std::sync::Arc;
 
+use axum::extract::rejection::JsonRejection;
 use axum::extract::{Extension, Path, Query};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use toolkit::api::{OpenApiRegistry, OperationBuilder, ParamLocation, ParamSpec};
-use toolkit_canonical_errors::{CanonicalError, resource_error};
+use toolkit_canonical_errors::{CanonicalError, Http, resource_error};
 use utoipa::ToSchema;
 
 use super::AppState;
-use crate::custom::{CustomError, held_by};
-use crate::definitions::{
-    Change, DefinitionError, DefinitionKind, DefinitionName, DefinitionStoreError, MAX_PAGE_LIMIT,
-    Page, PageError,
-};
+use super::errors::ApiErrors;
+use crate::domain::definition::{DefinitionKind, DefinitionName, MAX_PAGE_LIMIT, Page, PageError};
+use crate::domain::kinds::metric::answerable::EffectiveClock;
+use crate::domain::surfaces::CustomError;
+use crate::domain::violation::Violation;
 
 /// The query string on a list: what to look for, in a name or in a body, and
 /// which page of the matches to answer with.
@@ -44,7 +45,25 @@ struct RenameResponse {
 }
 
 #[resource_error("gts.cf.insight.insight_v3_core.definitions.v1~")]
-struct DefinitionApiError;
+pub(super) struct DefinitionApiError;
+
+impl ApiErrors for DefinitionApiError {
+    fn invalid_field(field: &str, detail: String) -> CanonicalError {
+        Self::invalid_argument()
+            .with_field_violation(field, detail, "INVALID")
+            .create()
+    }
+
+    fn timed_out(detail: &str) -> CanonicalError {
+        Self::deadline_exceeded(detail).create()
+    }
+
+    fn name_taken(name: &str) -> CanonicalError {
+        Self::already_exists(format!("`{name}` is already taken"))
+            .with_resource(name)
+            .create()
+    }
+}
 
 // `.anonymous()`: these routes trust the gateway to authenticate the
 // `__Host-sid` session cookie before forwarding. Must stay off the network
@@ -52,30 +71,13 @@ struct DefinitionApiError;
 pub(crate) fn register_routes(
     router: Router,
     openapi: &dyn OpenApiRegistry,
-    state: Arc<AppState>,
+    state: &Arc<AppState>,
 ) -> Router {
-    let router = register_kind(
-        router,
-        openapi,
-        state.clone(),
-        DefinitionKind::Metric,
-        "metrics",
-    );
-    let router = register_kind(
-        router,
-        openapi,
-        state.clone(),
-        DefinitionKind::Widget,
-        "widgets",
-    );
-
-    register_kind(
-        router,
-        openapi,
-        state,
-        DefinitionKind::Dashboard,
-        "dashboards",
-    )
+    DefinitionKind::ALL
+        .into_iter()
+        .fold(router, |router, kind| {
+            register_kind(router, openapi, state.clone(), kind)
+        })
 }
 
 fn query_param(name: &str, param_type: &str, description: &str) -> ParamSpec {
@@ -113,6 +115,7 @@ fn register_list(
         .param(query_param("offset", "integer", "Names to skip"))
         .json_response(StatusCode::OK, "One page of names, and how many match")
         .error_400(openapi)
+        .error_403(openapi)
         .error_500(openapi)
         .error_504(openapi)
         .handler(list_definitions)
@@ -126,8 +129,9 @@ fn register_kind(
     openapi: &dyn OpenApiRegistry,
     state: Arc<AppState>,
     kind: DefinitionKind,
-    segment: &str,
 ) -> Router {
+    let segment = kind.plural();
+
     let name_param = ParamSpec {
         name: "name".to_owned(),
         location: ParamLocation::Path,
@@ -139,6 +143,7 @@ fn register_kind(
 
     let delete_param = name_param.clone();
     let rename_param = name_param.clone();
+    let dependents = register_dependents(openapi, &state, kind, segment, name_param.clone());
 
     let put = OperationBuilder::put(format!("/v1/{segment}/{{name}}"))
         .operation_id(format!("insight_v3_core.{segment}.put"))
@@ -149,6 +154,7 @@ fn register_kind(
         .json_request::<serde_json::Value>(openapi, "The definition body")
         .no_content_response(StatusCode::NO_CONTENT, "Definition stored")
         .error_400(openapi)
+        .error_403(openapi)
         .error_500(openapi)
         .error_504(openapi)
         .handler(put_definition)
@@ -164,6 +170,7 @@ fn register_kind(
         .param(name_param)
         .json_response(StatusCode::OK, "The definition body")
         .error_400(openapi)
+        .error_403(openapi)
         .error_404(openapi)
         .error_500(openapi)
         .error_504(openapi)
@@ -182,7 +189,9 @@ fn register_kind(
         .param(delete_param)
         .no_content_response(StatusCode::NO_CONTENT, "Definition removed")
         .error_400(openapi)
+        .error_403(openapi)
         .error_404(openapi)
+        .error_409(openapi)
         .error_500(openapi)
         .error_504(openapi)
         .handler(delete_definition)
@@ -199,6 +208,7 @@ fn register_kind(
         .json_request::<RenameRequest>(openapi, "The new name")
         .json_response(StatusCode::OK, "The new name, and what was rewritten")
         .error_400(openapi)
+        .error_403(openapi)
         .error_404(openapi)
         .error_409(openapi)
         .error_500(openapi)
@@ -214,9 +224,22 @@ fn register_kind(
         .merge(list)
         .merge(remove)
         .merge(rename)
+        .merge(dependents)
 }
 
-pub(crate) fn custom_error(error: CustomError) -> CanonicalError {
+/// A stored definition as a reader is given it.
+///
+/// The body is what was written; the clock is not in it, because a metric
+/// over a dataset may inherit one, and a reader deciding whether to window a
+/// card cannot tell from the body alone.
+#[derive(Debug, Serialize)]
+struct DefinitionResponse {
+    body: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    clock: Option<EffectiveClock>,
+}
+
+pub(super) fn custom_error(error: CustomError) -> CanonicalError {
     match error {
         CustomError::NotFound { kind, name } => {
             DefinitionApiError::not_found(format!("{} `{name}` was not found", kind.singular()))
@@ -229,58 +252,61 @@ pub(crate) fn custom_error(error: CustomError) -> CanonicalError {
                 format!("still in use by {}", used_by.join(", ")),
                 "in_use",
             )
+            .with_override(Http::status_code(StatusCode::CONFLICT.as_u16()))
             .create(),
         CustomError::Widget(source) => widget_error(&source),
-        CustomError::Body(source) => DefinitionApiError::invalid_argument()
-            .with_field_violation("body", source.to_string(), "INVALID")
-            .create(),
-        CustomError::Range(source) => DefinitionApiError::invalid_argument()
-            .with_field_violation("time_ranges", source.to_string(), "INVALID")
-            .create(),
-        CustomError::Compile(source) => DefinitionApiError::invalid_argument()
-            .with_field_violation("body", source.to_string(), "INVALID")
-            .create(),
-        CustomError::Store(source) => definition_store_error(source),
+        CustomError::DatasetNotReady(named) => DefinitionApiError::invalid_field(
+            "body",
+            format!("no dataset named `{named}` is ready"),
+        ),
+        CustomError::Body(source) => DefinitionApiError::invalid_field("body", source.to_string()),
+        CustomError::Range(source) => {
+            DefinitionApiError::invalid_field("time_ranges", source.to_string())
+        }
+        CustomError::Compile(source) => {
+            DefinitionApiError::invalid_field("body", source.to_string())
+        }
+        CustomError::Unanswerable(violations) => unanswerable(&violations),
+        CustomError::Store(source) => DefinitionApiError::definition_store_error(source),
+        CustomError::Datasets(source) => DefinitionApiError::dataset_store_error(source),
         CustomError::Run(source) => {
             tracing::error!(error = ?source, "metric query execution failed");
             CanonicalError::internal("metric query execution failed").create()
         }
-        CustomError::Catalog(source) => {
-            tracing::error!(error = ?source, "table catalogue read failed");
-            CanonicalError::internal("table catalogue read failed").create()
-        }
     }
+}
+
+/// Every way the dataset cannot answer the metric, reported together.
+///
+/// A metric wrong in several places is answered once, with each place named
+/// as the submitted body shapes it, so an editor can mark all of them.
+fn unanswerable(violations: &[Violation]) -> CanonicalError {
+    let Some((first, rest)) = violations.split_first() else {
+        return DefinitionApiError::invalid_field(
+            "body",
+            "the dataset cannot answer this metric".to_owned(),
+        );
+    };
+
+    let mut builder = DefinitionApiError::invalid_argument().with_field_violation(
+        &first.field,
+        first.detail.clone(),
+        first.reason_code(),
+    );
+    for violation in rest {
+        builder = builder.with_field_violation(
+            &violation.field,
+            violation.detail.clone(),
+            violation.reason_code(),
+        );
+    }
+
+    builder.create()
 }
 
 /// The same body, pointed at the new name.
 ///
-/// A dashboard also names its widgets inside its item list, where the order
-/// and the headings live; nothing else has one, so walking it is a no-op for
-/// a widget's metric.
-fn pointed_at(body: serde_json::Value, field: &str, from: &str, to: &str) -> serde_json::Value {
-    let mut body = crate::dashboard::renamed(body, from, to);
-
-    match body.get_mut(field) {
-        Some(serde_json::Value::String(one)) if one == from => to.clone_into(one),
-        Some(serde_json::Value::Array(many)) => {
-            for entry in many {
-                if entry.as_str() == Some(from) {
-                    *entry = serde_json::Value::String(to.to_owned());
-                }
-            }
-        }
-        _ => {}
-    }
-
-    body
-}
-
 /// Renames a definition, and rewrites whatever drew it under the old name.
-///
-/// A name is the only handle a widget has on its metric, and a dashboard on
-/// its widgets, so renaming one alone would break the others - the same
-/// broken chart the widget check exists to prevent. The new name, the removal
-/// of the old, and every rewritten dependent are one transaction.
 async fn rename_definition(
     Extension(state): Extension<Arc<AppState>>,
     Extension(kind): Extension<DefinitionKind>,
@@ -295,79 +321,14 @@ async fn rename_definition(
     })
     .await?;
 
-    let from = DefinitionName::parse(&name).map_err(definition_error)?;
-    let to = DefinitionName::parse(&request.to).map_err(definition_error)?;
+    let from = DefinitionName::parse(&name).map_err(DefinitionApiError::definition_error)?;
+    let to = DefinitionName::parse(&request.to).map_err(DefinitionApiError::definition_error)?;
 
-    let body = state
-        .definitions()
-        .get(kind, &from)
+    let rewritten = state
+        .surfaces()
+        .rename(kind, &from, &to)
         .await
-        .map_err(definition_store_error)?
-        .ok_or_else(|| {
-            DefinitionApiError::not_found(format!("`{}` was not found", from.as_str()))
-                .with_resource(from.as_str())
-                .create()
-        })?;
-
-    if to == from {
-        return Ok(Json(RenameResponse {
-            name: to.as_str().to_owned(),
-            rewritten: Vec::new(),
-        })
-        .into_response());
-    }
-
-    if state
-        .definitions()
-        .get(kind, &to)
-        .await
-        .map_err(definition_store_error)?
-        .is_some()
-    {
-        return Err(DefinitionApiError::already_exists(format!(
-            "`{}` is already taken",
-            to.as_str()
-        ))
-        .with_resource(to.as_str())
-        .create());
-    }
-
-    let mut changes = vec![
-        Change::Put(kind, to.clone(), body),
-        Change::Delete(kind, from.clone()),
-    ];
-    let mut rewritten = Vec::new();
-    if let Some((holder, field)) = held_by(kind) {
-        for holder_name in state
-            .surfaces()
-            .dependents_of(kind, &from)
-            .await
-            .map_err(custom_error)?
-        {
-            let parsed = DefinitionName::parse(&holder_name).map_err(definition_error)?;
-            let Some(body) = state
-                .definitions()
-                .get(holder, &parsed)
-                .await
-                .map_err(definition_store_error)?
-            else {
-                continue;
-            };
-
-            changes.push(Change::Put(
-                holder,
-                parsed,
-                pointed_at(body, field, from.as_str(), to.as_str()),
-            ));
-            rewritten.push(holder_name);
-        }
-    }
-
-    state
-        .definitions()
-        .apply(&changes)
-        .await
-        .map_err(definition_store_error)?;
+        .map_err(custom_error)?;
 
     Ok(Json(RenameResponse {
         name: to.as_str().to_owned(),
@@ -389,7 +350,7 @@ async fn delete_definition(
     })
     .await?;
 
-    let name = DefinitionName::parse(&name).map_err(definition_error)?;
+    let name = DefinitionName::parse(&name).map_err(DefinitionApiError::definition_error)?;
 
     match state.surfaces().delete(kind, &name).await {
         Ok(()) => Ok(StatusCode::NO_CONTENT.into_response()),
@@ -398,12 +359,39 @@ async fn delete_definition(
     }
 }
 
+/// Every definition that names this one, so a reader sees what a removal would
+/// break before they ask for one.
+fn register_dependents(
+    openapi: &dyn OpenApiRegistry,
+    state: &Arc<AppState>,
+    kind: DefinitionKind,
+    segment: &str,
+    name_param: ParamSpec,
+) -> Router {
+    OperationBuilder::get(format!("/v1/{segment}/{{name}}/dependents"))
+        .operation_id(format!("insight_v3_core.{segment}.dependents"))
+        .summary("Every definition that names this one")
+        .anonymous()
+        .exposed()
+        .param(name_param)
+        .json_response(StatusCode::OK, "What would break if this were removed")
+        .error_400(openapi)
+        .error_403(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_504(openapi)
+        .handler(definition_dependents)
+        .register(Router::new(), openapi)
+        .layer(Extension(Arc::clone(state)))
+        .layer(Extension(kind))
+}
+
 async fn put_definition(
     Extension(state): Extension<Arc<AppState>>,
     Extension(kind): Extension<DefinitionKind>,
     Path(name): Path<String>,
     headers: axum::http::HeaderMap,
-    Json(body): Json<serde_json::Value>,
+    body: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Response, CanonicalError> {
     crate::api::require_admin(&state, &headers, || {
         DefinitionApiError::permission_denied()
@@ -411,8 +399,9 @@ async fn put_definition(
             .create()
     })
     .await?;
+    let Json(body) = body.map_err(|error| DefinitionApiError::unreadable_body(&error))?;
 
-    let name = DefinitionName::parse(&name).map_err(definition_error)?;
+    let name = DefinitionName::parse(&name).map_err(DefinitionApiError::definition_error)?;
 
     state
         .surfaces()
@@ -423,10 +412,59 @@ async fn put_definition(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
-pub(crate) fn widget_error(error: &crate::widget::WidgetError) -> CanonicalError {
+fn widget_error(error: &crate::domain::kinds::widget::WidgetError) -> CanonicalError {
     DefinitionApiError::invalid_argument()
         .with_field_violation("body", error.to_string(), "INVALID")
         .create()
+}
+
+/// What names a definition, as a reader is shown it.
+#[derive(Debug, Serialize)]
+struct Dependents {
+    /// Each holder, as the kind it is and the name it has.
+    holders: Vec<Holder>,
+}
+
+#[derive(Debug, Serialize)]
+struct Holder {
+    kind: String,
+    name: String,
+}
+
+/// Every definition that names this one, so a reader sees what a removal would
+/// break before they ask for one.
+async fn definition_dependents(
+    Extension(state): Extension<Arc<AppState>>,
+    Extension(kind): Extension<DefinitionKind>,
+    Path(name): Path<String>,
+    headers: axum::http::HeaderMap,
+) -> Result<Response, CanonicalError> {
+    crate::api::require_admin(&state, &headers, || {
+        DefinitionApiError::permission_denied()
+            .with_reason(crate::api::ADMIN_ONLY)
+            .create()
+    })
+    .await?;
+
+    let name = DefinitionName::parse(&name).map_err(DefinitionApiError::definition_error)?;
+    let surfaces = state.surfaces();
+
+    if let Err(CustomError::NotFound { .. }) = surfaces.get(kind, &name).await {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    }
+
+    let holders = surfaces
+        .dependents_of(kind, &name)
+        .await
+        .map_err(custom_error)?
+        .into_iter()
+        .map(|holder| Holder {
+            kind: holder.kind.plural().to_owned(),
+            name: holder.name,
+        })
+        .collect();
+
+    Ok(Json(Dependents { holders }).into_response())
 }
 
 async fn get_definition(
@@ -442,10 +480,15 @@ async fn get_definition(
     })
     .await?;
 
-    let name = DefinitionName::parse(&name).map_err(definition_error)?;
+    let name = DefinitionName::parse(&name).map_err(DefinitionApiError::definition_error)?;
 
-    match state.surfaces().get(kind, &name).await {
-        Ok(body) => Ok(Json(body).into_response()),
+    let surfaces = state.surfaces();
+    match surfaces.get(kind, &name).await {
+        Ok(body) => {
+            let clock = surfaces.clock_of(kind, &body).await;
+
+            Ok(Json(DefinitionResponse { body, clock }).into_response())
+        }
         Err(CustomError::NotFound { .. }) => Ok(StatusCode::NOT_FOUND.into_response()),
         Err(other) => Err(custom_error(other)),
     }
@@ -481,33 +524,7 @@ async fn list_definitions(
 }
 
 fn page_error(error: PageError) -> CanonicalError {
-    DefinitionApiError::invalid_argument()
-        .with_field_violation("limit", error.to_string(), "INVALID")
-        .create()
-}
-
-fn definition_error(error: DefinitionError) -> CanonicalError {
-    DefinitionApiError::invalid_argument()
-        .with_field_violation("name", error.to_string(), "INVALID")
-        .create()
-}
-
-fn definition_store_error(error: DefinitionStoreError) -> CanonicalError {
-    match error {
-        // Waiting for a connection is the store being busy, not broken.
-        DefinitionStoreError::Database(sea_orm::DbErr::ConnectionAcquire(source)) => {
-            tracing::warn!(error = ?source, "definition store connection timed out");
-            DefinitionApiError::deadline_exceeded("definition store timed out").create()
-        }
-        DefinitionStoreError::Database(source) => {
-            tracing::error!(error = ?source, "definition store operation failed");
-            CanonicalError::internal("definition store operation failed").create()
-        }
-        DefinitionStoreError::Json(source) => {
-            tracing::error!(error = ?source, "definition body serialization failed");
-            CanonicalError::internal("definition store operation failed").create()
-        }
-    }
+    DefinitionApiError::invalid_field("limit", error.to_string())
 }
 
 #[cfg(test)]

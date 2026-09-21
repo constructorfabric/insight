@@ -8,7 +8,7 @@ draw order, same dimension tables) and counts what gold will count:
 * `tasks_closed`   — issues whose close event lands inside the window,
 * `bugs_fixed`     — the closed ones whose type reconciles to `issue_kind='bug'`
                      via `_ISSUE_TYPE_DIM`,
-* `closed_non_bug` — the closed ones reconciling to `issue_kind='other'`.
+* `closed_task`    — the closed ones reconciling to `issue_kind='task'`.
 
 Grain is per assignee email — the strongest oracle the plan supports, since the
 generator assigns every issue to the person whose rng drew it and gold
@@ -45,13 +45,13 @@ from .profiles import Person
 #: Bump when the golden_metrics document changes shape. The stand-suite reader
 #: (tests/lib/insight_stand/manifest.py) skips, rather than misreads, a version
 #: it does not understand.
-GOLDEN_METRICS_VERSION = 1
+GOLDEN_METRICS_VERSION = 2
 
 
 class GoldenTaskTotals(TypedDict):
     tasks_closed: int
     bugs_fixed: int
-    closed_non_bug: int
+    closed_task: int
 
 
 class GoldenTasks(TypedDict):
@@ -69,7 +69,7 @@ class GoldenMetricsDoc(TypedDict):
 class TaskTotals:
     tasks_closed: int
     bugs_fixed: int
-    closed_non_bug: int
+    closed_task: int
 
 
 def task_totals(
@@ -80,14 +80,14 @@ def task_totals(
     """Per-assignee-email closed-issue totals over the seeded window.
 
     Counts by close date, which is the `metric_date` gold stamps on the
-    `tasks_closed` / `bugs_fixed` / `closed_non_bug` evidence rows.
+    `tasks_closed` / `bugs_fixed` / `closed_task` evidence rows.
     """
     window = days_window(days, end=anchor + _dt.timedelta(days=1))
 
     totals: dict[str, TaskTotals] = {}
     for person in task_persons(roster):
         weight = task_weight(person.team or "")
-        closed = bugs = non_bug = 0
+        closed = bugs = tasks = 0
         for created_day in window:
             for plan in plan_issues(person.uuid, weight, created_day, anchor):
                 if plan.close_at is None:
@@ -95,11 +95,9 @@ def task_totals(
                 closed += 1
                 if plan.issue_kind == "bug":
                     bugs += 1
-                elif plan.issue_kind == "other":
-                    non_bug += 1
-        totals[person.email] = TaskTotals(
-            tasks_closed=closed, bugs_fixed=bugs, closed_non_bug=non_bug
-        )
+                elif plan.issue_kind == "task":
+                    tasks += 1
+        totals[person.email] = TaskTotals(tasks_closed=closed, bugs_fixed=bugs, closed_task=tasks)
     return totals
 
 
@@ -115,7 +113,7 @@ def build_golden_metrics(
         email: {
             "tasks_closed": t.tasks_closed,
             "bugs_fixed": t.bugs_fixed,
-            "closed_non_bug": t.closed_non_bug,
+            "closed_task": t.closed_task,
         }
         for email, t in task_totals(roster, days, anchor).items()
     }

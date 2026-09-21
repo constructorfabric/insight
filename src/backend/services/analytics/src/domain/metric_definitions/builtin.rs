@@ -287,7 +287,7 @@ mod tests {
     #[test]
     fn registry_declares_the_expected_counts() {
         assert_eq!(builtin_sources().len(), 7, "builtin source count");
-        assert_eq!(builtin_metrics().len(), 105, "builtin metric count");
+        assert_eq!(builtin_metrics().len(), 109, "builtin metric count");
     }
 
     #[test]

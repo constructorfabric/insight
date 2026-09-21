@@ -51,7 +51,10 @@ jobs:
   transformations:
     name: transformations + dbt tests
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # The lane grows by a scenario with most changes and a runner varies by a
+    # third between runs; 74 scenarios took 31 to 42 minutes, so 45 was the
+    # edge, and a timeout reads as `cancelled` rather than as a failing test.
+    timeout-minutes: 75
     env:
       CLICKHOUSE_CONTAINER: jira-field-history-clickhouse
       CLICKHOUSE_USER: insight
@@ -137,14 +140,17 @@ jobs:
 
       - name: Transformation tests
         working-directory: src/ingestion/dbt/tests/jira/transform
-        # Each scenario seeds bronze, builds the models and asserts the whole
-        # journal. The dbt singular tests — the round trip above all — are
-        # asserted per scenario from inside the suite, because one scenario
-        # deliberately makes the round trip fail and only the suite knows which.
+        # A module's scenarios are seeded together, built once and asserted one
+        # by one, each reading its own source id. The dbt singular tests — the
+        # round trip above all — are asserted per scenario from inside the
+        # suite, because two scenarios deliberately make the round trip fail and
+        # only the suite knows which.
         run: |
           set -euo pipefail
-          # The suite shells out to `dbt`, so it has to be the pinned one.
-          PATH="${VENV}/bin:${PATH}" "${VENV}/bin/pytest" -q --durations=10
+          # The suite invokes dbt in its own process, importing it from the
+          # interpreter that runs pytest — so the venv's pytest is what pins the
+          # adapter, and no `dbt` needs to be on PATH.
+          "${VENV}/bin/pytest" -q --durations=10
 
       - name: ClickHouse logs
         if: failure()

@@ -11,7 +11,7 @@ close day, and the kind of a closed issue follows its CURRENT type.
 from __future__ import annotations
 
 import pytest
-from insight_datapath.metric_expect import approx, one
+from insight_datapath.metric_expect import approx, one, some
 from insight_datapath.spec_runner import SpecRun
 
 pytestmark = pytest.mark.fixture
@@ -26,7 +26,7 @@ DAVE = "dave@example.com"
 def test_bug_closes_sum_across_sources_for_one_person(spec: SpecRun) -> None:
     """Bob closes one Jira Bug and one GitHub Bug on 2026-06-25: the person aggregate
     carries no source dimension, so bugs_fixed and tasks.closed are each 2 and
-    bugs_ratio is 100."""
+    bugs_ratio is 100; the source breakdown says which close came from where."""
     r = spec.call(
         {
             "url": "/v1/metric-results",
@@ -36,7 +36,13 @@ def test_bug_closes_sum_across_sources_for_one_person(spec: SpecRun) -> None:
                 "period": {"from": "2026-06-20", "to": "2026-06-30"},
                 "metrics": [
                     {"metric_key": "tasks.bugs_fixed", "views": [{"view": "period"}]},
-                    {"metric_key": "tasks.closed", "views": [{"view": "period"}]},
+                    {
+                        "metric_key": "tasks.closed",
+                        "views": [
+                            {"view": "period"},
+                            {"view": "breakdown", "dimensions": ["source"]},
+                        ],
+                    },
                     {"metric_key": "tasks.bugs_ratio", "views": [{"view": "period"}]},
                 ],
             },
@@ -46,6 +52,18 @@ def test_bug_closes_sum_across_sources_for_one_person(spec: SpecRun) -> None:
 
     r.row("tasks.bugs_fixed", "period", entity_id=BOB).equals(value=2)
     r.row("tasks.closed", "period", entity_id=BOB).equals(value=2)
+    by_source = r.breakdown("tasks.closed")
+    assert (
+        float(one(by_source, entity_id=BOB, dimensions={"key": "source", "value": "jira"})["value"])
+        == 1.0
+    )
+    assert (
+        float(
+            one(by_source, entity_id=BOB, dimensions={"key": "source", "value": "github"})["value"]
+        )
+        == 1.0
+    )
+    assert len(some(by_source, entity_id=BOB)) == 2
     r.row("tasks.bugs_ratio", "period", entity_id=BOB).equals(value=100)
 
 
@@ -83,7 +101,7 @@ def test_reopened_bug_counts_once_on_its_final_close_day(spec: SpecRun) -> None:
 def test_type_change_after_close_reclassifies_the_close(spec: SpecRun) -> None:
     """Dave's issue was a Bug when it closed, but the current snapshot says Task after
     the 2026-06-26 retype, and the kind joins on the CURRENT type: the close counts in
-    closed_non_bug, not bugs_fixed. Pins current behavior (snapshot type wins), not
+    closed_task, not bugs_fixed. Pins current behavior (snapshot type wins), not
     intent."""
     r = spec.call(
         {
@@ -94,7 +112,7 @@ def test_type_change_after_close_reclassifies_the_close(spec: SpecRun) -> None:
                 "period": {"from": "2026-06-20", "to": "2026-06-30"},
                 "metrics": [
                     {"metric_key": "tasks.bugs_fixed", "views": [{"view": "period"}]},
-                    {"metric_key": "tasks.closed_non_bug", "views": [{"view": "period"}]},
+                    {"metric_key": "tasks.closed_task", "views": [{"view": "period"}]},
                     {"metric_key": "tasks.closed", "views": [{"view": "period"}]},
                 ],
             },
@@ -103,5 +121,5 @@ def test_type_change_after_close_reclassifies_the_close(spec: SpecRun) -> None:
     assert r.status == 200
 
     r.row("tasks.bugs_fixed", "period", entity_id=DAVE).equals(value=None)
-    r.row("tasks.closed_non_bug", "period", entity_id=DAVE).equals(value=1)
+    r.row("tasks.closed_task", "period", entity_id=DAVE).equals(value=1)
     r.row("tasks.closed", "period", entity_id=DAVE).equals(value=1)

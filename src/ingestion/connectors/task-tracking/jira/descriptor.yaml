@@ -61,26 +61,41 @@ name: jira
 # that no longer matched. MINOR: a new column, nothing re-derived; rows written
 # before this are filled by `heal_jira_substream_issue_id` from the two issue
 # streams.
-version: "6.3.0"
+# 7.0.0 (major): the field-history journal is derived in dbt
+# (`jira__field_history_derived`) and is the Jira producer of
+# silver.class_task_field_history; the pipeline no longer runs the enrich step
+# and nothing reads its output table. MAJOR because the class contract changes
+# shape — the discriminators become LowCardinality(String) and `title` leaves —
+# and because rows the retired producer wrote must go: the full refresh a major
+# dispatches (ADR-0015) rebuilds the class and the three incremental arms from
+# the models alone.
+# 7.0.1 (patch): clear the JQL ceiling on jira_issue / jira_issue_keys. A JQL
+# datetime literal has no timezone and is read in the instance's zone, while
+# the bound is rendered from now_utc(), so on a positive-offset instance the
+# ceiling landed early and objects changing faster than that offset were never
+# collected. PATCH: collection widens, nothing needs re-deriving — the missed
+# objects arrive on the next sync and their substreams carry no date filter.
+version: "7.0.1"
 schedule: "0 3 * * *"
 workflow: sync
 # CI build metadata + runtime image refs (ADR-0016). The `images:` block is
 # the sole source of truth: CI scans it via dynamic discovery to know what
-# to build, and reconcile reads images.enrich.image to pass to the
-# tt-enrich-jira-run workflow on each submission. Keys with runtime
-# semantics: `cdk` (CDK source image — absent for jira; jira is nocode/
-# manifest-based and served by Airbyte's first-party source-jira image),
-# `enrich` (jira-enrich Rust sidecar).
+# to build, and reconcile reads images.enrich.image into the pipeline's
+# `jira_enrich_image` parameter. Since 7.0.0 no pipeline step consumes that
+# parameter; the image, the crate and the parameter plumbing are removed
+# together in a follow-up. Keys: `cdk` (CDK source image — absent for jira;
+# jira is nocode/manifest-based and served by Airbyte's first-party source-jira
+# image), `enrich` (the retired Rust sidecar).
 images:
   enrich:
     name: insight-jira-enrich
     dockerfile: ./enrich/Dockerfile
     context: ./enrich
-    image: "ghcr.io/constructorfabric/insight-jira-enrich:2026.09.14.16.20-1f39c9e"
+    image: "ghcr.io/constructorfabric/insight-jira-enrich:2026.09.15.22.53-f836c38"
 # Silver routing (class_task_*) is delivered by the task-tracking Silver layer
-# package, not by this connector. The pipeline runs the jira-rust path:
-# dbt(tag:jira) → tt-enrich-jira-run → dbt(<selector below>). The selector is
-# the third step: the silver models that union jira staging (class_task_*)
+# package, not by this connector. The pipeline runs
+# dbt(tag:staging,tag:jira) → dbt(<selector below>). The selector is the
+# second step: the silver models that union jira staging (class_task_*)
 # plus the gold task-delivery chain downstream of them (space = union of the
 # two intersections) — not the full silver or gold layers. See DESIGN §1.1
 # and §3.2.

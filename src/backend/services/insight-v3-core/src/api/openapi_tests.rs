@@ -11,7 +11,10 @@ fn the_document_covers_every_route_this_service_serves() {
     let paths: Vec<&str> = document.paths.paths.keys().map(String::as_str).collect();
     for expected in [
         "/v1/raw-data",
-        "/v1/tables/{table}",
+        "/v1/datasets",
+        "/v1/datasets/{name}",
+        "/v1/datasets/{name}/records",
+        "/v1/datasets/{name}/dependents",
         "/v1/metrics",
         "/v1/metrics/{name}",
         "/v1/metrics/{name}/run",

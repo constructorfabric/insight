@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 
 from ..profiles import TEAM_PROFILES, Person
 from .base import (
+    UTC,
     anchor_date,
     anchor_datetime,
     days_window,
@@ -166,12 +167,24 @@ _ISSUE_TYPES = ("Bug", "Task", "Story", "Improvement")
 _ISSUE_TYPE_DIM = {
     # issue_type_name: (issue_type_id, issue_kind)
     "Bug": ("10004", "bug"),
-    "Task": ("10001", "other"),
-    "Story": ("10002", "other"),
-    "Improvement": ("10003", "other"),
+    "Task": ("10001", "task"),
+    "Story": ("10002", "task"),
+    "Improvement": ("10003", "task"),
 }
 _PRIORITIES = ("Highest", "High", "Medium", "Medium", "Low")
 _CLOSE_STATUSES = ("Closed", "Resolved", "Verified")
+
+# Resolution decisions for config.field_value_map. There is no raw resolution
+# catalogue: classification is id-keyed and nothing displays the Jira names.
+# Seeded issues carry no resolution field-history events (adding a draw would
+# re-deal the rng wire format), so gold classifies them 'unknown'; the rows
+# exist so stands exercise the resolution config path end to end.
+_RESOLUTION_DIM = {
+    # display_name: (resolution_id, resolution_kind)
+    "Fixed": ("1", "fixed"),
+    "Won't Fix": ("2", "wontfix"),
+    "Duplicate": ("3", "duplicate"),
+}
 
 # Status dimension. The task_issue_state gold model resolves a status to a
 # lifecycle category by joining class_task_statuses on
@@ -239,13 +252,10 @@ def _fh_row(
         event_kind,
         seq,
         author_id,
-        author_id,
         field_id,
         field_name,
         "single",
         "set",
-        value_id,
-        value_display,
         value_ids,
         value_displays,
         _value_id_type(field_id),
@@ -275,7 +285,7 @@ class IssuePlan:
 
     @property
     def issue_kind(self) -> str:
-        """The reconciled kind gold classifies this issue as ('bug' / 'other')."""
+        """The reconciled kind gold classifies this issue as ('bug' / 'task')."""
         return _ISSUE_TYPE_DIM[self.issue_type][1]
 
 
@@ -361,13 +371,10 @@ def seed_task_field_history(
         "event_kind",
         "_seq",
         "author_id",
-        "author_display",
         "field_id",
         "field_name",
         "field_cardinality",
         "delta_action",
-        "delta_value_id",
-        "delta_value_display",
         "value_ids",
         "value_displays",
         "value_id_type",
@@ -487,10 +494,9 @@ def seed_class_task_issuetypes(
     client: clickhouse_connect.driver.client.Client,
     roster: Sequence[Person],
 ) -> int:
-    """Issue-type dimension: one row per (source, issue type) mapping an
-    issue_type_id to its reconciled issue_kind. Gold joins this on
-    (insight_source_id, issue_type_id); without it every closed issue reads as
-    an unclassified type and the bug / non-bug measures stay empty."""
+    """Issue-type dimension: one raw catalogue row per (source, issue type).
+    Gold joins this on (insight_source_id, issue_type_id) for the type names;
+    the kind comes from config.field_value_map (seed_field_value_map)."""
     truncate(client, "silver", "class_task_issuetypes")
     cols = [
         "unique_key",
@@ -499,7 +505,6 @@ def seed_class_task_issuetypes(
         "issue_type_id",
         "issue_type_name",
         "untranslated_name",
-        "issue_kind",
         "collected_at",
         "_version",
     ]
@@ -508,7 +513,7 @@ def seed_class_task_issuetypes(
     for p in task_persons(roster):
         src_id = deterministic_uuid("task.source", p.uuid)
         data_source = _task_data_source(p.team)
-        for name, (issue_type_id, kind) in _ISSUE_TYPE_DIM.items():
+        for name, (issue_type_id, _kind) in _ISSUE_TYPE_DIM.items():
             rows.append(
                 (
                     deterministic_uuid("task.issuetype", src_id, issue_type_id),
@@ -517,12 +522,116 @@ def seed_class_task_issuetypes(
                     issue_type_id,
                     name,
                     name,
-                    kind,
                     now,
                     1,
                 )
             )
     return bulk_insert(client, "silver", "class_task_issuetypes", cols, rows)
+
+
+def seed_field_value_map(
+    client: clickhouse_connect.driver.client.Client,
+    roster: Sequence[Person],
+    tenant_uuid: str,
+) -> int:
+    """Operator issue-type decisions: one config.field_value_map row per
+    (source, issue type) binding the type id to its issue kind. Gold resolves
+    issue_kind from these rows at its own build; without them every closed
+    issue reads as `unknown` and the bug / non-bug measures stay empty. The
+    matching `config.field_value_defaults` rows are seeded alongside — see
+    `seed_field_value_defaults`."""
+    truncate(client, "config", "field_value_map")
+    cols = [
+        "tenant_id",
+        "insight_source_id",
+        "data_source",
+        "field",
+        "source_key",
+        "valid_from",
+        "recorded_at",
+        "unique_key",
+        "target_value",
+        "display_name",
+        "is_deleted",
+        "note",
+        "recorded_by",
+    ]
+    epoch = _dt.datetime(1970, 1, 1, tzinfo=UTC)
+    now = anchor_datetime()
+    rows: list[tuple[object, ...]] = []
+    for p in task_persons(roster):
+        src_id = deterministic_uuid("task.source", p.uuid)
+        data_source = _task_data_source(p.team)
+        for field, dim in (("issue_type", _ISSUE_TYPE_DIM), ("resolution", _RESOLUTION_DIM)):
+            for name, (source_key, kind) in dim.items():
+                rows.append(
+                    (
+                        tenant_uuid,
+                        src_id,
+                        data_source,
+                        field,
+                        source_key,
+                        epoch,
+                        now,
+                        deterministic_uuid("task.fieldvaluemap", src_id, field, source_key),
+                        kind,
+                        name,
+                        0,
+                        "",
+                        "seed",
+                    )
+                )
+    return bulk_insert(client, "config", "field_value_map", cols, rows)
+
+
+def seed_field_value_defaults(
+    client: clickhouse_connect.driver.client.Client,
+    roster: Sequence[Person],
+    tenant_uuid: str,
+) -> int:
+    """The per-source fallback decision for the classified fields: one
+    config.field_value_defaults row per (task source, field) saying that a
+    source key the map does not cover is `unknown`.
+
+    The seed maps every value it emits, so nothing actually falls here — the
+    rows exist because `assert_task_field_value_defaults_exist` blocks the gold
+    build without them. A seeded stand carries the operator decision it would
+    demand of a real one, and `unknown` is that decision stated explicitly
+    rather than left to the hardcoded terminal."""
+    truncate(client, "config", "field_value_defaults")
+    cols = [
+        "tenant_id",
+        "insight_source_id",
+        "field",
+        "valid_from",
+        "recorded_at",
+        "unique_key",
+        "default_value",
+        "is_deleted",
+        "note",
+        "recorded_by",
+    ]
+    epoch = _dt.datetime(1970, 1, 1, tzinfo=UTC)
+    now = anchor_datetime()
+    rows: list[tuple[object, ...]] = []
+    for p in task_persons(roster):
+        src_id = deterministic_uuid("task.source", p.uuid)
+        for field in ("issue_type", "resolution"):
+            rows.append(
+                (
+                    tenant_uuid,
+                    src_id,
+                    field,
+                    epoch,
+                    now,
+                    deterministic_uuid("task.fieldvaluedefault", src_id, field),
+                    "unknown",
+                    0,
+                    "",
+                    "seed",
+                )
+            )
+    return bulk_insert(client, "config", "field_value_defaults", cols, rows)
 
 
 def generate(
@@ -543,4 +652,6 @@ def generate(
         ),
         "silver.class_task_statuses": seed_class_task_statuses(client, roster),
         "silver.class_task_issuetypes": seed_class_task_issuetypes(client, roster),
+        "config.field_value_map": seed_field_value_map(client, roster, tenant_uuid),
+        "config.field_value_defaults": seed_field_value_defaults(client, roster, tenant_uuid),
     }

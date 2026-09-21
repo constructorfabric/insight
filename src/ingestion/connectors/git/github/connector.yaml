@@ -467,6 +467,116 @@ definitions:
         values: "{{ config['github_organizations'] }}"
         cursor_field: org
 
+  # Issues whose board card moved, so the timeline stream can re-walk them.
+  #
+  # Moving a card does NOT bump the issue's `updated_at`, and `issues_window`
+  # pages `/issues?since=` on exactly that: a board-only change never brings the
+  # issue back into the timeline's partition set, and its status history is lost
+  # for good rather than late. This parent is the board-side way back in.
+  #
+  # Deliberately not the `project_items` stream. That one sweeps board
+  # membership in full, and re-walking every card's timeline every sync is the
+  # cost `incremental_dependency` exists to avoid. The server-side `items(query:)`
+  # filter is skipped too — its index can disagree with the card's own
+  # `updatedAt`, and a card it drops would never be walked — so the whole board
+  # is read and the cut is made client-side on the field the record carries.
+  project_card_issues_parent: &project_card_issues_parent
+    type: DeclarativeStream
+    name: project_card_issues
+    primary_key:
+      - number
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          number: {type: [integer, "null"]}
+          repo_full_name: {type: [string, "null"]}
+          updated_at: {type: [string, "null"]}
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *rest_requester
+        path: /graphql
+        http_method: POST
+        error_handler: *graphql_error_handler
+        request_body_json:
+          query: |
+            query($project: ID!, $cursor: String) {
+              node(id: $project) {
+                ... on ProjectV2 {
+                  items(first: 100, after: $cursor) {
+                    pageInfo { hasNextPage endCursor }
+                    nodes {
+                      updated_at: updatedAt
+                      content {
+                        __typename
+                        ... on Issue { number repository { nameWithOwner } }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          variables:
+            project: "{{ stream_partition.project_id }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [data, node, items, nodes]
+        record_filter:
+          type: RecordFilter
+          # Issue cards only: a draft has no issue behind it, a pull request has
+          # its own timeline stream, and a card whose content the token cannot
+          # read carries no number to walk.
+          condition: "{{ (record.get('content') or {}).get('__typename') == 'Issue' }}"
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ (((response.get('data') or {}).get('node') or {}).get('items') or {}).get('pageInfo', {}).get('endCursor') }}"
+          stop_condition: "{{ not (((response.get('data') or {}).get('node') or {}).get('items') or {}).get('pageInfo', {}).get('hasNextPage') }}"
+        page_token_option:
+          type: RequestOption
+          inject_into: body_json
+          field_path: [variables, cursor]
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: id
+            partition_field: project_id
+            stream: *projects_all_parent
+    # INVARIANT: the cursor field is the GraphQL alias `updated_at: updatedAt`,
+    # not a transformation. A client-side cut has to find the field on the
+    # record, and aliasing it in the query is what makes that independent of
+    # when the transformations run.
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: updated_at
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%SZ"
+      is_client_side_incremental: true
+      lookback_window: P1D
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['github_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [number]
+            value: "{{ (record.get('content') or {}).get('number') or 0 }}"
+          - type: AddedFieldDefinition
+            path: [repo_full_name]
+            value: "{{ ((record.get('content') or {}).get('repository') or {}).get('nameWithOwner') or '' }}"
+            value_type: string
+
 check:
   type: CheckStream
   # branches is the cheapest proxy-backed stream, and it is checked so a wrong
@@ -2433,6 +2543,8 @@ streams:
           closed: {type: [boolean, "null"]}
           created_at: {type: [string, "null"]}
           updated_at: {type: [string, "null"]}
+          total_items: {type: [integer, "null"]}
+          draft_items: {type: [integer, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -2449,7 +2561,11 @@ streams:
               organization(login: $org) {
                 projectsV2(first: 100, after: $cursor) {
                   pageInfo { hasNextPage endCursor }
-                  nodes { id number title shortDescription public closed createdAt updatedAt }
+                  nodes {
+                    id number title shortDescription public closed createdAt updatedAt
+                    all_items: items(first: 1) { totalCount }
+                    draft_items: items(first: 1, query: "is:draft") { totalCount }
+                  }
                 }
               }
             }
@@ -2512,10 +2628,27 @@ streams:
             path: [title]
             value: "{{ (record.get('title') or '')[:1024] }}"
             value_type: string
+          # What the board says it holds, so a sweep of `project_items` can be
+          # checked against it: the cards that stream keeps are every card
+          # except the drafts it drops by design, so the expected row count is
+          # `total_items - draft_items`. The two numbers are read by this
+          # stream and the cards by another, so a board changing between the
+          # two reads makes them disagree by a little; a standing difference is
+          # the signal, not a single row.
+          - type: AddedFieldDefinition
+            path: [total_items]
+            value: "{{ (record.get('all_items') or {}).get('totalCount') or 0 }}"
+          - type: AddedFieldDefinition
+            path: [draft_items]
+            value: "{{ (record.get('draft_items') or {}).get('totalCount') or 0 }}"
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
               {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.org | replace(':', '%3A') }}:project:{{ (record.get('id') or '') | replace(':', '%3A') }}
+      - type: RemoveFields
+        # Hoisted above; the nested count shapes stay out of bronze.
+        field_pointers:
+          - [all_items]
 
   # ── Issue links, current state (GitHub GraphQL) ─────────────────────────
   # One row per issue carrying every link it holds right now, each set as JSON.
@@ -2569,6 +2702,11 @@ streams:
         error_handler: *graphql_error_handler_repo_scoped
         path: /graphql
         http_method: POST
+        # WORKAROUND: a declarative manifest cannot follow a nested cursor, so
+        # every `first:` on a link connection below is a ceiling, not a page.
+        # 100 is the vendor's maximum and costs what 50 did (measured: 2 points
+        # either way), and an issue that outgrows it loses its tail in silence —
+        # which is what the assert_issue_link_sets_are_complete test watches for.
         request_body_json:
           query: |
             query($owner: String!, $name: String!, $cursor: String) {
@@ -2578,10 +2716,10 @@ streams:
                   nodes {
                     number updatedAt
                     parent { number repository { nameWithOwner } }
-                    subIssues(first: 50) { totalCount nodes { number repository { nameWithOwner } } }
-                    blockedBy(first: 50) { totalCount nodes { number repository { nameWithOwner } } }
-                    blocking(first: 50) { totalCount nodes { number repository { nameWithOwner } } }
-                    closedByPullRequestsReferences(first: 20) { totalCount nodes { number repository { nameWithOwner } } }
+                    subIssues(first: 100) { totalCount nodes { number repository { nameWithOwner } } }
+                    blockedBy(first: 100) { totalCount nodes { number repository { nameWithOwner } } }
+                    blocking(first: 100) { totalCount nodes { number repository { nameWithOwner } } }
+                    closedByPullRequestsReferences(first: 100) { totalCount nodes { number repository { nameWithOwner } } }
                   }
                 }
               }
@@ -2903,12 +3041,17 @@ streams:
   #    is the card, so bronze holds its current state and a re-read inside the
   #    overlap window collapses onto it.
   #
-  # INVARIANT: the incremental filter is built from a DATE and nothing else.
-  # `items(query:)` filters server-side on the card's update date, but its
-  # granularity is a day: a full ISO timestamp returns zero rows, and an
-  # unparseable qualifier returns zero rows with NO GraphQL error — a green
-  # sync with no data, indistinguishable from a quiet one. `datetime_format`
-  # renders the cursor as a bare date so a timestamp cannot reach the string.
+  # INVARIANT: this stream is a SWEEP, not a window. Board membership is a
+  # snapshot, and an incremental read cannot deliver one: a card added to a
+  # board and never touched again is not in any window, so it would be absent
+  # for good rather than late.
+  #
+  # The server-side `items(query: "updated:>=…")` filter that used to narrow it
+  # is gone for a second reason as well — its index can disagree with the
+  # card's own `updatedAt`, dropping a card that qualifies, and the filtered
+  # `totalCount` agrees with the drop, so nothing inside the response reveals
+  # it. Sweeping is also what the volume allows: a board is read at 50 cards a
+  # page, and the whole estate is tens of requests.
   - type: DeclarativeStream
     name: project_items
     primary_key:
@@ -2950,10 +3093,10 @@ streams:
         error_handler: *graphql_error_handler
         request_body_json:
           query: |
-            query($project: ID!, $q: String!, $cursor: String) {
+            query($project: ID!, $cursor: String) {
               node(id: $project) {
                 ... on ProjectV2 {
-                  items(first: 50, after: $cursor, query: $q) {
+                  items(first: 50, after: $cursor) {
                     totalCount
                     pageInfo { hasNextPage endCursor }
                     nodes {
@@ -2982,7 +3125,6 @@ streams:
             }
           variables:
             project: "{{ stream_partition.project_id }}"
-            q: "updated:>={{ stream_interval.start_time }}"
       record_selector:
         type: RecordSelector
         extractor:
@@ -3018,29 +3160,6 @@ streams:
             extra_fields:
               - [number]
             stream: *projects_all_parent
-    incremental_sync:
-      type: DatetimeBasedCursor
-      cursor_field: updated_at
-      # Day granularity is the API's, not a choice: `updated:>=` rejects a
-      # timestamp by returning nothing.
-      datetime_format: "%Y-%m-%d"
-      cursor_datetime_formats:
-        - "%Y-%m-%dT%H:%M:%SZ"
-        - "%Y-%m-%dT%H:%M:%S%z"
-      # The server filter is coarser than the cursor, so a day is re-read on
-      # every sync. That is free: the row key is the card, so a re-read
-      # collapses onto the row already there.
-      #
-      # A client-side cut is NOT used here. The CDK applies it in the record
-      # selector, before the transformations that rename `updatedAt` to
-      # `updated_at` — so the cursor field it looks for does not exist yet and
-      # every record is silently dropped. State observation runs after the
-      # transformations, which is why the cursor field is the bronze name.
-      lookback_window: P1D
-      start_datetime:
-        type: MinMaxDatetime
-        datetime: "{{ config['github_start_date'] }}"
-        datetime_format: "%Y-%m-%d"
     transformations:
       - type: AddFields
         fields: *standard_fields
@@ -3887,6 +4006,10 @@ streams:
           label_name: {type: [string, "null"]}
           state_reason: {type: [string, "null"]}
           merge_commit_sha: {type: [string, "null"]}
+          link_target_type: {type: [string, "null"]}
+          link_target_number: {type: [integer, "null"]}
+          link_target_repo_full_name: {type: [string, "null"]}
+          is_cross_repository: {type: [boolean, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -3902,7 +4025,7 @@ streams:
             query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
               repository(owner: $owner, name: $name) {
                 pullRequest(number: $number) {
-                  timelineItems(first: 100, after: $cursor, itemTypes: [READY_FOR_REVIEW_EVENT, CONVERT_TO_DRAFT_EVENT, REVIEW_REQUESTED_EVENT, REVIEW_REQUEST_REMOVED_EVENT, ASSIGNED_EVENT, UNASSIGNED_EVENT, LABELED_EVENT, UNLABELED_EVENT, CLOSED_EVENT, REOPENED_EVENT, MERGED_EVENT]) {
+                  timelineItems(first: 100, after: $cursor, itemTypes: [READY_FOR_REVIEW_EVENT, CONVERT_TO_DRAFT_EVENT, REVIEW_REQUESTED_EVENT, REVIEW_REQUEST_REMOVED_EVENT, ASSIGNED_EVENT, UNASSIGNED_EVENT, LABELED_EVENT, UNLABELED_EVENT, CLOSED_EVENT, REOPENED_EVENT, MERGED_EVENT, CONNECTED_EVENT, DISCONNECTED_EVENT]) {
                     pageInfo { hasNextPage endCursor }
                     nodes {
                       __typename
@@ -3917,6 +4040,8 @@ streams:
                       ... on ClosedEvent { id createdAt actor { login ... on User { databaseId } } stateReason }
                       ... on ReopenedEvent { id createdAt actor { login ... on User { databaseId } } }
                       ... on MergedEvent { id createdAt actor { login ... on User { databaseId } } commit { oid } }
+                      ... on ConnectedEvent { id createdAt actor { login ... on User { databaseId } } isCrossRepository subject { __typename ... on Issue { number repository { nameWithOwner } } ... on PullRequest { number repository { nameWithOwner } } } }
+                      ... on DisconnectedEvent { id createdAt actor { login ... on User { databaseId } } isCrossRepository subject { __typename ... on Issue { number repository { nameWithOwner } } ... on PullRequest { number repository { nameWithOwner } } } }
                     }
                   }
                 }
@@ -4028,6 +4153,26 @@ streams:
             path: [merge_commit_sha]
             value: "{{ (record.get('commit') or {}).get('oid') or '' }}"
             value_type: string
+          # A link stated from the pull-request side. Only Connected/Disconnected
+          # carry one here, and both name it `subject`; the issue timeline has
+          # six payload keys for the same column because it carries six link
+          # kinds this one does not.
+          - type: AddedFieldDefinition
+            path: [link_target_number]
+            value: "{{ (record.get('subject') or {}).get('number') or 0 }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path: [link_target_repo_full_name]
+            value: "{{ ((record.get('subject') or {}).get('repository') or {}).get('nameWithOwner') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [link_target_type]
+            value: "{{ (record.get('subject') or {}).get('__typename') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [is_cross_repository]
+            value: "{{ record.get('isCrossRepository') or false }}"
+            value_type: boolean
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
@@ -4044,6 +4189,8 @@ streams:
           - [label]
           - [stateReason]
           - [commit]
+          - [subject]
+          - [isCrossRepository]
 
   # ── Issue timeline events (GitHub GraphQL) ──────────────────────────────
   # Same per-item shape as the pull-request stream, but a different item-type
@@ -4264,6 +4411,19 @@ streams:
                       path: [repo_full_name]
                       value: "{{ stream_partition.repo_full_name }}"
                       value_type: string
+          # Second way into the partition set: an issue whose BOARD CARD moved.
+          # A card move leaves the issue's own `updated_at` untouched, so the
+          # window above never yields it again and its board status changes
+          # would never be collected. An issue reached by both parents is
+          # walked twice, which costs calls and not correctness: the rows
+          # collapse on their event id in bronze.
+          - type: ParentStreamConfig
+            parent_key: number
+            partition_field: issue_number
+            extra_fields:
+              - [repo_full_name]
+            incremental_dependency: true
+            stream: *project_card_issues_parent
     transformations:
       - type: AddFields
         fields: *standard_fields

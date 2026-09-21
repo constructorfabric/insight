@@ -1,9 +1,14 @@
--- The board card stream filters server-side on a date: `items(query: "updated:>=…")`.
--- That filter fails SILENTLY. An unparseable qualifier — a stray timestamp, a
--- typo — returns zero rows with no GraphQL error, so the sync is green, the
--- stream is empty, and nothing distinguishes it from a genuinely quiet week.
--- The connector guards the input by rendering a bare date; this guards the
--- outcome.
+-- The board card stream sweeps every board and keeps what it gets. A sweep that
+-- comes back empty is indistinguishable from a genuinely quiet week: GraphQL
+-- answers 200 whether the board is empty, the token lost its project scope, or
+-- a page was dropped. This guards the outcome rather than any one cause.
+--
+-- It used to guard one cause in particular — a server-side
+-- `items(query: "updated:>=…")` filter that returned zero rows with no error
+-- when its qualifier was unparseable. That filter is gone, and the stream no
+-- longer narrows itself at all, so the silent-filter reading of a zero no
+-- longer applies. The check survives the filter it was written for because
+-- what it actually asserts is completeness, not the filter's syntax.
 --
 -- The condition is deliberately narrow so it cannot fire on a real zero: the
 -- source must have collected board field definitions (boards are visible) AND
@@ -31,7 +36,7 @@ cards AS (
 SELECT
     b.tenant_id  AS tenant_id,
     b.source_id  AS source_id,
-    'boards and board events are collected, cards are not — the incremental filter is rejected' AS finding
+    'boards and board events are collected, cards are not — the sweep returned nothing' AS finding
 FROM boards AS b
 INNER JOIN board_events AS e
     ON e.tenant_id = b.tenant_id AND e.source_id = b.source_id

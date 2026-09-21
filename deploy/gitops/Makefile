@@ -380,11 +380,39 @@ values-present:
 	@test -f $(VALUES) \
 		|| { echo "$(C_RED)ERROR$(C_RST): values file not found at $(VALUES)"; exit 1; }
 
+# A file, not a variable: a $(shell ...) here would run kubectl on every make
+# invocation. An explicit gateway.setRealIpFrom in the env's values wins.
+REALIP_ARGS = $(RENDER_DIR)/realip-$(ENV).args
+
+.PHONY: gateway-realip-args
+gateway-realip-args: values-present
+	@mkdir -p $(RENDER_DIR)
+	@if [ "$$(yq -r '.gateway.setRealIpFrom // "null"' $(VALUES))" = "null" ]; then \
+		CIDRS=$$(KUBE_CTX=$(KUBE_CTX) python3 scripts/gateway-realip.py) || exit 1; \
+		: > $(REALIP_ARGS); \
+		if [ -n "$$CIDRS" ]; then \
+			printf -- '--set gateway.setRealIpFrom={%s}' "$$CIDRS" > $(REALIP_ARGS); \
+		fi; \
+	else \
+		echo "gateway client-IP trust: pinned in $(VALUES)" >&2; \
+		: > $(REALIP_ARGS); \
+	fi
+
+.PHONY: show-gateway-realip
+show-gateway-realip: vpn-up kube-ctx values-present
+	@STORED=$$(yq -r '.gateway.setRealIpFrom // "null"' $(VALUES)); \
+	if [ "$$STORED" != "null" ]; then \
+		echo "pinned in $(VALUES): $$STORED"; \
+	else \
+		KUBE_CTX=$(KUBE_CTX) python3 scripts/gateway-realip.py >/dev/null; \
+	fi
+
 # ─── Diff and deploy ───────────────────────────────────────────────────
 
 .PHONY: diff
-diff: sync-clean values-present chart-present
-	@bash scripts/render-diff.sh "$(ENV)" "$(NAMESPACE)" "$(RELEASE)" \
+diff: sync-clean values-present chart-present vpn-up kube-ctx gateway-realip-args
+	@HELM_EXTRA_SET="$$(cat $(REALIP_ARGS))" \
+	bash scripts/render-diff.sh "$(ENV)" "$(NAMESPACE)" "$(RELEASE)" \
 		"$(CHART)" "$(VALUES)" "$(RENDER_DIR)" "$(INSIGHT_VERSION)"
 
 # Top-level deploy. For ENV=local (sandbox), `deploy` chains the full
@@ -490,6 +518,23 @@ keycloak-broker-realms: kube-ctx values-present
 	  kubectl --context $(KUBE_CTX) -n $(NS_APP) apply -f -; \
 	echo "$(C_GRN)applied$(C_RST) configmap $(RELEASE)-keycloak-config-realms → $(NS_APP)"
 
+.PHONY: field-value-map
+# Pack environments/$(ENV)/clickhouse/field-value-map/*.tsv into the ConfigMap
+# the umbrella's clickhouse-field-value-map hook Job seeds into
+# `config.field_value_map` (and `config.field_value_defaults` from defaults.tsv).
+# Insert-only: the loader anti-joins on the business key, so a stored decision
+# is never rewritten and an empty bundle is a no-op.
+# Chained into deploy-insight; no-op unless clickhouse.fieldValueMap.enabled.
+field-value-map: kube-ctx values-present
+	@if [ "$$(yq -r '.clickhouse.fieldValueMap.enabled // false' $(VALUES))" != "true" ]; then \
+	  echo "$(C_YEL)skip$(C_RST) field-value-map (clickhouse.fieldValueMap.enabled != true)"; exit 0; fi; \
+	DIR=environments/$(ENV)/clickhouse/field-value-map; \
+	FILES=""; for f in $$DIR/*.tsv; do [ -e "$$f" ] || continue; FILES="$$FILES --from-file=$$f"; done; \
+	kubectl --context $(KUBE_CTX) -n $(NS_APP) create configmap $(RELEASE)-field-value-map \
+	  $$FILES --dry-run=client -o yaml | \
+	  kubectl --context $(KUBE_CTX) -n $(NS_APP) apply -f -; \
+	echo "$(C_GRN)applied$(C_RST) configmap $(RELEASE)-field-value-map → $(NS_APP)"
+
 .PHONY: deploy-app
 deploy-app: deploy-insight
 
@@ -550,11 +595,12 @@ validate-insight: values-present local-chart-present
 	@kubeconform -strict -summary < $(RENDER_DIR)/validate-render-$(ENV).yaml
 
 .PHONY: deploy-insight
-deploy-insight: sync-clean vpn-up kube-ctx confirm values-present chart-present apply-app-secrets keycloak-broker-realms
+deploy-insight: sync-clean vpn-up kube-ctx confirm values-present chart-present gateway-realip-args apply-app-secrets keycloak-broker-realms field-value-map
 	@mkdir -p $(RENDER_DIR)
 	@helm template $(RELEASE) $(CHART) --version $(INSIGHT_VERSION) $(HELM_EXTRA_FLAGS) \
 		-n $(NS_APP) -f $(VALUES) \
 		--set previews.experiments.namespace=$(NS_PREVIEWS) \
+		$$(cat $(REALIP_ARGS)) \
 		> $(RENDER_DIR)/last-render-$(ENV).yaml
 	@echo "$(C_GRN)rendered$(C_RST) $(CHART):$(INSIGHT_VERSION) → $(RENDER_DIR)/last-render-$(ENV).yaml"
 	@# A release whose only revision is a failed install cannot be upgraded, and
@@ -601,6 +647,7 @@ deploy-insight: sync-clean vpn-up kube-ctx confirm values-present chart-present 
 		--namespace $(NS_APP) $(HELM_NS_FLAG) \
 		-f $(VALUES) \
 		--set previews.experiments.namespace=$(NS_PREVIEWS) \
+		$$(cat $(REALIP_ARGS)) \
 		--wait $(HELM_ATOMIC_FLAG) --timeout $(TIMEOUT) \
 		--history-max 10 \
 		2>&1 | tee $$LOG || rc=$$?; \

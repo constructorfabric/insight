@@ -9,17 +9,26 @@ import {
 import type {
   ChatTurn,
   DefinitionKind,
+  EditableKind,
   NamePage,
   PageRequest,
 } from "@/api/custom-client";
 import {
+  deleteDataset,
   deleteDefinition,
   fetchDashboard,
   fetchDashboardNames,
+  fetchDataset,
+  fetchDatasetDependents,
+  fetchDatasetNames,
+  fetchDatasetRecords,
+  fetchDependents,
   fetchMetric,
   fetchMetricNames,
   fetchWidget,
   fetchWidgetNames,
+  putDataset,
+  putDefinition,
   renameDefinition,
   runMetric,
   sendChat,
@@ -35,13 +44,16 @@ const PAGE_SIZE = 50;
 /** The most the service will answer with, for the lists that want everything. */
 const MAX_PAGE = 200;
 
+const DATASET_PREFIX = ["custom", "dataset"] as const;
+
 const FETCH_NAMES: Record<
-  DefinitionKind,
+  EditableKind,
   (page: PageRequest) => Promise<NamePage>
 > = {
   metrics: fetchMetricNames,
   widgets: fetchWidgetNames,
   dashboards: fetchDashboardNames,
+  datasets: fetchDatasetNames,
 };
 
 /**
@@ -50,7 +62,7 @@ const FETCH_NAMES: Record<
  * `total` counts the matches rather than the page, so the list can say what
  * is behind it and stop asking once it has them all.
  */
-export function definitionPagesQuery(kind: DefinitionKind, search = "") {
+export function definitionPagesQuery(kind: EditableKind, search = "") {
   return infiniteQueryOptions({
     // The needle is part of the key, so a search is its own cached answer
     // rather than overwriting the list everyone else is reading.
@@ -62,6 +74,45 @@ export function definitionPagesQuery(kind: DefinitionKind, search = "") {
       const read = pages.reduce((count, page) => count + page.names.length, 0);
       return read < last.total ? read : undefined;
     },
+  });
+}
+
+// Each kind hands its body back in its own envelope; the editor writes the body,
+// so what it opens must be what a save would send.
+export function definitionBodyQuery(kind: EditableKind, name: string) {
+  return queryOptions({
+    queryKey: ["custom", "body", kind, name],
+    // INVARIANT: the editor waits for an answer fetched after it mounted and
+    // seeds itself from that one. The client keeps answers fresh for an hour,
+    // so without this a reopened editor would wait for a fetch that never comes.
+    refetchOnMount: "always",
+    // Once seeded, a refetch underneath it would be neither shown nor wanted.
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    queryFn: async (): Promise<Record<string, unknown>> => {
+      if (kind === "datasets") {
+        const dataset = await fetchDataset(name);
+        return dataset.declaration as unknown as Record<string, unknown>;
+      }
+      if (kind === "metrics") {
+        const metric = await fetchMetric(name);
+        return metric.definition as unknown as Record<string, unknown>;
+      }
+      const body =
+        kind === "widgets"
+          ? await fetchWidget(name)
+          : await fetchDashboard(name);
+      return body as unknown as Record<string, unknown>;
+    },
+  });
+}
+
+// Every name of a kind in one answer, for a form to offer a reference from.
+export function catalogueNamesQuery(kind: EditableKind) {
+  return queryOptions({
+    queryKey: ["custom", "all-names", kind],
+    queryFn: () => FETCH_NAMES[kind]({ limit: MAX_PAGE }),
+    select: (page: NamePage) => page.names,
   });
 }
 
@@ -84,6 +135,39 @@ export function metricQuery(name: string) {
   return queryOptions({
     queryKey: ["custom", "metric", name],
     queryFn: () => fetchMetric(name),
+  });
+}
+
+export function datasetQuery(name: string) {
+  return queryOptions({
+    queryKey: [...DATASET_PREFIX, name],
+    queryFn: () => fetchDataset(name),
+  });
+}
+
+/** The latest records a dataset holds, as a reader sees them on its page. */
+/** How many of the latest records a dataset's page shows. */
+export const PREVIEW_ROWS = 20;
+
+export function datasetRecordsQuery(name: string) {
+  return queryOptions({
+    queryKey: [...DATASET_PREFIX, name, "records", PREVIEW_ROWS],
+    queryFn: () => fetchDatasetRecords(name, PREVIEW_ROWS),
+  });
+}
+
+/** Every metric that reads this dataset, which a removal would break. */
+export function dependentsQuery(kind: DefinitionKind, name: string) {
+  return queryOptions({
+    queryKey: ["custom", "dependents", kind, name],
+    queryFn: () => fetchDependents(kind, name),
+  });
+}
+
+export function datasetDependentsQuery(name: string) {
+  return queryOptions({
+    queryKey: [...DATASET_PREFIX, name, "dependents"],
+    queryFn: () => fetchDatasetDependents(name),
   });
 }
 
@@ -125,6 +209,49 @@ export function useRemoveDefinition() {
   });
 }
 
+/**
+ * Takes a dataset away, with the records it holds.
+ *
+ * Every catalogue is invalidated, not only the datasets one: a metric that
+ * read it is now unreadable, whatever the list still says.
+ */
+export function useRemoveDataset() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (name: string) => deleteDataset(name),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["custom"] }),
+  });
+}
+
+/**
+ * Stores a definition of any kind, as the document the editor holds says it.
+ *
+ * A dataset is written through its own path because it answers with what was
+ * stored and has a lifecycle behind it; the rest share one.
+ */
+export function useStoreDefinition() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      kind,
+      name,
+      body,
+    }: {
+      kind: EditableKind;
+      name: string;
+      body: unknown;
+    }) =>
+      kind === "datasets"
+        ? putDataset(name, body).then(() => undefined)
+        : putDefinition(kind, name, body),
+    // A stored definition changes what every other one may read, and the rail
+    // lists what is there.
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["custom"] }),
+  });
+}
+
 export function useRenameDefinition() {
   const queryClient = useQueryClient();
 
@@ -146,8 +273,13 @@ export function useRenameDefinition() {
 
 export function useSendChat() {
   return useMutation({
-    mutationFn: ({ message, history }: { message: string; history: ChatTurn[] }) =>
-      sendChat(message, history),
+    mutationFn: ({
+      message,
+      history,
+    }: {
+      message: string;
+      history: ChatTurn[];
+    }) => sendChat(message, history),
   });
 }
 

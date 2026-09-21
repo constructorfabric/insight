@@ -7,9 +7,9 @@
 ) }}
 
 -- Per-(issue x field x event) history; unioned into
--- `silver.class_task_field_history` via `union_by_tag`. What `jira-enrich`
--- computes in Rust for Jira is expressible here in SQL, because GitHub's
--- change events carry the whole previous value rather than a delta.
+-- `silver.class_task_field_history` via `union_by_tag`. Simpler than the Jira
+-- derivation because GitHub's change events carry the whole previous value
+-- rather than a delta.
 --
 -- A timeline records changes, so a field set at creation and never touched
 -- never appears in it. One rule produces every initial value: the earliest
@@ -95,7 +95,7 @@ events AS (
             -- the event says "on board X, status went A to B" and names no
             -- field object. Deriving which ProjectV2 field object it was would
             -- mean guessing; the board is stated and sufficient.
-            e.event_type = 'ProjectV2ItemStatusChangedEvent',
+            e.event_type IN ('ProjectV2ItemStatusChangedEvent', 'RemovedFromProjectV2Event'),
                 if(COALESCE(e.project_id, '') = '', '', concat('project_status:', e.project_id)),
             ''
         )                                                       AS field_id,
@@ -118,6 +118,12 @@ events AS (
             e.event_type = 'ProjectV2ItemStatusChangedEvent',
                 if(COALESCE(e.new_value, '') = '', '',
                    concat(COALESCE(e.project_id, ''), ':', lower(e.new_value))),
+            -- The card left the board, so the board's status column holds
+            -- nothing for this issue any more. Without this row the last
+            -- status stands open forever and the issue reads as still sitting
+            -- in it — on a board it is no longer on. Empty is the same way
+            -- `UnassignedEvent` states "no owner remains".
+            e.event_type = 'RemovedFromProjectV2Event', '',
             ''
         )                                                       AS value_id,
         multiIf(
@@ -142,7 +148,7 @@ events AS (
     WHERE e.event_type IN (
         'ClosedEvent', 'ReopenedEvent', 'AssignedEvent', 'UnassignedEvent',
         'IssueTypeChangedEvent', 'IssueFieldChangedEvent',
-        'ProjectV2ItemStatusChangedEvent'
+        'ProjectV2ItemStatusChangedEvent', 'RemovedFromProjectV2Event'
     )
 ),
 
@@ -190,10 +196,8 @@ snapshot_values AS (
 
     UNION ALL
 
-    -- The title, as a FIELD rather than a column repeated on every event row.
-    -- Gold reads it through the `title` role like any other value; the
-    -- denormalized `title` column is an issue attribute copied onto every row
-    -- of that issue, and goes once every source serves the role.
+    -- The title, as a FIELD like any other: gold reads it through the `title`
+    -- role, and a renamed issue has rename history.
     SELECT
         i.tenant_id, i.source_id, i.issue_id, i.id_readable, i.created_at,
         i.author_login, i.author_id,
@@ -386,25 +390,20 @@ SELECT
     CAST('github' AS String)                                    AS data_source,
     CAST(issue_id AS String)                                    AS issue_id,
     CAST(id_readable AS String)                                 AS id_readable,
-    -- The column stays while the class contract has it: gold falls back to it
-    -- for a source whose `title` role has no producer yet. This arm ALSO emits
-    -- the title as a field above, so GitHub is served by the role already; the
-    -- column and the fallback go together at the Jira cutover.
-    CAST(nullIf(issue_title.title, '') AS Nullable(String))     AS title,
     CAST(event_id AS String)                                    AS event_id,
     -- The WHERE below already excludes the unparseable ones; the class declares
     -- a non-Nullable column and `union_by_tag` fails the shared relation for
     -- every source if one branch widens it.
     assumeNotNull(event_at)                                     AS event_at,
-    -- Superset enum: the jira arms of this union also emit 'availability' and
-    -- 'lifecycle' rows, and UNION ALL needs one common enum type across arms.
-    CAST(event_kind AS Enum8('changelog' = 1, 'synthetic_initial' = 2, 'availability' = 3, 'lifecycle' = 4)) AS event_kind,
+    -- `LowCardinality(String)`, as the class declares: an enum here would make
+    -- this arm name the values every other source's arm emits.
+    CAST(event_kind AS LowCardinality(String))                  AS event_kind,
     _seq                                                        AS _seq,
     CAST(nullIf(author_id, '0') AS Nullable(String))            AS author_id,
     CAST(field_id AS String)                                    AS field_id,
     CAST(field_id AS String)                                    AS field_name,
-    CAST('single' AS Enum8('single' = 1, 'multi' = 2))          AS field_cardinality,
-    CAST('set' AS Enum8('set' = 1, 'add' = 2, 'remove' = 3))    AS delta_action,
+    CAST('single' AS LowCardinality(String))                    AS field_cardinality,
+    CAST('set' AS LowCardinality(String))                       AS delta_action,
     CAST([value_id] AS Array(String))                           AS value_ids,
     CAST([if(value_display != '', value_display, value_id)] AS Array(String)) AS value_displays,
     CAST(
@@ -418,11 +417,9 @@ SELECT
             startsWith(field_id, 'project_status:'), 'string_literal',
             'opaque_id'
         )
-        AS Enum8('opaque_id' = 1, 'account_id' = 2, 'string_literal' = 3, 'path' = 4, 'none' = 5)
+        AS LowCardinality(String)
     )                                                           AS value_id_type,
     toDateTime64(_airbyte_extracted_at, 3)                      AS collected_at,
     CAST(toUnixTimestamp64Milli(toDateTime64(_airbyte_extracted_at, 3)) AS UInt64) AS _version
 FROM every_row
-LEFT JOIN (SELECT issue_id, title FROM issues) AS issue_title
-    ON issue_title.issue_id = every_row.issue_id
 WHERE event_at IS NOT NULL

@@ -112,9 +112,7 @@ echo "=== Healing GitHub Projects V2 bronze keys ==="
 heal_github_project_day_keys() {
   local table="$1" stale
   ch_table_exists bronze_github "${table}" || return 0
-  stale="$(printf "SELECT count() FROM bronze_github.%s WHERE match(unique_key, ':[0-9]{4}-[0-9]{2}-[0-9]{2}$')" \
-    "${table}" | _ch_http_query | tr -d '[:space:]')"
-  [[ "${stale}" =~ ^[0-9]+$ ]] || return 0
+  stale="$(ch_scalar "SELECT count() FROM bronze_github.${table} WHERE match(unique_key, ':[0-9]{4}-[0-9]{2}-[0-9]{2}$')")"
   [[ "${stale}" -gt 0 ]] || return 0
   echo "  bronze_github.${table}: ${stale} day-keyed row(s) — dropping, the connector refills them"
   run_ch <<SQL
@@ -154,7 +152,7 @@ _jira_issue_id_lookup='staging._jira_issue_id_by_key'
 _jira_rows_needing_issue_id() {
   local table="$1" own="0"
   [[ "${table}" == "jira_worklogs" ]] && own="issueId IS NOT NULL"
-  printf "SELECT count() FROM bronze_jira.%s
+  ch_scalar "$(printf "SELECT count() FROM bronze_jira.%s
           WHERE jira_id IS NULL
             AND (%s
                  OR (id_readable IS NOT NULL AND tenant_id IS NOT NULL AND source_id IS NOT NULL
@@ -166,14 +164,12 @@ _jira_rows_needing_issue_id() {
                    SELECT assumeNotNull(tenant_id), assumeNotNull(source_id), assumeNotNull(id_readable)
                    FROM bronze_jira.jira_issue_keys
                    WHERE tenant_id IS NOT NULL AND source_id IS NOT NULL AND id_readable IS NOT NULL AND jira_id IS NOT NULL)))" \
-    "${table}" "${own}" |
-    _ch_http_query | tr -d '[:space:]'
+    "${table}" "${own}")"
 }
 
 _jira_rows_keyed_by_issue_key() {
   local table="$1"
-  printf "SELECT count() FROM bronze_jira.%s WHERE coalesce(unique_key, '') != concat(coalesce(tenant_id, ''), '-', coalesce(source_id, ''), '-', coalesce(jira_id, ''))" "${table}" |
-    _ch_http_query | tr -d '[:space:]'
+  ch_scalar "SELECT count() FROM bronze_jira.${table} WHERE coalesce(unique_key, '') != concat(coalesce(tenant_id, ''), '-', coalesce(source_id, ''), '-', coalesce(jira_id, ''))"
 }
 
 heal_jira_substream_issue_id() {
@@ -181,7 +177,7 @@ heal_jira_substream_issue_id() {
   for table in jira_issue_history jira_comments jira_worklogs; do
     ch_table_exists bronze_jira "${table}" || continue
     n="$(_jira_rows_needing_issue_id "${table}")"
-    [[ "${n}" =~ ^[0-9]+$ && "${n}" -gt 0 ]] || continue
+    [[ "${n}" -gt 0 ]] || continue
     echo "  bronze_jira.${table}: ${n} row(s) without jira_id — filling from the issue streams"
     pending+=("${table}")
   done
@@ -239,34 +235,46 @@ SQL
 }
 
 _jira_rows_without_identity() {
-  local table="$1"
-  printf "SELECT count() FROM bronze_jira.%s WHERE tenant_id IS NULL OR source_id IS NULL OR jira_id IS NULL" "${table}" |
-    _ch_http_query | tr -d '[:space:]'
+  ch_scalar "SELECT count() FROM bronze_jira.$1 WHERE tenant_id IS NULL OR source_id IS NULL OR jira_id IS NULL"
 }
 
+_jira_issue_count() {
+  ch_scalar "SELECT uniqExact(tenant_id, source_id, jira_id) FROM bronze_jira.$1"
+}
+
+_jira_row_count() {
+  ch_scalar "SELECT count() FROM bronze_jira.$1"
+}
+
+# INVARIANT: no statement that can lose rows runs before the rows it depends
+# on are verified. The copy is counted against the number of issues before
+# the swap; the swapped-in table is counted again before the old one is
+# dropped; any miss leaves the original table live and stops the deploy.
+# `run_ch` stops at the first failed statement, so a failed copy never reaches
+# the EXCHANGE either way.
 heal_jira_issue_key() {
-  local table="$1" n orphans copy_start_ms
+  local table="$1" n orphans expected copied live copy_start_ms
   ch_table_exists bronze_jira "${table}" || return 0
   n="$(_jira_rows_keyed_by_issue_key "${table}")"
-  [[ "${n}" =~ ^[0-9]+$ && "${n}" -gt 0 ]] || return 0
+  [[ "${n}" -gt 0 ]] || return 0
 
   # A row without tenant, source or issue id has no key under the new formula.
   # None can exist — the connector stamps all three on every record — so one
   # is a corrupted table, and the deploy stops here rather than dropping it.
   orphans="$(_jira_rows_without_identity "${table}")"
-  if [[ ! "${orphans}" =~ ^[0-9]+$ || "${orphans}" -gt 0 ]]; then
-    echo "  bronze_jira.${table}: ${orphans:-?} row(s) without tenant_id, source_id or jira_id — refusing to rebuild" >&2
+  if [[ "${orphans}" -gt 0 ]]; then
+    echo "  bronze_jira.${table}: ${orphans} row(s) without tenant_id, source_id or jira_id — refusing to rebuild" >&2
     return 1
   fi
 
-  echo "  bronze_jira.${table}: ${n} row(s) keyed by the issue key — rebuilding on the issue id"
+  expected="$(_jira_issue_count "${table}")"
+  echo "  bronze_jira.${table}: ${n} row(s) keyed by the issue key — rebuilding on the issue id (${expected} issues)"
   # MEMORY: the winner per issue is chosen in an aggregation that carries only
   # the raw id, and the rows are then copied by that id list. `ORDER BY … LIMIT
   # 1 BY` would sort the whole table, JSON payload included, and on a real-size
   # jira_issue that sort alone exceeds a server's memory budget — inside a Helm
   # hook, which fails the upgrade. Same two-pass shape as the snapshot model.
-  copy_start_ms="$(printf "SELECT toUnixTimestamp64Milli(now64(3))" | _ch_http_query | tr -d '[:space:]')"
-  [[ "${copy_start_ms}" =~ ^[0-9]+$ ]] || { echo "  bronze_jira.${table}: could not read the server clock — refusing to rebuild" >&2; return 1; }
+  copy_start_ms="$(ch_scalar "SELECT toUnixTimestamp64Milli(now64(3))")"
   run_ch <<SQL
 DROP TABLE IF EXISTS bronze_jira.${table}__rekey;
 CREATE TABLE bronze_jira.${table}__rekey AS bronze_jira.${table};
@@ -278,24 +286,65 @@ WHERE _airbyte_raw_id IN (
     FROM bronze_jira.${table}
     GROUP BY tenant_id, source_id, jira_id
 );
+SQL
+
+  copied="$(_jira_row_count "${table}__rekey")"
+  if [[ "${copied}" -ne "${expected}" ]]; then
+    echo "  bronze_jira.${table}: copy holds ${copied} row(s), expected ${expected} — leaving the table as it is" >&2
+    run_ch <<SQL
+DROP TABLE IF EXISTS bronze_jira.${table}__rekey;
+SQL
+    return 1
+  fi
+
+  run_ch <<SQL
 EXCHANGE TABLES bronze_jira.${table} AND bronze_jira.${table}__rekey;
 SQL
-  # From the EXCHANGE on, writers land in the rebuilt table by name. Rows a sync
-  # committed into the old table while the copy ran are carried over before it
-  # is dropped; the hour of slack covers an extraction stamp older than the
-  # write, and a row copied twice collapses on its key.
-  run_ch <<SQL
+  # From here on the rebuilt table is live and the original sits under the
+  # `__rekey` name. Every step until the DROP is checked explicitly, and any
+  # failure swaps the original back: under `set -e` a bare failing statement
+  # would end the script with the unverified table still live.
+  #
+  # Rows a sync committed into the original while the copy ran are carried
+  # over; the hour of slack covers an extraction stamp older than the write,
+  # and a row copied twice collapses on its key.
+  if ! run_ch <<SQL
 INSERT INTO bronze_jira.${table}
 SELECT * REPLACE (concat(tenant_id, '-', source_id, '-', jira_id) AS unique_key)
 FROM bronze_jira.${table}__rekey
 WHERE _airbyte_extracted_at >= fromUnixTimestamp64Milli(${copy_start_ms}) - INTERVAL 1 HOUR;
+SQL
+  then
+    echo "  bronze_jira.${table}: carrying the late rows over failed — swapping the original back" >&2
+    _jira_swap_back "${table}"
+    return 1
+  fi
+
+  if ! live="$(_jira_row_count "${table}")" || [[ "${live}" -lt "${expected}" ]]; then
+    echo "  bronze_jira.${table}: rebuilt table holds ${live:-?} row(s), expected at least ${expected} — swapping the original back" >&2
+    _jira_swap_back "${table}"
+    return 1
+  fi
+
+  run_ch <<SQL
 DROP TABLE IF EXISTS bronze_jira.${table}__rekey;
 SQL
 }
 
-heal_jira_substream_issue_id || exit 1
-heal_jira_issue_key jira_issue || exit 1
-heal_jira_issue_key jira_issue_keys || exit 1
+# The original is under the `__rekey` name after an EXCHANGE; put it back and
+# leave the rejected copy there for inspection (the next run drops it first).
+_jira_swap_back() {
+  run_ch <<SQL
+EXCHANGE TABLES bronze_jira.$1 AND bronze_jira.$1__rekey;
+SQL
+}
+
+# Plain calls on purpose: `f || exit 1` would switch `set -e` OFF inside the
+# function, so a failed statement in the middle would not stop it — the
+# following swap and drop would run against an unverified copy.
+heal_jira_substream_issue_id
+heal_jira_issue_key jira_issue
+heal_jira_issue_key jira_issue_keys
 
 echo "=== Healing AI staging contract schemas ==="
 # Physical column order must equal the model's SELECT order (positional
@@ -348,20 +397,23 @@ heal_ai_assistant_staging chatgpt_team__ai_assistant_usage
 heal_ai_invoice_staging claude_team__ai_invoice
 
 echo "=== Healing task field-history staging arms ==="
-# `author_display`, `delta_value_id` and `delta_value_display` left the class
-# contract: nothing reads them, and a consumer needing the detail of one change
-# joins back to the event it came from. The silver side drops in
-# migrations/*.sql; these three drop here because a staging table exists only
-# after dbt has built it, and dbt runs after the migrations.
+# The class contract changed twice and the three incremental Jira arms have to
+# follow: `author_display`, `delta_value_id`, `delta_value_display` and then
+# `title` left it, and the four discriminators became LowCardinality(String).
+# The silver side is in migrations/*.sql; the arms change here because a
+# staging table exists only after dbt has built it, and dbt runs after the
+# migrations.
 #
 # They cannot be skipped. All three models are `incremental`, so their tables
-# survive a run carrying whatever column list they were created with, and
+# survive a run carrying whatever columns they were created with, and
 # `class_task_field_history` unions them with `SELECT *` — an arm still holding
 # a dropped column fails the union with "different number of columns in
-# queries". The GitHub arm needs no heal: it is a `table`, rebuilt every run.
+# queries", and an arm still typed Enum8 fails the field-parity audit. The
+# GitHub arm and the derived Jira journal need no heal: both are `table`,
+# rebuilt every run.
 #
-# `staging.jira__task_field_history` is deliberately absent from this list. It
-# is the Rust binary's output and the binary still writes all four columns.
+# `staging.jira__task_field_history`, the retired producer's output, is left as
+# it is: no model reads it any more.
 heal_task_field_history_arm() {
   local table="$1"
   ch_table_exists staging "${table}" || return 0
@@ -370,6 +422,11 @@ heal_task_field_history_arm() {
 ALTER TABLE staging.${table} DROP COLUMN IF EXISTS author_display;
 ALTER TABLE staging.${table} DROP COLUMN IF EXISTS delta_value_id;
 ALTER TABLE staging.${table} DROP COLUMN IF EXISTS delta_value_display;
+ALTER TABLE staging.${table} DROP COLUMN IF EXISTS title;
+ALTER TABLE staging.${table} MODIFY COLUMN event_kind LowCardinality(String);
+ALTER TABLE staging.${table} MODIFY COLUMN field_cardinality LowCardinality(String);
+ALTER TABLE staging.${table} MODIFY COLUMN delta_action LowCardinality(String);
+ALTER TABLE staging.${table} MODIFY COLUMN value_id_type LowCardinality(String);
 SQL
 }
 
@@ -452,9 +509,9 @@ heal_task_users_table silver class_task_users
 # `title` to class_task_field_history after `id_readable` (#2739) so evidence
 # rows could name the work item; the title is now an ordinary field in the
 # journal, bound to the `title` role, and the column is dropped by
-# migrations/20260903000000_task-field-history-drop-columns.sql. Leaving the
-# heal in place would ADD the column straight back after that migration ran —
-# heals run after the .sql files — and gold would still read it.
+# migrations/20260912000000_task-field-history-cutover.sql. Leaving the heal in
+# place would ADD the column straight back after that migration ran — heals
+# run after the .sql files.
 
 echo "=== Healing git file-change object id columns ==="
 # The file-change object ids arrive at the tail of every projection that feeds
@@ -555,6 +612,177 @@ SQL
 for _git_source in github gitlab bitbucket_cloud; do
   heal_git_pr_author_account "${_git_source}__pull_requests"
 done
+
+echo "=== Healing git pull-request reported close-time column ==="
+# Same positional invariant: every projection feeding class_git_pull_requests
+# gained closed_on_reported after closed_on — the close time as the source
+# stated it, which the duration measures read so a recovered one cannot pose as
+# a measurement (#3362). Staging heals here because these tables exist only
+# after a connector has run; the silver column is added in migrations/*.sql.
+# Idempotent.
+heal_git_pr_close_time_reported() {
+  local table="$1"
+  ch_table_is_real staging "${table}" || return 0
+  echo "  staging.${table}"
+  run_ch <<SQL
+ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS closed_on_reported Nullable(DateTime) AFTER closed_on;
+ALTER TABLE staging.${table} MODIFY COLUMN closed_on_reported Nullable(DateTime) AFTER closed_on;
+SQL
+}
+
+for _git_source in github gitlab bitbucket_cloud; do
+  heal_git_pr_close_time_reported "${_git_source}__pull_requests"
+done
+
+echo "=== Backfilling git pull-request reported close time from the sources ==="
+# The rows a warm warehouse already holds must be filled from the SOURCE
+# timestamps, never from this table's own `closed_on`.
+#
+# `closed_on` is the SETTLED close, and the contract that settled it changed
+# here: both projections used to prefer `closed_at`, so a request CLOSED,
+# reopened and later MERGED settled on the earlier close. Copying that into
+# `closed_on_reported` would hand every duration measure an interval that ended
+# before the merge — the very reading this change corrects — and it would do so
+# invisibly, because the value is a real instant the source once reported.
+#
+# So the reported close is recomputed from bronze under the new contract:
+# `merged_at` when the source states one, else `closed_at`. `unique_key` reaches
+# bronze unchanged through both projections, which is what makes the lookup a
+# key equality rather than a guess. A mutation cannot join a subquery, so the
+# pairs go through a Join-engine table and joinGet, the same way the jira issue
+# identity heal above does.
+#
+# Three relations feed it. `bronze_gitlab.merge_requests` is the pre-#3250
+# stream: it is absent from the DDL snapshot and from any fresh cluster, and
+# holds the GitLab history of an installation that has not yet re-synced on the
+# rebuilt connector — which is exactly the installation this backfill is for.
+#
+# A row bronze cannot answer for falls back only where the STATE itself proves
+# what `closed_on` holds. `CLOSED` is such a state: it is terminal and it never
+# merged, so the settled close can only be the reported `closed_at`. `MERGED`
+# is not — `closed_on` there may be a merge or the stale close this change
+# corrects, and guessing is what went wrong. Nor is `OPEN` or `LOCKED`, which
+# have no close to report. Those keep NULL.
+#
+# Bitbucket is excluded throughout: its `closed_on` may be RECOVERED, and
+# promoting a recovered time to a reported one is the error this column exists
+# to prevent.
+_git_pr_reported_close_lookup='staging._git_pr_reported_close_by_key'
+
+# The relations that carry the column, as "<db> <table> <extra predicate>". The
+# class holds all three connectors in one table, so it alone needs the filter
+# that keeps Bitbucket out; the staging projections are per connector already.
+_GIT_PR_REPORTED_CLOSE_TARGETS=(
+  "silver|class_git_pull_requests| AND data_source IN ('insight_github', 'insight_gitlab')"
+  "staging|github__pull_requests|"
+  "staging|gitlab__pull_requests|"
+)
+
+# Rows this backfill would actually CHANGE. `fillable` is the same expression
+# the UPDATE below uses, so a converged warehouse counts zero and issues no
+# mutation at all — the rows that stay NULL for ever (a merge bronze cannot
+# answer for, a request still open) must not re-trigger it on every deploy.
+_git_pr_rows_needing_reported_close() {
+  local db="$1" table="$2" predicate="$3" fillable="$4"
+  printf "SELECT count() FROM %s.%s WHERE closed_on_reported IS NULL AND unique_key IS NOT NULL AND tenant_id IS NOT NULL AND source_id IS NOT NULL AND (%s)%s" \
+    "${db}" "${table}" "${fillable}" "${predicate}" |
+    _ch_http_query | tr -d '[:space:]'
+}
+
+# One branch of the lookup's UNION: the reported close as the source states it.
+#
+# `stream_rank` settles which relation wins when a GitLab installation holds
+# both the pre-#3250 stream and its replacement. The current stream ranks above
+# the legacy one by DECLARATION, not by whichever happened to be extracted
+# later — a clock is not a contract.
+_git_pr_reported_close_branch() {
+  local relation="$1" stream_rank="$2"
+  cat <<SQL
+    SELECT assumeNotNull(tenant_id) AS tenant_id,
+           assumeNotNull(source_id) AS source_id,
+           assumeNotNull(unique_key) AS unique_key,
+           COALESCE(nullIf(merged_at, ''), nullIf(closed_at, ''), '') AS reported_close,
+           toUInt8(${stream_rank}) AS stream_rank,
+           _airbyte_extracted_at AS extracted_at
+    FROM ${relation}
+    WHERE tenant_id IS NOT NULL AND source_id IS NOT NULL AND unique_key IS NOT NULL
+SQL
+}
+
+backfill_git_pr_reported_close() {
+  local sources=() source relation rank branches spec db table predicate n candidates=0
+  # "<relation> <stream_rank>": the current streams outrank the legacy one.
+  for source in "bronze_github.pull_requests 1" "bronze_gitlab.pull_requests 1" \
+                "bronze_gitlab.merge_requests 0"; do
+    relation="${source%% *}"
+    ch_table_is_real "${relation%%.*}" "${relation##*.}" && sources+=("${source}")
+  done
+  [[ "${#sources[@]}" -gt 0 ]] || { echo "  no git pull-request bronze to read — skipping"; return 0; }
+
+  branches=""
+  for source in "${sources[@]}"; do
+    relation="${source%% *}"; rank="${source##* }"
+    [[ -n "${branches}" ]] && branches+="    UNION ALL"$'\n'
+    branches+="$(_git_pr_reported_close_branch "${relation}" "${rank}")"$'\n'
+  done
+
+  run_ch <<SQL
+DROP TABLE IF EXISTS ${_git_pr_reported_close_lookup};
+CREATE TABLE ${_git_pr_reported_close_lookup}
+(
+    tenant_id String,
+    source_id String,
+    unique_key String,
+    reported_close String
+)
+ENGINE = Join(ANY, LEFT, tenant_id, source_id, unique_key);
+INSERT INTO ${_git_pr_reported_close_lookup}
+-- The GROUP BY leaves exactly one row per key, so Join(ANY) never chooses and
+-- the insert order is not a contract. The ordering tuple is total: the current
+-- stream outranks the legacy one, a later extraction outranks an earlier one,
+-- and the value itself breaks a remaining tie — so the answer is a function of
+-- the data alone, not of which part a merge happened to leave behind.
+SELECT tenant_id, source_id, unique_key,
+       argMax(reported_close, (stream_rank, extracted_at, reported_close)) AS reported_close
+FROM
+(
+${branches})
+GROUP BY tenant_id, source_id, unique_key;
+SQL
+
+  local lookup="joinGet('${_git_pr_reported_close_lookup}', 'reported_close', assumeNotNull(tenant_id), assumeNotNull(source_id), assumeNotNull(unique_key))"
+  # The one expression that decides whether a row can be answered at all; the
+  # count and the UPDATE share it so they cannot drift apart.
+  local fillable="${lookup} != '' OR (state = 'CLOSED' AND closed_on IS NOT NULL)"
+
+  for spec in "${_GIT_PR_REPORTED_CLOSE_TARGETS[@]}"; do
+    IFS='|' read -r db table predicate <<<"${spec}"
+    ch_table_is_real "${db}" "${table}" || continue
+    n="$(_git_pr_rows_needing_reported_close "${db}" "${table}" "${predicate}" "${fillable}")"
+    [[ "${n}" =~ ^[0-9]+$ && "${n}" -gt 0 ]] || continue
+    candidates=$((candidates + n))
+    echo "  ${db}.${table}: ${n} row(s)"
+    run_ch <<SQL
+ALTER TABLE ${db}.${table}
+    UPDATE closed_on_reported = if(
+        ${lookup} != '',
+        parseDateTimeBestEffortOrNull(${lookup}),
+        if(state = 'CLOSED', closed_on, CAST(NULL AS Nullable(DateTime)))
+    )
+    WHERE closed_on_reported IS NULL
+      AND unique_key IS NOT NULL AND tenant_id IS NOT NULL AND source_id IS NOT NULL
+      AND (${fillable})${predicate}
+    SETTINGS mutations_sync = 1;
+SQL
+  done
+  [[ "${candidates}" -gt 0 ]] || echo "  every row a source can answer for already carries its reported close"
+
+  run_ch <<SQL
+DROP TABLE IF EXISTS ${_git_pr_reported_close_lookup};
+SQL
+}
+
+backfill_git_pr_reported_close
 
 echo "=== Healing git repository default-branch column ==="
 # class_git_repositories gained `default_branch` at the projection tail; the

@@ -1,19 +1,17 @@
 spec_version: 1
 description: >
-  Task Delivery - the bug split for GITHUB, and the two ways a type acquires a
-  kind.
+  Task Delivery - the bug split for GITHUB, and how a type acquires a kind.
 
   GitHub states an issue's type by name and gives it no lifecycle meaning, so
-  `issue_kind` comes from one of two places: the operator's value map, which
-  wins, or the shared name lists, which catch what the map does not mention.
-  This fixture exercises both in one request and pins the gap between them.
+  `issue_kind` comes from the operator's `config.field_value_map` row, resolved
+  at the gold build, and nothing else. This fixture pins what a decided type
+  and an undecided one each produce in one request.
 
-  Carol closes three issues. `Bug` is mapped to `bug` by the operator. `Task` is
-  mapped to `other`. `Incident` is mapped by nobody, and no configured name list
-  covers it either, so it stays `unknown` — counted among closures but claimed
-  by neither side. One bug plus one non-bug is one short of the three closed,
-  and the missing one is the Incident; a kind that silently defaulted to
-  `other` would hide exactly that.
+  Carol closes three issues. `Bug` is decided `bug` by the operator. `Task` is
+  decided `task`. `Incident` is decided by nobody, so it stays `unknown` —
+  counted among closures but claimed by neither subset. One bug plus one non-bug
+  is one short of the three closed, and the missing one is the Incident; a kind
+  that silently defaulted to `task` would hide exactly that.
 
   The type breakdown therefore has three groups, not two, and the deliberately
   unclassified one is visible rather than absorbed.
@@ -35,9 +33,16 @@ bronze:
   config.task_value_map:
     - $ref: ../templates/github_task.yaml#/templates/value_open
     - $ref: ../templates/github_task.yaml#/templates/value_closed_completed
-    # Two types the operator classified; `Incident` is deliberately absent.
-    - { $ref: ../templates/github_task.yaml#/templates/value_open, field_id: type, value_id: IT_bug, unique_key: gh-value-type-bug, canonical_value: bug, value_display: Bug }
-    - { $ref: ../templates/github_task.yaml#/templates/value_open, field_id: type, value_id: IT_task, unique_key: gh-value-type-task, canonical_value: other, value_display: Task }
+
+  # Two types the operator classified; `Incident` is deliberately absent.
+  config.field_value_map:
+    - $ref: ../templates/github_task.yaml#/templates/issue_type_kind_bug
+    - $ref: ../templates/github_task.yaml#/templates/issue_type_kind_task
+
+  config.field_value_defaults:
+    # Unmapped type ids are unclassified by decision, not by accident:
+    # `assert_task_field_value_defaults_exist` requires this row.
+    - $ref: ../templates/github_task.yaml#/templates/github_issue_type_default_unknown
 
   bronze_github.issue_types:
     - $ref: ../templates/github_task.yaml#/templates/issue_type_task

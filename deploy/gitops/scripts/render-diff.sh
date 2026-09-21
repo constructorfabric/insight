@@ -14,6 +14,8 @@
 #   $5  VALUES file
 #   $6  RENDER_DIR (typically .deploy)
 #   $7  INSIGHT_VERSION (umbrella semver from .insight-version)
+#
+# Env: HELM_EXTRA_SET  extra `--set` flags; must match what deploy passes.
 
 set -euo pipefail
 
@@ -40,12 +42,13 @@ fi
 
 echo
 echo "=== rendering chart ==="
+# shellcheck disable=SC2086  # HELM_EXTRA_SET carries flags that must word-split
 if [ -n "$INSIGHT_VERSION" ]; then
   helm template "$RELEASE" "$CHART" --version "$INSIGHT_VERSION" \
-    -n "$NAMESPACE" -f "$VALUES" > "$new"
+    -n "$NAMESPACE" -f "$VALUES" ${HELM_EXTRA_SET:-} > "$new"
   echo "rendered $CHART:$INSIGHT_VERSION to $new"
 else
-  helm template "$RELEASE" "$CHART" -n "$NAMESPACE" -f "$VALUES" > "$new"
+  helm template "$RELEASE" "$CHART" -n "$NAMESPACE" -f "$VALUES" ${HELM_EXTRA_SET:-} > "$new"
   echo "rendered to $new"
 fi
 

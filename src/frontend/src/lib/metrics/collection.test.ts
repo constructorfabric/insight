@@ -788,7 +788,7 @@ describe("filterCollectionToAvailable", () => {
   const collection: MetricCollectionConfig = {
     metrics: [
       { key: "git.commits", views: [{ view: "period" }] },
-      { key: "tasks.closed_non_bug", views: [{ view: "period" }] },
+      { key: "tasks.closed_task", views: [{ view: "period" }] },
       { key: "ai.cost", views: [{ view: "period" }] },
     ],
   };
@@ -806,7 +806,7 @@ describe("filterCollectionToAvailable", () => {
   it("returns the SAME object when every key is available", () => {
     // Identity matters: the config rides in the react-query key, and a fresh
     // object per render would re-key every metric query.
-    const all = new Set(["git.commits", "tasks.closed_non_bug", "ai.cost"]);
+    const all = new Set(["git.commits", "tasks.closed_task", "ai.cost"]);
     expect(filterCollectionToAvailable(collection, all)).toBe(collection);
   });
 

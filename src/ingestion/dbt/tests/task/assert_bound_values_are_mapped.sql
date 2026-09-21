@@ -19,10 +19,38 @@ WITH bound AS (
     HAVING role IN ('status', 'issuetype')
 ),
 
+-- Statuses are decided in `task_value_map`, issue types in
+-- `field_value_map` under field='issue_type'; that table names no vendor
+-- field, so the field a decision is observed under is whichever one carries
+-- the `issuetype` role.
 mapped AS (
-    SELECT DISTINCT insight_source_id, data_source, field_id, value_id
-    FROM config.task_value_map FINAL
-    WHERE is_deleted = 0 AND valid_from <= now64(3)
+    SELECT DISTINCT
+        m.insight_source_id AS insight_source_id,
+        m.data_source       AS data_source,
+        m.field_id          AS field_id,
+        m.value_id          AS value_id
+    FROM config.task_value_map AS m FINAL
+    INNER JOIN bound AS b
+        ON b.insight_source_id = m.insight_source_id
+        AND b.data_source = m.data_source
+        AND b.field_id = m.field_id
+    WHERE m.is_deleted = 0 AND m.valid_from <= now64(3)
+      AND b.role = 'status'
+
+    UNION ALL
+
+    SELECT DISTINCT
+        b.insight_source_id AS insight_source_id,
+        b.data_source       AS data_source,
+        b.field_id          AS field_id,
+        m.source_key        AS value_id
+    FROM config.field_value_map AS m FINAL
+    INNER JOIN bound AS b
+        ON b.insight_source_id = m.insight_source_id
+        AND b.data_source = m.data_source
+    WHERE m.field = 'issue_type'
+      AND m.is_deleted = 0 AND m.valid_from <= now64(3)
+      AND b.role = 'issuetype'
 ),
 
 observed AS (

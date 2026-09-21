@@ -1,4 +1,9 @@
-vi.mock("@/api/custom-client");
+// The real error class, so `refusal` can read the body off it: an automocked
+// constructor never runs, and every refusal would read as the fallback.
+vi.mock("@/api/custom-client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/api/custom-client")>();
+  return { ...actual, sendChat: vi.fn() };
+});
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
@@ -118,7 +123,11 @@ describe("<CustomChat>", () => {
     await screen.findByText("And by author.");
 
     // The first call carries nothing; the second carries the turn before it.
-    expect(customClient.sendChat).toHaveBeenNthCalledWith(1, "lines per day?", []);
+    expect(customClient.sendChat).toHaveBeenNthCalledWith(
+      1,
+      "lines per day?",
+      []
+    );
     expect(customClient.sendChat).toHaveBeenNthCalledWith(2, "and by author?", [
       { role: "user", content: "lines per day?" },
       { role: "assistant", content: "Here they are." },
@@ -136,6 +145,23 @@ describe("<CustomChat>", () => {
 
     await screen.findByRole("alert");
     expect(textbox).toHaveValue("how many lines on the first?");
+  });
+
+  it("says what the service said about a refusal", async () => {
+    vi.mocked(customClient.sendChat).mockRejectedValue(
+      new customClient.CustomApiError(500, {
+        detail: "the assistant is not configured on this instance",
+      })
+    );
+    const onCreated = vi.fn();
+
+    render(<CustomChat onCreated={onCreated} />, { wrapper });
+    await userEvent.type(screen.getByRole("textbox"), "what data is there?");
+    await userEvent.click(screen.getByRole("button", { name: /send/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "the assistant is not configured on this instance"
+    );
   });
 
   it("shows a readable message instead of the raw API error", async () => {

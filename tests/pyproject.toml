@@ -81,7 +81,7 @@ dev = [
     "types-PyYAML>=6.0",
     "types-PyMySQL>=1.1",
     "types-jsonschema>=4.20",
-    "ruff==0.16.6",
+    "ruff==0.16.7",
     # Regenerates tests/stand/api/schemas/analytics.py from the committed
     # analytics OpenAPI document. Dev-only: the generated module is committed,
     # so a test run never needs the generator.

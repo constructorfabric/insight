@@ -1,0 +1,20 @@
+# Reusable ChatGPT Team Codex envelope records
+# (bronze_chatgpt_team.chatgpt_team_codex_user_daily_org). One row per READ of a
+# day, carrying that read's own headcount. The completeness gate in
+# chatgpt_team__ai_dev_usage joins it to the per-user rows on
+# (tenant, source, date, _airbyte_meta.sync_id), so a fixture that wants a day
+# judged must set date, total_users and a matching sync_id in _airbyte_meta on
+# both sides.
+templates:
+  chatgpt_team_codex_org:
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-01-05T00:00:00Z"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+    tenant_id: "{{ tenant }}"
+    source_id: "chatgpt-team-test"
+    unique_key: null
+    collected_at: null
+    data_source: "insight_chatgpt_team"
+    date: null
+    total_users: null

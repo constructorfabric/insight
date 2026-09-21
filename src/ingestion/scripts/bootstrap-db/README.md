@@ -131,7 +131,7 @@ It reads `system.columns` for the structure and `../../dbt/target/manifest.json`
 
 The run also fails if a model present in the manifest has no relation in the warehouse: a connector whose `discover` failed would otherwise shrink the comparison silently and the audit would pass for the wrong reason.
 
-Contributors whose physical table is not owned by dbt are covered too. `jira__task_field_history` is an ephemeral pass-through (`SELECT * FROM {{ source(...) }}`) over `staging.jira__task_field_history`, a table written by the `jira-enrich` Rust binary whose DDL lives in the `create_task_field_history_staging` macro — see ADR-003. The audit follows the `source()` dependency to that table and checks it against the silver target, so a future YouTrack twin of the enrich table gets the same field-parity guard for free, provided it keeps the shape: an ephemeral pass-through model carrying the `silver:<target>` tag. An ephemeral model that transforms its input publishes columns no relation holds and is reported as UNCHECKED instead.
+Contributors whose physical table is not owned by dbt would be covered too: an ephemeral pass-through (`SELECT * FROM {{ source(...) }}`) carrying the `silver:<target>` tag is followed to the relation it reads, and that relation is checked against the silver target. No contributor has that shape today — the Jira field history had it while a Rust binary wrote the table; every arm is now a dbt model. An ephemeral model that transforms its input publishes columns no relation holds and is reported as UNCHECKED instead.
 
 ## Scripts
 

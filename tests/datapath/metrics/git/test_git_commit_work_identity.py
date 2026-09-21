@@ -248,7 +248,7 @@ def test_file_rows_under_the_repository_that_lost_the_collapse_still_count(spec:
 
 def test_merge_result_with_partly_collected_branch_commits_stays_counted(spec: SpecRun) -> None:
     """One of two linked commits was collected, so both commits count; the overlapping
-    blob folds once (3 + 2 lines) and the sizes {3, 2} read 3."""
+    blob folds once (3 + 2 lines) and the sizes {3, 2} median to 2.5."""
     r = spec.call(
         {
             "url": "/v1/metric-results",
@@ -277,7 +277,7 @@ def test_merge_result_with_partly_collected_branch_commits_stays_counted(spec: S
 
     by_repository(r, "git.commits", PARTIAL_BRANCH).equals(value=2)
     by_repository(r, "git.lines_added", PARTIAL_BRANCH).equals(value=5)
-    by_repository(r, "git.commit_size", PARTIAL_BRANCH).equals(value=3)
+    by_repository(r, "git.commit_size", PARTIAL_BRANCH).equals(value=2.5)
 
 
 def test_same_patch_id_in_unrelated_repositories_is_two_authored_changes(spec: SpecRun) -> None:

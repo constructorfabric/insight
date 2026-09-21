@@ -18,8 +18,9 @@ description: >
       account for it, and nothing when neither is at or after the creation
     • gold:   a request in the MERGED state with a known close time contributes
       exactly 1 to git.prs_merged, dated by the CLOSE — so a merge with no
-      close time reaches no period at all. The same close time feeds the
-      duration measures, which discard an interval that does not run forwards
+      close time reaches no period at all. A RECOVERED close dates that count
+      and nothing more: the duration measures read the close the source itself
+      stated, so a request the recovery dated contributes no interval (#3362)
 
   Cases, one request each: the terminal entry wins even when the merge commit
   sits on another day; a silent close with no other activity is dated by the
@@ -37,8 +38,8 @@ description: >
   gain no close time, or it would count as an abandonment that never happened.
 
   Beyond git.prs_merged the module reads git.prs_created as a vacuity guard,
-  git.pr_cycle_time_h to prove a recovered close is usable and not merely
-  countable, and git.pr_abandonment_rate for the DECLINED guard.
+  git.pr_cycle_time_h to prove a recovered close is countable and NOT usable as
+  a duration, and git.pr_abandonment_rate for the DECLINED guard.
 
   The fixture's commits carry no author address on purpose: they exist to carry
   a date, and an addressless commit reaches no commit or line metric, so
