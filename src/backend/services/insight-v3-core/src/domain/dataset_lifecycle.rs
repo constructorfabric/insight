@@ -409,8 +409,8 @@ fn fields_moved(metric: &MetricQuery, before: &Declaration, after: &Declaration)
         .field_references()
         .into_iter()
         .filter(|reference| {
-            let was = before.field(reference.field).map(|field| &field.path);
-            let now = after.field(reference.field).map(|field| &field.path);
+            let was = before.field(reference.field).map(|field| &field.at);
+            let now = after.field(reference.field).map(|field| &field.at);
 
             was.is_some() && now.is_some() && was != now
         })

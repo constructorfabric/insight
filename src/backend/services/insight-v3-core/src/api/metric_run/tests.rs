@@ -34,6 +34,7 @@ fn a_ready_dataset(url: &str) -> crate::api::Datasets {
             "commits",
             json!({
             "title": "Commits",
+            "source": { "kind": "stream" },
             "fields": [
                 { "name": "occurred_at", "path": "occurred_at", "type": "datetime" },
                 { "name": "day", "path": "day", "type": "string" },

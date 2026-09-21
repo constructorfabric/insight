@@ -14,6 +14,7 @@ fn a_declaration_that_reads_as_one_has_nothing_to_say_about_its_shape() {
     let sound = json!({
         "title": "Commits",
         "description": "one per commit",
+        "source": { "kind": "stream" },
         "fields": [
             {
                 "name": "day", "path": "day", "type": "datetime",
@@ -37,6 +38,7 @@ fn a_declaration_that_reads_as_one_has_nothing_to_say_about_its_shape() {
 fn a_type_nothing_knows_does_not_hide_the_rest_of_the_body() {
     let body = json!({
         "title": "Commits",
+        "source": { "kind": "stream" },
         "fields": [
             { "name": "day", "path": "day", "type": "date" },
             { "name": "lines", "path": "lines", "type": "int", "colour": "red" }
@@ -79,7 +81,11 @@ fn every_place_a_field_can_be_wrong_is_named() {
     ];
 
     for (field, at) in cases {
-        let body = json!({ "title": "Commits", "fields": [field.clone()] });
+        let body = json!({
+            "title": "Commits",
+            "source": { "kind": "stream" },
+            "fields": [field.clone()]
+        });
 
         assert_eq!(
             places(&body),
@@ -92,13 +98,23 @@ fn every_place_a_field_can_be_wrong_is_named() {
 #[test]
 fn a_body_that_is_not_a_declaration_at_all_is_said_so_once() {
     assert_eq!(places(&json!([])), vec!["body"]);
-    assert_eq!(places(&json!({ "title": "Commits" })), vec!["fields"]);
+    // A body saying neither what it is over nor what it holds is told both,
+    // rather than sending a reader round once per missing half.
     assert_eq!(
-        places(&json!({ "title": "Commits", "fields": {} })),
+        places(&json!({ "title": "Commits" })),
+        vec!["source", "fields"]
+    );
+    assert_eq!(
+        places(&json!({ "title": "Commits", "source": { "kind": "stream" }, "fields": {} })),
         vec!["fields"]
     );
     assert_eq!(
-        places(&json!({ "title": "Commits", "fields": [], "extra": 1 })),
+        places(&json!({
+            "title": "Commits",
+            "source": { "kind": "stream" },
+            "fields": [],
+            "extra": 1
+        })),
         vec!["extra"]
     );
 }
@@ -108,6 +124,7 @@ fn a_body_that_is_not_a_declaration_at_all_is_said_so_once() {
 fn a_refusal_names_what_would_be_admissible() {
     let body = json!({
         "title": "Commits",
+        "source": { "kind": "stream" },
         "fields": [{ "name": "a", "path": "a", "type": "date" }]
     });
     let said = check(&body)

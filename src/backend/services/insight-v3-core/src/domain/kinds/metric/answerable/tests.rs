@@ -5,6 +5,7 @@ use super::*;
 fn declaration() -> Declaration {
     serde_json::from_value(json!({
         "title": "Commits",
+        "source": { "kind": "stream" },
         "fields": [
             { "name": "day", "path": "day", "type": "datetime", "default_clock": true },
             { "name": "lines", "path": "lines", "type": "int" },

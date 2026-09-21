@@ -23,6 +23,7 @@ fn name(value: &str) -> DefinitionName {
 fn declaration() -> Value {
     json!({
         "title": "Commits",
+        "source": { "kind": "stream" },
         "fields": [
             { "name": "day", "path": "day", "type": "datetime", "default_clock": true },
             { "name": "lines", "path": "lines", "type": "int" }
@@ -130,6 +131,7 @@ async fn a_declaration_that_is_wrong_twice_is_refused_with_both_reasons() -> R {
             &name("commits"),
             &json!({
                 "title": "Commits",
+                "source": { "kind": "stream" },
                 "fields": [
                     { "name": "day", "path": "day", "type": "datetime" },
                     { "name": "day", "path": "other", "type": "int" }
@@ -188,6 +190,7 @@ async fn replacing_the_declaration_of_a_dataset_that_stands_touches_no_table() -
 
     let second = json!({
         "title": "Commits per day",
+        "source": { "kind": "stream" },
         "fields": [
             { "name": "day", "path": "day", "type": "datetime", "default_clock": true },
             { "name": "lines", "path": "lines", "type": "int" }
@@ -537,6 +540,7 @@ fn reading_commits() -> Value {
 fn declaration_reading_elsewhere() -> Value {
     json!({
         "title": "Commits",
+        "source": { "kind": "stream" },
         "fields": [
             { "name": "day", "path": "day", "type": "datetime", "default_clock": true },
             { "name": "lines", "path": "changed.lines", "type": "int" }
@@ -582,6 +586,7 @@ async fn a_replacement_that_leaves_a_reader_unanswerable_is_refused_naming_it() 
 
     let without_lines = json!({
         "title": "Commits",
+        "source": { "kind": "stream" },
         "fields": [{ "name": "day", "path": "day", "type": "datetime", "default_clock": true }]
     });
     let refused = fixture
@@ -640,6 +645,7 @@ async fn a_replacement_that_moves_the_date_a_reader_windows_by_is_refused() -> R
     fixture.mock.add(handlers::record_ddl());
     let with_two_dates = json!({
         "title": "Commits",
+        "source": { "kind": "stream" },
         "fields": [
             { "name": "day", "path": "day", "type": "datetime", "default_clock": true },
             { "name": "merged", "path": "merged", "type": "datetime" },
@@ -654,6 +660,7 @@ async fn a_replacement_that_moves_the_date_a_reader_windows_by_is_refused() -> R
 
     let moved_clock = json!({
         "title": "Commits",
+        "source": { "kind": "stream" },
         "fields": [
             { "name": "day", "path": "day", "type": "datetime" },
             { "name": "merged", "path": "merged", "type": "datetime", "default_clock": true },

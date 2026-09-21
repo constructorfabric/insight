@@ -104,6 +104,7 @@ fn name(value: &str) -> DefinitionName {
 fn commits() -> serde_json::Value {
     json!({
         "title": "Commits",
+        "source": { "kind": "stream" },
         "fields": [{ "name": "actor", "path": "actor", "type": "string" }]
     })
 }
@@ -111,6 +112,7 @@ fn commits() -> serde_json::Value {
 fn pull_requests() -> serde_json::Value {
     json!({
         "title": "Pull requests",
+        "source": { "kind": "stream" },
         "fields": [
             { "name": "pull_request", "path": "pull_request", "type": "int" },
             { "name": "opened_at", "path": "opened_at", "type": "datetime" },
@@ -1010,6 +1012,7 @@ fn over_a_dataset() -> serde_json::Value {
 fn a_declaration() -> serde_json::Value {
     json!({
         "title": "Deploys",
+        "source": { "kind": "stream" },
         "fields": [{ "name": "lines", "path": "lines", "type": "int" }]
     })
 }

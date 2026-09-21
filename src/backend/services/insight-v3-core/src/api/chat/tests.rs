@@ -30,6 +30,7 @@ fn a_ready_dataset(url: &str) -> crate::api::Datasets {
         .unwrap_or_else(|error| panic!("the name parses: {error}"));
     let declaration = json!({
         "title": "Commits",
+        "source": { "kind": "stream" },
         "fields": [
             { "name": "author_email", "path": "author_email", "type": "string" },
             { "name": "day", "path": "day", "type": "string" },

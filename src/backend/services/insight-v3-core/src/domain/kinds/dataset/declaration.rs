@@ -76,13 +76,31 @@ impl PersonHandle {
     pub(crate) const ALL: [&'static str; 2] = ["email", "id"];
 }
 
+/// Where a field's value sits, which depends on what the dataset is over.
+///
+/// INVARIANT: one or the other, never both and never neither. A field of a
+/// dataset over a stream reads a key path out of the record's payload; one of
+/// a dataset over a relation reads a column. Nothing has to referee a field
+/// carrying both, because a field carrying both cannot be read.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum At {
+    /// Where the value sits in a record, as dot-separated segments.
+    Path(String),
+    /// The column of the relation that holds the value.
+    Column(String),
+}
+
 /// One field of a dataset, as declared.
+///
+/// Unknown keys are refused before a body reaches here, by
+/// [`super::shape`]: serde cannot both flatten a locator and deny what it
+/// does not know.
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct Field {
     pub(crate) name: String,
-    /// Where the value sits in a record, as dot-separated segments.
-    pub(crate) path: String,
+    #[serde(flatten)]
+    pub(crate) at: At,
     pub(crate) r#type: FieldType,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) role: Option<FieldRole>,
@@ -106,6 +124,23 @@ fn is_false(value: &bool) -> bool {
     !*value
 }
 
+/// What a dataset is over, and with it who owns the rows.
+///
+/// INVARIANT: the mode is written, never inferred from what else the
+/// declaration carries. The two differ in who provisions the relation, who
+/// may drop it, whether records may be sent, and how a field is read — too
+/// much to leave to the presence of a property.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
+pub(crate) enum Source {
+    /// Records are sent into this dataset. The service provisions its table
+    /// when the dataset is created and drops it when the dataset is removed.
+    Stream,
+    /// A relation the warehouse already builds. Nothing is provisioned and
+    /// nothing is ever dropped: the relation is not ours, we only read it.
+    Relation { database: String, table: String },
+}
+
 /// A dataset, as it is declared and stored.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -113,6 +148,7 @@ pub(crate) struct Declaration {
     pub(crate) title: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) description: Option<String>,
+    pub(crate) source: Source,
     pub(crate) fields: Vec<Field>,
     /// The fields that make two records the same record. Empty means every
     /// record stands on its own.

@@ -7,6 +7,7 @@ use crate::domain::query::time_window::{RequestedRange, Window};
 fn declaration() -> Declaration {
     serde_json::from_value(json!({
         "title": "Commits",
+        "source": { "kind": "stream" },
         "fields": [
             { "name": "day", "path": "day", "type": "datetime", "default_clock": true },
             { "name": "merged", "path": "merged", "type": "datetime" },
@@ -193,6 +194,7 @@ fn the_records_a_window_left_out_are_counted_over_the_same_relation_as_the_rows(
 fn a_declared_person_is_resolved_to_the_name_a_reader_knows() {
     let declared: Declaration = serde_json::from_value(json!({
         "title": "Commits",
+        "source": { "kind": "stream" },
         "fields": [
             { "name": "author", "path": "author", "type": "string", "person": "email" },
             { "name": "lines", "path": "lines", "type": "int" }
@@ -228,6 +230,7 @@ fn a_declared_person_is_resolved_to_the_name_a_reader_knows() {
 fn a_person_is_looked_up_by_the_record_s_own_value() {
     let declared: Declaration = serde_json::from_value(json!({
         "title": "Commits",
+        "source": { "kind": "stream" },
         "fields": [{
             "name": "author", "path": "author", "type": "string",
             "person": "email", "absent_value": "nobody"
@@ -314,6 +317,7 @@ fn a_windowed_run_that_aggregates_groups_by_the_bucket() {
 fn a_filter_is_judged_against_the_record_s_own_value() {
     let declared: Declaration = serde_json::from_value(json!({
         "title": "Commits",
+        "source": { "kind": "stream" },
         "fields": [{
             "name": "team", "path": "team", "type": "string", "absent_value": "unassigned"
         }]
@@ -353,6 +357,7 @@ fn a_filter_is_judged_against_the_record_s_own_value() {
 fn a_condition_on_a_person_field_keeps_the_rows_it_names() {
     let declared: Declaration = serde_json::from_value(json!({
         "title": "Commits",
+        "source": { "kind": "stream" },
         "fields": [
             { "name": "author", "path": "author", "type": "string", "person": "email" },
             { "name": "state", "path": "state", "type": "string" }

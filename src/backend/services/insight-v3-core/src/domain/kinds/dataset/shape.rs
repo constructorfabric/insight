@@ -12,11 +12,19 @@ use super::declaration::{FieldRole, FieldType, PersonHandle};
 use crate::domain::violation::{Reason, Violation};
 
 /// What a declaration may say at the top.
-const DECLARATION_KEYS: [&str; 4] = ["title", "description", "fields", "row_identity"];
-/// What one field may say.
-const FIELD_KEYS: [&str; 8] = [
+const DECLARATION_KEYS: [&str; 5] = ["title", "description", "source", "fields", "row_identity"];
+/// What a source may say, per mode.
+const SOURCE_KEYS_STREAM: [&str; 1] = ["kind"];
+const SOURCE_KEYS_RELATION: [&str; 3] = ["kind", "database", "table"];
+/// The modes a dataset may be over, as a declarer writes them.
+const SOURCE_KINDS: [&str; 2] = ["stream", "relation"];
+/// What one field may say. A field names where it reads exactly one way,
+/// which [`check_where_it_reads`] checks; both keys are admissible here so
+/// that the wrong one is refused as not admissible rather than as unknown.
+const FIELD_KEYS: [&str; 9] = [
     "name",
     "path",
+    "column",
     "type",
     "role",
     "description",
@@ -46,10 +54,76 @@ pub(crate) fn check(body: &Value) -> Vec<Violation> {
         false,
         &mut violations,
     );
+    check_source(declaration.get("source"), &mut violations);
     check_fields(declaration.get("fields"), &mut violations);
     check_row_identity(declaration.get("row_identity"), &mut violations);
 
     violations
+}
+
+/// What the dataset is over. The mode decides the rest of the declaration,
+/// so a body that does not say it cannot be read at all.
+fn check_source(source: Option<&Value>, violations: &mut Vec<Violation>) {
+    let Some(source) = source else {
+        violations.push(Violation::new(
+            "source",
+            Reason::Missing,
+            "a dataset says what it is over: records sent into it, or a relation it reads",
+        ));
+        return;
+    };
+    let Some(source) = source.as_object() else {
+        violations.push(Violation::new(
+            "source",
+            Reason::Malformed,
+            "source is an object",
+        ));
+        return;
+    };
+
+    word(
+        source.get("kind"),
+        "source.kind",
+        &SOURCE_KINDS,
+        true,
+        violations,
+    );
+
+    let relation = source.get("kind").and_then(Value::as_str) == Some("relation");
+    let admissible: &[&str] = if relation {
+        &SOURCE_KEYS_RELATION
+    } else {
+        &SOURCE_KEYS_STREAM
+    };
+    unknown_keys(source.keys(), admissible, "source", violations);
+
+    if relation {
+        text(source.get("database"), "source.database", true, violations);
+        text(source.get("table"), "source.table", true, violations);
+    }
+}
+
+/// A field says where it reads exactly one way. Both and neither are refused
+/// here, so the declaration the deserialiser sees can only carry one.
+fn check_where_it_reads(
+    field: &serde_json::Map<String, Value>,
+    at: &str,
+    violations: &mut Vec<Violation>,
+) {
+    match (field.get("path"), field.get("column")) {
+        (Some(_), Some(_)) => violations.push(Violation::new(
+            format!("{at}.column"),
+            Reason::NotAdmissible,
+            "a field reads a path or a column, not both",
+        )),
+        (Some(_), None) => text(field.get("path"), &format!("{at}.path"), true, violations),
+        (None, Some(_)) => text(field.get("column"), &format!("{at}.column"), true, violations),
+        (None, None) => violations.push(Violation::new(
+            format!("{at}.path"),
+            Reason::Missing,
+            "a field says where its value sits: a path into the record, or a column of the relation",
+        )),
+    }
 }
 
 fn check_fields(fields: Option<&Value>, violations: &mut Vec<Violation>) {
@@ -83,7 +157,7 @@ fn check_fields(fields: Option<&Value>, violations: &mut Vec<Violation>) {
 
         unknown_keys(field.keys(), &FIELD_KEYS, &at, violations);
         text(field.get("name"), &format!("{at}.name"), true, violations);
-        text(field.get("path"), &format!("{at}.path"), true, violations);
+        check_where_it_reads(field, &at, violations);
         text(
             field.get("description"),
             &format!("{at}.description"),

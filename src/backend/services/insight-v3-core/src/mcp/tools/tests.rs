@@ -24,6 +24,7 @@ fn surfaces() -> CustomSurfaces {
             "commits",
             json!({
                 "title": "Commits",
+                "source": { "kind": "stream" },
                 "fields": [
                     { "name": "actor", "path": "actor", "type": "string" },
                     { "name": "lines_added", "path": "lines_added", "type": "int" },

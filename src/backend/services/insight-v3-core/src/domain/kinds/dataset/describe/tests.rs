@@ -10,6 +10,7 @@ fn commits() -> Declaration {
     declaration(json!({
         "title": "Commits",
         "description": "One record per commit.",
+        "source": { "kind": "stream" },
         "fields": [
             {
                 "name": "day", "path": "committed\\.at", "type": "datetime",
@@ -74,6 +75,7 @@ fn where_a_value_sits_and_what_holds_it_are_left_out() {
 fn a_dataset_with_no_identity_says_nothing_about_it() {
     let plain = declaration(json!({
         "title": "Events",
+        "source": { "kind": "stream" },
         "fields": [{ "name": "day", "path": "day", "type": "datetime" }]
     }));
 

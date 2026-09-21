@@ -6,7 +6,7 @@
 
 use std::collections::HashSet;
 
-use super::declaration::{BUCKET_COLUMN, Declaration, FieldType, MAX_PATH_SEGMENTS};
+use super::declaration::{At, BUCKET_COLUMN, Declaration, FieldType, MAX_PATH_SEGMENTS, Source};
 use crate::domain::definition::DefinitionName;
 use crate::domain::violation::{Reason, Violation};
 
@@ -20,6 +20,7 @@ pub(crate) fn validate(name: &str, declaration: &Declaration) -> Vec<Violation> 
 
     check_name(name, &mut violations);
     check_title(declaration, &mut violations);
+    check_source(declaration, &mut violations);
     check_fields(declaration, &mut violations);
     check_default_clock(declaration, &mut violations);
     check_row_identity(declaration, &mut violations);
@@ -90,7 +91,7 @@ fn check_fields(declaration: &Declaration, violations: &mut Vec<Violation>) {
             ));
         }
 
-        check_path(&field.path, &at("path"), violations);
+        check_where_it_reads(declaration, &field.at, &at, violations);
 
         if field.default_clock && field.r#type != FieldType::Datetime {
             violations.push(Violation::new(
@@ -116,6 +117,93 @@ fn check_fields(declaration: &Declaration, violations: &mut Vec<Violation>) {
             ));
         }
     }
+}
+
+/// A relation this service may name, and the identity of the dataset over it.
+fn check_source(declaration: &Declaration, violations: &mut Vec<Violation>) {
+    let Source::Relation { database, table } = &declaration.source else {
+        return;
+    };
+
+    for (part, named) in [("database", database), ("table", table)] {
+        if named.is_empty() {
+            violations.push(Violation::new(
+                format!("source.{part}"),
+                Reason::Missing,
+                format!("a dataset over a relation names the {part} it reads"),
+            ));
+        } else if !is_plain_identifier(named) {
+            violations.push(Violation::new(
+                format!("source.{part}"),
+                Reason::Malformed,
+                format!("a {part} is letters, digits and underscore"),
+            ));
+        }
+    }
+
+    // The relation decides for itself which of its rows are current; a second
+    // rule written here would quietly disagree with it.
+    if !declaration.row_identity.is_empty() {
+        violations.push(Violation::new(
+            "row_identity",
+            Reason::NotAdmissible,
+            "a dataset over a relation takes the relation's own word for which rows are current",
+        ));
+    }
+}
+
+/// Where a field reads from, which the dataset's source decides.
+fn check_where_it_reads(
+    declaration: &Declaration,
+    at_value: &At,
+    at: &impl Fn(&str) -> String,
+    violations: &mut Vec<Violation>,
+) {
+    match (&declaration.source, at_value) {
+        (Source::Stream, At::Path(path)) => check_path(path, &at("path"), violations),
+        (Source::Relation { .. }, At::Column(column)) => {
+            check_column(column, &at("column"), violations);
+        }
+        (Source::Stream, At::Column(_)) => violations.push(Violation::new(
+            at("column"),
+            Reason::NotAdmissible,
+            "records sent into a dataset carry a payload, so a field reads a path, not a column",
+        )),
+        (Source::Relation { .. }, At::Path(_)) => violations.push(Violation::new(
+            at("path"),
+            Reason::NotAdmissible,
+            "a relation holds its values in columns, so a field reads a column, not a path",
+        )),
+    }
+}
+
+fn check_column(column: &str, at: &str, violations: &mut Vec<Violation>) {
+    if column.is_empty() {
+        violations.push(Violation::new(
+            at,
+            Reason::Missing,
+            "a field reads a column of the relation, so it needs one",
+        ));
+        return;
+    }
+
+    if !is_plain_identifier(column) {
+        violations.push(Violation::new(
+            at,
+            Reason::Malformed,
+            "a column is letters, digits and underscore",
+        ));
+    }
+}
+
+/// SAFETY: a database, relation or column name is written into a statement as
+/// an identifier, so nothing but these characters may reach one. Quoting is
+/// applied as well; this is the belt that makes the braces unnecessary to
+/// reason about.
+fn is_plain_identifier(named: &str) -> bool {
+    named
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || character == '_')
 }
 
 fn check_path(path: &str, at: &str, violations: &mut Vec<Violation>) {

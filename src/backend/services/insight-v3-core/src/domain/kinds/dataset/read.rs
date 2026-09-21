@@ -3,7 +3,7 @@
 
 use std::fmt::Write as _;
 
-use super::declaration::{Declaration, Field, FieldType, path_segments};
+use super::declaration::{At, Declaration, Field, FieldType, path_segments};
 
 /// The column every record is stored in.
 pub(crate) const PAYLOAD_COLUMN: &str = "raw_data";
@@ -67,9 +67,15 @@ pub(crate) fn collapsed(declaration: &Declaration, database: &str, table: &str) 
 }
 
 fn extract(field: &Field, payload: &str) -> String {
-    let keys = keys(&field.path);
+    match &field.at {
+        At::Path(path) => out_of_payload(field.r#type, &keys(path), payload),
+        At::Column(column) => out_of_column(field.r#type, column),
+    }
+}
 
-    match field.r#type {
+/// A value the record carries in its payload, read out by its key path.
+fn out_of_payload(declared: FieldType, keys: &str, payload: &str) -> String {
+    match declared {
         // Lenient, because a record carries whatever its sender wrote: a
         // timestamp this cannot read is empty rather than a refusal.
         FieldType::Datetime => format!(
@@ -79,6 +85,29 @@ fn extract(field: &Field, payload: &str) -> String {
         FieldType::Int => format!("JSONExtract({payload}{keys}, 'Nullable(Int64)')"),
         FieldType::Float => format!("JSONExtract({payload}{keys}, 'Nullable(Float64)')"),
         FieldType::Bool => format!("JSONExtract({payload}{keys}, 'Nullable(Bool)')"),
+    }
+}
+
+/// A value a relation holds in a column of its own.
+///
+/// INVARIANT: the relation's column keeps its own type wherever it already
+/// reads as the declared one, so a number stays a number to the warehouse and
+/// an index over it is still usable. Only where the two disagree is a cast
+/// written, and a value that cannot be cast reads as empty rather than as a
+/// zero standing in for one.
+fn out_of_column(declared: FieldType, column: &str) -> String {
+    let held = format!("`{}`", column.replace('`', "``"));
+
+    match declared {
+        // Lenient for the same reason a payload's is: a column this cannot
+        // read is empty rather than a run that fails.
+        FieldType::Datetime => format!("accurateCastOrNull({held}, 'DateTime64(3)')"),
+        // Every value has a text form, including the composite ones no other
+        // declared type reaches, so this is the one cast that cannot fail.
+        FieldType::String => format!("toString({held})"),
+        FieldType::Int => format!("accurateCastOrNull({held}, 'Int64')"),
+        FieldType::Float => format!("accurateCastOrNull({held}, 'Float64')"),
+        FieldType::Bool => format!("accurateCastOrNull({held}, 'Bool')"),
     }
 }
 

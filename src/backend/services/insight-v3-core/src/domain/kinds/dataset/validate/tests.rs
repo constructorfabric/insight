@@ -11,6 +11,7 @@ fn declaration(value: serde_json::Value) -> Declaration {
 fn sound() -> serde_json::Value {
     json!({
         "title": "QA test runs",
+        "source": { "kind": "stream" },
         "fields": [
             { "name": "run_id", "path": "run_id", "type": "string", "role": "dimension" },
             { "name": "test_name", "path": "test.name", "type": "string", "role": "dimension" },
@@ -43,6 +44,7 @@ fn every_problem_is_reported_at_once() {
         "qa_test_runs",
         json!({
             "title": "  ",
+            "source": { "kind": "stream" },
             "fields": [
                 { "name": "bucket", "path": "", "type": "string" },
                 { "name": "started_at", "path": "started_at", "type": "string",
@@ -84,7 +86,7 @@ fn a_name_that_is_not_an_identifier_or_is_a_catalogue_path_is_refused() {
 fn a_dataset_nothing_can_be_asked_of_is_refused() {
     let found = violations(
         "qa_test_runs",
-        json!({ "title": "QA test runs", "fields": [] }),
+        json!({ "title": "QA test runs", "source": { "kind": "stream" }, "fields": [] }),
     );
 
     assert_eq!(fields_of(&found), vec!["fields"]);
@@ -97,6 +99,7 @@ fn one_field_declared_twice_is_refused_once() {
         "qa_test_runs",
         json!({
             "title": "QA test runs",
+            "source": { "kind": "stream" },
             "fields": [
                 { "name": "run_id", "path": "run_id", "type": "string" },
                 { "name": "run_id", "path": "run.id", "type": "string" }
@@ -114,6 +117,7 @@ fn a_field_may_not_claim_the_column_a_windowed_run_injects() {
         "qa_test_runs",
         json!({
             "title": "QA test runs",
+            "source": { "kind": "stream" },
             "fields": [{ "name": "bucket", "path": "bucket", "type": "string" }]
         }),
     );
@@ -139,6 +143,7 @@ fn a_path_that_cannot_address_a_key_is_refused() {
             "qa_test_runs",
             json!({
                 "title": "QA test runs",
+                "source": { "kind": "stream" },
                 "fields": [{ "name": "value", "path": path, "type": "string" }]
             }),
         );
@@ -174,7 +179,11 @@ fn the_type_decides_what_a_property_may_be_attached_to() {
     for (field, expected) in cases {
         let found = violations(
             "qa_test_runs",
-            json!({ "title": "QA test runs", "fields": [field.clone()] }),
+            json!({
+                "title": "QA test runs",
+                "source": { "kind": "stream" },
+                "fields": [field.clone()]
+            }),
         );
         assert_eq!(fields_of(&found), vec![expected], "should reject: {field}");
     }
@@ -188,6 +197,7 @@ fn a_role_that_disagrees_with_the_type_is_accepted_because_it_only_describes() {
         "qa_test_runs",
         json!({
             "title": "QA test runs",
+            "source": { "kind": "stream" },
             "fields": [{ "name": "project_id", "path": "project_id",
                          "type": "int", "role": "measurable" }]
         }),
@@ -202,6 +212,7 @@ fn a_record_has_one_main_date() {
         "qa_test_runs",
         json!({
             "title": "QA test runs",
+            "source": { "kind": "stream" },
             "fields": [
                 { "name": "started_at", "path": "started_at", "type": "datetime",
                   "default_clock": true },
@@ -224,6 +235,7 @@ fn a_dataset_may_declare_no_main_date_at_all() {
         "qa_test_runs",
         json!({
             "title": "QA test runs",
+            "source": { "kind": "stream" },
             "fields": [{ "name": "run_id", "path": "run_id", "type": "string" }]
         }),
     );
@@ -241,6 +253,7 @@ fn an_identity_naming_something_undeclared_is_refused_and_says_what_is_declared(
         "qa_test_runs",
         json!({
             "title": "QA test runs",
+            "source": { "kind": "stream" },
             "fields": [{ "name": "run_id", "path": "run_id", "type": "string" }],
             "row_identity": ["run_id", "test_name"]
         }),
@@ -257,6 +270,7 @@ fn an_identity_naming_one_field_twice_is_refused() {
         "qa_test_runs",
         json!({
             "title": "QA test runs",
+            "source": { "kind": "stream" },
             "fields": [{ "name": "run_id", "path": "run_id", "type": "string" }],
             "row_identity": ["run_id", "run_id"]
         }),
@@ -278,4 +292,101 @@ fn every_reason_reaches_the_caller_as_a_stable_code() {
         let violation = Violation::new("f", reason, "d");
         assert_eq!(violation.reason_code(), code, "should map: {reason:?}");
     }
+}
+
+fn over_a_relation(fields: &serde_json::Value) -> serde_json::Value {
+    json!({
+        "title": "Collaboration observations",
+        "source": { "kind": "relation", "database": "insight", "table": "collab_metric_observations" },
+        "fields": fields
+    })
+}
+
+#[test]
+fn a_dataset_over_a_relation_declares_its_fields_as_columns() {
+    let found = violations(
+        "collab",
+        over_a_relation(&json!([
+            { "name": "day", "column": "metric_date", "type": "datetime", "default_clock": true },
+            { "name": "value", "column": "value", "type": "float" }
+        ])),
+    );
+
+    assert!(found.is_empty(), "{found:?}");
+}
+
+/// Where a value sits depends on what the dataset is over, so the wrong one
+/// is refused against the key that carries it rather than read as the other.
+#[test]
+fn a_field_that_reads_the_wrong_kind_of_place_is_refused_by_that_key() {
+    let over_relation = violations(
+        "collab",
+        over_a_relation(&json!([{ "name": "day", "path": "day", "type": "datetime" }])),
+    );
+    assert_eq!(fields_of(&over_relation), vec!["fields[0].path"]);
+    assert_eq!(over_relation[0].reason, Reason::NotAdmissible);
+
+    let over_stream = violations(
+        "commits",
+        json!({
+            "title": "Commits",
+            "source": { "kind": "stream" },
+            "fields": [{ "name": "day", "column": "day", "type": "datetime" }]
+        }),
+    );
+    assert_eq!(fields_of(&over_stream), vec!["fields[0].column"]);
+}
+
+/// The relation decides for itself which of its rows are current. A second
+/// rule written into the declaration would quietly disagree with it.
+#[test]
+fn a_dataset_over_a_relation_may_not_declare_a_row_identity() {
+    let found = violations(
+        "collab",
+        json!({
+            "title": "Collaboration observations",
+            "source": { "kind": "relation", "database": "insight", "table": "collab_metric_observations" },
+            "fields": [{ "name": "day", "column": "metric_date", "type": "datetime" }],
+            "row_identity": ["day"]
+        }),
+    );
+
+    assert_eq!(fields_of(&found), vec!["row_identity"]);
+    assert_eq!(found[0].reason, Reason::NotAdmissible);
+}
+
+/// SAFETY: a database, relation or column name reaches a statement as an
+/// identifier, so nothing that could end one may be declared.
+#[test]
+fn a_relation_or_column_named_with_anything_but_an_identifier_is_refused() {
+    let named = violations(
+        "collab",
+        json!({
+            "title": "Collaboration observations",
+            "source": { "kind": "relation", "database": "insight", "table": "obs`; DROP" },
+            "fields": [{ "name": "day", "column": "metric_date", "type": "datetime" }]
+        }),
+    );
+    assert_eq!(fields_of(&named), vec!["source.table"]);
+    assert_eq!(named[0].reason, Reason::Malformed);
+
+    let column = violations(
+        "collab",
+        over_a_relation(&json!([{ "name": "day", "column": "a b", "type": "datetime" }])),
+    );
+    assert_eq!(fields_of(&column), vec!["fields[0].column"]);
+}
+
+#[test]
+fn a_dataset_over_a_relation_that_names_none_is_refused() {
+    let found = violations(
+        "collab",
+        json!({
+            "title": "Collaboration observations",
+            "source": { "kind": "relation", "database": "", "table": "" },
+            "fields": [{ "name": "day", "column": "metric_date", "type": "datetime" }]
+        }),
+    );
+
+    assert_eq!(fields_of(&found), vec!["source.database", "source.table"]);
 }

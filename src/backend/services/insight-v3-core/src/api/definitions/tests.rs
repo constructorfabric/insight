@@ -19,6 +19,7 @@ use crate::store::definitions::memory::MemoryDefinitions;
 fn commits() -> serde_json::Value {
     json!({
         "title": "Commits",
+        "source": { "kind": "stream" },
         "fields": [
             { "name": "day", "path": "day", "type": "string" },
             { "name": "committed_at", "path": "committed_at", "type": "datetime" },
@@ -32,6 +33,7 @@ fn commits() -> serde_json::Value {
 fn deploys() -> serde_json::Value {
     json!({
         "title": "Deploys",
+        "source": { "kind": "stream" },
         "fields": [
             { "name": "service", "path": "service", "type": "string" },
             {

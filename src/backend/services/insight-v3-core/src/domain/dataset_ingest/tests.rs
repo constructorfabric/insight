@@ -34,6 +34,7 @@ fn name(value: &str) -> DefinitionName {
 fn declaration() -> Value {
     json!({
         "title": "Commits",
+        "source": { "kind": "stream" },
         "fields": [{ "name": "day", "path": "day", "type": "datetime", "default_clock": true }]
     })
 }

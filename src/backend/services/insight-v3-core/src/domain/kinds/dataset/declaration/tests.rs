@@ -10,6 +10,7 @@ fn parse(value: serde_json::Value) -> Declaration {
 fn a_declaration_needs_only_a_title_and_its_fields() {
     let declaration = parse(json!({
         "title": "QA test runs",
+        "source": { "kind": "stream" },
         "fields": [{ "name": "run_id", "path": "run_id", "type": "string" }]
     }));
 
@@ -25,6 +26,7 @@ fn a_property_the_shape_does_not_carry_is_refused_rather_than_ignored() {
     // is what makes a declaration disagree with what its author believes.
     let refused: Result<Declaration, _> = serde_json::from_value(json!({
         "title": "QA test runs",
+        "source": { "kind": "stream" },
         "fields": [{ "name": "run_id", "path": "run_id", "type": "string" }],
         "rowIdentity": ["run_id"]
     }));
@@ -36,6 +38,7 @@ fn a_property_the_shape_does_not_carry_is_refused_rather_than_ignored() {
 fn the_main_date_is_the_field_that_claims_it() {
     let declaration = parse(json!({
         "title": "QA test runs",
+        "source": { "kind": "stream" },
         "fields": [
             { "name": "run_id", "path": "run_id", "type": "string" },
             { "name": "started_at", "path": "started_at", "type": "datetime",
@@ -85,6 +88,7 @@ fn a_path_addresses_a_nested_key_and_a_key_holding_a_dot() {
 fn a_field_is_found_by_the_name_a_metric_uses() {
     let declaration = parse(json!({
         "title": "QA test runs",
+        "source": { "kind": "stream" },
         "fields": [
             { "name": "run_id", "path": "run_id", "type": "string" },
             { "name": "duration_ms", "path": "duration_ms", "type": "int" }
@@ -102,6 +106,7 @@ fn what_is_stored_is_what_was_declared() {
     let body = json!({
         "title": "QA test runs",
         "description": "One record per test in one CI run.",
+        "source": { "kind": "stream" },
         "fields": [
             { "name": "branch", "path": "branch", "type": "string",
               "role": "dimension", "absent_value": "(no branch)" },

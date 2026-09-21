@@ -133,6 +133,7 @@ impl TestHarness {
 fn declaration() -> serde_json::Value {
     json!({
         "title": "Commits",
+        "source": { "kind": "stream" },
         "fields": [
             { "name": "day", "path": "day", "type": "datetime", "default_clock": true },
             { "name": "lines", "path": "lines", "type": "int" }
@@ -169,6 +170,7 @@ async fn a_declaration_wrong_in_several_places_is_answered_with_all_of_them() {
             "commits",
             json!({
                 "title": "Commits",
+                "source": { "kind": "stream" },
                 "fields": [
                     { "name": "day", "path": "day", "type": "datetime" },
                     { "name": "day", "path": "other", "type": "int" }
@@ -331,6 +333,7 @@ async fn declaring_a_name_that_stands_replaces_it_without_touching_its_table() {
             "commits",
             json!({
                 "title": "Commits",
+                "source": { "kind": "stream" },
                 "fields": [
                     { "name": "day", "path": "day", "type": "datetime", "default_clock": true },
                     { "name": "lines", "path": "lines", "type": "int" },
@@ -498,6 +501,7 @@ async fn a_dataset_something_still_reads_answers_a_conflict() {
             "commits",
             json!({
                 "title": "Commits",
+                "source": { "kind": "stream" },
                 "fields": [
                     { "name": "day", "path": "day", "type": "datetime", "default_clock": true }
                 ]
@@ -530,6 +534,7 @@ async fn a_declaration_wrong_in_several_ways_names_every_place() {
             "commits",
             json!({
                 "title": "Commits",
+                "source": { "kind": "stream" },
                 "fields": [
                     { "name": "day", "path": "day", "type": "moment" },
                     { "name": "lines", "path": "lines", "type": "int", "colour": "red" }
