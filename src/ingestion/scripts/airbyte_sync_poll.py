@@ -61,9 +61,9 @@ def _read_failure(entry: dict) -> SyncFailure:
 
 
 def _read_text(value: object) -> str:
-    if value is None:
+    if not isinstance(value, str):
         return ""
-    return str(value)[:FAILURE_MESSAGE_MAX_CHARS]
+    return value[:FAILURE_MESSAGE_MAX_CHARS]
 
 
 def attempt_progress(resp: dict) -> Progress | None:

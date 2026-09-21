@@ -117,6 +117,15 @@ def test_a_reason_missing_its_classification_reads_as_unknown_rather_than_empty(
     assert attempt_failures(_resp_with_failures([{}])) == [SyncFailure("unknown", "unknown", "", "")]
 
 
+@pytest.mark.parametrize("value", [["a", "b"], {"k": "v"}, 7, 1.5, True, None])
+def test_a_field_that_is_not_text_reads_as_absent_rather_than_stringified(value) -> None:
+    entry = {"failureType": value, "failureOrigin": value, "externalMessage": value, "internalMessage": value}
+
+    assert attempt_failures(_resp_with_failures([entry])) == [SyncFailure("unknown", "unknown", "", "")], (
+        f"should reject: {value!r}"
+    )
+
+
 def test_an_oversized_reason_is_truncated_so_one_failure_cannot_flood_the_log() -> None:
     long_message = "x" * (FAILURE_MESSAGE_MAX_CHARS * 3)
 
