@@ -251,15 +251,20 @@ struct ShapeRow {
     sorting_key: String,
 }
 
-/// One record as a dataset's table holds it: whole, and stamped with when it
-/// arrived.
-/// One stored record as a reader is shown it.
+/// One row of a dataset as a reader is shown it.
+///
+/// A record sent into a dataset carries its own identity and the instant it
+/// arrived. A row of a relation the warehouse builds carries neither: it was
+/// not sent, and nothing here stamped it. Both are shown through the fields
+/// the dataset declares, which is what `raw_data` holds.
 #[derive(Debug, Serialize)]
 pub(crate) struct Record {
-    pub(crate) id: Uuid,
-    pub(crate) received_at: DateTime<Utc>,
-    /// The payload as it arrived. A record this service could not read back
-    /// as JSON is given as the text it holds, rather than left out.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) id: Option<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) received_at: Option<DateTime<Utc>>,
+    /// The values behind the row. For a record sent in, the payload as it
+    /// arrived; for a row of a relation, its declared columns.
     pub(crate) raw_data: serde_json::Value,
 }
 
@@ -295,8 +300,8 @@ impl PreviewRow {
             .unwrap_or_else(|_| serde_json::Value::String(self.raw_data.clone()));
 
         Record {
-            id: self.id,
-            received_at: self.received_at,
+            id: Some(self.id),
+            received_at: Some(self.received_at),
             raw_data,
         }
     }

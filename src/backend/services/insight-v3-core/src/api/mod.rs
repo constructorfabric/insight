@@ -229,6 +229,7 @@ impl AppState {
         crate::domain::dataset_records::DatasetRecords::new(
             self.datasets.rows.as_ref(),
             &self.datasets.tables,
+            &self.datasets.relations,
             self.datasets.preview_rows,
         )
     }

@@ -182,3 +182,62 @@ async fn a_dataset_being_removed_takes_no_more_records() -> R {
 
     Ok(())
 }
+
+/// A column of a relation, as `system.columns` answers for one.
+#[derive(Debug, Serialize, clickhouse::Row)]
+struct ColumnRow {
+    name: String,
+    r#type: String,
+}
+
+/// A relation's engine, as `system.tables` answers for one.
+#[derive(Debug, Serialize, clickhouse::Row)]
+struct EngineRow {
+    engine: String,
+}
+
+/// A record has nowhere to go in a dataset that reads a relation the
+/// warehouse builds. Answering that the dataset is not ready would send a
+/// sender looking for a name that is right in front of them.
+#[tokio::test]
+async fn a_record_sent_to_a_dataset_over_a_relation_is_refused_as_the_wrong_kind() -> R {
+    let fixture = Fixture::new();
+    fixture.mock.add(handlers::provide(vec![ColumnRow {
+        name: "metric_date".to_owned(),
+        r#type: "Date".to_owned(),
+    }]));
+    fixture.mock.add(handlers::provide(vec![EngineRow {
+        engine: "MergeTree".to_owned(),
+    }]));
+    DatasetLifecycle::new(
+        &fixture.datasets,
+        &fixture.tables,
+        &fixture.relations,
+        &fixture.definitions,
+    )
+    .declare(
+        &name("collab"),
+        &json!({
+            "title": "Collaboration observations",
+            "source": {
+                "kind": "relation",
+                "database": "insight",
+                "table": "collab_metric_observations"
+            },
+            "fields": [{ "name": "day", "column": "metric_date", "type": "datetime" }]
+        }),
+    )
+    .await?;
+
+    let refused = fixture
+        .ingest()
+        .receive(&name("collab"), &json!({ "day": "2026-09-16" }))
+        .await;
+
+    assert!(
+        matches!(refused, Err(IngestError::TakesNoRecords)),
+        "should say what the dataset is, not that it is absent: {refused:?}"
+    );
+
+    Ok(())
+}

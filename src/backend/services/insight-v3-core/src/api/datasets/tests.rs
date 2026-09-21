@@ -578,3 +578,81 @@ async fn the_dependents_of_a_dataset_nobody_declared_are_not_found() {
 
     assert_eq!(asked, StatusCode::NOT_FOUND);
 }
+
+/// A column of a relation, as `system.columns` answers for one.
+#[derive(Debug, Serialize, clickhouse::Row)]
+struct RelationColumn {
+    name: String,
+    r#type: String,
+}
+
+/// A relation's engine, as `system.tables` answers for one.
+#[derive(Debug, Serialize, clickhouse::Row)]
+struct RelationEngine {
+    engine: String,
+}
+
+/// One row of a relation, as the reader asks for it: its declared fields as
+/// one JSON object.
+#[derive(Debug, Serialize, clickhouse::Row)]
+struct RelationRow {
+    row: String,
+}
+
+fn over_a_relation() -> serde_json::Value {
+    json!({
+        "title": "Collaboration observations",
+        "source": { "kind": "relation", "database": "insight", "table": "collab" },
+        "fields": [
+            { "name": "day", "column": "metric_date", "type": "datetime" },
+            { "name": "value", "column": "value", "type": "float" }
+        ]
+    })
+}
+
+/// A row of a relation was not sent and nothing stamped it, so it carries
+/// neither an identity nor an arrival instant — only what the dataset
+/// declares over it.
+#[tokio::test]
+async fn the_rows_of_a_dataset_over_a_relation_are_shown_by_its_declared_fields() {
+    let harness = TestHarness::new();
+    harness.mock.add(handlers::provide(vec![
+        RelationColumn {
+            name: "metric_date".to_owned(),
+            r#type: "Date".to_owned(),
+        },
+        RelationColumn {
+            name: "value".to_owned(),
+            r#type: "Nullable(Float64)".to_owned(),
+        },
+    ]));
+    harness.mock.add(handlers::provide(vec![RelationEngine {
+        engine: "MergeTree".to_owned(),
+    }]));
+    harness.put("collab", over_a_relation()).await;
+
+    harness.mock.add(handlers::provide(vec![RelationRow {
+        row: r#"{"day":"2026-09-01","value":"7"}"#.to_owned(),
+    }]));
+    harness
+        .mock
+        .add(handlers::provide(vec![Counted { total: 42 }]));
+
+    let (looked, body) = harness.get("/v1/datasets/collab/records").await;
+
+    assert_eq!(looked, StatusCode::OK);
+    let record = &read(&body)["records"][0];
+    assert_eq!(
+        record["raw_data"],
+        json!({"day": "2026-09-01", "value": "7"})
+    );
+    assert!(
+        record["id"].is_null(),
+        "a row of a relation has none: {record}"
+    );
+    assert!(
+        record["received_at"].is_null(),
+        "nothing stamped it: {record}"
+    );
+    assert_eq!(read(&body)["total"], json!(42));
+}

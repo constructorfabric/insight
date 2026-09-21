@@ -9,7 +9,9 @@
 use std::fmt;
 use std::time::Duration;
 
+use clickhouse::sql::Identifier;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use thiserror::Error;
 
 const READ_COLUMNS: &str = "SELECT name, type FROM system.columns
@@ -17,6 +19,7 @@ WHERE database = ? AND table = ?
 ORDER BY position";
 const READ_ENGINE: &str = "SELECT engine FROM system.tables
 WHERE database = ? AND name = ?";
+const COUNT_ROWS: &str = "SELECT count() AS total FROM ?";
 const READ_TIMEOUT_SECS: u64 = 10;
 
 /// The engine families that keep superseded rows until a merge takes them
@@ -73,6 +76,72 @@ impl Relations {
         Ok(rows.first().is_some_and(|row| collapses(&row.engine)))
     }
 
+    /// A few rows of this relation, each as an object of the fields a
+    /// dataset declares over it.
+    ///
+    /// Values come back as text. A reader looking at rows is checking that
+    /// what the warehouse holds is what they meant, and one text form per
+    /// value says that without a column type per field having to survive the
+    /// round trip.
+    pub(crate) async fn rows(
+        &self,
+        database: &str,
+        table: &str,
+        reads: &[(String, String)],
+        limit: u64,
+    ) -> Result<Vec<Value>, RelationError> {
+        if reads.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // SAFETY: every part of this is built from the declaration, never
+        // from what a caller typed - the names through `DefinitionName`, the
+        // expressions through the dataset's own reader, whose `literal`
+        // escapes what a declared path or column holds.
+        let pairs: Vec<String> = reads
+            .iter()
+            .map(|(named, expression)| format!("{}, toString({expression})", literal(named)))
+            .collect();
+        let statement = format!(
+            "SELECT toJSONString(map({})) AS row FROM ?.? LIMIT ?",
+            pairs.join(", ")
+        );
+
+        let reading = self
+            .client
+            .inner()
+            .query(&statement)
+            .bind(Identifier(database))
+            .bind(Identifier(table))
+            .bind(limit)
+            .fetch_all::<RowText>();
+        let rows = tokio::time::timeout(self.read_timeout, reading)
+            .await
+            .map_err(|_| RelationError::Timeout)??;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| {
+                serde_json::from_str(&row.row).unwrap_or(Value::Object(serde_json::Map::new()))
+            })
+            .collect())
+    }
+
+    /// How many rows this relation holds.
+    pub(crate) async fn count(&self, database: &str, table: &str) -> Result<u64, RelationError> {
+        let counting = self
+            .client
+            .inner()
+            .query(COUNT_ROWS)
+            .bind(Identifier(&format!("{database}.{table}")))
+            .fetch_all::<Counted>();
+        let rows = tokio::time::timeout(self.read_timeout, counting)
+            .await
+            .map_err(|_| RelationError::Timeout)??;
+
+        Ok(rows.first().map_or(0, |row| row.total))
+    }
+
     /// The columns this relation holds, in the order it holds them.
     ///
     /// An empty answer is a relation the warehouse does not have: nothing
@@ -123,6 +192,31 @@ impl fmt::Debug for Relations {
             .field("read_timeout", &self.read_timeout)
             .finish_non_exhaustive()
     }
+}
+
+/// A value as a string literal the warehouse reads back unchanged.
+///
+/// WORKAROUND: the ClickHouse client scans a statement for `?` to find its
+/// bind sites, so a `?` inside a literal would swallow the next bound value.
+/// `??` is its escape and emits a single `?`.
+fn literal(value: &str) -> String {
+    format!(
+        "'{}'",
+        value
+            .replace('\\', "\\\\")
+            .replace('\'', "\\'")
+            .replace('?', "??")
+    )
+}
+
+#[derive(Debug, Deserialize, Serialize, clickhouse::Row)]
+struct RowText {
+    row: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, clickhouse::Row)]
+struct Counted {
+    total: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize, clickhouse::Row)]

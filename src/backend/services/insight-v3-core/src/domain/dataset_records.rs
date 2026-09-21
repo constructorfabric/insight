@@ -2,7 +2,10 @@
 
 use super::datasets::{self, Datasets, Reads};
 use super::definition::DefinitionName;
+use super::kinds::dataset::declaration::Declaration;
+use super::kinds::dataset::read::{Form, PAYLOAD_COLUMN, read};
 use crate::store::dataset_tables::{DatasetTableError, DatasetTables, Record};
+use crate::store::relations::{RelationError, Relations};
 
 /// Reads a dataset's own records, for a reader deciding whether what arrives
 /// is what they meant to send.
@@ -10,15 +13,22 @@ use crate::store::dataset_tables::{DatasetTableError, DatasetTables, Record};
 pub(crate) struct DatasetRecords<'a> {
     datasets: &'a dyn Datasets,
     tables: &'a DatasetTables,
+    relations: &'a Relations,
     /// How many records one look shows, whatever the dataset holds.
     cap: u64,
 }
 
 impl<'a> DatasetRecords<'a> {
-    pub(crate) fn new(datasets: &'a dyn Datasets, tables: &'a DatasetTables, cap: u64) -> Self {
+    pub(crate) fn new(
+        datasets: &'a dyn Datasets,
+        tables: &'a DatasetTables,
+        relations: &'a Relations,
+        cap: u64,
+    ) -> Self {
         Self {
             datasets,
             tables,
+            relations,
             cap,
         }
     }
@@ -38,17 +48,21 @@ impl<'a> DatasetRecords<'a> {
             .map_err(PreviewError::Store)?
             .ok_or_else(|| PreviewError::NotReady(name.as_str().to_owned()))?;
 
-        // This reads through the connection bound to the datasets database,
-        // which is the only one that may write, and it reads a record whole
-        // out of its payload. A relation the warehouse builds has neither a
-        // payload nor an arrival instant, so it is shown by its declared
-        // columns instead - which is not this read.
+        let shown = shown(wanted, self.cap);
+
+        // Two different reads, because the two hold their values differently:
+        // a record sent in is a payload with an arrival instant, and a row of
+        // a relation is columns and nothing else. Both are shown through the
+        // fields the dataset declares.
         let Reads::Ours(ours) = ready.reads else {
-            return Err(PreviewError::NotOurs(name.as_str().to_owned()));
+            let (database, table) = ready.reads.at("");
+            return self
+                .of_a_relation(database, table, &ready.declaration, shown)
+                .await;
         };
 
         let looked = async {
-            let records = self.tables.latest(&ours, shown(wanted, self.cap)).await?;
+            let records = self.tables.latest(&ours, shown).await?;
             let total = self.tables.count(&ours).await?;
             Ok::<_, DatasetTableError>(Preview { records, total })
         };
@@ -62,6 +76,42 @@ impl<'a> DatasetRecords<'a> {
             }
             Err(error) => Err(PreviewError::Table(error)),
         }
+    }
+
+    /// A few rows of a relation the warehouse builds, through the fields the
+    /// dataset declares over it.
+    async fn of_a_relation(
+        &self,
+        database: &str,
+        table: &str,
+        declaration: &Declaration,
+        shown: u64,
+    ) -> Result<Preview, PreviewError> {
+        let reads: Vec<(String, String)> = declaration
+            .fields
+            .iter()
+            .map(|field| {
+                (
+                    field.name.clone(),
+                    read(field, Form::Presented, PAYLOAD_COLUMN),
+                )
+            })
+            .collect();
+
+        let rows = self.relations.rows(database, table, &reads, shown).await?;
+        let total = self.relations.count(database, table).await?;
+
+        Ok(Preview {
+            records: rows
+                .into_iter()
+                .map(|raw_data| Record {
+                    id: None,
+                    received_at: None,
+                    raw_data,
+                })
+                .collect(),
+            total,
+        })
     }
 }
 
@@ -96,8 +146,8 @@ mod tests {
 pub(crate) enum PreviewError {
     #[error("no dataset named `{0}` is ready to be read")]
     NotReady(String),
-    #[error("`{0}` reads a relation the warehouse builds, whose records are not shown here yet")]
-    NotOurs(String),
+    #[error(transparent)]
+    Relation(#[from] RelationError),
     #[error(transparent)]
     Store(crate::domain::datasets::DatasetStoreError),
     #[error(transparent)]

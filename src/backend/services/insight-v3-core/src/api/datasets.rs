@@ -396,15 +396,10 @@ async fn dataset_dependents(
 fn preview_error(error: PreviewError) -> CanonicalError {
     match error {
         PreviewError::NotReady(named) => not_found(&named),
-        PreviewError::NotOurs(named) => DatasetApiError::failed_precondition()
-            .with_precondition_violation(
-                "DATASET_OVER_A_RELATION",
-                named.clone(),
-                format!(
-                    "`{named}` reads a relation the warehouse builds; its records are not shown here yet"
-                ),
-            )
-            .create(),
+        PreviewError::Relation(source) => {
+            tracing::error!(error = ?source, "a dataset's relation could not be read");
+            CanonicalError::internal("the dataset's rows could not be reached").create()
+        }
         PreviewError::Store(source) => DatasetApiError::dataset_store_error(source),
         PreviewError::Table(source) => {
             tracing::error!(error = ?source, "a dataset's records could not be read");
