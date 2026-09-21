@@ -1,16 +1,25 @@
 import { createFileRoute, Link, useRouterState } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 
-import type { DatasetRecord, DeclaredField } from "@/api/custom-client";
+import type { DeclaredField } from "@/api/custom-client";
 import { Held } from "@/components/custom/held-by";
+import { Button } from "@/components/ui/button";
+import {
+  ARRIVED,
+  RecordTable,
+  type Ordering,
+} from "@/components/custom/record-table";
 import { refusal } from "@/components/custom/refusal";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
+import { useLocalStorageState } from "@/hooks/use-local-storage-state";
 import {
   datasetDependentsQuery,
   datasetQuery,
   datasetRecordsQuery,
+  PREVIEW_ROWS,
 } from "@/queries/custom";
 import { TEXT_BODY, TEXT_HEADING, TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
@@ -73,7 +82,7 @@ function DatasetPage() {
         fields={declaration.fields}
         identity={declaration.row_identity}
       />
-      <Records name={name} />
+      <Records name={name} fields={declaration.fields} />
       <Dependents name={name} />
     </div>
   );
@@ -131,13 +140,49 @@ function Declaration({
 }
 
 /** The latest records, as they arrived. */
-function Records({ name }: { name: string }) {
-  const records = useQuery(datasetRecordsQuery(name));
+/** How many records one page of the table holds. */
+const PAGE = PREVIEW_ROWS;
+
+/** How many declared fields a table shows before the reader picks. */
+const COLUMNS_AT_FIRST = 10;
+
+function Records({
+  name,
+  fields,
+}: {
+  name: string;
+  fields: readonly DeclaredField[];
+}) {
+  const [page, setPage] = useState(0);
+  const [ordering, setOrdering] = useState<Ordering>({
+    by: ARRIVED,
+    descending: true,
+  });
+  const [shown, setShown] = useLocalStorageState<string[]>({
+    key: `insight.custom.dataset.${name}.columns`,
+    defaultValue: fields.slice(0, COLUMNS_AT_FIRST).map((field) => field.name),
+    parse: (raw) => JSON.parse(raw) as string[],
+    serialize: (value) => JSON.stringify(value),
+  });
+
+  const records = useQuery(
+    datasetRecordsQuery(name, {
+      limit: PAGE,
+      offset: page * PAGE,
+      orderBy: ordering.by,
+      descending: ordering.descending,
+    })
+  );
+
+  const order = (next: Ordering) => {
+    setOrdering(next);
+    setPage(0);
+  };
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle className={TEXT_HEADING}>Latest records</CardTitle>
+        <CardTitle className={TEXT_HEADING}>Records</CardTitle>
       </CardHeader>
       <CardContent>
         {records.isPending ? (
@@ -151,39 +196,67 @@ function Records({ name }: { name: string }) {
             Nothing has arrived yet.
           </p>
         ) : (
-          <>
-            <p className={cn(TEXT_LABEL, "mb-3 text-muted-foreground")}>
-              {shownOf(records.data.records.length, records.data.total)}
-            </p>
-            <ul className="flex flex-col gap-2">
-              {records.data.records.map((record) => (
-                <RecordRow key={record.id} record={record} />
-              ))}
-            </ul>
-          </>
+          <div className="flex flex-col gap-3">
+            <RecordTable
+              fields={fields}
+              records={records.data.records}
+              shown={shown}
+              ordering={ordering}
+              onShow={setShown}
+              onOrder={order}
+            />
+            <Paging
+              page={page}
+              held={records.data.records.length}
+              total={records.data.total}
+              onPage={setPage}
+            />
+          </div>
         )}
       </CardContent>
     </Card>
   );
 }
 
-/** What the list is a slice of: a re-sent record counts again, as it arrived. */
-function shownOf(shown: number, total: number): string {
-  return shown === total
-    ? `All ${total} records received, newest first.`
-    : `The latest ${shown} of ${total} records received.`;
-}
+/** Which records of the whole this page is, and the way to the others. */
+function Paging({
+  page,
+  held,
+  total,
+  onPage,
+}: {
+  page: number;
+  held: number;
+  total: number;
+  onPage: (page: number) => void;
+}) {
+  const first = page * PAGE + 1;
+  const last = page * PAGE + held;
 
-function RecordRow({ record }: { record: DatasetRecord }) {
   return (
-    <li className="flex flex-col gap-1">
+    <div className="flex flex-wrap items-center gap-2">
       <span className={cn(TEXT_LABEL, "text-muted-foreground")}>
-        {record.received_at}
+        {first}–{last} of {total} records received
       </span>
-      <pre className={cn(TEXT_BODY, "overflow-x-auto font-mono")}>
-        {JSON.stringify(record.raw_data)}
-      </pre>
-    </li>
+      <span className="ms-auto flex items-center gap-1">
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={page === 0}
+          onClick={() => onPage(page - 1)}
+        >
+          Newer
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={last >= total}
+          onClick={() => onPage(page + 1)}
+        >
+          Older
+        </Button>
+      </span>
+    </div>
   );
 }
 

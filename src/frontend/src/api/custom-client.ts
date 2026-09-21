@@ -9,6 +9,7 @@ import type {
   Dataset,
   DatasetRecords,
   Holder,
+  RecordPage,
   MetricResult,
   StoredMetric,
   Widget,
@@ -183,10 +184,16 @@ export async function fetchDataset(name: string): Promise<Dataset> {
 /** The latest records the dataset holds, newest first, capped by the service. */
 export async function fetchDatasetRecords(
   name: string,
-  limit: number
+  page: RecordPage
 ): Promise<DatasetRecords> {
+  const query = new URLSearchParams({ limit: String(page.limit) });
+  if (page.offset) query.set("offset", String(page.offset));
+  if (page.orderBy) {
+    query.set("order_by", page.orderBy);
+    query.set("direction", page.descending ? "desc" : "asc");
+  }
   const res = await fetchWithAuth(
-    `${BASE}/datasets/${encodeURIComponent(name)}/records?limit=${limit}`
+    `${BASE}/datasets/${encodeURIComponent(name)}/records?${query}`
   );
 
   return readJson<DatasetRecords>(res);

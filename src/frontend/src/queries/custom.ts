@@ -8,6 +8,7 @@ import {
 
 import type {
   ChatTurn,
+  RecordPage,
   DefinitionKind,
   EditableKind,
   NamePage,
@@ -146,13 +147,24 @@ export function datasetQuery(name: string) {
 }
 
 /** The latest records a dataset holds, as a reader sees them on its page. */
-/** How many of the latest records a dataset's page shows. */
+/** How many records a page of a dataset shows. */
 export const PREVIEW_ROWS = 20;
 
-export function datasetRecordsQuery(name: string) {
+export function datasetRecordsQuery(name: string, page: RecordPage) {
   return queryOptions({
-    queryKey: [...DATASET_PREFIX, name, "records", PREVIEW_ROWS],
-    queryFn: () => fetchDatasetRecords(name, PREVIEW_ROWS),
+    queryKey: [
+      ...DATASET_PREFIX,
+      name,
+      "records",
+      page.limit,
+      page.offset ?? 0,
+      page.orderBy ?? null,
+      page.descending ?? false,
+    ],
+    queryFn: () => fetchDatasetRecords(name, page),
+    // A page read while the reader is on the one before it should not blank
+    // the table: the old page stays until the new one is in.
+    placeholderData: (previous) => previous,
   });
 }
 

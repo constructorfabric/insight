@@ -150,7 +150,16 @@ export interface Holder {
   name: string;
 }
 
-/** A look at a dataset: its latest few records, and how many it holds in all. */
+/** What one page of a dataset's records is asked for. */
+export interface RecordPage {
+  limit: number;
+  offset?: number;
+  /** A declared field, or `received_at`. Absent means arrival order. */
+  orderBy?: string;
+  descending?: boolean;
+}
+
+/** A look at a dataset: one page of its records, and how many it holds in all. */
 export interface DatasetRecords {
   records: DatasetRecord[];
   /** Every record that arrived, a re-sent one counted again. */

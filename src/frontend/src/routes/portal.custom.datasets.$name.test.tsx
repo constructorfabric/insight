@@ -19,7 +19,8 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
 });
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { createElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -91,14 +92,14 @@ describe("/portal/custom/datasets/$name", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows the latest records as they arrived", async () => {
+  it("shows the records as a table of the declared fields", async () => {
     vi.mocked(customClient.fetchDataset).mockResolvedValue(COMMITS);
     vi.mocked(customClient.fetchDatasetRecords).mockResolvedValue({
       records: [
         {
           id: "1",
           received_at: "2026-09-17 10:00:00",
-          raw_data: { lines: 7 },
+          raw_data: { day: "2026-09-17", who: { email: "ada@example.com" } },
         },
       ],
       total: 757,
@@ -106,15 +107,106 @@ describe("/portal/custom/datasets/$name", () => {
 
     render(<Component />, { wrapper });
 
-    expect(await screen.findByText('{"lines":7}')).toBeInTheDocument();
-    // The list is a slice; the page says of how much.
+    // A column per declared field, read by the path the declaration names.
     expect(
-      await screen.findByText("The latest 1 of 757 records received.")
+      await screen.findByRole("columnheader", { name: "author" })
     ).toBeInTheDocument();
-    expect(customClient.fetchDatasetRecords).toHaveBeenCalledWith(
-      "commits",
-      20
+    // `author` sits at `who.email`, so the cell reads the path, not the key.
+    expect(
+      screen.getByRole("cell", { name: "ada@example.com" })
+    ).toBeInTheDocument();
+    expect(customClient.fetchDatasetRecords).toHaveBeenCalledWith("commits", {
+      limit: 20,
+      offset: 0,
+      orderBy: "received_at",
+      descending: true,
+    });
+  });
+
+  it("says which records of the whole this page is", async () => {
+    vi.mocked(customClient.fetchDataset).mockResolvedValue(COMMITS);
+    vi.mocked(customClient.fetchDatasetRecords).mockResolvedValue({
+      records: [
+        {
+          id: "1",
+          received_at: "2026-09-17 10:00:00",
+          raw_data: { who: { email: "ada@example.com" } },
+        },
+      ],
+      total: 757,
+    });
+
+    render(<Component />, { wrapper });
+
+    expect(
+      await screen.findByText("1–1 of 757 records received")
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Newer" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Older" })).toBeEnabled();
+  });
+
+  it("asks for the next page, and for the order the reader picked", async () => {
+    const user = userEvent.setup();
+    vi.mocked(customClient.fetchDataset).mockResolvedValue(COMMITS);
+    vi.mocked(customClient.fetchDatasetRecords).mockResolvedValue({
+      records: [
+        {
+          id: "1",
+          received_at: "2026-09-17 10:00:00",
+          raw_data: { who: { email: "ada@example.com" } },
+        },
+      ],
+      total: 757,
+    });
+
+    render(<Component />, { wrapper });
+    await screen.findByRole("cell", { name: "ada@example.com" });
+
+    await user.click(screen.getByRole("button", { name: "Older" }));
+    await waitFor(() =>
+      expect(customClient.fetchDatasetRecords).toHaveBeenCalledWith("commits", {
+        limit: 20,
+        offset: 20,
+        orderBy: "received_at",
+        descending: true,
+      })
     );
+
+    // Ordering by a column starts again at the first page: the page a reader
+    // was on means nothing once the order changes.
+    await user.click(screen.getByRole("button", { name: /Order by author/ }));
+    await waitFor(() =>
+      expect(customClient.fetchDatasetRecords).toHaveBeenCalledWith("commits", {
+        limit: 20,
+        offset: 0,
+        orderBy: "author",
+        descending: true,
+      })
+    );
+  });
+
+  // A record holds more than the columns on screen, and a reader chasing one
+  // wants the whole of it.
+  it("opens the whole record when a row is clicked", async () => {
+    const user = userEvent.setup();
+    vi.mocked(customClient.fetchDataset).mockResolvedValue(COMMITS);
+    vi.mocked(customClient.fetchDatasetRecords).mockResolvedValue({
+      records: [
+        {
+          id: "1",
+          received_at: "2026-09-17 10:00:00",
+          raw_data: { who: { email: "ada@example.com" } },
+        },
+      ],
+      total: 1,
+    });
+
+    render(<Component />, { wrapper });
+    await user.click(
+      await screen.findByRole("cell", { name: "ada@example.com" })
+    );
+
+    expect(screen.getByText(/"email": "ada@example.com"/)).toBeInTheDocument();
   });
 
   it("names the metrics that read it", async () => {
