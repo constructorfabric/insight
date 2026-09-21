@@ -67,10 +67,24 @@ struct DatasetRecords {
     total: u64,
 }
 
-/// How many of the latest records a look asks for.
+/// What a reader asked one page of records for.
 #[derive(Debug, Deserialize)]
-struct Look {
+struct LookQuery {
     limit: Option<u64>,
+    #[serde(default)]
+    offset: u64,
+    /// A declared field, or `received_at`. Absent means arrival order.
+    order_by: Option<String>,
+    #[serde(default)]
+    direction: Direction,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Direction {
+    Asc,
+    #[default]
+    Desc,
 }
 
 /// Everything that would go with this dataset.
@@ -313,8 +327,15 @@ fn register_reads(router: Router, openapi: &dyn OpenApiRegistry, state: &Arc<App
         .param(query_param(
             "limit",
             "integer",
-            "How many of the latest records to show, up to the service's cap",
+            "How many records this page holds, up to the service's cap",
         ))
+        .param(query_param("offset", "integer", "Records to skip"))
+        .param(query_param(
+            "order_by",
+            "string",
+            "A declared field, or `received_at`; absent means arrival order",
+        ))
+        .param(query_param("direction", "string", "asc or desc"))
         .json_response(StatusCode::OK, "The latest records, and how many there are")
         .error_400(openapi)
         .error_403(openapi)
@@ -347,7 +368,7 @@ fn register_reads(router: Router, openapi: &dyn OpenApiRegistry, state: &Arc<App
 async fn dataset_records(
     Extension(state): Extension<Arc<AppState>>,
     Path(name): Path<String>,
-    Query(look): Query<Look>,
+    Query(look): Query<LookQuery>,
     headers: axum::http::HeaderMap,
 ) -> Result<Response, CanonicalError> {
     admin_only(&state, &headers).await?;
@@ -355,7 +376,15 @@ async fn dataset_records(
 
     let preview = state
         .dataset_records()
-        .latest(&name, look.limit)
+        .page(
+            &name,
+            &crate::domain::dataset_records::Look {
+                limit: look.limit,
+                offset: look.offset,
+                order_by: look.order_by,
+                descending: matches!(look.direction, Direction::Desc),
+            },
+        )
         .await
         .map_err(preview_error)?;
 
@@ -395,6 +424,16 @@ async fn dataset_dependents(
 
 fn preview_error(error: PreviewError) -> CanonicalError {
     match error {
+        PreviewError::NoSuchField { named, declared } => DatasetApiError::invalid_argument()
+            .with_field_violation(
+                "order_by",
+                format!(
+                    "`{named}` is not a field of this dataset; it declares {}",
+                    declared.join(", ")
+                ),
+                "NOT_ADMISSIBLE",
+            )
+            .create(),
         PreviewError::NotReady(named) => not_found(&named),
         PreviewError::Store(source) => DatasetApiError::dataset_store_error(source),
         PreviewError::Table(source) => {

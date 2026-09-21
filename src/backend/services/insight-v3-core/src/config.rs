@@ -11,7 +11,8 @@ const DEFAULT_IDENTITY_DATABASE: &str = "identity";
 /// else owns.
 const DEFAULT_DATASETS_DATABASE: &str = "insight_datasets";
 /// How many of a dataset's latest records a reader is shown at once.
-const DEFAULT_DATASET_PREVIEW_ROWS: u64 = 50;
+/// The most one page of records may hold, however many a reader asks for.
+const DEFAULT_DATASET_PREVIEW_ROWS: u64 = 200;
 /// The widest preview an installation may ask for: the payloads are whole
 /// records, so the bound is on what one response may carry, not on taste.
 const MAX_DATASET_PREVIEW_ROWS: u64 = 500;

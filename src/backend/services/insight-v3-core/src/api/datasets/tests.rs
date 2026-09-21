@@ -411,6 +411,50 @@ async fn a_dataset_page_shows_the_latest_records_as_they_arrived() {
     assert_eq!(read(&body)["total"], json!(757));
 }
 
+/// A page is a window on what arrived: how many, from where, in what order.
+#[tokio::test]
+async fn a_page_is_ordered_by_a_declared_field_when_one_is_named() {
+    let harness = TestHarness::new();
+    harness.a_free_name();
+    harness.put("commits", declaration()).await;
+    harness
+        .mock
+        .add(handlers::provide(Vec::<StoredRecord>::new()));
+    harness
+        .mock
+        .add(handlers::provide(vec![Counted { total: 0 }]));
+
+    let (looked, _) = harness
+        .get("/v1/datasets/commits/records?order_by=day&direction=asc&offset=40")
+        .await;
+
+    assert_eq!(looked, StatusCode::OK);
+}
+
+/// The reader names a field; the declaration says how it is read. A name it
+/// does not declare is refused against the parameter that carried it.
+#[tokio::test]
+async fn a_page_ordered_by_a_field_the_dataset_does_not_declare_is_refused() {
+    let harness = TestHarness::new();
+    harness.a_free_name();
+    harness.put("commits", declaration()).await;
+
+    let (looked, body) = harness
+        .get("/v1/datasets/commits/records?order_by=nonsense")
+        .await;
+
+    assert_eq!(looked, StatusCode::BAD_REQUEST);
+    let violation = &read(&body)["context"]["field_violations"][0];
+    assert_eq!(violation["field"], "order_by");
+    assert!(
+        violation["description"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("`nonsense` is not a field of this dataset"),
+        "{violation}"
+    );
+}
+
 /// The table is not asked about at all: there is none to ask.
 #[tokio::test]
 async fn the_records_of_a_dataset_nobody_declared_are_not_found() {

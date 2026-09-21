@@ -1119,12 +1119,39 @@
             }
           },
           {
-            "description": "How many of the latest records to show, up to the service's cap",
+            "description": "How many records this page holds, up to the service's cap",
             "in": "query",
             "name": "limit",
             "required": false,
             "schema": {
               "type": "integer"
+            }
+          },
+          {
+            "description": "Records to skip",
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "A declared field, or `received_at`; absent means arrival order",
+            "in": "query",
+            "name": "order_by",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "asc or desc",
+            "in": "query",
+            "name": "direction",
+            "required": false,
+            "schema": {
+              "type": "string"
             }
           }
         ],
