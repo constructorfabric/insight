@@ -291,6 +291,13 @@ pub(crate) enum Finish {
     /// finished, so an attempt that has since lost the dataset learns to drop
     /// what it made.
     Provisioned(String),
+    /// This dataset has no table of this service's own, and any the row still
+    /// names belongs to an attempt that lost it.
+    ///
+    /// INVARIANT: a dataset over a relation must record none, or ingest — which
+    /// decides by the table, not by the declaration — would take records into a
+    /// table nothing reads.
+    Unprovisioned,
     /// The dataset is ready: its declaration stands, its records have a home,
     /// and the operation is released.
     Ready,

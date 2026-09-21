@@ -361,6 +361,23 @@ impl<'a> DatasetLifecycle<'a> {
         body: &Value,
         attempt: &Attempt,
     ) -> Result<Value, DatasetChangeError> {
+        // An attempt that took this name over from one that had already
+        // provisioned a table leaves that name in the row. Ingest decides by
+        // the table rather than by the declaration, so a relation dataset
+        // that kept one would take records into a table nothing reads.
+        if self
+            .datasets
+            .finish(name, &attempt.token, Finish::Unprovisioned)
+            .await?
+            == Owning::Lost
+        {
+            finished_stale(name, Operation::Create);
+
+            return Err(DatasetChangeError::Refused(Refused::Busy(
+                Operation::Create,
+            )));
+        }
+
         match self
             .datasets
             .finish(name, &attempt.token, Finish::Ready)

@@ -413,3 +413,98 @@ fn ordering_by_the_bucket_falls_back_when_the_run_does_not_bucket() {
     assert!(sql.contains("ORDER BY `author`"), "{sql}");
     assert!(!sql.contains("ORDER BY `bucket`"), "{sql}");
 }
+
+fn over_a_relation() -> Declaration {
+    serde_json::from_value(json!({
+        "title": "Collaboration observations",
+        "source": {
+            "kind": "relation",
+            "database": "insight",
+            "table": "collab_metric_observations"
+        },
+        "fields": [
+            { "name": "day", "column": "metric_date", "type": "datetime", "default_clock": true },
+            { "name": "value", "column": "value", "type": "float" },
+            { "name": "team", "column": "entity_id", "type": "string" }
+        ]
+    }))
+    .unwrap_or_else(|error| panic!("the fixture declaration parses: {error}"))
+}
+
+fn compiled_over_a_relation(body: serde_json::Value, window: &Window) -> String {
+    let written = metric(body);
+    let declared = over_a_relation();
+    let over = Over {
+        declaration: &declared,
+        database: "insight",
+        table: "collab_metric_observations",
+    };
+
+    written
+        .compile_over(&people(), window, over)
+        .unwrap_or_else(|error| panic!("the metric compiles: {error}"))
+        .sql
+}
+
+/// The whole of the relation mode, in one statement: the relation comes from
+/// the declaration rather than from the database this service keeps its own
+/// tables in, every field is the column it names rather than an extraction
+/// from a payload no such row carries, and nothing collapses rows the
+/// relation already counts once.
+#[test]
+fn a_metric_over_a_relation_reads_its_columns_from_the_relation_it_names() {
+    let sql = compiled_over_a_relation(
+        json!({
+            "dataset": "collab",
+            "table": "unused",
+            "fields": [
+                { "field": "team", "type": "string", "as_name": "team" },
+                { "field": "value", "type": "float", "agg": "sum", "as_name": "total" }
+            ],
+            "group_by": ["team"],
+            "filters": []
+        }),
+        &Window::legacy(),
+    );
+
+    assert!(
+        sql.contains("`insight`.`collab_metric_observations`"),
+        "should read the relation the declaration names: {sql}"
+    );
+    assert!(
+        !sql.contains("insight_datasets"),
+        "the datasets database holds nothing for this one: {sql}"
+    );
+    assert!(
+        sql.contains("toString(`entity_id`)") && sql.contains("`value`"),
+        "should read the columns: {sql}"
+    );
+    assert!(
+        !sql.contains("JSONExtract"),
+        "a relation holds no payload to extract from: {sql}"
+    );
+    assert!(
+        !sql.contains("LIMIT 1 BY") && !sql.contains("FINAL"),
+        "the relation counts its own rows once: {sql}"
+    );
+}
+
+/// A window selects by the dataset's main date, which for a relation is one
+/// of its columns read as a datetime.
+#[test]
+fn a_window_over_a_relation_selects_by_the_column_its_main_date_names() {
+    let sql = compiled_over_a_relation(
+        json!({
+            "dataset": "collab",
+            "table": "unused",
+            "fields": [{ "field": "value", "type": "float", "agg": "sum", "as_name": "total" }],
+            "filters": []
+        }),
+        &requested("P30D"),
+    );
+
+    assert!(
+        sql.contains("accurateCastOrNull(`metric_date`, 'DateTime64(3)')"),
+        "should window by the column: {sql}"
+    );
+}

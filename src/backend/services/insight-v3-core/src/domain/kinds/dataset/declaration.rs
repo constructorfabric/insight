@@ -130,11 +130,12 @@ fn is_false(value: &bool) -> bool {
 /// declaration carries. The two differ in who provisions the relation, who
 /// may drop it, whether records may be sent, and how a field is read — too
 /// much to leave to the presence of a property.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
 pub(crate) enum Source {
     /// Records are sent into this dataset. The service provisions its table
     /// when the dataset is created and drops it when the dataset is removed.
+    #[default]
     Stream,
     /// A relation the warehouse already builds. Nothing is provisioned and
     /// nothing is ever dropped: the relation is not ours, we only read it.
@@ -148,6 +149,13 @@ pub(crate) struct Declaration {
     pub(crate) title: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) description: Option<String>,
+    /// SAFETY: defaulted only for reading. A declaration written before a
+    /// dataset could be over anything else says nothing, and the migration
+    /// that tells it so runs before this service does - but a deploy that
+    /// lands the other way round would otherwise answer every read of such a
+    /// dataset with a failure a reader cannot act on. A body submitted
+    /// without it is still refused, by [`super::shape`].
+    #[serde(default)]
     pub(crate) source: Source,
     pub(crate) fields: Vec<Field>,
     /// The fields that make two records the same record. Empty means every

@@ -190,6 +190,11 @@ impl Datasets for MemoryDatasets {
                     dataset.physical_table = Some(table);
                 }
             }
+            Finish::Unprovisioned => {
+                if let Some(dataset) = stored.get_mut(name.as_str()) {
+                    dataset.physical_table = None;
+                }
+            }
             Finish::Ready => {
                 if let Some(dataset) = stored.get_mut(name.as_str()) {
                     dataset.state = DatasetState::Ready;

@@ -1009,3 +1009,47 @@ async fn removing_a_dataset_over_a_relation_drops_nothing() -> R {
     assert_eq!(removed, Removal::Removed);
     Ok(())
 }
+
+/// An attempt that takes a name over from one that had already provisioned a
+/// table leaves that name in the row. Ingest decides by the table rather
+/// than by the declaration, so a dataset over a relation that kept one would
+/// take records into a table nothing reads.
+#[tokio::test]
+async fn a_relation_taking_over_a_name_forgets_the_table_the_lost_attempt_made() -> R {
+    let fixture = Fixture::new();
+    let first = fixture
+        .datasets
+        .take_create(&name("collab"), &declaration())
+        .await?
+        .attempt();
+    fixture
+        .datasets
+        .finish(
+            &name("collab"),
+            &first.token,
+            Finish::Provisioned("ds_collab_first".to_owned()),
+        )
+        .await?;
+
+    // The lease lapses and a second attempt declares the same name, over a
+    // relation this time.
+    fixture.datasets.set_now(
+        Utc.with_ymd_and_hms(2026, 9, 16, 14, 0, 0)
+            .single()
+            .unwrap_or_else(|| panic!("the fixture time exists")),
+    );
+    a_ready_relation_dataset(&fixture).await?;
+
+    let held = fixture
+        .datasets
+        .get(&name("collab"))
+        .await?
+        .unwrap_or_else(|| panic!("the dataset stands"));
+    assert_eq!(held.state, DatasetState::Ready);
+    assert_eq!(
+        held.physical_table, None,
+        "a dataset over a relation records no table of ours"
+    );
+
+    Ok(())
+}

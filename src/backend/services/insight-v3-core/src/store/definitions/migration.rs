@@ -19,6 +19,7 @@ impl MigratorTrait for Migrator {
         vec![
             Box::new(m20260907_000001_definitions::Migration),
             Box::new(m20260916_000002_datasets::Migration),
+            Box::new(m20260921_000003_dataset_source::Migration),
         ]
     }
 }
@@ -38,8 +39,8 @@ async fn apply_sql(manager: &SchemaManager<'_>, script: &str) -> Result<(), DbEr
 ///
 /// INVARIANT: comments come off first. A `;` inside one would otherwise end a
 /// statement halfway through, which no test of the script's text can see and
-/// only a real server refuses. These scripts carry no string literals, so the
-/// remaining semicolons are all statement ends.
+/// only a real server refuses. No script here holds a `;` inside a string
+/// literal either, so the remaining semicolons are all statement ends.
 fn statements(script: &str) -> Vec<String> {
     let bare: String = script
         .lines()
@@ -145,7 +146,11 @@ mod tests {
 
         assert_eq!(
             names,
-            ["m20260907_000001_definitions", "m20260916_000002_datasets"],
+            [
+                "m20260907_000001_definitions",
+                "m20260916_000002_datasets",
+                "m20260921_000003_dataset_source",
+            ],
             "a migration's name is the ledger's key, so it is written down here"
         );
     }
@@ -206,6 +211,33 @@ mod tests {
                 script.contains(column),
                 "{column} is missing from the script"
             );
+        }
+    }
+}
+
+mod m20260921_000003_dataset_source {
+    use super::{DbErr, MigrationName, MigrationTrait, SchemaManager, apply_sql};
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &'static str {
+            "m20260921_000003_dataset_source"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            apply_sql(manager, include_str!("sql/003_dataset_source.sql")).await
+        }
+
+        /// Taking the property away again would leave every declaration
+        /// unreadable by the service that wrote it.
+        async fn down(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
+            Err(DbErr::Custom(
+                "a declaration that does not say what it is over cannot be read".to_owned(),
+            ))
         }
     }
 }

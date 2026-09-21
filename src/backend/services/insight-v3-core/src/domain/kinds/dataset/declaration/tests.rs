@@ -122,3 +122,16 @@ fn what_is_stored_is_what_was_declared() {
 
     assert_eq!(round_tripped, body);
 }
+
+/// A declaration written before a dataset could be over anything but a
+/// stream says nothing about it. The migration tells it so; this is what
+/// holds if a deploy lands the other way round.
+#[test]
+fn a_declaration_written_before_there_was_a_choice_reads_as_a_stream() {
+    let declared = parse(json!({
+        "title": "Commits",
+        "fields": [{ "name": "day", "path": "day", "type": "datetime" }]
+    }));
+
+    assert_eq!(declared.source, Source::Stream);
+}

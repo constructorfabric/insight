@@ -37,6 +37,8 @@ const TAKE_OPERATION: &str = "UPDATE datasets SET body = ?, state = ?, operation
 const TAKE_REMOVAL: &str = "UPDATE datasets SET state = ?, operation = ?, operation_token = ?, lease_until = ?, updated_at = UTC_TIMESTAMP(6) WHERE name = ?";
 const RECORD_TABLE: &str =
     "UPDATE datasets SET physical_table = ?, updated_at = UTC_TIMESTAMP(6) WHERE name = ?";
+const FORGET_TABLE: &str =
+    "UPDATE datasets SET physical_table = NULL, updated_at = UTC_TIMESTAMP(6) WHERE name = ?";
 const MARK_READY: &str = "UPDATE datasets SET state = ?, operation = NULL, operation_token = NULL, lease_until = NULL, updated_at = UTC_TIMESTAMP(6) WHERE name = ?";
 const DELETE_ROW: &str = "DELETE FROM datasets WHERE name = ?";
 /// A replacement changes the declaration and nothing else: the table the
@@ -170,6 +172,11 @@ impl Datasets for MariaDatasets {
                 DbBackend::MySql,
                 RECORD_TABLE,
                 [table.into(), name.as_str().into()],
+            ),
+            Finish::Unprovisioned => Statement::from_sql_and_values(
+                DbBackend::MySql,
+                FORGET_TABLE,
+                [name.as_str().into()],
             ),
             Finish::Ready => Statement::from_sql_and_values(
                 DbBackend::MySql,
