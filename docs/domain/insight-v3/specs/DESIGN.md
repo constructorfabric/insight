@@ -178,12 +178,12 @@ here, because a generated document cannot say which endpoints ought to exist.
 | Method and path | Purpose | Who may call it |
 |---|---|---|
 | `POST /v1/raw-data` | Send one record into a dataset | ingest token |
-| `PUT /v1/datasets/{name}` | Declare a dataset, or replace its declaration | admin role, or administration token |
+| `PUT /v1/datasets/{name}` | Declare a dataset, or replace its declaration | admin role |
 | `GET /v1/datasets` | The ready datasets, searched and paged | admin role |
 | `GET /v1/datasets/{name}` | One declaration | admin role |
-| `GET /v1/datasets/{name}/records` | The latest records, newest first, capped | admin role |
+| `GET /v1/datasets/{name}/records` | One page of records, ordered by a declared field or by arrival | admin role |
 | `GET /v1/datasets/{name}/dependents` | Every metric reading this dataset, unpaged | admin role |
-| `DELETE /v1/datasets/{name}` | Remove a dataset and its records | admin role, or administration token |
+| `DELETE /v1/datasets/{name}` | Remove a dataset and its records | admin role |
 | `GET/PUT/DELETE /v1/{metrics,widgets,dashboards}/{name}`, `POST /v1/metrics/{name}/run`, `POST /v1/chat` | Unchanged in surface; `PUT /v1/metrics` gains the dataset rules and `GET /v1/metrics/{name}` gains the effective clock | as today |
 
 `PUT /v1/tables/{table}` is withdrawn: a dataset is what a caller creates.
@@ -247,15 +247,19 @@ definitions migration, not here:
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-design-dataset-settings`
 
-Four values this feature introduces are configuration: the **datasets
+Three values this feature introduces are configuration: the **datasets
 database** name; the **operation lease** bound, which decides how long an
 abandoned create or removal holds its dataset before another attempt may take
-it over; the **record preview** cap, the most records one dataset page asks
-for; and the **administration token**, the credential the dataset lifecycle
-accepts over the API. The first three ship with defaults an installation may
-override. The last is a secret an installation sets, and it is deliberately
-not the ingest token: one is handed to whoever sends data, the other to
-whoever may declare and remove it, and they rotate apart.
+it over; and the **record preview** cap, the widest page of records the
+service will serve, which it reports with every page because a caller cannot
+know an installation's setting. All three ship with defaults an installation
+may override.
+
+The dataset lifecycle has no credential of its own in this iteration: it is
+opened by the admin role and nothing else, so declaring or removing a dataset
+means a portal session. A token that could be handed to whoever may declare
+and remove datasets, and rotated apart from the ingest one, is a later
+iteration.
 
 #### Database: the datasets database
 
