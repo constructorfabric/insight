@@ -78,6 +78,18 @@ beforeEach(() => {
 });
 
 describe("/portal/custom/datasets/$name", () => {
+  // A reader who opened this from the catalogue needs the way back, whether
+  // or not the page found what it was looking for.
+  it("offers the way back to the catalogue", async () => {
+    vi.mocked(customClient.fetchDataset).mockResolvedValue(COMMITS);
+
+    render(<Component />, { wrapper });
+
+    expect(
+      await screen.findByRole("link", { name: "Back to the catalogue" })
+    ).toHaveAttribute("href", "/portal/custom/datasets");
+  });
+
   it("reads the declaration back, field by field", async () => {
     vi.mocked(customClient.fetchDataset).mockResolvedValue(COMMITS);
 
