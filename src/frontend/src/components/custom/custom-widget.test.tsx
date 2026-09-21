@@ -187,12 +187,14 @@ describe("<CustomWidget>", () => {
     );
 
     expect(screen.queryByText(/no data/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toBeInTheDocument();
 
     rerender(
       <CustomWidget widget={{ type: "table", metric: "m", columns: ["day"] }} />
     );
 
     expect(screen.queryByText(/no data/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toBeInTheDocument();
   });
 
   it("pads a short row with empty cells instead of misaligning columns", () => {

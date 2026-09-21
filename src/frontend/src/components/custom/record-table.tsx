@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { ArrowDown, ArrowUp, ChevronDown } from "lucide-react";
+import { useId, useState } from "react";
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight } from "lucide-react";
 
 import type { DatasetRecord, DeclaredField } from "@/api/custom-client";
 import { Button } from "@/components/ui/button";
@@ -17,6 +17,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { pathSegments } from "@/lib/custom/dataset-path";
 import { read } from "@/lib/custom/editor/document";
 import { TEXT_BODY, TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
@@ -57,36 +58,35 @@ export function RecordTable({
 
   return (
     <div className="flex flex-col gap-3">
-      <Columns fields={fields} shown={shown} onShow={onShow} />
+      <Columns fields={fields} shown={shown} drawn={drawn} onShow={onShow} />
 
-      <div className="overflow-x-auto">
-        <Table>
-          <TableHeader>
-            <TableRow>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead className="w-0" />
+            <Sortable
+              name={ARRIVED}
+              label="Received"
+              ordering={ordering}
+              onOrder={onOrder}
+            />
+            {drawn.map((field) => (
               <Sortable
-                name={ARRIVED}
-                label="Received"
+                key={field.name}
+                name={field.name}
+                label={field.name}
                 ordering={ordering}
                 onOrder={onOrder}
               />
-              {drawn.map((field) => (
-                <Sortable
-                  key={field.name}
-                  name={field.name}
-                  label={field.name}
-                  ordering={ordering}
-                  onOrder={onOrder}
-                />
-              ))}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {records.map((record) => (
-              <Row key={record.id} record={record} fields={drawn} />
             ))}
-          </TableBody>
-        </Table>
-      </div>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {records.map((record) => (
+            <Row key={record.id} record={record} fields={drawn} />
+          ))}
+        </TableBody>
+      </Table>
     </div>
   );
 }
@@ -95,10 +95,13 @@ export function RecordTable({
 function Columns({
   fields,
   shown,
+  drawn,
   onShow,
 }: {
   fields: readonly DeclaredField[];
   shown: readonly string[];
+  /** What is actually drawn: a held name the declaration dropped is not. */
+  drawn: readonly DeclaredField[];
   onShow: (names: string[]) => void;
 }) {
   const toggle = (name: string) =>
@@ -116,7 +119,7 @@ function Columns({
         render={
           <Button variant="ghost" size="sm" className="self-start">
             <ChevronDown className="size-4" />
-            Columns · {shown.length} of {fields.length}
+            Columns · {drawn.length} of {fields.length}
           </Button>
         }
       />
@@ -153,13 +156,16 @@ function Sortable({
   onOrder: (ordering: Ordering) => void;
 }) {
   const chosen = ordering.by === name;
+  const sorted = chosen ? (ordering.descending ? "descending" : "ascending") : "none";
 
   return (
-    <TableHead>
+    <TableHead aria-sort={sorted}>
       <button
         type="button"
         className="inline-flex items-center gap-1 font-mono hover:underline"
-        aria-label={`Order by ${label}`}
+        aria-label={
+          chosen ? `Order by ${label}, now ${sorted}` : `Order by ${label}`
+        }
         onClick={() =>
           onOrder({
             by: name,
@@ -170,9 +176,9 @@ function Sortable({
         {label}
         {chosen ? (
           ordering.descending ? (
-            <ArrowDown className="size-3" aria-label="descending" />
+            <ArrowDown className="size-3" aria-hidden />
           ) : (
-            <ArrowUp className="size-3" aria-label="ascending" />
+            <ArrowUp className="size-3" aria-hidden />
           )
         ) : null}
       </button>
@@ -189,36 +195,58 @@ function Row({
   fields: readonly DeclaredField[];
 }) {
   const [open, setOpen] = useState(false);
+  const whole = useId();
 
   return (
     <>
       <TableRow
-        role="button"
-        tabIndex={0}
-        aria-expanded={open}
-        aria-label={`Show the whole record received at ${record.received_at}`}
         className="cursor-pointer"
         onClick={() => setOpen((was) => !was)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            setOpen((was) => !was);
-          }
-        }}
       >
+        <TableCell className="w-0 pr-0">
+          <button
+            type="button"
+            id={`${whole}-trigger`}
+            aria-expanded={open}
+            aria-controls={open ? whole : undefined}
+            aria-label={`${open ? "Hide" : "Show"} the whole record received at ${record.received_at}`}
+            className="flex items-center text-muted-foreground"
+            onClick={(event) => {
+              event.stopPropagation();
+              setOpen((was) => !was);
+            }}
+          >
+            {open ? (
+              <ChevronDown className="size-4" aria-hidden />
+            ) : (
+              <ChevronRight className="size-4" aria-hidden />
+            )}
+          </button>
+        </TableCell>
         <TableCell className="font-mono whitespace-nowrap">
           {record.received_at}
         </TableCell>
-        {fields.map((field) => (
-          <TableCell key={field.name} className="max-w-64 truncate font-mono">
-            {cell(record.raw_data, field)}
-          </TableCell>
-        ))}
+        {fields.map((field) => {
+          const held = cell(record.raw_data, field);
+          return (
+            <TableCell
+              key={field.name}
+              title={held || undefined}
+              className="max-w-64 truncate font-mono"
+            >
+              {held}
+            </TableCell>
+          );
+        })}
       </TableRow>
       {open ? (
         <TableRow>
-          <TableCell colSpan={fields.length + 1}>
-            <pre className={cn(TEXT_BODY, "overflow-x-auto font-mono")}>
+          <TableCell colSpan={fields.length + 2}>
+            <pre
+              id={whole}
+              aria-labelledby={`${whole}-trigger`}
+              className={cn(TEXT_BODY, "overflow-x-auto font-mono")}
+            >
               {JSON.stringify(record.raw_data, null, 2)}
             </pre>
           </TableCell>
@@ -228,10 +256,18 @@ function Row({
   );
 }
 
-/** What a declared field holds in this record, as a cell shows it. */
+/**
+ * What a declared field holds in this record, as a cell shows it.
+ *
+ * INVARIANT: the path is split the way the service splits it, and an absent
+ * value stands in the way the service stands it in. A table that reads a
+ * declaration differently from the metrics over it is worse than no table.
+ */
 function cell(payload: unknown, field: DeclaredField): string {
-  const value = read(payload, field.path.split("."));
-  if (value === undefined || value === null) return "";
+  const value = read(payload, pathSegments(field.path));
+  if (value === undefined || value === null || value === "") {
+    return field.absent_value ?? "";
+  }
   if (typeof value === "object") return JSON.stringify(value);
 
   return String(value);

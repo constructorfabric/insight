@@ -88,9 +88,52 @@ describe("<RecordTable>", () => {
       />
     );
 
-    await user.click(screen.getByRole("button", { name: "Order by author" }));
+    await user.click(
+      screen.getByRole("button", { name: "Order by author, now descending" })
+    );
 
     expect(onOrder).toHaveBeenCalledWith({ by: "author", descending: false });
+  });
+
+  // A reader who cannot see the arrow has nothing else to tell them which
+  // column the page is ordered by.
+  it("says in the header which column is ordering the page, and which way", () => {
+    render(
+      <RecordTable
+        fields={FIELDS}
+        records={RECORDS}
+        shown={["author", "lines"]}
+        ordering={{ by: "author", descending: false }}
+        onShow={vi.fn()}
+        onOrder={vi.fn()}
+      />
+    );
+
+    expect(
+      screen.getByRole("columnheader", { name: "author" })
+    ).toHaveAttribute("aria-sort", "ascending");
+    expect(
+      screen.getByRole("columnheader", { name: "lines" })
+    ).toHaveAttribute("aria-sort", "none");
+  });
+
+  // A row that says it is a button stops being a row, and its cells stop
+  // being in one.
+  it("keeps every record a row of the table", () => {
+    draw();
+
+    expect(screen.getAllByRole("row")).toHaveLength(2);
+    expect(
+      screen.getByRole("button", { name: /Show the whole record/ })
+    ).toBeInTheDocument();
+  });
+
+  it("counts the columns it draws, not the names it was handed", () => {
+    draw(["author", "gone"]);
+
+    expect(
+      screen.getByRole("button", { name: /Columns · 1 of 3/ })
+    ).toBeInTheDocument();
   });
 
   // A cell holding a list or an object shows it compactly; the whole record
@@ -118,7 +161,40 @@ describe("<RecordTable>", () => {
       />
     );
 
-    const cells = screen.getAllByRole("cell");
-    expect(cells[1]).toHaveTextContent("");
+    expect(screen.getAllByRole("cell").at(-1)).toBeEmptyDOMElement();
+  });
+
+  // The service stands the substitute in for a metric; a table that did not
+  // would say the field is empty while every metric over it says otherwise.
+  it("stands an absent value in the way the service does", () => {
+    render(
+      <RecordTable
+        fields={[{ name: "author", path: "who.email", type: "string", absent_value: "unknown" }]}
+        records={[{ id: "1", received_at: "now", raw_data: {} }]}
+        shown={["author"]}
+        ordering={{ by: ARRIVED, descending: true }}
+        onShow={vi.fn()}
+        onOrder={vi.fn()}
+      />
+    );
+
+    expect(screen.getByRole("cell", { name: "unknown" })).toBeInTheDocument();
+  });
+
+  // A payload key may hold a dot, and the declaration escapes it. Splitting
+  // on a plain dot showed an empty cell for a field metrics read a value from.
+  it("reads a path whose key holds an escaped dot", () => {
+    render(
+      <RecordTable
+        fields={[{ name: "dotted", path: "a\\.b", type: "string" }]}
+        records={[{ id: "1", received_at: "now", raw_data: { "a.b": "held" } }]}
+        shown={["dotted"]}
+        ordering={{ by: ARRIVED, descending: true }}
+        onShow={vi.fn()}
+        onOrder={vi.fn()}
+      />
+    );
+
+    expect(screen.getByRole("cell", { name: "held" })).toBeInTheDocument();
   });
 });
