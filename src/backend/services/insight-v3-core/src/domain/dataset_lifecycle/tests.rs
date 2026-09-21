@@ -887,12 +887,12 @@ async fn declaring_a_dataset_over_a_relation_provisions_no_table() -> R {
     Ok(())
 }
 
-/// A relation that keeps superseded rows would be counted more than once by
-/// a plain read, and `FINAL` is refused outright by the engines that do not
-/// need it. Answering a number that is quietly too high is the one outcome
-/// worth refusing a declaration over.
+/// A relation whose engine this cannot vouch for might be counted more than
+/// once by a plain read, and `FINAL` is refused outright by the engines that
+/// do not need it. Answering a number that is quietly too high is the one
+/// outcome worth refusing a declaration over.
 #[tokio::test]
-async fn a_relation_that_keeps_superseded_rows_is_refused_with_the_way_round_it() -> R {
+async fn a_relation_this_cannot_vouch_for_is_refused_with_the_way_round_it() -> R {
     let fixture = Fixture::new();
     fixture
         .mock
@@ -921,5 +921,91 @@ async fn a_relation_that_keeps_superseded_rows_is_refused_with_the_way_round_it(
         violations[0].detail
     );
 
+    Ok(())
+}
+
+/// A dataset over a relation declared and standing, for a test that then
+/// does something to it.
+async fn a_ready_relation_dataset(fixture: &Fixture) -> R {
+    fixture
+        .mock
+        .add(handlers::provide(vec![ColumnRow::named("metric_date")]));
+    fixture
+        .mock
+        .add(handlers::provide(vec![EngineRow::plain()]));
+    fixture
+        .lifecycle()
+        .declare(
+            &name("collab"),
+            &over_a_relation(&json!([
+                { "name": "day", "column": "metric_date", "type": "datetime" }
+            ])),
+        )
+        .await?;
+
+    Ok(())
+}
+
+/// Turning a stream into a relation strands the records already sent, with
+/// the table still recorded against a dataset that no longer reads it.
+/// Turning a relation into a stream leaves a dataset whose row says ready
+/// and which has no table to read, for good.
+#[tokio::test]
+async fn what_a_dataset_is_over_cannot_be_changed_by_replacing_its_declaration() -> R {
+    let into_a_relation = Fixture::new();
+    into_a_relation.nothing_holds_the_name();
+    into_a_relation.mock.add(handlers::record_ddl());
+    into_a_relation
+        .lifecycle()
+        .declare(&name("commits"), &declaration())
+        .await?;
+
+    into_a_relation
+        .mock
+        .add(handlers::provide(vec![ColumnRow::named("metric_date")]));
+    into_a_relation
+        .mock
+        .add(handlers::provide(vec![EngineRow::plain()]));
+    let refused = into_a_relation
+        .lifecycle()
+        .declare(
+            &name("commits"),
+            &over_a_relation(&json!([
+                { "name": "day", "column": "metric_date", "type": "datetime" }
+            ])),
+        )
+        .await;
+    let Err(DatasetChangeError::Invalid(violations)) = refused else {
+        panic!("a stream may not become a relation: {refused:?}")
+    };
+    assert_eq!(violations[0].field, "source.kind");
+
+    let into_a_stream = Fixture::new();
+    a_ready_relation_dataset(&into_a_stream).await?;
+
+    let refused = into_a_stream
+        .lifecycle()
+        .declare(&name("collab"), &declaration())
+        .await;
+    let Err(DatasetChangeError::Invalid(violations)) = refused else {
+        panic!("a relation may not become a stream: {refused:?}")
+    };
+    assert_eq!(violations[0].field, "source.kind");
+
+    Ok(())
+}
+
+/// The relation is the warehouse's: this service did not make it and may not
+/// take it away. Nothing answers a DDL here, so a statement issued against
+/// the datasets database has no handler and the removal fails. Succeeding is
+/// the proof none was issued.
+#[tokio::test]
+async fn removing_a_dataset_over_a_relation_drops_nothing() -> R {
+    let fixture = Fixture::new();
+    a_ready_relation_dataset(&fixture).await?;
+
+    let removed = fixture.lifecycle().remove(&name("collab")).await?;
+
+    assert_eq!(removed, Removal::Removed);
     Ok(())
 }

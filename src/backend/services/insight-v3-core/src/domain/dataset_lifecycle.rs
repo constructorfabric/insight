@@ -169,19 +169,19 @@ impl<'a> DatasetLifecycle<'a> {
             )]);
         }
 
-        // A relation that keeps superseded rows until a merge takes them away
-        // would be counted more than once by a plain read, and `FINAL` is
-        // refused outright by the engines that do not need it. Rather than
-        // answer a number that is quietly too high, such a relation is
-        // refused: a view over it reads as one row per key, and that is what
-        // a dataset binds.
-        if self.relations.collapses(database, table).await? {
+        // A relation whose engine this service cannot vouch for might be
+        // counted more than once by a plain read, and `FINAL` is refused
+        // outright by the engines that do not need it. Rather than answer a
+        // number that is quietly too high, such a relation is refused: a
+        // view over it reads as its select makes it, and that is what a
+        // dataset binds.
+        if !self.relations.reads_each_row_once(database, table).await? {
             return Ok(vec![Violation::new(
                 "source.table",
                 Reason::NotAdmissible,
                 format!(
-                    "`{database}`.`{table}` keeps superseded rows, which a read would count \
-                     again; bind a view over it that reads one row per key"
+                    "a plain read of `{database}`.`{table}` is not known to count each row \
+                     once; bind a view over it that reads one row per key"
                 ),
             )]);
         }
@@ -216,6 +216,21 @@ impl<'a> DatasetLifecycle<'a> {
             return Err(DatasetChangeError::NotFound);
         };
         let before: Declaration = read(&held.declaration)?;
+
+        // What a dataset is over is not a property of the declaration that a
+        // replacement may change. Turning a stream into a relation strands
+        // the records already sent, with the table still recorded against a
+        // dataset that no longer reads it; turning a relation into a stream
+        // leaves a dataset whose row says ready and which has no table to
+        // read, for good. Neither is a state the rest of this reasons about,
+        // so it is refused rather than handled.
+        if std::mem::discriminant(&before.source) != std::mem::discriminant(&after.source) {
+            return Err(DatasetChangeError::Invalid(vec![Violation::new(
+                "source.kind",
+                Reason::NotAdmissible,
+                "what a dataset is over cannot be changed; remove it and declare it anew",
+            )]));
+        }
 
         let broken = self.broken_by(name, &before, after).await?;
         if !broken.is_empty() {

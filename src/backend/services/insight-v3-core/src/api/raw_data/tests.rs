@@ -381,3 +381,76 @@ fn a_record_named_for_a_dataset_that_is_not_ready_is_not_found() {
 
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
+
+/// A dataset that reads a relation the warehouse builds, published with no
+/// table of ours because there is none to make.
+async fn a_ready_relation_dataset(url: &str) -> crate::api::Datasets {
+    let rows = crate::store::datasets::memory::MemoryDatasets::at(chrono::Utc::now());
+    let name = crate::domain::definition::DefinitionName::parse("collab")
+        .unwrap_or_else(|error| panic!("the name parses: {error}"));
+    let attempt = rows
+        .take_create(
+            &name,
+            &serde_json::json!({
+                "title": "Collaboration observations",
+                "source": { "kind": "relation", "database": "insight", "table": "collab" },
+                "fields": [{ "name": "day", "column": "metric_date", "type": "datetime" }]
+            }),
+        )
+        .await
+        .unwrap_or_else(|error| panic!("the dataset is claimed: {error}"))
+        .attempt();
+    rows.finish(
+        &name,
+        &attempt.token,
+        crate::domain::datasets::Finish::Ready,
+    )
+    .await
+    .unwrap_or_else(|error| panic!("the dataset is published: {error}"));
+
+    crate::api::Datasets::new(
+        Arc::new(rows),
+        crate::store::dataset_tables::DatasetTables::new(insight_clickhouse::Client::new(
+            insight_clickhouse::Config::new(url, "insight_datasets"),
+        )),
+        crate::store::relations::Relations::new(insight_clickhouse::Client::new(
+            insight_clickhouse::Config::new(url, "insight"),
+        )),
+        "insight_datasets".to_owned(),
+        50,
+    )
+}
+
+/// The dataset is there and it is ready; it is the wrong kind for this.
+/// Answering that it is absent would send a sender looking for a name that
+/// is right in front of them, so the refusal names the field that carried it
+/// and says what the dataset is.
+#[tokio::test]
+async fn a_record_sent_to_a_dataset_over_a_relation_is_refused_against_the_field_that_named_it() {
+    let mock = Mock::new();
+    let datasets = a_ready_relation_dataset(mock.url()).await;
+
+    let response = with_datasets(&mock, datasets)
+        .oneshot(post(
+            Body::from(r#"{"dataset":"collab","raw_data":{"day":"2026-09-16"}}"#),
+            Some(TEST_TOKEN),
+        ))
+        .await
+        .unwrap_or_else(|error| panic!("router must respond: {error}"));
+    let status = response.status();
+    let body = to_bytes(response.into_body(), 64 * 1024)
+        .await
+        .unwrap_or_else(|error| panic!("response body must be readable: {error}"));
+    let refusal: serde_json::Value = serde_json::from_slice(&body)
+        .unwrap_or_else(|error| panic!("the refusal is json: {error}"));
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let violation = &refusal["context"]["field_violations"][0];
+    assert_eq!(violation["field"], json!("dataset"));
+    assert!(
+        violation["description"]
+            .as_str()
+            .is_some_and(|said| said.contains("collab") && said.contains("relation")),
+        "should say which dataset and why: {violation}"
+    );
+}

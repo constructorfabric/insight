@@ -1,26 +1,34 @@
-use super::collapses;
+use super::reads_each_row_once;
 
-/// An engine that does not collapse refuses `FINAL` outright, so asking for
-/// it everywhere would break every read of a relation that does not need it.
+/// An allow-list, deliberately: an engine nobody thought of defaults to
+/// refused rather than to silently counted twice. A `MaterializedView` is
+/// the case that makes this matter — `system.tables` reports its engine as
+/// `MaterializedView` while its rows really belong to a hidden inner table
+/// that may well be a `ReplacingMergeTree`.
 #[test]
-fn only_an_engine_that_keeps_superseded_rows_counts_as_collapsing() {
+fn only_an_engine_known_to_count_each_row_once_may_be_read_plainly() {
     let cases = [
-        ("ReplacingMergeTree", true),
-        ("ReplicatedReplacingMergeTree", true),
-        ("SharedReplacingMergeTree", true),
-        ("CollapsingMergeTree", true),
-        ("VersionedCollapsingMergeTree", true),
-        ("SummingMergeTree", true),
-        ("AggregatingMergeTree", true),
-        ("MergeTree", false),
-        ("ReplicatedMergeTree", false),
-        ("View", false),
+        ("MergeTree", true),
+        ("ReplicatedMergeTree", true),
+        ("SharedMergeTree", true),
+        ("View", true),
+        ("ReplacingMergeTree", false),
+        ("ReplicatedReplacingMergeTree", false),
+        ("CollapsingMergeTree", false),
+        ("VersionedCollapsingMergeTree", false),
+        ("SummingMergeTree", false),
+        ("AggregatingMergeTree", false),
+        ("CoalescingMergeTree", false),
+        ("GraphiteMergeTree", false),
         ("MaterializedView", false),
+        ("Distributed", false),
+        ("Merge", false),
+        ("Buffer", false),
         ("Log", false),
         ("", false),
     ];
 
     for (engine, expected) in cases {
-        assert_eq!(collapses(engine), expected, "engine {engine}");
+        assert_eq!(reads_each_row_once(engine), expected, "engine {engine}");
     }
 }

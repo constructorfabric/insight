@@ -19,22 +19,27 @@ WHERE database = ? AND table = ?
 ORDER BY position";
 const READ_ENGINE: &str = "SELECT engine FROM system.tables
 WHERE database = ? AND name = ?";
-const COUNT_ROWS: &str = "SELECT count() AS total FROM ?";
+const COUNT_ROWS: &str = "SELECT count() AS total FROM ?.?";
 const READ_TIMEOUT_SECS: u64 = 10;
 
-/// The engine families that keep superseded rows until a merge takes them
-/// away, so that a plain read counts one row more than once.
+/// The engines a plain `SELECT` is known to count once per row.
 ///
-/// INVARIANT: an engine that does not collapse refuses `FINAL` outright
-/// (`ILLEGAL_FINAL`), so this cannot be widened into "ask for it everywhere
-/// and let the rest ignore it".
-const COLLAPSING: [&str; 5] = [
-    "ReplacingMergeTree",
-    "CollapsingMergeTree",
-    "VersionedCollapsingMergeTree",
-    "SummingMergeTree",
-    "AggregatingMergeTree",
-];
+/// INVARIANT: this is an allow-list, and it is one deliberately. Listing the
+/// engines that collapse instead would make every engine nobody thought of —
+/// a new one, a `Distributed` or `Merge` fronting a collapsing table, a
+/// `MaterializedView` whose rows are really its inner table's — default to
+/// silently counted twice. Defaulting to refused costs a declaration that
+/// has to be widened here; defaulting to allowed costs a number a reader
+/// cannot tell is wrong.
+///
+/// `FINAL` cannot stand in for this: an engine that does not collapse
+/// refuses it outright (`ILLEGAL_FINAL`), so it cannot simply be asked for
+/// everywhere.
+///
+/// A view is on the list because its rows are whatever its select makes
+/// them, which is its author's business — and binding a view is the way out
+/// this offers for a relation that does collapse.
+const READS_EACH_ROW_ONCE: [&str; 2] = ["MergeTree", "View"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Column {
@@ -56,8 +61,9 @@ impl Relations {
         }
     }
 
-    /// Whether a read of this relation would count a superseded row again.
-    pub(crate) async fn collapses(
+    /// Whether a plain read of this relation is known to count each row
+    /// once. An engine this does not recognise answers no.
+    pub(crate) async fn reads_each_row_once(
         &self,
         database: &str,
         table: &str,
@@ -73,7 +79,9 @@ impl Relations {
             .await
             .map_err(|_| RelationError::Timeout)??;
 
-        Ok(rows.first().is_some_and(|row| collapses(&row.engine)))
+        Ok(rows
+            .first()
+            .is_some_and(|row| reads_each_row_once(&row.engine)))
     }
 
     /// A few rows of this relation, each as an object of the fields a
@@ -133,7 +141,8 @@ impl Relations {
             .client
             .inner()
             .query(COUNT_ROWS)
-            .bind(Identifier(&format!("{database}.{table}")))
+            .bind(Identifier(database))
+            .bind(Identifier(table))
             .fetch_all::<Counted>();
         let rows = tokio::time::timeout(self.read_timeout, counting)
             .await
@@ -173,16 +182,17 @@ impl Relations {
     }
 }
 
-/// Whether a relation on this engine keeps rows a later merge will remove.
+/// Whether this service can tell that a plain read of a relation on this
+/// engine counts each row exactly once.
 ///
-/// A view is left alone: whether its rows need collapsing is decided by the
-/// select it is made of, which is where that belongs.
-fn collapses(engine: &str) -> bool {
+/// An engine it does not recognise answers no, which refuses the
+/// declaration rather than serving a number nobody can check.
+fn reads_each_row_once(engine: &str) -> bool {
     let family = engine
         .trim_start_matches("Shared")
         .trim_start_matches("Replicated");
 
-    COLLAPSING.contains(&family)
+    READS_EACH_ROW_ONCE.contains(&family)
 }
 
 impl fmt::Debug for Relations {

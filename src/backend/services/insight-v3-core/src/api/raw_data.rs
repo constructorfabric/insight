@@ -113,15 +113,17 @@ fn ingest_error(dataset: &DefinitionName, error: IngestError) -> CanonicalError 
         IngestError::NotReady => not_ready(dataset.as_str()),
         // Not "no such dataset": it is there, it is ready, and it is the
         // wrong kind for this. Saying it is absent would send a sender
-        // looking for a name that is right in front of them.
-        IngestError::TakesNoRecords => RawDataApiError::failed_precondition()
-            .with_precondition_violation(
-                "DATASET_OVER_A_RELATION",
-                dataset.as_str(),
+        // looking for a name that is right in front of them. Refused against
+        // the field that named it, which is how this endpoint refuses
+        // everything else it is given.
+        IngestError::TakesNoRecords => RawDataApiError::invalid_argument()
+            .with_field_violation(
+                "dataset",
                 format!(
                     "`{}` reads a relation the warehouse builds; records are not sent into it",
                     dataset.as_str()
                 ),
+                "INVALID",
             )
             .create(),
         IngestError::Table(crate::store::dataset_tables::DatasetTableError::Timeout) => {
