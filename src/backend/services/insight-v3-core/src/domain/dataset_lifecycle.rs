@@ -5,6 +5,8 @@
 //! publishes only while it still owns it; whatever it made and then lost, it
 //! takes away again.
 
+use std::collections::HashSet;
+
 use serde_json::Value;
 use thiserror::Error;
 
@@ -12,21 +14,23 @@ use super::datasets::{
     Attempt, DatasetStoreError, Datasets, Finish, OperationToken, Owning, Refused, Taken,
 };
 use super::definition::{DefinitionKind, DefinitionName, DefinitionStoreError, Definitions};
-use super::kinds::dataset::declaration::Declaration;
+use super::kinds::dataset::declaration::{At, Declaration, Source};
 use super::kinds::dataset::shape;
 use super::kinds::dataset::state::Operation;
 use super::kinds::dataset::validate::validate;
 use super::kinds::metric;
 use super::kinds::metric::answerable;
 use super::query::metric_query::MetricQuery;
-use super::violation::Violation;
+use super::violation::{Reason, Violation};
 use crate::store::dataset_tables::{DatasetTableError, DatasetTables, Shape};
+use crate::store::relations::{RelationError, Relations};
 
 /// Creating and removing datasets, which only an administrator does.
 #[derive(Debug)]
 pub(crate) struct DatasetLifecycle<'a> {
     datasets: &'a dyn Datasets,
     tables: &'a DatasetTables,
+    relations: &'a Relations,
     definitions: &'a dyn Definitions,
 }
 
@@ -34,11 +38,13 @@ impl<'a> DatasetLifecycle<'a> {
     pub(crate) fn new(
         datasets: &'a dyn Datasets,
         tables: &'a DatasetTables,
+        relations: &'a Relations,
         definitions: &'a dyn Definitions,
     ) -> Self {
         Self {
             datasets,
             tables,
+            relations,
             definitions,
         }
     }
@@ -109,17 +115,75 @@ impl<'a> DatasetLifecycle<'a> {
             return Err(DatasetChangeError::Invalid(violations));
         }
 
+        // Only now, because asking the warehouse about a relation a malformed
+        // declaration names would be a round trip to answer nothing.
+        let violations = self.against_the_relation(&declaration).await?;
+        if !violations.is_empty() {
+            return Err(DatasetChangeError::Invalid(violations));
+        }
+
         // Whether this is a replacement or a new dataset is decided while the
         // row is held, so a dataset that stands is never created over.
         match self.datasets.take_create(name, body).await {
             Ok(Taken::Stands) => self.replace(name, body, &declaration).await,
-            Ok(Taken::Attempt(attempt)) => self.bring_into_being(name, body, attempt).await,
+            // INVARIANT: only the stream branch ever reaches the table this
+            // service provisions, and `Finish::Provisioned` is the one place
+            // a table name is written against a dataset. A dataset over a
+            // relation therefore has no table recorded, and a removal has
+            // nothing of its own to drop — by construction, not by a check at
+            // the drop. The connection that could drop one is bound to the
+            // datasets database in any case, and cannot reach the warehouse.
+            Ok(Taken::Attempt(attempt)) => match declaration.source {
+                Source::Stream => self.bring_into_being(name, body, attempt).await,
+                Source::Relation { .. } => self.bind(name, body, &attempt).await,
+            },
             Err(error) => {
                 held_by_another(name, &error);
 
                 Err(error.into())
             }
         }
+    }
+
+    /// Whether the warehouse holds what a declaration over a relation says it
+    /// does.
+    ///
+    /// A declaration over a stream describes records that have not arrived
+    /// yet, so there is nothing to check it against. One over a relation
+    /// describes something that exists now, and a column it does not have is
+    /// a metric that compiles and then fails on every run.
+    async fn against_the_relation(
+        &self,
+        declaration: &Declaration,
+    ) -> Result<Vec<Violation>, DatasetChangeError> {
+        let Source::Relation { database, table } = &declaration.source else {
+            return Ok(Vec::new());
+        };
+
+        let held = self.relations.columns(database, table).await?;
+        if held.is_empty() {
+            return Ok(vec![Violation::new(
+                "source.table",
+                Reason::Unknown,
+                format!("the warehouse has no `{database}`.`{table}`"),
+            )]);
+        }
+
+        let names: HashSet<&str> = held.iter().map(|column| column.name.as_str()).collect();
+
+        Ok(declaration
+            .fields
+            .iter()
+            .enumerate()
+            .filter_map(|(index, field)| match &field.at {
+                At::Column(column) if !names.contains(column.as_str()) => Some(Violation::new(
+                    format!("fields[{index}].column"),
+                    Reason::Unknown,
+                    format!("`{database}`.`{table}` has no column `{column}`"),
+                )),
+                At::Column(_) | At::Path(_) => None,
+            })
+            .collect())
     }
 
     /// The declaration of a dataset that stands is replaced where it lies,
@@ -251,6 +315,32 @@ impl<'a> DatasetLifecycle<'a> {
                 );
 
                 Err(error)
+            }
+        }
+    }
+
+    /// Publishes a dataset over a relation the warehouse already builds.
+    ///
+    /// Nothing is provisioned: the relation exists, it is not ours, and the
+    /// only thing being created is the declaration that reads it.
+    async fn bind(
+        &self,
+        name: &DefinitionName,
+        body: &Value,
+        attempt: &Attempt,
+    ) -> Result<Value, DatasetChangeError> {
+        match self
+            .datasets
+            .finish(name, &attempt.token, Finish::Ready)
+            .await?
+        {
+            Owning::Held => Ok(body.clone()),
+            Owning::Lost => {
+                finished_stale(name, Operation::Create);
+
+                Err(DatasetChangeError::Refused(Refused::Busy(
+                    Operation::Create,
+                )))
             }
         }
     }
@@ -442,6 +532,8 @@ pub(crate) enum DatasetChangeError {
     Refused(Refused),
     #[error(transparent)]
     Table(#[from] DatasetTableError),
+    #[error(transparent)]
+    Relation(#[from] RelationError),
     #[error(transparent)]
     Store(DatasetStoreError),
     #[error(transparent)]

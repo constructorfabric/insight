@@ -7,6 +7,7 @@ use super::*;
 use crate::domain::kinds::dataset::state::DatasetState;
 use crate::store::datasets::memory::MemoryDatasets;
 use crate::store::definitions::memory::MemoryDefinitions;
+use crate::store::relations::Relations;
 
 type R = Result<(), Box<dyn std::error::Error>>;
 
@@ -35,6 +36,7 @@ struct Fixture {
     mock: Mock,
     datasets: MemoryDatasets,
     tables: DatasetTables,
+    relations: Relations,
     definitions: MemoryDefinitions,
 }
 
@@ -45,6 +47,9 @@ impl Fixture {
         let tables = DatasetTables::new(insight_clickhouse::Client::new(
             insight_clickhouse::Config::new(mock.url(), "insight_datasets"),
         ));
+        let relations = Relations::new(insight_clickhouse::Client::new(
+            insight_clickhouse::Config::new(mock.url(), "insight"),
+        ));
 
         Self {
             datasets: MemoryDatasets::at(
@@ -54,6 +59,7 @@ impl Fixture {
             ),
             mock,
             tables,
+            relations,
             definitions: MemoryDefinitions::new(),
         }
     }
@@ -64,7 +70,12 @@ impl Fixture {
     }
 
     fn lifecycle(&self) -> DatasetLifecycle<'_> {
-        DatasetLifecycle::new(&self.datasets, &self.tables, &self.definitions)
+        DatasetLifecycle::new(
+            &self.datasets,
+            &self.tables,
+            &self.relations,
+            &self.definitions,
+        )
     }
 }
 
@@ -341,9 +352,14 @@ async fn a_publication_the_store_never_answered_for_keeps_its_table() -> R {
             .unwrap_or_else(|| panic!("the fixture time exists")),
     ));
 
-    let failed = DatasetLifecycle::new(&datasets, &fixture.tables, &fixture.definitions)
-        .declare(&name("commits"), &declaration())
-        .await;
+    let failed = DatasetLifecycle::new(
+        &datasets,
+        &fixture.tables,
+        &fixture.relations,
+        &fixture.definitions,
+    )
+    .declare(&name("commits"), &declaration())
+    .await;
 
     assert!(failed.is_err(), "{failed:?}");
     let issued = recording.query().await;
@@ -367,9 +383,14 @@ async fn an_attempt_that_lost_the_dataset_takes_away_the_table_it_made() -> R {
             .unwrap_or_else(|| panic!("the fixture time exists")),
     ));
 
-    let refused = DatasetLifecycle::new(&datasets, &fixture.tables, &fixture.definitions)
-        .declare(&name("commits"), &declaration())
-        .await;
+    let refused = DatasetLifecycle::new(
+        &datasets,
+        &fixture.tables,
+        &fixture.relations,
+        &fixture.definitions,
+    )
+    .declare(&name("commits"), &declaration())
+    .await;
 
     assert!(
         matches!(refused, Err(DatasetChangeError::Refused(Refused::Busy(_)))),
@@ -705,5 +726,138 @@ async fn a_replacement_nothing_reads_is_free_to_land() -> R {
     };
     assert_eq!(held.declaration, declaration_reading_elsewhere());
 
+    Ok(())
+}
+
+/// A column of a relation, as `system.columns` answers for one.
+#[derive(Debug, Serialize, clickhouse::Row)]
+struct ColumnRow {
+    name: String,
+    r#type: String,
+}
+
+impl ColumnRow {
+    fn named(name: &str) -> Self {
+        Self {
+            name: name.to_owned(),
+            r#type: "String".to_owned(),
+        }
+    }
+}
+
+fn over_a_relation(fields: &serde_json::Value) -> serde_json::Value {
+    json!({
+        "title": "Collaboration observations",
+        "source": {
+            "kind": "relation",
+            "database": "insight",
+            "table": "collab_metric_observations"
+        },
+        "fields": fields
+    })
+}
+
+/// A declaration over a stream describes records that have not arrived; one
+/// over a relation describes something that exists now, and is held to it.
+#[tokio::test]
+async fn a_dataset_over_a_relation_is_checked_against_what_the_warehouse_holds() -> R {
+    let fixture = Fixture::new();
+    fixture.mock.add(handlers::provide(vec![
+        ColumnRow::named("metric_date"),
+        ColumnRow::named("value"),
+    ]));
+
+    let declared = fixture
+        .lifecycle()
+        .declare(
+            &name("collab"),
+            &over_a_relation(&json!([
+                { "name": "day", "column": "metric_date", "type": "datetime" }
+            ])),
+        )
+        .await;
+
+    assert!(declared.is_ok(), "{declared:?}");
+    Ok(())
+}
+
+/// A column the relation does not have compiles into every metric over the
+/// dataset and then fails on every run, which is far from where the mistake
+/// was made.
+#[tokio::test]
+async fn a_column_the_relation_does_not_have_is_refused_when_it_is_declared() -> R {
+    let fixture = Fixture::new();
+    fixture
+        .mock
+        .add(handlers::provide(vec![ColumnRow::named("metric_date")]));
+
+    let refused = fixture
+        .lifecycle()
+        .declare(
+            &name("collab"),
+            &over_a_relation(&json!([
+                { "name": "day", "column": "metric_date", "type": "datetime" },
+                { "name": "who", "column": "nonsense", "type": "string" }
+            ])),
+        )
+        .await;
+
+    let Err(DatasetChangeError::Invalid(violations)) = refused else {
+        panic!("should be refused as invalid: {refused:?}")
+    };
+    assert_eq!(violations.len(), 1, "{violations:?}");
+    assert_eq!(violations[0].field, "fields[1].column");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_dataset_over_a_relation_the_warehouse_does_not_have_is_refused() -> R {
+    let fixture = Fixture::new();
+    fixture.mock.add(handlers::provide(Vec::<ColumnRow>::new()));
+
+    let refused = fixture
+        .lifecycle()
+        .declare(
+            &name("collab"),
+            &over_a_relation(&json!([
+                { "name": "day", "column": "metric_date", "type": "datetime" }
+            ])),
+        )
+        .await;
+
+    let Err(DatasetChangeError::Invalid(violations)) = refused else {
+        panic!("should be refused as invalid: {refused:?}")
+    };
+    assert_eq!(violations[0].field, "source.table");
+
+    Ok(())
+}
+
+/// The connection that may create or drop a table is bound to the datasets
+/// database. A dataset over a relation must not provision anything at all:
+/// the relation is the warehouse's, made and taken away by the warehouse.
+///
+/// Nothing answers a DDL here, so a statement issued against the datasets
+/// database has no handler and the declare fails. Succeeding is the proof
+/// that none was issued.
+#[tokio::test]
+async fn declaring_a_dataset_over_a_relation_provisions_no_table() -> R {
+    let fixture = Fixture::new();
+    fixture
+        .mock
+        .add(handlers::provide(vec![ColumnRow::named("metric_date")]));
+
+    let declared = fixture
+        .lifecycle()
+        .declare(
+            &name("collab"),
+            &over_a_relation(&json!([
+                { "name": "day", "column": "metric_date", "type": "datetime" }
+            ])),
+        )
+        .await;
+
+    assert!(declared.is_ok(), "no table is provisioned: {declared:?}");
     Ok(())
 }

@@ -454,6 +454,10 @@ fn change_error(error: DatasetChangeError) -> CanonicalError {
             tracing::error!(error = ?source, "a dataset's table could not be reached");
             CanonicalError::internal("the dataset's records could not be reached").create()
         }
+        DatasetChangeError::Relation(source) => {
+            tracing::error!(error = ?source, "the warehouse could not be asked about a relation");
+            CanonicalError::internal("the warehouse could not be reached").create()
+        }
         DatasetChangeError::Store(source) => DatasetApiError::dataset_store_error(source),
         DatasetChangeError::Definitions(source) => DatasetApiError::definition_store_error(source),
     }

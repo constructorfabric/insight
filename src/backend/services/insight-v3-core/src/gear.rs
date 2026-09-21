@@ -48,6 +48,7 @@ impl Gear for InsightV3CoreGear {
                 config.dataset_lease(),
             )),
             crate::store::dataset_tables::DatasetTables::new(config.datasets_client()),
+            crate::store::relations::Relations::new(config.clickhouse_query_client()),
             config.datasets_database(),
             config.dataset_preview_rows(),
         );

@@ -91,6 +91,10 @@ pub(crate) struct AppState {
 pub(crate) struct Datasets {
     pub(crate) rows: Arc<dyn crate::domain::datasets::Datasets>,
     pub(crate) tables: Arc<DatasetTables>,
+    /// What the warehouse holds, for a declaration over one of its relations
+    /// to be checked against. Read-only, and the only handle here that
+    /// reaches a database other than the datasets one.
+    pub(crate) relations: Arc<crate::store::relations::Relations>,
     pub(crate) database: String,
     /// How many of a dataset's latest records one look shows.
     pub(crate) preview_rows: u64,
@@ -104,12 +108,14 @@ impl Datasets {
     pub(crate) fn new(
         rows: Arc<dyn crate::domain::datasets::Datasets>,
         tables: DatasetTables,
+        relations: crate::store::relations::Relations,
         database: String,
         preview_rows: u64,
     ) -> Self {
         Self {
             rows,
             tables: Arc::new(tables),
+            relations: Arc::new(relations),
             database,
             preview_rows,
         }
@@ -145,6 +151,9 @@ impl Datasets {
             DatasetTables::new(insight_clickhouse::Client::new(
                 insight_clickhouse::Config::new(url, "insight_datasets"),
             )),
+            crate::store::relations::Relations::new(insight_clickhouse::Client::new(
+                insight_clickhouse::Config::new(url, "insight"),
+            )),
             "insight_datasets".to_owned(),
             DEFAULT_PREVIEW_ROWS,
         )
@@ -160,6 +169,9 @@ impl Datasets {
             )),
             DatasetTables::new(insight_clickhouse::Client::new(
                 insight_clickhouse::Config::new(url, "insight_datasets"),
+            )),
+            crate::store::relations::Relations::new(insight_clickhouse::Client::new(
+                insight_clickhouse::Config::new(url, "insight"),
             )),
             "insight_datasets".to_owned(),
             DEFAULT_PREVIEW_ROWS,
@@ -234,6 +246,7 @@ impl AppState {
         crate::domain::dataset_lifecycle::DatasetLifecycle::new(
             self.datasets.rows.as_ref(),
             &self.datasets.tables,
+            &self.datasets.relations,
             self.definitions.as_ref(),
         )
     }

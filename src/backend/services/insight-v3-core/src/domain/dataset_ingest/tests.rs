@@ -43,6 +43,7 @@ struct Fixture {
     mock: Mock,
     datasets: MemoryDatasets,
     tables: DatasetTables,
+    relations: crate::store::relations::Relations,
     definitions: MemoryDefinitions,
 }
 
@@ -54,6 +55,10 @@ impl Fixture {
             insight_clickhouse::Config::new(mock.url(), "insight_datasets"),
         ));
 
+        let relations = crate::store::relations::Relations::new(insight_clickhouse::Client::new(
+            insight_clickhouse::Config::new(mock.url(), "insight"),
+        ));
+
         Self {
             datasets: MemoryDatasets::at(
                 Utc.with_ymd_and_hms(2026, 9, 16, 12, 0, 0)
@@ -62,6 +67,7 @@ impl Fixture {
             ),
             mock,
             tables,
+            relations,
             definitions: MemoryDefinitions::new(),
         }
     }
@@ -70,9 +76,14 @@ impl Fixture {
     async fn a_ready_dataset(&self) -> R {
         self.mock.add(handlers::provide(Vec::<NoTable>::new()));
         self.mock.add(handlers::record_ddl());
-        DatasetLifecycle::new(&self.datasets, &self.tables, &self.definitions)
-            .declare(&name("commits"), &declaration())
-            .await?;
+        DatasetLifecycle::new(
+            &self.datasets,
+            &self.tables,
+            &self.relations,
+            &self.definitions,
+        )
+        .declare(&name("commits"), &declaration())
+        .await?;
 
         Ok(())
     }

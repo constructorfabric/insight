@@ -59,6 +59,9 @@ fn a_ready_dataset(url: &str) -> crate::api::Datasets {
         crate::store::dataset_tables::DatasetTables::new(insight_clickhouse::Client::new(
             insight_clickhouse::Config::new(url, "insight_datasets"),
         )),
+        crate::store::relations::Relations::new(insight_clickhouse::Client::new(
+            insight_clickhouse::Config::new(url, "insight"),
+        )),
         "insight_datasets".to_owned(),
         50,
     )
