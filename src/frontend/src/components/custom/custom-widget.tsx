@@ -1,5 +1,6 @@
 import type { MetricResult, Widget } from "@/api/custom-client";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { refusal } from "@/components/custom/refusal";
 import { CustomAreaChart } from "@/components/custom/custom-area-chart";
 import { CustomBarChart } from "@/components/custom/custom-bar-chart";
 import { CustomLineChart } from "@/components/custom/custom-line-chart";
@@ -11,7 +12,8 @@ import { ComingSoon } from "@/components/widgets/coming-soon";
 export interface CustomWidgetProps {
   widget: Widget;
   result?: MetricResult;
-  error?: Error;
+  /** Whatever failed the run, shown as the service worded it. */
+  error?: unknown;
   /** Whether a time range was asked for, which changes what empty means. */
   windowed?: boolean;
 }
@@ -25,7 +27,9 @@ export function CustomWidget({
   if (error) {
     return (
       <Alert variant="destructive">
-        <AlertDescription>{error.message}</AlertDescription>
+        <AlertDescription>
+          {refusal(error, "The metric could not be run.")}
+        </AlertDescription>
       </Alert>
     );
   }
@@ -36,9 +40,7 @@ export function CustomWidget({
         variant="card"
         state="empty"
         label={
-          windowed
-            ? "Nothing in this window. Try a wider range."
-            : "No data."
+          windowed ? "Nothing in this window. Try a wider range." : "No data."
         }
       />
     );

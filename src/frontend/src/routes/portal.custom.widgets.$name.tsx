@@ -128,17 +128,7 @@ function Drawn({ name, widget }: { name: string; widget: Widget }) {
           <CustomWidget
             widget={widget}
             result={result.data}
-            error={
-              result.error
-                ? new Error(
-                    refusal(result.error, "The metric could not be run.")
-                  )
-                : metric.error
-                  ? new Error(
-                      refusal(metric.error, "The metric could not be read.")
-                    )
-                  : undefined
-            }
+            error={result.error ?? metric.error}
             windowed={Boolean(options)}
           />
         )}
