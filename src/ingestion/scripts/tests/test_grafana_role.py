@@ -37,7 +37,7 @@ BOOTSTRAP_DIR = Path(__file__).resolve().parent.parent / "bootstrap-db"
 PROVISION_SCRIPT = BOOTSTRAP_DIR / "provision-grafana-access.sh"
 
 # Every database grafana_ro grants SELECT on — and nothing but SELECT.
-GRANTED_DBS = ("silver", "identity", "insight", "presentation", "product_usage", "ingestion_history")
+GRANTED_DBS = ("silver", "identity", "insight", "presentation", "product_usage", "ingestion_history", "config")
 
 GRAFANA_USER = "grafana"
 # Alphanumeric to satisfy the script's quote/`;` guard.
