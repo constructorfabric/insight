@@ -79,10 +79,11 @@ fn compiles(
     ready: &Ready,
     against: CompileAgainst<'_>,
 ) -> Result<(), KindError> {
+    let (database, table) = ready.reads.at(against.database);
     let over = Over {
         declaration: &ready.declaration,
-        database: against.database,
-        table: &ready.table,
+        database,
+        table,
     };
 
     metric

@@ -1,6 +1,6 @@
 //! Looking at what a dataset holds: the latest records, as they arrived.
 
-use super::datasets::{self, Datasets};
+use super::datasets::{self, Datasets, Reads};
 use super::definition::DefinitionName;
 use crate::store::dataset_tables::{DatasetTableError, DatasetTables, Record};
 
@@ -38,12 +38,18 @@ impl<'a> DatasetRecords<'a> {
             .map_err(PreviewError::Store)?
             .ok_or_else(|| PreviewError::NotReady(name.as_str().to_owned()))?;
 
+        // This reads through the connection bound to the datasets database,
+        // which is the only one that may write, and it reads a record whole
+        // out of its payload. A relation the warehouse builds has neither a
+        // payload nor an arrival instant, so it is shown by its declared
+        // columns instead - which is not this read.
+        let Reads::Ours(ours) = ready.reads else {
+            return Err(PreviewError::NotOurs(name.as_str().to_owned()));
+        };
+
         let looked = async {
-            let records = self
-                .tables
-                .latest(&ready.table, shown(wanted, self.cap))
-                .await?;
-            let total = self.tables.count(&ready.table).await?;
+            let records = self.tables.latest(&ours, shown(wanted, self.cap)).await?;
+            let total = self.tables.count(&ours).await?;
             Ok::<_, DatasetTableError>(Preview { records, total })
         };
 
@@ -90,6 +96,8 @@ mod tests {
 pub(crate) enum PreviewError {
     #[error("no dataset named `{0}` is ready to be read")]
     NotReady(String),
+    #[error("`{0}` reads a relation the warehouse builds, whose records are not shown here yet")]
+    NotOurs(String),
     #[error(transparent)]
     Store(crate::domain::datasets::DatasetStoreError),
     #[error(transparent)]

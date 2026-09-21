@@ -736,6 +736,22 @@ struct ColumnRow {
     r#type: String,
 }
 
+/// A relation's engine, as `system.tables` answers for one.
+#[derive(Debug, Serialize, clickhouse::Row)]
+struct EngineRow {
+    engine: String,
+}
+
+impl EngineRow {
+    /// An engine that does not keep superseded rows, so a read counts each
+    /// row once and the relation may be bound.
+    fn plain() -> Self {
+        Self {
+            engine: "MergeTree".to_owned(),
+        }
+    }
+}
+
 impl ColumnRow {
     fn named(name: &str) -> Self {
         Self {
@@ -766,6 +782,9 @@ async fn a_dataset_over_a_relation_is_checked_against_what_the_warehouse_holds()
         ColumnRow::named("metric_date"),
         ColumnRow::named("value"),
     ]));
+    fixture
+        .mock
+        .add(handlers::provide(vec![EngineRow::plain()]));
 
     let declared = fixture
         .lifecycle()
@@ -790,6 +809,9 @@ async fn a_column_the_relation_does_not_have_is_refused_when_it_is_declared() ->
     fixture
         .mock
         .add(handlers::provide(vec![ColumnRow::named("metric_date")]));
+    fixture
+        .mock
+        .add(handlers::provide(vec![EngineRow::plain()]));
 
     let refused = fixture
         .lifecycle()
@@ -847,6 +869,9 @@ async fn declaring_a_dataset_over_a_relation_provisions_no_table() -> R {
     fixture
         .mock
         .add(handlers::provide(vec![ColumnRow::named("metric_date")]));
+    fixture
+        .mock
+        .add(handlers::provide(vec![EngineRow::plain()]));
 
     let declared = fixture
         .lifecycle()
@@ -859,5 +884,42 @@ async fn declaring_a_dataset_over_a_relation_provisions_no_table() -> R {
         .await;
 
     assert!(declared.is_ok(), "no table is provisioned: {declared:?}");
+    Ok(())
+}
+
+/// A relation that keeps superseded rows would be counted more than once by
+/// a plain read, and `FINAL` is refused outright by the engines that do not
+/// need it. Answering a number that is quietly too high is the one outcome
+/// worth refusing a declaration over.
+#[tokio::test]
+async fn a_relation_that_keeps_superseded_rows_is_refused_with_the_way_round_it() -> R {
+    let fixture = Fixture::new();
+    fixture
+        .mock
+        .add(handlers::provide(vec![ColumnRow::named("metric_date")]));
+    fixture.mock.add(handlers::provide(vec![EngineRow {
+        engine: "ReplacingMergeTree".to_owned(),
+    }]));
+
+    let refused = fixture
+        .lifecycle()
+        .declare(
+            &name("collab"),
+            &over_a_relation(&json!([
+                { "name": "day", "column": "metric_date", "type": "datetime" }
+            ])),
+        )
+        .await;
+
+    let Err(DatasetChangeError::Invalid(violations)) = refused else {
+        panic!("should be refused as invalid: {refused:?}")
+    };
+    assert_eq!(violations[0].field, "source.table");
+    assert!(
+        violations[0].detail.contains("view"),
+        "should say the way round it: {}",
+        violations[0].detail
+    );
+
     Ok(())
 }

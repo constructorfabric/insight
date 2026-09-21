@@ -2,9 +2,8 @@
 
 use chrono::Utc;
 
-use super::datasets::{self, Datasets};
+use super::datasets::{self, Datasets, Ready};
 use super::definition::{DefinitionKind, DefinitionName, Lookup};
-use super::kinds::dataset::declaration::Declaration;
 use super::kinds::metric::answerable::{self, EffectiveClock};
 use super::query::metric_query::over::Over;
 use super::query::metric_query::{MetricQuery, MetricQueryError, MetricRunner, RunResult};
@@ -81,11 +80,12 @@ impl<'a> MetricRuns<'a> {
         named: &str,
         request: &WindowRequest,
     ) -> Result<RunResult, CustomError> {
-        let (declaration, table) = self.ready_dataset(named).await?;
+        let ready = self.ready_dataset(named).await?;
+        let (database, table) = ready.reads.at(self.datasets_database);
         let over = Over {
-            declaration: &declaration,
-            database: self.datasets_database,
-            table: &table,
+            declaration: &ready.declaration,
+            database,
+            table,
         };
 
         let window = request
@@ -100,7 +100,7 @@ impl<'a> MetricRuns<'a> {
             .run(&compiled)
             .await
             .map_err(CustomError::Run)?;
-        result.clock = EffectiveClock::of(metric, &declaration);
+        result.clock = EffectiveClock::of(metric, &ready.declaration);
         if request.is_ranged() {
             result.undated = Some(self.undated_over(metric, over).await?.count());
         }
@@ -114,20 +114,21 @@ impl<'a> MetricRuns<'a> {
         let Some(named) = metric.dataset() else {
             return Err(CustomError::Compile(MetricQueryError::NoDataset));
         };
-        let (declaration, table) = self.ready_dataset(named).await?;
+        let ready = self.ready_dataset(named).await?;
 
         // Nobody stored this one, so nothing has checked it against the
         // dataset yet. A query the declaration cannot answer is refused here
         // rather than sent to the warehouse to fail there.
-        let violations = answerable::check(metric, &declaration);
+        let violations = answerable::check(metric, &ready.declaration);
         if !violations.is_empty() {
             return Err(CustomError::Unanswerable(violations));
         }
 
+        let (database, table) = ready.reads.at(self.datasets_database);
         let over = Over {
-            declaration: &declaration,
-            database: self.datasets_database,
-            table: &table,
+            declaration: &ready.declaration,
+            database,
+            table,
         };
 
         let compiled = metric
@@ -139,23 +140,21 @@ impl<'a> MetricRuns<'a> {
             .run(&compiled)
             .await
             .map_err(CustomError::Run)?;
-        result.clock = EffectiveClock::of(metric, &declaration);
+        result.clock = EffectiveClock::of(metric, &ready.declaration);
 
         Ok(result)
     }
 
-    /// The declaration and the table of a dataset that is ready to be read.
+    /// A dataset that is ready to be read, and where its rows are.
     ///
     /// A dataset that is absent, still being made or being removed answers
-    /// nothing: a run over it would read a table that is not there yet or is
-    /// about to go.
-    async fn ready_dataset(&self, named: &str) -> Result<(Declaration, String), CustomError> {
-        let ready = datasets::ready(self.datasets, named)
+    /// nothing: a run over it would read a relation that is not there yet or
+    /// is about to go.
+    async fn ready_dataset(&self, named: &str) -> Result<Ready, CustomError> {
+        datasets::ready(self.datasets, named)
             .await
             .map_err(CustomError::Datasets)?
-            .ok_or_else(|| CustomError::DatasetNotReady(named.to_owned()))?;
-
-        Ok((ready.declaration, ready.table))
+            .ok_or_else(|| CustomError::DatasetNotReady(named.to_owned()))
     }
 
     async fn undated_over(

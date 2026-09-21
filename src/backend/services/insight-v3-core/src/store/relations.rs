@@ -15,7 +15,23 @@ use thiserror::Error;
 const READ_COLUMNS: &str = "SELECT name, type FROM system.columns
 WHERE database = ? AND table = ?
 ORDER BY position";
+const READ_ENGINE: &str = "SELECT engine FROM system.tables
+WHERE database = ? AND name = ?";
 const READ_TIMEOUT_SECS: u64 = 10;
+
+/// The engine families that keep superseded rows until a merge takes them
+/// away, so that a plain read counts one row more than once.
+///
+/// INVARIANT: an engine that does not collapse refuses `FINAL` outright
+/// (`ILLEGAL_FINAL`), so this cannot be widened into "ask for it everywhere
+/// and let the rest ignore it".
+const COLLAPSING: [&str; 5] = [
+    "ReplacingMergeTree",
+    "CollapsingMergeTree",
+    "VersionedCollapsingMergeTree",
+    "SummingMergeTree",
+    "AggregatingMergeTree",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Column {
@@ -35,6 +51,26 @@ impl Relations {
             client,
             read_timeout: Duration::from_secs(READ_TIMEOUT_SECS),
         }
+    }
+
+    /// Whether a read of this relation would count a superseded row again.
+    pub(crate) async fn collapses(
+        &self,
+        database: &str,
+        table: &str,
+    ) -> Result<bool, RelationError> {
+        let reading = self
+            .client
+            .inner()
+            .query(READ_ENGINE)
+            .bind(database)
+            .bind(table)
+            .fetch_all::<EngineRow>();
+        let rows = tokio::time::timeout(self.read_timeout, reading)
+            .await
+            .map_err(|_| RelationError::Timeout)??;
+
+        Ok(rows.first().is_some_and(|row| collapses(&row.engine)))
     }
 
     /// The columns this relation holds, in the order it holds them.
@@ -68,6 +104,18 @@ impl Relations {
     }
 }
 
+/// Whether a relation on this engine keeps rows a later merge will remove.
+///
+/// A view is left alone: whether its rows need collapsing is decided by the
+/// select it is made of, which is where that belongs.
+fn collapses(engine: &str) -> bool {
+    let family = engine
+        .trim_start_matches("Shared")
+        .trim_start_matches("Replicated");
+
+    COLLAPSING.contains(&family)
+}
+
 impl fmt::Debug for Relations {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -75,6 +123,11 @@ impl fmt::Debug for Relations {
             .field("read_timeout", &self.read_timeout)
             .finish_non_exhaustive()
     }
+}
+
+#[derive(Debug, Deserialize, Serialize, clickhouse::Row)]
+struct EngineRow {
+    engine: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, clickhouse::Row)]
@@ -90,3 +143,6 @@ pub(crate) enum RelationError {
     #[error(transparent)]
     Warehouse(#[from] clickhouse::error::Error),
 }
+
+#[cfg(test)]
+mod tests;

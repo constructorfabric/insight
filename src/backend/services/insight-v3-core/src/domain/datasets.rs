@@ -13,7 +13,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 use super::definition::{DefinitionName, NamePage, Page};
-use super::kinds::dataset::declaration::Declaration;
+use super::kinds::dataset::declaration::{Declaration, Source};
 use super::kinds::dataset::state::{DatasetState, Operation};
 
 /// How long an attempt owns a dataset before another may take over, where an
@@ -102,7 +102,33 @@ impl Dataset {
 #[derive(Debug)]
 pub(crate) struct Ready {
     pub(crate) declaration: Declaration,
-    pub(crate) table: String,
+    pub(crate) reads: Reads,
+}
+
+/// Where a ready dataset's rows are read from.
+///
+/// INVARIANT: a dataset over a stream is ready only once its table exists,
+/// because there is nowhere to read until this service makes one. A dataset
+/// over a relation is ready as soon as it is published: the relation is
+/// already there, and this service neither made it nor may take it away.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Reads {
+    /// A table this service made. Its database is the service's own, so the
+    /// row records only which table.
+    Ours(String),
+    /// A relation the warehouse builds, which the declaration names whole.
+    Warehouse { database: String, table: String },
+}
+
+impl Reads {
+    /// The database and relation to read, given the one this service keeps
+    /// its own tables in.
+    pub(crate) fn at<'a>(&'a self, ours: &'a str) -> (&'a str, &'a str) {
+        match self {
+            Self::Ours(table) => (ours, table),
+            Self::Warehouse { database, table } => (database, table),
+        }
+    }
 }
 
 /// The dataset under this name, when one is ready to be read.
@@ -124,14 +150,21 @@ pub(crate) async fn ready(
     if held.state != DatasetState::Ready {
         return Ok(None);
     }
-    let Some(table) = held.physical_table else {
-        return Ok(None);
+    let declaration: Declaration = serde_json::from_value(held.declaration)?;
+    let reads = match &declaration.source {
+        Source::Stream => match held.physical_table {
+            Some(table) => Reads::Ours(table),
+            // A create that has not provisioned yet: the row stands, the
+            // table does not, and there is nothing to read.
+            None => return Ok(None),
+        },
+        Source::Relation { database, table } => Reads::Warehouse {
+            database: database.clone(),
+            table: table.clone(),
+        },
     };
 
-    Ok(Some(Ready {
-        declaration: serde_json::from_value(held.declaration)?,
-        table,
-    }))
+    Ok(Some(Ready { declaration, reads }))
 }
 
 /// Why an attempt may not take a dataset.

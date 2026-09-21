@@ -8,6 +8,7 @@ use thiserror::Error;
 
 use super::datasets::{DatasetStoreError, Datasets};
 use super::definition::DefinitionName;
+use super::kinds::dataset::declaration::{Declaration, Source};
 use super::kinds::dataset::state::DatasetState;
 use crate::store::dataset_tables::{DatasetTableError, DatasetTables};
 
@@ -43,7 +44,11 @@ impl<'a> DatasetIngest<'a> {
         }
 
         let Some(table) = dataset.physical_table else {
-            return Err(IngestError::NotReady);
+            // Only here, so the ordinary path does not parse a declaration
+            // for every record: a dataset with no table of ours is either
+            // mid-create or one that takes no records at all, and the two are
+            // different answers.
+            return Err(takes_no_records(&dataset.declaration));
         };
 
         let body = serde_json::to_string(raw_data)?;
@@ -55,8 +60,21 @@ impl<'a> DatasetIngest<'a> {
     }
 }
 
+/// Why a dataset holds no table of ours: it reads a relation the warehouse
+/// builds, or it is still being made.
+fn takes_no_records(declaration: &Value) -> IngestError {
+    match serde_json::from_value::<Declaration>(declaration.clone()) {
+        Ok(declaration) if !matches!(declaration.source, Source::Stream) => {
+            IngestError::TakesNoRecords
+        }
+        Ok(_) | Err(_) => IngestError::NotReady,
+    }
+}
+
 #[derive(Debug, Error)]
 pub(crate) enum IngestError {
+    #[error("this dataset reads a relation the warehouse builds; records are not sent into it")]
+    TakesNoRecords,
     #[error("no dataset of that name is ready to take records")]
     NotReady,
     #[error("the record could not be read")]

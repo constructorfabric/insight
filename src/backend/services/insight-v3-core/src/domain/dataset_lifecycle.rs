@@ -169,6 +169,23 @@ impl<'a> DatasetLifecycle<'a> {
             )]);
         }
 
+        // A relation that keeps superseded rows until a merge takes them away
+        // would be counted more than once by a plain read, and `FINAL` is
+        // refused outright by the engines that do not need it. Rather than
+        // answer a number that is quietly too high, such a relation is
+        // refused: a view over it reads as one row per key, and that is what
+        // a dataset binds.
+        if self.relations.collapses(database, table).await? {
+            return Ok(vec![Violation::new(
+                "source.table",
+                Reason::NotAdmissible,
+                format!(
+                    "`{database}`.`{table}` keeps superseded rows, which a read would count \
+                     again; bind a view over it that reads one row per key"
+                ),
+            )]);
+        }
+
         let names: HashSet<&str> = held.iter().map(|column| column.name.as_str()).collect();
 
         Ok(declaration

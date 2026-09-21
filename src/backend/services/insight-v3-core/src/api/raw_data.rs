@@ -111,6 +111,19 @@ fn not_ready(named: &str) -> CanonicalError {
 fn ingest_error(dataset: &DefinitionName, error: IngestError) -> CanonicalError {
     match error {
         IngestError::NotReady => not_ready(dataset.as_str()),
+        // Not "no such dataset": it is there, it is ready, and it is the
+        // wrong kind for this. Saying it is absent would send a sender
+        // looking for a name that is right in front of them.
+        IngestError::TakesNoRecords => RawDataApiError::failed_precondition()
+            .with_precondition_violation(
+                "DATASET_OVER_A_RELATION",
+                dataset.as_str(),
+                format!(
+                    "`{}` reads a relation the warehouse builds; records are not sent into it",
+                    dataset.as_str()
+                ),
+            )
+            .create(),
         IngestError::Table(crate::store::dataset_tables::DatasetTableError::Timeout) => {
             RawDataApiError::deadline_exceeded("the record could not be stored in time").create()
         }
