@@ -147,7 +147,12 @@ export function datasetQuery(name: string) {
 }
 
 /** The latest records a dataset holds, as a reader sees them on its page. */
-/** How many records a page of a dataset shows. */
+/**
+ * What a page of records is assumed to hold before one has come back.
+ *
+ * INVARIANT: only the first read uses it. Every page after steps by the size
+ * the service reports, because the cap is an installation's setting.
+ */
 export const PREVIEW_ROWS = 20;
 
 export function datasetRecordsQuery(name: string, page: RecordPage) {
@@ -156,7 +161,7 @@ export function datasetRecordsQuery(name: string, page: RecordPage) {
       ...DATASET_PREFIX,
       name,
       "records",
-      page.limit,
+      page.limit ?? null,
       page.offset ?? 0,
       page.orderBy ?? null,
       page.descending ?? false,

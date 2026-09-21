@@ -73,8 +73,10 @@ beforeEach(() => {
   vi.mocked(customClient.fetchDatasetRecords).mockResolvedValue({
     records: [],
     total: 0,
+    limit: 20,
   });
   vi.mocked(customClient.fetchDatasetDependents).mockResolvedValue([]);
+  localStorage.clear();
 });
 
 describe("/portal/custom/datasets/$name", () => {
@@ -115,6 +117,7 @@ describe("/portal/custom/datasets/$name", () => {
         },
       ],
       total: 757,
+      limit: 20,
     });
 
     render(<Component />, { wrapper });
@@ -127,8 +130,9 @@ describe("/portal/custom/datasets/$name", () => {
     expect(
       screen.getByRole("cell", { name: "ada@example.com" })
     ).toBeInTheDocument();
+    // No limit is asked for: the page is as wide as the installation allows,
+    // and the answer says how wide that was.
     expect(customClient.fetchDatasetRecords).toHaveBeenCalledWith("commits", {
-      limit: 20,
       offset: 0,
       orderBy: "received_at",
       descending: true,
@@ -146,6 +150,7 @@ describe("/portal/custom/datasets/$name", () => {
         },
       ],
       total: 757,
+      limit: 20,
     });
 
     render(<Component />, { wrapper });
@@ -153,8 +158,8 @@ describe("/portal/custom/datasets/$name", () => {
     expect(
       await screen.findByText("1–1 of 757 records received")
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Newer" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Older" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Next" })).toBeEnabled();
   });
 
   it("asks for the next page, and for the order the reader picked", async () => {
@@ -169,15 +174,15 @@ describe("/portal/custom/datasets/$name", () => {
         },
       ],
       total: 757,
+      limit: 20,
     });
 
     render(<Component />, { wrapper });
     await screen.findByRole("cell", { name: "ada@example.com" });
 
-    await user.click(screen.getByRole("button", { name: "Older" }));
+    await user.click(screen.getByRole("button", { name: "Next" }));
     await waitFor(() =>
       expect(customClient.fetchDatasetRecords).toHaveBeenCalledWith("commits", {
-        limit: 20,
         offset: 20,
         orderBy: "received_at",
         descending: true,
@@ -189,12 +194,96 @@ describe("/portal/custom/datasets/$name", () => {
     await user.click(screen.getByRole("button", { name: /Order by author/ }));
     await waitFor(() =>
       expect(customClient.fetchDatasetRecords).toHaveBeenCalledWith("commits", {
-        limit: 20,
         offset: 0,
         orderBy: "author",
         descending: true,
       })
     );
+  });
+
+  // A reader who walks into a refusal on page two had no way back but a
+  // reload, because the refusal took the paging with it.
+  it("offers the way back to the first page when a page is refused", async () => {
+    const user = userEvent.setup();
+    vi.mocked(customClient.fetchDataset).mockResolvedValue(COMMITS);
+    vi.mocked(customClient.fetchDatasetRecords)
+      .mockResolvedValueOnce({
+        records: [
+          {
+            id: "1",
+            received_at: "2026-09-17 10:00:00",
+            raw_data: { who: { email: "ada@example.com" } },
+          },
+        ],
+        total: 757,
+        limit: 20,
+      })
+      .mockRejectedValue(new Error("boom"));
+
+    render(<Component />, { wrapper });
+    await screen.findByRole("cell", { name: "ada@example.com" });
+    await user.click(screen.getByRole("button", { name: "Next" }));
+
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Back to the first page" })
+    ).toBeEnabled();
+  });
+
+  // Records may go between the count and the read, and a page that walks off
+  // the end must not keep offering another one.
+  it("stops at a page that holds nothing rather than walking further", async () => {
+    const user = userEvent.setup();
+    vi.mocked(customClient.fetchDataset).mockResolvedValue(COMMITS);
+    vi.mocked(customClient.fetchDatasetRecords)
+      .mockResolvedValueOnce({
+        records: [
+          {
+            id: "1",
+            received_at: "2026-09-17 10:00:00",
+            raw_data: { who: { email: "ada@example.com" } },
+          },
+        ],
+        total: 757,
+        limit: 20,
+      })
+      .mockResolvedValue({ records: [], total: 757, limit: 20 });
+
+    render(<Component />, { wrapper });
+    await screen.findByRole("cell", { name: "ada@example.com" });
+    await user.click(screen.getByRole("button", { name: "Next" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Next" })).toBeDisabled()
+    );
+    expect(screen.getByRole("button", { name: "Previous" })).toBeEnabled();
+  });
+
+  // The stored value is whatever is in the browser, and nothing in the UI
+  // could clear a shape that took the page down on render.
+  it("draws the page when the stored columns are not a list of names", async () => {
+    localStorage.setItem(
+      "insight.custom.dataset.commits.columns",
+      '{"not": "a list"}'
+    );
+    vi.mocked(customClient.fetchDataset).mockResolvedValue(COMMITS);
+    vi.mocked(customClient.fetchDatasetRecords).mockResolvedValue({
+      records: [
+        {
+          id: "1",
+          received_at: "2026-09-17 10:00:00",
+          raw_data: { who: { email: "ada@example.com" } },
+        },
+      ],
+      total: 1,
+      limit: 20,
+    });
+
+    render(<Component />, { wrapper });
+
+    expect(
+      await screen.findByRole("cell", { name: "ada@example.com" })
+    ).toBeInTheDocument();
   });
 
   // A record holds more than the columns on screen, and a reader chasing one
@@ -211,6 +300,7 @@ describe("/portal/custom/datasets/$name", () => {
         },
       ],
       total: 1,
+      limit: 20,
     });
 
     render(<Component />, { wrapper });

@@ -181,12 +181,13 @@ export async function fetchDataset(name: string): Promise<Dataset> {
   return readJson<Dataset>(res);
 }
 
-/** The latest records the dataset holds, newest first, capped by the service. */
+/** One page of the records a dataset holds, sized by the service. */
 export async function fetchDatasetRecords(
   name: string,
   page: RecordPage
 ): Promise<DatasetRecords> {
-  const query = new URLSearchParams({ limit: String(page.limit) });
+  const query = new URLSearchParams();
+  if (page.limit !== undefined) query.set("limit", String(page.limit));
   if (page.offset) query.set("offset", String(page.offset));
   if (page.orderBy) {
     query.set("order_by", page.orderBy);

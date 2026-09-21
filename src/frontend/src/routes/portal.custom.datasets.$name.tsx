@@ -150,10 +150,6 @@ function Declaration({
   );
 }
 
-/** The latest records, as they arrived. */
-/** How many records one page of the table holds. */
-const PAGE = PREVIEW_ROWS;
-
 /** How many declared fields a table shows before the reader picks. */
 const COLUMNS_AT_FIRST = 10;
 
@@ -172,18 +168,27 @@ function Records({
   const [shown, setShown] = useLocalStorageState<string[]>({
     key: `insight.custom.dataset.${name}.columns`,
     defaultValue: fields.slice(0, COLUMNS_AT_FIRST).map((field) => field.name),
-    parse: (raw) => JSON.parse(raw) as string[],
+    parse: storedColumns,
     serialize: (value) => JSON.stringify(value),
   });
 
+  // How wide a page is belongs to the service: its cap is an installation's
+  // setting. Stepping by a number of our own would walk past whatever a
+  // narrower page left behind. Only the first read, before any page has come
+  // back, goes by the assumption.
+  const [stride, setStride] = useState(PREVIEW_ROWS);
+
   const records = useQuery(
     datasetRecordsQuery(name, {
-      limit: PAGE,
-      offset: page * PAGE,
+      offset: page * stride,
       orderBy: ordering.by,
       descending: ordering.descending,
     })
   );
+
+  const waiting = records.isPlaceholderData;
+  const held = records.data?.limit;
+  if (held !== undefined && held !== stride) setStride(held);
 
   const order = (next: Ordering) => {
     setOrdering(next);
@@ -199,15 +204,25 @@ function Records({
         {records.isPending ? (
           <CenteredSpinner className="min-h-24" />
         ) : records.isError ? (
-          <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
-            {refusal(records.error, "Couldn't read the records.")}
-          </p>
+          <div className="flex flex-col items-start gap-3">
+            <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
+              {refusal(records.error, "Couldn't read the records.")}
+            </p>
+            {page > 0 ? (
+              <Button variant="ghost" size="sm" onClick={() => setPage(0)}>
+                Back to the first page
+              </Button>
+            ) : null}
+          </div>
         ) : records.data.total === 0 ? (
           <p className={cn(TEXT_BODY, "text-muted-foreground")}>
             Nothing has arrived yet.
           </p>
         ) : (
-          <div className="flex flex-col gap-3">
+          <div
+            className={cn("flex flex-col gap-3", waiting && "opacity-60")}
+            aria-busy={waiting || undefined}
+          >
             <RecordTable
               fields={fields}
               records={records.data.records}
@@ -218,8 +233,10 @@ function Records({
             />
             <Paging
               page={page}
+              stride={stride}
               held={records.data.records.length}
               total={records.data.total}
+              waiting={waiting}
               onPage={setPage}
             />
           </div>
@@ -232,43 +249,71 @@ function Records({
 /** Which records of the whole this page is, and the way to the others. */
 function Paging({
   page,
+  stride,
   held,
   total,
+  waiting,
   onPage,
 }: {
   page: number;
+  /** The page size the service applied, which it reports with the page. */
+  stride: number;
   held: number;
   total: number;
+  /** The rows on screen are the page before this one, still.  */
+  waiting: boolean;
   onPage: (page: number) => void;
 }) {
-  const first = page * PAGE + 1;
-  const last = page * PAGE + held;
+  const first = page * stride + 1;
+  const last = page * stride + held;
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <span className={cn(TEXT_LABEL, "text-muted-foreground")}>
-        {first}–{last} of {total} records received
+      <span
+        aria-live="polite"
+        className={cn(TEXT_LABEL, "text-muted-foreground")}
+      >
+        {waiting
+          ? "Reading…"
+          : held === 0
+            ? `Nothing left past record ${first - 1} of ${total}`
+            : `${first}–${last} of ${total} records received`}
       </span>
       <span className="ms-auto flex items-center gap-1">
         <Button
           variant="ghost"
           size="sm"
-          disabled={page === 0}
+          disabled={waiting || page === 0}
           onClick={() => onPage(page - 1)}
         >
-          Newer
+          Previous
         </Button>
         <Button
           variant="ghost"
           size="sm"
-          disabled={last >= total}
+          disabled={waiting || held === 0 || last >= total}
           onClick={() => onPage(page + 1)}
         >
-          Older
+          Next
         </Button>
       </span>
     </div>
   );
+}
+
+/**
+ * The columns a reader last picked, as they were stored.
+ *
+ * SAFETY: a stored value is whatever is in the browser, and asserting a shape
+ * it never checked took the page down with a TypeError nothing in the UI
+ * could clear. Anything unrecognised falls back to the default.
+ */
+function storedColumns(raw: string): string[] | undefined {
+  const held: unknown = JSON.parse(raw);
+  if (!Array.isArray(held)) return undefined;
+  if (!held.every((name) => typeof name === "string")) return undefined;
+
+  return held;
 }
 
 /** Every metric that reads this dataset, which a removal would break. */
