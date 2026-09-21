@@ -37,6 +37,7 @@ _TABLES = (
     "silver.class_task_statuses",
     "silver.class_task_issuetypes",
     "config.field_value_map",
+    "config.field_value_defaults",
 )
 
 _INITIAL_FIELDS = {
@@ -234,23 +235,30 @@ def test_the_issuetype_dimension_emits_exactly_the_declared_rows_per_source(
         assert per_source == declared, f"source {source_id} diverges from _ISSUE_TYPE_DIM"
 
 
+@pytest.mark.parametrize(
+    ("field", "dim"),
+    [("issue_type", task._ISSUE_TYPE_DIM), ("resolution", task._RESOLUTION_DIM)],
+    ids=["issue_type", "resolution"],
+)
 def test_the_value_map_emits_exactly_the_declared_decisions_per_source(
-    rows: Rows,
+    rows: Rows, field: str, dim: dict[str, tuple[str, str]]
 ) -> None:
     by_source: dict[str, dict[str, tuple[str, str]]] = {}
     for row in rows["config.field_value_map"]:
         assert row["tenant_id"] == _TENANT
-        assert row["field"] == "issue_type"
+        assert row["field"] in ("issue_type", "resolution")
         assert row["is_deleted"] == 0
+        if row["field"] != field:
+            continue
         per_source = by_source.setdefault(row["insight_source_id"], {})
         assert row["source_key"] not in per_source, (
             f"source {row['insight_source_id']} duplicates decision {row['source_key']}"
         )
         per_source[row["source_key"]] = (row["display_name"], row["target_value"])
 
-    declared = {type_id: (name, kind) for name, (type_id, kind) in task._ISSUE_TYPE_DIM.items()}
+    declared = {source_key: (name, kind) for name, (source_key, kind) in dim.items()}
     for source_id, per_source in by_source.items():
-        assert per_source == declared, f"source {source_id} diverges from _ISSUE_TYPE_DIM"
+        assert per_source == declared, f"source {source_id} diverges from the {field} dimension"
 
 
 def test_the_value_map_carries_a_bug_decision_keyed_by_the_history_value_id(
@@ -263,6 +271,25 @@ def test_the_value_map_carries_a_bug_decision_keyed_by_the_history_value_id(
             f"bug decision keyed {row['source_key']!r}, history events use {_BUG_TYPE_ID!r}"
         )
         assert row["display_name"] == "Bug"
+
+
+def test_every_source_carries_a_default_decision_for_each_classified_field(rows: Rows) -> None:
+    """`assert_task_field_value_defaults_exist` blocks the gold build without
+    these rows, so a seeded stand states the fallback rather than leaving it to
+    gold's hardcoded terminal."""
+    mapped = {(row["insight_source_id"], row["field"]) for row in rows["config.field_value_map"]}
+    assert mapped, "no value-map rows — nothing to default for"
+
+    by_key: dict[tuple[str, str], str] = {}
+    for row in rows["config.field_value_defaults"]:
+        assert row["tenant_id"] == _TENANT
+        assert row["is_deleted"] == 0
+        key = (row["insight_source_id"], row["field"])
+        assert key not in by_key, f"{key} duplicates its default decision"
+        by_key[key] = row["default_value"]
+
+    assert set(by_key) == mapped, "a task source has decisions for a field but no default"
+    assert set(by_key.values()) == {"unknown"}
 
 
 # ─── Referential integrity of the seed itself ────────────────────────────

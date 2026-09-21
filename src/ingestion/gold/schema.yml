@@ -856,7 +856,11 @@ models:
                 values:
                   - tasks_closed
                   - bugs_fixed
-                  - closed_non_bug
+                  - closed_task
+                  - closed_unknown_type
+                  - closed_fixed
+                  - closed_duplicate
+                  - closed_wontfix
                   - due_date_on_time
                   - due_date_with_due
                   - slip_days_total
@@ -954,6 +958,19 @@ models:
           - accepted_values:
               arguments:
                 values: ['bug', 'task', 'unknown']
+      - name: resolution_kind
+        description: >
+          Resolution class resolved at this build from the operator's
+          config.field_value_map row for (tenant, source, field='resolution',
+          resolution id); an unmapped id falls to the tenant's
+          config.field_value_defaults row, then to 'unknown'. An issue with no
+          resolution value at all is 'unknown' outright — the default speaks
+          only for unmapped values, not absent ones.
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['fixed', 'duplicate', 'wontfix', 'unknown']
 
   - name: task_status_spans
     description: >

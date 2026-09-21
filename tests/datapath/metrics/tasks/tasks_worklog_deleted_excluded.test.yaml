@@ -40,6 +40,12 @@ bronze:
     - $ref: ../templates/jira_task.yaml#/templates/field_assignee
     - $ref: ../templates/jira_task.yaml#/templates/field_issuetype
 
+  config.field_value_defaults:
+    # Unmapped type ids are unclassified by decision, not by accident:
+    # `assert_task_field_value_defaults_exist` requires this row.
+    - $ref: ../templates/jira_task.yaml#/templates/jira_issue_type_default_unknown
+    - $ref: ../templates/jira_task.yaml#/templates/jira_resolution_default_unknown
+
   bronze_jira.jira_issue:
     # Each member: created In Progress 2026-03-25T00:00, Closed 2026-03-26T00:00 -> 86400 s in progress.
     - {$ref: ../templates/jira_task.yaml#/templates/jira_issue, id: "10178", jira_id: "10178", unique_key: jira-test-WDA-1, id_readable: WDA1, created: "2026-03-25T00:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'}

@@ -29,6 +29,7 @@ mode does not show up on the PR, so it cannot be caught by review alone.
 | `descriptor.yaml` `version:` is strict semver `MAJOR.MINOR.PATCH` | descriptor | `bump-descriptors` runs ONLY on push to `main`. `"1.0"` passes the PR, then aborts that job, so `images.<key>.image` is never patched and reconcile WARN+skips the connector forever. |
 | Entry in `scripts/bootstrap-db/connectors-config.yaml` | bootstrap registry | Without it `bootstrap-db.sh` never creates `bronze_<snake>` → dbt `Code: 81 UNKNOWN_DATABASE` → `set -e` aborts before gold migrations → regenerated `connectors-ddl` snapshot silently loses downstream tables. |
 | Shared `silver:class_<X>` column types identical across sources | staging model | `union_by_tag` UNION ALLs the branches; one mismatched type raises `Code: 386 NO_COMMON_TYPE` and the shared class fails for ALL sources. |
+| A data test reading the connector's own tables carries `tags=['connector_quality', '<connector-name>']` | dbt test | No cluster runs a bare `dbt test`, so an UNTAGGED check runs nowhere and the condition it watches goes unreported indefinitely. Tagged `data_quality` instead, it joins the install-wide scheduled catalog and errors on every tenant that lacks the connector. The connector slug is the second half of an INTERSECTION selector — omit it and the check matches nothing. |
 
 ALWAYS run the guard before opening a PR — it is the only one of these that
 fails *before* merge (the `Guards` job in CI):
@@ -37,9 +38,11 @@ fails *before* merge (the `Guards` job in CI):
 python3 scripts/ci/connector_wiring.py
 ```
 
-Worked example of getting all three wrong at once: issue
+Worked example of getting the first three wrong at once: issue
 [#2048](https://github.com/constructorfabric/insight/issues/2048) (active-directory).
-Details and fixes in [create.md](workflows/create.md) §3.8.
+Details and fixes in [create.md](workflows/create.md) §3.8, which also carries
+the two data-check catalogs (`data_quality` vs `connector_quality`) and how to
+verify a check's selector resolves.
 
 NEVER regenerate `connectors-config.yaml` wholesale — it overwrites the
 `env:` credential references (HubSpot/Salesforce) with fake `value:` entries.

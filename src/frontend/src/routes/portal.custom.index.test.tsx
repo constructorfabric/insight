@@ -47,10 +47,10 @@ describe("/portal/custom", () => {
     // The identifier stands in until a title arrives, so the link is still
     // reachable when a definition cannot be read.
     expect(
-      await screen.findByRole("link", { name: /engineering/ })
+      await screen.findByRole("link", { name: "engineering" })
     ).toHaveAttribute("href", "/portal/custom/engineering");
     expect(
-      await screen.findByRole("link", { name: /delivery/ })
+      await screen.findByRole("link", { name: "delivery" })
     ).toBeInTheDocument();
   });
 

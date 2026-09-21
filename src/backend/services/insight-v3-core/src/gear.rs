@@ -39,26 +39,29 @@ impl Gear for InsightV3CoreGear {
         let config = config.validate()?;
         // The definitions are rows read by name and edited in place, so they
         // live in MariaDB rather than beside the data they describe.
-        let definitions: Arc<dyn crate::definitions::Definitions> =
-            Arc::new(crate::definitions::MariaDefinitions::new(
-                sea_orm::Database::connect(config.database_url()).await?,
-            ));
+        let db = sea_orm::Database::connect(config.database_url()).await?;
+        let definitions: Arc<dyn crate::domain::definition::Definitions> =
+            Arc::new(crate::store::definitions::MariaDefinitions::new(db.clone()));
+        let datasets = crate::api::Datasets::new(
+            Arc::new(crate::store::datasets::MariaDatasets::new(
+                db,
+                config.dataset_lease(),
+            )),
+            crate::store::dataset_tables::DatasetTables::new(config.datasets_client()),
+            config.datasets_database(),
+            config.dataset_preview_rows(),
+        );
         let admission = crate::api::admission::IngestAdmission::new(config.ingest_token());
         let chat = crate::chat::ChatClient::new(config.anthropic_token(), config.chat_model());
         let app = Arc::new(crate::api::AppState::new(
-            crate::raw_data::RawDataStore::new(config.clickhouse_client()),
-            crate::tables::TableStore::new(config.clickhouse_client()),
+            crate::domain::query::metric_query::MetricRunner::new(
+                config.clickhouse_query_client(),
+                crate::domain::query::metric_query::People::new(config.identity_database()),
+            ),
             definitions,
-            crate::metric_query::MetricRunner::new(
-                config.clickhouse_query_client(),
-                crate::metric_query::People::new(config.identity_database()),
-            ),
             chat,
-            crate::identity::IdentityClient::new(config.identity_url())?,
-            crate::catalog::Catalog::new(
-                config.clickhouse_query_client(),
-                config.clickhouse_database(),
-            ),
+            crate::store::identity::IdentityClient::new(config.identity_url())?,
+            datasets,
         ));
         let runtime = RuntimeState {
             app: Arc::clone(&app),
@@ -103,12 +106,14 @@ impl RestApiCapability for InsightV3CoreGear {
 pub(crate) async fn run_migrate(app: &toolkit::bootstrap::AppConfig) -> anyhow::Result<()> {
     let config = crate::config::ValidatedConfig::stores_from_app_config(app)?;
 
-    crate::migration::migrate(config.clickhouse()).await?;
-    tracing::info!("raw_data migration complete");
+    crate::migration::migrate(config.clickhouse(), config.datasets_database()).await?;
+    tracing::info!("datasets database migration complete");
 
     let db = sea_orm::Database::connect(config.database_url()).await?;
-    <crate::definitions::migration::Migrator as sea_orm_migration::MigratorTrait>::up(&db, None)
-        .await?;
+    <crate::store::definitions::migration::Migrator as sea_orm_migration::MigratorTrait>::up(
+        &db, None,
+    )
+    .await?;
     tracing::info!("definitions migration complete");
 
     Ok(())

@@ -13,12 +13,17 @@ clock and walk the windows the CDK actually generates.
 from __future__ import annotations
 
 import pytest
+from connector_tests import get_source
 from freezegun import freeze_time
 
-from connector_tests import get_source
-
 _CONNECTOR = "ai/chatgpt-team"
-_DAY_CURSOR_STREAMS = ["chatgpt_team_chat_activity", "chatgpt_team_codex_user_daily"]
+_DAY_CURSOR_STREAMS = [
+    "chatgpt_team_chat_activity",
+    "chatgpt_team_codex_user_daily",
+    # The envelope stream stamps its `date` the same way, and a headcount filed
+    # under the wrong day would judge the wrong day's rows.
+    "chatgpt_team_codex_user_daily_org",
+]
 
 
 def _config(start_date: str | None = None) -> dict[str, str]:
@@ -39,10 +44,7 @@ def _windows(stream_name: str, now: str, start_date: str | None) -> list[tuple[s
     with freeze_time(now):
         source = get_source(_CONNECTOR, config)
         stream = next(s for s in source.streams(config) if s.name == stream_name)
-        return [
-            (p.to_slice()["start_time"], p.to_slice()["end_time"])
-            for p in stream.generate_partitions()
-        ]
+        return [(p.to_slice()["start_time"], p.to_slice()["end_time"]) for p in stream.generate_partitions()]
 
 
 @pytest.mark.parametrize("stream_name", _DAY_CURSOR_STREAMS)
@@ -79,10 +81,4 @@ def test_every_request_window_stays_inside_one_day(stream_name, now, start_date)
 def test_the_window_walk_is_contiguous_and_reaches_today(stream_name):
     windows = _windows(stream_name, "2026-08-19T11:30:00Z", "2026-08-15")
 
-    assert [a for a, _ in windows] == [
-        "2026-08-15",
-        "2026-08-16",
-        "2026-08-17",
-        "2026-08-18",
-        "2026-08-19",
-    ]
+    assert [a for a, _ in windows] == ["2026-08-15", "2026-08-16", "2026-08-17", "2026-08-18", "2026-08-19"]

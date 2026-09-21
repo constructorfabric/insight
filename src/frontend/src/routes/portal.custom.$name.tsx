@@ -180,14 +180,15 @@ function DashboardWidgetSlot({
   const widgetState = useQuery(widgetQuery(name));
   const metric = widgetState.data?.metric;
 
-  // Whether this metric carries a clock decides the request, so nothing
-  // runs until the definition is in: guessing shows a number the picker
-  // does not claim.
+  // Whether a window has a date to select by decides the request, so nothing
+  // runs until the definition is in: guessing shows a number the picker does
+  // not claim. The metric's body cannot answer it - the date may be the
+  // dataset's - so the service reports the one in force.
   const definitionState = useQuery({
     ...metricQuery(metric ?? ""),
     enabled: Boolean(metric) && Boolean(range),
   });
-  const clocked = Boolean(definitionState.data?.time);
+  const clocked = Boolean(definitionState.data?.clock);
   const known = !range || definitionState.isSuccess;
   const options: RunOptions | undefined =
     range && clocked && widgetState.data

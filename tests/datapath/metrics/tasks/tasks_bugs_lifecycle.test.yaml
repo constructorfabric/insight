@@ -18,7 +18,7 @@ description: >
   the re-close day, and the first close day serves nothing. (3) dave's Jira
   issue closes 2026-06-25 while it is a Bug, but a 2026-06-26 changelog row
   retypes it Bug -> Task and the current snapshot carries Task: issue_kind
-  joins on the CURRENT type, so the close lands in closed_non_bug and not in
+  joins on the CURRENT type, so the close lands in closed_task and not in
   bugs_fixed - pinned as current behavior (snapshot type wins), not intent.
 
 bronze:
@@ -140,6 +140,13 @@ bronze:
     - $ref: ../templates/github_task.yaml#/templates/issue_type_kind_bug
     - $ref: ../templates/jira_task.yaml#/templates/value_type_task
     - $ref: ../templates/jira_task.yaml#/templates/value_type_bug
+
+  config.field_value_defaults:
+    # Unmapped type ids are unclassified by decision, not by accident:
+    # `assert_task_field_value_defaults_exist` requires this row.
+    - $ref: ../templates/jira_task.yaml#/templates/jira_issue_type_default_unknown
+    - $ref: ../templates/jira_task.yaml#/templates/jira_resolution_default_unknown
+    - $ref: ../templates/github_task.yaml#/templates/github_issue_type_default_unknown
 
   bronze_github.issue_types:
     - $ref: ../templates/github_task.yaml#/templates/issue_type_bug

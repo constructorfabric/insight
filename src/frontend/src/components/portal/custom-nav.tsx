@@ -1,5 +1,5 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import { ChartLine, LayoutDashboard, Sigma } from "lucide-react";
+import { ChartLine, Database, LayoutDashboard, Sigma } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 
 import {
@@ -16,9 +16,9 @@ import { dashboardNamesQuery, dashboardQuery } from "@/queries/custom";
 import { TEXT_LABEL } from "@/lib/type-scale";
 
 /**
- * The custom zone's pane: the three catalogues, then one row per dashboard
- * read from the same query the page reads — so a dashboard the chat just
- * built appears here as soon as the list is invalidated, with no reload.
+ * The custom zone's pane: the catalogues, then one row per dashboard read from
+ * the same query the page reads — so a dashboard the chat just built appears
+ * here as soon as the list is invalidated, with no reload.
  */
 export function CustomNav() {
   return (
@@ -43,6 +43,11 @@ export function CustomNav() {
               label="Widgets"
               icon={<ChartLine />}
             />
+            <CatalogueRow
+              to="/portal/custom/datasets"
+              label="Datasets"
+              icon={<Database />}
+            />
           </SidebarMenu>
         </SidebarGroupContent>
       </SidebarGroup>
@@ -57,7 +62,11 @@ function CatalogueRow({
   icon,
   exact = false,
 }: {
-  to: "/portal/custom" | "/portal/custom/metrics" | "/portal/custom/widgets";
+  to:
+    | "/portal/custom"
+    | "/portal/custom/metrics"
+    | "/portal/custom/widgets"
+    | "/portal/custom/datasets";
   label: string;
   icon: React.ReactNode;
   /** Dashboards owns the zone root, so it must not match every child path. */

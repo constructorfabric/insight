@@ -18,13 +18,35 @@ severity and run under `dbt build` for build integrity; they are not part of
 the scheduled run and don't emit findings. The runner and emitter live in
 `charts/insight/templates/ingestion/data-quality-test.yaml`.
 
+## Two catalogs
+
+`data_quality` is the scheduled catalog above. It runs install-wide on its own
+clock, so its checks may read **silver and gold only** — a check touching one
+connector's bronze would error on a tenant where that connector is absent.
+
+`connector_quality` is the per-connector catalog, for exactly the checks that
+DO need a connector's own bronze or staging. They run in the `connector-checks`
+step at the end of that connector's pipeline, where those tables exist because
+the pipeline that built them is what invoked the step. The selector is an
+INTERSECTION, `tag:connector_quality,tag:<connector-slug>`, so such a check
+carries its connector's slug alongside the tag — without it the check matches
+nothing. The runner is `charts/insight/templates/ingestion/connector-checks.yaml`
+and it never fails the sync; findings emit in the same shape as the scheduled
+catalog's.
+
+An untagged singular test is in neither catalog and runs in no cluster at all —
+only under `dbt build` for build integrity.
+
 ## Adding a check
 
-Create `tests/<domain>/assert_<subject>_<rule>.sql`:
+Create `tests/<domain>/assert_<subject>_<rule>.sql`. Pick the catalog first, per
+the section above: `['data_quality']` for a check that reads silver or gold, and
+`['connector_quality', '<connector-slug>']` for one that needs a connector's own
+bronze or staging. The rest of the block is the same either way.
 
 ```sql
 {{ config(
-    tags=['data_quality'],
+    tags=['data_quality'],           -- or ['connector_quality', '<connector-slug>']
     severity='warn',
     store_failures=true,
     meta={

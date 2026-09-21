@@ -30,18 +30,16 @@ pulls_dashboard_name="pull_requests_$$"
 
 log_file="$(mktemp)"
 body_file="$(mktemp)"
-table_created="false"
+datasets_declared="false"
 definitions_created="false"
 
 cleanup() {
   status=$?
   trap - EXIT
-  if [[ "$table_created" == "true" ]]; then
-    for dropped in "$table_name" "$pulls_table_name"; do
-      curl --silent --show-error --connect-timeout 2 --max-time 10 \
-        --user "$clickhouse_user:$clickhouse_password" \
-        --data-binary "DROP TABLE IF EXISTS $dropped" \
-        "$clickhouse_url/?database=$clickhouse_database" >/dev/null 2>&1 || true
+  if [[ "$datasets_declared" == "true" ]]; then
+    # A dataset takes its records with it, so the table goes too.
+    for removed in "$table_name" "$pulls_table_name"; do
+      http DELETE "/v1/datasets/$removed" >/dev/null 2>&1 || true
     done
   fi
   if [[ "$definitions_created" == "true" ]]; then
@@ -115,10 +113,20 @@ if [[ "$status" != "200" ]]; then
 fi
 echo "stack reachable at $base_url"
 
-step 1 "PUT /v1/tables/$table_name"
-status="$(http PUT "/v1/tables/$table_name" --header "X-Insight-Token: $token")"
-expect_equal "204" "$status" "table creation"
-table_created="true"
+step 1 "PUT /v1/datasets/$table_name"
+status="$(http PUT "/v1/datasets/$table_name" \
+  --header 'content-type: application/json' \
+  --data-binary "$(jq -n '{
+    title: "Commit events",
+    fields: [
+      {name: "author", path: "author", type: "string", person: "email"},
+      {name: "event", path: "event", type: "string"},
+      {name: "day", path: "day", type: "string"},
+      {name: "lines", path: "lines", type: "int", role: "measurable"}
+    ]
+  }')")"
+expect_equal "200" "$status" "dataset declaration"
+datasets_declared="true"
 echo "-> $status"
 
 step 2 "POST /v1/raw-data for each fixture line"
@@ -126,7 +134,7 @@ line_count=0
 while IFS= read -r line || [[ -n "$line" ]]; do
   [[ -z "$line" ]] && continue
   line_count=$((line_count + 1))
-  request_body="$(jq -c --arg table "$table_name" '{table: $table, raw_data: .}' <<<"$line")"
+  request_body="$(jq -c --arg dataset "$table_name" '{dataset: $dataset, raw_data: .}' <<<"$line")"
   status="$(http POST /v1/raw-data \
     --header "X-Insight-Token: $token" \
     --header 'content-type: application/json' \
@@ -137,11 +145,11 @@ expect_equal "30" "$line_count" "fixture line count"
 echo "-> ingested $line_count events"
 
 step 3 "PUT /v1/metrics/$metric_name"
-metric_body="$(jq -n --arg table "$table_name" '{
-  table: $table,
+metric_body="$(jq -n --arg dataset "$table_name" '{
+  dataset: $dataset,
   fields: [
-    {json: "day", type: "string", as_name: "day"},
-    {json: "lines", type: "int", agg: "sum", as_name: "lines"}
+    {field: "day", type: "string", as_name: "day"},
+    {field: "lines", type: "int", agg: "sum", as_name: "lines"}
   ],
   group_by: ["day"],
   filters: [],
@@ -198,9 +206,21 @@ expect_equal "true" "$has_table" "dashboard widgets include $widget_table_name"
 expect_equal "true" "$has_graph" "dashboard widgets include $widget_graph_name"
 echo "-> $status, widgets=$(jq -c '.widgets' <<<"$response_body")"
 
-step 9 "PUT /v1/tables/$pulls_table_name"
-status="$(http PUT "/v1/tables/$pulls_table_name" --header "X-Insight-Token: $token")"
-expect_equal "204" "$status" "pull-request table creation"
+step 9 "PUT /v1/datasets/$pulls_table_name"
+status="$(http PUT "/v1/datasets/$pulls_table_name" \
+  --header 'content-type: application/json' \
+  --data-binary "$(jq -n '{
+    title: "Pull requests",
+    fields: [
+      {name: "pull_request", path: "pull_request", type: "int"},
+      {name: "repo", path: "repo", type: "string"},
+      {name: "author", path: "author", type: "string", person: "email"},
+      {name: "opened_at", path: "opened_at", type: "datetime", default_clock: true},
+      {name: "merged_at", path: "merged_at", type: "datetime"}
+    ],
+    row_identity: ["pull_request"]
+  }')")"
+expect_equal "200" "$status" "pull-request dataset declaration"
 echo "-> $status"
 
 step 10 "POST /v1/raw-data for each pull request"
@@ -208,7 +228,7 @@ pull_count=0
 while IFS= read -r line || [[ -n "$line" ]]; do
   [[ -z "$line" ]] && continue
   pull_count=$((pull_count + 1))
-  request_body="$(jq -c --arg table "$pulls_table_name" '{table: $table, raw_data: .}' <<<"$line")"
+  request_body="$(jq -c --arg dataset "$pulls_table_name" '{dataset: $dataset, raw_data: .}' <<<"$line")"
   status="$(http POST /v1/raw-data \
     --header "X-Insight-Token: $token" \
     --header 'content-type: application/json' \
@@ -222,10 +242,10 @@ echo "-> ingested $pull_count pull requests"
 step 11 "PUT /v1/metrics/$opened_metric_name — a clock on when a PR was opened"
 status="$(http PUT "/v1/metrics/$opened_metric_name" \
   --header 'content-type: application/json' \
-  --data-binary "$(jq -n --arg table "$pulls_table_name" '{
-    table: $table,
-    time: {json: "opened_at"},
-    fields: [{json: "pull_request", type: "int", agg: "count", as_name: "opened"}]
+  --data-binary "$(jq -n --arg dataset "$pulls_table_name" '{
+    dataset: $dataset,
+    time: {field: "opened_at"},
+    fields: [{field: "pull_request", type: "int", agg: "count", as_name: "opened"}]
   }')")"
 expect_equal "204" "$status" "opened metric"
 definitions_created="true"
@@ -234,10 +254,10 @@ echo "-> $status"
 step 12 "PUT /v1/metrics/$merged_metric_name — a second clock on the same rows"
 status="$(http PUT "/v1/metrics/$merged_metric_name" \
   --header 'content-type: application/json' \
-  --data-binary "$(jq -n --arg table "$pulls_table_name" '{
-    table: $table,
-    time: {json: "merged_at"},
-    fields: [{json: "pull_request", type: "int", agg: "count", as_name: "merged"}]
+  --data-binary "$(jq -n --arg dataset "$pulls_table_name" '{
+    dataset: $dataset,
+    time: {field: "merged_at"},
+    fields: [{field: "pull_request", type: "int", agg: "count", as_name: "merged"}]
   }')")"
 expect_equal "204" "$status" "merged metric"
 echo "-> $status"
@@ -245,9 +265,9 @@ echo "-> $status"
 step 13 "PUT /v1/metrics/$by_repo_metric_name — no clock at all"
 status="$(http PUT "/v1/metrics/$by_repo_metric_name" \
   --header 'content-type: application/json' \
-  --data-binary "$(jq -n --arg table "$pulls_table_name" '{
-    table: $table,
-    fields: [{json: "pull_request", type: "int", agg: "count", as_name: "total"}]
+  --data-binary "$(jq -n --arg dataset "$pulls_table_name" '{
+    dataset: $dataset,
+    fields: [{field: "pull_request", type: "int", agg: "count", as_name: "total"}]
   }')")"
 expect_equal "204" "$status" "clockless metric"
 echo "-> $status"
@@ -332,4 +352,4 @@ expect_equal "204" "$status" "pull-request dashboard"
 echo "-> $status"
 
 echo
-echo "All 19 steps passed (tables=$table_name, $pulls_table_name)."
+echo "All 19 steps passed (datasets=$table_name, $pulls_table_name)."

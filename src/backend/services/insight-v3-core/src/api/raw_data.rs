@@ -1,4 +1,4 @@
-//! Raw-data ingestion HTTP endpoint.
+//! Taking records in: one record, named by the dataset it belongs to.
 
 use std::sync::Arc;
 
@@ -13,7 +13,8 @@ use utoipa::ToSchema;
 
 use super::AppState;
 use super::admission::{self, IngestAdmission};
-use crate::raw_data::{RawDataError, RawDataRecord, StoreError};
+use crate::domain::dataset_ingest::IngestError;
+use crate::domain::definition::DefinitionName;
 
 #[resource_error("gts.cf.insight.insight_v3_core.raw_data.v1~")]
 struct RawDataApiError;
@@ -21,7 +22,8 @@ struct RawDataApiError;
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 struct RawDataRequest {
-    table: String,
+    /// The dataset this record belongs to, which must already be declared.
+    dataset: String,
     raw_data: serde_json::Value,
 }
 
@@ -39,10 +41,11 @@ pub(crate) fn register_routes(
         .anonymous()
         .exposed()
         .param(admission::instance_token_parameter())
-        .json_request::<RawDataRequest>(openapi, "Physical table name and raw JSON data")
+        .json_request::<RawDataRequest>(openapi, "The dataset name and the record")
         .no_content_response(StatusCode::NO_CONTENT, "Raw data stored")
         .error_400(openapi)
         .error_401(openapi)
+        .error_404(openapi)
         .error_413(openapi)
         .error_415(openapi)
         .error_429(openapi)
@@ -60,28 +63,16 @@ async fn ingest_raw_data(
     body: Result<Json<RawDataRequest>, JsonRejection>,
 ) -> Result<Response, CanonicalError> {
     let Json(request) = body.map_err(|error| request_rejection(&error))?;
-    let record = parse_record(request).await?;
+    let dataset =
+        DefinitionName::parse(&request.dataset).map_err(|_| not_ready(&request.dataset))?;
 
     state
-        .raw_data()
-        .insert(record)
+        .dataset_ingest()
+        .receive(&dataset, &request.raw_data)
         .await
-        .map_err(|error| store_error(&error))?;
+        .map_err(|error| ingest_error(&dataset, error))?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
-}
-
-async fn parse_record(request: RawDataRequest) -> Result<RawDataRecord, CanonicalError> {
-    let result = tokio::task::spawn_blocking(move || {
-        RawDataRecord::parse(&request.table, &request.raw_data)
-    })
-    .await
-    .map_err(|error| {
-        tracing::error!(error = ?error, "raw data preparation task failed");
-        internal_error()
-    })?;
-
-    result.map_err(raw_data_error)
 }
 
 fn request_rejection(error: &JsonRejection) -> CanonicalError {
@@ -101,46 +92,45 @@ fn request_rejection(error: &JsonRejection) -> CanonicalError {
     RawDataApiError::invalid_argument()
         .with_field_violation(
             "body",
-            "Expected a JSON object containing table and raw_data",
+            "Expected a JSON object containing dataset and raw_data",
             "INVALID",
         )
         .create()
 }
 
-fn raw_data_error(error: RawDataError) -> CanonicalError {
-    match error {
-        RawDataError::Table(source) => RawDataApiError::invalid_argument()
-            .with_field_violation("table", source.to_string(), "INVALID")
-            .create(),
-        RawDataError::Serialization(source) => {
-            tracing::error!(error = ?source, "raw data serialization failed");
-            internal_error()
-        }
-    }
+/// A record can only land in a dataset somebody declared, so a name that is
+/// not one, or names nothing ready, is answered the same way.
+fn not_ready(named: &str) -> CanonicalError {
+    RawDataApiError::not_found(format!(
+        "no dataset named `{named}` is ready to take records"
+    ))
+    .with_resource(named)
+    .create()
 }
 
-fn store_error(error: &StoreError) -> CanonicalError {
+fn ingest_error(dataset: &DefinitionName, error: IngestError) -> CanonicalError {
     match error {
-        StoreError::Timeout => {
-            RawDataApiError::deadline_exceeded("raw data insert timed out").create()
+        IngestError::NotReady => not_ready(dataset.as_str()),
+        IngestError::Table(crate::store::dataset_tables::DatasetTableError::Timeout) => {
+            RawDataApiError::deadline_exceeded("the record could not be stored in time").create()
         }
-        StoreError::ClickHouse(source) => {
-            tracing::error!(error = ?source, "raw data insert failed");
+        IngestError::Unreadable(source) => {
+            tracing::error!(error = ?source, "a record could not be read");
             internal_error()
         }
-        StoreError::Create(source) => {
-            tracing::error!(error = ?source, "the stream's table could not be created");
+        IngestError::Table(source) => {
+            tracing::error!(error = ?source, "a record could not be stored");
             internal_error()
         }
-        StoreError::NoTable => {
-            tracing::error!("the stream's table is absent after it was created");
+        IngestError::Store(source) => {
+            tracing::error!(error = ?source, "the dataset store did not answer");
             internal_error()
         }
     }
 }
 
 fn internal_error() -> CanonicalError {
-    CanonicalError::internal("raw data ingestion failed").create()
+    CanonicalError::internal("the record could not be stored").create()
 }
 
 #[cfg(test)]

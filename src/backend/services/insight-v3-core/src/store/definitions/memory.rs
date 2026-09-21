@@ -1,0 +1,163 @@
+//! The definition store the tests use.
+//!
+//! It keeps definitions in a map, so a test that stores one and reads it back
+//! asserts on behaviour rather than on a database's wire protocol.
+
+use std::collections::BTreeMap;
+use std::sync::Mutex;
+
+use async_trait::async_trait;
+
+use crate::domain::definition::{
+    Change, DefinitionKind, DefinitionName, DefinitionStoreError, Definitions, Lookup, NamePage,
+    Page,
+};
+
+#[derive(Debug, Default)]
+pub(crate) struct MemoryDefinitions {
+    stored: Mutex<BTreeMap<(&'static str, String), serde_json::Value>>,
+    /// Set to fail every write, for the cases about a store that is down.
+    failing: bool,
+}
+
+impl MemoryDefinitions {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    /// A store that refuses every write, for the cases about one that is down.
+    pub(crate) fn refusing() -> Self {
+        Self {
+            failing: true,
+            ..Self::default()
+        }
+    }
+
+    fn key(kind: DefinitionKind, name: &DefinitionName) -> (&'static str, String) {
+        (kind.table(), name.as_str().to_owned())
+    }
+
+    fn write(&self, kind: DefinitionKind, name: &DefinitionName, body: &serde_json::Value) {
+        let mut stored = self.lock();
+        stored.insert(Self::key(kind, name), body.clone());
+    }
+
+    fn lock(
+        &self,
+    ) -> std::sync::MutexGuard<'_, BTreeMap<(&'static str, String), serde_json::Value>> {
+        self.stored
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn refuse() -> DefinitionStoreError {
+        DefinitionStoreError::Database(sea_orm::DbErr::Custom("store is down".to_owned()))
+    }
+}
+
+#[cfg(test)]
+mod tests;
+
+#[async_trait]
+impl Lookup for MemoryDefinitions {
+    async fn get(
+        &self,
+        kind: DefinitionKind,
+        name: &DefinitionName,
+    ) -> Result<Option<serde_json::Value>, DefinitionStoreError> {
+        Ok(self.lock().get(&Self::key(kind, name)).cloned())
+    }
+}
+
+#[async_trait]
+impl Definitions for MemoryDefinitions {
+    async fn put(
+        &self,
+        kind: DefinitionKind,
+        name: &DefinitionName,
+        body: &serde_json::Value,
+    ) -> Result<(), DefinitionStoreError> {
+        if self.failing {
+            return Err(Self::refuse());
+        }
+        self.write(kind, name, body);
+
+        Ok(())
+    }
+
+    async fn list(&self, kind: DefinitionKind) -> Result<Vec<String>, DefinitionStoreError> {
+        Ok(self
+            .lock()
+            .keys()
+            .filter(|(table, _)| *table == kind.table())
+            .map(|(_, name)| name.clone())
+            .collect())
+    }
+
+    async fn page(
+        &self,
+        kind: DefinitionKind,
+        needle: &str,
+        page: Page,
+    ) -> Result<NamePage, DefinitionStoreError> {
+        let needle = needle.to_lowercase();
+        let matched: Vec<String> = self
+            .lock()
+            .iter()
+            .filter(|((table, _), _)| *table == kind.table())
+            .filter(|((_, name), body)| {
+                name.to_lowercase().contains(&needle)
+                    || body.to_string().to_lowercase().contains(&needle)
+            })
+            .map(|((_, name), _)| name.clone())
+            .collect();
+
+        let total = matched.len() as u64;
+        let names = matched
+            .into_iter()
+            .skip(usize::try_from(page.offset()).unwrap_or(usize::MAX))
+            .take(usize::try_from(page.limit()).unwrap_or(usize::MAX))
+            .collect();
+
+        Ok(NamePage { names, total })
+    }
+
+    async fn delete(
+        &self,
+        kind: DefinitionKind,
+        name: &DefinitionName,
+    ) -> Result<bool, DefinitionStoreError> {
+        Ok(self.lock().remove(&Self::key(kind, name)).is_some())
+    }
+
+    async fn apply(&self, changes: &[Change]) -> Result<(), DefinitionStoreError> {
+        if self.failing {
+            return Err(Self::refuse());
+        }
+        // INVARIANT: all or nothing, as the real transaction is.
+        let mut stored = self.lock();
+        let mut applied = stored.clone();
+
+        for change in changes {
+            match change {
+                Change::Put(kind, name, body) => {
+                    applied.insert(Self::key(*kind, name), body.clone());
+                }
+                Change::Create(kind, name, body) => {
+                    let key = Self::key(*kind, name);
+                    if applied.contains_key(&key) {
+                        return Err(DefinitionStoreError::NameTaken(name.as_str().to_owned()));
+                    }
+                    applied.insert(key, body.clone());
+                }
+                Change::Delete(kind, name) => {
+                    applied.remove(&Self::key(*kind, name));
+                }
+            }
+        }
+
+        *stored = applied;
+
+        Ok(())
+    }
+}

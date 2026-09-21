@@ -44,6 +44,11 @@ bronze:
   config.field_value_map:
     - $ref: ../templates/github_task.yaml#/templates/issue_type_kind_task
 
+  config.field_value_defaults:
+    # Unmapped type ids are unclassified by decision, not by accident:
+    # `assert_task_field_value_defaults_exist` requires this row.
+    - $ref: ../templates/github_task.yaml#/templates/github_issue_type_default_unknown
+
   bronze_github.issue_types:
     - $ref: ../templates/github_task.yaml#/templates/issue_type_task
 

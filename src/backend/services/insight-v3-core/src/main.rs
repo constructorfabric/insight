@@ -1,20 +1,11 @@
 mod api;
-mod catalog;
 mod chat;
 mod config;
-mod custom;
-mod dashboard;
-mod definitions;
+mod domain;
 mod gear;
-mod identity;
 mod mcp;
-mod metric_query;
 mod migration;
-mod raw_data;
-mod tables;
-mod time_window;
-mod undated;
-mod widget;
+mod store;
 
 #[cfg(test)]
 mod window_live_tests;

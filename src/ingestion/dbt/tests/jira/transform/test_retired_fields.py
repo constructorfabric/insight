@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from conftest import Scenario
+from conftest import Scenario, case
 from helpers import OBSERVED_AT, event, field, issue, item
 
 SEVERITY = "customfield_10003"
@@ -42,15 +42,13 @@ def _severity_history(key: str = "TST-1") -> list[dict[str, Any]]:
     return [event(key, 101, "2026-01-06T10:00:00", [item(SEVERITY, frm=None, frm_str=None, to="9001", to_str="High")])]
 
 
+@case(fields=[SEVERITY_FIELD], issues=[issue("TST-1", fields={})], events=_severity_history())
 def test_absent_key_after_history_yields_one_withdrawal(scenario: Scenario) -> None:
     """The field was set, then left the issue's configuration.
 
     The journal must end at "holds nothing", and it must say so as an event
     rather than by having its last row quietly disagree with the issue.
     """
-    scenario.seed(fields=[SEVERITY_FIELD], issues=[issue("TST-1", fields={})], events=_severity_history())
-    scenario.build()
-
     rows = scenario.journal(field=SEVERITY)
     assert [(r["event_kind"], r["value_ids"]) for r in rows] == [
         ("synthetic_initial", []),
@@ -62,14 +60,12 @@ def test_absent_key_after_history_yields_one_withdrawal(scenario: Scenario) -> N
     assert scenario.round_trip_holds()
 
 
+@case(fields=[SEVERITY_FIELD], issues=[issue("TST-1", fields={})], events=_severity_history())
 def test_the_withdrawal_is_dated_by_the_observation(scenario: Scenario) -> None:
     """Jira exposes no date for a configuration change, so the honest stamp is
     when the absence was seen — the issue's own extraction mark. That is also
     the stamp the round trip treats as the issue's freshness, so the event can
     never be newer than the state it is compared against."""
-    scenario.seed(fields=[SEVERITY_FIELD], issues=[issue("TST-1", fields={})], events=_severity_history())
-    scenario.build()
-
     withdrawal = [r for r in scenario.journal(field=SEVERITY) if r["event_kind"] == "retired_field"]
     assert len(withdrawal) == 1
     assert withdrawal[0]["event_id"] == "retired:TST-1"
@@ -78,6 +74,9 @@ def test_the_withdrawal_is_dated_by_the_observation(scenario: Scenario) -> None:
     assert withdrawal[0]["author_id"] is None
 
 
+# No `case`, so this scenario gets a warehouse of its own: its journal is meant
+# NOT to reconcile — that is the point of the test below — and sharing a build
+# would report it as a defect in every neighbour that asserts the round trip.
 def test_a_present_but_empty_key_is_not_a_withdrawal(scenario: Scenario) -> None:
     """The field still applies to the issue and is unset — an ordinary state.
 
@@ -98,35 +97,28 @@ def test_a_present_but_empty_key_is_not_a_withdrawal(scenario: Scenario) -> None
     assert not scenario.round_trip_holds()
 
 
+@case(fields=[SEVERITY_FIELD], issues=[issue("TST-1", fields={})], events=_severity_history())
 def test_a_withdrawal_keeps_the_field_identifier_type(scenario: Scenario) -> None:
     """`value_id_type` is asserted stable per (source, field), so a row of that
     field may not carry a different one just because its arrays are empty."""
-    scenario.seed(fields=[SEVERITY_FIELD], issues=[issue("TST-1", fields={})], events=_severity_history())
-    scenario.build()
-
     types = {r["value_id_type"] for r in scenario.journal(field=SEVERITY)}
     assert types == {"opaque_id"}
 
 
+@case(
+    fields=[SEVERITY_FIELD, PRODUCTS_FIELD],
+    issues=[issue("TST-1", fields={})],
+    events=_severity_history()
+    + [
+        event(
+            "TST-1", 102, "2026-01-07T10:00:00", [item(PRODUCTS, frm=None, frm_str=None, to="[7001]", to_str="Storage")]
+        )
+    ],
+)
 def test_cardinality_decides_how_the_withdrawal_reads(scenario: Scenario) -> None:
     """A single field is `set` to nothing; a multi field has its elements
     removed. Same rule the cardinality contract states for a value going away.
     """
-    scenario.seed(
-        fields=[SEVERITY_FIELD, PRODUCTS_FIELD],
-        issues=[issue("TST-1", fields={})],
-        events=_severity_history()
-        + [
-            event(
-                "TST-1",
-                102,
-                "2026-01-07T10:00:00",
-                [item(PRODUCTS, frm=None, frm_str=None, to="[7001]", to_str="Storage")],
-            )
-        ],
-    )
-    scenario.build()
-
     withdrawals = {
         r["field_id"]: (r["field_cardinality"], r["delta_action"])
         for r in scenario.journal(issue="TST-1")

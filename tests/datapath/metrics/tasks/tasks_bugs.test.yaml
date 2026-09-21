@@ -9,7 +9,7 @@ description: >
   to a kind: bug / task / unknown. Per (person, close-day):
     tasks_closed   = every closed issue, bugs included;
     bugs_fixed     = the bug-kind ones;
-    closed_non_bug = the known non-bug ones (an unknown kind joins neither subset).
+    closed_task    = the known task-kind ones (an unknown kind joins neither).
   bugs_ratio = 100 * sum(bugs_fixed) / sum(tasks_closed) — a share of closed
   issues, so a bug counts in BOTH numerator and denominator and 100% is the
   ceiling.
@@ -52,6 +52,12 @@ bronze:
   config.field_value_map:
     - $ref: ../templates/jira_task.yaml#/templates/value_type_task
     - $ref: ../templates/jira_task.yaml#/templates/value_type_bug
+
+  config.field_value_defaults:
+    # Unmapped type ids are unclassified by decision, not by accident:
+    # `assert_task_field_value_defaults_exist` requires this row.
+    - $ref: ../templates/jira_task.yaml#/templates/jira_issue_type_default_unknown
+    - $ref: ../templates/jira_task.yaml#/templates/jira_resolution_default_unknown
 
   bronze_jira.jira_fields:
     - $ref: ../templates/jira_task.yaml#/templates/field_status

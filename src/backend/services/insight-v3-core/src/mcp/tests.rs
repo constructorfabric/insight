@@ -10,15 +10,12 @@ use tower::ServiceExt as _;
 
 use super::*;
 use crate::api::AppState;
-use crate::catalog::Catalog;
 use crate::chat::ChatClient;
 use crate::config::McpConfig;
-use crate::definitions::memory::MemoryDefinitions;
-use crate::identity::IdentityClient;
+use crate::domain::query::metric_query::{MetricRunner, People};
 use crate::mcp::test_support::Issuer;
-use crate::metric_query::{MetricRunner, People};
-use crate::raw_data::RawDataStore;
-use crate::tables::TableStore;
+use crate::store::definitions::memory::MemoryDefinitions;
+use crate::store::identity::IdentityClient;
 
 type R = Result<(), Box<dyn Error>>;
 
@@ -35,13 +32,11 @@ fn surfaces() -> tools::CustomSurfaces {
     };
 
     let state = Arc::new(AppState::new(
-        RawDataStore::new(client()),
-        TableStore::new(client()),
-        Arc::new(MemoryDefinitions::new()),
         MetricRunner::new(client(), People::new("identity")),
+        Arc::new(MemoryDefinitions::new()),
         ChatClient::keyless(),
         identity,
-        Catalog::new(client(), "insight".to_owned()),
+        crate::api::Datasets::offline("http://offline.invalid"),
     ));
 
     tools::CustomSurfaces::new(state)
@@ -269,8 +264,8 @@ async fn an_authorized_client_initializes_and_lists_the_tools_over_http() -> R {
             "arrange_dashboard",
             "delete_definition",
             "get_definition",
+            "list_datasets",
             "list_definitions",
-            "list_tables",
             "put_dashboard",
             "put_metric",
             "put_widget",

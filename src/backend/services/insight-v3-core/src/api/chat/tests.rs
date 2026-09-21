@@ -12,16 +12,55 @@ use tower::ServiceExt as _;
 use super::*;
 use crate::api::AppState;
 use crate::chat::{ChatClient, Proposal};
-use crate::definitions::Definitions;
-use crate::definitions::memory::MemoryDefinitions;
-use crate::metric_query::MetricRunner;
-use crate::raw_data::RawDataStore;
-use crate::tables::TableStore;
+use crate::domain::datasets::Datasets as _;
+use crate::domain::definition::Definitions;
+use crate::domain::query::metric_query::MetricRunner;
+use crate::store::definitions::memory::MemoryDefinitions;
 
 struct TestHarness {
     mock: Mock,
     router: Router,
     definitions: Arc<dyn Definitions>,
+}
+
+/// The one dataset the assistant reads in these cases.
+fn a_ready_dataset(url: &str) -> crate::api::Datasets {
+    let rows = crate::store::datasets::memory::MemoryDatasets::at(chrono::Utc::now());
+    let name = crate::domain::definition::DefinitionName::parse("commits")
+        .unwrap_or_else(|error| panic!("the name parses: {error}"));
+    let declaration = json!({
+        "title": "Commits",
+        "fields": [
+            { "name": "author_email", "path": "author_email", "type": "string" },
+            { "name": "day", "path": "day", "type": "string" },
+            { "name": "lines", "path": "lines", "type": "int" }
+        ]
+    });
+
+    futures::executor::block_on(async {
+        let attempt = rows
+            .take_create(&name, &declaration)
+            .await
+            .unwrap_or_else(|error| panic!("the dataset is claimed: {error}"))
+            .attempt();
+        for written in [
+            crate::domain::datasets::Finish::Provisioned("ds_commits_1".to_owned()),
+            crate::domain::datasets::Finish::Ready,
+        ] {
+            rows.finish(&name, &attempt.token, written)
+                .await
+                .unwrap_or_else(|error| panic!("the dataset is published: {error}"));
+        }
+    });
+
+    crate::api::Datasets::new(
+        std::sync::Arc::new(rows),
+        crate::store::dataset_tables::DatasetTables::new(insight_clickhouse::Client::new(
+            insight_clickhouse::Config::new(url, "insight_datasets"),
+        )),
+        "insight_datasets".to_owned(),
+        50,
+    )
 }
 
 impl TestHarness {
@@ -31,7 +70,7 @@ impl TestHarness {
 
     /// A harness whose metric queries go somewhere that answers them, for the
     /// cases about what an answer does with the rows it got back.
-    #[allow(clippy::unused_async)]
+    #[expect(clippy::unused_async, reason = "the harness mirrors the async one")]
     async fn with_metrics(chat: ChatClient, metrics: Option<&str>) -> Self {
         let mut mock = Mock::new();
         mock.non_exhaustive();
@@ -39,32 +78,19 @@ impl TestHarness {
         let url = mock.url();
         let definitions: Arc<dyn Definitions> = Arc::new(MemoryDefinitions::new());
         let state = Arc::new(AppState::new(
-            RawDataStore::new(insight_clickhouse::Client::new(
-                insight_clickhouse::Config::new(url, "insight"),
-            )),
-            TableStore::new(insight_clickhouse::Client::new(
-                insight_clickhouse::Config::new(url, "insight"),
-            )),
-            definitions.clone(),
             MetricRunner::new(
                 insight_clickhouse::Client::new(insight_clickhouse::Config::new(
                     metrics.unwrap_or(url),
                     "insight",
                 )),
-                crate::metric_query::People::new("identity"),
+                crate::domain::query::metric_query::People::new("identity"),
             ),
+            definitions.clone(),
             chat,
-            crate::identity::IdentityClient::fixed(true),
-            crate::catalog::Catalog::new(
-                insight_clickhouse::Client::new(insight_clickhouse::Config::new(
-                    "http://catalogue.invalid",
-                    "insight",
-                )),
-                "insight".to_owned(),
-            ),
+            crate::store::identity::IdentityClient::fixed(true),
+            a_ready_dataset(url),
         ));
-        let router =
-            crate::api::definitions::register_routes(Router::new(), &openapi, state.clone());
+        let router = crate::api::definitions::register_routes(Router::new(), &openapi, &state);
         let router = register_routes(router, &openapi, state);
 
         Self {
@@ -101,10 +127,22 @@ impl TestHarness {
         self.mock.add(handlers::provide(Vec::<String>::new()));
     }
 
+    /// Whether the store holds anything under `name`.
+    async fn holds(&self, kind: DefinitionKind, name: &str) -> bool {
+        let name = crate::domain::definition::DefinitionName::parse(name)
+            .unwrap_or_else(|error| panic!("test name must parse: {error}"));
+
+        self.definitions
+            .get(kind, &name)
+            .await
+            .unwrap_or_else(|error| panic!("the store must answer: {error}"))
+            .is_some()
+    }
+
     /// What the store holds under `name`, for the cases about what a request
     /// wrote rather than what it answered.
     async fn stored(&self, kind: DefinitionKind, name: &str) -> serde_json::Value {
-        let name = crate::definitions::DefinitionName::parse(name)
+        let name = crate::domain::definition::DefinitionName::parse(name)
             .unwrap_or_else(|error| panic!("test name must parse: {error}"));
 
         self.definitions
@@ -156,7 +194,7 @@ impl TestResponse {
         self.status
     }
 
-    #[allow(clippy::unused_async)]
+    #[expect(clippy::unused_async, reason = "the harness mirrors the async one")]
     async fn json(&self) -> serde_json::Value {
         serde_json::from_slice(&self.body)
             .unwrap_or_else(|error| panic!("response body must be JSON: {error}"))
@@ -164,7 +202,7 @@ impl TestResponse {
 }
 
 #[derive(Debug, Default, Deserialize)]
-#[allow(
+#[expect(
     dead_code,
     reason = "mirrors the full response shape; not every field is asserted on"
 )]
@@ -177,7 +215,7 @@ struct TestCreated {
 #[derive(Debug, Deserialize)]
 struct ChatCreatedBody {
     #[serde(default)]
-    #[allow(dead_code)]
+    #[expect(dead_code, reason = "the wire shape carries it; no case asserts it")]
     reply: String,
     #[serde(default)]
     created: TestCreated,
@@ -191,9 +229,8 @@ fn empty_answer_proposal() -> Proposal {
         reply: "Here is who has committed the most overall.".to_owned(),
         query: Some(
             serde_json::from_value(json!({
-                "database": "silver",
-                "table": "fct_git_commit",
-                "fields": [{ "column": "author_email", "type": "string", "as_name": "author" }],
+                                "dataset": "commits",
+                "fields": [{ "field": "author_email", "type": "string", "as_name": "author" }],
                 "group_by": ["author"],
                 "filters": []
             }))
@@ -209,8 +246,8 @@ fn single_existing_widget_proposal() -> Proposal {
         metric: Some((
             "m".to_owned(),
             json!({
-                "table": "events",
-                "fields": [{ "json": "day", "type": "string", "as_name": "day" }]
+                "dataset": "commits",
+                "fields": [{ "field": "day", "type": "string", "as_name": "day" }]
             }),
         )),
         widgets: vec![(
@@ -230,8 +267,8 @@ async fn a_name_already_in_use_is_replaced_and_reported_as_updated() {
         .put_json(
             "/v1/metrics/was_here_first",
             json!({
-                "table": "events",
-                "fields": [{ "json": "day", "type": "string", "as_name": "day" }]
+                "dataset": "commits",
+                "fields": [{ "field": "day", "type": "string", "as_name": "day" }]
             }),
         )
         .await;
@@ -269,10 +306,10 @@ fn whole_board_proposal() -> Proposal {
         metric: Some((
             "delivery_metric".to_owned(),
             json!({
-                "table": "events",
+                "dataset": "commits",
                 "fields": [
-                    { "json": "day", "type": "string", "as_name": "day" },
-                    { "json": "lines", "type": "int", "agg": "sum", "as_name": "lines" }
+                    { "field": "day", "type": "string", "as_name": "day" },
+                    { "field": "lines", "type": "int", "agg": "sum", "as_name": "lines" }
                 ],
                 "group_by": ["day"]
             }),
@@ -374,7 +411,7 @@ async fn an_answer_whose_query_found_nothing_says_there_is_no_data()
 
     assert_eq!(
         body["reply"],
-        "No data: that query returned no rows from silver.fct_git_commit."
+        "No data: that query returned no rows from commits."
     );
     server.abort();
 
@@ -402,4 +439,63 @@ async fn an_answer_with_rows_keeps_the_reply_it_came_with() -> Result<(), Box<dy
     server.abort();
 
     Ok(())
+}
+
+fn a_widget_naming_a_column_the_metric_lacks() -> Proposal {
+    Proposal::Create {
+        reply: "ok".to_owned(),
+        metric: Some((
+            "m".to_owned(),
+            json!({
+                "dataset": "commits",
+                "fields": [{ "field": "day", "type": "string", "as_name": "day" }]
+            }),
+        )),
+        widgets: vec![(
+            "chart".to_owned(),
+            json!({ "type": "table", "metric": "m", "columns": ["nowhere"] }),
+        )],
+        dashboard: None,
+    }
+}
+
+fn a_metric_that_cannot_be_read_as_a_query() -> Proposal {
+    Proposal::Create {
+        reply: "ok".to_owned(),
+        metric: Some(("m".to_owned(), json!({ "dataset": "commits" }))),
+        widgets: Vec::new(),
+        dashboard: None,
+    }
+}
+
+#[tokio::test]
+async fn a_proposal_with_one_refused_body_stores_none_of_it() {
+    let harness = TestHarness::new(ChatClient::scripted(
+        a_widget_naming_a_column_the_metric_lacks,
+    ))
+    .await;
+    harness.queue_chat_context();
+
+    let refused = harness.post_chat("build me a board").await;
+
+    assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+    assert!(
+        !harness.holds(DefinitionKind::Metric, "m").await,
+        "the metric of a refused batch must not be stored"
+    );
+    assert!(!harness.holds(DefinitionKind::Widget, "chart").await);
+}
+
+#[tokio::test]
+async fn a_proposed_metric_that_cannot_be_read_as_a_query_is_refused_before_it_is_stored() {
+    let harness = TestHarness::new(ChatClient::scripted(
+        a_metric_that_cannot_be_read_as_a_query,
+    ))
+    .await;
+    harness.queue_chat_context();
+
+    let refused = harness.post_chat("build me a metric").await;
+
+    assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+    assert!(!harness.holds(DefinitionKind::Metric, "m").await);
 }

@@ -11,6 +11,8 @@ use rmcp::transport::streamable_http_server::session::local::LocalSessionManager
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 use tokio_util::sync::CancellationToken;
 
+use url::Url;
+
 use crate::config::McpConfig;
 
 pub(crate) mod auth;
@@ -24,6 +26,23 @@ mod tests;
 
 const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
 
+/// The hosts this server answers to.
+///
+/// The guard exists to stop a browser on the operator's machine reaching a
+/// private server by name, so the advertised origin has to be among them or
+/// no deployed client is answered at all.
+fn allowed_hosts(config: &McpConfig) -> Vec<String> {
+    let mut hosts = vec!["localhost".to_owned()];
+    if let Some(advertised) = Url::parse(&config.public_url)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_owned))
+    {
+        hosts.push(advertised);
+    }
+
+    hosts
+}
+
 pub(crate) fn router(
     config: &McpConfig,
     surfaces: tools::CustomSurfaces,
@@ -36,7 +55,7 @@ pub(crate) fn router(
             StreamableHttpServerConfig::default()
                 .with_legacy_session_mode(false)
                 .with_json_response(true)
-                .with_allowed_hosts(["localhost"])
+                .with_allowed_hosts(allowed_hosts(config))
                 .with_max_request_body_bytes(MAX_REQUEST_BODY_BYTES)
                 .with_cancellation_token(cancellation),
         );

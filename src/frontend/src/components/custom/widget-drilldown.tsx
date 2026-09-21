@@ -186,7 +186,7 @@ function StoredMetric({ name }: { name: string }) {
     );
   }
 
-  return <MetricSummary definition={definition.data} />;
+  return <MetricSummary definition={definition.data.definition} />;
 }
 
 function Rows({
@@ -199,9 +199,9 @@ function Rows({
   const definition = useQuery(metricQuery(metric));
 
   // The rows have to be the rows behind the number on the card, so they take
-  // the card's own window — and a metric with no clock of its own cannot be
-  // windowed at all.
-  const windowed = options && Boolean(definition.data?.time);
+  // the card's own window — and a metric nothing dates cannot be windowed at
+  // all.
+  const windowed = options && Boolean(definition.data?.clock);
   const result = useQuery({
     ...metricResultQuery(metric, windowed ? options : undefined),
     enabled: definition.isSuccess,

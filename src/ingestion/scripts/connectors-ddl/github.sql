@@ -412,7 +412,9 @@ CREATE TABLE IF NOT EXISTS bronze_github.projects_v2
     `public` Nullable(Bool),
     `closed` Nullable(Bool),
     `created_at` Nullable(String),
-    `updated_at` Nullable(String)
+    `updated_at` Nullable(String),
+    `total_items` Nullable(Int64),
+    `draft_items` Nullable(Int64)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
@@ -604,7 +606,11 @@ CREATE TABLE IF NOT EXISTS bronze_github.pull_request_timeline_events
     `target_id` Nullable(Int64),
     `label_name` Nullable(String),
     `state_reason` Nullable(String),
-    `merge_commit_sha` Nullable(String)
+    `merge_commit_sha` Nullable(String),
+    `link_target_type` Nullable(String),
+    `link_target_number` Nullable(Int64),
+    `link_target_repo_full_name` Nullable(String),
+    `is_cross_repository` Nullable(Bool)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
