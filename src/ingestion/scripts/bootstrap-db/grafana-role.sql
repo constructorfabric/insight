@@ -13,3 +13,10 @@ GRANT SELECT ON insight.* TO grafana_ro;
 GRANT SELECT ON presentation.* TO grafana_ro;
 GRANT SELECT ON product_usage.* TO grafana_ro;
 GRANT SELECT ON ingestion_history.* TO grafana_ro;
+GRANT SELECT ON config.* TO grafana_ro;
+
+-- The disk-usage and slow-query dashboards read these two system tables;
+-- without an explicit grant the server refuses SELECT on them. system.tables
+-- takes no grant but is filtered by the grants above.
+GRANT SELECT ON system.parts TO grafana_ro;
+GRANT SELECT ON system.query_log TO grafana_ro;
