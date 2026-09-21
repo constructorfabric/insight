@@ -22,6 +22,9 @@ const UNNAMED: &str = "migration";
 /// The name the first migration answers to now.
 const FIRST: &str = "m20260907_000001_definitions";
 
+/// The table sea-orm keeps the ledger in.
+const LEDGER: &str = "seaql_migrations";
+
 pub struct Migrator;
 
 #[async_trait::async_trait]
@@ -45,14 +48,18 @@ impl MigratorTrait for Migrator {
 /// there. Nothing is applied here, and a ledger that never held the old name
 /// is left alone.
 pub(crate) async fn name_the_first_migration(db: &DatabaseConnection) -> Result<(), DbErr> {
+    // A database this service has never written has no ledger to read, which
+    // is the same as having nothing to rename. Every other failure is reported:
+    // a rename skipped because the database was briefly unreachable would leave
+    // the migrator to abort on the name it cannot find, which reads as a
+    // missing migration rather than as the database being down.
+    if !SchemaManager::new(db).has_table(LEDGER).await? {
+        return Ok(());
+    }
+
     let backend = sea_orm::ConnectionTrait::get_database_backend(db);
     let held = Statement::from_sql_and_values(backend, holds(), [UNNAMED.into(), FIRST.into()]);
-
-    // A database this service has never written has no ledger to read, which
-    // is the same as having nothing to rename.
-    let Ok(rows) = sea_orm::ConnectionTrait::query_all_raw(db, held).await else {
-        return Ok(());
-    };
+    let rows = sea_orm::ConnectionTrait::query_all_raw(db, held).await?;
 
     let mut names = Vec::with_capacity(rows.len());
     for row in &rows {
@@ -124,7 +131,7 @@ fn statements(script: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod ledger_tests {
-    use super::{FIRST, RENAME_FIRST, UNNAMED, holds, needs_naming};
+    use super::{FIRST, LEDGER, RENAME_FIRST, UNNAMED, holds, needs_naming};
 
     /// An installation that ran the build before the migrations named
     /// themselves: sea-orm refuses to run at all against a ledger naming a
@@ -165,7 +172,7 @@ mod ledger_tests {
 
     #[test]
     fn the_ledger_is_read_by_the_two_names_it_might_hold() {
-        assert!(holds().contains("FROM seaql_migrations"));
+        assert!(holds().contains(&format!("FROM {LEDGER}")));
         assert!(holds().contains("version IN (?, ?)"));
     }
 }
