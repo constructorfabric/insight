@@ -374,6 +374,29 @@ sources:
             - { key: billing_month, label: Billing month }
             - { key: month_to_date_usd, label: Month to date, type: number }
             - { key: covers_days, label: Days covered, type: number }
+      - key: daily_credits
+        # The count itself, which every priced or unpriced tenant gets. A day's
+        # credits are settled once the vendor has published them; unlike the
+        # month-to-date figures above, nothing rewrites them later.
+        revision: !rolling_days 0
+        evidence_granularity: source_summary
+        evidence_presentation: &credit_day_row
+          show_value: true
+          detail_columns:
+            - { key: credits, label: Credits, type: number }
+            - { key: credit_kind, label: Meter }
+            - { key: price_minor_units, label: Price per credit }
+            - { key: report_currency, label: Currency }
+      - key: daily_credit_cost_usd
+        # An ESTIMATE: a credit count multiplied by an operator-supplied rate,
+        # not an amount a vendor invoiced. Absent entirely — not zero — for a
+        # tenant that has priced no credits, so a missing figure reads as
+        # "unpriced" rather than "free". Revision follows daily_credits: the
+        # count is settled, and only a restated rate moves the money, which
+        # recomputes on read rather than arriving as a supplier revision.
+        revision: !rolling_days 0
+        evidence_granularity: source_summary
+        evidence_presentation: *credit_day_row
     dimensions:
       - tool
       - seat_tier

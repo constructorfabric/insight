@@ -77,7 +77,16 @@ name: chatgpt-team
 #   sync, which the sync workflow runs before dbt. An instance whose first run
 #   of the envelope stream fails has no table for the gate to read, and its dbt
 #   step fails until that stream succeeds once.
-version: "3.0.0"
+# 3.2.0: adds chatgpt_team__ai_credit_usage, the connector's contribution to
+#   silver.class_ai_credit_usage. It carries every person-day the vendor
+#   reports credits for, deliberately without chatgpt_team__ai_dev_usage's
+#   emission filter: that filter admits a row on activity counters, and a
+#   person-day can carry credits while every activity counter reads zero, so
+#   routing spend through it would drop real charges. No new stream and no new
+#   Bronze table — it reads the leaderboard Bronze the connector already
+#   collects. MINOR per ADR-0015: the dbt step has to re-run so the new model
+#   materialises; nothing already stored changes meaning.
+version: "3.2.0"
 # Daily at 04:00 UTC — off-peak. The customer's proxy runs a single browser
 # instance, so we avoid scheduling chatgpt-team next to anything else that
 # may also hit it (same rationale as claude-team).

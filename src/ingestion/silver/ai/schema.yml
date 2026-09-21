@@ -11,6 +11,7 @@ sources:
     schema: config
     tables:
       - name: ai_seat_tier_map
+      - name: ai_credit_price
 
 models:
   - name: class_ai_dev_usage
@@ -558,3 +559,65 @@ models:
         description: "When the record was collected (_airbyte_extracted_at)."
         tests:
           - not_null
+
+  - name: class_ai_credit_usage
+    description: >
+      Per-person readings of AI usage credits, across vendors. Grain: one row
+      per (tenant, source, person, day). A credit is a vendor-internal
+      consumption unit, not money: it is held as a count and priced only at read
+      time in gold, from config.ai_credit_price, so restating a price restates
+      the whole history rather than leaving stored amounts that disagree with
+      the rate that produced them. Distinct from class_ai_overage_daily, which
+      carries a cumulative month-to-date figure the vendor itself denominated in
+      minor units plus an ISO currency. Contributors admit a row on credits
+      alone and never on an activity counter — a person-day can carry credits
+      while every activity counter the vendor publishes reads zero.
+    columns:
+      - name: insight_tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: source_id
+        description: "Connector instance identifier"
+        tests:
+          - not_null
+      - name: unique_key
+        description: "Composite dedup key: tenant-source-email-YYYY-MM-DD"
+        tests:
+          - not_null
+          - unique
+      - name: email
+        description: "Person's work email (lowercased, trimmed)."
+        tests:
+          - not_null
+      - name: day
+        description: "The day the credits were consumed. The grain of this relation."
+        tests:
+          - not_null
+      - name: tool
+        description: "Dev-tool discriminator ('codex')."
+        tests:
+          - not_null
+      - name: credits
+        description: >
+          Credits consumed on this day, as a Decimal so sums stay stable under
+          parallel aggregation. Always above zero — a zero-credit person-day is
+          not a charge and is not emitted.
+        tests:
+          - not_null
+      - name: credit_kind
+        description: >
+          Which meter the count came from. 'on_demand' where the vendor bills
+          the credits beyond an allowance, which is the only kind any current
+          contributor publishes. Named rather than assumed so a vendor that
+          later exposes a total meter does not silently land in the same column.
+        tests:
+          - not_null
+      - name: source
+        description: "Vendor discriminator ('chatgpt_team')."
+        tests:
+          - not_null
+      - name: data_source
+        description: "Connector data_source tag."
+      - name: collected_at
+        description: "When the record was collected (_airbyte_extracted_at)."

@@ -337,4 +337,98 @@ FROM seat_day_step
 WHERE tenant_id IS NOT NULL
   AND entity_id IS NOT NULL
   AND metric_date IS NOT NULL
+
+UNION ALL
+
+-- Usage credits, and what they cost where an operator has priced them.
+--
+-- Two measures from one row, and the count is emitted whether or not a price
+-- exists. A credit count is a measurement; its price is a decision held in
+-- config.ai_credit_price, and a tenant that has not made that decision still
+-- gets to see consumption. The array is built so the money measure is simply
+-- absent without a price — never a zero, which would read as "this cost
+-- nothing" rather than "nobody has said what a credit costs".
+--
+-- INVARIANT: the price is applied here, at read time, and the product is never
+-- stored. Correcting a rate restates the whole history on the next read. The
+-- raw count travels beside the money for exactly that reason.
+--
+-- The money figure is an ESTIMATE and is labelled one in `details`: it is a
+-- credit count multiplied by an operator-supplied rate, not an amount any
+-- vendor invoiced.
+SELECT
+    assumeNotNull(tenant_id)                    AS tenant_id,
+    'ai_cost'                                   AS source_key,
+    'person'                                    AS entity_type,
+    assumeNotNull(entity_id)                    AS entity_id,
+    assumeNotNull(metric_date)                  AS metric_date,
+    toNullable(observed_at)                     AS observed_at,
+    credit_measure.1                            AS measure_key,
+    concat(
+        toString(metric_date), ':', credit_measure.1, ':',
+        hex(sipHash64(concat(coalesce(source_id, ''), ':', coalesce(source, ''))))
+    )                                           AS record_id,
+    'seat_day'                                  AS record_kind,
+    'source_summary'                            AS granularity,
+    formatDateTime(metric_date, '%Y-%m-%d')     AS record_label,
+    toNullable(toFloat64(credit_measure.2))     AS contribution,
+    CAST(NULL AS Nullable(String))              AS subject_key,
+    credit_dimensions                           AS dimensions,
+    map(
+        'credits', toString(credits),
+        'credit_kind', credit_kind,
+        -- Empty where no price row applies, so a reader can tell an unpriced
+        -- tenant from one priced at zero.
+        'price_minor_units', if(has_price, toString(price_minor_units), ''),
+        'price_currency', if(has_price, price_currency, ''),
+        'report_currency', if(has_price, report_currency, ''),
+        'is_estimate', if(has_price, 'true', '')
+    )                                           AS details
+FROM (
+    SELECT
+        credit.insight_tenant_id                AS tenant_id,
+        credit.email                            AS entity_id,
+        credit.source_id,
+        credit.source,
+        credit.day                              AS metric_date,
+        toDateTime64(credit.collected_at, 3)    AS observed_at,
+        credit.credits,
+        credit.credit_kind,
+        CAST(
+            [
+                tuple('tool', credit.tool, {{ ai_tool_label('credit.tool') }})
+            ] AS Array(Tuple(key String, value String, label Nullable(String)))
+        )                                       AS credit_dimensions,
+        price.unique_key != ''                  AS has_price,
+        price.price_minor_units,
+        price.price_currency,
+        price.report_currency,
+        -- Minor units per credit × credits × FX, then to major units. Kept in
+        -- Decimal to the last step so a sub-cent rate survives the multiply.
+        toFloat64(
+            credit.credits * price.price_minor_units * price.fx_to_report
+        ) / 100                                 AS credit_cost
+    FROM {{ ref('class_ai_credit_usage') }} AS credit FINAL
+    LEFT JOIN (
+        SELECT unique_key, tenant_id, insight_source_id, source,
+               price_minor_units, price_currency, fx_to_report, report_currency
+        FROM {{ source('config', 'ai_credit_price') }} FINAL
+        WHERE is_deleted = 0
+    ) AS price
+           ON price.tenant_id = credit.insight_tenant_id
+          AND price.source = credit.source
+          -- Empty binds every instance of the vendor, as in ai_seat_tier_map:
+          -- a tenant running one instance needs no row per instance.
+          AND (price.insight_source_id = credit.source_id OR price.insight_source_id = '')
+    WHERE credit.email IS NOT NULL
+      AND credit.email != ''
+      AND credit.collected_at IS NOT NULL
+) AS credit_row
+ARRAY JOIN arrayConcat(
+    [tuple('daily_credits', toFloat64(credits))],
+    if(has_price, [tuple('daily_credit_cost_usd', credit_cost)], [])
+) AS credit_measure
+WHERE tenant_id IS NOT NULL
+  AND entity_id IS NOT NULL
+  AND metric_date IS NOT NULL
 ) AS src

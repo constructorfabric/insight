@@ -51,4 +51,45 @@
         ENGINE = ReplacingMergeTree(_version)
         ORDER BY (unique_key)
     ") %}
+
+    {#-
+      The price of one usage credit, and the rate that carries it into the
+      reporting currency. Operator-authored for the same reason as the tier map:
+      no vendor API states it. A credit is a vendor-internal unit, and the figure
+      that turns it into money arrives on a contract, not on an endpoint.
+
+      Gold multiplies by this at READ time and never stores the product. Raw
+      credits sit beside the derived figure in every relation that carries them,
+      so correcting a rate restates the whole history on the next read instead of
+      leaving priced rows that no longer agree with the rate. That is deliberate:
+      a credit count is a measurement, its price is a decision, and only the
+      decision should be revisable.
+
+      Empty is the correct initial state. With no row, gold reports credits and
+      reports no money — never a zero, which would read as "this cost nothing".
+    -#}
+    {% do run_query("
+        CREATE TABLE IF NOT EXISTS config.ai_credit_price
+        (
+            tenant_id            String,
+            insight_source_id    String,
+            -- The class's own `source` value ('chatgpt_team'), matching
+            -- ai_seat_tier_map: the price is per vendor, not per connector run.
+            source               LowCardinality(String),
+            unique_key           String DEFAULT concat(tenant_id, ':', insight_source_id, ':', source),
+            -- Minor units of price_currency per ONE credit, held as a Decimal so
+            -- a sub-cent price does not round to nothing before it is summed.
+            price_minor_units    Decimal(18, 6),
+            price_currency       LowCardinality(String),
+            -- Multiply by this to reach report_currency. 1 when the two match.
+            fx_to_report         Decimal(18, 6) DEFAULT 1,
+            report_currency      LowCardinality(String) DEFAULT '',
+            is_deleted           UInt8   DEFAULT 0,
+            note                 String  DEFAULT '',
+            recorded_by          String  DEFAULT '',
+            _version             DateTime64(3) DEFAULT now64(3)
+        )
+        ENGINE = ReplacingMergeTree(_version)
+        ORDER BY (unique_key)
+    ") %}
 {% endmacro %}
