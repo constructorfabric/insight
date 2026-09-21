@@ -45,7 +45,6 @@ jobs:
           # Python tooling
           - insight-toolbox
           - insight-seed
-          - insight-jira-enrich
           # Python connectors
           - source-active-directory-insight
           # Keep the waiver on the entry line: the GitLab detector reads this image name as a token.

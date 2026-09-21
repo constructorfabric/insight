@@ -198,21 +198,6 @@ COMPONENTS = [
         "cover": False,
         "paths": ["src/backend/libs/authenticator-sdk"],
     },
-    # jira-enrich is a standalone workspace; its `io` feature needs a live
-    # ClickHouse, so cover with default features only (core tests are io-free).
-    # clippy: False — jira-enrich's strict [lints.clippy] (pedantic/unwrap_used/…)
-    # was never CI-enforced and the code violates it extensively. Clippy is
-    # silenced here until the debt is cleared; re-enable per #1512. fmt + coverage
-    # still run.
-    {
-        "name": "jira-enrich",
-        "lang": "rust",
-        "root": "src/ingestion/connectors/task-tracking/jira/enrich",
-        "package": "jira-enrich",
-        "all_features": False,
-        "clippy": False,
-        "paths": ["src/ingestion/connectors/task-tracking/jira/enrich"],
-    },
     # Python CDK connectors
     {
         "name": "hubspot",
@@ -258,7 +243,7 @@ COMPONENTS = [
     # leave the merged coverage judged without the meta tests' share.
     # Line coverage measures the harness — declarative YAML manifests have no
     # first-party lines; a connector's behavioral coverage is the spec's stream
-    # matrix. Longest-prefix match keeps nested components (jira-enrich) apart.
+    # matrix.
     {
         "name": "connector-tests-harness",
         "lang": "python",

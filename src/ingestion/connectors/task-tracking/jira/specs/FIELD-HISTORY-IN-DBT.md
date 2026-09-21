@@ -52,7 +52,7 @@ Derive the whole table in dbt, per `(issue, field)`, from three bronze inputs.
 | `bronze_jira.jira_fields` | field metadata — the classifier's only source |
 | `bronze_jira.jira_issue` | current value of every field, as JSON |
 | `bronze_jira.jira_issue_history` | changelog items |
-| `staging.jira__task_field_history` | output |
+| `staging.jira__field_history_derived` | output |
 
 The reconstruction walks each field's history from newest to oldest, reverse-
 applying every event to the current value, so the oldest emitted row is the
@@ -946,7 +946,7 @@ meant editing the GitHub arm. The accepted values are data tests on the class.
 The "Rust owns this table" decision is referenced in code comments as ADR-003 but
 has no ADR file in the repository. Its reversal is recorded here and in the
 header of `class_task_field_history.sql`: every producer of the class is a dbt
-model, and `staging.jira__task_field_history` is read by nothing.
+model, and the retired staging relation is removed by the deploy heal.
 
 ## 11. Issue deletion
 
@@ -1098,12 +1098,12 @@ Shapes covered, one test each:
 - an issue whose summary changed, asserting the title reaches gold through the
   `title` role rather than a denormalized column
 
-## 15. Comparing against the binary it replaces
+## 15. Parity verification against the retired producer
 
-The comparison does not need the cluster. The binary reads staging and bronze
-and writes one table, so a restored bronze dump plus a locally built
-`jira-enrich --features io` reproduces its output next to the model's, on
-**identical** inputs, and the diff is a pure implementation difference.
+Parity was verified against the retired producer before its removal. The
+producer and the dbt model ran on **identical** restored bronze inputs, making
+the diff a pure implementation difference. The comparison results below are
+retained as the cutover record.
 
 Two traps make the naive version meaningless, and both were hit:
 

@@ -37,16 +37,12 @@ def plan_row(name: str, source_id: str = "main", secret: str = "insight-secret")
     here would be indistinguishable from the padding around it.
     """
     namespace = "bronze_" + name.replace("-", "_")
-    return "\\t".join(
-        [name, "dir", "1", "nocode", "", "", "", namespace, source_id, secret, "hash"]
-    )
+    return "\\t".join([name, "dir", "1", "nocode", "", "", namespace, source_id, secret, "hash"])
 
 
 #: One instance each of two connectors, and a third the install does not
 #: configure — the plan carries it with its instance columns empty.
-DEFAULT_PLAN = "\\n".join(
-    [plan_row("alpha"), plan_row("bravo"), plan_row("charlie", source_id="", secret="")]
-)
+DEFAULT_PLAN = "\\n".join([plan_row("alpha"), plan_row("bravo"), plan_row("charlie", source_id="", secret="")])
 
 
 def build_work(plan: str = DEFAULT_PLAN, *, unreadable: bool = False) -> subprocess.CompletedProcess:
@@ -65,9 +61,7 @@ def build_work(plan: str = DEFAULT_PLAN, *, unreadable: bool = False) -> subproc
     reconcile_compute_connection_name() {{ printf '%s-%s-default-conn' "$1" "$2"; }}
     sweep__build_work "tick-1" {json.dumps(CONNECTIONS)}
     """
-    return subprocess.run(
-        ["bash", "-c", script], capture_output=True, text=True, check=False
-    )
+    return subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=False)
 
 
 def names(result: subprocess.CompletedProcess) -> list[str]:
@@ -136,7 +130,4 @@ class TestEveryInstanceIsItsOwnRow:
         assert result.returncode == 0, result.stderr
         work = json.loads(result.stdout)
         reported = {(c["name"], c["source_id"], c.get("connection_id")) for c in work["connectors"]}
-        assert reported == {
-            ("alpha", "main", "conn-alpha"),
-            ("alpha", "second", "conn-alpha-second"),
-        }
+        assert reported == {("alpha", "main", "conn-alpha"), ("alpha", "second", "conn-alpha-second")}

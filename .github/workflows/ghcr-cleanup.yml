@@ -29,7 +29,7 @@ permissions:
 
 env:
   SERVICE_IMAGES: "insight-analytics insight-authenticator insight-frontend insight-gateway insight-git-cli-proxy insight-identity-resolution insight-previews insight-seed insight-toolbox"
-  CONNECTOR_IMAGES: "insight-jira-enrich source-active-directory-insight source-bamboohr-insight source-claude-team-invoices-insight source-hubspot-insight"
+  CONNECTOR_IMAGES: "source-active-directory-insight source-bamboohr-insight source-claude-team-invoices-insight source-hubspot-insight"
 
 jobs:
   trunk:
