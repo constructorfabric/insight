@@ -21,6 +21,19 @@
 --   preserved in tool_action_breakdown_json so nothing is lost. They do not
 --   admit a row: see the emission filter's invariant at the foot of the model.
 --
+-- Two endpoints feed Codex and each owns its fields. The leaderboard owns
+-- email, name, lines_added and the thread/turn counters; the sessions
+-- aggregate (chatgpt_team_codex_sessions_daily) owns the credit split and the
+-- token split. They reconcile on (user_id, date); seen_in_sessions records the
+-- outcome per row.
+--
+-- INVARIANT: the emission filter is unchanged by the sessions join. The
+-- sessions counters are turns and NEW sessions, neither of which is a
+-- contract column here — agent_sessions and chat_requests are Cursor's by the
+-- class contract — so admitting a row on them would assert activity no class
+-- column can evidence, which is the same thing the filter already refuses to
+-- do for credits. Monetary usage and active_day stay separate concerns.
+--
 -- INVARIANT: `credits` is ON-DEMAND usage, not total Codex consumption — it
 --   matches the vendor's own on-demand figure wherever one is published, and
 --   Codex activity routinely records zero credits while still reporting tokens.
@@ -130,6 +143,34 @@ admitted_reads AS (
        OR coalesce(f.instance_has_references, 0) = 0
        OR r.read_id < f.since_read
 
+),
+
+-- The sessions/messages aggregate, keyed the way it publishes: user_id, never
+-- email. It owns the credit split and the token split; the leaderboard owns
+-- email, name and lines_added. Joined LEFT so a person-day the leaderboard
+-- returned and this endpoint did not keeps its row instead of vanishing.
+--
+-- INVARIANT: no completeness gate here and none is owed. The endpoint is
+-- unpaginated — page_size is ignored and `page` is rejected — so a read
+-- returns every person in the range or fails outright, and the page-boundary
+-- loss the leaderboard gate exists for cannot occur.
+codex_sessions AS (
+
+    SELECT
+        coalesce(tenant_id, '')                         AS insight_tenant_id,
+        coalesce(source_id, '')                         AS source_id,
+        trim(user_id)                                   AS user_id,
+        toDateOrNull(date)                              AS day,
+        credit_total,
+        on_demand_credits,
+        toUInt64OrNull(toString(n_new_sessions_total))  AS n_new_sessions_total,
+        toUInt64OrNull(toString(n_user_messages_total)) AS n_user_messages_total,
+        toUInt64OrNull(toString(text_total_tokens))     AS text_total_tokens
+    FROM {{ source('bronze_chatgpt_team', 'chatgpt_team_codex_sessions_daily') }} FINAL
+    WHERE user_id IS NOT NULL
+      AND trim(user_id) != ''
+      AND date IS NOT NULL
+
 )
 
 SELECT
@@ -166,11 +207,23 @@ SELECT
     CAST(NULL AS Nullable(UInt32))                      AS prs_with_cc_count,
     CAST(NULL AS Nullable(UInt32))                      AS prs_total_count,
     -- Codex-specific counters not in the shared contract — preserved here.
+    -- The sessions_* keys come from chatgpt_team_codex_sessions_daily and are
+    -- absent, not zero, when that endpoint did not return the person-day:
+    -- seen_in_sessions says which, so a genuine zero stays distinguishable
+    -- from an unread one. Money is NOT sourced from here — the cost pipeline
+    -- reads the sessions stream directly, because this model's emission
+    -- filter drops credit-bearing person-days by design.
     CAST(toJSONString(map(
         'credits',        toString(coalesce(credits, 0)),
         'n_turns',        toString(coalesce(toUInt32OrNull(toString(n_turns)), 0)),
         'text_tokens',    toString(coalesce(toUInt64OrNull(toString(text_tokens)), 0)),
-        'current_streak', toString(coalesce(toUInt32OrNull(toString(current_streak)), 0))
+        'current_streak', toString(coalesce(toUInt32OrNull(toString(current_streak)), 0)),
+        'seen_in_sessions',       if(seen_in_sessions, '1', '0'),
+        'sessions_credit_total',  if(seen_in_sessions, toString(coalesce(sessions_credit_total, 0)), ''),
+        'sessions_on_demand_credits', if(seen_in_sessions, toString(coalesce(sessions_on_demand_credits, 0)), ''),
+        'sessions_new_sessions',  if(seen_in_sessions, toString(coalesce(sessions_new_sessions, 0)), ''),
+        'sessions_user_messages', if(seen_in_sessions, toString(coalesce(sessions_user_messages, 0)), ''),
+        'sessions_text_total_tokens', if(seen_in_sessions, toString(coalesce(sessions_text_total_tokens, 0)), '')
     )) AS Nullable(String))                             AS tool_action_breakdown_json,
     'chatgpt_team'                                      AS source,
     data_source,
@@ -179,6 +232,22 @@ SELECT
     -- The usage endpoint carries no seat lifecycle state.
     CAST(NULL AS Nullable(String))                      AS seat_status
 FROM (
+    -- The leaderboard is the spine and the sessions aggregate enriches it.
+    -- LEFT, and joined on the id rather than the address: this endpoint keys
+    -- on user_id and publishes no email, so an inner join would silently drop
+    -- every leaderboard row whose user_id the vendor left null.
+    SELECT
+        lb.*,
+        s.credit_total                      AS sessions_credit_total,
+        s.on_demand_credits                 AS sessions_on_demand_credits,
+        s.n_new_sessions_total              AS sessions_new_sessions,
+        s.n_user_messages_total             AS sessions_user_messages,
+        s.text_total_tokens                 AS sessions_text_total_tokens,
+        -- Records the reconciliation outcome per person-day so a divergence
+        -- between the two endpoints is queryable instead of reading as a
+        -- column that happens to be null.
+        s.day IS NOT NULL                   AS seen_in_sessions
+    FROM (
     -- Bronze dedup: keep the latest ADMITTED extract per (email, date).
     -- INVARIANT: the gate runs inside this subquery. Deduping first would keep
     -- a short read's row and then reject it, dropping the day altogether
@@ -199,6 +268,12 @@ FROM (
     -- else two case-variant spellings of one address both survive and then
     -- collide on unique_key (unique-test failure).
     LIMIT 1 BY tenant_id, source_id, lower(trim(email)), date
+    ) AS lb
+    LEFT JOIN codex_sessions AS s
+           ON coalesce(lb.tenant_id, '') = s.insight_tenant_id
+          AND coalesce(lb.source_id, '') = s.source_id
+          AND trim(coalesce(lb.user_id, '')) = s.user_id
+          AND toDateOrNull(lb.date) = s.day
 )
 WHERE email IS NOT NULL
   AND trim(email) != ''

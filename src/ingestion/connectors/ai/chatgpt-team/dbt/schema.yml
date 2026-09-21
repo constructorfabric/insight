@@ -30,6 +30,11 @@ sources:
         freshness:
           warn_after: {count: 72, period: hour}
           error_after: {count: 120, period: hour}
+      - name: chatgpt_team_codex_sessions_daily  # windowed — credits by surface
+        loaded_at_field: parseDateTimeBestEffortOrNull(date)
+        freshness:
+          warn_after: {count: 72, period: hour}
+          error_after: {count: 120, period: hour}
       - name: chatgpt_team_subscription_usage    # inferred windowed (snapshot_date)
         loaded_at_field: parseDateTimeBestEffortOrNull(snapshot_date)
         freshness:

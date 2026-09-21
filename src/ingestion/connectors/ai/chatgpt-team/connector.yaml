@@ -13,18 +13,22 @@
 # Proxy source code + Dockerfile + deployment docs:
 #   https://gitlab.constr.dev/insight/secure-enclave → proxies/chatgpt_team/
 #
-# Seven streams:
+# Eight streams:
 #   1. chatgpt_team_seats             — full snapshot, offset-paginated
 #   2. chatgpt_team_chat_activity     — per-day, cursor-paginated; DatetimeBasedCursor
 #   3. chatgpt_team_codex_user_daily  — per-day, page-paginated; DatetimeBasedCursor
 #   4. chatgpt_team_codex_user_daily_org — the same day's envelope, headcount only
-#   5. chatgpt_team_subscription_usage   — per-model spend snapshot; 401/403/404 tolerated
-#   6. chatgpt_team_subscription_balance — current balance snapshot; 401/403/404 tolerated
-#   7. chatgpt_team_account_settings     — workspace seat defaults and caps
+#   5. chatgpt_team_codex_sessions_daily — per-day, unpaginated; credits by surface
+#   6. chatgpt_team_subscription_usage   — per-model spend snapshot; 401/403/404 tolerated
+#   7. chatgpt_team_subscription_balance — current balance snapshot; 401/403/404 tolerated
+#   8. chatgpt_team_account_settings     — workspace seat defaults and caps
 #
-# The roster, leaderboard and settings shapes below were read back from a
-# workspace. The two subscription streams were not: their fields still come
-# from the data_collector prototype (apps/openai) and are unconfirmed.
+# Streams 3 and 5 are both per-person-per-day Codex readings and neither
+# replaces the other — see stream 5 for which fields each one owns.
+#
+# The roster, leaderboard, sessions and settings shapes below were read back
+# from a workspace. The two subscription streams were not: their fields still
+# come from the data_collector prototype (apps/openai) and are unconfirmed.
 # The proxy handles the chatgpt.com access_token.
 
 version: "7.0.4"
@@ -485,7 +489,111 @@ streams:
             path: [unique_key]
             value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_interval.start_time }}-{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
 
-  # ── Stream 5: chatgpt_team_subscription_usage ───────────────────────
+  # ── Stream 5: chatgpt_team_codex_sessions_daily ─────────────────────
+  # Per-user per-day Codex usage as the vendor's session/message aggregate.
+  # Endpoint:
+  #   GET /backend-api/wham/analytics/daily-sessions-messages-counts
+  # Response: {data: [...], group_by}. One row per (user_id, date); the row
+  # carries its own `date`, so unlike the leaderboard nothing is stamped from
+  # the request window.
+  #
+  # INVARIANT: not paginated. page_size is ignored and `page` is rejected as an
+  # unparseable next_page token, so one request returns every person the range
+  # covers — measured against a workspace over a single day and over a 41-day
+  # range, with the row count tracking the days requested. This is why the
+  # stream carries no completeness gate: the page-boundary loss that
+  # chatgpt_team_codex_user_daily guards against cannot occur here.
+  #
+  # INVARIANT: keyed on user_id, not email. This endpoint publishes neither
+  # email nor name, and the id it does publish is the roster's `id` — verified
+  # by joining a day's readers onto the roster with no unmatched row. Identity
+  # therefore resolves downstream through the roster, never from this stream.
+  #
+  # FIELD OWNERSHIP. The two Codex streams overlap and neither replaces the
+  # other, so each fact has exactly one owning stream and downstream models
+  # read it only from its owner:
+  #
+  #   leaderboard (stream 3) owns:  email, name, lines_added, n_threads,
+  #                                 n_turns, current_streak
+  #   this stream owns:             credit_total, on_demand_credits, the
+  #                                 per-surface credit_* split, the token
+  #                                 split, n_new_sessions_*, n_user_messages_*,
+  #                                 n_tasks_web, n_code_reviews_web
+  #
+  # `credits` appears in both. The leaderboard's is a projection of this
+  # stream's credit_total, so this stream is its owner and the leaderboard
+  # copy is the redundant one.
+  #
+  # RECONCILIATION is on (user_id, date). The leaderboard publishes both
+  # email and user_id; this stream publishes user_id alone. A person-day
+  # present in one stream and absent from the other is a fact about the
+  # vendor, not a row to drop or a column to null out — the staging model
+  # keeps both sides and records which stream each row was seen in, so a
+  # divergence is queryable rather than silent. Reading credits through an
+  # inner join on the leaderboard would discard exactly the person-days the
+  # leaderboard's own activity counters leave at zero, which are measurably
+  # credit-bearing.
+  - type: DeclarativeStream
+    name: chatgpt_team_codex_sessions_daily
+    primary_key:
+      - date
+      - user_id
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        additionalProperties: true
+        properties:
+          tenant_id: { type: string }
+          source_id: { type: string }
+          unique_key: { type: string }
+          collected_at: { type: string }
+          data_source: { type: string }
+          date: { type: string }
+          user_id: { type: string }
+          n_new_sessions_total: { type: ["number", "null"] }
+          n_user_messages_total: { type: ["number", "null"] }
+          n_tasks_web: { type: ["number", "null"] }
+          n_code_reviews_web: { type: ["number", "null"] }
+          credit_total: { type: ["number", "null"] }
+          on_demand_credits: { type: ["number", "null"] }
+          uncached_text_input_tokens: { type: ["number", "null"] }
+          cached_text_input_tokens: { type: ["number", "null"] }
+          text_output_tokens: { type: ["number", "null"] }
+          text_total_tokens: { type: ["number", "null"] }
+          # Per-surface session, message and credit counters, the nested
+          # clients[] and models[] arrays and the workspace-wide
+          # n_users_used_* counters arrive under additionalProperties. They
+          # are stored whole rather than enumerated: the surface list is the
+          # vendor's own and grows without notice, and a column per surface
+          # would make every addition a schema change.
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *base_requester
+        path: "/api/wham/analytics/daily-sessions-messages-counts"
+        error_handler: *session_error_handler
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [data]
+    incremental_sync: *day_cursor
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            # The record's own date, not the request window's start: this
+            # endpoint dates every row, and reading the window instead would
+            # reintroduce the off-by-one the shared cursor's missing end bound
+            # was fixed to avoid.
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['date'] }}-{{ record['user_id'] }}"
+
+  # ── Stream 6: chatgpt_team_subscription_usage ───────────────────────
   # Per-model spend for the current window. Endpoint:
   #   GET /backend-api/subscriptions/{org_id}/usage
   # Response: {usage_detail: [{label, amount}], current_balance, ...}.
@@ -551,7 +659,7 @@ streams:
             path: [unique_key]
             value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ now_utc().strftime('%Y-%m-%d') }}-{{ record['label'] }}"
 
-  # ── Stream 6: chatgpt_team_subscription_balance ─────────────────────
+  # ── Stream 7: chatgpt_team_subscription_balance ─────────────────────
   # Current balance snapshot. Same endpoint as stream 5, but extracts the
   # root object's current_balance (field_path []). One row per run.
   - type: DeclarativeStream
@@ -609,7 +717,7 @@ streams:
             path: [unique_key]
             value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ now_utc().strftime('%Y-%m-%d') }}"
 
-  # ── Stream 7: chatgpt_team_account_settings ─────────────────────────
+  # ── Stream 8: chatgpt_team_account_settings ─────────────────────────
   # Workspace-level seat defaults. Endpoint:
   #   GET /backend-api/accounts/{account_id}/settings
   # One row per run, keyed on the snapshot day.
