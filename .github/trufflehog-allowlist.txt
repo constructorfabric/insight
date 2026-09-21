@@ -89,6 +89,13 @@ a1bf6f0828538dc7  JiraToken          tests/datapath/metrics/templates/jira_task.
 
 # Retired paths. The nightly sweep reads every ref, so a value stays reachable
 # while the commit that carried it does — the path leaving HEAD retires nothing.
+248cd327790a9dbc  Gitlab             src/ingestion/connectors/git/gitlab/dev/config.example.json  # repeated-character placeholder in an example dev config
+968ddfbbb41c029f  Gitlab             src/ingestion/connectors/git/gitlab/source_gitlab/streams/issues.py  # stream class name, not a token
+135883ae40a7dd42  Gitlab             src/ingestion/connectors/git/gitlab/source_gitlab/streams/merge_request_child.py  # module constant name, not a token
+5804c17e4c07e9bb  Gitlab             src/ingestion/connectors/git/gitlab/source_gitlab/streams/merge_requests.py  # stream class name, not a token
+cd968567652ff20b  Gitlab             src/ingestion/connectors/git/gitlab/source_gitlab/streams/project_incremental.py  # module constant name, not a token
+d1c1dd2c5248b565  Gitlab             src/ingestion/connectors/git/gitlab/tests/test_source.py  # test function name, not a token
+079c134aaca8eb24  Gitlab             src/ingestion/scripts/connectors-ddl/gitlab-nocode.sql  # a bronze relation name in the DDL snapshot, not a token
 fdd801f84b096f9b  HubSpotApiKey      src/ingestion/tests/e2e/lib/metric_coverage.py  # synthetic UUID fixture
 93192185cb9d3fc6  HubSpotApiKey      src/ingestion/tests/e2e/lib/metric_coverage.py  # synthetic UUID fixture
 175ae9997104cde3  HubSpotApiKey      src/ingestion/tests/e2e/lib/metric_coverage.py  # synthetic UUID fixture
