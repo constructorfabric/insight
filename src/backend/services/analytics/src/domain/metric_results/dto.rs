@@ -105,6 +105,7 @@ impl MetricViewRequest {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct MetricResultsResponse {
     pub metrics: Vec<MetricResultDto>,
+    pub absence_context: Vec<crate::domain::person_absences::PersonAbsenceContext>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]

@@ -1,6 +1,28 @@
 version: 2
 
 models:
+  - name: class_person_absences
+    description: "Current confirmed absence intervals across providers. Full replacement removes intervals absent from newer source snapshots."
+    columns:
+      - name: insight_tenant_id
+        description: "Tenant isolation identifier."
+        tests: [not_null]
+      - name: unique_key
+        description: "Source-qualified interval identity."
+        tests: [not_null, unique]
+      - name: account_source_type
+        description: "Identity provider for the source account."
+      - name: account_source_id
+        description: "Raw connector identifier, resolved using the shared account mapping."
+      - name: account_id
+        description: "Source-native identity account identifier."
+      - name: start_date
+        description: "Inclusive first absent calendar date."
+        tests: [not_null]
+      - name: end_date
+        description: "Inclusive last absent calendar date."
+        tests: [not_null]
+
   - name: class_hr_working_hours
     description: "Scheduled working hours per active employee from all HR sources"
     tests:
