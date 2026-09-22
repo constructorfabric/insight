@@ -93,7 +93,11 @@ function DatasetPage() {
         fields={declaration.fields}
         identity={declaration.row_identity}
       />
-      <Records name={name} fields={declaration.fields} />
+      <Records
+        name={name}
+        fields={declaration.fields}
+        sent={declaration.source?.kind !== "relation"}
+      />
       <Dependents name={name} />
     </div>
   );
@@ -156,13 +160,20 @@ const COLUMNS_AT_FIRST = 10;
 function Records({
   name,
   fields,
+  sent,
 }: {
   name: string;
   fields: readonly DeclaredField[];
+  /** Whether records are sent into this dataset, rather than read from a
+   * relation the warehouse builds. */
+  sent: boolean;
 }) {
   const [page, setPage] = useState(0);
+  // A relation has no arrival column, so naming one would be naming a field
+  // the dataset does not declare. Nothing is named, and the service orders by
+  // the dataset's main date.
   const [ordering, setOrdering] = useState<Ordering>({
-    by: ARRIVED,
+    by: sent ? ARRIVED : "",
     descending: true,
   });
   const [shown, setShown] = useLocalStorageState<string[]>({
@@ -181,7 +192,7 @@ function Records({
   const records = useQuery(
     datasetRecordsQuery(name, {
       offset: page * stride,
-      orderBy: ordering.by,
+      orderBy: ordering.by || undefined,
       descending: ordering.descending,
     })
   );
@@ -216,7 +227,7 @@ function Records({
           </div>
         ) : records.data.total === 0 ? (
           <p className={cn(TEXT_BODY, "text-muted-foreground")}>
-            Nothing has arrived yet.
+            {sent ? "Nothing has arrived yet." : "The relation holds no rows."}
           </p>
         ) : (
           <div
@@ -233,6 +244,7 @@ function Records({
             />
             <Paging
               page={page}
+              sent={sent}
               stride={stride}
               held={records.data.records.length}
               total={records.data.total}
@@ -249,6 +261,7 @@ function Records({
 /** Which records of the whole this page is, and the way to the others. */
 function Paging({
   page,
+  sent,
   stride,
   held,
   total,
@@ -256,6 +269,8 @@ function Paging({
   onPage,
 }: {
   page: number;
+  /** Whether these rows were sent in, or read from a relation. */
+  sent: boolean;
   /** The page size the service applied, which it reports with the page. */
   stride: number;
   held: number;
@@ -277,7 +292,7 @@ function Paging({
           ? "Reading…"
           : held === 0
             ? `Nothing left past record ${first - 1} of ${total}`
-            : `${first}–${last} of ${total} records received`}
+            : `${first}–${last} of ${total} ${sent ? "records received" : "rows"}`}
       </span>
       <span className="ms-auto flex items-center gap-1">
         <Button

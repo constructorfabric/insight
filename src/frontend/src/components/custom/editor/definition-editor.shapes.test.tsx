@@ -31,7 +31,7 @@ beforeEach(() => {
   vi.mocked(customClient.putDefinition).mockResolvedValue(undefined);
   vi.mocked(customClient.putDataset).mockResolvedValue({
     name: "x",
-    declaration: { title: "x", fields: [] },
+    declaration: { title: "x", source: { kind: "stream" as const }, fields: [] },
   });
 });
 
@@ -232,6 +232,7 @@ describe("<DefinitionEditor> over a kind's shape", () => {
     await waitFor(() =>
       expect(customClient.putDataset).toHaveBeenCalledWith("commits", {
         title: "Commits",
+        source: { kind: "stream" as const },
         fields: [
           {
             name: "day",
@@ -256,6 +257,7 @@ describe("<DefinitionEditor> over a kind's shape", () => {
         name="commits"
         document={{
           title: "Commits",
+          source: { kind: "stream" as const },
           fields: [
             { name: "day", path: "day", type: "datetime", default_clock: true },
             { name: "merged", path: "merged", type: "datetime" },
@@ -314,6 +316,7 @@ describe("<DefinitionEditor> over a kind's shape", () => {
       name: "commits",
       declaration: {
         title: "Commits",
+        source: { kind: "stream" as const },
         fields: [
           { name: "merged", path: "merged", type: "bool" },
           { name: "lines", path: "lines", type: "int" },
@@ -361,6 +364,7 @@ describe("<DefinitionEditor> over a kind's shape", () => {
       name: "commits",
       declaration: {
         title: "Commits",
+        source: { kind: "stream" as const },
         fields: [
           { name: "day", path: "day", type: "datetime" },
           { name: "author", path: "author", type: "string" },
@@ -425,5 +429,68 @@ describe("<DefinitionEditor> over a kind's shape", () => {
       "how_many",
       "bucket",
     ]);
+  });
+
+  // What a dataset is over decides who owns its rows, whether records may be
+  // sent into it, and how every field is read. The editor asks it rather than
+  // leaving a reader to write the property by hand in the text view.
+  it("offers the two things a dataset can be over, and what each one needs", async () => {
+    const user = userEvent.setup();
+
+    render(<DefinitionEditor kind="datasets" onStored={vi.fn()} />, {
+      wrapper,
+    });
+
+    // A new dataset starts over a stream, which asks for nothing more.
+    expect(screen.queryByLabelText("Database")).not.toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText("Kind"), "relation");
+
+    await user.type(screen.getByLabelText("Database"), "insight");
+    await user.type(screen.getByLabelText("Relation"), "collab");
+    await user.type(screen.getByLabelText("Name"), "collab");
+    await user.type(screen.getByLabelText("Title"), "Collaboration");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(customClient.putDataset).toHaveBeenCalledWith("collab", {
+        title: "Collaboration",
+        source: { kind: "relation", database: "insight", table: "collab" },
+      })
+    );
+  });
+
+  // A relation holds its values in columns, and a record sent in holds them
+  // under a key path. They are not the same kind of place, so a field says
+  // which one it reads rather than one key meaning two things.
+  it("lets a field read a column instead of a path", async () => {
+    const user = userEvent.setup();
+
+    render(<DefinitionEditor kind="datasets" onStored={vi.fn()} />, {
+      wrapper,
+    });
+
+    await user.type(screen.getByLabelText("Name"), "collab");
+    await user.type(screen.getByLabelText("Title"), "Collaboration");
+    await user.click(screen.getByRole("button", { name: "Add field" }));
+    const first = within(screen.getByRole("group", { name: "field 1" }));
+
+    // A new field starts on a path, which is what a dataset records are sent
+    // into asks for.
+    expect(first.getByLabelText("Path")).toBeInTheDocument();
+
+    await user.selectOptions(first.getByLabelText("Where it sits"), "column");
+    await user.type(first.getByLabelText("Name"), "day");
+    await user.type(first.getByLabelText("Column"), "metric_date");
+    await user.selectOptions(first.getByLabelText("Type"), "datetime");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(customClient.putDataset).toHaveBeenCalledWith("collab", {
+        title: "Collaboration",
+        source: { kind: "stream" },
+        fields: [{ name: "day", column: "metric_date", type: "datetime" }],
+      })
+    );
   });
 });

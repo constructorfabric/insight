@@ -32,7 +32,7 @@ beforeEach(() => {
   vi.mocked(customClient.putDefinition).mockResolvedValue(undefined);
   vi.mocked(customClient.putDataset).mockResolvedValue({
     name: "x",
-    declaration: { title: "x", fields: [] },
+    declaration: { title: "x", source: { kind: "stream" as const }, fields: [] },
   });
 });
 
@@ -75,6 +75,7 @@ describe("<DefinitionEditor> shown a refusal", () => {
         name="commits"
         document={{
           title: "",
+          source: { kind: "stream" as const },
           fields: [
             { name: "day", path: "day", type: "datetime" },
             { name: "n", path: "n", type: "moment" },
@@ -110,7 +111,7 @@ describe("<DefinitionEditor> shown a refusal", () => {
       <DefinitionEditor
         kind="datasets"
         name="commits"
-        document={{ title: "Commits", fields: [{ name: "day" }] }}
+        document={{ title: "Commits", source: { kind: "stream" as const }, fields: [{ name: "day" }] }}
         onStored={vi.fn()}
       />,
       { wrapper }
@@ -192,7 +193,7 @@ describe("<DefinitionEditor> shown a refusal", () => {
       <DefinitionEditor
         kind="datasets"
         name="commits"
-        document={{ title: "Commits", fields: [] }}
+        document={{ title: "Commits", source: { kind: "stream" as const }, fields: [] }}
         onStored={vi.fn()}
       />,
       { wrapper }

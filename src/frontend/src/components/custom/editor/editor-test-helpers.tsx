@@ -23,7 +23,7 @@ export function mockCatalogues(): void {
   vi.mocked(customClient.fetchDatasetNames).mockResolvedValue(none);
   vi.mocked(customClient.fetchDataset).mockImplementation(async (name) => ({
     name,
-    declaration: { title: name, fields: [] },
+    declaration: { title: name, source: { kind: "stream" as const }, fields: [] },
   }));
 }
 

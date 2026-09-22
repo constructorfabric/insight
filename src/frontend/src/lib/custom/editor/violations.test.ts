@@ -76,7 +76,7 @@ describe("offers", () => {
 });
 
 describe("place", () => {
-  const document = { title: "T", fields: [{ type: "moment" }] };
+  const document = { title: "T", source: { kind: "stream" as const }, fields: [{ type: "moment" }] };
 
   it("puts a violation on the row it names", () => {
     const placed = place(

@@ -124,7 +124,7 @@ describe("<RecordTable>", () => {
 
     expect(screen.getAllByRole("row")).toHaveLength(2);
     expect(
-      screen.getByRole("button", { name: /Show the whole record/ })
+      screen.getByRole("button", { name: /Show the whole of this row/ })
     ).toBeInTheDocument();
   });
 
@@ -196,5 +196,47 @@ describe("<RecordTable>", () => {
     );
 
     expect(screen.getByRole("cell", { name: "held" })).toBeInTheDocument();
+  });
+
+  // A row of a relation the warehouse builds was not sent and nothing
+  // stamped it, so there is no arrival column to draw or to order by — and
+  // no identity to key it on either.
+  it("draws no arrival column for rows that never arrived", () => {
+    render(
+      <RecordTable
+        fields={[{ name: "team", column: "entity_id", type: "string" }]}
+        records={[{ raw_data: { team: "platform" } }]}
+        shown={["team"]}
+        ordering={{ by: "team", descending: true }}
+        onShow={vi.fn()}
+        onOrder={vi.fn()}
+      />
+    );
+
+    expect(
+      screen.queryByRole("columnheader", { name: "Received" })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("cell", { name: "platform" })
+    ).toBeInTheDocument();
+  });
+
+  // The service hands a relation's row back already keyed by the field names
+  // the dataset declares, so the value sits under the name, not under a path.
+  it("reads a field over a relation by the name it declares", () => {
+    render(
+      <RecordTable
+        fields={[{ name: "day", column: "metric_date", type: "datetime" }]}
+        records={[{ raw_data: { day: "2026-09-01" } }]}
+        shown={["day"]}
+        ordering={{ by: "day", descending: true }}
+        onShow={vi.fn()}
+        onOrder={vi.fn()}
+      />
+    );
+
+    expect(
+      screen.getByRole("cell", { name: "2026-09-01" })
+    ).toBeInTheDocument();
   });
 });

@@ -22,11 +22,35 @@ const DECLARED_FIELD: Shape = {
       hint: "The identifier metrics, filters, the window and the row identity refer to this field by.",
     },
     {
-      name: "path",
-      label: "Path",
-      shape: { of: "text" },
+      // Where a value sits depends on what the dataset is over, and the two
+      // are not the same kind of place. The variant whose own property the
+      // field carries is the one it is, so the locator is its own choice.
+      name: "at",
+      label: "Where it sits",
+      shape: {
+        of: "variants",
+        variants: {
+          path: [
+            {
+              name: "path",
+              label: "Path",
+              shape: { of: "text" },
+              required: true,
+              hint: "Where the value sits in a record sent into this dataset, as dot-separated keys (who.email).",
+            },
+          ],
+          column: [
+            {
+              name: "column",
+              label: "Column",
+              shape: { of: "text" },
+              required: true,
+              hint: "The column of the relation that holds the value.",
+            },
+          ],
+        },
+      },
       required: true,
-      hint: "Where the value sits in a record, as dot-separated keys (who.email).",
     },
     {
       name: "type",
@@ -86,9 +110,51 @@ const DATASET: Description = {
       hint: "What the records are and where they come from, for people and the assistant.",
     },
     {
+      name: "source",
+      label: "Over",
+      // A record, because the service reads this as its own object. The
+      // choice inside it is transparent, as every variant here is: its
+      // properties sit beside the choice, which is where `source` holds them.
+      shape: {
+        of: "record",
+        fields: [
+          {
+            name: "kind",
+            label: "Kind",
+            shape: {
+              of: "variants",
+              recorded: "kind",
+              variants: {
+                stream: [],
+                relation: [
+                  {
+                    name: "database",
+                    label: "Database",
+                    shape: { of: "text" },
+                    required: true,
+                    hint: "The warehouse database the relation is in.",
+                  },
+                  {
+                    name: "table",
+                    label: "Relation",
+                    shape: { of: "text" },
+                    required: true,
+                    hint: "The table or view to read. Nothing is created, and nothing is ever dropped.",
+                  },
+                ],
+              },
+            },
+            required: true,
+          },
+        ],
+      },
+      required: true,
+      hint: "Records sent into this dataset, or a relation the warehouse already builds and this only reads. It cannot be changed afterwards.",
+    },
+    {
       name: "fields",
       label: "Fields",
-      hint: "How a record is read: one entry per value the dataset exposes, each with the key it sits under.",
+      hint: "How a row is read: one entry per value the dataset exposes, each with where it sits.",
       shape: { of: "list", entry: DECLARED_FIELD, entryLabel: "field" },
       required: true,
     },

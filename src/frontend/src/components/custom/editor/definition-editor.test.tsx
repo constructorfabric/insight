@@ -36,7 +36,7 @@ beforeEach(() => {
   vi.mocked(customClient.putDefinition).mockResolvedValue(undefined);
   vi.mocked(customClient.putDataset).mockResolvedValue({
     name: "x",
-    declaration: { title: "x", fields: [] },
+    declaration: { title: "x", source: { kind: "stream" as const }, fields: [] },
   });
 });
 
@@ -157,7 +157,7 @@ describe("<DefinitionEditor> holding one document", () => {
       <DefinitionEditor
         kind="datasets"
         name="commits"
-        document={{ title: "Commits", fields: [] }}
+        document={{ title: "Commits", source: { kind: "stream" as const }, fields: [] }}
         onStored={vi.fn()}
       />,
       { wrapper }
@@ -178,8 +178,12 @@ describe("<DefinitionEditor> holding one document", () => {
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() =>
+      // A dataset cannot be stored without saying what it is over, so a new
+      // one starts with the choice made rather than refusing the first save
+      // over a question the reader was never asked.
       expect(customClient.putDataset).toHaveBeenCalledWith("commits", {
         title: "Commits",
+        source: { kind: "stream" },
       })
     );
   });

@@ -69,7 +69,7 @@ describe("/portal/custom/new/$kind", () => {
     const user = userEvent.setup();
     vi.mocked(customClient.putDataset).mockResolvedValue({
       name: "deployments",
-      declaration: { title: "Deployments", fields: [] },
+      declaration: { title: "Deployments", source: { kind: "stream" as const }, fields: [] },
     });
 
     render(<Component />, { wrapper });
@@ -81,6 +81,7 @@ describe("/portal/custom/new/$kind", () => {
     await waitFor(() =>
       expect(customClient.putDataset).toHaveBeenCalledWith("deployments", {
         title: "Deployments",
+        source: { kind: "stream" },
       })
     );
     expect(portalRouter.navigations).toContainEqual({

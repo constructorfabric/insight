@@ -44,6 +44,7 @@ const COMMITS = {
   declaration: {
     title: "Commits",
     description: "One per commit.",
+    source: { kind: "stream" as const },
     fields: [
       {
         name: "author",

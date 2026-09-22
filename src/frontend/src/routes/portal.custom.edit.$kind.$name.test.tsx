@@ -78,7 +78,7 @@ beforeEach(() => {
   vi.mocked(customClient.putDefinition).mockResolvedValue(undefined);
   vi.mocked(customClient.fetchDataset).mockImplementation(async (name) => ({
     name,
-    declaration: { title: name, fields: [] },
+    declaration: { title: name, source: { kind: "stream" as const }, fields: [] },
   }));
 });
 
@@ -175,7 +175,7 @@ describe("/portal/custom/edit/$kind/$name", () => {
     portalRouter.reset("/portal/custom/edit/datasets/commits");
     vi.mocked(customClient.fetchDataset).mockResolvedValue({
       name: "commits",
-      declaration: { title: "Commits", fields: [] },
+      declaration: { title: "Commits", source: { kind: "stream" as const }, fields: [] },
     });
     vi.mocked(customClient.deleteDataset).mockRejectedValue(
       new CustomApiError(409, {
@@ -247,7 +247,7 @@ describe("/portal/custom/edit/$kind/$name", () => {
     portalRouter.reset("/portal/custom/edit/datasets/commits");
     vi.mocked(customClient.fetchDataset).mockResolvedValue({
       name: "commits",
-      declaration: { title: "Commits", fields: [] },
+      declaration: { title: "Commits", source: { kind: "stream" as const }, fields: [] },
     });
     vi.mocked(customClient.deleteDataset).mockResolvedValue(undefined);
 
@@ -272,7 +272,7 @@ describe("/portal/custom/edit/$kind/$name", () => {
       arrange: () =>
         vi.mocked(customClient.fetchDataset).mockResolvedValue({
           name: "commits",
-          declaration: { title: "Commits", fields: [] },
+          declaration: { title: "Commits", source: { kind: "stream" as const }, fields: [] },
         }),
       label: "Title",
       value: "Commits",

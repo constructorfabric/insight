@@ -16,6 +16,7 @@ import {
   sendable,
   type Held,
 } from "@/lib/custom/editor/document";
+import { starting } from "@/lib/custom/editor/blank";
 import { DESCRIPTIONS } from "@/lib/custom/editor/kinds";
 import { place } from "@/lib/custom/editor/violations";
 import {
@@ -42,7 +43,9 @@ export function DefinitionEditor({
 }) {
   const description = DESCRIPTIONS[kind];
   const [called, setCalled] = useState(name ?? "");
-  const [held, setHeld] = useState<Held>(() => hold(document));
+  const [held, setHeld] = useState<Held>(() =>
+    hold(document ?? starting(DESCRIPTIONS[kind].fields))
+  );
   const [view, setView] = useState<"fields" | "text">("fields");
   const store = useStoreDefinition();
 

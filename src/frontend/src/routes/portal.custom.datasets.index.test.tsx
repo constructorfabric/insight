@@ -32,6 +32,7 @@ const COMMITS = {
   name: "commits",
   declaration: {
     title: "Commits",
+    source: { kind: "stream" as const },
     fields: [
       { name: "author", path: "author", type: "string" as const },
       {

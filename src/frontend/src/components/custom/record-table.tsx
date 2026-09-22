@@ -55,6 +55,9 @@ export function RecordTable({
   onOrder: (ordering: Ordering) => void;
 }) {
   const drawn = fields.filter((field) => shown.includes(field.name));
+  // A row of a relation the warehouse builds was not sent and nothing
+  // stamped it, so there is no arrival column to draw or to order by.
+  const arrived = records.some((record) => record.received_at !== undefined);
 
   return (
     <div className="flex flex-col gap-3">
@@ -64,12 +67,14 @@ export function RecordTable({
         <TableHeader>
           <TableRow>
             <TableHead className="w-0" />
-            <Sortable
-              name={ARRIVED}
-              label="Received"
-              ordering={ordering}
-              onOrder={onOrder}
-            />
+            {arrived ? (
+              <Sortable
+                name={ARRIVED}
+                label="Received"
+                ordering={ordering}
+                onOrder={onOrder}
+              />
+            ) : null}
             {drawn.map((field) => (
               <Sortable
                 key={field.name}
@@ -82,8 +87,13 @@ export function RecordTable({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {records.map((record) => (
-            <Row key={record.id} record={record} fields={drawn} />
+          {records.map((record, at) => (
+            <Row
+              key={record.id ?? at}
+              record={record}
+              fields={drawn}
+              arrived={arrived}
+            />
           ))}
         </TableBody>
       </Table>
@@ -190,9 +200,12 @@ function Sortable({
 function Row({
   record,
   fields,
+  arrived,
 }: {
   record: DatasetRecord;
   fields: readonly DeclaredField[];
+  /** Whether this table draws the instant a row arrived. */
+  arrived: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const whole = useId();
@@ -209,7 +222,7 @@ function Row({
             id={`${whole}-trigger`}
             aria-expanded={open}
             aria-controls={open ? whole : undefined}
-            aria-label={`${open ? "Hide" : "Show"} the whole record received at ${record.received_at}`}
+            aria-label={`${open ? "Hide" : "Show"} the whole of this row`}
             className="flex items-center text-muted-foreground"
             onClick={(event) => {
               event.stopPropagation();
@@ -223,9 +236,11 @@ function Row({
             )}
           </button>
         </TableCell>
-        <TableCell className="font-mono whitespace-nowrap">
-          {record.received_at}
-        </TableCell>
+        {arrived ? (
+          <TableCell className="font-mono whitespace-nowrap">
+            {record.received_at}
+          </TableCell>
+        ) : null}
         {fields.map((field) => {
           const held = cell(record.raw_data, field);
           return (
@@ -241,7 +256,7 @@ function Row({
       </TableRow>
       {open ? (
         <TableRow>
-          <TableCell colSpan={fields.length + 2}>
+          <TableCell colSpan={fields.length + (arrived ? 2 : 1)}>
             <pre
               id={whole}
               aria-labelledby={`${whole}-trigger`}
@@ -257,14 +272,19 @@ function Row({
 }
 
 /**
- * What a declared field holds in this record, as a cell shows it.
+ * What a declared field holds in this row, as a cell shows it.
  *
  * INVARIANT: the path is split the way the service splits it, and an absent
  * value stands in the way the service stands it in. A table that reads a
  * declaration differently from the metrics over it is worse than no table.
+ *
+ * A field of a dataset over a relation names a column, and the service hands
+ * back a row already keyed by the field names it declares — so the value sits
+ * under the field's own name, not under a path.
  */
 function cell(payload: unknown, field: DeclaredField): string {
-  const value = read(payload, pathSegments(field.path));
+  const at = "path" in field ? pathSegments(field.path) : [field.name];
+  const value = read(payload, at);
   if (value === undefined || value === null || value === "") {
     return field.absent_value ?? "";
   }

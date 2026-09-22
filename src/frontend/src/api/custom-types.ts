@@ -106,11 +106,18 @@ export type FieldType = "string" | "int" | "float" | "bool" | "datetime";
 /** What a field is for, as a reader is told it. Advisory only. */
 export type FieldRole = "dimension" | "measurable" | "time";
 
+/**
+ * Where a field's value sits, which depends on what the dataset is over.
+ *
+ * INVARIANT: one or the other, never both and never neither. A field of a
+ * dataset records are sent into reads a key path out of the payload; one of a
+ * dataset over a relation reads a column.
+ */
+export type FieldAt = { path: string } | { column: string };
+
 /** One field of a dataset, as declared. */
-export interface DeclaredField {
+export type DeclaredField = FieldAt & {
   name: string;
-  /** Where the value sits in a record, as dot-separated segments. */
-  path: string;
   type: FieldType;
   role?: FieldRole;
   description?: string;
@@ -119,12 +126,24 @@ export interface DeclaredField {
   person?: "email" | "id";
   /** Whether a window with no date of its own selects by this one. */
   default_clock?: boolean;
-}
+};
+
+/**
+ * What a dataset is over, and with it who owns its rows.
+ *
+ * INVARIANT: written, never inferred from what else the declaration carries.
+ * Too much follows from it — who provisions the relation, whether records may
+ * be sent, how every field is read.
+ */
+export type DatasetSource =
+  | { kind: "stream" }
+  | { kind: "relation"; database: string; table: string };
 
 /** What a dataset says about the records it holds. */
 export interface DatasetDeclaration {
   title: string;
   description?: string;
+  source: DatasetSource;
   fields: DeclaredField[];
   /** The fields that make two records the same record. */
   row_identity?: string[];
@@ -136,10 +155,16 @@ export interface Dataset {
   declaration: DatasetDeclaration;
 }
 
-/** One record a dataset holds, as it arrived. */
+/**
+ * One row of a dataset as a reader is shown it.
+ *
+ * A record sent into a dataset carries its own identity and the instant it
+ * arrived. A row of a relation the warehouse builds carries neither: it was
+ * not sent, and nothing stamped it.
+ */
 export interface DatasetRecord {
-  id: string;
-  received_at: string;
+  id?: string;
+  received_at?: string;
   raw_data: unknown;
 }
 
@@ -155,7 +180,11 @@ export interface RecordPage {
   /** Absent asks for the page size the installation allows. */
   limit?: number;
   offset?: number;
-  /** A declared field, or `received_at`. Absent means arrival order. */
+  /**
+   * A declared field, or `received_at` for a dataset records are sent into.
+   * Absent means arrival order, or — over a relation, which has none — the
+   * dataset's main date.
+   */
   orderBy?: string;
   descending?: boolean;
 }
