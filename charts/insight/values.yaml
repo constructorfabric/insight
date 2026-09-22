@@ -215,15 +215,9 @@ ingestion:
   # (the default) means the stand cannot be seeded until an operator names an
   # image, either here or with the script's `--image` flag.
   seedImage: "ghcr.io/constructorfabric/insight-seed:2026.09.21.12.57-0fa9522.release-2026.09" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
-  # airbyte-sync poll-job tunables — see templates/ingestion/airbyte-sync.yaml.
-  # The poll loop replaces a wall-clock deadline with a progress watchdog:
-  # it tracks (status, bytesEmitted, recordsEmitted, stateMessagesEmitted)
-  # on the latest attempt and resets a timer whenever any of those move.
-  # If the timer exceeds `idleThresholdSeconds`, the step exits with a
-  # "no-progress" failure (exit 2), distinct from SIGTERM (exit 143).
   airbyteSync:
     pollIntervalSeconds: 30
-    idleThresholdSeconds: 1800 # 30 min without any byte/record/state movement → fail
+    statusUnreadableThresholdSeconds: 1800
   # jira-enrich (templates/ingestion/tt-enrich-jira-run.yaml). Phase 1 of the
   # binary holds the whole reference set in memory — field metadata, every
   # issue snapshot, and the last known value of each field it must diff

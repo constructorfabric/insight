@@ -389,9 +389,7 @@ ingestion:
     # that are created and never picked up.
     argoInstanceId: "argo-workflows-argo"
   airbyteSync:
-    # How long a connector may sit idle before the sync loop treats it as
-    # stalled, in seconds. Chart default carried forward.
-    idleThresholdSeconds: 3600
+    statusUnreadableThresholdSeconds: 3600
 
 airbyte:
   # `namespace` does two things and only one of them is the URL: it also
