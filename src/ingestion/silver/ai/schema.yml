@@ -11,8 +11,7 @@ sources:
     schema: config
     tables:
       - name: ai_seat_tier_map
-      - name: ai_credit_price
-      - name: ai_currency_rate
+      - name: ai_credit_pricing
 
 models:
   - name: class_ai_dev_usage

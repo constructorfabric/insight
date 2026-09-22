@@ -53,81 +53,44 @@
     ") %}
 
     {#-
-      The price of one usage credit, in the currency the vendor bills.
+      What one Codex usage credit costs, and the rate that presents it in USD.
       Operator-authored for the same reason as the tier map: no vendor API states
-      it. A credit is a vendor-internal unit, and the figure that turns it into
-      money arrives on a contract, not on an endpoint.
+      either figure. A credit is a vendor-internal unit and the price arrives on a
+      contract, not on an endpoint.
 
-      Dated, because the price it holds is a contract term with a start date the
-      operator knows. `effective_from` is the day the vendor's price began to
-      apply; the next row implicitly closes the one before it, so no interval can
-      overlap another and there is nothing to keep consistent. A day earlier than
-      the first row resolves to no price at all, which is the correct answer:
-      absence is expressed, not filled. To stop pricing from a date — a contract
-      that ended — insert a row at that date with is_deleted = 1 rather than a
-      price of zero, which would read as "free".
+      ONE CURRENT CONFIGURATION, deliberately — no validity intervals and no rate
+      history. The reference implementation this mirrors carries both numbers as
+      plain settings and multiplies at read time, and dating only the price would
+      not buy a reproducible USD history while the rate beside it stays undated.
+      An operator-maintained temporal model that still cannot reproduce the figure
+      it exists for is cost without the benefit.
 
-      Currency conversion is NOT here. Gold converts to the reporting currency
-      when it reads, and the converted figure is an estimate; what this table
-      holds is the amount the vendor actually charges, which is the reproducible
-      fact.
+      The consequence is stated rather than hidden: changing either number
+      restates every USD figure already reported, and changing the price restates
+      the EUR amount too. The credits themselves never move — they are the
+      measurement, and these two are the assumption applied to it.
 
-      Empty is the correct initial state. With no row, gold reports no money —
-      never a zero, which would read as "this cost nothing".
+      Empty is the correct initial state. With no row, gold reports no money at
+      all — never a zero, which would read as "this cost nothing".
     -#}
     {% do run_query("
-        CREATE TABLE IF NOT EXISTS config.ai_credit_price
+        CREATE TABLE IF NOT EXISTS config.ai_credit_pricing
         (
-            tenant_id            String,
-            insight_source_id    String,
+            tenant_id               String,
+            insight_source_id       String,
             -- The class's own `source` value ('chatgpt_team'), matching
             -- ai_seat_tier_map: the price is per vendor, not per connector run.
-            source               LowCardinality(String),
-            -- The day this price began to apply. In the key, so a price change
-            -- adds a row instead of overwriting what priced earlier days.
-            effective_from       Date,
-            unique_key           String DEFAULT concat(tenant_id, ':', insight_source_id, ':',
-                                                       source, ':', toString(effective_from)),
-            -- Minor units of price_currency per ONE credit, held as a Decimal so
-            -- a sub-cent price does not round to nothing before it is summed.
-            price_minor_units    Decimal(18, 6),
-            price_currency       LowCardinality(String),
-            is_deleted           UInt8   DEFAULT 0,
-            note                 String  DEFAULT '',
-            recorded_by          String  DEFAULT '',
-            _version             DateTime64(3) DEFAULT now64(3)
-        )
-        ENGINE = ReplacingMergeTree(_version)
-        ORDER BY (unique_key)
-    ") %}
-
-    {#-
-      The rate that carries a billed currency into the reporting one.
-
-      Undated on purpose, and that is a weaker guarantee than the price above —
-      say so rather than imply otherwise. A real exchange rate moves daily and
-      nothing in this system publishes one, so a dated table here would oblige an
-      operator to maintain rows nobody will maintain, and a stale row wearing a
-      date claims an accuracy it does not have. One rate, restated when someone
-      chooses to, is the honest shape.
-
-      The consequence is deliberate and bounded: the amount the vendor billed is
-      reproducible because it is held in the billed currency, and only its
-      presentation in the reporting currency moves when the rate is restated.
-      Anything derived from this is an estimate and is labelled one.
-    -#}
-    {% do run_query("
-        CREATE TABLE IF NOT EXISTS config.ai_currency_rate
-        (
-            tenant_id            String,
-            from_currency        LowCardinality(String),
-            to_currency          LowCardinality(String),
-            unique_key           String DEFAULT concat(tenant_id, ':', from_currency, ':', to_currency),
-            rate                 Decimal(18, 6),
-            is_deleted           UInt8   DEFAULT 0,
-            note                 String  DEFAULT '',
-            recorded_by          String  DEFAULT '',
-            _version             DateTime64(3) DEFAULT now64(3)
+            source                  LowCardinality(String),
+            unique_key              String DEFAULT concat(tenant_id, ':', insight_source_id, ':', source),
+            -- Minor units of the billed currency per ONE credit. Decimal so a
+            -- sub-cent price does not round to nothing before it is summed.
+            credit_price_eur_cents  Decimal(18, 6),
+            -- Multiply the EUR amount by this to present it in USD.
+            eur_usd_rate            Decimal(18, 6),
+            is_deleted              UInt8   DEFAULT 0,
+            note                    String  DEFAULT '',
+            recorded_by             String  DEFAULT '',
+            _version                DateTime64(3) DEFAULT now64(3)
         )
         ENGINE = ReplacingMergeTree(_version)
         ORDER BY (unique_key)

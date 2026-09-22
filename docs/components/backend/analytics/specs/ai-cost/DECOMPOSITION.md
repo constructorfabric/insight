@@ -426,13 +426,27 @@ same thing on both sides — additional, on-demand spend — and no new measure 
 backfill raising the sum is the ordinary case that rule describes. The earliest day history
 holds is a boundary, not an absence.
 
-**Money is priced, never stored.** `config.ai_credit_price` holds an operator-authored price per
-credit in the currency the vendor bills, dated with `effective_from` — a contract term with a
-start date the operator knows. The amount in that currency is the reproducible fact.
-`config.ai_currency_rate` carries the conversion to USD undated, because no exchange-rate source
-exists here and a dated table would oblige an operator to maintain rows nobody maintains; the
-converted figure is therefore labelled an estimate on every row. No price or no rate yields no
-money measure at all, never a zero.
+**Money is priced, never stored — and the price is an assumption, not history.**
+`config.ai_credit_pricing` holds one current configuration per tenant and vendor:
+what a credit costs in the currency the vendor bills, and the rate that presents that
+amount in USD. Gold multiplies at read time and stores neither product.
+
+This is an explicit exception to `cpt-insightspec-aicost-principle-rates-are-data`
+and to NFR-1, and it is taken knowingly. Neither number comes from a vendor API —
+both are settings, exactly as in the reference implementation this mirrors — and
+there is no source of historical exchange rates here at all. Dating the price alone
+would not make a USD figure reproducible while the rate beside it stays current, so
+it would buy an operator-maintained temporal model and not the property the model
+exists for.
+
+The consequence is stated rather than hidden: changing the rate restates every USD
+figure already reported, and changing the price restates the amount in the billed
+currency too. The credits do not move — they are the measurement, and these two are
+the assumption applied to it, which is why the evidence rows carry the credits, the
+price, the native amount and the rate used. A real source of historical price and FX
+would make temporal pricing a later improvement, not a reason to build one now.
+
+No pricing row yields no money measure at all, never a zero.
 
 **`extra_usage_utilisation` does not appear for this vendor.** It needs a per-seat limit as of
 the day spent, and the workspace settings endpoint reports current state only, so no historical

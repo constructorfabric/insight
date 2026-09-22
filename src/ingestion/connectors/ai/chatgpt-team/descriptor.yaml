@@ -84,7 +84,10 @@ name: chatgpt-team
 #   person-day can carry credits while every activity counter reads zero, so
 #   routing spend through it would drop real charges. Priced in gold, the
 #   credits feed the existing daily_extra_usage_usd and extra_usage_usd rather
-#   than a second cost vocabulary. No new stream and no new Bronze table — it
+#   than a second cost vocabulary, priced by one current operator-authored
+#   configuration rather than a dated rate history — a Codex monetary value
+#   is an estimate and restates when that configuration changes, while the
+#   credits behind it do not. No new stream and no new Bronze table — it
 #   reads the leaderboard Bronze the connector already collects, which is also
 #   the authoritative source of the total. MINOR per ADR-0015: the dbt step has
 #   to re-run so the new model materialises; nothing already stored changes

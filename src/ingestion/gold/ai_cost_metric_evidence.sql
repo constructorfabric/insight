@@ -388,19 +388,18 @@ SELECT
     map(
         'credits', toString(credits),
         'credit_kind', credit_kind,
-        'price_minor_units', toString(price_minor_units),
-        'price_currency', price_currency,
-        'price_effective_from', toString(price_effective_from),
-        'native_amount', toString(native_minor_units / 100),
-        'fx_rate', toString(fx_rate),
-        -- The rate carries no date, so the converted figure is a presentation
-        -- of the billed amount rather than a second fact. Say so on every row.
+        'credit_price_eur_cents', toString(credit_price_eur_cents),
+        'native_amount_eur', toString(native_eur_cents / 100),
+        'eur_usd_rate', toString(eur_usd_rate),
+        -- Both the price and the rate are current configuration, not history,
+        -- so this figure is an estimate and restates when either is changed.
+        -- The credits beside it do not.
         'is_estimate', 'true'
     )                                           AS details
 FROM (
-    -- One price and one rate per credit row, chosen without a disjunction in
-    -- any ON clause: ClickHouse refuses a join mixing equality with OR, and
-    -- scope precedence is a ranking question rather than a join condition.
+    -- One pricing row per credit row, chosen without a disjunction in any ON
+    -- clause: ClickHouse refuses a join mixing equality with OR, and scope
+    -- precedence is a ranking question rather than a join condition.
     SELECT * FROM (
         SELECT
             credit.insight_tenant_id            AS tenant_id,
@@ -416,55 +415,43 @@ FROM (
                     tuple('tool', credit.tool, {{ ai_tool_label('credit.tool') }})
                 ] AS Array(Tuple(key String, value String, label Nullable(String)))
             )                                   AS credit_dimensions,
-            price.price_minor_units             AS price_minor_units,
-            price.price_currency                AS price_currency,
-            price.effective_from                AS price_effective_from,
-            rate.rate                           AS fx_rate,
-            credit.credits * price.price_minor_units              AS native_minor_units,
-            credit.credits * price.price_minor_units * rate.rate  AS usd_minor_units,
+            pricing.credit_price_eur_cents      AS credit_price_eur_cents,
+            pricing.eur_usd_rate                AS eur_usd_rate,
+            -- What the vendor bills, in the currency it bills: credits times the
+            -- price of one. The USD beside it is this amount presented.
+            credit.credits * pricing.credit_price_eur_cents               AS native_eur_cents,
+            credit.credits * pricing.credit_price_eur_cents
+                           * pricing.eur_usd_rate                         AS usd_cents,
             row_number() OVER (
                 PARTITION BY credit.insight_tenant_id, credit.source_id,
                              credit.source, credit.day, credit.email
-                ORDER BY
-                    -- An instance-scoped price wins over the vendor default.
-                    (price.insight_source_id != '') DESC,
-                    -- Then the newest price that had taken effect by that day.
-                    price.effective_from DESC,
-                    -- A tenant's own rate wins over a shared one.
-                    (rate.tenant_id != '') DESC
+                -- An instance-scoped configuration wins over the vendor default.
+                ORDER BY (pricing.insight_source_id != '') DESC
             )                                   AS pick
         FROM {{ ref('class_ai_credit_usage') }} AS credit FINAL
-        -- Equi-joins only. Scope and validity are filtered below so the join
-        -- conditions carry nothing but equalities.
+        -- Equi-join only. Scope is filtered below so the join condition carries
+        -- nothing but equalities.
         INNER JOIN (
-            SELECT * FROM {{ source('config', 'ai_credit_price') }} FINAL WHERE is_deleted = 0
-        ) AS price
-                ON price.tenant_id = credit.insight_tenant_id
-               AND price.source = credit.source
-        INNER JOIN (
-            SELECT * FROM {{ source('config', 'ai_currency_rate') }} FINAL
-            WHERE is_deleted = 0 AND to_currency = 'USD'
-        ) AS rate
-                ON rate.from_currency = price.price_currency
+            SELECT * FROM {{ source('config', 'ai_credit_pricing') }} FINAL WHERE is_deleted = 0
+        ) AS pricing
+                ON pricing.tenant_id = credit.insight_tenant_id
+               AND pricing.source = credit.source
         WHERE credit.email IS NOT NULL
           AND credit.email != ''
           AND credit.collected_at IS NOT NULL
           -- Empty binds every instance of the vendor, as in ai_seat_tier_map.
-          AND has([credit.source_id, ''], price.insight_source_id)
-          -- The price that had taken effect by the day the credits were spent.
-          -- A day earlier than every price resolves to nothing, and the INNER
-          -- join then drops it: no rate, no money, never a zero.
-          AND price.effective_from <= credit.day
-          AND has([credit.insight_tenant_id, ''], rate.tenant_id)
+          -- IN is unsupported with a column on the right, and OR would put a
+          -- disjunction back into the join, so the scope test is has().
+          AND has([credit.source_id, ''], pricing.insight_source_id)
     )
     WHERE pick = 1
 ) AS priced_day
 ARRAY JOIN [
     -- The day, exact as this vendor reports it.
-    tuple('daily_extra_usage_usd', toFloat64(usd_minor_units) / 100,
+    tuple('daily_extra_usage_usd', toFloat64(usd_cents) / 100,
           'seat_day', day),
     -- The same charge, dated at its month so the observations layer sums it.
-    tuple('extra_usage_usd', toFloat64(usd_minor_units) / 100,
+    tuple('extra_usage_usd', toFloat64(usd_cents) / 100,
           'seat_month', toStartOfMonth(day))
 ] AS credit_measure
 WHERE tenant_id IS NOT NULL
