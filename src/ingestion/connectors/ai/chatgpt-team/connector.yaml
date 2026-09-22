@@ -26,6 +26,20 @@
 # Streams 3 and 5 are both per-person-per-day Codex readings and neither
 # replaces the other — see stream 5 for which fields each one owns.
 #
+# TYPES: a counter the vendor reports as a whole number is declared `integer`,
+# not `number`. A JSON `number` lands as Nullable(Decimal(38, 9)) in ClickHouse,
+# which is why every downstream read of one goes through
+# toUInt32OrNull(toString(...)) — a conversion the column type should not have
+# made necessary. Credits stay `number`: they are genuinely fractional.
+#
+# ⚠️ This changes the Bronze column type, and reconcile_bronze_schema.py only
+# ADDs columns — a type that differs from the snapshot is reported and left
+# alone, because MODIFY COLUMN rewrites data and is an operator's decision. So a
+# fresh install gets Int64 while an installation that already holds these tables
+# keeps Decimal, and the reconciler logs the drift on every run until an
+# operator converges it. The dbt models read both: toString of either type gives
+# the same digits for a whole number.
+
 # The roster, leaderboard, sessions and settings shapes below were read back
 # from a workspace. The two subscription streams were not: their fields still
 # come from the data_collector prototype (apps/openai) and are unconfirmed.
@@ -352,11 +366,11 @@ streams:
           user_id: { type: ["string", "null"] }
           name: { type: ["string", "null"] }
           credits: { type: ["number", "null"] }
-          n_threads: { type: ["number", "null"] }
-          n_turns: { type: ["number", "null"] }
-          current_streak: { type: ["number", "null"] }
-          text_tokens: { type: ["number", "null"] }
-          lines_added: { type: ["number", "null"] }
+          n_threads: { type: ["integer", "null"] }
+          n_turns: { type: ["integer", "null"] }
+          current_streak: { type: ["integer", "null"] }
+          text_tokens: { type: ["integer", "null"] }
+          lines_added: { type: ["integer", "null"] }
     retriever:
       type: SimpleRetriever
       requester:
@@ -559,16 +573,16 @@ streams:
           data_source: { type: string }
           date: { type: string }
           user_id: { type: string }
-          n_new_sessions_total: { type: ["number", "null"] }
-          n_user_messages_total: { type: ["number", "null"] }
-          n_tasks_web: { type: ["number", "null"] }
-          n_code_reviews_web: { type: ["number", "null"] }
+          n_new_sessions_total: { type: ["integer", "null"] }
+          n_user_messages_total: { type: ["integer", "null"] }
+          n_tasks_web: { type: ["integer", "null"] }
+          n_code_reviews_web: { type: ["integer", "null"] }
           credit_total: { type: ["number", "null"] }
           on_demand_credits: { type: ["number", "null"] }
-          uncached_text_input_tokens: { type: ["number", "null"] }
-          cached_text_input_tokens: { type: ["number", "null"] }
-          text_output_tokens: { type: ["number", "null"] }
-          text_total_tokens: { type: ["number", "null"] }
+          uncached_text_input_tokens: { type: ["integer", "null"] }
+          cached_text_input_tokens: { type: ["integer", "null"] }
+          text_output_tokens: { type: ["integer", "null"] }
+          text_total_tokens: { type: ["integer", "null"] }
           # Per-surface credits. The surface list is the vendor's own and it
           # grows without notice, so a surface added later arrives as a column
           # this schema does not declare and is dropped until it is added here.
@@ -582,25 +596,25 @@ streams:
           credit_github_code_review: { type: ["number", "null"] }
           credit_github_turn: { type: ["number", "null"] }
           # Per-surface new sessions, same caveat as the credits above.
-          n_new_sessions_cli: { type: ["number", "null"] }
-          n_new_sessions_vscode: { type: ["number", "null"] }
-          n_new_sessions_exec: { type: ["number", "null"] }
-          n_new_sessions_sdk_ts: { type: ["number", "null"] }
-          n_new_sessions_desktop: { type: ["number", "null"] }
-          n_new_sessions_work_desktop: { type: ["number", "null"] }
-          n_new_sessions_work_web: { type: ["number", "null"] }
-          n_new_sessions_work_mobile: { type: ["number", "null"] }
-          n_new_sessions_other: { type: ["number", "null"] }
+          n_new_sessions_cli: { type: ["integer", "null"] }
+          n_new_sessions_vscode: { type: ["integer", "null"] }
+          n_new_sessions_exec: { type: ["integer", "null"] }
+          n_new_sessions_sdk_ts: { type: ["integer", "null"] }
+          n_new_sessions_desktop: { type: ["integer", "null"] }
+          n_new_sessions_work_desktop: { type: ["integer", "null"] }
+          n_new_sessions_work_web: { type: ["integer", "null"] }
+          n_new_sessions_work_mobile: { type: ["integer", "null"] }
+          n_new_sessions_other: { type: ["integer", "null"] }
           # Per-surface user messages, same caveat again.
-          n_user_messages_cli: { type: ["number", "null"] }
-          n_user_messages_vscode: { type: ["number", "null"] }
-          n_user_messages_exec: { type: ["number", "null"] }
-          n_user_messages_sdk_ts: { type: ["number", "null"] }
-          n_user_messages_desktop: { type: ["number", "null"] }
-          n_user_messages_work_desktop: { type: ["number", "null"] }
-          n_user_messages_work_web: { type: ["number", "null"] }
-          n_user_messages_work_mobile: { type: ["number", "null"] }
-          n_user_messages_other: { type: ["number", "null"] }
+          n_user_messages_cli: { type: ["integer", "null"] }
+          n_user_messages_vscode: { type: ["integer", "null"] }
+          n_user_messages_exec: { type: ["integer", "null"] }
+          n_user_messages_sdk_ts: { type: ["integer", "null"] }
+          n_user_messages_desktop: { type: ["integer", "null"] }
+          n_user_messages_work_desktop: { type: ["integer", "null"] }
+          n_user_messages_work_web: { type: ["integer", "null"] }
+          n_user_messages_work_mobile: { type: ["integer", "null"] }
+          n_user_messages_other: { type: ["integer", "null"] }
           # NOT collected: the nested clients[] / models[] arrays and the
           # workspace-wide n_users_used_* counters. The arrays restate the
           # per-surface columns above at a different granularity, and a

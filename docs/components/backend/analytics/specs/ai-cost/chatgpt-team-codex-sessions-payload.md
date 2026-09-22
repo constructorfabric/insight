@@ -4,9 +4,10 @@ Every field the ChatGPT Team endpoint `wham/analytics/daily-sessions-messages-co
 returns, what we do with it today, and what is simply not established.
 
 The purpose is to let a reader decide what else is worth collecting without
-re-reading the vendor. Everything the per-person aggregate publishes is stored
-and surfaced; what remains outside is listed under "Not collected", with the
-reason, and none of it was rejected on merit — nobody has asked for it yet.
+re-reading the vendor. All selected scalar per-person fields are stored and
+surfaced; the nested arrays and the workspace-wide counters are not, and are
+listed under "Not collected" with the reason — none of it was rejected on
+merit, nobody has asked for it yet.
 
 The endpoint is undocumented by the vendor. Field names below are the vendor's;
 semantics are inferred from the names and from the shape of the responses, and
@@ -128,6 +129,23 @@ Counts messages the person sent. The assistant's replies are not counted.
 | `models` | array of objects | Per-model breakdown with `model`, `speed`, credits and token counters. This is the only place the model is named, so it is the field to collect first if per-model cost is ever wanted. |
 | `n_users_used_codex` | int | Workspace-wide headcount repeated on every person's row. Copying an organisation-level fact onto each person multiplies it by the roster and makes any sum wrong. Collect as its own day-grain stream if wanted — the pattern exists in `chatgpt_team_codex_user_daily_org`. |
 | `n_users_used_work` | int | Same, for the work surfaces. |
+
+## Storage types
+
+A counter the vendor reports as a whole number is declared `integer` in the
+manifest and lands as `Nullable(Int64)`. Credits are declared `number` and land
+as `Nullable(Decimal(38, 9))`, because they are genuinely fractional.
+
+The distinction is not cosmetic. A JSON `number` becomes a Decimal in ClickHouse
+whatever the values look like, and every downstream read of one then has to go
+through `toUInt32OrNull(toString(...))` to get an integer back.
+
+One consequence worth knowing before reading a live warehouse: the bronze
+reconciler only ADDs columns. A column whose type differs from the snapshot is
+reported and left alone, because changing it rewrites data and is an operator's
+decision. An installation that already holds these tables therefore keeps the
+Decimal columns it was created with, while a fresh one gets Int64. Both read the
+same through `toString`.
 
 ## Completeness
 
