@@ -565,7 +565,7 @@ models:
       Per-person readings of AI usage credits, across vendors. Grain: one row
       per (tenant, source, person, day). A credit is a vendor-internal
       consumption unit, not money: it is held as a count and priced only at read
-      time in gold, from config.ai_credit_price, so restating a price restates
+      time in gold, from config.ai_credit_pricing, so restating a price restates
       the whole history rather than leaving stored amounts that disagree with
       the rate that produced them. Distinct from class_ai_overage_daily, which
       carries a cumulative month-to-date figure the vendor itself denominated in
@@ -601,8 +601,10 @@ models:
       - name: credits
         description: >
           Credits consumed on this day, as a Decimal so sums stay stable under
-          parallel aggregation. Always above zero — a zero-credit person-day is
-          not a charge and is not emitted.
+          parallel aggregation. Zero is emitted and meaningful: the vendor can
+          revise a charge down to nothing, and the corrected zero has to arrive
+          as a row to replace the positive one it supersedes. Gold's monetary
+          branch requires credits > 0, so a zero never becomes a $0 charge.
         tests:
           - not_null
       - name: credit_kind

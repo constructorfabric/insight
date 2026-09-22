@@ -53,7 +53,8 @@
     ") %}
 
     {#-
-      What one Codex usage credit costs, and the rate that presents it in USD.
+      What one Codex usage credit costs in the currency the vendor bills, and
+      the rate that presents that amount in USD.
       Operator-authored for the same reason as the tier map: no vendor API states
       either figure. A credit is a vendor-internal unit and the price arrives on a
       contract, not on an endpoint.
@@ -82,11 +83,14 @@
             -- ai_seat_tier_map: the price is per vendor, not per connector run.
             source                  LowCardinality(String),
             unique_key              String DEFAULT concat(tenant_id, ':', insight_source_id, ':', source),
-            -- Minor units of the billed currency per ONE credit. Decimal so a
+            -- Minor units of billed_currency per ONE credit. Decimal so a
             -- sub-cent price does not round to nothing before it is summed.
-            credit_price_eur_cents  Decimal(18, 6),
-            -- Multiply the EUR amount by this to present it in USD.
-            eur_usd_rate            Decimal(18, 6),
+            credit_price_minor_units Decimal(18, 6),
+            -- ISO code of the currency the vendor bills in.
+            billed_currency          LowCardinality(String),
+            -- Multiply the billed amount by this to present it in USD, which is
+            -- what every AI Cost measure reports. 1 where the two are the same.
+            native_to_usd_rate       Decimal(18, 6),
             is_deleted              UInt8   DEFAULT 0,
             note                    String  DEFAULT '',
             recorded_by             String  DEFAULT '',

@@ -22,7 +22,7 @@
 -- the exact thing an on-demand charge is levied on.
 --
 -- No money here. Credits are a vendor-internal unit; gold multiplies them by
--- config.ai_credit_price at read time and never stores the product.
+-- config.ai_credit_pricing at read time and never stores the product.
 {{ config(
     materialized='incremental',
     incremental_strategy='append',
@@ -73,9 +73,20 @@ WHERE email IS NOT NULL
   AND trim(email) != ''
   AND date IS NOT NULL
   AND trim(date) != ''
-  -- A zero-credit person-day is a fact the vendor states, but it is not a
-  -- charge and nothing downstream distinguishes it from an absent row.
-  AND coalesce(toDecimal64OrNull(toString(credits), 6), 0) > 0
+  -- INVARIANT: a zero-credit person-day IS emitted. The vendor can revise a
+  -- charge down to nothing, and this relation is a ReplacingMergeTree keyed on
+  -- unique_key — so the corrected zero has to arrive as a row, or the earlier
+  -- positive one stays the stored truth forever. Suppressing it here would
+  -- leave a charge nobody can withdraw.
+  --
+  -- The correction reaches Bronze only while the connector still re-reads the
+  -- day (lookback_window P2D); the 3-day window below is wider than that, so
+  -- it is the vendor's re-read, not this filter, that bounds how late a
+  -- revision can land.
+  --
+  -- Gold admits the money, not this model: the monetary branch of
+  -- ai_cost_metric_evidence requires credits > 0, so a zero never becomes a
+  -- $0 charge.
 {% if is_incremental() %}
   -- Empty-table guard, as in chatgpt_team__ai_dev_usage: over an empty `this`
   -- max(day) is the Date epoch and the interval underflows, filtering

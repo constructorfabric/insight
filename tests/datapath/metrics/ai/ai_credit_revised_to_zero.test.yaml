@@ -1,0 +1,63 @@
+spec_version: 1
+description: >
+  A Codex charge the vendor revises down to nothing must stop being charged.
+
+  chatgpt_team__ai_credit_usage emits a row for every person-day the vendor
+  reports, including one whose credits came back as zero. That is deliberate and
+  it is what this case pins. The relation is a ReplacingMergeTree keyed on
+  unique_key, which carries (tenant, source, email, date) and NOT the credit
+  figure — so a corrected reading replaces the one it supersedes only if it
+  arrives as a row at all. Filtering zeros out of the contributor would leave
+  the earlier positive reading as the stored truth with nothing able to withdraw
+  it.
+
+  Money is admitted one layer later. The monetary branch of
+  ai_cost_metric_evidence requires credits > 0, so the stored zero produces no
+  evidence row rather than a $0 charge — "this was not charged" and "this cost
+  nothing" are different answers and only the first one is true here.
+
+  Two people, one day each, read twice.
+
+    alice   Dec 02   read at 08:00 reports 500 credits
+                     read at 09:00 reports 0 — the vendor withdrew the charge
+                     => silver holds the zero; no charge is served
+    bob     Dec 02   read at 08:00 reports 200 credits
+                     read at 09:00 reports 200 — unchanged
+                     => the control: a charge that was never revised stays
+
+  bob is what makes the case fail loudly if the monetary filter is dropped
+  altogether: without it alice would serve $0 where she must serve nothing,
+  and without the contributor emitting zeros she would serve her withdrawn 500.
+
+  Priced at 4 minor units per credit with a 1.08 conversion, so bob's 200
+  credits are 200 × 4 = 800 minor units billed, presented as 800 × 1.08 = 864
+  cents, i.e. 8.64.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/alice
+    - $ref: ../templates/people.yaml#/templates/bob
+
+  # ── The operator's pricing: one current configuration, no history ──
+  config.ai_credit_pricing:
+    - { tenant_id: "{{ tenant }}", insight_source_id: "chatgpt-team-test", source: chatgpt_team,
+        unique_key: pricing-chatgpt, credit_price_minor_units: 4, billed_currency: EUR,
+        native_to_usd_rate: 1.08, is_deleted: 0, note: "", recorded_by: "",
+        _version: "2026-12-01T00:00:00.000Z" }
+
+  bronze_chatgpt_team.chatgpt_team_codex_user_daily:
+    # alice: charged, then the charge is withdrawn by a later read of the same day.
+    - { $ref: ../templates/chatgpt_team_codex.yaml#/templates/alice,
+        date: "2026-12-02", unique_key: "{{ tenant }}-chatgpt-team-test-2026-12-02-alice@example.com",
+        credits: 500, n_threads: 3, _airbyte_extracted_at: "2026-12-03T08:00:00Z" }
+    - { $ref: ../templates/chatgpt_team_codex.yaml#/templates/alice,
+        date: "2026-12-02", unique_key: "{{ tenant }}-chatgpt-team-test-2026-12-02-alice@example.com",
+        credits: 0, n_threads: 3, _airbyte_extracted_at: "2026-12-03T09:00:00Z" }
+
+    # bob: read twice, unchanged. The control.
+    - { $ref: ../templates/chatgpt_team_codex.yaml#/templates/bob,
+        date: "2026-12-02", unique_key: "{{ tenant }}-chatgpt-team-test-2026-12-02-bob@example.com",
+        credits: 200, n_threads: 2, _airbyte_extracted_at: "2026-12-03T08:00:00Z" }
+    - { $ref: ../templates/chatgpt_team_codex.yaml#/templates/bob,
+        date: "2026-12-02", unique_key: "{{ tenant }}-chatgpt-team-test-2026-12-02-bob@example.com",
+        credits: 200, n_threads: 2, _airbyte_extracted_at: "2026-12-03T09:00:00Z" }

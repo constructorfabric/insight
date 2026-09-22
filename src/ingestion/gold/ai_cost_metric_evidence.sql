@@ -388,9 +388,10 @@ SELECT
     map(
         'credits', toString(credits),
         'credit_kind', credit_kind,
-        'credit_price_eur_cents', toString(credit_price_eur_cents),
-        'native_amount_eur', toString(native_eur_cents / 100),
-        'eur_usd_rate', toString(eur_usd_rate),
+        'billed_currency', billed_currency,
+        'credit_price_minor_units', toString(credit_price_minor_units),
+        'native_amount', toString(native_minor_units / 100),
+        'native_to_usd_rate', toString(native_to_usd_rate),
         -- Both the price and the rate are current configuration, not history,
         -- so this figure is an estimate and restates when either is changed.
         -- The credits beside it do not.
@@ -415,13 +416,14 @@ FROM (
                     tuple('tool', credit.tool, {{ ai_tool_label('credit.tool') }})
                 ] AS Array(Tuple(key String, value String, label Nullable(String)))
             )                                   AS credit_dimensions,
-            pricing.credit_price_eur_cents      AS credit_price_eur_cents,
-            pricing.eur_usd_rate                AS eur_usd_rate,
+            pricing.credit_price_minor_units    AS credit_price_minor_units,
+            pricing.billed_currency             AS billed_currency,
+            pricing.native_to_usd_rate          AS native_to_usd_rate,
             -- What the vendor bills, in the currency it bills: credits times the
             -- price of one. The USD beside it is this amount presented.
-            credit.credits * pricing.credit_price_eur_cents               AS native_eur_cents,
-            credit.credits * pricing.credit_price_eur_cents
-                           * pricing.eur_usd_rate                         AS usd_cents,
+            credit.credits * pricing.credit_price_minor_units             AS native_minor_units,
+            credit.credits * pricing.credit_price_minor_units
+                           * pricing.native_to_usd_rate                   AS usd_cents,
             row_number() OVER (
                 PARTITION BY credit.insight_tenant_id, credit.source_id,
                              credit.source, credit.day, credit.email
@@ -439,6 +441,11 @@ FROM (
         WHERE credit.email IS NOT NULL
           AND credit.email != ''
           AND credit.collected_at IS NOT NULL
+          -- INVARIANT: money only where there is a charge. class_ai_credit_usage
+          -- carries zero-credit person-days on purpose, so that a charge revised
+          -- down to nothing replaces the positive row it corrects; admitting
+          -- those here would publish a $0 charge instead of no charge.
+          AND credit.credits > 0
           -- Empty binds every instance of the vendor, as in ai_seat_tier_map.
           -- IN is unsupported with a column on the right, and OR would put a
           -- disjunction back into the join, so the scope test is has().

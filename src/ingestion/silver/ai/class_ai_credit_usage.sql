@@ -13,7 +13,7 @@
 -- (tenant, source, person, day).
 --
 -- A credit is a vendor-internal consumption unit, not money. It is kept as a
--- count here and priced only at read time, from config.ai_credit_price — so a
+-- count here and priced only at read time, from config.ai_credit_pricing — so a
 -- restated price restates the whole history instead of leaving stored amounts
 -- that disagree with the rate that produced them.
 --
