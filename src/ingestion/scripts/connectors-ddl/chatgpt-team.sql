@@ -48,6 +48,62 @@ ORDER BY unique_key
 SETTINGS allow_nullable_key = 1, index_granularity = 8192
 ;
 
+CREATE TABLE IF NOT EXISTS bronze_chatgpt_team.chatgpt_team_codex_sessions_daily
+(
+    `_airbyte_raw_id` String,
+    `_airbyte_extracted_at` DateTime64(3),
+    `_airbyte_meta` String,
+    `_airbyte_generation_id` UInt32,
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `unique_key` Nullable(String),
+    `collected_at` Nullable(String),
+    `data_source` Nullable(String),
+    `date` Nullable(String),
+    `user_id` Nullable(String),
+    `n_new_sessions_total` Nullable(Decimal(38, 9)),
+    `n_user_messages_total` Nullable(Decimal(38, 9)),
+    `n_tasks_web` Nullable(Decimal(38, 9)),
+    `n_code_reviews_web` Nullable(Decimal(38, 9)),
+    `credit_total` Nullable(Decimal(38, 9)),
+    `on_demand_credits` Nullable(Decimal(38, 9)),
+    `uncached_text_input_tokens` Nullable(Decimal(38, 9)),
+    `cached_text_input_tokens` Nullable(Decimal(38, 9)),
+    `text_output_tokens` Nullable(Decimal(38, 9)),
+    `text_total_tokens` Nullable(Decimal(38, 9)),
+    `credit_cli` Nullable(Decimal(38, 9)),
+    `credit_vscode` Nullable(Decimal(38, 9)),
+    `credit_exec` Nullable(Decimal(38, 9)),
+    `credit_sdk_ts` Nullable(Decimal(38, 9)),
+    `credit_desktop` Nullable(Decimal(38, 9)),
+    `credit_web` Nullable(Decimal(38, 9)),
+    `credit_slack` Nullable(Decimal(38, 9)),
+    `credit_github_code_review` Nullable(Decimal(38, 9)),
+    `credit_github_turn` Nullable(Decimal(38, 9)),
+    `n_new_sessions_cli` Nullable(Decimal(38, 9)),
+    `n_new_sessions_vscode` Nullable(Decimal(38, 9)),
+    `n_new_sessions_exec` Nullable(Decimal(38, 9)),
+    `n_new_sessions_sdk_ts` Nullable(Decimal(38, 9)),
+    `n_new_sessions_desktop` Nullable(Decimal(38, 9)),
+    `n_new_sessions_work_desktop` Nullable(Decimal(38, 9)),
+    `n_new_sessions_work_web` Nullable(Decimal(38, 9)),
+    `n_new_sessions_work_mobile` Nullable(Decimal(38, 9)),
+    `n_new_sessions_other` Nullable(Decimal(38, 9)),
+    `n_user_messages_cli` Nullable(Decimal(38, 9)),
+    `n_user_messages_vscode` Nullable(Decimal(38, 9)),
+    `n_user_messages_exec` Nullable(Decimal(38, 9)),
+    `n_user_messages_sdk_ts` Nullable(Decimal(38, 9)),
+    `n_user_messages_desktop` Nullable(Decimal(38, 9)),
+    `n_user_messages_work_desktop` Nullable(Decimal(38, 9)),
+    `n_user_messages_work_web` Nullable(Decimal(38, 9)),
+    `n_user_messages_work_mobile` Nullable(Decimal(38, 9)),
+    `n_user_messages_other` Nullable(Decimal(38, 9))
+)
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, index_granularity = 8192
+;
+
 CREATE TABLE IF NOT EXISTS bronze_chatgpt_team.chatgpt_team_codex_user_daily
 (
     `_airbyte_raw_id` String,
