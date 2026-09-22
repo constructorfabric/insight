@@ -29,6 +29,21 @@ description: >
   altogether: without it alice would serve $0 where she must serve nothing,
   and without the contributor emitting zeros she would serve her withdrawn 500.
 
+  WHAT THIS DOES NOT PROVE. Both readings are seeded before a single build, so
+  what is exercised is the ReplacingMergeTree collapsing to the newest _version
+  within one run, and gold declining to charge the zero it settles on. It does
+  NOT exercise the incremental path — a zero arriving in a later dbt run over a
+  table that already holds the positive row — because the spec runner seeds
+  once and builds once. Covering that needs a second seed-and-rebuild phase in
+  the runner, which is a framework change rather than a case.
+
+  The two differ in what could break them. This case fails if the contributor
+  filters zeros out or if gold charges one. The uncovered path would fail on
+  something else: an incremental predicate that never selects the corrected day
+  again. That predicate is the model's three-day window, and the connector's own
+  lookback (P2D) is narrower, so the vendor's re-read bounds the correction
+  before this model does.
+
   Priced at 4 minor units per credit with a 1.08 conversion, so bob's 200
   credits are 200 × 4 = 800 minor units billed, presented as 800 × 1.08 = 864
   cents, i.e. 8.64.

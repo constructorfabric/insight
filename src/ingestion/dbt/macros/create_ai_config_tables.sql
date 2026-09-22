@@ -68,8 +68,8 @@
 
       The consequence is stated rather than hidden: changing either number
       restates every USD figure already reported, and changing the price restates
-      the EUR amount too. The credits themselves never move — they are the
-      measurement, and these two are the assumption applied to it.
+      the native billed amount too. The credits themselves never move — they are
+      the measurement, and these two are the assumption applied to it.
 
       Empty is the correct initial state. With no row, gold reports no money at
       all — never a zero, which would read as "this cost nothing".

@@ -9,6 +9,12 @@ withdraw it.
 The monetary branch of gold then requires credits > 0, so the stored zero serves
 no charge rather than a $0 one. Those are different answers and only the first
 is true.
+
+Scope: both readings are seeded before one build, so this covers the collapse to
+the newest version within a run and gold's refusal to charge the zero it settles
+on. It does not cover the incremental path — a correction arriving in a later run
+over a table that already holds the positive row — which the spec runner cannot
+express without a second seed-and-rebuild phase. The fixture says so at length.
 """
 
 from __future__ import annotations
