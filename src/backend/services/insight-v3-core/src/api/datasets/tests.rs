@@ -403,12 +403,89 @@ async fn a_dataset_page_shows_the_latest_records_as_they_arrived() {
         .mock
         .add(handlers::provide(vec![Counted { total: 757 }]));
 
-    let (looked, body) = harness.get("/v1/datasets/commits/records?limit=20").await;
+    let (looked, body) = harness
+        .get(&format!(
+            "/v1/datasets/commits/records?limit={PREVIEW_ROWS}"
+        ))
+        .await;
 
     assert_eq!(looked, StatusCode::OK);
     assert_eq!(read(&body)["records"][0]["raw_data"], json!({"lines": 7}));
     // The look is a slice; the count says how much lies behind it.
     assert_eq!(read(&body)["total"], json!(757));
+    // And how wide the slice was, so a reader stepping by offset does not
+    // have to assume the limit it asked for was the one applied.
+    assert_eq!(read(&body)["limit"], json!(PREVIEW_ROWS));
+}
+
+/// A page is a window on what arrived: how many, from where, in what order.
+#[tokio::test]
+async fn a_page_is_ordered_by_a_declared_field_when_one_is_named() {
+    let harness = TestHarness::new();
+    harness.a_free_name();
+    harness.put("commits", declaration()).await;
+    harness
+        .mock
+        .add(handlers::provide(Vec::<StoredRecord>::new()));
+    harness
+        .mock
+        .add(handlers::provide(vec![Counted { total: 0 }]));
+
+    let (looked, _) = harness
+        .get("/v1/datasets/commits/records?order_by=day&direction=asc&offset=40")
+        .await;
+
+    assert_eq!(looked, StatusCode::OK);
+}
+
+/// A page cut down to the cap without saying so would let a reader paging by
+/// the size it asked for step over the records the smaller page left behind.
+/// A page of none is no page at all, and is refused against the same field.
+#[tokio::test]
+async fn a_page_of_a_size_this_installation_does_not_serve_is_refused() {
+    for asked in [0, PREVIEW_ROWS + 1] {
+        let harness = TestHarness::new();
+        harness.a_free_name();
+        harness.put("commits", declaration()).await;
+
+        let (looked, body) = harness
+            .get(&format!("/v1/datasets/commits/records?limit={asked}"))
+            .await;
+
+        assert_eq!(looked, StatusCode::BAD_REQUEST, "asked {asked}");
+        let violation = &read(&body)["context"]["field_violations"][0];
+        assert_eq!(violation["field"], json!("limit"));
+        assert!(
+            violation["description"]
+                .as_str()
+                .is_some_and(|said| said.contains(&PREVIEW_ROWS.to_string())),
+            "should name the range: {violation}"
+        );
+    }
+}
+
+/// The reader names a field; the declaration says how it is read. A name it
+/// does not declare is refused against the parameter that carried it.
+#[tokio::test]
+async fn a_page_ordered_by_a_field_the_dataset_does_not_declare_is_refused() {
+    let harness = TestHarness::new();
+    harness.a_free_name();
+    harness.put("commits", declaration()).await;
+
+    let (looked, body) = harness
+        .get("/v1/datasets/commits/records?order_by=nonsense")
+        .await;
+
+    assert_eq!(looked, StatusCode::BAD_REQUEST);
+    let violation = &read(&body)["context"]["field_violations"][0];
+    assert_eq!(violation["field"], "order_by");
+    assert!(
+        violation["description"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("`nonsense` is not a field of this dataset"),
+        "{violation}"
+    );
 }
 
 /// The table is not asked about at all: there is none to ask.

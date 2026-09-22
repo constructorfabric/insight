@@ -63,6 +63,18 @@ beforeEach(() => {
 });
 
 describe("/portal/custom/metrics/$name", () => {
+  // A reader who opened this from the catalogue needs the way back, whether
+  // or not the page found what it was looking for.
+  it("offers the way back to the catalogue", async () => {
+    vi.mocked(customClient.fetchMetric).mockResolvedValue(CLOCKED);
+
+    render(<Component />, { wrapper });
+
+    expect(
+      await screen.findByRole("link", { name: "Back to the catalogue" })
+    ).toHaveAttribute("href", "/portal/custom/metrics");
+  });
+
   it("runs the metric and shows its rows, all time first", async () => {
     vi.mocked(customClient.fetchMetric).mockResolvedValue(CLOCKED);
 

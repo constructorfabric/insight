@@ -63,6 +63,8 @@ vi.mock("recharts", async (importOriginal) => {
   };
 });
 
+import { CustomApiError } from "@/api/custom-client";
+
 import { CustomWidget } from "./custom-widget";
 
 const result = {
@@ -79,16 +81,21 @@ describe("<CustomWidget>", () => {
       <CustomWidget
         widget={{ type: "table", metric: "m", columns: ["day", "lines"] }}
         result={result}
-      />,
+      />
     );
 
-    expect(screen.getByRole("columnheader", { name: "day" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("columnheader", { name: "day" })
+    ).toBeInTheDocument();
     expect(screen.getAllByRole("row")).toHaveLength(3);
   });
 
   it("renders a line widget as a chart", () => {
     render(
-      <CustomWidget widget={{ type: "line", metric: "m", x: "day", y: "lines" }} result={result} />,
+      <CustomWidget
+        widget={{ type: "line", metric: "m", x: "day", y: "lines" }}
+        result={result}
+      />
     );
 
     expect(screen.getByTestId("custom-line-chart")).toBeInTheDocument();
@@ -96,14 +103,17 @@ describe("<CustomWidget>", () => {
 
   it("maps the widget's x and y fields to the chart axes and row values", () => {
     render(
-      <CustomWidget widget={{ type: "line", metric: "m", x: "day", y: "lines" }} result={result} />,
+      <CustomWidget
+        widget={{ type: "line", metric: "m", x: "day", y: "lines" }}
+        result={result}
+      />
     );
 
     expect(screen.getByTestId("x-axis")).toHaveAttribute("data-key", "day");
     expect(screen.getByTestId("line")).toHaveAttribute("data-key", "lines");
 
     const chartData = JSON.parse(
-      screen.getByTestId("line-chart").getAttribute("data-chart-data")!,
+      screen.getByTestId("line-chart").getAttribute("data-chart-data")!
     );
     expect(chartData).toEqual([
       { day: "2026-09-01", lines: 59 },
@@ -111,15 +121,37 @@ describe("<CustomWidget>", () => {
     ]);
   });
 
-  it("shows an error in place of the content when the run failed", () => {
+  // A card is where a reader meets a refusal, so it shows what the service
+  // said rather than the status it said it with.
+  it("shows the service's refusal in place of the content", () => {
     render(
       <CustomWidget
         widget={{ type: "table", metric: "m", columns: ["day"] }}
-        error={new Error("unknown table `evnts`")}
-      />,
+        error={
+          new CustomApiError(400, {
+            detail: "a metric reads a dataset, so it may not name a `table`",
+          })
+        }
+      />
     );
 
-    expect(screen.getByRole("alert")).toHaveTextContent("unknown table `evnts`");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "a metric reads a dataset, so it may not name a `table`"
+    );
+    expect(screen.getByRole("alert")).not.toHaveTextContent("400");
+  });
+
+  it("says plainly when the failure carries nothing readable", () => {
+    render(
+      <CustomWidget
+        widget={{ type: "table", metric: "m", columns: ["day"] }}
+        error={new TypeError("Failed to fetch")}
+      />
+    );
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "The metric could not be run."
+    );
   });
 
   it("says there is no data when the metric returned no rows", () => {
@@ -127,30 +159,57 @@ describe("<CustomWidget>", () => {
       <CustomWidget
         widget={{ type: "table", metric: "m", columns: ["day"] }}
         result={{ columns: ["day"], rows: [] }}
-      />,
+      />
     );
 
     expect(screen.getByText(/no data/i)).toBeInTheDocument();
   });
 
   it("says so when the type is unknown", () => {
-    render(<CustomWidget widget={{ type: "sankey", metric: "m" } as never} result={result} />);
+    render(
+      <CustomWidget
+        widget={{ type: "sankey", metric: "m" } as never}
+        result={result}
+      />
+    );
 
     expect(screen.getByText(/unknown widget type/i)).toBeInTheDocument();
   });
 
-  it("says there is no data when neither a result nor an error was passed", () => {
-    render(<CustomWidget widget={{ type: "table", metric: "m", columns: ["day"] }} />);
+  // Switching boards leaves a card with no result for a moment. Saying "No
+  // data" there reads as an answer, and then the answer changes.
+  it("waits rather than saying there is no data while the run is in flight", () => {
+    const { rerender } = render(
+      <CustomWidget
+        widget={{ type: "table", metric: "m", columns: ["day"] }}
+        pending
+      />
+    );
 
-    expect(screen.getByText(/no data/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no data/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toBeInTheDocument();
+
+    rerender(
+      <CustomWidget widget={{ type: "table", metric: "m", columns: ["day"] }} />
+    );
+
+    expect(screen.queryByText(/no data/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toBeInTheDocument();
   });
 
   it("pads a short row with empty cells instead of misaligning columns", () => {
     render(
       <CustomWidget
-        widget={{ type: "table", metric: "m", columns: ["day", "lines", "extra"] }}
-        result={{ columns: ["day", "lines", "extra"], rows: [["2026-09-01", 59]] }}
-      />,
+        widget={{
+          type: "table",
+          metric: "m",
+          columns: ["day", "lines", "extra"],
+        }}
+        result={{
+          columns: ["day", "lines", "extra"],
+          rows: [["2026-09-01", 59]],
+        }}
+      />
     );
 
     const cells = screen.getAllByRole("cell");
@@ -165,7 +224,7 @@ describe("<CustomWidget>", () => {
       <CustomWidget
         widget={{ type: "table", metric: "m", columns: ["day"] }}
         result={{ columns: ["day"], rows: [["2026-09-01", 59, "extra"]] }}
-      />,
+      />
     );
 
     const cells = screen.getAllByRole("cell");
@@ -226,8 +285,14 @@ describe("<CustomWidget>", () => {
   });
 
   it.each([
-    [{ type: "bar", metric: "lines_per_day", x: "day", y: "lines" }, "custom-bar-chart"],
-    [{ type: "area", metric: "lines_per_day", x: "day", y: "lines" }, "custom-area-chart"],
+    [
+      { type: "bar", metric: "lines_per_day", x: "day", y: "lines" },
+      "custom-bar-chart",
+    ],
+    [
+      { type: "area", metric: "lines_per_day", x: "day", y: "lines" },
+      "custom-area-chart",
+    ],
     [{ type: "stat", metric: "lines_per_day", value: "lines" }, "custom-stat"],
     [
       { type: "pie", metric: "lines_per_day", label: "day", value: "lines" },
@@ -237,7 +302,10 @@ describe("<CustomWidget>", () => {
     render(
       <CustomWidget
         widget={widget as never}
-        result={{ columns: ["day", "total_lines"], rows: [["2026-09-01", 132]] }}
+        result={{
+          columns: ["day", "total_lines"],
+          rows: [["2026-09-01", 132]],
+        }}
       />
     );
 
@@ -273,18 +341,25 @@ describe("<CustomWidget> over a window that holds nothing", () => {
         widget={{ type: "line", metric: "opened", x: "bucket", y: "opened" }}
         result={{ columns: ["bucket", "opened"], rows: [] }}
         windowed
-      />,
+      />
     );
 
-    expect(screen.getByRole("status")).toHaveTextContent(/nothing in this window/i);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      /nothing in this window/i
+    );
   });
 
   it("says only that there is no data when no window was asked for", () => {
     render(
       <CustomWidget
-        widget={{ type: "stat", metric: "total", value: "total", label: "Total" }}
+        widget={{
+          type: "stat",
+          metric: "total",
+          value: "total",
+          label: "Total",
+        }}
         result={{ columns: ["total"], rows: [] }}
-      />,
+      />
     );
 
     expect(screen.getByRole("status")).toHaveTextContent(/no data/i);

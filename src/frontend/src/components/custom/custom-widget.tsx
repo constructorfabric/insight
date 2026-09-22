@@ -1,19 +1,24 @@
 import type { MetricResult, Widget } from "@/api/custom-client";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { refusal } from "@/components/custom/refusal";
 import { CustomAreaChart } from "@/components/custom/custom-area-chart";
 import { CustomBarChart } from "@/components/custom/custom-bar-chart";
 import { CustomLineChart } from "@/components/custom/custom-line-chart";
 import { CustomPieChart } from "@/components/custom/custom-pie-chart";
 import { CustomStat } from "@/components/custom/custom-stat";
 import { CustomTable } from "@/components/custom/custom-table";
+import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 
 export interface CustomWidgetProps {
   widget: Widget;
   result?: MetricResult;
-  error?: Error;
+  /** Whatever failed the run, shown as the service worded it. */
+  error?: unknown;
   /** Whether a time range was asked for, which changes what empty means. */
   windowed?: boolean;
+  /** Whether the run is still in flight, which is not the same as empty. */
+  pending?: boolean;
 }
 
 export function CustomWidget({
@@ -21,24 +26,31 @@ export function CustomWidget({
   result,
   error,
   windowed,
+  pending,
 }: CustomWidgetProps) {
   if (error) {
     return (
       <Alert variant="destructive">
-        <AlertDescription>{error.message}</AlertDescription>
+        <AlertDescription>
+          {refusal(error, "The metric could not be run.")}
+        </AlertDescription>
       </Alert>
     );
   }
 
-  if (!result || result.rows.length === 0) {
+  // A run in flight has no result yet, which is not the same as a result with
+  // nothing in it: saying "No data" while waiting reads as an answer.
+  if (pending || !result) {
+    return <CenteredSpinner className="min-h-40" />;
+  }
+
+  if (result.rows.length === 0) {
     return (
       <ComingSoon
         variant="card"
         state="empty"
         label={
-          windowed
-            ? "Nothing in this window. Try a wider range."
-            : "No data."
+          windowed ? "Nothing in this window. Try a wider range." : "No data."
         }
       />
     );
