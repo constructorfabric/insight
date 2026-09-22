@@ -247,10 +247,13 @@ SELECT
     CAST(NULL AS Nullable(UInt32))                      AS prs_with_cc_count,
     CAST(NULL AS Nullable(UInt32))                      AS prs_total_count,
     -- Codex-specific counters not in the shared contract — preserved here.
-    -- The sessions_* keys come from chatgpt_team_codex_sessions_daily and are
-    -- absent, not zero, when that endpoint did not return the person-day:
-    -- seen_in_sessions says which, so a genuine zero stays distinguishable
-    -- from an unread one. Money is NOT sourced from here: the cost path reads
+    --
+    -- Every counter key reads '' unless it holds a whole non-negative number,
+    -- and that one rule covers three different absences: the endpoint did not
+    -- return the person-day, or it returned no value, or it returned one that
+    -- is not a count. None of them is a zero, and '0' therefore always means a
+    -- measured zero. seen_in_sessions separates the first case from the other
+    -- two, so a reader can tell "not read" from "read and unusable". Money is NOT sourced from here: the cost path reads
     -- the leaderboard's credits through class_ai_credit_usage, because this
     -- model's emission filter drops credit-bearing person-days by design. The
     -- sessions figures beside them are the breakdown and the reconciliation,
@@ -269,14 +272,14 @@ SELECT
         'seen_in_sessions',       if(seen_in_sessions, '1', '0'),
         'sessions_credit_total',  if(seen_in_sessions, toString(coalesce(sessions_credit_total, 0)), ''),
         'sessions_on_demand_credits', if(seen_in_sessions, toString(coalesce(sessions_on_demand_credits, 0)), ''),
-        'sessions_new_sessions',  if(seen_in_sessions, toString(coalesce(sessions_new_sessions, 0)), ''),
-        'sessions_user_messages', if(seen_in_sessions, toString(coalesce(sessions_user_messages, 0)), ''),
-        'sessions_tasks_web',     if(seen_in_sessions, toString(coalesce(sessions_tasks_web, 0)), ''),
-        'sessions_code_reviews_web', if(seen_in_sessions, toString(coalesce(sessions_code_reviews_web, 0)), ''),
-        'sessions_uncached_input_tokens', if(seen_in_sessions, toString(coalesce(sessions_uncached_input_tokens, 0)), ''),
-        'sessions_cached_input_tokens', if(seen_in_sessions, toString(coalesce(sessions_cached_input_tokens, 0)), ''),
-        'sessions_output_tokens', if(seen_in_sessions, toString(coalesce(sessions_output_tokens, 0)), ''),
-        'sessions_text_total_tokens', if(seen_in_sessions, toString(coalesce(sessions_text_total_tokens, 0)), ''),
+        'sessions_new_sessions',  ifNull(toString(sessions_new_sessions), ''),
+        'sessions_user_messages', ifNull(toString(sessions_user_messages), ''),
+        'sessions_tasks_web',     ifNull(toString(sessions_tasks_web), ''),
+        'sessions_code_reviews_web', ifNull(toString(sessions_code_reviews_web), ''),
+        'sessions_uncached_input_tokens', ifNull(toString(sessions_uncached_input_tokens), ''),
+        'sessions_cached_input_tokens', ifNull(toString(sessions_cached_input_tokens), ''),
+        'sessions_output_tokens', ifNull(toString(sessions_output_tokens), ''),
+        'sessions_text_total_tokens', ifNull(toString(sessions_text_total_tokens), ''),
         'sessions_credit_cli', if(seen_in_sessions, toString(coalesce(sessions_credit_cli, 0)), ''),
         'sessions_credit_vscode', if(seen_in_sessions, toString(coalesce(sessions_credit_vscode, 0)), ''),
         'sessions_credit_exec', if(seen_in_sessions, toString(coalesce(sessions_credit_exec, 0)), ''),
@@ -286,24 +289,24 @@ SELECT
         'sessions_credit_slack', if(seen_in_sessions, toString(coalesce(sessions_credit_slack, 0)), ''),
         'sessions_credit_github_code_review', if(seen_in_sessions, toString(coalesce(sessions_credit_github_code_review, 0)), ''),
         'sessions_credit_github_turn', if(seen_in_sessions, toString(coalesce(sessions_credit_github_turn, 0)), ''),
-        'sessions_new_sessions_cli', if(seen_in_sessions, toString(coalesce(sessions_new_sessions_cli, 0)), ''),
-        'sessions_new_sessions_vscode', if(seen_in_sessions, toString(coalesce(sessions_new_sessions_vscode, 0)), ''),
-        'sessions_new_sessions_exec', if(seen_in_sessions, toString(coalesce(sessions_new_sessions_exec, 0)), ''),
-        'sessions_new_sessions_sdk_ts', if(seen_in_sessions, toString(coalesce(sessions_new_sessions_sdk_ts, 0)), ''),
-        'sessions_new_sessions_desktop', if(seen_in_sessions, toString(coalesce(sessions_new_sessions_desktop, 0)), ''),
-        'sessions_new_sessions_work_desktop', if(seen_in_sessions, toString(coalesce(sessions_new_sessions_work_desktop, 0)), ''),
-        'sessions_new_sessions_work_web', if(seen_in_sessions, toString(coalesce(sessions_new_sessions_work_web, 0)), ''),
-        'sessions_new_sessions_work_mobile', if(seen_in_sessions, toString(coalesce(sessions_new_sessions_work_mobile, 0)), ''),
-        'sessions_new_sessions_other', if(seen_in_sessions, toString(coalesce(sessions_new_sessions_other, 0)), ''),
-        'sessions_user_messages_cli', if(seen_in_sessions, toString(coalesce(sessions_user_messages_cli, 0)), ''),
-        'sessions_user_messages_vscode', if(seen_in_sessions, toString(coalesce(sessions_user_messages_vscode, 0)), ''),
-        'sessions_user_messages_exec', if(seen_in_sessions, toString(coalesce(sessions_user_messages_exec, 0)), ''),
-        'sessions_user_messages_sdk_ts', if(seen_in_sessions, toString(coalesce(sessions_user_messages_sdk_ts, 0)), ''),
-        'sessions_user_messages_desktop', if(seen_in_sessions, toString(coalesce(sessions_user_messages_desktop, 0)), ''),
-        'sessions_user_messages_work_desktop', if(seen_in_sessions, toString(coalesce(sessions_user_messages_work_desktop, 0)), ''),
-        'sessions_user_messages_work_web', if(seen_in_sessions, toString(coalesce(sessions_user_messages_work_web, 0)), ''),
-        'sessions_user_messages_work_mobile', if(seen_in_sessions, toString(coalesce(sessions_user_messages_work_mobile, 0)), ''),
-        'sessions_user_messages_other', if(seen_in_sessions, toString(coalesce(sessions_user_messages_other, 0)), '')
+        'sessions_new_sessions_cli', ifNull(toString(sessions_new_sessions_cli), ''),
+        'sessions_new_sessions_vscode', ifNull(toString(sessions_new_sessions_vscode), ''),
+        'sessions_new_sessions_exec', ifNull(toString(sessions_new_sessions_exec), ''),
+        'sessions_new_sessions_sdk_ts', ifNull(toString(sessions_new_sessions_sdk_ts), ''),
+        'sessions_new_sessions_desktop', ifNull(toString(sessions_new_sessions_desktop), ''),
+        'sessions_new_sessions_work_desktop', ifNull(toString(sessions_new_sessions_work_desktop), ''),
+        'sessions_new_sessions_work_web', ifNull(toString(sessions_new_sessions_work_web), ''),
+        'sessions_new_sessions_work_mobile', ifNull(toString(sessions_new_sessions_work_mobile), ''),
+        'sessions_new_sessions_other', ifNull(toString(sessions_new_sessions_other), ''),
+        'sessions_user_messages_cli', ifNull(toString(sessions_user_messages_cli), ''),
+        'sessions_user_messages_vscode', ifNull(toString(sessions_user_messages_vscode), ''),
+        'sessions_user_messages_exec', ifNull(toString(sessions_user_messages_exec), ''),
+        'sessions_user_messages_sdk_ts', ifNull(toString(sessions_user_messages_sdk_ts), ''),
+        'sessions_user_messages_desktop', ifNull(toString(sessions_user_messages_desktop), ''),
+        'sessions_user_messages_work_desktop', ifNull(toString(sessions_user_messages_work_desktop), ''),
+        'sessions_user_messages_work_web', ifNull(toString(sessions_user_messages_work_web), ''),
+        'sessions_user_messages_work_mobile', ifNull(toString(sessions_user_messages_work_mobile), ''),
+        'sessions_user_messages_other', ifNull(toString(sessions_user_messages_other), '')
     )) AS Nullable(String))                             AS tool_action_breakdown_json,
     'chatgpt_team'                                      AS source,
     data_source,
