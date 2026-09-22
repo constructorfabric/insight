@@ -56,7 +56,8 @@ definitions:
       path: [data_source]
       value: insight_chatgpt_team
 
-  # Per-day cursor shared by chat_activity and codex_user_daily. The API
+  # Per-day cursor shared by every daily stream: chat_activity,
+  # codex_user_daily, codex_user_daily_org and codex_sessions_daily. The API
   # treats start_date/end_date as an inclusive single-day filter, so we
   # walk one day per request (step P1D) and inject the day onto each row
   # (the per-user objects do not carry the date themselves).
@@ -497,12 +498,14 @@ streams:
   # carries its own `date`, so unlike the leaderboard nothing is stamped from
   # the request window.
   #
-  # INVARIANT: not paginated. page_size is ignored and `page` is rejected as an
-  # unparseable next_page token, so one request returns every person the range
-  # covers — measured against a workspace over a single day and over a 41-day
-  # range, with the row count tracking the days requested. This is why the
-  # stream carries no completeness gate: the page-boundary loss that
-  # chatgpt_team_codex_user_daily guards against cannot occur here.
+  # INVARIANT: not paginated — page_size is ignored and `page` is rejected as an
+  # unparseable next_page token. What that proves is narrow and worth stating
+  # exactly: pagination-boundary truncation cannot occur here, because there is
+  # no pagination to truncate on. It does NOT prove the response is complete.
+  # The endpoint publishes no envelope and no expected total, so a partial
+  # answer is not detectable from its own payload, and this stream therefore
+  # carries no completeness gate — not because none is needed, but because
+  # nothing in the response could drive one.
   #
   # INVARIANT: keyed on user_id, not email. This endpoint publishes neither
   # email nor name, and the id it does publish is the roster's `id` — verified
@@ -514,15 +517,19 @@ streams:
   # read it only from its owner:
   #
   #   leaderboard (stream 3) owns:  email, name, lines_added, n_threads,
-  #                                 n_turns, current_streak
-  #   this stream owns:             credit_total, on_demand_credits, the
-  #                                 per-surface credit_* split, the token
+  #                                 n_turns, current_streak, and the
+  #                                 AUTHORITATIVE total on-demand credits
+  #   this stream owns:             the per-surface credit_* split, the token
   #                                 split, n_new_sessions_*, n_user_messages_*,
   #                                 n_tasks_web, n_code_reviews_web
   #
-  # `credits` appears in both. The leaderboard's is a projection of this
-  # stream's credit_total, so this stream is its owner and the leaderboard
-  # copy is the redundant one.
+  # INVARIANT: the total belongs to the leaderboard, not here, and the two
+  # differ in what they can prove about themselves. The leaderboard publishes
+  # a total_users envelope and a read that loses somebody is rejected whole by
+  # the gate in chatgpt_team__ai_dev_usage; this endpoint publishes no envelope
+  # and no read of it can be judged against anything. Equal values do not make
+  # equal guarantees, so credit_total and on_demand_credits are collected here
+  # to RECONCILE against the leaderboard's figure, never to replace it.
   #
   # RECONCILIATION is on (user_id, date). The leaderboard publishes both
   # email and user_id; this stream publishes user_id alone. A person-day
@@ -562,12 +569,43 @@ streams:
           cached_text_input_tokens: { type: ["number", "null"] }
           text_output_tokens: { type: ["number", "null"] }
           text_total_tokens: { type: ["number", "null"] }
-          # Per-surface session, message and credit counters, the nested
-          # clients[] and models[] arrays and the workspace-wide
-          # n_users_used_* counters arrive under additionalProperties. They
-          # are stored whole rather than enumerated: the surface list is the
-          # vendor's own and grows without notice, and a column per surface
-          # would make every addition a schema change.
+          # Per-surface credits. The surface list is the vendor's own and it
+          # grows without notice, so a surface added later arrives as a column
+          # this schema does not declare and is dropped until it is added here.
+          credit_cli: { type: ["number", "null"] }
+          credit_vscode: { type: ["number", "null"] }
+          credit_exec: { type: ["number", "null"] }
+          credit_sdk_ts: { type: ["number", "null"] }
+          credit_desktop: { type: ["number", "null"] }
+          credit_web: { type: ["number", "null"] }
+          credit_slack: { type: ["number", "null"] }
+          credit_github_code_review: { type: ["number", "null"] }
+          credit_github_turn: { type: ["number", "null"] }
+          # Per-surface new sessions, same caveat as the credits above.
+          n_new_sessions_cli: { type: ["number", "null"] }
+          n_new_sessions_vscode: { type: ["number", "null"] }
+          n_new_sessions_exec: { type: ["number", "null"] }
+          n_new_sessions_sdk_ts: { type: ["number", "null"] }
+          n_new_sessions_desktop: { type: ["number", "null"] }
+          n_new_sessions_work_desktop: { type: ["number", "null"] }
+          n_new_sessions_work_web: { type: ["number", "null"] }
+          n_new_sessions_work_mobile: { type: ["number", "null"] }
+          n_new_sessions_other: { type: ["number", "null"] }
+          # Per-surface user messages, same caveat again.
+          n_user_messages_cli: { type: ["number", "null"] }
+          n_user_messages_vscode: { type: ["number", "null"] }
+          n_user_messages_exec: { type: ["number", "null"] }
+          n_user_messages_sdk_ts: { type: ["number", "null"] }
+          n_user_messages_desktop: { type: ["number", "null"] }
+          n_user_messages_work_desktop: { type: ["number", "null"] }
+          n_user_messages_work_web: { type: ["number", "null"] }
+          n_user_messages_work_mobile: { type: ["number", "null"] }
+          n_user_messages_other: { type: ["number", "null"] }
+          # NOT collected, and the reason is in docs/.../chatgpt-team-codex-sessions-payload.md:
+          # the nested clients[] / models[] arrays and the workspace-wide
+          # n_users_used_* counters. Nothing downstream reads them yet, and a
+          # fact this connector never stores cannot gain a reader later — so
+          # the document lists them for whoever decides they are wanted.
     retriever:
       type: SimpleRetriever
       requester:

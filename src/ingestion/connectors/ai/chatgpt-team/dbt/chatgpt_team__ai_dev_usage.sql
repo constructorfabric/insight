@@ -165,6 +165,11 @@ codex_sessions AS (
         on_demand_credits,
         toUInt64OrNull(toString(n_new_sessions_total))  AS n_new_sessions_total,
         toUInt64OrNull(toString(n_user_messages_total)) AS n_user_messages_total,
+        toUInt64OrNull(toString(n_tasks_web))           AS n_tasks_web,
+        toUInt64OrNull(toString(n_code_reviews_web))    AS n_code_reviews_web,
+        toUInt64OrNull(toString(uncached_text_input_tokens)) AS uncached_text_input_tokens,
+        toUInt64OrNull(toString(cached_text_input_tokens))   AS cached_text_input_tokens,
+        toUInt64OrNull(toString(text_output_tokens))    AS text_output_tokens,
         toUInt64OrNull(toString(text_total_tokens))     AS text_total_tokens
     FROM {{ source('bronze_chatgpt_team', 'chatgpt_team_codex_sessions_daily') }} FINAL
     WHERE user_id IS NOT NULL
@@ -223,6 +228,11 @@ SELECT
         'sessions_on_demand_credits', if(seen_in_sessions, toString(coalesce(sessions_on_demand_credits, 0)), ''),
         'sessions_new_sessions',  if(seen_in_sessions, toString(coalesce(sessions_new_sessions, 0)), ''),
         'sessions_user_messages', if(seen_in_sessions, toString(coalesce(sessions_user_messages, 0)), ''),
+        'sessions_tasks_web',     if(seen_in_sessions, toString(coalesce(sessions_tasks_web, 0)), ''),
+        'sessions_code_reviews_web', if(seen_in_sessions, toString(coalesce(sessions_code_reviews_web, 0)), ''),
+        'sessions_uncached_input_tokens', if(seen_in_sessions, toString(coalesce(sessions_uncached_input_tokens, 0)), ''),
+        'sessions_cached_input_tokens', if(seen_in_sessions, toString(coalesce(sessions_cached_input_tokens, 0)), ''),
+        'sessions_output_tokens', if(seen_in_sessions, toString(coalesce(sessions_output_tokens, 0)), ''),
         'sessions_text_total_tokens', if(seen_in_sessions, toString(coalesce(sessions_text_total_tokens, 0)), '')
     )) AS Nullable(String))                             AS tool_action_breakdown_json,
     'chatgpt_team'                                      AS source,
@@ -242,6 +252,11 @@ FROM (
         s.on_demand_credits                 AS sessions_on_demand_credits,
         s.n_new_sessions_total              AS sessions_new_sessions,
         s.n_user_messages_total             AS sessions_user_messages,
+        s.n_tasks_web                       AS sessions_tasks_web,
+        s.n_code_reviews_web                AS sessions_code_reviews_web,
+        s.uncached_text_input_tokens        AS sessions_uncached_input_tokens,
+        s.cached_text_input_tokens          AS sessions_cached_input_tokens,
+        s.text_output_tokens                AS sessions_output_tokens,
         s.text_total_tokens                 AS sessions_text_total_tokens,
         -- Records the reconciliation outcome per person-day so a divergence
         -- between the two endpoints is queryable instead of reading as a
