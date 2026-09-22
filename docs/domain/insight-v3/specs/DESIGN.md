@@ -177,16 +177,25 @@ here, because a generated document cannot say which endpoints ought to exist.
 
 | Method and path | Purpose | Who may call it |
 |---|---|---|
-| `POST /v1/raw-data` | Send one record into a dataset | ingest token |
+| `POST /v1/raw-data` | Send one record into a dataset records are sent into | ingest token |
 | `PUT /v1/datasets/{name}` | Declare a dataset, or replace its declaration | admin role |
 | `GET /v1/datasets` | The ready datasets, searched and paged | admin role |
 | `GET /v1/datasets/{name}` | One declaration | admin role |
-| `GET /v1/datasets/{name}/records` | One page of records, ordered by a declared field or by arrival | admin role |
+| `GET /v1/datasets/{name}/records` | One page of rows, ordered by a declared field, or by arrival where records are sent in | admin role |
 | `GET /v1/datasets/{name}/dependents` | Every metric reading this dataset, unpaged | admin role |
 | `DELETE /v1/datasets/{name}` | Remove a dataset and its records | admin role |
 | `GET/PUT/DELETE /v1/{metrics,widgets,dashboards}/{name}`, `POST /v1/metrics/{name}/run`, `POST /v1/chat` | Unchanged in surface; `PUT /v1/metrics` gains the dataset rules and `GET /v1/metrics/{name}` gains the effective clock | as today |
 
 `PUT /v1/tables/{table}` is withdrawn: a dataset is what a caller creates.
+
+A dataset is over one of two things, and says which. Records are sent into
+one, and this service owns the table they land in. The other names a relation
+the warehouse already builds, and this service only reads it: nothing is
+provisioned, nothing is ever dropped, no record may be sent, and its rows
+carry neither an identity of their own nor an instant they arrived. The
+relation is read through the connection that reaches every database read-only
+(ADR-0007), which is the only handle in these surfaces addressing a database
+other than the datasets one.
 
 **Answers.** A refusal the caller can act on carries every violation at once
 (§3.9). A name that is not free, a dataset an operation holds, and a removal a

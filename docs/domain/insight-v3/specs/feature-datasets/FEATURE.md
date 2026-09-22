@@ -42,6 +42,8 @@ date: 2026-09-15
   - [Dataset Lifecycle](#dataset-lifecycle)
 - [5. Definitions of Done](#5-definitions-of-done)
   - [Declaration Store and Validation](#declaration-store-and-validation)
+  - [A Dataset Says What It Is Over](#a-dataset-says-what-it-is-over)
+  - [A Relation Is Read and Never Owned](#a-relation-is-read-and-never-owned)
   - [Datasets Own Their Own Database](#datasets-own-their-own-database)
   - [One Owner per Operation, and Every Step Repeatable](#one-owner-per-operation-and-every-step-repeatable)
   - [Operations Can See and Tune What This Adds](#operations-can-see-and-tune-what-this-adds)
@@ -74,9 +76,15 @@ Today a stream is a physical table that appears on the first write of anyone hol
 
 The feature implements the decision in [ADR-0009](../ADR/0009-a-dataset-is-the-unit-of-ingest-and-query.md): the declaration of the data lives in one dataset, the rows keep their raw JSON shape, and everything that reads or writes rows goes through the dataset.
 
-**Scope of this iteration**: uploaded datasets only, each owning a table in a ClickHouse database this service owns; records stored whole as JSON, read through the declared fields; duplicates collapsed on read by the declared row identity; declarations replaced on write like every other definition, without versions; datasets created and removed by administrators only, in the portal and over the API; the portal reads a metric's effective clock instead of guessing it from the metric body.
+**Scope of this iteration**: a dataset says what it is over, and it is one of two things.
 
-**The portal also gains a hand editor for every definition.** A dataset needs one, and a metric, a widget and a dashboard have never had one — each is authored only by the assistant or an agent today. They are one editor over four descriptions rather than four editors, because what differs between them is the shape of the document, not the act of editing it. Datasets bound to warehouse tables, typed columns, declaration history, access policies and a credential of the lifecycle's own — one that lets a dataset be declared or removed over the API without a portal session, and is rotated apart from the ingest token ([#3496](https://github.com/constructorfabric/insight/issues/3496)) — are later iterations. The analytics service and its own metrics are untouched.
+*Over a stream*: records are sent into it, this service owns the table they land in, they are stored whole as JSON and read through the declared fields, and duplicates collapse on read by the declared row identity.
+
+*Over a relation*: it names a relation the warehouse already builds — `database` and `table` — and this service only ever reads it. Nothing is provisioned when it is declared and nothing is ever dropped when it is removed; no records may be sent into it; its rows carry neither an identity of their own nor an instant they arrived; and the relation decides for itself which of its rows are current, so no row identity is declared over one.
+
+Both ways: declarations replaced on write like every other definition, without versions; datasets created and removed by administrators only, in the portal and over the API; metrics, the assistant and MCP read the declaration and cannot tell the two apart except where the difference is the point; the portal reads a metric's effective clock instead of guessing it from the metric body.
+
+**The portal also gains a hand editor for every definition.** A dataset needs one, and a metric, a widget and a dashboard have never had one — each is authored only by the assistant or an agent today. They are one editor over four descriptions rather than four editors, because what differs between them is the shape of the document, not the act of editing it. Typed columns, declaration history, access policies, anything list-shaped over a value that is not a scalar ([#3499](https://github.com/constructorfabric/insight/issues/3499)) and a credential of the lifecycle's own — one that lets a dataset be declared or removed over the API without a portal session, and is rotated apart from the ingest token ([#3496](https://github.com/constructorfabric/insight/issues/3496)) — are later iterations. The analytics service and its own metrics are untouched.
 
 **Nothing is carried over.** This is a clean break: no stream table is adopted, moved or renamed, and no stored metric is rewritten. On a stand that already holds them, the tables stay where they are and the metrics stay as they are, refused from the moment this ships because they name a table. Datasets are declared anew and records are sent again through the ordinary ingest path. Whoever sends records addresses a dataset from that point on; there is no compatibility alias.
 
@@ -143,6 +151,8 @@ The feature implements the decision in [ADR-0009](../ADR/0009-a-dataset-is-the-u
 **Error Scenarios**:
 - The name is not an identifier, or is one of the catalogue's reserved path segments
 - The body fails validation: an unknown type, a default clock that is not a datetime, two default clocks, a row identity naming an undeclared field
+- The replacement would change what the dataset is over, which is not a change a replacement makes
+- The declaration names a relation the warehouse does not have, a column it does not hold, or one whose engine a plain read cannot count once per row
 - The replacement leaves a stored metric invalid — a field it reads is gone, retyped, or the default clock it inherits has changed
 - The replacement would silently move numbers: a field a metric reads now reads from somewhere else, or the row identity changed
 - The name is held by a removal, or another attempt owns an operation on it, so it is not free
@@ -154,6 +164,15 @@ The feature implements the decision in [ADR-0009](../ADR/0009-a-dataset-is-the-u
 3. [ ] - `p1` - **IF** the caller does not hold the admin role — the ingest token is not a way in, and presenting it here is refused - `inst-ds-create-authz`
    1. [ ] - `p1` - **RETURN** permission denied, nothing written - `inst-ds-create-authz-reject`
 4. [ ] - `p1` - Validate the body per `cpt-insightspec-v3-algo-datasets-validate-declaration` - `inst-ds-create-validate`
+   1. [ ] - `p1` - **IF** the declaration is over a relation - `inst-ds-create-relation`
+      1. [ ] - `p1` - Warehouse: SELECT system.columns (the columns of the named relation) - `inst-ds-create-relation-columns`
+      2. [ ] - `p1` - **IF** it holds none — the warehouse has no such relation - `inst-ds-create-relation-absent`
+         1. [ ] - `p1` - Record a violation against `source.table` - `inst-ds-create-relation-absent-violation`
+      3. [ ] - `p1` - Warehouse: SELECT system.tables (the relation's engine) - `inst-ds-create-relation-engine`
+      4. [ ] - `p1` - **IF** the engine is not one a plain read counts once per row - `inst-ds-create-relation-collapses`
+         1. [ ] - `p1` - Record a violation against `source.table`, naming a view over it as the way through - `inst-ds-create-relation-collapses-violation`
+      5. [ ] - `p1` - **FOR EACH** declared field whose column the relation does not hold - `inst-ds-create-relation-column-unknown`
+         1. [ ] - `p1` - Record a violation against that field's `column` - `inst-ds-create-relation-column-violation`
 5. [ ] - `p1` - **IF** validation reports violations - `inst-ds-create-invalid`
    1. [ ] - `p1` - **RETURN** every violation with its field path, nothing written - `inst-ds-create-invalid-reject`
 6. [ ] - `p1` - DB: BEGIN and hold the dataset's row per `cpt-insightspec-v3-algo-datasets-serialize` - `inst-ds-create-hold`
@@ -191,6 +210,7 @@ The feature implements the decision in [ADR-0009](../ADR/0009-a-dataset-is-the-u
 - The dataset is not ready — absent, still being created, or being removed — or the name is misspelled: nothing is created
 - The request names no dataset, or still names a table as earlier releases accepted
 - The dataset was removed between the lookup and the write: the record is refused, not accepted
+- The dataset reads a relation the warehouse builds: there is nowhere to write, and the refusal says so rather than saying the dataset is absent
 
 **Steps**:
 1. [ ] - `p1` - Connector sends one record naming the dataset - `inst-ds-ingest-send`
@@ -198,12 +218,14 @@ The feature implements the decision in [ADR-0009](../ADR/0009-a-dataset-is-the-u
 3. [ ] - `p1` - **IF** the ingest token does not verify - `inst-ds-ingest-token`
    1. [ ] - `p1` - **RETURN** unauthenticated - `inst-ds-ingest-token-reject`
 4. [ ] - `p1` - DB: SELECT datasets (the declaration under the given name, and its state) - `inst-ds-ingest-lookup`
-5. [ ] - `p1` - **IF** the dataset is not ready — absent, claimed by an unfinished create, or removing - `inst-ds-ingest-unknown`
+5. [ ] - `p1` - **IF** the dataset is over a relation — there is nowhere to write, and it is not the dataset that is missing - `inst-ds-ingest-relation`
+   1. [ ] - `p1` - **RETURN** a refusal against the field that named it, saying what the dataset is - `inst-ds-ingest-relation-refuse`
+6. [ ] - `p1` - **IF** the dataset is not ready — absent, claimed by an unfinished create, or removing - `inst-ds-ingest-unknown`
    1. [ ] - `p1` - **RETURN** not found naming the dataset; no table is created, and a claimed dataset has no table to write into - `inst-ds-ingest-unknown-reject`
-6. [ ] - `p1` - ClickHouse: INSERT into the table the declaration names (id, table_name, raw_data, received_at); the row is read without a hold, because a write per record cannot wait on a lock a removal might be holding - `inst-ds-ingest-insert`
-7. [ ] - `p1` - **IF** the insert reports the table is gone, which is what a removal racing this write looks like - `inst-ds-ingest-vanished`
+7. [ ] - `p1` - ClickHouse: INSERT into the table the declaration names (id, table_name, raw_data, received_at); the row is read without a hold, because a write per record cannot wait on a lock a removal might be holding - `inst-ds-ingest-insert`
+8. [ ] - `p1` - **IF** the insert reports the table is gone, which is what a removal racing this write looks like - `inst-ds-ingest-vanished`
    1. [ ] - `p1` - **RETURN** not found naming the dataset, never accepted: a record that reached no table was not stored - `inst-ds-ingest-vanished-reject`
-8. [ ] - `p1` - **RETURN** accepted - `inst-ds-ingest-return`
+9. [ ] - `p1` - **RETURN** accepted - `inst-ds-ingest-return`
 
 ### Browse Datasets in the Portal
 
@@ -732,6 +754,44 @@ The system **MUST** store dataset declarations as a fourth definition kind in th
 - DB: `datasets`
 - Entities: `Dataset`, `DatasetField`
 
+### A Dataset Says What It Is Over
+
+- [ ] `p1` - **ID**: `cpt-insightspec-v3-dod-datasets-source`
+
+A declaration **MUST** say what its dataset is over, and **MUST NOT** leave it to be inferred from whether a relation happens to be named. Who provisions the relation, who may drop it, whether records may be sent and how every field is read all follow from it, which is more than the presence of a property should decide. A replacement **MUST NOT** change it: turning a stream into a relation strands the records already sent, with a table still recorded against a dataset that no longer reads it, and the other way round leaves a dataset whose row says ready and which has nothing to read, for good. Neither is a state the rest of this reasons about, so it is refused rather than handled — a dataset is removed and declared anew.
+
+A field **MUST** say where its value sits in the terms its mode uses: a key path into the record's payload, or a column of the relation. A field carrying both, or neither, **MUST** be refused before the body is read, so that nothing below has to referee one; a field carrying the wrong one for its mode **MUST** be refused against the key that carries it rather than read as though it were the other.
+
+**Implements**:
+- `cpt-insightspec-v3-flow-datasets-create`
+- `cpt-insightspec-v3-algo-datasets-validate-declaration`
+
+**Touches**:
+- API: `PUT /v1/datasets/{name}`
+- Entities: `Dataset`, `DatasetField`
+
+### A Relation Is Read and Never Owned
+
+- [ ] `p1` - **ID**: `cpt-insightspec-v3-dod-datasets-relation`
+
+A dataset over a relation **MUST** be published without provisioning anything, and its removal **MUST** take the declaration and nothing else. That **MUST** hold by construction rather than by a check at the drop: only the stream mode may reach the table this service makes, a table name **MUST** be recorded against a dataset in one place only, and the connection that may create or drop a table **MUST** be bound to the datasets database — so the warehouse's own relations are out of its reach whatever a declaration says. An attempt that takes a name over from one that had already provisioned a table **MUST** forget that table as it publishes, or a dataset over a relation would inherit one and ingest, which decides by the table, would take records into it.
+
+A declaration over a relation **MUST** be checked against the warehouse when it is written: a relation the warehouse does not have is refused against the name that asked for it, and a column it does not hold against the field that named it. A declaration over a stream describes records that have not arrived, so there is nothing to hold it to; one over a relation describes something that exists now, and a column it does not have compiles into every metric over the dataset and then fails on every run, far from where the mistake was made.
+
+The relation **MUST** be one a plain read is known to count once per row. Its rows **MUST NOT** be collapsed by a declared identity — the relation decides for itself which of its rows are current, and a second rule here would quietly disagree with it — so a relation on an engine that keeps superseded rows **MUST** be refused when it is declared, naming a view over it as the way through. What counts as such an engine **MUST** be an allow-list: an engine nobody thought of, one fronting another, or a view whose rows are really an inner table's, then defaults to refused rather than to a number a reader cannot tell is wrong. `FINAL` cannot stand in for this, because an engine that does not collapse refuses it outright.
+
+Records **MUST NOT** be sent into a dataset over a relation, and the refusal **MUST** say what the dataset is rather than that it is not there: it is there, it is ready, and saying otherwise sends a sender looking for a name in front of them.
+
+**Implements**:
+- `cpt-insightspec-v3-flow-datasets-create`
+- `cpt-insightspec-v3-flow-datasets-remove`
+- `cpt-insightspec-v3-flow-datasets-ingest`
+- `cpt-insightspec-v3-algo-datasets-table-is-ours`
+
+**Touches**:
+- API: `PUT /v1/datasets/{name}`, `DELETE /v1/datasets/{name}`, `POST /v1/raw-data`
+- DB: `datasets`, the warehouse relation named by the declaration
+
 ### Datasets Own Their Own Database
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-dod-datasets-database`
@@ -969,6 +1029,14 @@ The service **MUST** stop creating an ingest-schema landing table in the warehou
 - [ ] A declaration with several problems is refused once, with every problem and its field path
 - [ ] A metric groups by a numeric field and is stored; the same field summed as a string field is refused
 - [ ] A metric body naming a table is refused; the same metric rewritten onto a dataset is stored and runs
+- [ ] A dataset declared over a relation the warehouse already builds is listed, described and read exactly like one records are sent into, and a metric over it runs
+- [ ] Declaring one over a relation creates nothing, and removing it leaves the relation where it was; no path in the service can drop or alter it
+- [ ] A relation the warehouse does not have is refused against the name that asked for it, and a column it does not hold against the field that named it
+- [ ] A relation whose engine is not known to count each row once is refused when it is declared, naming a view over it as the way through
+- [ ] A record sent into a dataset over a relation is refused as the wrong kind of dataset, not as one that is absent
+- [ ] Replacing a declaration so that what the dataset is over would change is refused; removing it and declaring it anew is how it is done
+- [ ] A field of a dataset over a relation reads a column and one over a stream reads a path; the wrong one is refused against the key that carries it
+- [ ] A dataset over a relation declares no row identity, and its page shows rows with no arrival instant and no identity of their own
 - [ ] Two identical records, re-sent, count once in every metric over a dataset that declares a row identity, and twice over one that does not
 - [ ] Two different records missing the same identity field are counted separately, not collapsed into one, even when that field declares a substitute for absent values
 - [ ] A metric ordering by the name of an aggregate it computes is stored and runs

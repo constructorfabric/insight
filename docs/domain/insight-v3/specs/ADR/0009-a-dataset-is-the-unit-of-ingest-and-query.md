@@ -28,6 +28,10 @@ Supersedes [ADR-0006](0006-a-table-per-ingest-stream.md). The physical table
 per uploaded dataset that ADR-0006 describes stays; what changes is what a
 caller creates, writes to, reads and is told about.
 
+A dataset is the unit of query always, and the unit of ingest where records
+are sent into it. One over a relation the warehouse already builds is read
+and described exactly like any other, and is written into by nothing.
+
 ## Context and Problem Statement
 
 Raw data arrives as JSON named by its stream, and the stream is a physical
@@ -135,9 +139,30 @@ The decisions the option carries, taken on 2026-09-15:
   the API reports that effective clock so the portal windows the card instead
   of reading the metric body.
 * Custom metrics read datasets and nothing else. A body naming a table or a
-  database is refused. Warehouse tables become readable again only through a
-  later, warehouse-bound dataset kind; the analytics service and its metrics
-  are outside this decision.
+  database is refused; the analytics service and its metrics are outside this
+  decision.
+* **A dataset says what it is over, and it is one of two things.** Records are
+  sent into it, and this service owns the table they land in; or it names a
+  relation the warehouse already builds, which this service only ever reads.
+  The mode is written in the declaration rather than inferred from whether a
+  relation happens to be named: who provisions the relation, who may drop it,
+  whether records may be sent and how every field is read all follow from it.
+  It cannot be changed by replacing the declaration — turning a stream into a
+  relation strands the records already sent, and the other way round leaves a
+  dataset that says it is ready and has nothing to read.
+* **A field says where its value sits in the terms its mode uses**: a key path
+  into the record's payload, or a column of the relation. A field carrying
+  both, or neither, is refused before the body is read.
+* **A relation is never provisioned and never dropped.** Only the stream mode
+  reaches the table this service makes, and the connection that may drop one
+  is bound to the datasets database, so the warehouse's own relations are out
+  of its reach whatever a declaration says.
+* **A relation must be one a plain read counts once per row.** Its rows are
+  not collapsed by a declared identity — the relation decides for itself which
+  of its rows are current — so a relation on an engine that keeps superseded
+  rows is refused when it is declared, with a view over it as the way through.
+  The allow-list is deliberate: an engine nobody thought of defaults to
+  refused rather than to a number quietly too high.
 * **Nothing is carried over.** No stream table is adopted, moved or renamed,
   and no stored metric is rewritten. A stand that already holds them keeps them
   where they are, unreachable: the metrics name tables and are refused, the
@@ -164,8 +189,12 @@ The decisions the option carries, taken on 2026-09-15:
   with a row identity.
 * Bad, because migrated metrics can answer differently: an average over records
   missing a key rises once that key stops reading as a zero.
-* Bad, because custom metrics over warehouse tables on a stand stop answering
-  until the warehouse-bound kind ships.
+* Bad, because a relation's rows are shown and read through one text form per
+  value: what the warehouse holds reaches a reader as text, not as the column's
+  own type.
+* Bad, because a declaration over a relation is checked against the warehouse
+  when it is written and not afterwards. A column dropped or an engine changed
+  later is met by the reader, not by the author.
 * Bad, because every custom metric a stand already holds is refused from the
   moment this ships, and every dataset it wants must be declared again by hand.
 * Bad, because whatever sends records must address a dataset from that moment,
