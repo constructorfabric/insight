@@ -111,6 +111,7 @@ pub(crate) async fn run_migrate(app: &toolkit::bootstrap::AppConfig) -> anyhow::
     tracing::info!("datasets database migration complete");
 
     let db = sea_orm::Database::connect(config.database_url()).await?;
+    crate::store::definitions::migration::name_the_first_migration(&db).await?;
     <crate::store::definitions::migration::Migrator as sea_orm_migration::MigratorTrait>::up(
         &db, None,
     )

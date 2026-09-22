@@ -9,7 +9,21 @@
 //! The ledger is keyed by that name, so two migrations sharing one would let
 //! the ledger say the second had run when it had not.
 
+use sea_orm::{DatabaseConnection, Statement};
 use sea_orm_migration::prelude::*;
+
+/// What the first migration was called before it was given a name of its own.
+///
+/// `DeriveMigrationName` took the file stem, so both migrations answered
+/// `migration` and the ledger of an installation that ran the older build
+/// holds that. See [`name_the_first_migration`].
+const UNNAMED: &str = "migration";
+
+/// The name the first migration answers to now.
+const FIRST: &str = "m20260907_000001_definitions";
+
+/// The table sea-orm keeps the ledger in.
+const LEDGER: &str = "seaql_migrations";
 
 pub struct Migrator;
 
@@ -23,6 +37,64 @@ impl MigratorTrait for Migrator {
         ]
     }
 }
+
+/// Gives the first migration its name in a ledger that still calls it
+/// `migration`.
+///
+/// SAFETY: an installation that ran the build before the migrations named
+/// themselves holds a row this code no longer knows, and sea-orm refuses to
+/// run at all against a ledger naming a migration it cannot find - so the
+/// service would not start and the deploy would roll back. Renaming the row
+/// says what is already true: that migration is the one whose tables are
+/// there. Nothing is applied here, and a ledger that never held the old name
+/// is left alone.
+pub(crate) async fn name_the_first_migration(db: &DatabaseConnection) -> Result<(), DbErr> {
+    // A database this service has never written has no ledger to read, which
+    // is the same as having nothing to rename. Every other failure is reported:
+    // a rename skipped because the database was briefly unreachable would leave
+    // the migrator to abort on the name it cannot find, which reads as a
+    // missing migration rather than as the database being down.
+    if !SchemaManager::new(db).has_table(LEDGER).await? {
+        return Ok(());
+    }
+
+    let backend = sea_orm::ConnectionTrait::get_database_backend(db);
+    let held = Statement::from_sql_and_values(backend, holds(), [UNNAMED.into(), FIRST.into()]);
+    let rows = sea_orm::ConnectionTrait::query_all_raw(db, held).await?;
+
+    let mut names = Vec::with_capacity(rows.len());
+    for row in &rows {
+        names.push(row.try_get::<String>("", "version")?);
+    }
+    if !needs_naming(&names) {
+        return Ok(());
+    }
+
+    let rename =
+        Statement::from_sql_and_values(backend, RENAME_FIRST, [FIRST.into(), UNNAMED.into()]);
+    sea_orm::ConnectionTrait::execute_raw(db, rename).await?;
+    tracing::info!(
+        from = UNNAMED,
+        to = FIRST,
+        "named the first migration in a ledger written before the names"
+    );
+
+    Ok(())
+}
+
+/// Whether the ledger calls the first migration by the name it no longer has.
+///
+/// Both names at once would leave two rows for one migration, so a ledger
+/// holding the new name is left as it is.
+fn needs_naming(held: &[String]) -> bool {
+    held.iter().any(|name| name == UNNAMED) && !held.iter().any(|name| name == FIRST)
+}
+
+fn holds() -> &'static str {
+    "SELECT version FROM seaql_migrations WHERE version IN (?, ?)"
+}
+
+const RENAME_FIRST: &str = "UPDATE seaql_migrations SET version = ? WHERE version = ?";
 
 /// One statement per call is all the `MySQL` wire protocol takes, so a script
 /// is applied a statement at a time.
@@ -56,6 +128,54 @@ fn statements(script: &str) -> Vec<String> {
         .filter(|statement| !statement.is_empty())
         .map(str::to_owned)
         .collect()
+}
+
+#[cfg(test)]
+mod ledger_tests {
+    use super::{FIRST, LEDGER, RENAME_FIRST, UNNAMED, holds, needs_naming};
+
+    /// An installation that ran the build before the migrations named
+    /// themselves: sea-orm refuses to run at all against a ledger naming a
+    /// migration it cannot find, so the row is renamed to what it already is.
+    #[test]
+    fn a_ledger_written_before_the_names_needs_its_first_migration_named() {
+        assert!(needs_naming(&[UNNAMED.to_owned()]));
+    }
+
+    #[test]
+    fn a_ledger_that_already_names_it_is_left_alone() {
+        let held = [FIRST.to_owned(), "m20260916_000002_datasets".to_owned()];
+
+        assert!(!needs_naming(&held));
+    }
+
+    /// Both names at once would mean two rows for one migration, so the old
+    /// one is not renamed over the new.
+    #[test]
+    fn a_ledger_holding_both_names_is_left_alone() {
+        assert!(!needs_naming(&[UNNAMED.to_owned(), FIRST.to_owned()]));
+    }
+
+    #[test]
+    fn a_ledger_with_neither_name_is_left_alone() {
+        assert!(!needs_naming(&[]));
+        assert!(!needs_naming(&["m20260916_000002_datasets".to_owned()]));
+    }
+
+    /// The rename touches one row by name and writes nothing else: a ledger
+    /// is the only record of what has run.
+    #[test]
+    fn the_rename_names_one_row_and_nothing_more() {
+        assert!(RENAME_FIRST.starts_with("UPDATE seaql_migrations SET version = ?"));
+        assert!(RENAME_FIRST.ends_with("WHERE version = ?"));
+        assert!(!RENAME_FIRST.contains("DELETE"), "{RENAME_FIRST}");
+    }
+
+    #[test]
+    fn the_ledger_is_read_by_the_two_names_it_might_hold() {
+        assert!(holds().contains(&format!("FROM {LEDGER}")));
+        assert!(holds().contains("version IN (?, ?)"));
+    }
 }
 
 mod m20260907_000001_definitions {

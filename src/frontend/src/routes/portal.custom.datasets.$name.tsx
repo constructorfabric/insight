@@ -1,16 +1,25 @@
 import { createFileRoute, Link, useRouterState } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 
-import type { DatasetRecord, DeclaredField } from "@/api/custom-client";
+import type { DeclaredField } from "@/api/custom-client";
 import { Held } from "@/components/custom/held-by";
+import { Button } from "@/components/ui/button";
+import {
+  ARRIVED,
+  RecordTable,
+  type Ordering,
+} from "@/components/custom/record-table";
 import { refusal } from "@/components/custom/refusal";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
+import { useLocalStorageState } from "@/hooks/use-local-storage-state";
 import {
   datasetDependentsQuery,
   datasetQuery,
   datasetRecordsQuery,
+  PREVIEW_ROWS,
 } from "@/queries/custom";
 import { TEXT_BODY, TEXT_HEADING, TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
@@ -59,8 +68,19 @@ function DatasetPage() {
 
   return (
     <div className="flex flex-col gap-4 p-4 md:p-6">
-      <header className="flex flex-wrap items-center gap-3">
-        <h1 className={cn(TEXT_HEADING, "font-mono")}>{name}</h1>
+      <header className="flex flex-wrap items-baseline gap-3">
+        <div className="flex min-w-0 flex-col gap-1">
+          <h1 className={cn(TEXT_HEADING, "font-mono")}>{name}</h1>
+          <Link
+            to="/portal/custom/datasets"
+            className={cn(
+              TEXT_BODY,
+              "self-start underline decoration-dotted underline-offset-4"
+            )}
+          >
+            Back to the catalogue
+          </Link>
+        </div>
         <span className={cn(TEXT_BODY, "text-muted-foreground")}>
           {declaration.title}
         </span>
@@ -73,7 +93,7 @@ function DatasetPage() {
         fields={declaration.fields}
         identity={declaration.row_identity}
       />
-      <Records name={name} />
+      <Records name={name} fields={declaration.fields} />
       <Dependents name={name} />
     </div>
   );
@@ -130,61 +150,170 @@ function Declaration({
   );
 }
 
-/** The latest records, as they arrived. */
-function Records({ name }: { name: string }) {
-  const records = useQuery(datasetRecordsQuery(name));
+/** How many declared fields a table shows before the reader picks. */
+const COLUMNS_AT_FIRST = 10;
+
+function Records({
+  name,
+  fields,
+}: {
+  name: string;
+  fields: readonly DeclaredField[];
+}) {
+  const [page, setPage] = useState(0);
+  const [ordering, setOrdering] = useState<Ordering>({
+    by: ARRIVED,
+    descending: true,
+  });
+  const [shown, setShown] = useLocalStorageState<string[]>({
+    key: `insight.custom.dataset.${name}.columns`,
+    defaultValue: fields.slice(0, COLUMNS_AT_FIRST).map((field) => field.name),
+    parse: storedColumns,
+    serialize: (value) => JSON.stringify(value),
+  });
+
+  // How wide a page is belongs to the service: its cap is an installation's
+  // setting. Stepping by a number of our own would walk past whatever a
+  // narrower page left behind. Only the first read, before any page has come
+  // back, goes by the assumption.
+  const [stride, setStride] = useState(PREVIEW_ROWS);
+
+  const records = useQuery(
+    datasetRecordsQuery(name, {
+      offset: page * stride,
+      orderBy: ordering.by,
+      descending: ordering.descending,
+    })
+  );
+
+  const waiting = records.isPlaceholderData;
+  const held = records.data?.limit;
+  if (held !== undefined && held !== stride) setStride(held);
+
+  const order = (next: Ordering) => {
+    setOrdering(next);
+    setPage(0);
+  };
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle className={TEXT_HEADING}>Latest records</CardTitle>
+        <CardTitle className={TEXT_HEADING}>Records</CardTitle>
       </CardHeader>
       <CardContent>
         {records.isPending ? (
           <CenteredSpinner className="min-h-24" />
         ) : records.isError ? (
-          <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
-            {refusal(records.error, "Couldn't read the records.")}
-          </p>
+          <div className="flex flex-col items-start gap-3">
+            <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
+              {refusal(records.error, "Couldn't read the records.")}
+            </p>
+            {page > 0 ? (
+              <Button variant="ghost" size="sm" onClick={() => setPage(0)}>
+                Back to the first page
+              </Button>
+            ) : null}
+          </div>
         ) : records.data.total === 0 ? (
           <p className={cn(TEXT_BODY, "text-muted-foreground")}>
             Nothing has arrived yet.
           </p>
         ) : (
-          <>
-            <p className={cn(TEXT_LABEL, "mb-3 text-muted-foreground")}>
-              {shownOf(records.data.records.length, records.data.total)}
-            </p>
-            <ul className="flex flex-col gap-2">
-              {records.data.records.map((record) => (
-                <RecordRow key={record.id} record={record} />
-              ))}
-            </ul>
-          </>
+          <div
+            className={cn("flex flex-col gap-3", waiting && "opacity-60")}
+            aria-busy={waiting || undefined}
+          >
+            <RecordTable
+              fields={fields}
+              records={records.data.records}
+              shown={shown}
+              ordering={ordering}
+              onShow={setShown}
+              onOrder={order}
+            />
+            <Paging
+              page={page}
+              stride={stride}
+              held={records.data.records.length}
+              total={records.data.total}
+              waiting={waiting}
+              onPage={setPage}
+            />
+          </div>
         )}
       </CardContent>
     </Card>
   );
 }
 
-/** What the list is a slice of: a re-sent record counts again, as it arrived. */
-function shownOf(shown: number, total: number): string {
-  return shown === total
-    ? `All ${total} records received, newest first.`
-    : `The latest ${shown} of ${total} records received.`;
+/** Which records of the whole this page is, and the way to the others. */
+function Paging({
+  page,
+  stride,
+  held,
+  total,
+  waiting,
+  onPage,
+}: {
+  page: number;
+  /** The page size the service applied, which it reports with the page. */
+  stride: number;
+  held: number;
+  total: number;
+  /** The rows on screen are the page before this one, still.  */
+  waiting: boolean;
+  onPage: (page: number) => void;
+}) {
+  const first = page * stride + 1;
+  const last = page * stride + held;
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span
+        aria-live="polite"
+        className={cn(TEXT_LABEL, "text-muted-foreground")}
+      >
+        {waiting
+          ? "Reading…"
+          : held === 0
+            ? `Nothing left past record ${first - 1} of ${total}`
+            : `${first}–${last} of ${total} records received`}
+      </span>
+      <span className="ms-auto flex items-center gap-1">
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={waiting || page === 0}
+          onClick={() => onPage(page - 1)}
+        >
+          Previous
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={waiting || held === 0 || last >= total}
+          onClick={() => onPage(page + 1)}
+        >
+          Next
+        </Button>
+      </span>
+    </div>
+  );
 }
 
-function RecordRow({ record }: { record: DatasetRecord }) {
-  return (
-    <li className="flex flex-col gap-1">
-      <span className={cn(TEXT_LABEL, "text-muted-foreground")}>
-        {record.received_at}
-      </span>
-      <pre className={cn(TEXT_BODY, "overflow-x-auto font-mono")}>
-        {JSON.stringify(record.raw_data)}
-      </pre>
-    </li>
-  );
+/**
+ * The columns a reader last picked, as they were stored.
+ *
+ * SAFETY: a stored value is whatever is in the browser, and asserting a shape
+ * it never checked took the page down with a TypeError nothing in the UI
+ * could clear. Anything unrecognised falls back to the default.
+ */
+function storedColumns(raw: string): string[] | undefined {
+  const held: unknown = JSON.parse(raw);
+  if (!Array.isArray(held)) return undefined;
+  if (!held.every((name) => typeof name === "string")) return undefined;
+
+  return held;
 }
 
 /** Every metric that reads this dataset, which a removal would break. */

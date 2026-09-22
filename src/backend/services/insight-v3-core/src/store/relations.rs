@@ -96,7 +96,7 @@ impl Relations {
         database: &str,
         table: &str,
         reads: &[(String, String)],
-        limit: u64,
+        page: Page<'_>,
     ) -> Result<Vec<Value>, RelationError> {
         if reads.is_empty() {
             return Ok(Vec::new());
@@ -111,8 +111,9 @@ impl Relations {
             .map(|(named, expression)| format!("{}, toString({expression})", literal(named)))
             .collect();
         let statement = format!(
-            "SELECT toJSONString(map({})) AS row FROM ?.? LIMIT ?",
-            pairs.join(", ")
+            "SELECT toJSONString(map({})) AS row FROM ?.? ORDER BY {} LIMIT ? OFFSET ?",
+            pairs.join(", "),
+            page.order
         );
 
         let reading = self
@@ -121,7 +122,8 @@ impl Relations {
             .query(&statement)
             .bind(Identifier(database))
             .bind(Identifier(table))
-            .bind(limit)
+            .bind(page.limit)
+            .bind(page.offset)
             .fetch_all::<RowText>();
         let rows = tokio::time::timeout(self.read_timeout, reading)
             .await
@@ -202,6 +204,18 @@ impl fmt::Debug for Relations {
             .field("read_timeout", &self.read_timeout)
             .finish_non_exhaustive()
     }
+}
+
+/// Which slice of a relation to read, and in what order.
+///
+/// SAFETY: `order` is an expression, not a value, so it is written into the
+/// statement rather than bound. It is built from the declaration, whose
+/// column names the validator admits only as letters, digits and underscore.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Page<'a> {
+    pub(crate) limit: u64,
+    pub(crate) offset: u64,
+    pub(crate) order: &'a str,
 }
 
 /// A value as a string literal the warehouse reads back unchanged.

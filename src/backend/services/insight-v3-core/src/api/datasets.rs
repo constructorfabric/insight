@@ -59,18 +59,35 @@ struct DatasetNames {
     total: u64,
 }
 
-/// What a dataset holds, as a reader is shown it: the latest few records,
-/// and how many have arrived in all.
+/// What a dataset holds, as a reader is shown it: one page of records, how
+/// many have arrived in all, and how wide the page was.
 #[derive(Debug, Serialize)]
 struct DatasetRecords {
     records: Vec<Record>,
     total: u64,
+    /// The page size this installation applied. A reader stepping by offset
+    /// reads it rather than assuming the limit it asked for was the one used.
+    limit: u64,
 }
 
-/// How many of the latest records a look asks for.
+/// What a reader asked one page of records for.
 #[derive(Debug, Deserialize)]
-struct Look {
+struct LookQuery {
     limit: Option<u64>,
+    #[serde(default)]
+    offset: u64,
+    /// A declared field, or `received_at`. Absent means arrival order.
+    order_by: Option<String>,
+    #[serde(default)]
+    direction: Direction,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Direction {
+    Asc,
+    #[default]
+    Desc,
 }
 
 /// Everything that would go with this dataset.
@@ -306,16 +323,30 @@ fn register_reads(router: Router, openapi: &dyn OpenApiRegistry, state: &Arc<App
 
     let records = OperationBuilder::get("/v1/datasets/{name}/records")
         .operation_id("insight_v3_core.datasets.records")
-        .summary("The latest records a dataset holds, newest first")
+        .summary("One page of the records a dataset holds")
         .anonymous()
         .exposed()
         .param(name_param.clone())
         .param(query_param(
             "limit",
             "integer",
-            "How many of the latest records to show, up to the service's cap",
+            "How many records this page holds, from 1 to the service's cap",
         ))
-        .json_response(StatusCode::OK, "The latest records, and how many there are")
+        .param(query_param("offset", "integer", "Records to skip"))
+        .param(query_param(
+            "order_by",
+            "string",
+            "A declared field, or `received_at`; absent means arrival order",
+        ))
+        .param(query_param(
+            "direction",
+            "string",
+            "`asc` or `desc`; defaults to `desc`",
+        ))
+        .json_response(
+            StatusCode::OK,
+            "This page of records, and how many the dataset holds",
+        )
         .error_400(openapi)
         .error_403(openapi)
         .error_404(openapi)
@@ -347,7 +378,7 @@ fn register_reads(router: Router, openapi: &dyn OpenApiRegistry, state: &Arc<App
 async fn dataset_records(
     Extension(state): Extension<Arc<AppState>>,
     Path(name): Path<String>,
-    Query(look): Query<Look>,
+    Query(look): Query<LookQuery>,
     headers: axum::http::HeaderMap,
 ) -> Result<Response, CanonicalError> {
     admin_only(&state, &headers).await?;
@@ -355,13 +386,22 @@ async fn dataset_records(
 
     let preview = state
         .dataset_records()
-        .latest(&name, look.limit)
+        .page(
+            &name,
+            &crate::domain::dataset_records::Look {
+                limit: look.limit,
+                offset: look.offset,
+                order_by: look.order_by,
+                descending: matches!(look.direction, Direction::Desc),
+            },
+        )
         .await
         .map_err(preview_error)?;
 
     Ok(Json(DatasetRecords {
         records: preview.records,
         total: preview.total,
+        limit: preview.limit,
     })
     .into_response())
 }
@@ -395,6 +435,23 @@ async fn dataset_dependents(
 
 fn preview_error(error: PreviewError) -> CanonicalError {
     match error {
+        PreviewError::NoSuchField { named, declared } => DatasetApiError::invalid_argument()
+            .with_field_violation(
+                "order_by",
+                format!(
+                    "`{named}` is not a field of this dataset; it declares {}",
+                    declared.join(", ")
+                ),
+                "UNKNOWN",
+            )
+            .create(),
+        PreviewError::PageSize { asked, cap } => DatasetApiError::invalid_argument()
+            .with_field_violation(
+                "limit",
+                format!("a page holds 1 to {cap} records; {asked} were asked for"),
+                "OUT_OF_RANGE",
+            )
+            .create(),
         PreviewError::NotReady(named) => not_found(&named),
         PreviewError::Relation(source) => {
             tracing::error!(error = ?source, "a dataset's relation could not be read");

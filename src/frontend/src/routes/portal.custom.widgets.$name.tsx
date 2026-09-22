@@ -59,8 +59,19 @@ function WidgetPage() {
 
   return (
     <div className="flex flex-col gap-4 p-4 md:p-6">
-      <header className="flex flex-wrap items-center gap-3">
-        <h1 className={cn(TEXT_HEADING, "font-mono")}>{name}</h1>
+      <header className="flex flex-wrap items-baseline gap-3">
+        <div className="flex min-w-0 flex-col gap-1">
+          <h1 className={cn(TEXT_HEADING, "font-mono")}>{name}</h1>
+          <Link
+            to="/portal/custom/widgets"
+            className={cn(
+              TEXT_BODY,
+              "self-start underline decoration-dotted underline-offset-4"
+            )}
+          >
+            Back to the catalogue
+          </Link>
+        </div>
         <span className="ms-auto">
           <EditLink kind="widgets" name={name} />
         </span>
@@ -122,26 +133,13 @@ function Drawn({ name, widget }: { name: string; widget: Widget }) {
             Nothing dates this widget's metric, so every window shows all time.
           </p>
         ) : null}
-        {metric.isPending || result.isPending ? (
-          <CenteredSpinner className="min-h-40" />
-        ) : (
-          <CustomWidget
-            widget={widget}
-            result={result.data}
-            error={
-              result.error
-                ? new Error(
-                    refusal(result.error, "The metric could not be run.")
-                  )
-                : metric.error
-                  ? new Error(
-                      refusal(metric.error, "The metric could not be read.")
-                    )
-                  : undefined
-            }
-            windowed={Boolean(options)}
-          />
-        )}
+        <CustomWidget
+          widget={widget}
+          result={result.data}
+          error={result.error ?? metric.error}
+          windowed={Boolean(options)}
+          pending={metric.isPending || result.isPending || result.isFetching}
+        />
       </CardContent>
     </Card>
   );

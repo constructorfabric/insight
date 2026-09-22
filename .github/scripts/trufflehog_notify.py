@@ -98,11 +98,15 @@ def main() -> int:
         findings = json.load(fh)
 
     cache: dict[str, str] = {}
+    seen: set[str] = set()
     created = skipped = 0
     for f in findings:
-        if already_open(args.repo, f["fp"]):
+        # WORKAROUND: search indexing lags a create by seconds, so a fingerprint carried by
+        # several commits needs a local record too or it opens one issue per commit.
+        if f["fp"] in seen or already_open(args.repo, f["fp"]):
             skipped += 1
             continue
+        seen.add(f["fp"])
         login = author_of(args.repo, f.get("commit", ""), cache)
         title = f"Possible secret in {f['file']} ({f['fp']})"
         if args.dry_run:
