@@ -76,7 +76,9 @@ struct LookQuery {
     limit: Option<u64>,
     #[serde(default)]
     offset: u64,
-    /// A declared field, or `received_at`. Absent means arrival order.
+    /// A declared field, or `received_at` for a dataset records are sent
+    /// into. Absent means the order the dataset is read in: arrival, or — for
+    /// one over a relation, which has no arrival — its main date.
     order_by: Option<String>,
     #[serde(default)]
     direction: Direction,
@@ -336,7 +338,8 @@ fn register_reads(router: Router, openapi: &dyn OpenApiRegistry, state: &Arc<App
         .param(query_param(
             "order_by",
             "string",
-            "A declared field, or `received_at`; absent means arrival order",
+            "A declared field, or `received_at` where records are sent in; absent \
+             means the order the dataset is read in",
         ))
         .param(query_param(
             "direction",

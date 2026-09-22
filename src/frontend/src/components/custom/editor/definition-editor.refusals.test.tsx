@@ -255,4 +255,39 @@ describe("<DefinitionEditor> shown a refusal", () => {
   });
 
   // Two main dates is a refusal; the form offers only what a declaration
+
+  // The name is the refusal a first author meets most, and the form draws
+  // that input itself, outside any description — so without this it printed
+  // above the form with the offending input unmarked.
+  it("puts a refusal about the name beside the name", async () => {
+    const user = userEvent.setup();
+    vi.mocked(customClient.putDataset).mockRejectedValue(
+      new CustomApiError(400, {
+        detail: "the declaration is not valid",
+        context: {
+          field_violations: [
+            {
+              field: "name",
+              description:
+                "a name is letters, digits, underscore and dash, up to 128 characters",
+              reason: "MALFORMED",
+            },
+          ],
+        },
+      })
+    );
+
+    render(<DefinitionEditor kind="datasets" onStored={vi.fn()} />, {
+      wrapper,
+    });
+
+    await user.type(screen.getByLabelText("Name"), "not a name");
+    await user.type(screen.getByLabelText("Title"), "Commits");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByLabelText("Name")).toBeInvalid();
+    expect(
+      await screen.findByText(/a name is letters, digits, underscore and dash/)
+    ).toBeInTheDocument();
+  });
 });

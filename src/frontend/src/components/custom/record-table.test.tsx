@@ -91,10 +91,66 @@ describe("<RecordTable>", () => {
     );
 
     await user.click(
-      screen.getByRole("button", { name: "Order by author, now descending" })
+      screen.getByRole("button", {
+        name: "Order by author, now descending; again for the order it is read in",
+      })
     );
 
     expect(onOrder).toHaveBeenCalledWith({ by: "author", descending: false });
+  });
+
+  // A dataset over a relation is read in an order that has no column of its
+  // own, so a reader who sorted once could never stop.
+  it("offers the way back to the order the dataset is read in", async () => {
+    const user = userEvent.setup();
+    const onOrder = vi.fn();
+    render(
+      <RecordTable
+        fields={FIELDS}
+        records={RECORDS}
+        shown={["author"]}
+        arrived={false}
+        ordering={{ by: "author", descending: false }}
+        onShow={vi.fn()}
+        onOrder={onOrder}
+      />
+    );
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "Order by author, now ascending; again for the order it is read in",
+      })
+    );
+
+    expect(onOrder).toHaveBeenCalledWith({ by: "", descending: true });
+  });
+
+  // A row of a relation is drawn where it sits, because it carries no
+  // identity. Paging puts a different row in that place, and a pane left open
+  // would be showing somebody else's values.
+  it("closes a pane whose row is no longer the row it was opened on", async () => {
+    const user = userEvent.setup();
+    const first = [{ raw_data: { team: "platform" } }];
+    const second = [{ raw_data: { team: "delivery" } }];
+    const draw = (records: typeof first) => (
+      <RecordTable
+        fields={[{ name: "team", column: "entity_id", type: "string" }]}
+        records={records}
+        shown={["team"]}
+        arrived={false}
+        ordering={{ by: "team", descending: true }}
+        onShow={vi.fn()}
+        onOrder={vi.fn()}
+      />
+    );
+
+    const { rerender } = render(draw(first));
+    await user.click(screen.getByRole("button", { name: /Show the whole/ }));
+    expect(screen.getByText(/"platform"/)).toBeInTheDocument();
+
+    rerender(draw(second));
+
+    expect(screen.queryByText(/"delivery"/)).not.toBeInTheDocument();
   });
 
   // A reader who cannot see the arrow has nothing else to tell them which

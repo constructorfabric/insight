@@ -71,7 +71,8 @@ export function DefinitionEditor({
     store.error,
     description.fields,
     held.document,
-    "Couldn't store it."
+    "Couldn't store it.",
+    ["name"]
   );
   const given = called.trim();
   // SAFETY: the service replaces on write. A new definition given a name the
@@ -113,7 +114,7 @@ export function DefinitionEditor({
           <Input
             id="definition-name"
             value={called}
-            aria-invalid={taken || undefined}
+            aria-invalid={taken || placed.at.has("name") || undefined}
             aria-describedby="definition-name-hint"
             className="h-9 w-72 font-mono"
             onChange={(event) => setCalled(event.target.value)}
@@ -126,6 +127,11 @@ export function DefinitionEditor({
             sending records call this {description.noun}. Letters, digits,{" "}
             <code>_</code> and <code>-</code>.
           </p>
+          {placed.at.get("name") === undefined ? null : (
+            <p role="alert" className={cn(TEXT_LABEL, "text-destructive")}>
+              {placed.at.get("name")}
+            </p>
+          )}
           {taken ? (
             <p role="alert" className={cn(TEXT_LABEL, "text-destructive")}>
               A {description.noun} called <code>{given}</code> already exists.{" "}

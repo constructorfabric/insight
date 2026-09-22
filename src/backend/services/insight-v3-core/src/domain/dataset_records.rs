@@ -1,5 +1,5 @@
-//! Looking at what a dataset holds: one page of its records, ordered by
-//! the instant they arrived or by a field the dataset declares.
+//! Looking at what a dataset holds: one page of its rows, ordered by a field
+//! the dataset declares, or by the instant a record arrived where one did.
 
 use super::datasets::{self, Datasets, Reads};
 use super::definition::DefinitionName;
@@ -143,8 +143,8 @@ impl<'a> DatasetRecords<'a> {
 pub(crate) struct Look {
     pub(crate) limit: Option<u64>,
     pub(crate) offset: u64,
-    /// A declared field, or `received_at`. Absent means the order records
-    /// arrived in.
+    /// A declared field, or `received_at` for a dataset records are sent
+    /// into. Absent means the order the dataset is read in.
     pub(crate) order_by: Option<String>,
     pub(crate) descending: bool,
 }

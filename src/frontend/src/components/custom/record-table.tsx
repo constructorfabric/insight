@@ -67,6 +67,16 @@ export function RecordTable({
 }) {
   const drawn = fields.filter((field) => shown.includes(field.name));
 
+  // Which rows are open, by what they hold rather than by where they sit: a
+  // row of a relation carries no identity of its own, so paging or reordering
+  // puts a different row in the same place — and an open pane keyed by that
+  // place would be showing somebody else's values.
+  const [opened, setOpened] = useState<readonly string[]>([]);
+  const toggle = (held: string) =>
+    setOpened((was) =>
+      was.includes(held) ? was.filter((one) => one !== held) : [...was, held]
+    );
+
   return (
     <div className="flex flex-col gap-3">
       <Columns fields={fields} shown={shown} drawn={drawn} onShow={onShow} />
@@ -102,6 +112,8 @@ export function RecordTable({
               at={at}
               fields={drawn}
               arrived={arrived}
+              opened={opened}
+              onToggle={toggle}
             />
           ))}
         </TableBody>
@@ -175,7 +187,21 @@ function Sortable({
   onOrder: (ordering: Ordering) => void;
 }) {
   const chosen = ordering.by === name;
-  const sorted = chosen ? (ordering.descending ? "descending" : "ascending") : "none";
+  const sorted = chosen
+    ? ordering.descending
+      ? "descending"
+      : "ascending"
+    : "none";
+
+  // Three states, not two: the order a dataset is read in when nothing is
+  // named has no column of its own over a relation, so without a way back to
+  // it a reader who sorts once can never stop.
+  const next = (): Ordering => {
+    if (!chosen) return { by: name, descending: true };
+    if (ordering.descending) return { by: name, descending: false };
+
+    return { by: "", descending: true };
+  };
 
   return (
     <TableHead aria-sort={sorted}>
@@ -183,14 +209,11 @@ function Sortable({
         type="button"
         className="inline-flex items-center gap-1 font-mono hover:underline"
         aria-label={
-          chosen ? `Order by ${label}, now ${sorted}` : `Order by ${label}`
+          chosen
+            ? `Order by ${label}, now ${sorted}; again for the order it is read in`
+            : `Order by ${label}`
         }
-        onClick={() =>
-          onOrder({
-            by: name,
-            descending: chosen ? !ordering.descending : true,
-          })
-        }
+        onClick={() => onOrder(next())}
       >
         {label}
         {chosen ? (
@@ -211,6 +234,8 @@ function Row({
   at,
   fields,
   arrived,
+  opened,
+  onToggle,
 }: {
   record: DatasetRecord;
   /** Where the row sits on the page, for one that carries no stamp. */
@@ -218,15 +243,19 @@ function Row({
   fields: readonly DeclaredField[];
   /** Whether this table draws the instant a row arrived. */
   arrived: boolean;
+  /** What the rows already open hold. */
+  opened: readonly string[];
+  onToggle: (held: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
   const whole = useId();
+  const held = JSON.stringify(record.raw_data);
+  const open = opened.includes(held);
 
   return (
     <>
       <TableRow
         className="cursor-pointer"
-        onClick={() => setOpen((was) => !was)}
+        onClick={() => onToggle(held)}
       >
         <TableCell className="w-0 pr-0">
           <button
@@ -242,7 +271,7 @@ function Row({
             className="flex items-center text-muted-foreground"
             onClick={(event) => {
               event.stopPropagation();
-              setOpen((was) => !was);
+              onToggle(held);
             }}
           >
             {open ? (

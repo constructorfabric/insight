@@ -107,7 +107,12 @@ export function place(
   error: unknown,
   fields: readonly Field[],
   document: unknown,
-  fallback: string
+  fallback: string,
+  /**
+   * Places the form draws itself, outside any description — the name of the
+   * definition is one, and it is the refusal a first author meets most.
+   */
+  also: readonly string[] = []
 ): Placed {
   const at = new Map<string, string>();
   const loose: string[] = [];
@@ -117,6 +122,7 @@ export function place(
 
   const body = error.body as Refusal | null;
   const offered = offers(fields, document);
+  for (const path of also) offered.add(path);
 
   for (const violation of body?.context?.field_violations ?? []) {
     const said = violation.description ?? "";
