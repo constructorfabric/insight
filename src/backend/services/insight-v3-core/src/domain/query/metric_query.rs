@@ -301,6 +301,8 @@ pub(crate) struct CompiledQuery {
 pub(crate) enum MetricQueryError {
     #[error("`{0}` must be 1-128 characters of letters, digits or underscore")]
     Identifier(String),
+    #[error("`{0}` must name a json key of 1-128 characters between its dots")]
+    JsonKey(String),
     #[error("`{0}` must name one of this query's as_name values")]
     GroupBy(String),
     #[error(

@@ -124,6 +124,17 @@ impl Stand {
         (result, undated)
     }
 
+    async fn every_row(&self, metric: &MetricQuery) -> RunResult {
+        let compiled = metric
+            .compile(self.runner.people())
+            .unwrap_or_else(|error| panic!("the metric compiles: {error}"));
+
+        self.runner
+            .run(&compiled)
+            .await
+            .unwrap_or_else(|error| panic!("the metric runs: {error}"))
+    }
+
     async fn drop_table(&self) {
         execute(
             &self.client,
@@ -582,14 +593,7 @@ async fn an_array_selector_reads_a_nullable_json_column() {
         "order_by": ["state"]
     }));
 
-    let compiled = metric
-        .compile(stand.runner.people())
-        .unwrap_or_else(|error| panic!("the metric compiles: {error}"));
-    let result = stand
-        .runner
-        .run(&compiled)
-        .await
-        .unwrap_or_else(|error| panic!("the metric runs: {error}"));
+    let result = stand.every_row(&metric).await;
 
     assert_eq!(
         pairs(&result),
@@ -630,14 +634,7 @@ async fn a_json_key_outside_the_identifier_charset_reads_its_value() {
         "order_by": ["stand"]
     }));
 
-    let compiled = metric
-        .compile(stand.runner.people())
-        .unwrap_or_else(|error| panic!("the metric compiles: {error}"));
-    let result = stand
-        .runner
-        .run(&compiled)
-        .await
-        .unwrap_or_else(|error| panic!("the metric runs: {error}"));
+    let result = stand.every_row(&metric).await;
 
     assert_eq!(
         pairs(&result),

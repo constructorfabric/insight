@@ -10,7 +10,7 @@ use super::filter::{Filter, FilterBind};
 use super::over::Over;
 use super::people::PersonHandle;
 
-const MAX_IDENTIFIER_CHARS: usize = 128;
+pub(super) const MAX_IDENTIFIER_CHARS: usize = 128;
 
 /// How to sort the rows. Without it the grouping's own columns order the
 /// result, which cannot answer "the most" or "the largest".
@@ -178,8 +178,10 @@ impl Field {
         let matched = selector.r#type.extract("x", key)?;
         binds.push(selector.bind(selected)?);
 
+        // ClickHouse refuses `Array(String)` inside a `Nullable`, and an
+        // ingested JSON column may be declared `Nullable(String)`.
         let element = format!(
-            "arrayFirst(x -> {matched} {} ?, JSONExtractArrayRaw({}))",
+            "arrayFirst(x -> {matched} {} ?, JSONExtractArrayRaw(ifNull({}, '')))",
             selector.op.sql(),
             source.payload_sql(qualifier)?
         );
@@ -347,10 +349,10 @@ impl FieldType {
 
         let mut keys = String::new();
         for segment in path.split('.') {
-            if !is_identifier(segment) {
-                return Err(MetricQueryError::Identifier(path.to_owned()));
+            if segment.is_empty() || segment.chars().count() > MAX_IDENTIFIER_CHARS {
+                return Err(MetricQueryError::JsonKey(path.to_owned()));
             }
-            let _ = write!(keys, ", '{segment}'");
+            let _ = write!(keys, ", {}", json_key_literal(segment));
         }
 
         Ok(format!("{function}({payload}{keys})"))
@@ -391,6 +393,19 @@ pub(super) fn is_identifier(value: &str) -> bool {
     !value.is_empty()
         && value.chars().count() <= MAX_IDENTIFIER_CHARS
         && value.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// `?` doubles because the driver binds by scanning the raw query text with
+/// no regard for quoting, so a single `?` here would take a bound parameter
+/// and shift every later one. Backslash first, or it would escape the
+/// backslashes the later replacements add.
+fn json_key_literal(key: &str) -> String {
+    format!(
+        "'{}'",
+        key.replace('\\', r"\\")
+            .replace('\'', r"\'")
+            .replace('?', "??")
+    )
 }
 
 /// `ClickHouse`'s `JSON` format serialises wide integers as JSON strings;
