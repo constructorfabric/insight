@@ -14,10 +14,10 @@ use crate::domain::metric_access::authorize_tenant_metrics;
 use crate::domain::metric_definitions::MetricDefinition;
 use crate::domain::metric_drilldown::load_capabilities;
 use crate::domain::metric_results::{
-    BatchItem, BreakdownQueryRow, CompiledQuery, HistogramQueryRow, MetricResultViewDto,
-    MetricResultsRequest, MetricResultsResponse, PeerPopulation, PeerWideRow, PeriodWideRow,
-    PlannedQuery, PooledHistogramQueryRow, RankingQueryRow, RankingResults, RollupQueryRow,
-    TimeseriesQueryRow, UnbatchedView, ValidatedMetricResultsRequest, ViewFailure,
+    BatchItem, BreakdownQueryRow, CompiledQuery, HistogramQueryRow, MetricResultDto,
+    MetricResultViewDto, MetricResultsRequest, MetricResultsResponse, PeerPopulation, PeerWideRow,
+    PeriodWideRow, PlannedQuery, PooledHistogramQueryRow, RankingQueryRow, RankingResults,
+    RollupQueryRow, TimeseriesQueryRow, UnbatchedView, ValidatedMetricResultsRequest, ViewFailure,
     build_breakdown_view, build_histogram_view, build_metric_result, build_peer_view,
     build_period_view, build_pooled_histogram_view, build_ranked_groups, build_rollup_view,
     build_timeseries_view, demux_peer_rows, demux_period_rows, enforce_view_row_limit,
@@ -41,16 +41,31 @@ pub async fn query_metric_results(
     req.enforce_tenant_scope = state.config.metric_catalog.enforce_tenant_scope;
     authorize_person_request(&state, &ctx, &headers, &req).await?;
 
+    let (metrics, absence_context) = tokio::join!(
+        compute_metrics(&state, &req, &headers),
+        crate::domain::person_absences::load(&state.ch, &req),
+    );
+
+    Ok(Json(MetricResultsResponse {
+        metrics: metrics?,
+        absence_context,
+    }))
+}
+
+async fn compute_metrics(
+    state: &Arc<AppState>,
+    req: &ValidatedMetricResultsRequest,
+    headers: &HeaderMap,
+) -> Result<Vec<MetricResultDto>, CanonicalError> {
     let metric_keys = req
         .metrics
         .iter()
         .map(|metric| metric.def.key().to_owned())
         .collect::<Vec<_>>();
-    let capabilities = load_capabilities(&state.db, tenant_id, &metric_keys);
-    let (ranking_results, capabilities) =
-        tokio::join!(collect_rankings(&state, &req), capabilities);
+    let capabilities = load_capabilities(&state.db, req.tenant_id, &metric_keys);
+    let (ranking_results, capabilities) = tokio::join!(collect_rankings(state, req), capabilities);
     let peer_population = peer_population(state.config.visibility_policy);
-    let planned = plan_queries(&req, &ranking_results, peer_population)?;
+    let planned = plan_queries(req, &ranking_results, peer_population)?;
 
     let mut views_by_metric: Vec<Vec<Option<Result<MetricResultViewDto, ViewFailure>>>> = req
         .metrics
@@ -61,7 +76,7 @@ pub async fn query_metric_results(
     // A failed query settles only its own view slots as errors; the other
     // queries keep running so one broken metric cannot empty the response.
     let mut results = stream::iter(planned)
-        .map(|query| execute_planned(&state, &req, query))
+        .map(|query| execute_planned(state, req, query))
         .buffer_unordered(QUERY_CONCURRENCY);
     while let Some(result) = results.next().await {
         for view in result {
@@ -74,7 +89,7 @@ pub async fn query_metric_results(
         .flatten()
         .filter(|view| matches!(view, Some(Err(_))))
         .count();
-    let admin = failed_views > 0 && admin_for_error_detail(&state, &headers).await;
+    let admin = failed_views > 0 && admin_for_error_detail(state, headers).await;
     if failed_views > 0 {
         tracing::warn!(
             failed_views,
@@ -135,8 +150,7 @@ pub async fn query_metric_results(
         metrics.push(result);
     }
 
-    let response = MetricResultsResponse { metrics };
-    Ok(Json(response))
+    Ok(metrics)
 }
 
 fn peer_population(visibility_policy: VisibilityPolicy) -> PeerPopulation {
