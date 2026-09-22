@@ -30,6 +30,11 @@ sources:
         freshness:
           warn_after: {count: 72, period: hour}
           error_after: {count: 120, period: hour}
+      - name: chatgpt_team_codex_sessions_daily  # windowed — credits by surface
+        loaded_at_field: parseDateTimeBestEffortOrNull(date)
+        freshness:
+          warn_after: {count: 72, period: hour}
+          error_after: {count: 120, period: hour}
       - name: chatgpt_team_subscription_usage    # inferred windowed (snapshot_date)
         loaded_at_field: parseDateTimeBestEffortOrNull(snapshot_date)
         freshness:
@@ -155,6 +160,35 @@ models:
         tests: [not_null]
       - name: _version
         tests: [not_null]
+
+  - name: chatgpt_team__codex_reconciliation
+    description: >
+      Diagnostic view over both Codex readings of a person-day — the usage
+      leaderboard and the session/message aggregate — carrying both key spaces
+      so a person-day only one endpoint returned stays visible. `seen_in` is
+      'both', 'leaderboard_only' or 'sessions_only'; `credits_delta` is NULL
+      where either side is absent, because a missing reading is not a zero
+      difference. Not a class relation: it feeds no metric, defines no contract
+      and is never a source of active_day. Materialised as a view.
+    columns:
+      - name: insight_tenant_id
+        description: "Tenant isolation field"
+      - name: source_id
+        description: "Connector instance identifier"
+      - name: user_id
+        description: "The vendor account id both endpoints key on"
+      - name: day
+        description: "The usage day"
+      - name: seen_in
+        description: "'both' | 'leaderboard_only' | 'sessions_only'"
+      - name: leaderboard_credits
+        description: "Credits as the authoritative leaderboard reports them"
+      - name: sessions_credit_total
+        description: "credit_total from the sessions aggregate, for comparison only"
+      - name: sessions_on_demand_credits
+        description: "The vendor's own on-demand figure from the sessions aggregate"
+      - name: credits_delta
+        description: "leaderboard_credits - sessions_credit_total; NULL unless both sides are present"
 
   - name: chatgpt_team__seats_latest
     description: >
