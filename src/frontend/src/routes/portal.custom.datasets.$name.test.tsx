@@ -353,4 +353,57 @@ describe("/portal/custom/datasets/$name", () => {
     expect(customClient.fetchDatasetRecords).not.toHaveBeenCalled();
     expect(customClient.fetchDatasetDependents).not.toHaveBeenCalled();
   });
+
+  // A relation the warehouse builds has no arrival column, so naming one
+  // would be naming a field the dataset does not declare — which the service
+  // refuses, on the very first read.
+  it("names no order when reading a dataset over a relation", async () => {
+    vi.mocked(customClient.fetchDataset).mockResolvedValue({
+      name: "collab",
+      declaration: {
+        title: "Collaboration",
+        source: { kind: "relation", database: "insight", table: "collab" },
+        fields: [{ name: "day", column: "metric_date", type: "datetime" }],
+      },
+    });
+    vi.mocked(customClient.fetchDatasetRecords).mockResolvedValue({
+      records: [{ raw_data: { day: "2026-09-01" } }],
+      total: 1,
+      limit: 20,
+    });
+    portalRouter.go("/portal/custom/datasets/collab");
+
+    render(<Component />, { wrapper });
+    await screen.findByRole("cell", { name: "2026-09-01" });
+
+    expect(customClient.fetchDatasetRecords).toHaveBeenCalledWith("collab", {
+      offset: 0,
+      orderBy: undefined,
+      descending: true,
+    });
+    // Its rows were never sent, so they are rows, and there is nothing to
+    // have arrived.
+    expect(screen.getByText("1–1 of 1 rows")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("columnheader", { name: "Received" })
+    ).not.toBeInTheDocument();
+  });
+
+  it("says the relation holds nothing rather than that nothing arrived", async () => {
+    vi.mocked(customClient.fetchDataset).mockResolvedValue({
+      name: "collab",
+      declaration: {
+        title: "Collaboration",
+        source: { kind: "relation", database: "insight", table: "collab" },
+        fields: [{ name: "day", column: "metric_date", type: "datetime" }],
+      },
+    });
+    portalRouter.go("/portal/custom/datasets/collab");
+
+    render(<Component />, { wrapper });
+
+    expect(
+      await screen.findByText("The relation holds no rows.")
+    ).toBeInTheDocument();
+  });
 });

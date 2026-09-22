@@ -43,8 +43,11 @@ export function DefinitionEditor({
 }) {
   const description = DESCRIPTIONS[kind];
   const [called, setCalled] = useState(name ?? "");
+  // Under the stored body, not over it: a definition written before a
+  // property was required is opened with the choice made rather than saving
+  // a body the service refuses and a form with nothing to correct.
   const [held, setHeld] = useState<Held>(() =>
-    hold(document ?? starting(DESCRIPTIONS[kind].fields))
+    hold({ ...starting(DESCRIPTIONS[kind].fields), ...document })
   );
   const [view, setView] = useState<"fields" | "text">("fields");
   const store = useStoreDefinition();

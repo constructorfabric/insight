@@ -29,6 +29,10 @@ const DECLARED_FIELD: Shape = {
       label: "Where it sits",
       shape: {
         of: "variants",
+        starts: {
+          by: ["source", "kind"],
+          then: { stream: "path", relation: "column" },
+        },
         variants: {
           path: [
             {
@@ -124,6 +128,7 @@ const DATASET: Description = {
             shape: {
               of: "variants",
               recorded: "kind",
+              starts: "stream",
               variants: {
                 stream: [],
                 relation: [

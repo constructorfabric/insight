@@ -39,6 +39,14 @@ export type Shape =
       of: "variants";
       recorded?: string;
       variants: Readonly<Record<string, readonly Field[]>>;
+      /**
+       * Which variant a new one opens on, where opening on none would leave
+       * a reader answering a question before they can begin. Either a
+       * variant's name, or the property at the document's root that decides
+       * it. Absent asks the reader, which is the default: a choice made for
+       * them is a choice they were never offered.
+       */
+      starts?: string | { by: Path; then: Readonly<Record<string, string>> };
     };
 
 export interface Field {

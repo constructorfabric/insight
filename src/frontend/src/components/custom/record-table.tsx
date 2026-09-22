@@ -42,6 +42,7 @@ export function RecordTable({
   fields,
   records,
   shown,
+  arrived,
   ordering,
   onShow,
   onOrder,
@@ -50,14 +51,21 @@ export function RecordTable({
   records: readonly DatasetRecord[];
   /** The declared fields to draw, in declaration order. */
   shown: readonly string[];
+  /**
+   * Whether these rows were sent into the dataset, and so carry the instant
+   * they arrived. A row of a relation the warehouse builds was not sent and
+   * nothing stamped it.
+   *
+   * INVARIANT: this comes from the declaration. Reading it off the rows would
+   * take the column away from a stream dataset whenever a page came back
+   * empty — which a reader can reach by paging past the end.
+   */
+  arrived: boolean;
   ordering: Ordering;
   onShow: (names: string[]) => void;
   onOrder: (ordering: Ordering) => void;
 }) {
   const drawn = fields.filter((field) => shown.includes(field.name));
-  // A row of a relation the warehouse builds was not sent and nothing
-  // stamped it, so there is no arrival column to draw or to order by.
-  const arrived = records.some((record) => record.received_at !== undefined);
 
   return (
     <div className="flex flex-col gap-3">
@@ -91,6 +99,7 @@ export function RecordTable({
             <Row
               key={record.id ?? at}
               record={record}
+              at={at}
               fields={drawn}
               arrived={arrived}
             />
@@ -199,10 +208,13 @@ function Sortable({
 /** One record, with the whole of it a click away. */
 function Row({
   record,
+  at,
   fields,
   arrived,
 }: {
   record: DatasetRecord;
+  /** Where the row sits on the page, for one that carries no stamp. */
+  at: number;
   fields: readonly DeclaredField[];
   /** Whether this table draws the instant a row arrived. */
   arrived: boolean;
@@ -222,7 +234,11 @@ function Row({
             id={`${whole}-trigger`}
             aria-expanded={open}
             aria-controls={open ? whole : undefined}
-            aria-label={`${open ? "Hide" : "Show"} the whole of this row`}
+            aria-label={
+              record.received_at === undefined
+                ? `${open ? "Hide" : "Show"} the whole of row ${at + 1}`
+                : `${open ? "Hide" : "Show"} the whole of the row received at ${record.received_at}`
+            }
             className="flex items-center text-muted-foreground"
             onClick={(event) => {
               event.stopPropagation();

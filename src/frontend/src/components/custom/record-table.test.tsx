@@ -30,6 +30,7 @@ function draw(
       fields={FIELDS}
       records={RECORDS}
       shown={shown}
+      arrived
       ordering={{ by: ARRIVED, descending: true }}
       onShow={onShow}
       onOrder={onOrder}
@@ -82,6 +83,7 @@ describe("<RecordTable>", () => {
         fields={FIELDS}
         records={RECORDS}
         shown={["author"]}
+        arrived
         ordering={{ by: "author", descending: true }}
         onShow={vi.fn()}
         onOrder={onOrder}
@@ -103,6 +105,7 @@ describe("<RecordTable>", () => {
         fields={FIELDS}
         records={RECORDS}
         shown={["author", "lines"]}
+        arrived
         ordering={{ by: "author", descending: false }}
         onShow={vi.fn()}
         onOrder={vi.fn()}
@@ -124,7 +127,7 @@ describe("<RecordTable>", () => {
 
     expect(screen.getAllByRole("row")).toHaveLength(2);
     expect(
-      screen.getByRole("button", { name: /Show the whole of this row/ })
+      screen.getByRole("button", { name: /Show the whole of the row/ })
     ).toBeInTheDocument();
   });
 
@@ -155,7 +158,8 @@ describe("<RecordTable>", () => {
         fields={FIELDS}
         records={[{ id: "1", received_at: "now", raw_data: {} }]}
         shown={["author"]}
-        ordering={{ by: ARRIVED, descending: true }}
+        arrived
+      ordering={{ by: ARRIVED, descending: true }}
         onShow={vi.fn()}
         onOrder={vi.fn()}
       />
@@ -172,7 +176,8 @@ describe("<RecordTable>", () => {
         fields={[{ name: "author", path: "who.email", type: "string", absent_value: "unknown" }]}
         records={[{ id: "1", received_at: "now", raw_data: {} }]}
         shown={["author"]}
-        ordering={{ by: ARRIVED, descending: true }}
+        arrived
+      ordering={{ by: ARRIVED, descending: true }}
         onShow={vi.fn()}
         onOrder={vi.fn()}
       />
@@ -189,7 +194,8 @@ describe("<RecordTable>", () => {
         fields={[{ name: "dotted", path: "a\\.b", type: "string" }]}
         records={[{ id: "1", received_at: "now", raw_data: { "a.b": "held" } }]}
         shown={["dotted"]}
-        ordering={{ by: ARRIVED, descending: true }}
+        arrived
+      ordering={{ by: ARRIVED, descending: true }}
         onShow={vi.fn()}
         onOrder={vi.fn()}
       />
@@ -207,6 +213,7 @@ describe("<RecordTable>", () => {
         fields={[{ name: "team", column: "entity_id", type: "string" }]}
         records={[{ raw_data: { team: "platform" } }]}
         shown={["team"]}
+        arrived={false}
         ordering={{ by: "team", descending: true }}
         onShow={vi.fn()}
         onOrder={vi.fn()}
@@ -229,6 +236,7 @@ describe("<RecordTable>", () => {
         fields={[{ name: "day", column: "metric_date", type: "datetime" }]}
         records={[{ raw_data: { day: "2026-09-01" } }]}
         shown={["day"]}
+        arrived={false}
         ordering={{ by: "day", descending: true }}
         onShow={vi.fn()}
         onOrder={vi.fn()}

@@ -237,7 +237,10 @@ function ListEntries({
         size="sm"
         className="self-start"
         onClick={() =>
-          editing.onChange([...at, entries.length], blank(shape.entry))
+          editing.onChange(
+            [...at, entries.length],
+            blank(shape.entry, editing.document)
+          )
         }
       >
         <Plus />

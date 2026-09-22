@@ -493,4 +493,57 @@ describe("<DefinitionEditor> over a kind's shape", () => {
       })
     );
   });
+
+  // A definition written before a property was required carries none. The
+  // editor makes the choice rather than saving a body the service refuses
+  // and leaving the reader a form with nothing to correct.
+  it("fills in a choice a stored declaration predates", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <DefinitionEditor
+        kind="datasets"
+        name="legacy"
+        document={{ title: "Legacy", fields: [] }}
+        onStored={vi.fn()}
+      />,
+      { wrapper }
+    );
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(customClient.putDataset).toHaveBeenCalledWith("legacy", {
+        title: "Legacy",
+        source: { kind: "stream" },
+        fields: [],
+      })
+    );
+  });
+
+  // A field reads where its dataset keeps values, so a new one on a dataset
+  // over a relation starts on a column rather than costing a choice apiece.
+  it("starts a new field on the locator its dataset uses", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <DefinitionEditor
+        kind="datasets"
+        name="collab"
+        document={{
+          title: "Collaboration",
+          source: { kind: "relation", database: "insight", table: "collab" },
+          fields: [],
+        }}
+        onStored={vi.fn()}
+      />,
+      { wrapper }
+    );
+
+    await user.click(screen.getByRole("button", { name: "Add field" }));
+    const first = within(screen.getByRole("group", { name: "field 1" }));
+
+    expect(first.getByLabelText("Column")).toBeInTheDocument();
+    expect(first.queryByLabelText("Path")).not.toBeInTheDocument();
+  });
 });

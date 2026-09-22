@@ -1,12 +1,13 @@
+import { read } from "./document";
 import type { Field, Shape } from "./describe";
 
 /** What a new entry of a list starts as, by the shape of an entry. */
-export function blank(shape: Shape): unknown {
+export function blank(shape: Shape, document: unknown = {}): unknown {
   switch (shape.of) {
     case "list":
       return [];
     case "record":
-      return seeded(shape.fields);
+      return seeded(shape.fields, document);
     case "variants":
       return {};
     case "flag":
@@ -30,40 +31,52 @@ export function blank(shape: Shape): unknown {
  * than refusing the first save over a question the reader was never asked.
  */
 export function starting(fields: readonly Field[]): Record<string, unknown> {
-  return seeded(fields);
+  return seeded(fields, {});
 }
 
 /**
- * A new record with the choices it cannot do without already made.
+ * A new record with the choices its description says to open on.
  *
- * A choice that must be made anyway starts on its first option, so that a new
- * entry offers something to fill in rather than a question to answer first.
- * Variants are transparent, so the chosen one's properties sit in the record
- * beside everything else - which is where the document holds them.
+ * INVARIANT: only a variant the description names is opened on. Picking
+ * whichever happens to be written first would decide for a reader wherever a
+ * kind meant to ask them.
  */
-function seeded(fields: readonly Field[]): Record<string, unknown> {
+function seeded(
+  fields: readonly Field[],
+  document: unknown
+): Record<string, unknown> {
   const held: Record<string, unknown> = {};
 
   for (const field of fields) {
-    if (field.required !== true) continue;
-
     if (field.shape.of === "record") {
-      const within = seeded(field.shape.fields);
+      const within = seeded(field.shape.fields, document);
       if (Object.keys(within).length > 0) held[field.name] = within;
       continue;
     }
 
     if (field.shape.of !== "variants") continue;
 
-    const [first] = Object.keys(field.shape.variants);
-    if (first === undefined) continue;
+    const opens = opening(field.shape.starts, document);
+    if (opens === undefined || !(opens in field.shape.variants)) continue;
 
     if (field.shape.recorded === undefined) {
-      held[first] = "";
+      held[opens] = "";
     } else {
-      held[field.shape.recorded] = first;
+      held[field.shape.recorded] = opens;
     }
   }
 
   return held;
+}
+
+/** The variant to open on, read from the description or from the document. */
+function opening(
+  starts: Extract<Shape, { of: "variants" }>["starts"],
+  document: unknown
+): string | undefined {
+  if (starts === undefined || typeof starts === "string") return starts;
+
+  const said = read(document, starts.by);
+
+  return typeof said === "string" ? starts.then[said] : undefined;
 }

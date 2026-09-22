@@ -93,7 +93,11 @@ function DatasetPage() {
         fields={declaration.fields}
         identity={declaration.row_identity}
       />
+      {/* Keyed by the dataset: the order, the page and the columns on screen
+          all belong to the one being read, and a move to another must not
+          carry them across. */}
       <Records
+        key={name}
         name={name}
         fields={declaration.fields}
         sent={declaration.source?.kind !== "relation"}
@@ -238,6 +242,7 @@ function Records({
               fields={fields}
               records={records.data.records}
               shown={shown}
+              arrived={sent}
               ordering={ordering}
               onShow={setShown}
               onOrder={order}
