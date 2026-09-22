@@ -26,19 +26,19 @@
 # Streams 3 and 5 are both per-person-per-day Codex readings and neither
 # replaces the other — see stream 5 for which fields each one owns.
 #
-# TYPES: a counter the vendor reports as a whole number is declared `integer`,
-# not `number`. A JSON `number` lands as Nullable(Decimal(38, 9)) in ClickHouse,
-# which is why every downstream read of one goes through
-# toUInt32OrNull(toString(...)) — a conversion the column type should not have
-# made necessary. Credits stay `number`: they are genuinely fractional.
+# TYPES: in the sessions stream a counter the vendor reports as a whole number
+# is declared `integer` and lands as Nullable(Int64). Credits stay `number`:
+# they are genuinely fractional.
 #
-# ⚠️ This changes the Bronze column type, and reconcile_bronze_schema.py only
-# ADDs columns — a type that differs from the snapshot is reported and left
-# alone, because MODIFY COLUMN rewrites data and is an operator's decision. So a
-# fresh install gets Int64 while an installation that already holds these tables
-# keeps Decimal, and the reconciler logs the drift on every run until an
-# operator converges it. The dbt models read both: toString of either type gives
-# the same digits for a whole number.
+# The leaderboard's counters keep `number`, and that is not an oversight. Its
+# tables exist wherever the connector has run, and reconcile_bronze_schema.py
+# only ADDs columns — a type differing from the snapshot is reported and left
+# alone, since MODIFY COLUMN rewrites data and is an operator's decision.
+# Redeclaring them would hand a fresh install Int64 and leave every existing one
+# on Decimal, with no deploy able to close the gap. They are read through
+# toUInt32OrNull(toString(...)) instead, which is exact here: toString of a
+# Decimal trims trailing zeros, so a whole reading converts to itself and a
+# fractional or negative one yields NULL.
 
 # The roster, leaderboard, sessions and settings shapes below were read back
 # from a workspace. The two subscription streams were not: their fields still
@@ -366,11 +366,11 @@ streams:
           user_id: { type: ["string", "null"] }
           name: { type: ["string", "null"] }
           credits: { type: ["number", "null"] }
-          n_threads: { type: ["integer", "null"] }
-          n_turns: { type: ["integer", "null"] }
-          current_streak: { type: ["integer", "null"] }
-          text_tokens: { type: ["integer", "null"] }
-          lines_added: { type: ["integer", "null"] }
+          n_threads: { type: ["number", "null"] }
+          n_turns: { type: ["number", "null"] }
+          current_streak: { type: ["number", "null"] }
+          text_tokens: { type: ["number", "null"] }
+          lines_added: { type: ["number", "null"] }
     retriever:
       type: SimpleRetriever
       requester:

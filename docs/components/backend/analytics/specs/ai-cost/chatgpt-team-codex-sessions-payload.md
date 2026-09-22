@@ -132,20 +132,26 @@ Counts messages the person sent. The assistant's replies are not counted.
 
 ## Storage types
 
-A counter the vendor reports as a whole number is declared `integer` in the
-manifest and lands as `Nullable(Int64)`. Credits are declared `number` and land
-as `Nullable(Decimal(38, 9))`, because they are genuinely fractional.
+In **this** stream a counter the vendor reports as a whole number is declared
+`integer` in the manifest and lands as `Nullable(Int64)`. Credits are declared
+`number` and land as `Nullable(Decimal(38, 9))`, because they are genuinely
+fractional.
 
-The distinction is not cosmetic. A JSON `number` becomes a Decimal in ClickHouse
-whatever the values look like, and every downstream read of one then has to go
-through `toUInt32OrNull(toString(...))` to get an integer back.
+The distinction is not cosmetic: a JSON `number` becomes a Decimal in ClickHouse
+whatever the values look like, and every downstream read of one then has to
+convert back.
 
-One consequence worth knowing before reading a live warehouse: the bronze
-reconciler only ADDs columns. A column whose type differs from the snapshot is
+**The older leaderboard stream keeps its Decimal columns**, and deliberately.
+Those tables already exist wherever the connector has run, and the bronze
+reconciler only ADDs columns — a column whose type differs from the snapshot is
 reported and left alone, because changing it rewrites data and is an operator's
-decision. An installation that already holds these tables therefore keeps the
-Decimal columns it was created with, while a fresh one gets Int64. Both read the
-same through `toString`.
+decision. Redeclaring them would give a fresh install Int64 and leave every
+existing one on Decimal, a drift no deploy would ever close. So the older
+counters are read through `toUInt32OrNull(toString(...))` instead, which is
+exact for this data: `toString` of a Decimal trims its trailing zeros, so a
+whole reading converts to itself, while a fractional or negative one yields
+NULL. That NULL is carried as an empty string rather than a zero — a value that
+did not parse is not a measurement of none.
 
 ## Completeness
 

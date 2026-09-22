@@ -222,7 +222,12 @@ SELECT
     CAST(NULL AS Nullable(String))                      AS api_key_id,
     toDate(date)                                        AS day,
     'codex'                                             AS tool,
-    -- Codex threads ≈ coding sessions. Non-nullable UInt32 per contract.
+    -- Codex threads ≈ coding sessions. Non-nullable UInt32 per contract, which
+    -- is the one place a failed parse cannot stay unknown: the column admits no
+    -- NULL, so an unparseable counter reads as 0 here. It cannot admit the row
+    -- on its own, though — the emission filter tests the same expression, and a
+    -- value that did not parse fails it. conversation_count below is nullable
+    -- and keeps the distinction.
     toUInt32(coalesce(toUInt32OrNull(toString(n_threads)), 0))        AS session_count,
     toUInt32OrNull(toString(n_threads))                               AS conversation_count,
     toUInt32(coalesce(toUInt32OrNull(toString(lines_added)), 0))      AS lines_added,
@@ -252,9 +257,15 @@ SELECT
     -- never the amount anything is charged on.
     CAST(toJSONString(map(
         'credits',        toString(coalesce(credits, 0)),
-        'n_turns',        toString(coalesce(toUInt32OrNull(toString(n_turns)), 0)),
-        'text_tokens',    toString(coalesce(toUInt64OrNull(toString(text_tokens)), 0)),
-        'current_streak', toString(coalesce(toUInt32OrNull(toString(current_streak)), 0)),
+        -- '' where the value does not parse as a whole non-negative number,
+        -- never '0': these columns are Nullable(Decimal(38, 9)) because the
+        -- vendor publishes them as JSON numbers, and toString of one trims its
+        -- trailing zeros — so an integral reading converts exactly, while a
+        -- fractional or negative one yields NULL. Writing that NULL as 0 would
+        -- report a measurement of none where there is no measurement.
+        'n_turns',        ifNull(toString(toUInt32OrNull(toString(n_turns))), ''),
+        'text_tokens',    ifNull(toString(toUInt64OrNull(toString(text_tokens))), ''),
+        'current_streak', ifNull(toString(toUInt32OrNull(toString(current_streak))), ''),
         'seen_in_sessions',       if(seen_in_sessions, '1', '0'),
         'sessions_credit_total',  if(seen_in_sessions, toString(coalesce(sessions_credit_total, 0)), ''),
         'sessions_on_demand_credits', if(seen_in_sessions, toString(coalesce(sessions_on_demand_credits, 0)), ''),

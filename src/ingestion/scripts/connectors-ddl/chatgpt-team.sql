@@ -120,11 +120,11 @@ CREATE TABLE IF NOT EXISTS bronze_chatgpt_team.chatgpt_team_codex_user_daily
     `user_id` Nullable(String),
     `name` Nullable(String),
     `credits` Nullable(Decimal(38, 9)),
-    `n_threads` Nullable(Int64),
-    `n_turns` Nullable(Int64),
-    `current_streak` Nullable(Int64),
-    `text_tokens` Nullable(Int64),
-    `lines_added` Nullable(Int64)
+    `n_threads` Nullable(Decimal(38, 9)),
+    `n_turns` Nullable(Decimal(38, 9)),
+    `current_streak` Nullable(Decimal(38, 9)),
+    `text_tokens` Nullable(Decimal(38, 9)),
+    `lines_added` Nullable(Decimal(38, 9))
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
