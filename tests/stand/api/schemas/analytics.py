@@ -698,6 +698,15 @@ class PeriodValueDto(BaseModel):
     value: float | None = None
 
 
+class PersonAbsenceContext(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    compare_to_overlap: bool | None = None
+    period_overlap: bool
+    person_id: str
+
+
 class Problem(BaseModel):
     """
     RFC 9457 problem+json. `context` varies by error category.
@@ -1607,4 +1616,5 @@ class MetricResultsResponse(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
+    absence_context: list[PersonAbsenceContext]
     metrics: list[MetricResultDto]

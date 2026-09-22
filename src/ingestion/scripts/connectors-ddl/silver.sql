@@ -839,6 +839,21 @@ ORDER BY unique_key
 SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
 ;
 
+CREATE TABLE IF NOT EXISTS silver.class_person_absences
+(
+    `insight_tenant_id` String,
+    `unique_key` String,
+    `account_source_type` String,
+    `account_source_id` String,
+    `account_id` String,
+    `start_date` Date,
+    `end_date` Date
+)
+ENGINE = ReplacingMergeTree
+ORDER BY unique_key
+SETTINGS replicated_deduplication_window = '0', index_granularity = 8192
+;
+
 CREATE TABLE IF NOT EXISTS silver.class_person_attribute_claims
 (
     `unique_key` String,

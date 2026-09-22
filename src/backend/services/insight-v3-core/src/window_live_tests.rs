@@ -124,6 +124,17 @@ impl Stand {
         (result, undated)
     }
 
+    async fn every_row(&self, metric: &MetricQuery) -> RunResult {
+        let compiled = metric
+            .compile(self.runner.people())
+            .unwrap_or_else(|error| panic!("the metric compiles: {error}"));
+
+        self.runner
+            .run(&compiled)
+            .await
+            .unwrap_or_else(|error| panic!("the metric runs: {error}"))
+    }
+
     async fn drop_table(&self) {
         execute(
             &self.client,
@@ -543,6 +554,95 @@ async fn a_window_bound_keeps_the_millisecond_it_was_cut_on() {
         .await;
 
     assert_eq!(totals(&result), vec!["2".to_owned()]);
+
+    stand.drop_table().await;
+}
+
+#[tokio::test]
+async fn an_array_selector_reads_a_nullable_json_column() {
+    let Some(stand) =
+        stand_or_skip("(id UInt32, fields_json Nullable(String)) ENGINE = MergeTree ORDER BY id")
+            .await
+    else {
+        return;
+    };
+    stand
+        .insert(
+            "id, fields_json",
+            &[
+                r#"(1, '[{"name":"State","value":{"name":"Done"}}]')"#,
+                r#"(2, '[{"name":"State","value":{"name":"Open"}}]')"#,
+                r#"(3, '[{"name":"State","value":{"name":"Done"}}]')"#,
+                "(4, NULL)",
+            ],
+        )
+        .await;
+
+    let metric = stand.metric(&json!({
+        "fields": [
+            {
+                "column": "fields_json",
+                "json": "value.name",
+                "type": "string",
+                "as_name": "state",
+                "where": { "json": "name", "type": "string", "op": "eq", "value": "State" }
+            },
+            { "agg": "count", "type": "int", "as_name": "issues" }
+        ],
+        "group_by": ["state"],
+        "order_by": ["state"]
+    }));
+
+    let result = stand.every_row(&metric).await;
+
+    assert_eq!(
+        pairs(&result),
+        vec![
+            (String::new(), "1".to_owned()),
+            ("Done".to_owned(), "2".to_owned()),
+            ("Open".to_owned(), "1".to_owned()),
+        ]
+    );
+
+    stand.drop_table().await;
+}
+
+#[tokio::test]
+async fn a_json_key_outside_the_identifier_charset_reads_its_value() {
+    let Some(stand) =
+        stand_or_skip("(id UInt32, raw_data String) ENGINE = MergeTree ORDER BY id").await
+    else {
+        return;
+    };
+    stand
+        .insert(
+            "id, raw_data",
+            &[
+                r#"(1, '{"environment":{"Region Name":"east"},"$type":"Launch"}')"#,
+                r#"(2, '{"environment":{"Region Name":"west"},"$type":"Launch"}')"#,
+                r#"(3, '{"environment":{"Region Name":"east"},"$type":"Launch"}')"#,
+            ],
+        )
+        .await;
+
+    let metric = stand.metric(&json!({
+        "fields": [
+            { "json": "environment.Region Name", "type": "string", "as_name": "stand" },
+            { "agg": "count", "type": "int", "as_name": "launches" }
+        ],
+        "group_by": ["stand"],
+        "order_by": ["stand"]
+    }));
+
+    let result = stand.every_row(&metric).await;
+
+    assert_eq!(
+        pairs(&result),
+        vec![
+            ("east".to_owned(), "2".to_owned()),
+            ("west".to_owned(), "1".to_owned()),
+        ]
+    );
 
     stand.drop_table().await;
 }

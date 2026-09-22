@@ -77,6 +77,19 @@ name: chatgpt-team
 #   sync, which the sync workflow runs before dbt. An instance whose first run
 #   of the envelope stream fails has no table for the gate to read, and its dbt
 #   step fails until that stream succeeds once.
+# 3.1.0: adds chatgpt_team_codex_sessions_daily, the vendor's session/message
+#   aggregate, as a second per-person-per-day Codex reading. It owns the
+#   per-surface credit split, an explicit on_demand_credits and the cached vs
+#   uncached token split; the leaderboard keeps email, name and lines_added,
+#   which this endpoint does not publish. The two reconcile on (user_id, date)
+#   and chatgpt_team__ai_dev_usage records the outcome per row, so a person-day
+#   one endpoint returned and the other did not stays visible instead of
+#   reading as a null column. The endpoint is unpaginated, so the stream
+#   carries no completeness gate. MINOR per ADR-0015: the manifest has to reach
+#   Airbyte for the new Bronze table to be created, and no existing row changes
+#   meaning — the added columns land in tool_action_breakdown_json and a full
+#   refresh would reproduce what is already there for every day both endpoints
+#   covered.
 # 3.2.0: adds chatgpt_team__ai_credit_usage, the connector's contribution to
 #   silver.class_ai_credit_usage. It carries every person-day the vendor
 #   reports credits for, deliberately without chatgpt_team__ai_dev_usage's

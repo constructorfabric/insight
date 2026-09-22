@@ -8,6 +8,7 @@ import {
   CustomApiError,
   fetchDashboard,
   fetchDashboardNames,
+  fetchDatasetRecords,
   fetchMetric,
   fetchWidget,
   runMetric,
@@ -185,5 +186,45 @@ describe("runMetric", () => {
         bucket: false,
       }),
     });
+  });
+});
+
+describe("fetchDatasetRecords", () => {
+  // The service sizes the page: its cap is an installation's setting, and
+  // asking for a size of our own is how a reader ends up stepping over what
+  // a narrower page left behind.
+  it("asks for no page size of its own", async () => {
+    mockFetch.mockResolvedValueOnce(response({ records: [], total: 0, limit: 20 }));
+
+    await fetchDatasetRecords("commits", {});
+
+    expect(mockFetch).toHaveBeenCalledWith("/api/v3/v1/datasets/commits/records?");
+  });
+
+  // With no field named the service orders by the instant a record arrived,
+  // and honours the direction there too; omitting it asks for the default,
+  // which is the opposite of ascending.
+  it("sends the direction whether or not a field is named", async () => {
+    mockFetch.mockResolvedValueOnce(response({ records: [], total: 0, limit: 20 }));
+
+    await fetchDatasetRecords("commits", { descending: false });
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/v3/v1/datasets/commits/records?direction=asc"
+    );
+  });
+
+  it("sends the field, the direction and the offset the reader is at", async () => {
+    mockFetch.mockResolvedValueOnce(response({ records: [], total: 0, limit: 20 }));
+
+    await fetchDatasetRecords("commits", {
+      offset: 40,
+      orderBy: "day",
+      descending: true,
+    });
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/v3/v1/datasets/commits/records?offset=40&order_by=day&direction=desc"
+    );
   });
 });
