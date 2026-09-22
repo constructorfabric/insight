@@ -1,0 +1,104 @@
+spec_version: 1
+description: >
+  Task Delivery - the `resolution` breakdown dimension on tasks.closed and
+  tasks.bugs_fixed.
+
+  Gold resolves `resolution_kind` per issue as mapping row -> tenant default
+  -> 'unknown', with one carve-out: an issue carrying NO resolution value at
+  all is 'unknown' outright — the default speaks only for unmapped values,
+  never absent ones. This tenant maps Fixed(1) -> fixed, Won't Fix(2) ->
+  wontfix, Duplicate(3) -> duplicate and defaults unmapped resolution ids to
+  wontfix.
+
+  Carol closes five issues: a bug resolved Fixed, a task resolved Duplicate, a
+  bug resolved Won't Fix, a task with an unmapped resolution id (falls to the
+  wontfix default) and a bug with no resolution (unknown despite the default).
+  tasks.closed by resolution reads fixed=1, duplicate=1, wontfix=2, unknown=1;
+  tasks.bugs_fixed by resolution reads fixed=1, wontfix=1, unknown=1. The
+  per-class metrics read the same subsets: closed_fixed=1, closed_duplicate=1,
+  closed_wontfix=2 — and no metric counts the unknown class, the
+  unclassified-closures alert owns it.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/alice
+    - $ref: ../templates/people.yaml#/templates/bob
+    - $ref: ../templates/people.yaml#/templates/carol
+
+  bronze_jira.jira_user:
+    - $ref: ../templates/jira_task.yaml#/templates/carol_user
+
+  bronze_jira.jira_statuses:
+    - $ref: ../templates/jira_task.yaml#/templates/status_open
+    - $ref: ../templates/jira_task.yaml#/templates/status_in_progress
+    - $ref: ../templates/jira_task.yaml#/templates/status_closed
+
+  bronze_jira.jira_fields:
+    - $ref: ../templates/jira_task.yaml#/templates/field_status
+    - $ref: ../templates/jira_task.yaml#/templates/field_assignee
+    - $ref: ../templates/jira_task.yaml#/templates/field_issuetype
+    - $ref: ../templates/jira_task.yaml#/templates/field_resolution
+
+  bronze_jira.jira_issuetypes:
+    - $ref: ../templates/jira_task.yaml#/templates/issuetype_task
+    - $ref: ../templates/jira_task.yaml#/templates/issuetype_bug
+
+  config.field_value_map:
+    - $ref: ../templates/jira_task.yaml#/templates/value_type_task
+    - $ref: ../templates/jira_task.yaml#/templates/value_type_bug
+    - $ref: ../templates/jira_task.yaml#/templates/value_resolution_fixed
+    - $ref: ../templates/jira_task.yaml#/templates/value_resolution_wontfix
+    - $ref: ../templates/jira_task.yaml#/templates/value_resolution_duplicate
+
+  config.field_value_defaults:
+    # Unmapped resolution ids at this source fall to `wontfix`; an issue with
+    # no resolution at all must stay `unknown` in spite of it.
+    - $ref: ../templates/jira_task.yaml#/templates/jira_resolution_default
+    # The issue-type field is standardized here too, so it needs its own row.
+    - $ref: ../templates/jira_task.yaml#/templates/jira_issue_type_default_unknown
+
+  bronze_jira.jira_issue:
+    - $ref: ../templates/jira_task.yaml#/templates/jira_issue
+      id: JRB-1
+      jira_id: JRB-1
+      unique_key: jira-test-JRB-1
+      id_readable: JRB1
+      created: "2026-03-01T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10000","name":"Bug"},"resolution":{"id":"1","name":"Fixed"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
+    - $ref: ../templates/jira_task.yaml#/templates/jira_issue
+      id: JRB-2
+      jira_id: JRB-2
+      unique_key: jira-test-JRB-2
+      id_readable: JRB2
+      created: "2026-03-01T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"resolution":{"id":"3","name":"Duplicate"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
+    - $ref: ../templates/jira_task.yaml#/templates/jira_issue
+      id: JRB-3
+      jira_id: JRB-3
+      unique_key: jira-test-JRB-3
+      id_readable: JRB3
+      created: "2026-03-01T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10000","name":"Bug"},"resolution":{"id":"2","name":"Won''t Fix"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
+    # Resolution id 9 has no mapping row: falls to the wontfix default.
+    - $ref: ../templates/jira_task.yaml#/templates/jira_issue
+      id: JRB-4
+      jira_id: JRB-4
+      unique_key: jira-test-JRB-4
+      id_readable: JRB4
+      created: "2026-03-01T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"resolution":{"id":"9","name":"Escalated"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
+    # No resolution value at all: 'unknown' outright, never the default.
+    - $ref: ../templates/jira_task.yaml#/templates/jira_issue
+      id: JRB-5
+      jira_id: JRB-5
+      unique_key: jira-test-JRB-5
+      id_readable: JRB5
+      created: "2026-03-01T09:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10000","name":"Bug"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
+
+  bronze_jira.jira_issue_history:
+    - { $ref: ../templates/jira_task.yaml#/templates/closed_hist, id_readable: JRB1, jira_id: JRB-1, changelog_id: "53000", unique_key: jira-test-JRB1-53000, created_at: "2026-03-25T14:00:00.000+0000", author_account_id: carol-jira-acct }
+    - { $ref: ../templates/jira_task.yaml#/templates/closed_hist, id_readable: JRB2, jira_id: JRB-2, changelog_id: "53001", unique_key: jira-test-JRB2-53001, created_at: "2026-03-25T14:00:00.000+0000", author_account_id: carol-jira-acct }
+    - { $ref: ../templates/jira_task.yaml#/templates/closed_hist, id_readable: JRB3, jira_id: JRB-3, changelog_id: "53002", unique_key: jira-test-JRB3-53002, created_at: "2026-03-25T14:00:00.000+0000", author_account_id: carol-jira-acct }
+    - { $ref: ../templates/jira_task.yaml#/templates/closed_hist, id_readable: JRB4, jira_id: JRB-4, changelog_id: "53003", unique_key: jira-test-JRB4-53003, created_at: "2026-03-25T14:00:00.000+0000", author_account_id: carol-jira-acct }
+    - { $ref: ../templates/jira_task.yaml#/templates/closed_hist, id_readable: JRB5, jira_id: JRB-5, changelog_id: "53004", unique_key: jira-test-JRB5-53004, created_at: "2026-03-25T14:00:00.000+0000", author_account_id: carol-jira-acct }

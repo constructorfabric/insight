@@ -15,10 +15,10 @@ use chrono::Utc;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use crate::catalog::TableEngine;
-use crate::metric_query::{MetricQuery, MetricRunner, People, RunResult};
-use crate::time_window::WindowRequest;
-use crate::undated::UndatedCount;
+use crate::domain::query::metric_query::TableEngine;
+use crate::domain::query::metric_query::{MetricQuery, MetricRunner, People, RunResult};
+use crate::domain::query::time_window::WindowRequest;
+use crate::domain::query::undated::UndatedCount;
 
 const URL_VAR: &str = "INTEGRATION_TESTS_CLICKHOUSE_URL";
 
@@ -98,7 +98,7 @@ impl Stand {
         engine: TableEngine,
     ) -> (RunResult, UndatedCount) {
         let undated = match metric
-            .undated_query(engine)
+            .undated_query(engine, None)
             .unwrap_or_else(|error| panic!("the undated count compiles: {error}"))
         {
             Some(query) => self
@@ -113,7 +113,7 @@ impl Stand {
             .resolve(Utc::now())
             .unwrap_or_else(|error| panic!("the window resolves: {error}"));
         let compiled = metric
-            .compile_window(self.runner.people(), &window, engine)
+            .compile_window(self.runner.people(), &window, engine, None)
             .unwrap_or_else(|error| panic!("the metric compiles: {error}"));
         let result = self
             .runner

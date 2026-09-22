@@ -38,7 +38,7 @@ describe("<RemoveDefinition>", () => {
     // Nothing is gone until the second click.
     expect(customClient.deleteDefinition).not.toHaveBeenCalled();
 
-    await userEvent.click(screen.getByRole("button", { name: "Remove" }));
+    await userEvent.click(screen.getByRole("button", { name: "Remove it" }));
     expect(customClient.deleteDefinition).toHaveBeenCalledWith(
       "metrics",
       "lines_per_day"
@@ -75,7 +75,7 @@ describe("<RemoveDefinition>", () => {
     await userEvent.click(
       screen.getByRole("button", { name: "Remove lines_per_day" })
     );
-    await userEvent.click(screen.getByRole("button", { name: "Remove" }));
+    await userEvent.click(screen.getByRole("button", { name: "Remove it" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "still in use by lines_table"
@@ -93,7 +93,7 @@ describe("<RemoveDefinition>", () => {
     await userEvent.click(
       screen.getByRole("button", { name: "Remove engineering" })
     );
-    await userEvent.click(screen.getByRole("button", { name: "Remove" }));
+    await userEvent.click(screen.getByRole("button", { name: "Remove it" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Couldn't remove it."

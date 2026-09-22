@@ -1,9 +1,9 @@
 # Field history in dbt
 
 Design for replacing the Rust `jira-enrich` binary with dbt models that derive
-`staging.jira__task_field_history` from bronze.
+the Jira field-history journal from bronze.
 
-Status: implemented up to the cutover. The models of §2–§9 are built alongside the Rust binary, which stays the silver producer until §10 is carried out.
+Status: cut over. `jira__field_history_derived` is the Jira producer of `silver.class_task_field_history`; the binary's output table is read by nothing, and the binary, its image and its parameter plumbing are removed in a follow-up. §10.1 and §10.1.1 record the cutover as it was carried out.
 
 ## 1. Why
 
@@ -56,8 +56,8 @@ Derive the whole table in dbt, per `(issue, field)`, from three bronze inputs.
 
 The reconstruction walks each field's history from newest to oldest, reverse-
 applying every event to the current value, so the oldest emitted row is the
-field's value at issue creation. Each `(issue, field)` pair is independent,
-which is what makes the incremental strategy cheap (§7).
+field's value at issue creation. Each issue is independent of every other,
+which is what lets a run recompute only the issues bronze touched (§7).
 
 ### 2.1 A backward fold is needed for one class only
 
@@ -707,25 +707,33 @@ NULL, which carries no information; those are skipped.
 
 ## 7. Incremental strategy
 
-No high-water mark. The unit of recomputation is the `(issue, field)` pair.
+The unit of recomputation is the **issue**, not the event and not the
+`(issue, field)` pair. Only the element-wise kinds fold state across an issue's
+event sequence (§2.1), but they do fold, so the state after event N needs every
+earlier event of that issue; and the synthetic rows — creation marker,
+`synthetic_initial`, `retired_field`, `snapshot_diff` — are functions of the
+whole issue. Nothing smaller than the issue can be recomputed on its own, and
+nothing can be appended: a changelog entry re-emitted without one of its items,
+or an issue whose key changed, leaves rows behind that only a replacement
+removes.
 
-1. Find pairs whose changelog set in bronze differs from what the output table
-   already records — a new `changelog_id` for that pair, or a changed issue
-   snapshot.
-2. Recompute those pairs **in full**, from the current value backwards.
-3. Replace by `delete+insert` keyed on the pair.
+The model is `materialized='incremental'` with `delete+insert` keyed on
+`(insight_source_id, issue_id)`. A run:
 
-This is idempotent, removes the seam entirely, and makes `--full-refresh` work
-by ordinary dbt semantics. It also retires
-`reset_task_field_history_on_full_refresh` and the `CREATE TABLE IF NOT EXISTS`
-macro that forced it to exist.
+1. finds the **touched** issues — those for which bronze holds something newer
+   than the version their journal rows carry: an issue row or a changelog entry
+   whose `_airbyte_extracted_at` exceeds the issue's `_version` in the table.
+   An issue with no rows at all is touched by definition;
+2. derives the complete journal of every touched issue, reading nothing of any
+   other — the scope narrows every read of the issue table, the changelog items
+   and the snapshot, so the JSON of an untouched issue is never scanned;
+3. deletes every row of the touched issues and inserts the derived ones.
 
-The seam check survives as a **test**, not as a mechanism: recomputing a pair
-must reproduce the rows it previously held, for every event at or below the
-issue snapshot's `collected_at`. Events newer than the snapshot are excluded
-from the comparison — the issue stream and the history stream are read at
-different points within a sync, so an event newer than the snapshot is expected
-and self-heals on the next run.
+This is what keeps the build's memory proportional to the day's churn instead
+of to the history, which was the reason for the change: the query's peak sits
+in operators that grow with the input and that the spill settings do not bound
+— lowering those settings raises the peak rather than lowering it, and the peak
+falls with the share of issues recomputed.
 
 Idempotence relies on `unique_key` being a pure function of content:
 
@@ -733,7 +741,10 @@ Idempotence relies on `unique_key` being a pure function of content:
 
 where `event_id` is the bronze `changelog_id` for changelog rows and
 `initial:{issue_id}` for synthetic rows. Two runs over the same bronze data
-therefore produce byte-identical keys, and ReplacingMergeTree collapses them.
+therefore produce byte-identical keys and byte-identical rows, and the
+transformation lane holds that in place: an incremental run over unchanged
+bronze changes nothing, and a run after a change reproduces what a full rebuild
+would (`tests/jira/transform/test_incremental_recompute.py`).
 
 The issue is named by its immutable id, not by `id_readable`. Jira changes the
 readable key when an issue moves between projects; a key built from it stored
@@ -747,7 +758,142 @@ never a join key. An entry whose row has no id names an issue the issue stream
 never delivered; it is left out of the journal and counted by
 `assert_jira_substream_rows_without_issue_id`. `jira_history_key` is the one
 place the formula lives, and `assert_jira_field_history_key_is_issue_keyed`
-recomputes it over every row.
+recomputes it over every row. Under incrementality this is also what makes a
+move harmless: the new key arrives as a newer issue row, the issue is touched,
+and its rows — keyed by the id, so the same rows — are replaced under the new
+`id_readable`. Were the key part of `unique_key`, the old rows would sit outside
+the replaced set forever.
+
+### 7.1 The field catalogue is an input too
+
+`retired_field` and `unclassified_field` rows follow the current classification
+(`jira__task_field_kind`), and `synthetic_initial` rows follow which fields are
+modelled and how their values are read. A catalogue that changed — a field
+created, one reclassified, one renamed — therefore changes rows of issues bronze
+never touched, and an issue-scoped run would never revisit them.
+
+The classification the last build used is recorded on the journal table itself
+(its comment, written by the model's post-hook after a successful build): a
+hash over every `(source, field_id, field_kind, field_name)` of the whole
+catalogue, not only the modelled subset, because an `ignored` field decides
+what the unclassified arm leaves out. The record travels with the table, so a
+table that carries none — a fresh install, a dropped table, the first run after
+this mechanism landed — is rebuilt too. A field renamed is a shift like any
+other: the rebuild is what keeps "incremental output equals a full rebuild"
+true without exceptions, and renames are rare.
+
+A rebuild is not a separate mechanism: the touched set becomes every issue, and
+the `delete+insert` that follows replaces every row whose issue bronze still
+knows. That is every row the journal should hold — each arm derives its issues
+from the issue stream or from the changelog, and bronze forgets neither — so
+nothing has to be emptied first. A model cannot ask dbt for a real full refresh
+anyway: `config()` does nothing at run time, so only the CLI flag reaches
+`should_full_refresh()`, and dropping the table breaks the run because the
+materialization reads the target's existence before hooks fire.
+
+The one thing `delete+insert` cannot reach is a row left by an earlier shape of
+this model, keyed by an issue id bronze never had. The model's pre-hook removes
+exactly those, on rebuild runs only. Emptying the table instead would be
+shorter, and is worse where it matters: the expensive half of a rebuild is
+deriving the rows, and a run that dies there — at the memory ceiling this design
+exists to stay under — would leave the journal empty until the next night.
+Nothing destructive happens until the derivation has succeeded.
+
+A rebuild does write its rows twice, once into the relation `delete+insert`
+stages and once into the table. That cost is confined to rebuild runs.
+
+**A catalogue change therefore costs a whole rebuild, however small it was.**
+Adding one field to a Jira instance shifts the fingerprint, and the common case
+— a genuinely new field no existing issue carries — changes no existing row at
+all. Narrowing this to the issues a changed field actually reaches is a
+worthwhile follow-up: for each field whose kind or name moved, the issues
+holding rows for it, plus the issues holding `unclassified_field` rows for a
+field that has just become classifiable. It needs the previous classification
+kept per field rather than as one hash, so it is a table rather than a comment,
+and it is not attempted here.
+
+A change to the **models** is not detected this way. It ships as a major
+descriptor bump, which dispatches a full refresh (ADR-0015), as before.
+
+### 7.2 What a run changes downstream
+
+The class this model feeds is incremental and admits rows whose `_version`
+exceeds the newest it holds. A build-time `_version` would make every rebuild
+look entirely new to the class, and the class would delete and re-insert the
+whole Jira journal on every run.
+
+`_version` is instead the issue's *input freshness*: the newest
+`_airbyte_extracted_at` among the issue's own bronze row and its changelog
+entries, stamped on every row of that issue — the same freshness the touched
+set is decided by, so an issue is recomputed exactly when its version moves.
+Unchanged bronze reproduces the same versions and the class leaves the issue
+alone; a touched issue has all its rows re-emitted under the new version, and
+the class's `delete+insert` on `unique_key` replaces them. The GitHub arm
+versions its rows the same way.
+
+The freshness is floored at the **catalogue epoch**: the catalogue's own
+extraction stamp at the last full rebuild, kept in the same record as the hash.
+Between rebuilds the floor is constant and moves no version. A rebuild takes
+the current stamp as its epoch, so the rows it writes for issues whose own
+inputs never moved still carry something newer than the run before it
+delivered, and the class re-ingests the Jira journal once.
+
+Every quantity the model compares — freshness, the floor, the mark of how far
+the last completed run read — is an extraction stamp, never a clock reading.
+Mixing the two breaks the comparison outright on a warehouse whose bronze is
+older than the machine's idea of now: a wall-clock floor sits above every
+extraction stamp, and the scope stops selecting anything at all.
+
+The cost of staying in bronze's time is one exposure worth naming. The class
+admits by a watermark its other arms set from their build time, so a Jira row
+reaches it only when its extraction stamp is newer than the previous silver
+build — true of every ordinary row, since the sync that produced it ran after
+that build, and true of a rebuild dispatched by a sync. It is NOT true of a
+staging run started by hand with no sync before it: the catalogue stamp is then
+older than the watermark, and the rebuilt rows wait in staging until something
+newer arrives. The durable fix is a per-source watermark in the class rather
+than one global maximum, which is a change to a model every source shares.
+
+The floor cannot hide a later change from the touched set. A rebuild's epoch is
+an extraction stamp the run has already read, so every extraction after it is
+larger, and an issue touched from then on compares greater than the floor its
+rows carry.
+
+**Deployment.** The first run on a warehouse that already holds this table finds
+no record, rebuilds through the path above, and records one — no descriptor bump
+and no operator step. That first rebuild raises every row's version to its
+epoch, so the class re-ingests the Jira journal once, exactly as it does after
+any full refresh; from the next run on, only touched issues move.
+
+**The journal a run arrives at is the one a rebuild of the same bronze would
+produce.** That is the property the design rests on, and it holds because no
+part of the derivation reads across issues: every window, group and join is
+partitioned by the issue, so recomputing one from its own bronze — which is
+append-only, and therefore complete — yields what a rebuild would have written
+for it, while an issue nothing arrived for keeps rows a rebuild would reproduce
+unchanged. `tests/jira/transform/test_incremental_recompute.py` asserts it
+directly: it follows bronze forward in two steps and compares the result with a
+rebuild over that same bronze, row for row.
+
+One column is deliberately outside that comparison. `collected_at` stamps when
+a row was derived, so an untouched issue keeps the stamp of the build that last
+derived it rather than the stamp of the latest run. It is not a fact about the
+issue and nothing reads it from the class; the freshness a consumer wants is
+`_version`, which is the issue's own input freshness.
+
+Two limits of the composition, stated rather than solved here:
+
+- the class deletes only the keys the incoming batch carries. A row that
+  vanished from this model's output — a changelog item its entry no longer has,
+  a `retired_field` that came back — is gone from staging but stays in the
+  class until a full refresh. This was equally true of the full nightly rebuild;
+- the delete of a touched issue and the insert of its new rows are two
+  statements, so a run that dies between them leaves an issue short of rows.
+  The rows it did write carry the version the complete set would have carried,
+  which is why the scope is not decided by them alone: the record on the table
+  also carries how far into bronze the last run whose replacement **completed**
+  had read, and everything delivered since is in scope again. A failed run
+  therefore repairs itself on the next one rather than waiting for a rebuild.
 
 ## 8. Long text in a side table
 
@@ -843,7 +989,7 @@ The output table is consumed by `silver.class_task_field_history` through
   `scalar` it reports `none`, so no field's identifier type moves at cutover
 - `unique_key` as the single ORDER BY column
 
-### 10.1 Retiring four columns, and why the fifth stays
+### 10.1 Retiring four columns, and why the fifth stayed until the cutover
 
 `author_display`, `delta_value_id` and `delta_value_display` leave
 `silver.class_task_field_history`. None of them has a reader in gold, in silver
@@ -854,9 +1000,9 @@ detail of one change joins back to the event it came from, a path
 their entity id in `delta_value_id` **and** in `value_ids[1]`, so nothing is
 lost there either.
 
-**`title` stays until the cutover**, and the plan to drop it with the others was
-wrong for a reason worth stating: the title's *producer* changes at cutover, not
-before.
+**`title` stayed until the cutover** (it is gone now, see §10.1.1), and the plan
+to drop it with the others was wrong for a reason worth stating: the title's
+*producer* changes at cutover, not before.
 
 Gold reads the title through the `title` role, and for Jira that role binds
 `summary`. While the Rust binary is still the producer, a `summary` row exists
@@ -910,15 +1056,24 @@ the pieces:
    `task_issue_state`, not from the journal.
    `tests/jira/transform/test_title_role.py` holds the precedence in place.
 
-Dropping `title` from the staging arms and from `silver.class_task_field_history`
-is a migration under `src/ingestion/scripts/migrations/` in the cutover change,
-once the derived model has produced a `summary` row for every issue; the
-`ADD COLUMN IF NOT EXISTS ... AFTER id_readable` self-migration in the DDL macro
-goes with the macro itself.
+At the cutover, `title` left the staging arms and
+`silver.class_task_field_history` (migration
+`20260912000000_task-field-history-cutover.sql`, arm heal in
+`apply-ch-migrations.sh`), and gold reads the role alone — the derived model
+emits a `summary` row for every issue, so nothing is left unnamed.
+`test_title_role` now pins the role as the only channel.
 
-Note that the "Rust owns this table" decision is referenced in code comments as
-ADR-003 but has no ADR file in the repository. Retiring the binary should record
-the reversal wherever that decision ends up living.
+The same migration retyped the four discriminators — `event_kind`,
+`field_cardinality`, `delta_action`, `value_id_type` — from `Enum8` to
+`LowCardinality(String)`. Every source contributes its own arm to the class, and
+an enum type made each arm spell out the values of all the others: adding
+`retired_field`, `unclassified_field` and `snapshot_diff` for Jira would have
+meant editing the GitHub arm. The accepted values are data tests on the class.
+
+The "Rust owns this table" decision is referenced in code comments as ADR-003 but
+has no ADR file in the repository. Its reversal is recorded here and in the
+header of `class_task_field_history.sql`: every producer of the class is a dbt
+model, and `staging.jira__task_field_history` is read by nothing.
 
 ## 11. Issue deletion
 
@@ -1010,8 +1165,9 @@ cheap and it fails loudly the first time someone reaches for a field id.
 - *bronze coverage*: every field key present with a non-null value in an issue's
   JSON must have at least one row for that issue in the history. The existing
   tests all run history → bronze; this is the missing direction.
-- *seam*: recomputation reproduces previously recorded rows, restricted to
-  events at or below the snapshot's `collected_at` (§7).
+- *seam*: an incremental run over unchanged bronze reproduces every row and
+  every version, and a run after a change produces what a full rebuild would
+  (§7; `tests/jira/transform/test_incremental_recompute.py`).
 - *retired-field recency*: no field is excluded for catalogue absence while
   carrying an event newer than the oldest `collected_at` in the catalogue
   (§3.2) — this is the guard that distinguishes a deleted field from one whose
@@ -1036,19 +1192,16 @@ whole journal for the issue. That is where a parsing or reconstruction defect is
 visible, and it is strictly stronger than a metric assertion for these shapes.
 
 Their **metrics-layer** counterparts in `tests/datapath/metrics/tasks/` are deliberately
-NOT written yet, for two reasons that both dissolve at cutover:
-
-- the journal that reaches silver today is the Rust binary's, not this model's,
-  so a case seeded now would assert the behaviour being replaced;
-- the YAML rig asserts the analytics HTTP response, and its expect engine binds
-  metric-shaped payloads. None of these shapes reaches a metric — there is no
-  labels metric, no components metric — so a case could assert the request
-  succeeded and nothing more.
+NOT written: the YAML rig asserts the analytics HTTP response, and its expect
+engine binds metric-shaped payloads. None of these shapes reaches a metric —
+there is no labels metric, no components metric — so a case could assert the
+request succeeded and nothing more. The existing task metric specs do run through
+this model since the cutover, which is what pins the shapes a metric does read.
 
 The one part of this change whose consumer IS gold — the `title` role — is
-covered now, in the transformation lane, because it can be: `test_title_role`
-seeds the class table and builds `task_issue_state`, pinning the precedence
-between the role and the column it falls back to (§10.1).
+covered in the transformation lane: `test_title_role` seeds the class table and
+builds `task_issue_state`, pinning the role as the only channel the title
+reaches gold through (§10.1.1).
 
 Shapes covered, one test each:
 

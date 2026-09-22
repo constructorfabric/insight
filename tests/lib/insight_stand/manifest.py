@@ -187,7 +187,7 @@ class Capabilities:
 #: carrying a newer one parses (the field is self-versioned exactly so a bump
 #: does not brick older readers) but reports its payload as absent, and a test
 #: needing it skips with the version in the reason.
-SUPPORTED_GOLDEN_METRICS_VERSION: Final[int] = 1
+SUPPORTED_GOLDEN_METRICS_VERSION: Final[int] = 2
 
 
 @dataclass(frozen=True)
@@ -197,14 +197,14 @@ class GoldenTaskTotals:
 
     tasks_closed: int
     bugs_fixed: int
-    closed_non_bug: int
+    closed_task: int
 
     @classmethod
     def parse(cls, doc: Mapping[str, Any], where: str) -> GoldenTaskTotals:
         return cls(
             tasks_closed=_require(doc, "tasks_closed", int, where),
             bugs_fixed=_require(doc, "bugs_fixed", int, where),
-            closed_non_bug=_require(doc, "closed_non_bug", int, where),
+            closed_task=_require(doc, "closed_task", int, where),
         )
 
 

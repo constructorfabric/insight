@@ -1,0 +1,16 @@
+{
+  "rank": 1,
+  "user_id": "user-worked-00",
+  "name": "worked-00",
+  "email": "worked-00@example.com",
+  "credits": 12.5,
+  "n_threads": 2,
+  "n_turns": 7,
+  "current_streak": 1,
+  "text_tokens": 1234,
+  "code_attribution": {
+    "lines_of_code": {
+      "added": 42
+    }
+  }
+}

@@ -26,7 +26,7 @@ sources:
 
 models:
   - name: class_task_field_history
-    description: "Unified per-(issue × field × event) history from all task-tracker sources. Event-sourced: one row per changelog entry or synthetic_initial bootstrap row. Source of truth is the Rust jira-enrich binary (per-source)."
+    description: "Unified per-(issue × field × event) history from all task-tracker sources. Event-sourced: one row per changelog entry, synthetic_initial bootstrap row or synthetic observation. Every producer is a dbt model contributing an arm through the `silver:class_task_field_history` tag."
     columns:
       - name: insight_source_id
         description: "Source instance identifier"
@@ -36,29 +36,23 @@ models:
         description: "Source system discriminator (e.g. 'jira')"
         tests:
           - not_null
-      - name: title
-        description: >
-          The issue's own summary as the tracker states it, repeated on every
-          event of that issue — an issue attribute, not an event one. NULL when
-          the source does not report one. Gold surfaces it as `details.title` in
-          task evidence; the record label is `id_readable`.
       - name: event_id
         description: "Natural identifier of the event. For `event_kind='changelog'` this is `jira_issue_history.changelog_id` (shared across all fields changed in one changelog). For `event_kind='synthetic_initial'` it is `'initial:<issue_id>'` (shared across all initial fields of one issue). For `event_kind='availability'` it is `'availability:<issue_id>:<detection epoch ms>'` (issue id included because census-only issues have an empty `id_readable`, and the audit grain needs event_id to disambiguate them). Per ADR-005, operator audit JOIN key is (insight_source_id, issue_id, event_id, field_id)."
         tests:
           - not_null
       - name: event_kind
-        description: "Discriminator for event origin. Enum8: `changelog` = real field change from jira_issue_history; `synthetic_initial` = bootstrap row emitted for every tracked field on first observation of an issue; `availability` = synthetic availability transition (present / deleted / archived / trashed / access_lost / unobserved) detected by the source's census streams; `lifecycle` = sub-entity lifecycle (field_id `comment` / `worklog`, delta_action add/set/remove) — value_ids[1] is the entity id, the lookup key into class_task_comments / class_task_worklogs. The issue's entire history, including deletions of the issue and of its sub-entities, lives in this one table."
+        description: "Discriminator for event origin, a LowCardinality(String) whose accepted values are this test, not a type: `changelog` = real field change from the tracker's changelog; `synthetic_initial` = the value at creation, one row per (issue, field); `availability` = synthetic availability transition (present / deleted / archived / trashed / access_lost / unobserved) detected by the source's census streams; `lifecycle` = sub-entity lifecycle (field_id `comment` / `worklog`, delta_action add/set/remove) — value_ids[1] is the entity id, the lookup key into class_task_comments / class_task_worklogs; `retired_field` = the field left the issue with no event recording it; `unclassified_field` = the newest value of a field the catalogue does not describe; `snapshot_diff` = the issue's observed state where it disagrees with its history, as observed rather than as an event. The issue's entire history, including deletions of the issue and of its sub-entities, lives in this one table."
         tests:
           - not_null
           - accepted_values:
-              values: ['changelog', 'synthetic_initial', 'availability', 'lifecycle']
+              values: ['changelog', 'synthetic_initial', 'availability', 'lifecycle', 'retired_field', 'unclassified_field', 'snapshot_diff']
       - name: field_id
         description: "Field identifier (e.g. 'status', 'assignee', 'customfield_10020'). Part of the ReplacingMergeTree ORDER BY together with (insight_source_id, data_source, issue_id, event_id) — see ADR-005."
         tests:
           - not_null
 
   - name: class_task_field_metadata
-    description: "Unified task-tracker field catalog. Declares cardinality (`is_multi`) and whether the field has an opaque ID vs a string literal (`has_id`). Consumed by `jira-enrich` to classify `value_id_type`."
+    description: "Unified task-tracker field catalog. Declares cardinality (`is_multi`) and whether the field has an opaque ID vs a string literal (`has_id`)."
     columns:
       - name: insight_source_id
         tests:
@@ -200,7 +194,7 @@ models:
               values: ['new', 'in_progress', 'done', 'undefined']
 
   - name: class_task_issuetypes
-    description: "Unified, source-neutral issue-type dimension. Maps each source issue type id to the reconciled `issue_kind` (bug/other/unknown) and the type display name. Jira classifies from `untranslatedName` so a translated instance reads like an untranslated one; YouTrack from the Type enum bundle value names. Gold identifies bug work via `issue_kind='bug'` — never a localized type name."
+    description: "Unified, source-neutral issue-type dimension: the raw vendor type catalogue, one row per source issue type (id, display name, untranslated name). Carries no classification — gold resolves the issue kind from `config.field_value_map` at its own build, keyed by the type id, so an operator decision applies without a silver rebuild."
     columns:
       - name: insight_source_id
         tests:
@@ -212,10 +206,3 @@ models:
         description: "Type display name as the source reports it; the label Gold shows for the type dimension."
       - name: untranslated_name
         description: "Locale-independent type name where the source has one (Jira); NULL otherwise."
-      - name: issue_kind
-        description: "Reconciled type kind: bug | other | unknown. `unknown` means the type name matched neither configured list and is reported as its own bucket, never as non-bug work."
-        tests:
-          - not_null
-          - accepted_values:
-              arguments:
-                values: ['bug', 'other', 'unknown']

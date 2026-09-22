@@ -175,9 +175,9 @@ describe("AiCostView", () => {
     render(<AiCostView item={null} />);
     expect(screen.getByText("AI potential usage cost")).toBeInTheDocument();
     expect(screen.getByText("Claude Code only")).toBeInTheDocument();
-    // 3 of 4 members have active days > 0
+    // 3 of the 5 people in scope (lead included) have active days > 0
     expect(screen.getByText("Active AI users")).toBeInTheDocument();
-    expect(screen.getByText("75% of 4")).toBeInTheDocument();
+    expect(screen.getByText("60% of 5")).toBeInTheDocument();
     expect(screen.getByText(/1[,  ]?000/)).toBeInTheDocument(); // 700+200+100 lines
   });
 
@@ -344,10 +344,17 @@ describe("AiCostView", () => {
     expect(cells?.[4]?.textContent).toBe("—");
   });
 
+  it("counts the lead with their reports, as the People roster does", () => {
+    render(<AiCostView item={null} />);
+    expect(screen.getByText(/boss's org · 5 people/)).toBeInTheDocument();
+    // ...and the lead is a row of the per-person grid, not just a head-count.
+    expect(screen.getByText("boss")).toBeInTheDocument();
+  });
+
   it("gates on an empty scope instead of rendering zero KPIs", () => {
     mocks.members = [];
-    mocks.tree = person("boss");
-    mocks.roster = peopleFromIdentityTree(mocks.tree);
+    mocks.tree = undefined;
+    mocks.roster = [];
     render(<AiCostView item={null} />);
     expect(screen.getByText(/No people in the current scope/)).toBeInTheDocument();
     expect(screen.queryByText("AI potential usage cost")).not.toBeInTheDocument();

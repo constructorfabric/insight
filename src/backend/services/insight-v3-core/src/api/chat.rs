@@ -1,10 +1,10 @@
 //! The chat endpoint: answers a question from the data, or writes
 //! metric/widget/dashboard definitions.
 
-use std::fmt::Write as _;
 use std::sync::Arc;
 
 use axum::extract::Extension;
+use axum::extract::rejection::JsonRejection;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
@@ -14,16 +14,32 @@ use toolkit_canonical_errors::{CanonicalError, resource_error};
 use utoipa::ToSchema;
 
 use super::AppState;
-use crate::catalog::{Catalog, Layer, TableSchema};
-use crate::chat::{Ask, Catalogue, ChatError, KnownTable, Proposal, Schemas, Turn};
-use crate::definitions::{
-    Change, DefinitionError, DefinitionKind, DefinitionName, DefinitionStoreError,
-};
-use crate::metric_query::{MetricQuery, MetricQueryError, RunResult};
-use crate::tables::TableName;
+use super::errors::ApiErrors;
+use crate::chat::{Ask, ChatError, Proposal, Turn};
+use crate::domain::assistant::DatasetSchemas;
+use crate::domain::definition::{Change, Definition, DefinitionKind, DefinitionName};
+use crate::domain::query::metric_query::{MetricQuery, RunResult};
 
 #[resource_error("gts.cf.insight.insight_v3_core.chat.v1~")]
 struct ChatApiError;
+
+impl ApiErrors for ChatApiError {
+    fn invalid_field(field: &str, detail: String) -> CanonicalError {
+        Self::invalid_argument()
+            .with_field_violation(field, detail, "INVALID")
+            .create()
+    }
+
+    fn timed_out(detail: &str) -> CanonicalError {
+        Self::deadline_exceeded(detail).create()
+    }
+
+    fn name_taken(name: &str) -> CanonicalError {
+        Self::already_exists(format!("`{name}` is already taken"))
+            .with_resource(name)
+            .create()
+    }
+}
 
 #[derive(Debug, Deserialize, ToSchema)]
 struct ChatRequest {
@@ -71,6 +87,7 @@ pub(crate) fn register_routes(
         .json_request::<ChatRequest>(openapi, "The chat message")
         .json_response(StatusCode::OK, "The model's reply")
         .error_400(openapi)
+        .error_403(openapi)
         .error_500(openapi)
         .error_504(openapi)
         .handler(handle_chat)
@@ -83,7 +100,7 @@ pub(crate) fn register_routes(
 async fn handle_chat(
     Extension(state): Extension<Arc<AppState>>,
     headers: axum::http::HeaderMap,
-    Json(request): Json<ChatRequest>,
+    request: Result<Json<ChatRequest>, JsonRejection>,
 ) -> Result<Response, CanonicalError> {
     crate::api::require_admin(&state, &headers, || {
         ChatApiError::permission_denied()
@@ -91,23 +108,18 @@ async fn handle_chat(
             .create()
     })
     .await?;
+    let Json(request) = request.map_err(|error| ChatApiError::unreadable_body(&error))?;
 
-    let tables = known_tables(&state).await;
-    let catalogue = catalogue(&state).await;
-    let map = layer_map(state.catalog()).await;
-    let allowed = queryable_tables(state.catalog(), &tables).await;
-    let schemas = CatalogSchemas {
-        catalog: state.catalog(),
-    };
+    let briefing = state.assistant().briefing().await;
+    let schemas = DatasetSchemas::new(state.datasets(), state.definitions());
     let proposal = state
         .chat()
         .propose(&Ask {
             message: &request.message,
             turns: &request.history,
-            tables: &tables,
-            catalogue: &catalogue,
-            map: &map,
-            allowed: &allowed,
+            datasets: &briefing.datasets,
+            catalogue: &briefing.catalogue,
+            allowed: &briefing.allowed,
             schemas: &schemas,
             people: state.metrics().people(),
         })
@@ -116,7 +128,10 @@ async fn handle_chat(
 
     match proposal {
         Proposal::Answer { reply, query } => {
-            let queried = query.as_ref().map(MetricQuery::qualified);
+            let queried = query
+                .as_ref()
+                .and_then(MetricQuery::dataset)
+                .map(str::to_owned);
             let result = answered_with(&state, query).await?;
             let reply = match &result {
                 Some(rows) if rows.rows.is_empty() => no_rows(queried.as_deref()),
@@ -130,287 +145,94 @@ async fn handle_chat(
             metric,
             widgets,
             dashboard,
-        } => {
-            let mut asked = Vec::new();
-            if let Some((name, body)) = metric {
-                asked.push((DefinitionKind::Metric, name, body));
-            }
-            for (name, body) in widgets {
-                asked.push((DefinitionKind::Widget, name, body));
-            }
-            if let Some((name, body)) = dashboard {
-                asked.push((DefinitionKind::Dashboard, name, body));
-            }
-
-            // Every name is checked before anything is written, so one bad
-            // name in the set stores none of it.
-            let mut writes = Vec::with_capacity(asked.len());
-            for (kind, name, body) in asked {
-                let parsed = DefinitionName::parse(&name).map_err(definition_error)?;
-                writes.push((kind, parsed, body, name));
-            }
-
-            // A widget draws its metric's columns by the names the metric
-            // gives them. Unchecked, a widget could name a column that is not
-            // there and the chart drew its axes and no line.
-            for (kind, _, body, _) in &writes {
-                if *kind == DefinitionKind::Widget {
-                    check_widget_in_batch(&state, body, &writes).await?;
-                }
-            }
-
-            // Which names are new is read before the write, so a name another
-            // writer takes in between is reported as created rather than
-            // replaced. The write itself is one transaction either way.
-            let mut created = CreatedNames::default();
-            let mut updated = CreatedNames::default();
-            for (kind, parsed, _, name) in &writes {
-                let held = state
-                    .definitions()
-                    .get(*kind, parsed)
-                    .await
-                    .map_err(definition_store_error)?
-                    .is_some();
-                let names = if held { &mut updated } else { &mut created };
-                match kind {
-                    DefinitionKind::Metric => names.metric = Some(name.clone()),
-                    DefinitionKind::Widget => names.widgets.push(name.clone()),
-                    DefinitionKind::Dashboard => names.dashboard = Some(name.clone()),
-                }
-            }
-
-            let batch: Vec<_> = writes
-                .into_iter()
-                .map(|(kind, parsed, body, _)| Change::Put(kind, parsed, body))
-                .collect();
-            state
-                .definitions()
-                .apply(&batch)
-                .await
-                .map_err(definition_store_error)?;
-
-            Ok(Json(ChatCreatedResponse {
-                reply,
-                created,
-                updated,
-            })
-            .into_response())
-        }
+        } => store_proposed(&state, reply, metric, widgets, dashboard).await,
     }
 }
 
-/// Every table a query may name, as it must name it: `database.table` for a
-/// table in a layer, and the bare name for one ingested here, which a stored
-/// metric has always addressed without a database.
+/// Stores what the assistant proposed, or none of it.
 ///
-/// This is what stops the model querying a table it invented - it reached for
-/// `information_schema` when it had nothing else - while letting it reach
-/// every real table on the stand.
-async fn queryable_tables(catalog: &Catalog, ingested: &[KnownTable]) -> Vec<String> {
-    let mut allowed: Vec<String> = ingested.iter().map(|table| table.name.clone()).collect();
-
-    match catalog.tables().await {
-        Ok(tables) => allowed.extend(
-            tables
-                .iter()
-                .map(|table| format!("{}.{}", table.database, table.table)),
-        ),
-        Err(error) => {
-            tracing::warn!(error = ?error, "could not list the stand's tables for the chat");
-        }
-    }
-
-    allowed
-}
-
-/// Every table on the stand, grouped by layer, names only.
-///
-/// The map is what lets the model reach bronze, silver, gold and identity
-/// without a hardcoded list: it is read from the stand each time, so a
-/// database added on another stand appears with no code change. Columns are
-/// left out on purpose - they run to tens of thousands of tokens - and the
-/// model asks for the ones it needs through `look_up`.
-async fn layer_map(catalog: &Catalog) -> String {
-    let tables = match catalog.tables().await {
-        Ok(tables) => tables,
-        Err(error) => {
-            tracing::warn!(error = ?error, "could not map the stand for the chat");
-            return String::new();
-        }
-    };
-
-    let mut rendered = String::new();
-    for (layer, label) in [
-        (Layer::Gold, "Gold (published metrics)"),
-        (Layer::Silver, "Silver (cleaned per-source models)"),
-        (Layer::Identity, "Identity (who people are)"),
-        (Layer::Bronze, "Bronze (raw provider payloads)"),
-        (Layer::Ingest, "Ingested here (one JSON payload column)"),
-    ] {
-        let of_layer: Vec<&TableSchema> =
-            tables.iter().filter(|table| table.layer == layer).collect();
-        if of_layer.is_empty() {
-            continue;
-        }
-
-        rendered.push_str(label);
-        rendered.push('\n');
-        // Grouped by database, because that is what a query has to name.
-        let mut database = "";
-        for table in of_layer {
-            if table.database != database {
-                database = &table.database;
-                let _ = writeln!(rendered, "  {database}:");
-            }
-            let _ = writeln!(rendered, "    {}", table.table);
-        }
-        rendered.push('\n');
-    }
-
-    rendered
-}
-
-/// The columns of the tables the model asked about, read from the same
-/// listing the map came from.
-struct CatalogSchemas<'a> {
-    catalog: &'a Catalog,
-}
-
-#[async_trait::async_trait]
-impl Schemas for CatalogSchemas<'_> {
-    async fn describe(&self, tables: &[String]) -> String {
-        let found = match self.catalog.describe(tables).await {
-            Ok(found) => found,
-            Err(error) => {
-                tracing::warn!(error = ?error, "a schema lookup failed");
-                return "The schema could not be read. Answer from the map alone.".to_owned();
-            }
-        };
-
-        let mut rendered = String::new();
-        for table in &found {
-            let _ = writeln!(rendered, "{}.{}", table.database, table.table);
-            for (column, kind) in &table.columns {
-                let _ = writeln!(rendered, "  {column} {kind}");
-            }
-        }
-
-        // A name that resolved to nothing is said so rather than left out:
-        // silence reads as "no columns" and the model invents them.
-        for asked in tables {
-            let matched = found.iter().any(|table| {
-                asked == &format!("{}.{}", table.database, table.table) || asked == &table.table
-            });
-            if !matched {
-                let _ = writeln!(rendered, "{asked}: no such table on this stand");
-            }
-        }
-
-        rendered
-    }
-}
-
-/// What is already stored, so the model can name it, reuse it, and replace it
-/// when the reader asks for a change. A listing failure degrades the hint; it
-/// does not fail the chat.
-async fn catalogue(state: &AppState) -> Catalogue {
-    Catalogue {
-        metrics: names(state, DefinitionKind::Metric).await,
-        widgets: names(state, DefinitionKind::Widget).await,
-        dashboards: names(state, DefinitionKind::Dashboard).await,
-    }
-}
-
-async fn names(state: &AppState, kind: DefinitionKind) -> Vec<String> {
-    match state.definitions().list(kind).await {
-        Ok(names) => names,
-        Err(error) => {
-            tracing::warn!(error = ?error, ?kind, "could not list definitions for the chat");
-            Vec::new()
-        }
-    }
-}
-
-/// Checks a widget against the metric it draws, whether that metric is
-/// already stored or arriving in the same request.
-///
-/// A chat request usually builds the metric and the widget together, so the
-/// metric is not in the store yet when the widget is checked.
-async fn check_widget_in_batch(
+/// Every name is parsed and every body checked before anything is written, so
+/// one refusal leaves the reader what they had rather than half a dashboard.
+async fn store_proposed(
     state: &AppState,
-    body: &serde_json::Value,
-    batch: &[(DefinitionKind, DefinitionName, serde_json::Value, String)],
-) -> Result<(), CanonicalError> {
-    let widget: crate::widget::Widget = serde_json::from_value(body.clone())
-        .map_err(|error| crate::api::definitions::widget_error(&error.into()))?;
-
-    let arriving = batch
-        .iter()
-        .find(|(kind, _, _, name)| *kind == DefinitionKind::Metric && name == widget.metric());
-
-    match arriving {
-        Some((_, _, metric_body, _)) => {
-            let metric: crate::metric_query::MetricQuery =
-                serde_json::from_value(metric_body.clone())
-                    .map_err(|error| crate::api::definitions::widget_error(&error.into()))?;
-            widget
-                .check_against(&metric)
-                .map_err(|error| crate::api::definitions::widget_error(&error))
-        }
-        None => state
-            .surfaces()
-            .check_widget(body)
-            .await
-            .map_err(crate::api::definitions::custom_error),
+    reply: String,
+    metric: Option<(String, serde_json::Value)>,
+    widgets: Vec<(String, serde_json::Value)>,
+    dashboard: Option<(String, serde_json::Value)>,
+) -> Result<Response, CanonicalError> {
+    let mut asked = Vec::new();
+    if let Some((name, body)) = metric {
+        asked.push((DefinitionKind::Metric, name, body));
     }
+    for (name, body) in widgets {
+        asked.push((DefinitionKind::Widget, name, body));
+    }
+    if let Some((name, body)) = dashboard {
+        asked.push((DefinitionKind::Dashboard, name, body));
+    }
+
+    let mut writes = Vec::with_capacity(asked.len());
+    for (kind, name, body) in asked {
+        let parsed = DefinitionName::parse(&name).map_err(ChatApiError::definition_error)?;
+        writes.push(Definition::new(kind, parsed, body));
+    }
+
+    state
+        .surfaces()
+        .check_batch(&writes)
+        .await
+        .map_err(crate::api::definitions::custom_error)?;
+
+    let (created, updated) = named_by_novelty(state, &writes).await?;
+
+    let batch: Vec<_> = writes
+        .into_iter()
+        .map(|write| Change::Put(write.kind, write.name, write.body))
+        .collect();
+    state
+        .definitions()
+        .apply(&batch)
+        .await
+        .map_err(ChatApiError::definition_store_error)?;
+
+    Ok(Json(ChatCreatedResponse {
+        reply,
+        created,
+        updated,
+    })
+    .into_response())
 }
 
-/// The tables the reader has data in, each with the field names and types
-/// `TableStore::sample_fields` found in its most recent rows. A table with
-/// nothing in it is left out.
+/// Which of these names the store does not hold yet, and which it does.
 ///
-/// Read from the ingested tables themselves. Deriving them from the stored
-/// metrics instead meant a stand with no metrics yet told the model there
-/// was no data at all — so asked what data existed, it invented
-/// `information_schema` and the query failed in the database. A listing
-/// failure degrades the hint; it does not fail the chat.
-async fn known_tables(state: &AppState) -> Vec<KnownTable> {
-    let names = match state.tables().list().await {
-        Ok(names) => names,
-        Err(error) => {
-            tracing::warn!(error = ?error, "could not list tables to seed chat table hints");
-            return Vec::new();
-        }
-    };
+/// Read before the write, so a name another writer takes in between is
+/// reported as created rather than replaced. The write itself is one
+/// transaction either way.
+async fn named_by_novelty(
+    state: &AppState,
+    writes: &[Definition],
+) -> Result<(CreatedNames, CreatedNames), CanonicalError> {
+    let mut created = CreatedNames::default();
+    let mut updated = CreatedNames::default();
 
-    let mut described = Vec::with_capacity(names.len());
-    for name in names {
-        let Ok(table_name) = TableName::parse(&name) else {
-            continue;
-        };
-        let fields = state
-            .tables()
-            .sample_fields(&table_name)
+    for write in writes {
+        let held = state
+            .definitions()
+            .get(write.kind, &write.name)
             .await
-            .unwrap_or_default();
+            .map_err(ChatApiError::definition_store_error)?
+            .is_some();
 
-        // Nothing has landed here, so there are no fields to query and
-        // naming it only crowds the list the reader is shown.
-        if fields.is_empty() {
-            continue;
+        let reported = if held { &mut updated } else { &mut created };
+        let held_name = write.name.as_str().to_owned();
+        match write.kind {
+            DefinitionKind::Metric => reported.metric = Some(held_name),
+            DefinitionKind::Widget => reported.widgets.push(held_name),
+            DefinitionKind::Dashboard => reported.dashboard = Some(held_name),
         }
-
-        described.push(KnownTable {
-            fields: fields
-                .iter()
-                .map(|(field, kind)| format!("{field} ({kind})"))
-                .collect::<Vec<_>>()
-                .join(", "),
-            name,
-        });
     }
 
-    described
+    Ok((created, updated))
 }
 
 /// What an answer says when its query found nothing.
@@ -437,13 +259,13 @@ async fn answered_with(
         return Ok(None);
     };
 
-    let compiled = query
-        .compile(state.metrics().people())
-        .map_err(|error| compile_error(&error))?;
+    let answered = state
+        .metric_runs()
+        .answer(&query)
+        .await
+        .map_err(crate::api::definitions::custom_error)?;
 
-    Ok(Some(
-        state.metrics().run(&compiled).await.map_err(run_error)?,
-    ))
+    Ok(Some(answered))
 }
 
 fn chat_error(error: ChatError) -> CanonicalError {
@@ -454,9 +276,11 @@ fn chat_error(error: ChatError) -> CanonicalError {
         ChatError::Metric(source) => ChatApiError::invalid_argument()
             .with_field_violation("reply", source.to_string(), "INVALID")
             .create(),
-        ChatError::UnknownTable { .. } => ChatApiError::invalid_argument()
-            .with_field_violation("query", error.to_string(), "INVALID")
-            .create(),
+        ChatError::UnknownDataset { .. } | ChatError::NoDataset { .. } => {
+            ChatApiError::invalid_argument()
+                .with_field_violation("query", error.to_string(), "INVALID")
+                .create()
+        }
         ChatError::TooManyLookups => {
             tracing::warn!("the model exhausted its schema lookups without answering");
             CanonicalError::internal("the model did not answer").create()
@@ -482,55 +306,6 @@ fn chat_error(error: ChatError) -> CanonicalError {
         ChatError::NoKey => {
             tracing::error!("the assistant was asked to answer with no anthropic token set");
             CanonicalError::internal("the assistant is not configured on this instance").create()
-        }
-    }
-}
-
-fn compile_error(error: &MetricQueryError) -> CanonicalError {
-    ChatApiError::invalid_argument()
-        .with_field_violation("query", error.to_string(), "INVALID")
-        .create()
-}
-
-fn run_error(error: crate::metric_query::MetricRunError) -> CanonicalError {
-    use crate::metric_query::MetricRunError;
-
-    match error {
-        MetricRunError::Timeout => ChatApiError::deadline_exceeded("query timed out").create(),
-        MetricRunError::ResultTooLarge => ChatApiError::invalid_argument()
-            .with_field_violation("query", "result exceeded the size limit", "TOO_LARGE")
-            .create(),
-        MetricRunError::ClickHouse(source) => {
-            tracing::error!(error = ?source, "chat query execution failed");
-            CanonicalError::internal("chat query execution failed").create()
-        }
-        MetricRunError::InvalidResponse(source) => {
-            tracing::error!(error = ?source, "chat query result deserialization failed");
-            CanonicalError::internal("chat query execution failed").create()
-        }
-    }
-}
-
-fn definition_error(error: DefinitionError) -> CanonicalError {
-    ChatApiError::invalid_argument()
-        .with_field_violation("name", error.to_string(), "INVALID")
-        .create()
-}
-
-fn definition_store_error(error: DefinitionStoreError) -> CanonicalError {
-    match error {
-        // Waiting for a connection is the store being busy, not broken.
-        DefinitionStoreError::Database(sea_orm::DbErr::ConnectionAcquire(source)) => {
-            tracing::warn!(error = ?source, "definition store connection timed out");
-            ChatApiError::deadline_exceeded("definition store timed out").create()
-        }
-        DefinitionStoreError::Database(source) => {
-            tracing::error!(error = ?source, "definition store operation failed");
-            CanonicalError::internal("definition store operation failed").create()
-        }
-        DefinitionStoreError::Json(source) => {
-            tracing::error!(error = ?source, "definition body serialization failed");
-            CanonicalError::internal("definition store operation failed").create()
         }
     }
 }

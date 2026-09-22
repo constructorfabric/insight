@@ -45,7 +45,7 @@ For every `.sql` file under `src/ingestion/connectors/*/dbt/`:
 
 - If `materialized` is `incremental` or `table` → `engine='ReplacingMergeTree(_version)'` + `order_by=['unique_key']`
 - If `materialized` is `view` → confirm it's a thin pass-through (no GROUP BY / window) AND the bronze upstream has been promoted
-- If `materialized` is `ephemeral` → confirm it's a pass-through over a Rust-written staging table (currently only `jira__task_field_history.sql`)
+- If `materialized` is `ephemeral` → confirm it's a pass-through over a staging table dbt does not own (none exist today; the Jira field history is derived in dbt)
 - The SELECT body MUST project a `unique_key` column (either propagated from bronze: `u.unique_key AS unique_key`, or computed: `CAST(concat(...) AS String) AS unique_key`)
 
 Bash discovery:
@@ -85,7 +85,7 @@ column, so promotion is blocked until the connector emits one — flag, don't do
 - `src/ingestion/airbyte-toolkit/connect.sh` must have `dest_sync_mode = "append"` literal
 - Must NOT have `append_dedup` or `overwrite` anywhere
 
-### Check 6 — Ephemeral wrapping for Rust-owned staging
+### Check 6 — Ephemeral wrapping for staging tables dbt does not own
 
 - Any model materialized as `ephemeral` must SELECT only from `source(...)` (not `ref(...)`) — i.e., it's a thin wrapper for a non-dbt-managed table
 - The `union_by_tag` macro must contain the ephemeral handling branch (check `src/ingestion/dbt/macros/union_by_tag.sql` for `materialized == 'ephemeral'`)

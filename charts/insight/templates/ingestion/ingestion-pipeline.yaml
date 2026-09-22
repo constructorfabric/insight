@@ -33,8 +33,9 @@ spec:
             default: "false"
           - name: toolbox_image
             default: {{ required "ingestion.toolboxImage is required when ingestion.templates.enabled=true" .Values.ingestion.toolboxImage | quote }}
-          # Sourced from the jira descriptor's `images.enrich.image` field
-          # (per ADR-0016) by the submitter; required when data_source == "jira".
+          # Still passed by the reconcile submitter from the jira descriptor's
+          # `images.enrich.image`; no step consumes it since the field-history
+          # journal moved into dbt. Removed with the rest of the enrich plumbing.
           - name: jira_enrich_image
           - name: airbyte_url
             default: {{ include "insight.airbyte.url" . | quote }}
@@ -92,7 +93,7 @@ spec:
         parameters:
           - name: data_source
           - name: insight_source_id
-            default: ""  # RULE-DEFAULTS-OK: consumed by the jira enrich step only
+            default: ""  # RULE-DEFAULTS-OK: accepted from the submitter; no step consumes it
           - name: dbt_select_staging
             default: ""  # RULE-DEFAULTS-OK: same sentinel as on `pipeline`
           - name: dbt_select
@@ -102,7 +103,7 @@ spec:
           - name: toolbox_image
             default: {{ required "ingestion.toolboxImage is required when ingestion.templates.enabled=true" .Values.ingestion.toolboxImage | quote }}
           - name: jira_enrich_image
-            default: ""  # RULE-DEFAULTS-OK: consumed by the jira enrich step only
+            default: ""  # RULE-DEFAULTS-OK: accepted from the submitter; no step consumes it
           - name: clickhouse_host
             default: {{ include "insight.clickhouse.fqdn" . | quote }}
           - name: clickhouse_port
@@ -111,7 +112,7 @@ spec:
             default: {{ required "clickhouse.username is required" .Values.clickhouse.username | quote }}
       dag:
         tasks:
-          # ------ Jira: dbt(tag:jira) → jira-enrich → dbt(tag:silver) ------
+          # ------ Jira: dbt(tag:staging,tag:jira) → dbt(tag:silver,tag:jira+) ------
           - name: transform-jira-staging
             when: {{ `"'{{inputs.parameters.data_source}}' == 'jira'"` }}
             templateRef:
@@ -133,27 +134,6 @@ spec:
                   value: {{ `"{{inputs.parameters.clickhouse_port}}"` }}
                 - name: clickhouse_user
                   value: {{ `"{{inputs.parameters.clickhouse_user}}"` }}
-
-          - name: enrich
-            depends: transform-jira-staging
-            when: {{ `"'{{inputs.parameters.data_source}}' == 'jira'"` }}
-            templateRef:
-              name: tt-enrich-jira-run
-              template: run
-            arguments:
-              parameters:
-                - name: insight_source_id
-                  value: {{ `"{{inputs.parameters.insight_source_id}}"` }}
-                - name: jira_enrich_image
-                  value: {{ `"{{inputs.parameters.jira_enrich_image}}"` }}
-                - name: clickhouse_host
-                  value: {{ `"{{inputs.parameters.clickhouse_host}}"` }}
-                - name: clickhouse_port
-                  value: {{ `"{{inputs.parameters.clickhouse_port}}"` }}
-                - name: clickhouse_user
-                  value: {{ `"{{inputs.parameters.clickhouse_user}}"` }}
-                - name: batch_size
-                  value: "10000"
 
           # ------ Non-Jira: connector staging + identity_inputs before the seed ------
           - name: transform-staging
@@ -189,7 +169,7 @@ spec:
               template: run
 
           - name: transform-jira-silver
-            depends: enrich && identity-seed
+            depends: transform-jira-staging.Succeeded && identity-seed
             when: {{ `"'{{inputs.parameters.data_source}}' == 'jira'"` }}
             templateRef:
               name: dbt-run

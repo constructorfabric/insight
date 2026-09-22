@@ -10,13 +10,32 @@ use toolkit::api::{OpenApiRegistry, OperationBuilder, ParamLocation, ParamSpec};
 use toolkit_canonical_errors::{CanonicalError, resource_error};
 
 use super::AppState;
-use crate::custom::CustomError;
-use crate::definitions::{DefinitionError, DefinitionName, DefinitionStoreError};
-use crate::metric_query::{MetricQueryError, MetricRunError};
-use crate::time_window::{WindowError, WindowRequest};
+use super::errors::ApiErrors;
+use crate::domain::definition::DefinitionName;
+use crate::domain::query::metric_query::{MetricQueryError, MetricRunError};
+use crate::domain::query::time_window::{WindowError, WindowRequest};
+use crate::domain::surfaces::CustomError;
 
 #[resource_error("gts.cf.insight.insight_v3_core.metric_run.v1~")]
 struct MetricRunApiError;
+
+impl ApiErrors for MetricRunApiError {
+    fn invalid_field(field: &str, detail: String) -> CanonicalError {
+        Self::invalid_argument()
+            .with_field_violation(field, detail, "INVALID")
+            .create()
+    }
+
+    fn timed_out(detail: &str) -> CanonicalError {
+        Self::deadline_exceeded(detail).create()
+    }
+
+    fn name_taken(name: &str) -> CanonicalError {
+        Self::already_exists(format!("`{name}` is already taken"))
+            .with_resource(name)
+            .create()
+    }
+}
 
 pub(crate) fn register_routes(
     router: Router,
@@ -40,6 +59,7 @@ pub(crate) fn register_routes(
         .param(name_param)
         .json_response(StatusCode::OK, "Query result")
         .error_400(openapi)
+        .error_403(openapi)
         .error_404(openapi)
         .error_500(openapi)
         .error_504(openapi)
@@ -74,7 +94,7 @@ async fn run_metric(
     })
     .await?;
 
-    let name = DefinitionName::parse(&name).map_err(definition_error)?;
+    let name = DefinitionName::parse(&name).map_err(MetricRunApiError::definition_error)?;
     let asked = match body {
         Some(Json(value)) => {
             serde_json::from_value::<RunBody>(value).map_err(|error| run_body_error(&error))?
@@ -86,8 +106,8 @@ async fn run_metric(
         .map_err(|error| window_error(&error))?;
 
     let result = state
-        .surfaces()
-        .run_metric(&name, &requested)
+        .metric_runs()
+        .run(&name, &requested)
         .await
         .map_err(custom_error)?;
 
@@ -112,23 +132,23 @@ fn window_field(error: &WindowError) -> &'static str {
     }
 }
 
-fn definition_error(error: DefinitionError) -> CanonicalError {
-    MetricRunApiError::invalid_argument()
-        .with_field_violation("name", error.to_string(), "INVALID")
-        .create()
-}
-
 fn custom_error(error: CustomError) -> CanonicalError {
     match error {
         CustomError::NotFound { name, .. } => metric_not_found(&name),
+        CustomError::DatasetNotReady(named) => {
+            MetricRunApiError::not_found(format!("no dataset named `{named}` is ready to be read"))
+                .with_resource(&named)
+                .create()
+        }
         CustomError::Body(source) => invalid_metric_body(&source),
         CustomError::Compile(source) => compile_error(&source),
         CustomError::Run(source) => run_error(source),
-        CustomError::Store(source) => definition_store_error(source),
+        CustomError::Store(source) => MetricRunApiError::definition_store_error(source),
+        CustomError::Datasets(source) => MetricRunApiError::dataset_store_error(source),
         CustomError::InUse { .. }
         | CustomError::Widget(_)
         | CustomError::Range(_)
-        | CustomError::Catalog(_) => {
+        | CustomError::Unanswerable(_) => {
             tracing::error!(%error, "running a metric produced an unrelated failure");
             CanonicalError::internal("metric query execution failed").create()
         }
@@ -142,33 +162,11 @@ fn metric_not_found(name: &str) -> CanonicalError {
 }
 
 fn invalid_metric_body(error: &serde_json::Error) -> CanonicalError {
-    MetricRunApiError::invalid_argument()
-        .with_field_violation("body", error.to_string(), "INVALID")
-        .create()
+    MetricRunApiError::invalid_field("body", error.to_string())
 }
 
 fn compile_error(error: &MetricQueryError) -> CanonicalError {
-    MetricRunApiError::invalid_argument()
-        .with_field_violation("body", error.to_string(), "INVALID")
-        .create()
-}
-
-fn definition_store_error(error: DefinitionStoreError) -> CanonicalError {
-    match error {
-        // Waiting for a connection is the store being busy, not broken.
-        DefinitionStoreError::Database(sea_orm::DbErr::ConnectionAcquire(source)) => {
-            tracing::warn!(error = ?source, "definition store connection timed out");
-            MetricRunApiError::deadline_exceeded("definition store timed out").create()
-        }
-        DefinitionStoreError::Database(source) => {
-            tracing::error!(error = ?source, "metric definition lookup failed");
-            CanonicalError::internal("definition store operation failed").create()
-        }
-        DefinitionStoreError::Json(source) => {
-            tracing::error!(error = ?source, "metric definition body deserialization failed");
-            CanonicalError::internal("definition store operation failed").create()
-        }
-    }
+    MetricRunApiError::invalid_field("body", error.to_string())
 }
 
 fn run_error(error: MetricRunError) -> CanonicalError {

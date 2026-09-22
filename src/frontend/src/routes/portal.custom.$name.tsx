@@ -5,13 +5,21 @@ import { Table2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 
-import { CustomApiError, type Dashboard, type RunOptions } from "@/api/custom-client";
+import {
+  CustomApiError,
+  type Dashboard,
+  type RunOptions,
+} from "@/api/custom-client";
 import { RangePicker } from "@/components/custom/range-picker";
 import { selectedRange } from "@/lib/custom/board-range";
 import { drawsBucket } from "@/lib/custom/draws-bucket";
-import { useSetPortalSearch, usePortalSearch } from "@/lib/portal/portal-search";
+import {
+  useSetPortalSearch,
+  usePortalSearch,
+} from "@/lib/portal/portal-search";
 import { dashboardItems } from "@/lib/custom/dashboard-items";
 import { CustomWidget } from "@/components/custom/custom-widget";
+import { refusal } from "@/components/custom/refusal";
 import { WidgetDrilldown } from "@/components/custom/widget-drilldown";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,11 +31,7 @@ import {
   metricResultQuery,
   widgetQuery,
 } from "@/queries/custom";
-import {
-  TEXT_BODY,
-  TEXT_HEADING,
-  TEXT_TITLE,
-} from "@/lib/type-scale";
+import { TEXT_BODY, TEXT_HEADING, TEXT_TITLE } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/portal/custom/$name")({
@@ -180,14 +184,15 @@ function DashboardWidgetSlot({
   const widgetState = useQuery(widgetQuery(name));
   const metric = widgetState.data?.metric;
 
-  // Whether this metric carries a clock decides the request, so nothing
-  // runs until the definition is in: guessing shows a number the picker
-  // does not claim.
+  // Whether a window has a date to select by decides the request, so nothing
+  // runs until the definition is in: guessing shows a number the picker does
+  // not claim. The metric's body cannot answer it - the date may be the
+  // dataset's - so the service reports the one in force.
   const definitionState = useQuery({
     ...metricQuery(metric ?? ""),
     enabled: Boolean(metric) && Boolean(range),
   });
-  const clocked = Boolean(definitionState.data?.time);
+  const clocked = Boolean(definitionState.data?.clock);
   const known = !range || definitionState.isSuccess;
   const options: RunOptions | undefined =
     range && clocked && widgetState.data
@@ -229,7 +234,7 @@ function DashboardWidgetSlot({
       <Card>
         <CardContent>
           <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
-            {(widgetState.error as Error).message}
+            {refusal(widgetState.error, `Couldn't read ${name}.`)}
           </p>
         </CardContent>
       </Card>
@@ -242,7 +247,11 @@ function DashboardWidgetSlot({
     <Card>
       <CardHeader className="flex flex-row items-start gap-2">
         <CardTitle
-          className={cn(TEXT_HEADING, "min-w-0 flex-1", heading ? "" : "font-mono")}
+          className={cn(
+            TEXT_HEADING,
+            "min-w-0 flex-1",
+            heading ? "" : "font-mono"
+          )}
         >
           {heading ?? name}
         </CardTitle>
@@ -277,8 +286,9 @@ function DashboardWidgetSlot({
         <CustomWidget
           widget={widgetState.data}
           result={resultState.data}
-          error={resultState.error as Error | undefined}
+          error={resultState.error}
           windowed={Boolean(options)}
+          pending={!known || resultState.isPending || resultState.isFetching}
         />
       </CardContent>
       <WidgetDrilldown

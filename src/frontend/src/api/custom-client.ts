@@ -3,131 +3,21 @@ import { fetchWithAuth } from "@/api/fetch-with-auth";
 const BASE =
   (import.meta.env.VITE_API_BASE_V3 as string | undefined) ?? "/api/v3/v1";
 
-/** What every widget carries, whatever it draws. */
-interface WidgetBase {
-  metric: string;
-  /** The heading a reader sees. Without it the card shows the identifier. */
-  title?: string;
-  /**
-   * A metric for the drilldown to run instead of this widget's own.
-   *
-   * A chart draws an aggregate; the rows a reader wants underneath are the
-   * facts that went into it — the commits, not the counts. Only the author of
-   * the widget knows which query that is, so they name it.
-   */
-  detail?: string;
-}
-
-export interface TableWidget extends WidgetBase {
-  type: "table";
-  columns: string[];
-}
-
-/** A line, a bar and an area all read one column against another. */
-export interface SeriesWidget extends WidgetBase {
-  type: "line" | "bar" | "area";
-  x: string;
-  y: string;
-}
-
-export interface StatWidget extends WidgetBase {
-  type: "stat";
-  value: string;
-  label?: string;
-}
-
-export interface PieWidget extends WidgetBase {
-  type: "pie";
-  label: string;
-  value: string;
-}
-
-export type Widget = TableWidget | SeriesWidget | StatWidget | PieWidget;
-
-/**
- * A metric's stored query, as the service interprets it.
- *
- * A field reads either a key inside an ingested payload (`json`) or a real
- * column of a table on the stand (`column`) — never both, and a lone `count`
- * needs neither.
- */
-export interface MetricDefinition {
-  database?: string;
-  table: string;
-  /**
-   * The timestamp a reader may window and bucket by. A metric without one
-   * answers every row, whatever the board's picker is set to.
-   */
-  time?: { json?: string; column?: string; type?: string };
-  /** The widest window this metric will answer, as an ISO duration. */
-  max_range?: string;
-  fields: {
-    json?: string;
-    column?: string;
-    type: string;
-    agg?: string;
-    as_name: string;
-    person?: "email" | "id";
-  }[];
-  group_by?: string[];
-  filters?: {
-    json?: string;
-    column?: string;
-    type: string;
-    op: string;
-    value: unknown;
-  }[];
-  order_by?: { field: string; direction?: "asc" | "desc" };
-  limit?: number;
-}
-
-export interface MetricResult {
-  columns: string[];
-  rows: unknown[][];
-  /** The columns whose numbers are percentages, named by the metric. */
-  percents?: string[];
-}
-
-/**
- * One thing a dashboard draws: a stored widget, a section title over the
- * widgets that follow, or a line of prose between them.
- */
-export type DashboardItem =
-  | { widget: string }
-  | { heading: string }
-  | { text: string };
-
-export interface Dashboard {
-  title: string;
-  /** What the dashboard draws, top to bottom. */
-  items?: DashboardItem[];
-  /** The older shorthand: a list of nothing but widgets. */
-  widgets?: string[];
-  /** The windows this board offers, as server tokens. None means no picker. */
-  time_ranges?: string[];
-  default_range?: string;
-}
-
-
-export interface ChatCreated {
-  metric?: string;
-  widgets: string[];
-  dashboard?: string;
-}
-
-/** One turn already in the thread, sent back so the model can read it. */
-export interface ChatTurn {
-  role: "user" | "assistant";
-  content: string;
-}
-
-export interface ChatReply {
-  reply: string;
-  result?: MetricResult;
-  created?: ChatCreated;
-  /** Names that already existed and now hold something else. */
-  updated?: ChatCreated;
-}
+export type * from "@/api/custom-types";
+import type {
+  Dashboard,
+  Dataset,
+  DatasetRecords,
+  Holder,
+  RecordPage,
+  MetricResult,
+  StoredMetric,
+  Widget,
+  ChatReply,
+  ChatTurn,
+  DefinitionResponse,
+  MetricDefinition,
+} from "@/api/custom-types";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
@@ -143,15 +33,23 @@ export class CustomApiError extends Error {
   }
 }
 
-async function readJson<T>(res: Response): Promise<T> {
+/** Refuses with what the service said, or with nothing when it said nothing. */
+async function ensureOk(res: Response): Promise<void> {
   if (!res.ok) {
     throw new CustomApiError(res.status, await res.json().catch(() => null));
   }
+}
+
+async function readJson<T>(res: Response): Promise<T> {
+  await ensureOk(res);
   return (await res.json()) as T;
 }
 
 /** What a definition is, in the API's path segments. */
 export type DefinitionKind = "metrics" | "widgets" | "dashboards";
+
+/** Every kind the Custom zone holds, including the one with a lifecycle. */
+export type EditableKind = DefinitionKind | "datasets";
 
 /**
  * Removes a definition.
@@ -163,12 +61,13 @@ export async function deleteDefinition(
   kind: DefinitionKind,
   name: string
 ): Promise<void> {
-  const res = await fetchWithAuth(`${BASE}/${kind}/${encodeURIComponent(name)}`, {
-    method: "DELETE",
-  });
-  if (!res.ok) {
-    throw new CustomApiError(res.status, await res.json().catch(() => null));
-  }
+  const res = await fetchWithAuth(
+    `${BASE}/${kind}/${encodeURIComponent(name)}`,
+    {
+      method: "DELETE",
+    }
+  );
+  await ensureOk(res);
 }
 
 /** The new name, and what the service pointed at it. */
@@ -192,9 +91,7 @@ export async function renameDefinition(
     `${BASE}/${kind}/${encodeURIComponent(name)}/rename`,
     { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ to }) }
   );
-  if (!res.ok) {
-    throw new CustomApiError(res.status, await res.json().catch(() => null));
-  }
+  await ensureOk(res);
 
   return (await res.json()) as Renamed;
 }
@@ -233,7 +130,9 @@ export async function fetchDashboard(name: string): Promise<Dashboard> {
   const res = await fetchWithAuth(
     `${BASE}/dashboards/${encodeURIComponent(name)}`
   );
-  return readJson<Dashboard>(res);
+  const read = await readJson<DefinitionResponse<Dashboard>>(res);
+
+  return read.body;
 }
 
 export async function fetchMetricNames(
@@ -243,11 +142,13 @@ export async function fetchMetricNames(
   return readJson<NamePage>(res);
 }
 
-export async function fetchMetric(name: string): Promise<MetricDefinition> {
+export async function fetchMetric(name: string): Promise<StoredMetric> {
   const res = await fetchWithAuth(
     `${BASE}/metrics/${encodeURIComponent(name)}`
   );
-  return readJson<MetricDefinition>(res);
+  const read = await readJson<DefinitionResponse<MetricDefinition>>(res);
+
+  return { definition: read.body, clock: read.clock };
 }
 
 export async function fetchWidgetNames(
@@ -261,7 +162,115 @@ export async function fetchWidget(name: string): Promise<Widget> {
   const res = await fetchWithAuth(
     `${BASE}/widgets/${encodeURIComponent(name)}`
   );
-  return readJson<Widget>(res);
+  const read = await readJson<DefinitionResponse<Widget>>(res);
+
+  return read.body;
+}
+
+export async function fetchDatasetNames(
+  page: PageRequest = {}
+): Promise<NamePage> {
+  const res = await fetchWithAuth(`${BASE}/datasets${pageQuery(page)}`);
+  return readJson<NamePage>(res);
+}
+
+export async function fetchDataset(name: string): Promise<Dataset> {
+  const res = await fetchWithAuth(
+    `${BASE}/datasets/${encodeURIComponent(name)}`
+  );
+  return readJson<Dataset>(res);
+}
+
+/** One page of the records a dataset holds, sized by the service. */
+export async function fetchDatasetRecords(
+  name: string,
+  page: RecordPage
+): Promise<DatasetRecords> {
+  const query = new URLSearchParams();
+  if (page.limit !== undefined) query.set("limit", String(page.limit));
+  if (page.offset) query.set("offset", String(page.offset));
+  // The direction stands on its own: with no field named the service orders
+  // by the instant a record arrived, and honours the direction there too.
+  if (page.orderBy) query.set("order_by", page.orderBy);
+  if (page.descending !== undefined) {
+    query.set("direction", page.descending ? "desc" : "asc");
+  }
+  const res = await fetchWithAuth(
+    `${BASE}/datasets/${encodeURIComponent(name)}/records?${query}`
+  );
+
+  return readJson<DatasetRecords>(res);
+}
+
+/** Every definition that names this one: what a removal would break. */
+export async function fetchDependents(
+  kind: DefinitionKind,
+  name: string
+): Promise<Holder[]> {
+  const res = await fetchWithAuth(
+    `${BASE}/${kind}/${encodeURIComponent(name)}/dependents`
+  );
+  const read = await readJson<{ holders: Holder[] }>(res);
+
+  return read.holders;
+}
+
+/**
+ * Every metric that reads this dataset.
+ *
+ * An exact lookup over what each body names, so a metric merely mentioning
+ * the name in a label is not one of them.
+ */
+export async function fetchDatasetDependents(name: string): Promise<string[]> {
+  const res = await fetchWithAuth(
+    `${BASE}/datasets/${encodeURIComponent(name)}/dependents`
+  );
+  const read = await readJson<{ metrics: string[] }>(res);
+
+  return read.metrics;
+}
+
+/**
+ * Declares a dataset, or replaces the declaration of one that stands.
+ *
+ * A replacement touches no record: it is refused where a metric reading the
+ * dataset would break or quietly start answering something else.
+ */
+export async function putDataset(
+  name: string,
+  declaration: unknown
+): Promise<Dataset> {
+  const res = await fetchWithAuth(
+    `${BASE}/datasets/${encodeURIComponent(name)}`,
+    { method: "PUT", headers: JSON_HEADERS, body: JSON.stringify(declaration) }
+  );
+  return readJson<Dataset>(res);
+}
+
+/** Stores a definition of any other kind, as the document says it. */
+export async function putDefinition(
+  kind: DefinitionKind,
+  name: string,
+  body: unknown
+): Promise<void> {
+  const res = await fetchWithAuth(
+    `${BASE}/${kind}/${encodeURIComponent(name)}`,
+    { method: "PUT", headers: JSON_HEADERS, body: JSON.stringify(body) }
+  );
+  await ensureOk(res);
+}
+
+/**
+ * Takes a dataset away, with the records it holds.
+ *
+ * Refused while a metric reads it, and the reply names every one.
+ */
+export async function deleteDataset(name: string): Promise<void> {
+  const res = await fetchWithAuth(
+    `${BASE}/datasets/${encodeURIComponent(name)}`,
+    { method: "DELETE" }
+  );
+  await ensureOk(res);
 }
 
 /**

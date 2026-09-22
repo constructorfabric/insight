@@ -11,11 +11,38 @@ use tower::ServiceExt as _;
 use super::*;
 use crate::api::AppState;
 use crate::chat::ChatClient;
-use crate::definitions::Definitions;
-use crate::definitions::memory::MemoryDefinitions;
-use crate::metric_query::MetricRunner;
-use crate::raw_data::RawDataStore;
-use crate::tables::TableStore;
+use crate::domain::definition::Definitions;
+use crate::domain::query::metric_query::MetricRunner;
+use crate::store::definitions::memory::MemoryDefinitions;
+
+/// The dataset every metric stored here reads.
+fn commits() -> serde_json::Value {
+    json!({
+        "title": "Commits",
+        "fields": [
+            { "name": "day", "path": "day", "type": "string" },
+            { "name": "committed_at", "path": "committed_at", "type": "datetime" },
+            { "name": "lines_added", "path": "lines_added", "type": "int" }
+        ]
+    })
+}
+
+/// A dataset that marks a main date, so a metric over it is windowed without
+/// naming a clock of its own.
+fn deploys() -> serde_json::Value {
+    json!({
+        "title": "Deploys",
+        "fields": [
+            { "name": "service", "path": "service", "type": "string" },
+            {
+                "name": "deployed_at",
+                "path": "deployed_at",
+                "type": "datetime",
+                "default_clock": true
+            }
+        ]
+    })
+}
 
 struct TestHarness {
     /// Held, not read: the stores this harness does not exercise are built
@@ -29,37 +56,40 @@ impl TestHarness {
         Self::with_caller(true).await
     }
 
+    /// A harness whose definition store refuses every write.
+    #[expect(clippy::unused_async, reason = "the harness mirrors the async one")]
+    async fn with_a_store_that_is_down() -> Self {
+        Self::build(
+            true,
+            &(Arc::new(MemoryDefinitions::refusing()) as Arc<dyn Definitions>),
+        )
+    }
+
     /// A caller who does or does not hold the admin role.
-    #[allow(clippy::unused_async)]
+    #[expect(clippy::unused_async, reason = "the harness mirrors the async one")]
     async fn with_caller(is_admin: bool) -> Self {
+        Self::build(
+            is_admin,
+            &(Arc::new(MemoryDefinitions::new()) as Arc<dyn Definitions>),
+        )
+    }
+
+    fn build(is_admin: bool, definitions: &Arc<dyn Definitions>) -> Self {
         let mut mock = Mock::new();
         mock.non_exhaustive();
         let openapi = OpenApiRegistryImpl::new();
         let url = mock.url();
-        let definitions: Arc<dyn Definitions> = Arc::new(MemoryDefinitions::new());
         let state = Arc::new(AppState::new(
-            RawDataStore::new(insight_clickhouse::Client::new(
-                insight_clickhouse::Config::new(url, "insight"),
-            )),
-            TableStore::new(insight_clickhouse::Client::new(
-                insight_clickhouse::Config::new(url, "insight"),
-            )),
-            definitions.clone(),
             MetricRunner::new(
                 insight_clickhouse::Client::new(insight_clickhouse::Config::new(url, "insight")),
-                crate::metric_query::People::new("identity"),
+                crate::domain::query::metric_query::People::new("identity"),
             ),
+            definitions.clone(),
             ChatClient::keyless(),
-            crate::identity::IdentityClient::fixed(is_admin),
-            crate::catalog::Catalog::new(
-                insight_clickhouse::Client::new(insight_clickhouse::Config::new(
-                    "http://catalogue.invalid",
-                    "insight",
-                )),
-                "insight".to_owned(),
-            ),
+            crate::store::identity::IdentityClient::fixed(is_admin),
+            crate::api::Datasets::holding(url, &[("commits", commits()), ("deploys", deploys())]),
         ));
-        let router = register_routes(Router::new(), &openapi, state);
+        let router = register_routes(Router::new(), &openapi, &state);
 
         Self {
             _clickhouse: mock,
@@ -113,8 +143,8 @@ impl TestHarness {
         self.put_json(
             "/v1/metrics/commits_per_day",
             json!({
-                "table": "events",
-                "fields": [{ "json": "day", "type": "string", "as_name": "day" }]
+                "dataset": "commits",
+                "fields": [{ "field": "day", "type": "string", "as_name": "day" }]
             }),
         )
         .await;
@@ -201,11 +231,73 @@ impl TestResponse {
         self.status
     }
 
-    #[allow(clippy::unused_async)]
+    #[expect(clippy::unused_async, reason = "the harness mirrors the async one")]
     async fn json(&self) -> serde_json::Value {
         serde_json::from_slice(&self.body)
             .unwrap_or_else(|error| panic!("response body must be JSON: {error}"))
     }
+}
+
+/// The smallest body that reads back as a metric, for tests about storage
+/// rather than about what a metric says.
+fn metric_body() -> serde_json::Value {
+    json!({
+        "dataset": "commits",
+        "fields": [{ "agg": "count", "type": "int", "as_name": "total" }]
+    })
+}
+
+/// A reader is shown what a removal would break before they ask for one.
+#[tokio::test]
+async fn a_definition_names_what_holds_it() {
+    let harness = TestHarness::new().await;
+    harness
+        .put_json("/v1/metrics/commits_per_day", metric_body())
+        .await;
+    let drawn = harness
+        .put_json(
+            "/v1/widgets/commits_table",
+            json!({
+                "type": "table",
+                "metric": "commits_per_day",
+                "columns": ["total"]
+            }),
+        )
+        .await;
+    assert_eq!(drawn.status(), StatusCode::NO_CONTENT);
+
+    let held = harness
+        .get_json("/v1/metrics/commits_per_day/dependents")
+        .await;
+
+    assert_eq!(held.status(), StatusCode::OK);
+    assert_eq!(
+        held.json().await["holders"],
+        json!([{ "kind": "widgets", "name": "commits_table" }])
+    );
+}
+
+#[tokio::test]
+async fn a_definition_nothing_holds_names_nothing() {
+    let harness = TestHarness::new().await;
+    harness
+        .put_json("/v1/metrics/commits_per_day", metric_body())
+        .await;
+
+    let held = harness
+        .get_json("/v1/metrics/commits_per_day/dependents")
+        .await;
+
+    assert_eq!(held.json().await["holders"], json!([]));
+}
+
+#[tokio::test]
+async fn the_dependents_of_a_definition_that_is_not_there_are_not_found() {
+    let harness = TestHarness::new().await;
+
+    let held = harness.get_json("/v1/metrics/nobody/dependents").await;
+
+    assert_eq!(held.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -213,25 +305,73 @@ async fn put_then_get_returns_the_stored_body() {
     let harness = TestHarness::new().await;
 
     let put = harness
-        .put_json(
-            "/v1/metrics/commits_per_day",
-            json!({
-                "table": "events",
-                "fields": [{ "json": "day", "type": "string", "as_name": "day" }]
-            }),
-        )
+        .put_json("/v1/metrics/commits_per_day", metric_body())
         .await;
     assert_eq!(put.status(), StatusCode::NO_CONTENT);
 
     let got = harness.get_json("/v1/metrics/commits_per_day").await;
     assert_eq!(got.status(), StatusCode::OK);
+    assert_eq!(got.json().await["body"], metric_body());
+}
+
+/// A card is windowed or not by what the read says, never by whether the
+/// stored body happens to name a clock.
+#[tokio::test]
+async fn a_metric_inheriting_its_dataset_s_clock_reads_back_saying_so() {
+    let harness = TestHarness::new().await;
+    let put = harness
+        .put_json(
+            "/v1/metrics/deploys_per_day",
+            json!({
+                "dataset": "deploys",
+                "fields": [{"agg": "count", "type": "int", "as_name": "total"}]
+            }),
+        )
+        .await;
+    assert_eq!(put.status(), StatusCode::NO_CONTENT);
+
+    let got = harness.get_json("/v1/metrics/deploys_per_day").await;
+
     assert_eq!(
-        got.json().await,
-        json!({
-            "table": "events",
-            "fields": [{ "json": "day", "type": "string", "as_name": "day" }]
-        })
+        got.json().await["clock"],
+        json!({ "field": "deployed_at", "from": "dataset" })
     );
+}
+
+#[tokio::test]
+async fn a_metric_naming_its_own_clock_reads_back_saying_it_named_it() {
+    let harness = TestHarness::new().await;
+    harness
+        .put_json(
+            "/v1/metrics/commits_per_day",
+            json!({
+                "dataset": "commits",
+                "time": {"field": "committed_at", "type": "datetime"},
+                "fields": [{"agg": "count", "type": "int", "as_name": "total"}]
+            }),
+        )
+        .await;
+
+    let got = harness.get_json("/v1/metrics/commits_per_day").await;
+
+    assert_eq!(
+        got.json().await["clock"],
+        json!({ "field": "committed_at", "from": "metric" })
+    );
+}
+
+/// A dataset marking no main date leaves a metric that names none unwindowed,
+/// and the read says nothing rather than inventing a field.
+#[tokio::test]
+async fn a_metric_with_no_clock_anywhere_reads_back_without_one() {
+    let harness = TestHarness::new().await;
+    harness
+        .put_json("/v1/metrics/all_commits", metric_body())
+        .await;
+
+    let got = harness.get_json("/v1/metrics/all_commits").await;
+
+    assert_eq!(got.json().await["clock"], json!(null));
 }
 
 #[tokio::test]
@@ -259,13 +399,7 @@ async fn list_returns_the_stored_names_in_order() {
     // Stored out of order, listed in it.
     for name in ["lines_per_day", "commits_per_day"] {
         let put = harness
-            .put_json(
-                &format!("/v1/metrics/{name}"),
-                json!({
-                    "table": "events",
-                    "fields": [{ "json": "day", "type": "string", "as_name": "day" }]
-                }),
-            )
+            .put_json(&format!("/v1/metrics/{name}"), metric_body())
             .await;
         assert_eq!(put.status(), StatusCode::NO_CONTENT);
     }
@@ -293,8 +427,8 @@ async fn put_then_get_a_widget_definition_round_trips() {
         .put_json(
             "/v1/metrics/commits_per_day",
             json!({
-                "table": "events",
-                "fields": [{ "json": "day", "type": "string", "as_name": "day" }]
+                "dataset": "commits",
+                "fields": [{ "field": "day", "type": "string", "as_name": "day" }]
             }),
         )
         .await;
@@ -311,7 +445,7 @@ async fn put_then_get_a_widget_definition_round_trips() {
     let got = harness.get_json("/v1/widgets/commits_table").await;
     assert_eq!(got.status(), StatusCode::OK);
     assert_eq!(
-        got.json().await,
+        got.json().await["body"],
         json!({ "type": "table", "metric": "commits_per_day", "columns": ["day"] })
     );
 }
@@ -350,8 +484,8 @@ async fn a_definition_nothing_uses_is_removed() {
         .put_json(
             "/v1/metrics/spare",
             json!({
-                "table": "events",
-                "fields": [{ "json": "day", "type": "string", "as_name": "day" }]
+                "dataset": "commits",
+                "fields": [{ "field": "day", "type": "string", "as_name": "day" }]
             }),
         )
         .await;
@@ -382,8 +516,8 @@ async fn a_metric_a_widget_draws_is_kept_and_the_widget_named() {
         .put_json(
             "/v1/metrics/lines_per_day",
             json!({
-                "table": "events",
-                "fields": [{ "json": "day", "type": "string", "as_name": "day" }]
+                "dataset": "commits",
+                "fields": [{ "field": "day", "type": "string", "as_name": "day" }]
             }),
         )
         .await;
@@ -397,9 +531,9 @@ async fn a_metric_a_widget_draws_is_kept_and_the_widget_named() {
     let refused = harness.delete_json("/v1/metrics/lines_per_day").await;
 
     // A widget whose metric is gone renders an error where a chart should be.
-    // A definition in use is a failed precondition, which this error family
-    // answers as 400 - what matters is that the reply names the widget.
-    assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+    // Something still holding it is a conflict, the same answer a dataset
+    // something still reads gives, and the reply names the widget.
+    assert_eq!(refused.status(), StatusCode::CONFLICT);
     let body = refused.json().await;
     assert!(
         body.to_string().contains("lines_table"),
@@ -419,8 +553,8 @@ async fn a_widget_a_dashboard_holds_is_kept_and_the_dashboard_named() {
         .put_json(
             "/v1/metrics/m",
             json!({
-                "table": "events",
-                "fields": [{ "json": "day", "type": "string", "as_name": "day" }]
+                "dataset": "commits",
+                "fields": [{ "field": "day", "type": "string", "as_name": "day" }]
             }),
         )
         .await;
@@ -439,7 +573,7 @@ async fn a_widget_a_dashboard_holds_is_kept_and_the_dashboard_named() {
 
     let refused = harness.delete_json("/v1/widgets/held").await;
 
-    assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(refused.status(), StatusCode::CONFLICT);
     assert!(refused.json().await.to_string().contains("holder"));
 }
 
@@ -496,7 +630,7 @@ async fn renaming_a_metric_rewrites_the_widgets_that_draw_it() {
         StatusCode::NOT_FOUND
     );
     let widget = harness.get_json("/v1/widgets/commits_table").await;
-    assert_eq!(widget.json().await["metric"], "commits_daily");
+    assert_eq!(widget.json().await["body"]["metric"], "commits_daily");
 }
 
 #[tokio::test]
@@ -515,7 +649,10 @@ async fn renaming_a_widget_rewrites_the_dashboards_holding_it() {
     assert_eq!(renamed.json().await["rewritten"], json!(["engineering"]));
 
     let dashboard = harness.get_json("/v1/dashboards/engineering").await;
-    assert_eq!(dashboard.json().await["widgets"], json!(["daily_table"]));
+    assert_eq!(
+        dashboard.json().await["body"]["widgets"],
+        json!(["daily_table"])
+    );
 }
 
 #[tokio::test]
@@ -546,8 +683,8 @@ async fn renaming_onto_a_name_in_use_changes_nothing() {
         .put_json(
             "/v1/metrics/already_here",
             json!({
-                "table": "events",
-                "fields": [{ "json": "day", "type": "string", "as_name": "day" }]
+                "dataset": "commits",
+                "fields": [{ "field": "day", "type": "string", "as_name": "day" }]
             }),
         )
         .await;
@@ -560,6 +697,10 @@ async fn renaming_onto_a_name_in_use_changes_nothing() {
         .await;
 
     assert_eq!(refused.status(), StatusCode::CONFLICT);
+    assert!(
+        String::from_utf8_lossy(&refused.body).contains("already_here"),
+        "the refusal must name the name that is taken"
+    );
     // Neither name moved, and the widget still draws the one it did.
     assert_eq!(
         harness
@@ -569,7 +710,7 @@ async fn renaming_onto_a_name_in_use_changes_nothing() {
         StatusCode::OK
     );
     let widget = harness.get_json("/v1/widgets/commits_table").await;
-    assert_eq!(widget.json().await["metric"], "commits_per_day");
+    assert_eq!(widget.json().await["body"]["metric"], "commits_per_day");
 }
 
 #[tokio::test]
@@ -625,7 +766,7 @@ async fn a_search_matches_a_name() {
 
 #[tokio::test]
 async fn a_search_matches_what_the_body_says() {
-    // "Which metrics read this table" is the question a catalogue is asked,
+    // "Which metrics read this field" is the question a catalogue is asked,
     // and a name cannot answer it.
     let harness = TestHarness::new().await;
     harness.seed_chain().await;
@@ -633,14 +774,13 @@ async fn a_search_matches_what_the_body_says() {
         .put_json(
             "/v1/metrics/lines_per_day",
             json!({
-                "database": "silver",
-                "table": "class_git_commits",
-                "fields": [{ "column": "lines_added", "type": "int", "as_name": "lines" }]
+                "dataset": "commits",
+                "fields": [{ "field": "lines_added", "type": "int", "as_name": "lines" }]
             }),
         )
         .await;
 
-    let found = harness.get_json("/v1/metrics?q=class_git_commits").await;
+    let found = harness.get_json("/v1/metrics?q=lines_added").await;
 
     assert_eq!(found.json().await["names"], json!(["lines_per_day"]));
 }
@@ -671,13 +811,7 @@ async fn a_list_answers_one_page_and_how_many_there_are() {
     let harness = TestHarness::new().await;
     for name in ["a_one", "b_two", "c_three"] {
         harness
-            .put_json(
-                &format!("/v1/metrics/{name}"),
-                json!({
-                    "table": "events",
-                    "fields": [{ "json": "day", "type": "string", "as_name": "day" }]
-                }),
-            )
+            .put_json(&format!("/v1/metrics/{name}"), metric_body())
             .await;
     }
 
@@ -702,4 +836,83 @@ async fn a_page_bigger_than_the_cap_is_refused() {
     let refused = harness.list_json("/v1/metrics?limit=5000").await;
 
     assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn a_metric_body_that_cannot_be_read_as_a_query_is_refused_on_write() {
+    let harness = TestHarness::new().await;
+
+    let refusal = harness
+        .put_json(
+            "/v1/metrics/commits_per_day",
+            json!({ "dataset": "commits" }),
+        )
+        .await;
+
+    assert_eq!(refusal.status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        harness.get_json("/v1/metrics/commits_per_day").await.status,
+        StatusCode::NOT_FOUND,
+        "a refused body must not be stored"
+    );
+}
+
+#[tokio::test]
+async fn a_metric_offering_a_window_the_server_cannot_resolve_is_refused_on_write() {
+    let harness = TestHarness::new().await;
+
+    let refusal = harness
+        .put_json(
+            "/v1/metrics/commits_per_day",
+            json!({
+                "dataset": "commits",
+                "fields": [{ "field": "day", "type": "string", "as_name": "day" }],
+                "time": { "field": "committed_at" },
+                "max_range": "for ever",
+            }),
+        )
+        .await;
+
+    assert_eq!(refusal.status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        harness.get_json("/v1/metrics/commits_per_day").await.status,
+        StatusCode::NOT_FOUND
+    );
+
+    let sound = harness
+        .put_json(
+            "/v1/metrics/commits_per_day",
+            json!({
+                "dataset": "commits",
+                "fields": [{ "field": "day", "type": "string", "as_name": "day" }],
+                "time": { "field": "committed_at" },
+                "max_range": "P6M",
+            }),
+        )
+        .await;
+
+    assert_eq!(
+        sound.status,
+        StatusCode::NO_CONTENT,
+        "only the window the server cannot resolve is the caller's mistake"
+    );
+}
+
+#[tokio::test]
+async fn a_store_that_is_down_is_ours_to_fix_and_says_nothing_about_itself() {
+    let harness = TestHarness::with_a_store_that_is_down().await;
+
+    let failed = harness
+        .put_json(
+            "/v1/metrics/commits_per_day",
+            json!({
+                "dataset": "commits",
+                "fields": [{ "field": "day", "type": "string", "as_name": "day" }]
+            }),
+        )
+        .await;
+
+    assert_eq!(failed.status, StatusCode::INTERNAL_SERVER_ERROR);
+    let said = String::from_utf8_lossy(&failed.body);
+    assert!(!said.contains("store is down"), "{said}");
 }

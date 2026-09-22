@@ -52,6 +52,7 @@ vendor_defaults AS (
         ('summary',              'title',     'none'),
         ('assignee',             'assignee',  'none'),
         ('issuetype',            'issuetype', 'none'),
+        ('resolution',           'resolution', 'none'),
         ('duedate',              'duedate',   'none'),
         ('timeoriginalestimate', 'estimate',  'seconds'),
         ('timespent',            'spent',     'seconds')
@@ -74,19 +75,33 @@ vendor_defaults AS (
     WHERE s.data_source = 'github'
 ),
 
+-- INVARIANT: `recorded_at` is part of `unique_key`, so a retraction is a NEWER
+-- row — filter `is_deleted` after the LIMIT 1 BY pick, never before.
 authored AS (
     SELECT
         insight_source_id,
         data_source,
         field_id,
-        argMax(role, (valid_from, recorded_at))            AS role,
-        argMax(precedence, (valid_from, recorded_at))      AS precedence,
-        argMax(value_unit, (valid_from, recorded_at))      AS value_unit,
-        argMax(unit_multiplier, (valid_from, recorded_at)) AS unit_multiplier
-    FROM {{ source('config', 'task_field_roles') }} FINAL
+        role,
+        precedence,
+        value_unit,
+        unit_multiplier
+    FROM (
+        SELECT
+            insight_source_id,
+            data_source,
+            field_id,
+            role,
+            precedence,
+            value_unit,
+            unit_multiplier,
+            is_deleted
+        FROM {{ source('config', 'task_field_roles') }} FINAL
+        WHERE valid_from <= now64(3)
+        ORDER BY valid_from DESC, recorded_at DESC
+        LIMIT 1 BY insight_source_id, data_source, field_id
+    )
     WHERE is_deleted = 0
-      AND valid_from <= now64(3)
-    GROUP BY insight_source_id, data_source, field_id
 ),
 
 every_binding AS (

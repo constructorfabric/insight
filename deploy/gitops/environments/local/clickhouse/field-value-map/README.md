@@ -2,8 +2,9 @@
 
 Operator decisions binding a vendor value of a standardized field to the
 canonical value gold consumes. The file mirrors the table: one dictionary for
-every standardized field, so a future field needs no loader change and no new
-format — issue types are just the first field. Every `*.tsv` here is packed
+every standardized field, no new format per field. A new field needs one
+`FIELD_DOMAINS` entry in the loader, which rejects any field it has no domain
+for. Every `*.tsv` here is packed
 into the `insight-field-value-map` ConfigMap by `make field-value-map` (chained
 into `make deploy`) and applied by the umbrella's `clickhouse-field-value-map`
 hook Job on every upgrade. Files other than `defaults.tsv` land in
@@ -47,10 +48,16 @@ history; `recorded_by=gitops`).
 
 ## Defaults
 
-An optional `defaults.tsv` assigns, per (tenant, source, field), the value an
-unmapped source key falls to. No row means the hardcoded `unknown` terminal.
-All four columns are required; `default_value` obeys the same per-field domain
-as `target_value`.
+`defaults.tsv` assigns, per (tenant, source, field), the value an unmapped
+source key falls to. It is required: with no row an unmapped key silently
+reaches gold's hardcoded `unknown` terminal, which reads exactly like a
+decision nobody made. A source whose unmapped closures really are unclassified
+says so with `default_value` `unknown`; that is a decision, and it is not the
+same thing as leaving the row out. `assert_task_field_value_defaults_exist`
+blocks the gold build in CI when a row is absent, and the Grafana rule
+`insight-field-value-defaults-missing` reports it in a deployed install. All
+four columns are required; `default_value` obeys the same per-field domain as
+`target_value`.
 
 ```
 tenant_id  insight_source_id  field  default_value

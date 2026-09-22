@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 
 import type { ChatCreated, ChatReply } from "@/api/custom-client";
 import { ChatProse } from "@/components/custom/chat-prose";
+import { refusal } from "@/components/custom/refusal";
 import { CustomTable } from "@/components/custom/custom-table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -85,13 +86,15 @@ export function CustomChat({ onCreated }: CustomChatProps) {
         )
       );
       if (reply.created) onCreated(reply.created);
-    } catch {
+    } catch (error) {
       setMessage(question);
+      // What the service said, not that something failed: an assistant with no
+      // key configured, or a dataset being removed, is a different answer to
+      // the reader than "try again".
+      const said = refusal(error, "The chat request failed.");
       setExchanges((prev) =>
         prev.map((exchange) =>
-          exchange.id === id
-            ? { ...exchange, error: "The chat request failed." }
-            : exchange
+          exchange.id === id ? { ...exchange, error: said } : exchange
         )
       );
     }

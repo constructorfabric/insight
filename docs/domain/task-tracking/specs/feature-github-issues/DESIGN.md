@@ -93,8 +93,8 @@ wrong.
 > and gold's existing `if(dev_seconds > 0, …)` guard omits the measure instead
 > of inventing it.
 
-Produced: `tasks_closed`, `bugs_fixed`, `closed_non_bug`, `resolution_days`,
-`close_events`, `reopened_within_14d`, `due_date_on_time`, `due_date_with_due`,
+Produced: `tasks_closed`, `bugs_fixed`, `closed_task`, `closed_unknown_type`,
+`resolution_days`, `close_events`, `reopened_within_14d`, `due_date_on_time`, `due_date_with_due`,
 `slip_days_total`, `late_count`, and `stale_in_progress` subject to the caveat
 in [section 5](#5-making-gold-source-neutral).
 
@@ -464,8 +464,7 @@ when boards arrive and a board column's meaning genuinely changes on a date.
 
 The `config` relations must not be dbt models — dbt would recreate and wipe
 them. They are created by migration alongside the connectors-ddl snapshot and
-declared to dbt as sources, the same arrangement as the Rust-owned
-`staging.jira__task_field_history`.
+declared to dbt as sources.
 
 ## 5. Making Gold Source-Neutral
 
@@ -509,9 +508,9 @@ literals. It describes *what is there*. It deliberately does not say *what
 anything means* — that is the configuration tables' job, and the distinction is
 why the two are separate.
 
-**Who reads it.** Today only `jira-enrich`, which builds a field map to classify
-cardinality and value type per event. Its query filters `data_source = 'jira'`,
-so GitHub rows are invisible to it and no change is needed there.
+**Who reads it.** No model: the Jira journal classifies fields from its own
+catalogue (`jira__task_field_kind`), and the binary that once read this table
+to classify cardinality and value type is retired.
 
 **Why populate it anyway.**
 
@@ -570,10 +569,9 @@ listed in [section 1.3](#13-measures-produced-and-withheld).
 Two properties of the rig make this cheaper than it looks. The seeder keys on
 `<schema>.<table>` and does not care which schema that is, so the configuration
 rows a GitHub fixture needs are seeded the same way the bronze rows are — no rig
-change, provided the migration has created the relations. And because phase 1
-adds no enrich binary, the GitHub path runs bronze to gold entirely inside the
-rig: a fixture exercises the real staging models rather than starting from a
-hand-written silver row.
+change, provided the migration has created the relations. And the GitHub path
+runs bronze to gold entirely inside the rig: a fixture exercises the real
+staging models rather than starting from a hand-written silver row.
 
 Files to add, each asserting one thing the design claims:
 
@@ -842,8 +840,9 @@ measure wants them.
 `task_non_bug_type_names` are dbt variables scoped to the whole deployment, with
 no tenant or source key. Two trackers with different type vocabularies collide,
 and an unlisted type falls to `unknown`, which is excluded from both `bugs_fixed`
-and `closed_non_bug` while still counting toward `tasks_closed` — the bug share
-moves with no signal. Migrating these lists into the value-mapping table keyed on
+and `closed_task` while still counting toward `tasks_closed`; it lands in
+`closed_unknown_type` (served as `tasks.closed_unknown`), so the bug share moves
+with a readable cause rather than silently. Migrating these lists into the value-mapping table keyed on
 the source resolves it; the current lists become the per-vendor default seed.
 
 **Three configuration guarantees are implemented but unproven.**

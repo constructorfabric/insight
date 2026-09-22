@@ -13,16 +13,19 @@
 # Proxy source code + Dockerfile + deployment docs:
 #   https://gitlab.constr.dev/insight/secure-enclave → proxies/chatgpt_team/
 #
-# Five streams (Phase 1):
+# Seven streams:
 #   1. chatgpt_team_seats             — full snapshot, offset-paginated
 #   2. chatgpt_team_chat_activity     — per-day, cursor-paginated; DatetimeBasedCursor
 #   3. chatgpt_team_codex_user_daily  — per-day, page-paginated; DatetimeBasedCursor
-#   4. chatgpt_team_subscription_usage   — per-model spend snapshot; tolerates 403
-#   5. chatgpt_team_subscription_balance — current balance snapshot; tolerates 403
+#   4. chatgpt_team_codex_user_daily_org — the same day's envelope, headcount only
+#   5. chatgpt_team_subscription_usage   — per-model spend snapshot; 401/403/404 tolerated
+#   6. chatgpt_team_subscription_balance — current balance snapshot; 401/403/404 tolerated
+#   7. chatgpt_team_account_settings     — workspace seat defaults and caps
 #
-# NOTE: endpoint shapes/fields are derived from the data_collector prototype
-# (apps/openai) and NOT yet verified against a live instance — see connector
-# spec OQ-CGT-3/4/6. The proxy handles the chatgpt.com access_token.
+# The roster, leaderboard and settings shapes below were read back from a
+# workspace. The two subscription streams were not: their fields still come
+# from the data_collector prototype (apps/openai) and are unconfirmed.
+# The proxy handles the chatgpt.com access_token.
 
 version: "7.0.4"
 type: DeclarativeSource
@@ -82,16 +85,24 @@ definitions:
       field_name: end_date
       inject_into: request_parameter
 
-  # Tolerate the most common failure mode for the subscription streams —
-  # the session/account lacks billing visibility. Mark the response as
-  # "no records" instead of failing the whole sync (mirrors claude-team's
-  # overage_spend handling).
-  # The subscription streams need chatgpt_org_id. When it is blank (e.g. an
-  # analytics-viewer account with no billing visibility) the request hits
-  # /subscriptions//usage → 404; a billing-gated session returns 403. Both
-  # are benign here: IGNORE them so the stream commits zero records and the
-  # sync stays GREEN (the seat/chat/Codex streams are unaffected). A real
-  # org_id with billing access starts populating rows automatically.
+  # The subscription streams are the only ones an installation can legitimately
+  # be unable to read, and there are three ways that happens. A blank
+  # chatgpt_org_id makes the path /subscriptions//usage → 404. A session the
+  # vendor gates out of billing → 403. A session whose workspace ROLE is below
+  # account-admin → 401, which is the case an analytics-viewer identity hits.
+  # All three are IGNOREd so the stream commits zero records and the seat, chat
+  # and Codex streams still sync.
+  #
+  # 401 is split into its own filter for one reason: its error_message is the
+  # only place the difference between "no billing capability" and "nothing to
+  # report" is written down. Know what that buys. On action: IGNORE the CDK
+  # passes the message to logger.info (airbyte_cdk http_client, the IGNORE
+  # branch) and nothing else — it becomes a line in the connector's log stream,
+  # never a record, a state message or any field the warehouse can be asked
+  # about later. An empty table has no freshness to go stale either, so
+  # assert_chatgpt_subscription_stream_not_silent compares an instance against
+  # its own past and still cannot see one that never read billing at all.
+  #
   # ⚠️ MONITORING: IGNORE also hides a mistyped chatgpt_org_id or a broken proxy
   # route (green-but-empty). Runbook: if chatgpt_org_id is SET but the
   # subscription streams return 0 rows for N consecutive days, alert — that is a
@@ -100,9 +111,30 @@ definitions:
     type: DefaultErrorHandler
     response_filters:
       - type: HttpResponseFilter
+        http_codes: [401]
+        action: IGNORE
+        error_message: "chatgpt.com returned 401 on a subscription stream — the workspace role is below account-admin, so this installation has no billing capability at all. Stream skipped, sync continues; nothing downstream will ever populate until the role is raised."
+      - type: HttpResponseFilter
         http_codes: [403, 404]
         action: IGNORE
         error_message: "chatgpt.com returned 403/404 — billing not visible (or chatgpt_org_id blank). Subscription stream skipped, sync continues."
+
+  # WORKAROUND: the proxy mints its chatgpt.com bearer from a browser session,
+  # and a session that has just come up answers 401/403 until it settles. RETRY
+  # rather than IGNORE: unlike the billing streams there is no benign reading of
+  # 401/403 here, so the sync must recover or fail loudly — never commit zero
+  # records and report green.
+  session_error_handler: &session_error_handler
+    type: DefaultErrorHandler
+    max_retries: 3
+    backoff_strategies:
+      - type: ConstantBackoffStrategy
+        backoff_time_in_seconds: 60
+    response_filters:
+      - type: HttpResponseFilter
+        http_codes: [401, 403]
+        action: RETRY
+        error_message: "chatgpt-team-proxy returned 401/403 — the browser session may still be settling; retrying."
 
 check:
   type: CheckStream
@@ -136,6 +168,28 @@ streams:
           role: { type: ["string", "null"] }
           seat_type: { type: ["string", "null"] }
           added_at: { type: ["string", "null"] }
+          # INVARIANT: everything below is declared last and in this order. The
+          # reconciler appends a new column to a table that already exists, so
+          # anywhere else would give a fresh install a different column order
+          # from a reconciled one, and union_by_tag reads positionally.
+          #
+          # credit_limits is the per-member spend cap, and it carries three
+          # distinct states the reader must keep apart: absent (no override),
+          # an empty array (an override that removes the cap) and an array of
+          # {enforcement_mode, limit, limit_mode}. Kept whole rather than
+          # flattened — the cap is denominated in credits, not currency.
+          account_user_id: { type: ["string", "null"] }
+          verified_email: { type: ["string", "null"] }
+          trial_state: { type: ["string", "null"] }
+          is_trial: { type: ["boolean", "null"] }
+          is_scim_managed: { type: ["boolean", "null"] }
+          creation_source: { type: ["string", "null"] }
+          # The vendor's own departure signal. Nothing reads it yet; collecting
+          # it is what makes a seat's tenure knowable later at all.
+          deactivated_time: { type: ["string", "null"] }
+          pending_seat_type: { type: ["string", "null"] }
+          reclaimable_seat_type: { type: ["string", "null"] }
+          credit_limits: { type: ["array", "null"] }
     retriever:
       type: SimpleRetriever
       requester:
@@ -143,6 +197,7 @@ streams:
         path: "/api/accounts/{{ config['chatgpt_account_id'] }}/users"
         request_parameters:
           query: ""
+        error_handler: *session_error_handler
       record_selector:
         type: RecordSelector
         extractor:
@@ -218,6 +273,7 @@ streams:
           page_size: "100"
           order_by_field: "messages"
           order_by_direction: "DESC"
+        error_handler: *session_error_handler
       record_selector:
         type: RecordSelector
         extractor:
@@ -255,6 +311,20 @@ streams:
   # Response: {data: [...], total_users}. Page-number-paginated within a
   # day; DatetimeBasedCursor walks days. lines_added comes from a nested
   # code_attribution object.
+  #
+  # INVARIANT: `credits` is ON-DEMAND usage, not total Codex consumption.
+  # Established by reading a workspace back:
+  #   - it equals the vendor's own on-demand figure at every grain that
+  #     publishes one (per user per day, per org per day, per org per month),
+  #     with no observed case of credits > 0 while on-demand is 0;
+  #   - Codex activity routinely records credits = 0 while the same rows carry
+  #     non-zero token counts, on a large share of active days and inside the
+  #     history of every user who has ever spent a credit;
+  #   - the credited/uncredited boundary does not follow the model used, so it
+  #     is not a premium-model meter.
+  # What remains unproven is WHY the uncredited usage is uncredited — covered
+  # by an allowance, or simply unmetered. Either way it is excluded, so the
+  # figure must never be read as total consumption.
   - type: DeclarativeStream
     name: chatgpt_team_codex_user_daily
     primary_key:
@@ -288,14 +358,13 @@ streams:
         <<: *base_requester
         path: "/api/wham/analytics/usage-leaderboard"
         request_parameters:
-          # Daily granularity comes from the day_cursor injecting start_date /
-          # end_date (one day per request). NO window_days — it would make each
-          # "daily" row a 30-day rolling aggregate (≈30× overcount). Dropped per
-          # review; dev values are day-scale (~140 lines/person/day), confirming
-          # the date range is honored.
+          # INVARIANT: no window_days. The day_cursor injects start_date /
+          # end_date for a single day, and window_days would turn each "daily"
+          # row into a rolling multi-day aggregate over the same range.
           client_filter: "all"
           sort_by: "credits"
           sort_direction: "desc"
+        error_handler: *session_error_handler
       record_selector:
         type: RecordSelector
         extractor:
@@ -307,6 +376,11 @@ streams:
           type: PageIncrement
           page_size: 50
           start_from_page: 1
+          # The endpoint is 1-indexed and an omitted `page` answers page 1 —
+          # measured: the no-page and page=1 responses are identical, page=2
+          # returns the next ranks. Naming it changes no behaviour; it removes
+          # a server default the walk would otherwise depend on silently.
+          inject_on_first_request: true
         page_token_option:
           type: RequestOption
           field_name: page
@@ -325,8 +399,10 @@ streams:
             path: [date]
             value: "{{ stream_interval.start_time }}"
           - type: AddedFieldDefinition
+            # Null-safe, not ''-safe: an absent id and an empty one are
+            # different facts and the column is nullable to keep them apart.
             path: [user_id]
-            value: "{{ record['user_id'] | string if record.get('user_id') else '' }}"
+            value: "{{ record['user_id'] | string if record.get('user_id') else None }}"
           - type: AddedFieldDefinition
             # Nested under code_attribution.lines_of_code.added; null-safe.
             path: [lines_added]
@@ -335,16 +411,93 @@ streams:
             path: [unique_key]
             value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_interval.start_time }}-{{ record['email'] }}"
 
-  # ── Stream 4: chatgpt_team_subscription_usage ───────────────────────
+  # ── Stream 4: chatgpt_team_codex_user_daily_org ─────────────────────
+  # The leaderboard envelope without its rows. Same endpoint as stream 3,
+  # asked for one row: field_path [] selects the envelope itself, and
+  # total_users is the day's headcount as the vendor counts it.
+  #
+  # Kept out of chatgpt_team_codex_user_daily because it describes the
+  # organisation, not a person: copying it onto every user row would
+  # multiply one fact by the roster and make any sum wrong.
+  #
+  # No Silver target of its own. It exists so the completeness gate in
+  # chatgpt_team__ai_dev_usage can ask whether a stored day came from a read
+  # that returned everybody — the vendor keeps no history, so a headcount not
+  # captured on the day it was published is gone.
+  - type: DeclarativeStream
+    name: chatgpt_team_codex_user_daily_org
+    primary_key:
+      - date
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        additionalProperties: true
+        properties:
+          tenant_id: { type: string }
+          source_id: { type: string }
+          unique_key: { type: string }
+          collected_at: { type: string }
+          data_source: { type: string }
+          date: { type: string }
+          # INVARIANT: declared last. The reconciler appends a new column to a
+          # table that already exists, so anywhere else would give a fresh
+          # install a different column order from a reconciled one.
+          total_users: { type: ["number", "null"] }
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *base_requester
+        path: "/api/wham/analytics/usage-leaderboard"
+        request_parameters:
+          client_filter: "all"
+          sort_by: "credits"
+          sort_direction: "desc"
+          page_size: "1"
+        error_handler: *session_error_handler
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+    incremental_sync: *day_cursor
+    transformations:
+      # The envelope also holds the leaderboard page. Keeping it would store
+      # the roster twice — once per user row in chatgpt_team_codex_user_daily
+      # and once more inside every org row.
+      - type: RemoveFields
+        field_pointers:
+          - [data]
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [date]
+            value: "{{ stream_interval.start_time }}"
+          - type: AddedFieldDefinition
+            # INVARIANT: the read is in the key, so each read of a day keeps
+            # its own envelope. total_users is only true as of the read that
+            # returned it — a day still in progress reports fewer people than
+            # it ends with — so the gate needs the reference belonging to the
+            # read it judges, not the day's newest one.
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_interval.start_time }}-{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+
+  # ── Stream 5: chatgpt_team_subscription_usage ───────────────────────
   # Per-model spend for the current window. Endpoint:
   #   GET /backend-api/subscriptions/{org_id}/usage
   # Response: {usage_detail: [{label, amount}], current_balance, ...}.
   # No pagination. Snapshot: a `snapshot_date` (today) is injected so daily
   # snapshots accumulate instead of overwriting.
   #
-  # NOTE: the prototype queried the billing cycle (resets on the 14th). We
-  # use a simple [start_date or -30d, today] window here; billing-cycle
-  # alignment is deferred (spec OQ — billing semantics).
+  # INVARIANT: a fixed rolling [-30d, today] window, independent of the
+  # config's start_date. The vendor's billing period does not start on the 1st
+  # and this connector does not model it, so the window is a rolling read of
+  # the current state rather than a period boundary. Nothing here loads a past
+  # billing period, and moving the analytics backfill date does not make it.
+  # Billing-cycle alignment stays deferred.
   - type: DeclarativeStream
     name: chatgpt_team_subscription_usage
     primary_key:
@@ -371,7 +524,11 @@ streams:
         <<: *base_requester
         path: "/api/subscriptions/{{ config['chatgpt_org_id'] }}/usage"
         request_parameters:
-          start_date: "{{ config.get('start_date') or day_delta(-30, format='%Y-%m-%d') }}"
+          # INVARIANT: not config['start_date']. That knob backfills the daily
+          # streams; letting it reach here would silently redefine `amount`
+          # from a rolling 30-day figure to an all-time one under an unchanged
+          # snapshot_date, with nothing downstream recording which it is.
+          start_date: "{{ day_delta(-30, format='%Y-%m-%d') }}"
           end_date: "{{ now_utc().strftime('%Y-%m-%d') }}"
         error_handler: *billing_error_handler
       record_selector:
@@ -394,8 +551,8 @@ streams:
             path: [unique_key]
             value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ now_utc().strftime('%Y-%m-%d') }}-{{ record['label'] }}"
 
-  # ── Stream 5: chatgpt_team_subscription_balance ─────────────────────
-  # Current balance snapshot. Same endpoint as stream 4, but extracts the
+  # ── Stream 6: chatgpt_team_subscription_balance ─────────────────────
+  # Current balance snapshot. Same endpoint as stream 5, but extracts the
   # root object's current_balance (field_path []). One row per run.
   - type: DeclarativeStream
     name: chatgpt_team_subscription_balance
@@ -421,9 +578,75 @@ streams:
         <<: *base_requester
         path: "/api/subscriptions/{{ config['chatgpt_org_id'] }}/usage"
         request_parameters:
-          start_date: "{{ config.get('start_date') or day_delta(-30, format='%Y-%m-%d') }}"
+          # INVARIANT: not config['start_date']. That knob backfills the daily
+          # streams; letting it reach here would silently redefine `amount`
+          # from a rolling 30-day figure to an all-time one under an unchanged
+          # snapshot_date, with nothing downstream recording which it is.
+          start_date: "{{ day_delta(-30, format='%Y-%m-%d') }}"
           end_date: "{{ now_utc().strftime('%Y-%m-%d') }}"
         error_handler: *billing_error_handler
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+    transformations:
+      # field_path [] takes the whole envelope, so the per-model array rides
+      # along as an undeclared field. Dropped here: stream 5 already stores it
+      # one row per model, and a second copy inside the balance row is a
+      # second answer to the same question.
+      - type: RemoveFields
+        field_pointers:
+          - [usage_detail]
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [snapshot_date]
+            value: "{{ now_utc().strftime('%Y-%m-%d') }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ now_utc().strftime('%Y-%m-%d') }}"
+
+  # ── Stream 7: chatgpt_team_account_settings ─────────────────────────
+  # Workspace-level seat defaults. Endpoint:
+  #   GET /backend-api/accounts/{account_id}/settings
+  # One row per run, keyed on the snapshot day.
+  #
+  # Why it is worth a stream of its own: a member's own credit_limits is an
+  # OVERRIDE. seat_type_credit_limits holds the default that actually applies
+  # to everyone without one, so the effective cap for most seats is knowable
+  # only here. Costs one request per sync on the session already open.
+  - type: DeclarativeStream
+    name: chatgpt_team_account_settings
+    primary_key:
+      - snapshot_date
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        additionalProperties: true
+        properties:
+          tenant_id: { type: string }
+          source_id: { type: string }
+          unique_key: { type: string }
+          collected_at: { type: string }
+          data_source: { type: string }
+          snapshot_date: { type: string }
+          # Keyed by seat type, each value a list of cap objects shaped like a
+          # member's credit_limits entry. Kept whole: the key set is the
+          # vendor's seat vocabulary and pinning it here would be a guess.
+          seat_type_credit_limits: { type: ["object", "null"] }
+          default_seat_type: { type: ["string", "null"] }
+          auto_approve_seat_upgrades: { type: ["boolean", "null"] }
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *base_requester
+        path: "/api/accounts/{{ config['chatgpt_account_id'] }}/settings"
+        error_handler: *session_error_handler
       record_selector:
         type: RecordSelector
         extractor:
@@ -503,12 +726,21 @@ spec:
         order: 5
       start_date:
         type: string
-        title: Start Date (daily streams only)
+        title: Start Date (daily analytics streams only)
         description: |
-          Earliest date to backfill the per-day streams (chat_activity,
-          codex_user_daily) from (YYYY-MM-DD). Default: 7 days ago. Set to
-          "2026-01-14" for a full historical backfill (earliest observed
-          data point for the test org). Also bounds the subscription window.
+          Earliest date (YYYY-MM-DD) the per-day ANALYTICS streams backfill
+          from: chat_activity, codex_user_daily and codex_user_daily_org.
+          Default: 7 days ago. There is no floor — how far back it reaches is
+          whatever history the workspace still holds.
+
+          It does NOT reach the subscription streams. Those ask for a fixed
+          rolling 30-day window ending today, whatever this is set to, so
+          moving it back does not load historical billing periods. Historical
+          subscription backfill is not supported and has not been confirmed
+          against a live workspace.
+
+          The seat roster and account settings are full snapshots and have no
+          window at all.
         default: ""
         order: 6
     additionalProperties: true

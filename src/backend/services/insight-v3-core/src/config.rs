@@ -6,6 +6,18 @@ use thiserror::Error;
 
 const DEFAULT_CLICKHOUSE_DATABASE: &str = "insight";
 const DEFAULT_IDENTITY_DATABASE: &str = "identity";
+/// Datasets keep their records apart from the warehouse the rest of Insight
+/// builds, so nothing this service creates or drops can reach a table someone
+/// else owns.
+const DEFAULT_DATASETS_DATABASE: &str = "insight_datasets";
+/// How many of a dataset's latest records a reader is shown at once.
+/// The most one page of records may hold, however many a reader asks for.
+const DEFAULT_DATASET_PREVIEW_ROWS: u64 = 200;
+/// The widest preview an installation may ask for: the payloads are whole
+/// records, so the bound is on what one response may carry, not on taste.
+const MAX_DATASET_PREVIEW_ROWS: u64 = 500;
+/// The longest an installation may let an abandoned attempt hold a dataset.
+const MAX_DATASET_LEASE_SECS: i64 = 3600;
 pub(crate) const MIN_INGEST_TOKEN_BYTES: usize = 32;
 pub(crate) const MAX_INGEST_TOKEN_BYTES: usize = 1024;
 const DEFAULT_CHAT_MODEL: &str = "claude-sonnet-5";
@@ -53,6 +65,12 @@ pub(crate) struct GearConfig {
     pub(crate) clickhouse_database: String,
     /// The database identity materialises into.
     pub(crate) identity_database: String,
+    /// The database the datasets' own tables live in.
+    pub(crate) datasets_database: String,
+    /// How many of a dataset's latest records its page shows.
+    pub(crate) dataset_preview_rows: u64,
+    /// How long an abandoned create or removal holds its dataset.
+    pub(crate) dataset_lease_secs: i64,
     pub(crate) clickhouse_user: Option<String>,
     pub(crate) clickhouse_password: Option<SecretString>,
     /// The read-only principal the assistant's query path connects as. Blank
@@ -73,6 +91,9 @@ impl Default for GearConfig {
             clickhouse_url: String::new(),
             clickhouse_database: DEFAULT_CLICKHOUSE_DATABASE.to_owned(),
             identity_database: DEFAULT_IDENTITY_DATABASE.to_owned(),
+            datasets_database: DEFAULT_DATASETS_DATABASE.to_owned(),
+            dataset_preview_rows: DEFAULT_DATASET_PREVIEW_ROWS,
+            dataset_lease_secs: crate::domain::datasets::LEASE_SECS,
             clickhouse_user: None,
             clickhouse_password: None,
             clickhouse_query_user: None,
@@ -91,12 +112,17 @@ impl Default for GearConfig {
 /// migration that cannot serve a request should still run.
 pub(crate) struct StoreConfig {
     clickhouse: insight_clickhouse::Client,
+    datasets_database: String,
     database_url: String,
 }
 
 impl StoreConfig {
     pub(crate) fn clickhouse(&self) -> &insight_clickhouse::Client {
         &self.clickhouse
+    }
+
+    pub(crate) fn datasets_database(&self) -> &str {
+        &self.datasets_database
     }
 
     pub(crate) fn database_url(&self) -> &str {
@@ -108,6 +134,9 @@ pub(crate) struct ValidatedConfig {
     clickhouse_url: String,
     clickhouse_database: String,
     identity_database: String,
+    datasets_database: String,
+    dataset_preview_rows: u64,
+    dataset_lease_secs: i64,
     clickhouse_user: Option<String>,
     clickhouse_password: Option<SecretString>,
     clickhouse_query_user: Option<String>,
@@ -130,6 +159,9 @@ impl fmt::Debug for GearConfig {
             .field("clickhouse_url", &self.clickhouse_url)
             .field("clickhouse_database", &self.clickhouse_database)
             .field("identity_database", &self.identity_database)
+            .field("datasets_database", &self.datasets_database)
+            .field("dataset_preview_rows", &self.dataset_preview_rows)
+            .field("dataset_lease_secs", &self.dataset_lease_secs)
             .field("clickhouse_user", &self.clickhouse_user)
             .field("clickhouse_password", &REDACTED)
             .field("clickhouse_query_user", &self.clickhouse_query_user)
@@ -151,6 +183,9 @@ impl fmt::Debug for ValidatedConfig {
             .field("clickhouse_url", &self.clickhouse_url)
             .field("clickhouse_database", &self.clickhouse_database)
             .field("identity_database", &self.identity_database)
+            .field("datasets_database", &self.datasets_database)
+            .field("dataset_preview_rows", &self.dataset_preview_rows)
+            .field("dataset_lease_secs", &self.dataset_lease_secs)
             .field("clickhouse_user", &self.clickhouse_user)
             .field("clickhouse_password", &REDACTED)
             .field("clickhouse_query_user", &self.clickhouse_query_user)
@@ -242,14 +277,36 @@ impl ValidatedConfig {
     }
 
     /// The database gold materialises into — `dbt_project.yml` sets
-    /// `gold_database` to the same one this service reads and writes.
-    pub(crate) fn clickhouse_database(&self) -> String {
-        self.clickhouse_database.clone()
-    }
-
     /// The database holding the names people are known by.
     pub(crate) fn identity_database(&self) -> &str {
         &self.identity_database
+    }
+
+    pub(crate) fn datasets_database(&self) -> String {
+        self.datasets_database.clone()
+    }
+
+    pub(crate) fn dataset_preview_rows(&self) -> u64 {
+        self.dataset_preview_rows
+    }
+
+    pub(crate) fn dataset_lease(&self) -> crate::domain::datasets::Lease {
+        crate::domain::datasets::Lease::of_seconds(self.dataset_lease_secs)
+    }
+
+    /// A client connected to the database the datasets' tables live in, which
+    /// is the only database this service creates or drops a table in.
+    pub(crate) fn datasets_client(&self) -> insight_clickhouse::Client {
+        let mut config =
+            insight_clickhouse::Config::new(&self.clickhouse_url, &self.datasets_database);
+        if let (Some(user), Some(password)) = (
+            self.clickhouse_user.as_deref(),
+            self.clickhouse_password.as_ref(),
+        ) {
+            config = config.with_auth(user, password.expose_secret());
+        }
+
+        insight_clickhouse::Client::new(config)
     }
 }
 
@@ -259,6 +316,7 @@ impl GearConfig {
     pub(crate) fn validate_stores(self) -> Result<StoreConfig, ConfigError> {
         require_non_empty("clickhouse_url", &self.clickhouse_url)?;
         require_non_empty("clickhouse_database", &self.clickhouse_database)?;
+        validate_datasets_database(&self.datasets_database, &self.clickhouse_database)?;
         require_non_empty("database_url", &self.database_url)?;
         validate_credentials(
             self.clickhouse_user.as_deref(),
@@ -282,6 +340,7 @@ impl GearConfig {
                     ),
                 },
             ),
+            datasets_database: self.datasets_database,
             database_url: self.database_url,
         })
     }
@@ -290,6 +349,13 @@ impl GearConfig {
         require_non_empty("clickhouse_url", &self.clickhouse_url)?;
         require_non_empty("clickhouse_database", &self.clickhouse_database)?;
         require_non_empty("identity_database", &self.identity_database)?;
+        validate_datasets_database(&self.datasets_database, &self.clickhouse_database)?;
+        if self.dataset_preview_rows == 0 || self.dataset_preview_rows > MAX_DATASET_PREVIEW_ROWS {
+            return Err(ConfigError::PreviewRows(MAX_DATASET_PREVIEW_ROWS));
+        }
+        if self.dataset_lease_secs <= 0 || self.dataset_lease_secs > MAX_DATASET_LEASE_SECS {
+            return Err(ConfigError::LeaseSecs(MAX_DATASET_LEASE_SECS));
+        }
         require_non_empty("chat_model", &self.chat_model)?;
         require_non_empty("database_url", &self.database_url)?;
         require_non_empty("identity_url", &self.identity_url)?;
@@ -313,6 +379,9 @@ impl GearConfig {
             clickhouse_url: self.clickhouse_url,
             clickhouse_database: self.clickhouse_database,
             identity_database: self.identity_database,
+            datasets_database: self.datasets_database,
+            dataset_preview_rows: self.dataset_preview_rows,
+            dataset_lease_secs: self.dataset_lease_secs,
             clickhouse_user: self.clickhouse_user,
             clickhouse_password: self.clickhouse_password,
             clickhouse_query_user,
@@ -350,6 +419,24 @@ impl IngestToken {
     fn as_secret(&self) -> &SecretString {
         &self.0
     }
+}
+
+/// The datasets database is interpolated into SQL as a name and is the one
+/// place this service creates and drops tables, so it has to be a plain
+/// identifier and it has to be a database of its own.
+fn validate_datasets_database(datasets: &str, warehouse: &str) -> Result<(), ConfigError> {
+    let is_identifier = !datasets.is_empty()
+        && datasets
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '_');
+    if !is_identifier {
+        return Err(ConfigError::DatasetsDatabaseName);
+    }
+    if datasets == warehouse {
+        return Err(ConfigError::DatasetsDatabaseIsTheWarehouse);
+    }
+
+    Ok(())
 }
 
 fn require_non_empty(field: &'static str, value: &str) -> Result<(), ConfigError> {
@@ -407,6 +494,14 @@ pub(crate) enum ConfigError {
     InvalidIngestTokenCharacters,
     #[error("gears.insight-v3-core.config.mcp.bind_addr is not a socket address")]
     McpBindAddr,
+    #[error("gears.insight-v3-core.config.dataset_preview_rows must be 1 to {0}")]
+    PreviewRows(u64),
+    #[error("gears.insight-v3-core.config.dataset_lease_secs must be 1 to {0}")]
+    LeaseSecs(i64),
+    #[error("gears.insight-v3-core.config.datasets_database must be letters, digits or underscore")]
+    DatasetsDatabaseName,
+    #[error("gears.insight-v3-core.config.datasets_database must not be the clickhouse_database")]
+    DatasetsDatabaseIsTheWarehouse,
 }
 
 #[derive(Debug, Error)]
@@ -420,260 +515,4 @@ pub(crate) enum ConfigLoadError {
 }
 
 #[cfg(test)]
-mod tests {
-    use secrecy::SecretString;
-
-    use super::*;
-
-    fn valid_config() -> GearConfig {
-        GearConfig {
-            clickhouse_url: "http://clickhouse.example.test:8123".to_owned(),
-            clickhouse_database: "insight".to_owned(),
-            identity_database: "identity".to_owned(),
-            clickhouse_user: None,
-            clickhouse_password: None,
-            clickhouse_query_user: None,
-            clickhouse_query_password: None,
-            ingest_token: SecretString::from("test-ingest-token-0123456789abcdef"),
-            anthropic_token: SecretString::from("test-anthropic-token"),
-            mcp: McpConfig::default(),
-            chat_model: "claude-sonnet-5".to_owned(),
-            database_url: "mysql://insight:secret@mariadb.example.test:3306/insight_v3".to_owned(),
-            identity_url: "http://identity-resolution.example.test:8082".to_owned(),
-        }
-    }
-
-    #[test]
-    fn required_values_must_not_be_empty() {
-        for field in ["clickhouse_url", "clickhouse_database", "ingest_token"] {
-            let mut config = valid_config();
-            match field {
-                "clickhouse_url" => config.clickhouse_url.clear(),
-                "clickhouse_database" => config.clickhouse_database.clear(),
-                "ingest_token" => config.ingest_token = SecretString::from(String::new()),
-                _ => unreachable!(),
-            }
-
-            assert!(config.validate().is_err(), "empty {field} must be rejected");
-        }
-    }
-
-    #[test]
-    fn chat_model_must_not_be_empty() {
-        let mut config = valid_config();
-        config.chat_model.clear();
-
-        assert!(config.validate().is_err());
-    }
-
-    #[test]
-    fn a_stand_without_an_anthropic_token_still_serves_everything_else() {
-        let mut config = valid_config();
-        config.anthropic_token = SecretString::from(String::new());
-        assert!(
-            config.validate().is_ok(),
-            "the assistant is one endpoint; the rest of the service does not wait on its key"
-        );
-    }
-
-    #[test]
-    fn secrets_are_redacted_from_debug_output() {
-        let mut config = valid_config();
-        config.clickhouse_user = Some("writer".to_owned());
-        config.clickhouse_password = Some(SecretString::from("database-secret"));
-
-        let rendered = format!("{config:?}");
-
-        assert!(!rendered.contains("test-ingest-token-0123456789abcdef"));
-        assert!(!rendered.contains("database-secret"));
-        assert!(!rendered.contains("test-anthropic-token"));
-    }
-
-    #[test]
-    fn credentials_must_be_complete() {
-        let mut config = valid_config();
-        config.clickhouse_user = Some("writer".to_owned());
-
-        assert!(matches!(
-            config.validate(),
-            Err(ConfigError::IncompleteCredentials)
-        ));
-    }
-
-    #[test]
-    fn ingest_token_must_be_usable_in_the_instance_token_header() {
-        let invalid_tokens = [
-            "token with space".to_owned(),
-            "töken".to_owned(),
-            "x".repeat(1025),
-        ];
-
-        for token in invalid_tokens {
-            let mut config = valid_config();
-            config.ingest_token = SecretString::from(token);
-
-            assert!(
-                config.validate().is_err(),
-                "configured token outside the instance-token header contract must be rejected"
-            );
-        }
-    }
-
-    #[test]
-    fn ingest_token_accepts_the_wire_size_boundary() {
-        let mut config = valid_config();
-        config.ingest_token = SecretString::from("x".repeat(MAX_INGEST_TOKEN_BYTES));
-
-        assert!(config.validate().is_ok());
-    }
-
-    #[test]
-    fn ingest_token_rejects_values_shorter_than_32_bytes() {
-        let mut config = valid_config();
-        config.ingest_token = SecretString::from("x".repeat(31));
-
-        assert!(config.validate().is_err());
-    }
-
-    #[test]
-    fn ingest_token_accepts_the_minimum_size_boundary() {
-        let mut config = valid_config();
-        config.ingest_token = SecretString::from("x".repeat(32));
-
-        assert!(config.validate().is_ok());
-    }
-
-    #[test]
-    fn the_query_client_falls_back_to_the_ordinary_credentials_when_no_reader_is_configured() {
-        let mut config = valid_config();
-        config.clickhouse_user = Some("writer".to_owned());
-        config.clickhouse_password = Some(SecretString::from("writer-secret"));
-
-        let validated = config
-            .validate()
-            .unwrap_or_else(|error| panic!("config must be valid: {error}"));
-        let client = validated.clickhouse_query_client();
-
-        assert_eq!(client.config().user.as_deref(), Some("writer"));
-        assert_eq!(client.config().password.as_deref(), Some("writer-secret"));
-    }
-
-    #[test]
-    fn the_query_client_uses_the_reader_when_it_is_configured() {
-        let mut config = valid_config();
-        config.clickhouse_user = Some("writer".to_owned());
-        config.clickhouse_password = Some(SecretString::from("writer-secret"));
-        config.clickhouse_query_user = Some("reader".to_owned());
-        config.clickhouse_query_password = Some(SecretString::from("reader-secret"));
-
-        let validated = config
-            .validate()
-            .unwrap_or_else(|error| panic!("config must be valid: {error}"));
-        let client = validated.clickhouse_query_client();
-
-        assert_eq!(client.config().user.as_deref(), Some("reader"));
-        assert_eq!(client.config().password.as_deref(), Some("reader-secret"));
-    }
-
-    #[test]
-    fn a_blank_reader_setting_reads_as_unset_rather_than_as_a_credential() {
-        let mut config = valid_config();
-        config.clickhouse_user = Some("writer".to_owned());
-        config.clickhouse_password = Some(SecretString::from("writer-secret"));
-        config.clickhouse_query_user = Some(String::new());
-        config.clickhouse_query_password = Some(SecretString::from(String::new()));
-
-        let validated = config
-            .validate()
-            .unwrap_or_else(|error| panic!("config must be valid: {error}"));
-        let client = validated.clickhouse_query_client();
-
-        assert_eq!(client.config().user.as_deref(), Some("writer"));
-    }
-
-    #[test]
-    fn half_a_reader_credential_is_refused_instead_of_falling_back() {
-        let mut config = valid_config();
-        config.clickhouse_query_user = Some("reader".to_owned());
-
-        assert!(matches!(
-            config.validate(),
-            Err(ConfigError::IncompleteQueryCredentials)
-        ));
-    }
-    fn mcp(enabled: bool, bind_addr: &str, public_url: &str) -> McpConfig {
-        McpConfig {
-            enabled,
-            bind_addr: bind_addr.to_owned(),
-            public_url: public_url.to_owned(),
-            jwks_url: String::new(),
-            allow_insecure_private_network: false,
-        }
-    }
-
-    #[test]
-    fn the_mcp_server_is_off_and_bound_to_the_documented_port_by_default() {
-        let config = McpConfig::default();
-
-        assert!(!config.enabled);
-        assert_eq!(config.bind_addr, "0.0.0.0:8087");
-        assert!(config.public_url.is_empty());
-    }
-
-    #[test]
-    fn a_disabled_mcp_server_needs_no_public_url() {
-        assert!(validate_mcp(&McpConfig::default()).is_ok());
-    }
-
-    #[test]
-    fn an_enabled_mcp_server_without_a_public_url_is_refused() {
-        let Err(error) = validate_mcp(&mcp(true, "0.0.0.0:8087", "")) else {
-            panic!("a server with no origin has no issuer to verify a token against");
-        };
-
-        assert!(
-            matches!(error, ConfigError::Empty("mcp.public_url")),
-            "{error:?}"
-        );
-    }
-
-    #[test]
-    fn an_enabled_mcp_server_with_an_unparseable_bind_address_is_refused() {
-        let Err(error) = validate_mcp(&mcp(
-            true,
-            "not-an-address",
-            "https://insight.example.invalid",
-        )) else {
-            panic!("an address that is not a socket address cannot be bound");
-        };
-
-        assert!(matches!(error, ConfigError::McpBindAddr), "{error:?}");
-    }
-
-    #[test]
-    fn an_enabled_mcp_server_is_accepted_with_an_origin_and_an_address() {
-        assert!(
-            validate_mcp(&mcp(
-                true,
-                "0.0.0.0:8087",
-                "https://insight.example.invalid"
-            ))
-            .is_ok()
-        );
-    }
-
-    #[test]
-    fn a_config_whose_mcp_section_is_invalid_is_refused_as_a_whole() {
-        let mut raw = valid_config();
-        raw.mcp = mcp(true, "0.0.0.0:8087", "");
-
-        let Err(error) = raw.validate() else {
-            panic!("an enabled server with no origin makes the whole config invalid");
-        };
-
-        assert!(
-            matches!(error, ConfigError::Empty("mcp.public_url")),
-            "{error:?}"
-        );
-    }
-}
+mod tests;

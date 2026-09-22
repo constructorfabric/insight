@@ -17,7 +17,8 @@
 --   conversation_count ← NULL         — user_list reports messages, not conversations.
 --   The per-bucket message splits (gpt/tool/connector/project), credits_used and
 --   seat_type are preserved in surface_metrics_json (the shared schema has no
---   dedicated columns for them).
+--   dedicated columns for them). seat_type is resolved roster-first, falling
+--   back to the tier the usage row restates.
 {{ config(
     materialized='incremental',
     incremental_strategy='append',
@@ -29,6 +30,26 @@
     schema='staging',
     tags=['chatgpt-team', 'silver:class_ai_assistant_usage']
 ) }}
+
+WITH roster_seat_type AS (
+
+    -- The seat tier as the roster reports it. The roster is the primary and
+    -- the usage row the fallback: the roster leaves seat_type null for some
+    -- members, and the usage row is the only other place the tier appears.
+    -- Column names are prefixed so the join below stays unambiguous against
+    -- the activity row's own tenant_id / source_id / email / seat_type.
+    SELECT
+        coalesce(tenant_id, '')                                     AS r_tenant_id,
+        coalesce(source_id, '')                                     AS r_source_id,
+        lower(trim(email))                                          AS r_email,
+        nullIf(trim(coalesce(seat_type, '')), '')                   AS r_seat_type
+    FROM {{ source('bronze_chatgpt_team', 'chatgpt_team_seats') }} FINAL
+    WHERE email IS NOT NULL
+      AND trim(email) != ''
+    ORDER BY _airbyte_extracted_at DESC
+    LIMIT 1 BY r_tenant_id, r_source_id, r_email
+
+)
 
 SELECT
     tenant_id                                                       AS insight_tenant_id,
@@ -62,7 +83,13 @@ SELECT
         'connector_messages', toString(coalesce(toUInt32OrNull(toString(connector_messages)), 0)),
         'project_messages',   toString(coalesce(toUInt32OrNull(toString(project_messages)), 0)),
         'credits_used',       toString(coalesce(credits_used, 0)),
-        'seat_type',          coalesce(seat_type, '')
+        -- nullIf on the joined column, not plain coalesce: without
+        -- join_use_nulls an unmatched LEFT JOIN yields the column's default
+        -- rather than NULL, and an empty roster hit must fall through to the
+        -- tier the usage row restates instead of winning as ''.
+        'seat_type',          coalesce(nullIf(r_seat_type, ''),
+                                       nullIf(trim(coalesce(seat_type, '')), ''),
+                                       '')
     )) AS Nullable(String))                                         AS surface_metrics_json,
     'chatgpt_team'                                                  AS source,
     data_source                                                     AS data_source,
@@ -78,18 +105,23 @@ FROM (
     -- Dedup on the SAME normalized key the unique_key uses (lower(trim(email))),
     -- else two case-variant spellings collide on unique_key (unique-test fail).
     LIMIT 1 BY tenant_id, source_id, lower(trim(email)), date
-)
+) AS activity
+LEFT JOIN roster_seat_type AS roster
+       ON roster.r_tenant_id = coalesce(activity.tenant_id, '')
+      AND roster.r_source_id = coalesce(activity.source_id, '')
+      AND roster.r_email = lower(trim(activity.email))
 WHERE email IS NOT NULL
   AND trim(email) != ''
   AND date IS NOT NULL
-  -- Emit a row whenever any chat-surface counter signals activity.
-  AND (
-        coalesce(toUInt32OrNull(toString(messages)), 0) > 0
-     OR coalesce(toUInt32OrNull(toString(tool_messages)), 0) > 0
-     OR coalesce(toUInt32OrNull(toString(connector_messages)), 0) > 0
-     OR coalesce(toUInt32OrNull(toString(project_messages)), 0) > 0
-     OR coalesce(toUInt32OrNull(toString(gpt_messages)), 0) > 0
-  )
+  -- toDate throws on '' where it returns NULL on a NULL, so the emptiness
+  -- guard is not redundant with the IS NOT NULL above.
+  AND trim(date) != ''
+  -- INVARIANT: the one term is the one counter this model emits into the
+  -- class. `messages` is the day's total and the per-bucket splits partition
+  -- it, so admitting a row on a split would admit a row whose message_count
+  -- is zero — activity none of its class columns can evidence, which is what
+  -- assert_ai_assistant_usage_rows_active fails on.
+  AND coalesce(toUInt32OrNull(toString(messages)), 0) > 0
 {% if is_incremental() %}
   -- Empty-table guard. Over an empty `this` (the e2e rig resets staging between
   -- tests) `max(day)` is the Date epoch (1970-01-01) and `- INTERVAL 3 DAY`

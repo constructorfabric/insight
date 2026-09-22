@@ -4,6 +4,7 @@ import { ArrowLeft } from "lucide-react";
 
 import type { Widget } from "@/api/custom-client";
 import { CustomTable } from "@/components/custom/custom-table";
+import { refusal } from "@/components/custom/refusal";
 import {
   MetricSummary,
   WidgetSummary,
@@ -179,29 +180,21 @@ function StoredMetric({ name }: { name: string }) {
   if (definition.isError || !definition.data) {
     return (
       <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
-        {definition.isError
-          ? (definition.error as Error).message
-          : "That metric is not there."}
+        {refusal(definition.error, "That metric is not there.")}
       </p>
     );
   }
 
-  return <MetricSummary definition={definition.data} />;
+  return <MetricSummary definition={definition.data.definition} />;
 }
 
-function Rows({
-  metric,
-  options,
-}: {
-  metric: string;
-  options?: RunOptions;
-}) {
+function Rows({ metric, options }: { metric: string; options?: RunOptions }) {
   const definition = useQuery(metricQuery(metric));
 
   // The rows have to be the rows behind the number on the card, so they take
-  // the card's own window — and a metric with no clock of its own cannot be
-  // windowed at all.
-  const windowed = options && Boolean(definition.data?.time);
+  // the card's own window — and a metric nothing dates cannot be windowed at
+  // all.
+  const windowed = options && Boolean(definition.data?.clock);
   const result = useQuery({
     ...metricResultQuery(metric, windowed ? options : undefined),
     enabled: definition.isSuccess,
@@ -212,7 +205,7 @@ function Rows({
   if (result.isError) {
     return (
       <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
-        {(result.error as Error).message}
+        {refusal(result.error, "The metric could not be run.")}
       </p>
     );
   }
