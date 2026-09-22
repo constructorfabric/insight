@@ -450,12 +450,12 @@ FROM (
           AND credit.email != ''
           AND credit.collected_at IS NOT NULL
           -- Empty binds every instance of the vendor, as in ai_seat_tier_map.
-          AND price.insight_source_id IN (credit.source_id, '')
+          AND has([credit.source_id, ''], price.insight_source_id)
           -- The price that had taken effect by the day the credits were spent.
           -- A day earlier than every price resolves to nothing, and the INNER
           -- join then drops it: no rate, no money, never a zero.
           AND price.effective_from <= credit.day
-          AND rate.tenant_id IN (credit.insight_tenant_id, '')
+          AND has([credit.insight_tenant_id, ''], rate.tenant_id)
     )
     WHERE pick = 1
 ) AS priced_day

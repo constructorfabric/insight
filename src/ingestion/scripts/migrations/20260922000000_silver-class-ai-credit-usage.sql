@@ -9,6 +9,11 @@
 -- must match chatgpt_team__ai_credit_usage's SELECT order exactly, and any
 -- contributor added later must match it too.
 --
+-- Types are the ones dbt materialises, not the ones the column names suggest:
+-- a literal in a SELECT lands as String rather than LowCardinality(String), and
+-- toUnixTimestamp64Milli returns Int64. A warm relation built here has to match
+-- what a fresh one gets, or the two diverge the moment both exist.
+--
 -- Idempotent: this channel has no ledger and re-runs on every deploy.
 --
 CREATE TABLE IF NOT EXISTS silver.class_ai_credit_usage
@@ -18,13 +23,13 @@ CREATE TABLE IF NOT EXISTS silver.class_ai_credit_usage
     `unique_key` String,
     `email` Nullable(String),
     `day` Date,
-    `tool` LowCardinality(String),
+    `tool` String,
     `credits` Decimal(18, 6),
-    `credit_kind` LowCardinality(String),
-    `source` LowCardinality(String),
+    `credit_kind` String,
+    `source` String,
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
-    `_version` UInt64
+    `_version` Int64
 )
 ENGINE = ReplacingMergeTree(_version)
 ORDER BY unique_key

@@ -45,7 +45,10 @@ SELECT
         coalesce(date, '')
     ) AS String)                                        AS unique_key,
     lower(trim(email))                                  AS email,
-    toDate(date)                                        AS day,
+    -- assumeNotNull after the NOT NULL filter below: gold builds record_id
+    -- from toString(day), and a Nullable there reaches the evidence table's
+    -- sorting key, which MergeTree refuses.
+    assumeNotNull(toDate(date))                         AS day,
     'codex'                                             AS tool,
     -- Decimal, not Float: credits are summed across people and months, and a
     -- float sum reorders under parallel aggregation and stops being stable.
