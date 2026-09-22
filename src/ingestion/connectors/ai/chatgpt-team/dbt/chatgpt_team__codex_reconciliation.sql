@@ -22,7 +22,14 @@
     tags=['chatgpt-team']
 ) }}
 
-WITH leaderboard AS (
+WITH
+-- INVARIANT: deduped to the JOIN grain, which is narrower than the Bronze key.
+-- The leaderboard's unique_key carries the email, so one person whose address
+-- changes within a day keeps both rows through FINAL, and both would reach the
+-- join — repeating the session match and reporting a credits_delta twice.
+-- Nothing downstream would show that the duplicate was ours rather than the
+-- vendor's, which is the one thing a reconciliation view must not do.
+leaderboard AS (
 
     SELECT
         coalesce(tenant_id, '')                     AS insight_tenant_id,
@@ -34,6 +41,8 @@ WITH leaderboard AS (
     WHERE user_id IS NOT NULL
       AND trim(user_id) != ''
       AND date IS NOT NULL
+    ORDER BY _airbyte_extracted_at DESC
+    LIMIT 1 BY coalesce(tenant_id, ''), coalesce(source_id, ''), trim(user_id), toDateOrNull(date)
 
 ),
 
