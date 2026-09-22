@@ -1,0 +1,69 @@
+name: Self-hosted runner smoke
+
+on:
+  push:
+    branches:
+      - chore/self-hosted-runner-smoke-3515
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: [self-hosted, linux, x64, insight-vhc-canary]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Every probe runs even after one fails, so a single push reports the whole
+      # picture instead of only the first gap.
+      - name: Host
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          hostname
+          uname -a
+
+      - name: CPU and memory
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          nproc
+          free -h
+
+      - name: Disks
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          df -h
+          df -h /srv/gha
+
+      - name: Docker
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          docker version
+          docker info
+          docker compose version
+          docker run --rm hello-world
+
+      - name: Base tools
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          git --version
+          jq --version
+          yq --version
+
+      - name: Passwordless sudo
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          sudo -n true
+
+      - name: Docker state
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          docker ps -a
+          docker system df
