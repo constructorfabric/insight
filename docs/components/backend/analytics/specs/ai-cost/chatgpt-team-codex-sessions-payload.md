@@ -4,8 +4,9 @@ Every field the ChatGPT Team endpoint `wham/analytics/daily-sessions-messages-co
 returns, what we do with it today, and what is simply not established.
 
 The purpose is to let a reader decide what else is worth collecting without
-re-reading the vendor. Nothing here is a commitment: a field marked
-`not selected yet` is a field nobody has asked for, not one that was rejected.
+re-reading the vendor. Everything the per-person aggregate publishes is stored
+and surfaced; what remains outside is listed under "Not collected", with the
+reason, and none of it was rejected on merit — nobody has asked for it yet.
 
 The endpoint is undocumented by the vendor. Field names below are the vendor's;
 semantics are inferred from the names and from the shape of the responses, and
@@ -48,15 +49,15 @@ on.
 |---|---|---|---|---|
 | `credit_total` | float | Sum of the per-surface credits below. | yes | yes, for reconciliation only |
 | `on_demand_credits` | float | The vendor's own name for the same figure. Observed equal to `credit_total` wherever both are published. | yes | yes, for reconciliation only |
-| `credit_cli` | float | Credits attributed to the CLI surface. | yes | not selected yet |
-| `credit_vscode` | float | VS Code extension. | yes | not selected yet |
-| `credit_exec` | float | Named `exec`; the vendor does not document what it covers. Inferred to be non-interactive execution, **not established**. | yes | not selected yet |
-| `credit_sdk_ts` | float | TypeScript SDK. | yes | not selected yet |
-| `credit_desktop` | float | Desktop app. | yes | not selected yet |
-| `credit_web` | float | Web surface. | yes | not selected yet |
-| `credit_slack` | float | Slack integration. | yes | not selected yet |
-| `credit_github_code_review` | float | GitHub code-review integration. | yes | not selected yet |
-| `credit_github_turn` | float | GitHub, per turn. How this differs from `credit_github_code_review` is **not established**. | yes | not selected yet |
+| `credit_cli` | float | Credits attributed to the CLI surface. | yes | yes |
+| `credit_vscode` | float | VS Code extension. | yes | yes |
+| `credit_exec` | float | Named `exec`; the vendor does not document what it covers. Inferred to be non-interactive execution, **not established**. | yes | yes |
+| `credit_sdk_ts` | float | TypeScript SDK. | yes | yes |
+| `credit_desktop` | float | Desktop app. | yes | yes |
+| `credit_web` | float | Web surface. | yes | yes |
+| `credit_slack` | float | Slack integration. | yes | yes |
+| `credit_github_code_review` | float | GitHub code-review integration. | yes | yes |
+| `credit_github_turn` | float | GitHub, per turn. How this differs from `credit_github_code_review` is **not established**. | yes | yes |
 
 > **Authority.** These credits are collected to reconcile against the usage
 > leaderboard, which remains the authoritative source of the total. The
@@ -82,15 +83,15 @@ every one of these reads zero. This is why they are not used to decide activity.
 | Vendor field | Type | Stored | Surfaced |
 |---|---|---|---|
 | `n_new_sessions_total` | int | yes | yes |
-| `n_new_sessions_cli` | int | yes | not selected yet |
-| `n_new_sessions_vscode` | int | yes | not selected yet |
-| `n_new_sessions_exec` | int | yes | not selected yet |
-| `n_new_sessions_sdk_ts` | int | yes | not selected yet |
-| `n_new_sessions_desktop` | int | yes | not selected yet |
-| `n_new_sessions_work_desktop` | int | yes | not selected yet |
-| `n_new_sessions_work_web` | int | yes | not selected yet |
-| `n_new_sessions_work_mobile` | int | yes | not selected yet |
-| `n_new_sessions_other` | int | yes | not selected yet |
+| `n_new_sessions_cli` | int | yes | yes |
+| `n_new_sessions_vscode` | int | yes | yes |
+| `n_new_sessions_exec` | int | yes | yes |
+| `n_new_sessions_sdk_ts` | int | yes | yes |
+| `n_new_sessions_desktop` | int | yes | yes |
+| `n_new_sessions_work_desktop` | int | yes | yes |
+| `n_new_sessions_work_web` | int | yes | yes |
+| `n_new_sessions_work_mobile` | int | yes | yes |
+| `n_new_sessions_other` | int | yes | yes |
 
 The `work_*` prefix distinguishes a work surface from a personal one. What the
 vendor counts as `other` is **not established**.
@@ -100,15 +101,15 @@ vendor counts as `other` is **not established**.
 | Vendor field | Type | Stored | Surfaced |
 |---|---|---|---|
 | `n_user_messages_total` | int | yes | yes |
-| `n_user_messages_cli` | int | yes | not selected yet |
-| `n_user_messages_vscode` | int | yes | not selected yet |
-| `n_user_messages_exec` | int | yes | not selected yet |
-| `n_user_messages_sdk_ts` | int | yes | not selected yet |
-| `n_user_messages_desktop` | int | yes | not selected yet |
-| `n_user_messages_work_desktop` | int | yes | not selected yet |
-| `n_user_messages_work_web` | int | yes | not selected yet |
-| `n_user_messages_work_mobile` | int | yes | not selected yet |
-| `n_user_messages_other` | int | yes | not selected yet |
+| `n_user_messages_cli` | int | yes | yes |
+| `n_user_messages_vscode` | int | yes | yes |
+| `n_user_messages_exec` | int | yes | yes |
+| `n_user_messages_sdk_ts` | int | yes | yes |
+| `n_user_messages_desktop` | int | yes | yes |
+| `n_user_messages_work_desktop` | int | yes | yes |
+| `n_user_messages_work_web` | int | yes | yes |
+| `n_user_messages_work_mobile` | int | yes | yes |
+| `n_user_messages_other` | int | yes | yes |
 
 Counts messages the person sent. The assistant's replies are not counted.
 

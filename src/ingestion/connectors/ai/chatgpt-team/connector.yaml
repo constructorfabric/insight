@@ -601,11 +601,12 @@ streams:
           n_user_messages_work_web: { type: ["number", "null"] }
           n_user_messages_work_mobile: { type: ["number", "null"] }
           n_user_messages_other: { type: ["number", "null"] }
-          # NOT collected, and the reason is in docs/.../chatgpt-team-codex-sessions-payload.md:
-          # the nested clients[] / models[] arrays and the workspace-wide
-          # n_users_used_* counters. Nothing downstream reads them yet, and a
-          # fact this connector never stores cannot gain a reader later — so
-          # the document lists them for whoever decides they are wanted.
+          # NOT collected: the nested clients[] / models[] arrays and the
+          # workspace-wide n_users_used_* counters. The arrays restate the
+          # per-surface columns above at a different granularity, and a
+          # workspace headcount copied onto every person's row multiplies one
+          # fact by the roster. Both are listed, with their reasons, in
+          # docs/components/backend/analytics/specs/ai-cost/chatgpt-team-codex-sessions-payload.md
     retriever:
       type: SimpleRetriever
       requester:
