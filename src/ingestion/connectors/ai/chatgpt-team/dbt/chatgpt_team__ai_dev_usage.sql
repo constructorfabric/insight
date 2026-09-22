@@ -150,10 +150,12 @@ admitted_reads AS (
 -- email, name and lines_added. Joined LEFT so a person-day the leaderboard
 -- returned and this endpoint did not keeps its row instead of vanishing.
 --
--- INVARIANT: no completeness gate here and none is owed. The endpoint is
--- unpaginated — page_size is ignored and `page` is rejected — so a read
--- returns every person in the range or fails outright, and the page-boundary
--- loss the leaderboard gate exists for cannot occur.
+-- INVARIANT: no completeness gate here, because nothing in the response could
+-- drive one. The endpoint is unpaginated — page_size is ignored and `page` is
+-- rejected — which proves only that a page-boundary loss cannot occur, there
+-- being no pages. It publishes no envelope and no expected total, so a partial
+-- answer is undetectable from its own payload. That is also why the
+-- authoritative total stays with the leaderboard, which can be judged.
 codex_sessions AS (
 
     SELECT
@@ -243,9 +245,11 @@ SELECT
     -- The sessions_* keys come from chatgpt_team_codex_sessions_daily and are
     -- absent, not zero, when that endpoint did not return the person-day:
     -- seen_in_sessions says which, so a genuine zero stays distinguishable
-    -- from an unread one. Money is NOT sourced from here — the cost pipeline
-    -- reads the sessions stream directly, because this model's emission
-    -- filter drops credit-bearing person-days by design.
+    -- from an unread one. Money is NOT sourced from here: the cost path reads
+    -- the leaderboard's credits through class_ai_credit_usage, because this
+    -- model's emission filter drops credit-bearing person-days by design. The
+    -- sessions figures beside them are the breakdown and the reconciliation,
+    -- never the amount anything is charged on.
     CAST(toJSONString(map(
         'credits',        toString(coalesce(credits, 0)),
         'n_turns',        toString(coalesce(toUInt32OrNull(toString(n_turns)), 0)),
