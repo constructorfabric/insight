@@ -405,19 +405,19 @@ FROM (
         SELECT
             credit.insight_tenant_id            AS tenant_id,
             credit.email                        AS entity_id,
-            credit.source_id,
-            credit.source,
-            credit.day,
-            credit.credits,
-            credit.credit_kind,
+            credit.source_id                    AS source_id,
+            credit.source                       AS source,
+            credit.day                          AS day,
+            credit.credits                      AS credits,
+            credit.credit_kind                  AS credit_kind,
             toDateTime64(credit.collected_at, 3) AS observed_at,
             CAST(
                 [
                     tuple('tool', credit.tool, {{ ai_tool_label('credit.tool') }})
                 ] AS Array(Tuple(key String, value String, label Nullable(String)))
             )                                   AS credit_dimensions,
-            price.price_minor_units,
-            price.price_currency,
+            price.price_minor_units             AS price_minor_units,
+            price.price_currency                AS price_currency,
             price.effective_from                AS price_effective_from,
             rate.rate                           AS fx_rate,
             credit.credits * price.price_minor_units              AS native_minor_units,
