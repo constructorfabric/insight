@@ -34,6 +34,26 @@ ORDER BY unique_key
 SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
 ;
 
+CREATE TABLE IF NOT EXISTS silver.class_ai_credit_usage
+(
+    `insight_tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `unique_key` String,
+    `email` Nullable(String),
+    `day` Date,
+    `tool` String,
+    `credits` Decimal(18, 6),
+    `credit_kind` String,
+    `source` String,
+    `data_source` Nullable(String),
+    `collected_at` Nullable(DateTime64(3)),
+    `_version` Int64
+)
+ENGINE = ReplacingMergeTree(_version)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
 CREATE TABLE IF NOT EXISTS silver.class_ai_dev_usage
 (
     `insight_tenant_id` Nullable(String),
