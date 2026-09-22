@@ -156,7 +156,7 @@ jobs:
       # conftest.py generates the Keycloak import realm through
       # `uv run --project`: the generator is a console script of the seed
       # package, and uv resolves and installs it on first use.
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           save-cache: ${{ github.event_name == 'push' }}
 

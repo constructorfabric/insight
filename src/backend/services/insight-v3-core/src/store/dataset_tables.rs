@@ -24,11 +24,11 @@ const CREATE_TABLE: &str = "CREATE TABLE IF NOT EXISTS ? (
 ENGINE = MergeTree
 ORDER BY (table_name, received_at, id)";
 const DROP_TABLE: &str = "DROP TABLE IF EXISTS ?";
-/// The preview: the latest records, newest first, with the id breaking an
-/// equal receipt instant so that repeated reads agree on the order.
-const READ_LATEST: &str = "SELECT id, received_at, raw_data FROM ?
-ORDER BY received_at DESC, id DESC
-LIMIT ?";
+/// One page of records. The id breaks an equal ordering value so that two
+/// reads of the same page agree on what is in it.
+const READ_PAGE: &str = "SELECT id, received_at, raw_data FROM ?
+ORDER BY {order}, received_at DESC, id DESC
+LIMIT ? OFFSET ?";
 const COUNT_ROWS: &str = "SELECT count() AS total FROM ?";
 const READ_SHAPE: &str = "SELECT sorting_key FROM system.tables
 WHERE database = currentDatabase() AND name = ?";
@@ -119,21 +119,30 @@ impl DatasetTables {
         Ok(())
     }
 
-    /// The latest records a dataset holds, newest first.
+    /// One page of a dataset's records.
     ///
     /// Each record is given back as it was sent: this is a reader looking at
     /// what arrived, so a payload is never reshaped on the way out.
-    pub(crate) async fn latest(
+    ///
+    /// SAFETY: `order` is an expression, not a value, so it is written into
+    /// the statement rather than bound. A caller only names a declared field;
+    /// the expression itself is built by
+    /// [`crate::domain::kinds::dataset::read`], whose `literal` escapes every
+    /// declared path segment into a ClickHouse string literal — including the
+    /// `?` that would otherwise shift this statement's bindings.
+    pub(crate) async fn page(
         &self,
         table: &str,
-        limit: u64,
+        page: Page<'_>,
     ) -> Result<Vec<Record>, DatasetTableError> {
+        let statement = READ_PAGE.replace("{order}", page.order);
         let rows = self
             .client
             .inner()
-            .query(READ_LATEST)
+            .query(&statement)
             .bind(Identifier(table))
-            .bind(limit)
+            .bind(page.limit)
+            .bind(page.offset)
             .fetch_all::<PreviewRow>();
         let found = tokio::time::timeout(self.read_timeout, rows)
             .await
@@ -276,6 +285,15 @@ struct RecordRow {
 #[derive(Debug, Serialize, Deserialize, clickhouse::Row)]
 struct CountRow {
     total: u64,
+}
+
+/// What a reader asked for: how many records, from where, in what order.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Page<'a> {
+    pub(crate) limit: u64,
+    pub(crate) offset: u64,
+    /// The ordering expression, with its direction.
+    pub(crate) order: &'a str,
 }
 
 /// A record as the preview reads it back: the columns the preview selects,

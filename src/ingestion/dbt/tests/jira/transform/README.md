@@ -119,6 +119,12 @@ and seeds and builds as it likes. Three kinds need it:
   report itself as a defect in every neighbour sharing its build. A test that
   does not assert `round_trip_holds()` is the one to look at here.
 
+A build is a full refresh unless a test passes `full_refresh=False`, which runs
+the journal the way the nightly pipeline does: only the issues bronze touched
+since the previous build are recomputed. `test_incremental_recompute.py` is
+where that distinction is the subject; everywhere else the full refresh keeps a
+scenario independent of the one before it.
+
 ## The other tests in this directory
 
 The `.sql` files one level up are dbt singular tests, run by

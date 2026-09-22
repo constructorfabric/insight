@@ -66,6 +66,18 @@ beforeEach(() => {
 });
 
 describe("/portal/custom/widgets/$name", () => {
+  // A reader who opened this from the catalogue needs the way back, whether
+  // or not the page found what it was looking for.
+  it("offers the way back to the catalogue", async () => {
+    vi.mocked(customClient.fetchWidget).mockResolvedValue(TABLE);
+
+    render(<Component />, { wrapper });
+
+    expect(
+      await screen.findByRole("link", { name: "Back to the catalogue" })
+    ).toHaveAttribute("href", "/portal/custom/widgets");
+  });
+
   it("draws the widget as a board would, all time first", async () => {
     render(<Component />, { wrapper });
 

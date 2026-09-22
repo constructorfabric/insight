@@ -150,11 +150,27 @@ export interface Holder {
   name: string;
 }
 
-/** A look at a dataset: its latest few records, and how many it holds in all. */
+/** What one page of a dataset's records is asked for. */
+export interface RecordPage {
+  /** Absent asks for the page size the installation allows. */
+  limit?: number;
+  offset?: number;
+  /** A declared field, or `received_at`. Absent means arrival order. */
+  orderBy?: string;
+  descending?: boolean;
+}
+
+/** A look at a dataset: one page of its records, and how many it holds in all. */
 export interface DatasetRecords {
   records: DatasetRecord[];
   /** Every record that arrived, a re-sent one counted again. */
   total: number;
+  /**
+   * The page size the service applied. Its cap is an installation's setting,
+   * so a reader stepping by offset reads this rather than assuming the limit
+   * it asked for was the one used.
+   */
+  limit: number;
 }
 
 export interface MetricResult {

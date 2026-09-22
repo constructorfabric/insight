@@ -57,8 +57,19 @@ function MetricPage() {
 
   return (
     <div className="flex flex-col gap-4 p-4 md:p-6">
-      <header className="flex flex-wrap items-center gap-3">
-        <h1 className={cn(TEXT_HEADING, "font-mono")}>{name}</h1>
+      <header className="flex flex-wrap items-baseline gap-3">
+        <div className="flex min-w-0 flex-col gap-1">
+          <h1 className={cn(TEXT_HEADING, "font-mono")}>{name}</h1>
+          <Link
+            to="/portal/custom/metrics"
+            className={cn(
+              TEXT_BODY,
+              "self-start underline decoration-dotted underline-offset-4"
+            )}
+          >
+            Back to the catalogue
+          </Link>
+        </div>
         <span className="ms-auto">
           <EditLink kind="metrics" name={name} />
         </span>
