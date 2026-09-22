@@ -50,6 +50,9 @@ SELECT
     -- Decimal, not Float: credits are summed across people and months, and a
     -- float sum reorders under parallel aggregation and stops being stable.
     CAST(coalesce(toDecimal64OrNull(toString(credits), 6), 0) AS Decimal(18, 6)) AS credits,
+    -- The vendor's own designation for these credits, not a claim about what
+    -- they sit on top of: whether the uncredited part is allowance-covered or
+    -- unmetered is not established.
     'on_demand'                                         AS credit_kind,
     'chatgpt_team'                                      AS source,
     data_source,

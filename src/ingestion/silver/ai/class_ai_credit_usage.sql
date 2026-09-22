@@ -26,7 +26,8 @@
 -- counter. A person-day can carry credits while every activity counter its
 -- vendor publishes reads zero — continuing an existing session spends without
 -- starting one — and a contributor that filtered on activity would drop real
--- charges.
+-- charges. In particular this relation is never sourced from
+-- class_ai_dev_usage, whose emission filter does exactly that.
 --
 -- depends_on: {{ ref('chatgpt_team__ai_credit_usage') }}
 

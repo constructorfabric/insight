@@ -12,6 +12,7 @@ sources:
     tables:
       - name: ai_seat_tier_map
       - name: ai_credit_price
+      - name: ai_currency_rate
 
 models:
   - name: class_ai_dev_usage

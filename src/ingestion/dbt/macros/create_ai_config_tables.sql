@@ -53,20 +53,27 @@
     ") %}
 
     {#-
-      The price of one usage credit, and the rate that carries it into the
-      reporting currency. Operator-authored for the same reason as the tier map:
-      no vendor API states it. A credit is a vendor-internal unit, and the figure
-      that turns it into money arrives on a contract, not on an endpoint.
+      The price of one usage credit, in the currency the vendor bills.
+      Operator-authored for the same reason as the tier map: no vendor API states
+      it. A credit is a vendor-internal unit, and the figure that turns it into
+      money arrives on a contract, not on an endpoint.
 
-      Gold multiplies by this at READ time and never stores the product. Raw
-      credits sit beside the derived figure in every relation that carries them,
-      so correcting a rate restates the whole history on the next read instead of
-      leaving priced rows that no longer agree with the rate. That is deliberate:
-      a credit count is a measurement, its price is a decision, and only the
-      decision should be revisable.
+      Dated, because the price it holds is a contract term with a start date the
+      operator knows. `effective_from` is the day the vendor's price began to
+      apply; the next row implicitly closes the one before it, so no interval can
+      overlap another and there is nothing to keep consistent. A day earlier than
+      the first row resolves to no price at all, which is the correct answer:
+      absence is expressed, not filled. To stop pricing from a date — a contract
+      that ended — insert a row at that date with is_deleted = 1 rather than a
+      price of zero, which would read as "free".
 
-      Empty is the correct initial state. With no row, gold reports credits and
-      reports no money — never a zero, which would read as "this cost nothing".
+      Currency conversion is NOT here. Gold converts to the reporting currency
+      when it reads, and the converted figure is an estimate; what this table
+      holds is the amount the vendor actually charges, which is the reproducible
+      fact.
+
+      Empty is the correct initial state. With no row, gold reports no money —
+      never a zero, which would read as "this cost nothing".
     -#}
     {% do run_query("
         CREATE TABLE IF NOT EXISTS config.ai_credit_price
@@ -76,14 +83,47 @@
             -- The class's own `source` value ('chatgpt_team'), matching
             -- ai_seat_tier_map: the price is per vendor, not per connector run.
             source               LowCardinality(String),
-            unique_key           String DEFAULT concat(tenant_id, ':', insight_source_id, ':', source),
+            -- The day this price began to apply. In the key, so a price change
+            -- adds a row instead of overwriting what priced earlier days.
+            effective_from       Date,
+            unique_key           String DEFAULT concat(tenant_id, ':', insight_source_id, ':',
+                                                       source, ':', toString(effective_from)),
             -- Minor units of price_currency per ONE credit, held as a Decimal so
             -- a sub-cent price does not round to nothing before it is summed.
             price_minor_units    Decimal(18, 6),
             price_currency       LowCardinality(String),
-            -- Multiply by this to reach report_currency. 1 when the two match.
-            fx_to_report         Decimal(18, 6) DEFAULT 1,
-            report_currency      LowCardinality(String) DEFAULT '',
+            is_deleted           UInt8   DEFAULT 0,
+            note                 String  DEFAULT '',
+            recorded_by          String  DEFAULT '',
+            _version             DateTime64(3) DEFAULT now64(3)
+        )
+        ENGINE = ReplacingMergeTree(_version)
+        ORDER BY (unique_key)
+    ") %}
+
+    {#-
+      The rate that carries a billed currency into the reporting one.
+
+      Undated on purpose, and that is a weaker guarantee than the price above —
+      say so rather than imply otherwise. A real exchange rate moves daily and
+      nothing in this system publishes one, so a dated table here would oblige an
+      operator to maintain rows nobody will maintain, and a stale row wearing a
+      date claims an accuracy it does not have. One rate, restated when someone
+      chooses to, is the honest shape.
+
+      The consequence is deliberate and bounded: the amount the vendor billed is
+      reproducible because it is held in the billed currency, and only its
+      presentation in the reporting currency moves when the rate is restated.
+      Anything derived from this is an estimate and is labelled one.
+    -#}
+    {% do run_query("
+        CREATE TABLE IF NOT EXISTS config.ai_currency_rate
+        (
+            tenant_id            String,
+            from_currency        LowCardinality(String),
+            to_currency          LowCardinality(String),
+            unique_key           String DEFAULT concat(tenant_id, ':', from_currency, ':', to_currency),
+            rate                 Decimal(18, 6),
             is_deleted           UInt8   DEFAULT 0,
             note                 String  DEFAULT '',
             recorded_by          String  DEFAULT '',

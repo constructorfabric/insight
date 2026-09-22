@@ -82,10 +82,13 @@ name: chatgpt-team
 #   reports credits for, deliberately without chatgpt_team__ai_dev_usage's
 #   emission filter: that filter admits a row on activity counters, and a
 #   person-day can carry credits while every activity counter reads zero, so
-#   routing spend through it would drop real charges. No new stream and no new
-#   Bronze table — it reads the leaderboard Bronze the connector already
-#   collects. MINOR per ADR-0015: the dbt step has to re-run so the new model
-#   materialises; nothing already stored changes meaning.
+#   routing spend through it would drop real charges. Priced in gold, the
+#   credits feed the existing daily_extra_usage_usd and extra_usage_usd rather
+#   than a second cost vocabulary. No new stream and no new Bronze table — it
+#   reads the leaderboard Bronze the connector already collects, which is also
+#   the authoritative source of the total. MINOR per ADR-0015: the dbt step has
+#   to re-run so the new model materialises; nothing already stored changes
+#   meaning.
 version: "3.2.0"
 # Daily at 04:00 UTC — off-peak. The customer's proxy runs a single browser
 # instance, so we avoid scheduling chatgpt-team next to anything else that

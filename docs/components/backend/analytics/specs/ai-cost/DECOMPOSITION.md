@@ -397,6 +397,57 @@ branch is picked up.
 
 ---
 
+### 2.12 Codex Team — on-demand credits as additional spend — HIGH
+
+Phase 2's first half. The Codex workspace bills additional usage in credits, and this turns
+them into the money measures Phase 1 already publishes rather than a second cost vocabulary.
+
+**Credits reach silver on their own.** `silver.class_ai_credit_usage` holds a per-day,
+summable count per person. It is deliberately not sourced from `class_ai_dev_usage`: that
+relation admits a row on activity counters, because its contract derives `active_day` from a
+row existing, and a person-day can carry credits while every activity counter the vendor
+publishes reads zero — continuing an existing session spends without starting one. A money
+path filtered on activity drops real charges.
+
+**The authoritative total is the leaderboard's.** The vendor publishes the same figure twice:
+the usage leaderboard, which carries a `total_users` envelope and whose reads are rejected
+whole when they lose somebody, and a session aggregate, which publishes no envelope and whose
+reads cannot be judged at all. The values agree; the guarantees do not. The aggregate's totals
+reconcile against the leaderboard's and never replace them.
+
+**Both vendors feed the same measures, deriving them in opposite directions.** Claude publishes
+a cumulative month-to-date amount, so its month is the fact and a day is the difference between
+two readings. Codex publishes an exact per-day charge, so its day is the fact and its month is
+the sum of the days that have arrived. `daily_extra_usage_usd` and `extra_usage_usd` mean the
+same thing on both sides — additional, on-demand spend — and no new measure is introduced.
+
+**A partial month is reported, not suppressed.** The `ai_cost` source declares
+`revision: billing_month`, so a month still accumulating is already served as unsettled, and a
+backfill raising the sum is the ordinary case that rule describes. The earliest day history
+holds is a boundary, not an absence.
+
+**Money is priced, never stored.** `config.ai_credit_price` holds an operator-authored price per
+credit in the currency the vendor bills, dated with `effective_from` — a contract term with a
+start date the operator knows. The amount in that currency is the reproducible fact.
+`config.ai_currency_rate` carries the conversion to USD undated, because no exchange-rate source
+exists here and a dated table would oblige an operator to maintain rows nobody maintains; the
+converted figure is therefore labelled an estimate on every row. No price or no rate yields no
+money measure at all, never a zero.
+
+**`extra_usage_utilisation` does not appear for this vendor.** It needs a per-seat limit as of
+the day spent, and the workspace settings endpoint reports current state only, so no historical
+limit is recoverable. The ratio has no denominator here and is left absent rather than
+fabricated.
+
+**Seat and subscription cost stay out.** They need the billing endpoints, which answer only to a
+workspace role above the one the collection identity holds. That is 2.13, below.
+
+### 2.13 Codex Team — seat and subscription cost — MEDIUM — BLOCKED
+
+The second half of Phase 2. Blocked on billing visibility: the subscription endpoints require an
+account-admin or account-owner workspace role, and until one is available their field shapes are
+declared rather than observed. Unblocks when a session holding that role is installed.
+
 ### 2.7 Claude API — token usage contract — HIGH — DEFERRED
 
 - [ ] `p1` - **ID**: `cpt-insightspec-aicost-feature-token-usage-contract`
