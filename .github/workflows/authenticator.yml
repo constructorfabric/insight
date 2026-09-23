@@ -56,7 +56,7 @@ permissions:
 jobs:
   e2e:
     name: e2e (8 suites)
-    runs-on: ${{ (github.event_name != 'pull_request' || (github.event.pull_request.user.login != 'dependabot[bot]' && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER' || github.event.pull_request.author_association == 'COLLABORATOR' || github.event.pull_request.author_association == 'CONTRIBUTOR'))) && fromJSON('["self-hosted","linux","x64","insight-vhc"]') || 'ubuntu-latest' }}
+    runs-on: ${{ (github.event_name != 'pull_request' || (github.event.pull_request.user.login != 'dependabot[bot]' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR","CONTRIBUTOR"]'), github.event.pull_request.author_association))) && fromJSON('["self-hosted","linux","x64","insight-vhc"]') || 'ubuntu-latest' }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -116,7 +116,7 @@ jobs:
     name: Authenticator endpoint coverage gate
     needs: e2e
     if: ${{ !cancelled() && needs.e2e.result != 'skipped' }}
-    runs-on: ${{ (github.event_name != 'pull_request' || (github.event.pull_request.user.login != 'dependabot[bot]' && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER' || github.event.pull_request.author_association == 'COLLABORATOR' || github.event.pull_request.author_association == 'CONTRIBUTOR'))) && fromJSON('["self-hosted","linux","x64","insight-vhc"]') || 'ubuntu-latest' }}
+    runs-on: ${{ (github.event_name != 'pull_request' || (github.event.pull_request.user.login != 'dependabot[bot]' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR","CONTRIBUTOR"]'), github.event.pull_request.author_association))) && fromJSON('["self-hosted","linux","x64","insight-vhc"]') || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
       # Checkout only for the gate script + the committed OpenAPI spec (the

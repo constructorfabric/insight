@@ -56,7 +56,7 @@ permissions:
 jobs:
   suite:
     name: stand suite
-    runs-on: ${{ (github.event_name != 'pull_request' || (github.event.pull_request.user.login != 'dependabot[bot]' && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER' || github.event.pull_request.author_association == 'COLLABORATOR' || github.event.pull_request.author_association == 'CONTRIBUTOR'))) && fromJSON('["self-hosted","linux","x64","insight-vhc"]') || 'ubuntu-latest' }}
+    runs-on: ${{ (github.event_name != 'pull_request' || (github.event.pull_request.user.login != 'dependabot[bot]' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR","CONTRIBUTOR"]'), github.event.pull_request.author_association))) && fromJSON('["self-hosted","linux","x64","insight-vhc"]') || 'ubuntu-latest' }}
     # This environment has to admit the ref being dispatched. An allow-list of
     # exactly `main` would make this workflow — whose whole purpose is running a
     # branch's tests — fail before its first step.

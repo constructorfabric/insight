@@ -63,7 +63,7 @@ jobs:
     # Inlined rather than shared: this lane has no change-detection job to carry
     # the verdict. Same rule as ci.yml — see the note there on what it does and
     # does not close.
-    runs-on: ${{ (github.event_name != 'pull_request' || (github.event.pull_request.user.login != 'dependabot[bot]' && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER' || github.event.pull_request.author_association == 'COLLABORATOR' || github.event.pull_request.author_association == 'CONTRIBUTOR'))) && fromJSON('["self-hosted","linux","x64","insight-vhc"]') || 'ubuntu-latest' }}
+    runs-on: ${{ (github.event_name != 'pull_request' || (github.event.pull_request.user.login != 'dependabot[bot]' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR","CONTRIBUTOR"]'), github.event.pull_request.author_association))) && fromJSON('["self-hosted","linux","x64","insight-vhc"]') || 'ubuntu-latest' }}
     timeout-minutes: 60
     env:
       BOOTSTRAP_DIR: src/ingestion/scripts/bootstrap-db
