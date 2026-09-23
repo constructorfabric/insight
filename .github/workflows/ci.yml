@@ -75,6 +75,27 @@ permissions:
   contents: read
 
 jobs:
+  # TEMPORARY: pinned to the pool so it answers while the hosted queue is deep —
+  # the routing question cannot be studied from a job the routing has parked.
+  # Remove together with the probe step below.
+  routing-probe:
+    name: Routing probe
+    runs-on: [self-hosted, linux, x64, insight-vhc]
+    timeout-minutes: 5
+    steps:
+      - env:
+          EVENT: ${{ github.event_name }}
+          ASSOC: ${{ github.event.pull_request.author_association }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          ACTOR: ${{ github.actor }}
+          VERDICT: ${{ (github.event_name != 'pull_request' || github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER' || github.event.pull_request.author_association == 'COLLABORATOR') && 'trusted' || 'untrusted' }}
+        run: |
+          echo "event=${EVENT}"
+          echo "assoc='${ASSOC}'"
+          echo "head_repo='${HEAD_REPO}'"
+          echo "actor='${ACTOR}'"
+          echo "verdict=${VERDICT}"
+
   # Detect which components a PR touches — via scripts/ci/coverage.py, the single
   # component↔path map — and emit a per-language matrix of rich entries (each
   # carries the fields its producer job needs to collect coverage). Downstream
