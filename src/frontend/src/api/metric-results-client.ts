@@ -275,6 +275,13 @@ export interface MetricErrorView {
 
 export interface MetricResultsResponse {
   metrics: MetricResult[];
+  absence_context?: PersonAbsenceContext[];
+}
+
+export interface PersonAbsenceContext {
+  person_id: string;
+  period_overlap: boolean;
+  compare_to_overlap: boolean | null;
 }
 
 export async function queryMetricResults(

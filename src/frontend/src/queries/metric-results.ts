@@ -173,7 +173,7 @@ export function useMetricCollection(
   // the groups that belong only to the comparison window — the very rows it
   // exists to carry.
   const served = useMemo(
-    () => normalizeMetricResults(current.data?.metrics),
+    () => normalizeMetricResults(current.data?.metrics, current.data?.absence_context),
     [current.data]
   );
   const byKey = useMemo(() => projectPrimary(served), [served]);
@@ -302,7 +302,7 @@ export function useMetricCollectionSet(
     const query = results[index];
     if (!query) return;
     const maps = chunkMaps.get(key) ?? [];
-    maps.push(normalizeMetricResults(query.data?.metrics));
+    maps.push(normalizeMetricResults(query.data?.metrics, query.data?.absence_context));
     chunkMaps.set(key, maps);
     const existing = out.get(key);
     // Same guard as the single-collection hook: a disabled chunk has no valid

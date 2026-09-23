@@ -8,6 +8,7 @@ import { TEXT_BODY, TEXT_EYEBROW, TEXT_LABEL, TEXT_NAME } from "@/lib/type-scale
 import { cn } from "@/lib/utils";
 import { metricComparisons } from "@/lib/insight/metric-comparison";
 import { derivePeerStanding } from "@/lib/metrics/peer-standing";
+import { absenceLabel } from "@/lib/metrics/absence";
 import {
   forEntity,
   type MetricCollectionConfig,
@@ -66,12 +67,14 @@ export function SectionMetricIndex({
     })
     .sort((a, b) => a.label.localeCompare(b.label));
   if (rest.length === 0) return null;
+  const leaveLabel = absenceLabel(rest[0]?.absenceContext?.get(entityId));
 
   return (
     <section className="rounded-xl border p-4 sm:p-5">
       <h2 className={TEXT_EYEBROW}>
         Also measured here
       </h2>
+      {leaveLabel ? <p className={TEXT_LABEL}>{leaveLabel}</p> : null}
       {/* One column, whatever the width. Side-by-side columns of aligned
           names and numbers read as a table — the eye takes the row first — so
           an alphabet running down each column is invisible, and the list

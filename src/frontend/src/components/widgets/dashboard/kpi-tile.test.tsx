@@ -31,6 +31,17 @@ function tile(overrides: Partial<KpiTileData> = {}): KpiTileData {
 }
 
 describe("KpiTile", () => {
+  it("shows absence context alongside unchanged values and neutral comparisons", () => {
+    render(<KpiTile periodNoun="month" tile={tile({
+      value: "3",
+      delta: { text: "-97%", status: "neutral", down: true },
+      absenceLabel: "Time off in this period",
+    })} />);
+    expect(screen.getByText("3")).toBeInTheDocument();
+    expect(screen.getByText(/-97% since last month/)).toHaveClass("text-muted-foreground");
+    expect(screen.getByText("Time off in this period")).toBeInTheDocument();
+    expect(screen.getByText(/Team median 11/)).toBeInTheDocument();
+  });
   it("renders the display-ready value, delta, median, and context", () => {
     render(<KpiTile periodNoun="month" tile={tile()} />);
     expect(screen.getByText("14")).toBeInTheDocument();

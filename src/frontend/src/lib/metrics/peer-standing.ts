@@ -18,6 +18,7 @@ import {
 
 /** Why a standing is (in)eligible, most specific reason wins. */
 type StandingReason =
+  | "time_off"
   /** Rankable — `rank` is meaningful. */
   | "ok"
   /** No period value for the entity. */
@@ -97,7 +98,7 @@ export function peerSpread(stats: PeerStats): number {
 
 export function derivePeerStanding(
   direction: MetricDirection,
-  data: Pick<EntityMetricData, "value" | "peer">,
+  data: Pick<EntityMetricData, "value" | "peer" | "absence">,
 ): PeerStanding {
   const value = data.value;
   const stats = toPeerStats(data.peer);
@@ -127,6 +128,7 @@ export function derivePeerStanding(
   if (!observed) return ineligible("unmeasured");
   if (stats == null) return ineligible("no_stats");
   if (Math.abs(stats.max - stats.min) <= 1e-9) return ineligible("flat_pool");
+  if (data.absence?.period_overlap) return ineligible("time_off");
 
   return {
     observed,

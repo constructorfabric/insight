@@ -48,6 +48,27 @@ function params(over: Partial<FlagParams>): FlagParams {
 }
 
 describe("computeAttentionFlags", () => {
+  it("does not flag a person absent in the current period", () => {
+    const result = fixture([...BASE, ["x", 0]]);
+    result.absenceContext = new Map([["x", {
+      person_id: "x", period_overlap: true, compare_to_overlap: false,
+    }]]);
+    expect(computeAttentionFlags(params({
+      byKey: new Map([["t.metric", result]]),
+    }))).toEqual([]);
+    expect(result.period?.values.at(-1)?.value).toBe(0);
+  });
+
+  it("previous-only absence does not suppress a current peer outlier", () => {
+    const result = fixture([...BASE, ["x", 0]]);
+    result.absenceContext = new Map([["x", {
+      person_id: "x", period_overlap: false, compare_to_overlap: true,
+    }]]);
+    expect(computeAttentionFlags(params({
+      byKey: new Map([["t.metric", result]]),
+    }))[0]?.kind).toBe("collapse");
+  });
+
   it("flags a collapse when a member has zero against a positive median", () => {
     const flags = computeAttentionFlags(
       params({ byKey: new Map([["t.metric", fixture([...BASE, ["x", 0]])]]) }),
@@ -137,6 +158,17 @@ describe("computeAttentionFlags", () => {
     expect(flags).toHaveLength(1);
     expect(flags[0]!.kind).toBe("decline");
     expect(flags[0]!.reason).toBe("down 50% from last period");
+  });
+
+  it("suppresses decline flags when only the previous period overlaps leave", () => {
+    const current = fixture([...BASE, ["x", 8]]);
+    current.absenceContext = new Map([["x", {
+      person_id: "x", period_overlap: false, compare_to_overlap: true,
+    }]]);
+    expect(computeAttentionFlags(params({
+      byKey: new Map([["t.metric", current]]),
+      previousByKey: new Map([["t.metric", fixture([...BASE, ["x", 16]])]]),
+    }))).toEqual([]);
   });
 
   it("flags a decline when the cohort is too small to say where the pack is", () => {
