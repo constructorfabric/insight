@@ -4,8 +4,8 @@ use std::fmt::Write as _;
 
 use super::MetricQueryError;
 use super::people::PersonHandle;
-use crate::domain::kinds::dataset::declaration::{Declaration, Field, FieldType};
-use crate::domain::kinds::dataset::read::{Form, PAYLOAD_COLUMN, collapsed, read};
+use crate::domain::kinds::dataset::declaration::{Declaration, Field, FieldType, Source};
+use crate::domain::kinds::dataset::read::{Form, collapsed, read};
 
 /// What a metric over a dataset is compiled against.
 #[derive(Debug, Clone, Copy)]
@@ -53,7 +53,13 @@ impl<'a> Over<'a> {
     ) -> Result<String, MetricQueryError> {
         let field = self.declared(named, at)?;
 
-        Ok(read(field, form, &Self::payload(qualifier)))
+        Ok(read(field, form, qualifier))
+    }
+
+    /// Whether this dataset reads a relation of the warehouse's, whose own
+    /// columns a bare name could refer to.
+    pub(crate) fn over_a_relation(self) -> bool {
+        !matches!(self.declaration.source, Source::Stream)
     }
 
     /// What the declaration says this field holds, for a caller that has to
@@ -83,15 +89,6 @@ impl<'a> Over<'a> {
         self.declaration
             .field(named)
             .ok_or_else(|| MetricQueryError::UnknownField(named.to_owned()))
-    }
-
-    /// The column every record is stored in, qualified when a join makes a
-    /// bare name ambiguous.
-    fn payload(qualifier: Option<&str>) -> String {
-        match qualifier {
-            Some(alias) => format!("`{alias}`.{PAYLOAD_COLUMN}"),
-            None => PAYLOAD_COLUMN.to_owned(),
-        }
     }
 }
 

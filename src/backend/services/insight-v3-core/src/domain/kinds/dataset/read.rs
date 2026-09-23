@@ -23,8 +23,13 @@ pub(crate) enum Form {
 /// INVARIANT: a key that is absent, null, or present but unconvertible reads
 /// as empty and never as a zero standing in for a number. An average over one
 /// record holding ten and one holding nothing is ten, not five.
-pub(crate) fn read(field: &Field, form: Form, payload: &str) -> String {
-    let extracted = extract(field, payload);
+/// `under` is the alias the relation is read as, where there is one. A read
+/// that names a bare column can be shadowed by an output alias of the same
+/// name — ClickHouse resolves the alias first, and a filter over a summed
+/// column then refuses the whole query — so a column is qualified wherever
+/// the relation carries an alias to qualify it with.
+pub(crate) fn read(field: &Field, form: Form, under: Option<&str>) -> String {
+    let extracted = extract(field, under);
 
     match (form, field.absent_value.as_deref()) {
         (Form::Presented, Some(substitute)) => {
@@ -47,7 +52,7 @@ pub(crate) fn collapsed(declaration: &Declaration, database: &str, table: &str) 
         // Raw: a substitute would make two records with no key look like one
         // record sharing a value, and a resolved person would group two
         // accounts of one human into one event.
-        .map(|field| read(field, Form::Raw, PAYLOAD_COLUMN))
+        .map(|field| read(field, Form::Raw, None))
         .collect();
 
     if identity.is_empty() {
@@ -66,10 +71,28 @@ pub(crate) fn collapsed(declaration: &Declaration, database: &str, table: &str) 
     )
 }
 
-fn extract(field: &Field, payload: &str) -> String {
+fn extract(field: &Field, under: Option<&str>) -> String {
     match &field.at {
-        At::Path(path) => out_of_payload(field.r#type, &keys(path), payload),
-        At::Column(column) => out_of_column(field.r#type, column),
+        At::Path(path) => out_of_payload(field.r#type, &keys(path), &payload(under)),
+        At::Column(column) => out_of_column(field.r#type, &named(under, column)),
+    }
+}
+
+/// The payload column, under the relation's alias where it has one.
+fn payload(under: Option<&str>) -> String {
+    match under {
+        Some(alias) => format!("`{alias}`.{PAYLOAD_COLUMN}"),
+        None => PAYLOAD_COLUMN.to_owned(),
+    }
+}
+
+/// One of the relation's own columns, under its alias where it has one.
+fn named(under: Option<&str>, column: &str) -> String {
+    let held = format!("`{}`", column.replace('`', "``"));
+
+    match under {
+        Some(alias) => format!("`{alias}`.{held}"),
+        None => held,
     }
 }
 
@@ -95,9 +118,7 @@ fn out_of_payload(declared: FieldType, keys: &str, payload: &str) -> String {
 /// an index over it is still usable. Only where the two disagree is a cast
 /// written, and a value that cannot be cast reads as empty rather than as a
 /// zero standing in for one.
-fn out_of_column(declared: FieldType, column: &str) -> String {
-    let held = format!("`{}`", column.replace('`', "``"));
-
+fn out_of_column(declared: FieldType, held: &str) -> String {
     match declared {
         // Lenient for the same reason a payload's is: a column this cannot
         // read is empty rather than a run that fails.
@@ -135,6 +156,69 @@ fn literal(value: &str) -> String {
             .replace('\'', "\\'")
             .replace('?', "??")
     )
+}
+
+/// The warehouse types a value can be read out of one at a time.
+///
+/// INVARIANT: an allow-list, like the engines a relation may be on. A type
+/// nobody thought of is read as its text, which always works, rather than
+/// cast — `accurateCastOrNull` refuses a composite outright rather than
+/// answering nothing, and that refusal would meet the reader on every run
+/// instead of the author at the declaration.
+const SCALAR: [&str; 24] = [
+    "String",
+    "FixedString",
+    "UUID",
+    "Bool",
+    "Date",
+    "Date32",
+    "DateTime",
+    "DateTime64",
+    "Int8",
+    "Int16",
+    "Int32",
+    "Int64",
+    "Int128",
+    "Int256",
+    "UInt8",
+    "UInt16",
+    "UInt32",
+    "UInt64",
+    "UInt128",
+    "UInt256",
+    "Float32",
+    "Float64",
+    "Decimal",
+    "Enum",
+];
+
+/// Whether a column the warehouse holds as `held` can be read as `declared`.
+///
+/// Every value has a text form, so a string reads anything. Everything else
+/// is a cast, which answers nothing where it cannot convert — but only for a
+/// value that is one value. A composite refuses the cast itself.
+pub(crate) fn reads_as(held: &str, declared: FieldType) -> bool {
+    declared == FieldType::String || is_scalar(held)
+}
+
+fn is_scalar(held: &str) -> bool {
+    let bare = unwrapped(held);
+    let constructor = bare.split(['(', ' ']).next().unwrap_or(bare);
+
+    SCALAR
+        .iter()
+        .any(|scalar| constructor == *scalar || constructor.starts_with(scalar))
+}
+
+/// The type under the decorations that do not change what a value is.
+fn unwrapped(held: &str) -> &str {
+    for wrapper in ["Nullable(", "LowCardinality("] {
+        if let Some(inner) = held.strip_prefix(wrapper) {
+            return unwrapped(inner.strip_suffix(')').unwrap_or(inner));
+        }
+    }
+
+    held
 }
 
 #[cfg(test)]

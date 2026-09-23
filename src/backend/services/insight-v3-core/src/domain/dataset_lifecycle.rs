@@ -5,7 +5,7 @@
 //! publishes only while it still owns it; whatever it made and then lost, it
 //! takes away again.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 use serde_json::Value;
 use thiserror::Error;
@@ -15,6 +15,7 @@ use super::datasets::{
 };
 use super::definition::{DefinitionKind, DefinitionName, DefinitionStoreError, Definitions};
 use super::kinds::dataset::declaration::{At, Declaration, Source};
+use super::kinds::dataset::read::reads_as;
 use super::kinds::dataset::shape;
 use super::kinds::dataset::state::Operation;
 use super::kinds::dataset::validate::validate;
@@ -186,19 +187,43 @@ impl<'a> DatasetLifecycle<'a> {
             )]);
         }
 
-        let names: HashSet<&str> = held.iter().map(|column| column.name.as_str()).collect();
+        let by_name: HashMap<&str, &str> = held
+            .iter()
+            .map(|column| (column.name.as_str(), column.held.as_str()))
+            .collect();
 
         Ok(declaration
             .fields
             .iter()
             .enumerate()
-            .filter_map(|(index, field)| match &field.at {
-                At::Column(column) if !names.contains(column.as_str()) => Some(Violation::new(
-                    format!("fields[{index}].column"),
-                    Reason::Unknown,
-                    format!("`{database}`.`{table}` has no column `{column}`"),
-                )),
-                At::Column(_) | At::Path(_) => None,
+            .filter_map(|(index, field)| {
+                let At::Column(column) = &field.at else {
+                    return None;
+                };
+                let at = format!("fields[{index}].column");
+
+                let Some(warehouse_type) = by_name.get(column.as_str()) else {
+                    return Some(Violation::new(
+                        at,
+                        Reason::Unknown,
+                        format!("`{database}`.`{table}` has no column `{column}`"),
+                    ));
+                };
+
+                // A cast refuses a composite outright rather than answering
+                // nothing, so a type this cannot read is met by the author
+                // here instead of by the reader on every run.
+                (!reads_as(warehouse_type, field.r#type)).then(|| {
+                    Violation::new(
+                        format!("fields[{index}].type"),
+                        Reason::NotAdmissible,
+                        format!(
+                            "`{column}` is {warehouse_type}, which reads as a string and not as \
+                             {}",
+                            field.r#type.as_str()
+                        ),
+                    )
+                })
             })
             .collect())
     }
@@ -224,11 +249,20 @@ impl<'a> DatasetLifecycle<'a> {
         // leaves a dataset whose row says ready and which has no table to
         // read, for good. Neither is a state the rest of this reasons about,
         // so it is refused rather than handled.
-        if std::mem::discriminant(&before.source) != std::mem::discriminant(&after.source) {
+        // The whole of it, not only which of the two it is. Pointing a
+        // dataset at another relation leaves every field valid and every
+        // metric over it reading somewhere else — the same silent move as a
+        // field that changed where it reads from, and refused the same way.
+        if before.source != after.source {
+            let at = match after.source {
+                Source::Stream => "source.kind",
+                Source::Relation { .. } => "source.table",
+            };
+
             return Err(DatasetChangeError::Invalid(vec![Violation::new(
-                "source.kind",
+                at,
                 Reason::NotAdmissible,
-                "what a dataset is over cannot be changed; remove it and declare it anew",
+                "what a dataset reads cannot be changed; remove it and declare it anew",
             )]));
         }
 

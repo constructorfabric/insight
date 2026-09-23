@@ -259,14 +259,19 @@ impl MetricQuery {
             self.validate_shape(table)?;
         }
 
-        // Resolving a name joins another table in, and then a bare column
-        // could mean either side - so every read carries the fact table's
-        // alias exactly when there is something to be ambiguous with.
+        // Two ways a bare name could mean something other than this
+        // relation's own column. Resolving a person joins another table in,
+        // and then it could mean either side. And a dataset over a relation
+        // reads real columns, so an output alias of the same name shadows
+        // one — a filter over a summed column then refuses the whole query
+        // rather than reading the column. A dataset records are sent into
+        // reads out of a payload, which no alias can stand in for.
         let joins_a_person = self.fields.iter().any(|field| match over {
             Some(over) => over.person_of(field.declared.as_deref()).is_some(),
             None => field.person.is_some(),
         });
-        let qualifier = joins_a_person.then_some(FACT_ALIAS);
+        let names_its_own_columns = over.is_some_and(Over::over_a_relation);
+        let qualifier = (joins_a_person || names_its_own_columns).then_some(FACT_ALIAS);
         let Selection {
             mut parts,
             as_names,

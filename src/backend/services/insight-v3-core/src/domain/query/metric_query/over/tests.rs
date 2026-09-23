@@ -476,7 +476,7 @@ fn a_metric_over_a_relation_reads_its_columns_from_the_relation_it_names() {
         "the datasets database holds nothing for this one: {sql}"
     );
     assert!(
-        sql.contains("toString(`entity_id`)") && sql.contains("`value`"),
+        sql.contains("toString(`__f`.`entity_id`)") && sql.contains("`__f`.`value`"),
         "should read the columns: {sql}"
     );
     assert!(
@@ -504,7 +504,39 @@ fn a_window_over_a_relation_selects_by_the_column_its_main_date_names() {
     );
 
     assert!(
-        sql.contains("accurateCastOrNull(`metric_date`, 'DateTime64(3)')"),
+        sql.contains("accurateCastOrNull(`__f`.`metric_date`, 'DateTime64(3)')"),
         "should window by the column: {sql}"
+    );
+}
+
+/// An output alias of the same name as one of the relation's own columns
+/// shadows it: ClickHouse resolves the alias first, and a filter over a
+/// summed column is then an aggregate in a WHERE, which refuses the whole
+/// query. Reading the column under the relation's alias puts it out of
+/// reach of the name.
+#[test]
+fn an_output_alias_cannot_shadow_the_column_a_filter_reads() {
+    let sql = compiled_over_a_relation(
+        json!({
+            "dataset": "collab",
+            "table": "unused",
+            "fields": [
+                { "field": "team", "type": "string", "as_name": "team" },
+                { "field": "value", "type": "float", "agg": "sum", "as_name": "value" }
+            ],
+            "group_by": ["team"],
+            "filters": [
+                { "field": "value", "op": "gt", "type": "float", "value": 2 }
+            ]
+        }),
+        &Window::legacy(),
+    );
+
+    let (_, wheres) = sql
+        .split_once("WHERE")
+        .unwrap_or_else(|| panic!("the metric filters: {sql}"));
+    assert!(
+        wheres.contains("`__f`.`value`"),
+        "a filter reads the column, not the alias over it: {sql}"
     );
 }

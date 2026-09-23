@@ -3,8 +3,8 @@
 
 use super::datasets::{self, Datasets, Reads};
 use super::definition::DefinitionName;
-use super::kinds::dataset::declaration::{Declaration, Source};
-use super::kinds::dataset::read::{Form, PAYLOAD_COLUMN, read};
+use super::kinds::dataset::declaration::{Declaration, Field, Source};
+use super::kinds::dataset::read::{Form, read};
 use crate::store::dataset_tables::{DatasetTableError, DatasetTables, Page, Record};
 use crate::store::relations::{RelationError, Relations};
 
@@ -107,12 +107,7 @@ impl<'a> DatasetRecords<'a> {
         let reads: Vec<(String, String)> = declaration
             .fields
             .iter()
-            .map(|field| {
-                (
-                    field.name.clone(),
-                    read(field, Form::Presented, PAYLOAD_COLUMN),
-                )
-            })
+            .map(|field| (field.name.clone(), read(field, Form::Presented, None)))
             .collect();
 
         let page = crate::store::relations::Page {
@@ -177,10 +172,15 @@ fn ordering(declaration: &Declaration, look: &Look) -> Result<String, PreviewErr
     // A record that does not carry the field reads as NULL, and ClickHouse
     // sorts NULL above every value: without this the first page of a sparse
     // field is nothing but blanks.
-    Ok(format!(
-        "{} {direction} NULLS LAST",
-        read(field, Form::Raw, PAYLOAD_COLUMN)
-    ))
+    //
+    // A record sent in is told apart by its own identity, which the read
+    // appends. A row of a relation has none, so the rest of the declared
+    // fields are what tells two of them apart.
+    if declaration.source == Source::Stream {
+        return Ok(term(field, direction));
+    }
+
+    Ok(ordered_by(declaration, field, direction))
 }
 
 /// How a page is ordered when the reader names nothing.
@@ -196,19 +196,39 @@ fn unasked(declaration: &Declaration, direction: &str) -> String {
         return format!("{ARRIVED} {direction}");
     }
 
-    let field = declaration
+    let first = declaration
         .default_clock()
         .or_else(|| declaration.fields.first());
 
-    field.map_or_else(
+    first.map_or_else(
         || "1".to_owned(),
-        |field| {
-            format!(
-                "{} {direction} NULLS LAST",
-                read(field, Form::Raw, PAYLOAD_COLUMN)
-            )
-        },
+        |field| ordered_by(declaration, field, direction),
     )
+}
+
+/// The order a page of a relation is read in: the field it goes by, then
+/// every other field the dataset declares.
+///
+/// INVARIANT: a relation carries no identity of its own to break a tie with,
+/// and a partial order makes a page read by offset show one row twice and
+/// skip another — on data nobody touched. Two rows agreeing on every field
+/// the dataset declares are interchangeable to every reader of it, so
+/// ordering by all of them is as total an order as this can see.
+fn ordered_by(declaration: &Declaration, first: &Field, direction: &str) -> String {
+    let rest = declaration
+        .fields
+        .iter()
+        .filter(|field| field.name != first.name)
+        .map(|field| term(field, direction));
+
+    std::iter::once(term(first, direction))
+        .chain(rest)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn term(field: &Field, direction: &str) -> String {
+    format!("{} {direction} NULLS LAST", read(field, Form::Raw, None))
 }
 
 /// What one look at a dataset shows: a page of its records, how many there
@@ -356,9 +376,15 @@ mod tests {
     fn a_page_of_a_relation_naming_no_order_is_ordered_by_its_main_date() {
         let ordered = ordering(&over_a_relation(), &look(None, true));
 
+        // The main date first, then every other declared field: a relation
+        // carries nothing of its own to break a tie with.
         assert_eq!(
             ordered.ok(),
-            Some("accurateCastOrNull(`metric_date`, 'DateTime64(3)') DESC NULLS LAST".to_owned())
+            Some(
+                "accurateCastOrNull(`metric_date`, 'DateTime64(3)') DESC NULLS LAST, \
+                 toString(`entity_id`) DESC NULLS LAST"
+                    .to_owned()
+            )
         );
     }
 

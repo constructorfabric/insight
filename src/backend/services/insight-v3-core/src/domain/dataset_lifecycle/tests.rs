@@ -759,6 +759,13 @@ impl ColumnRow {
             r#type: "String".to_owned(),
         }
     }
+
+    fn holding(name: &str, held: &str) -> Self {
+        Self {
+            name: name.to_owned(),
+            r#type: held.to_owned(),
+        }
+    }
 }
 
 fn over_a_relation(fields: &serde_json::Value) -> serde_json::Value {
@@ -978,7 +985,7 @@ async fn what_a_dataset_is_over_cannot_be_changed_by_replacing_its_declaration()
     let Err(DatasetChangeError::Invalid(violations)) = refused else {
         panic!("a stream may not become a relation: {refused:?}")
     };
-    assert_eq!(violations[0].field, "source.kind");
+    assert_eq!(violations[0].field, "source.table");
 
     let into_a_stream = Fixture::new();
     a_ready_relation_dataset(&into_a_stream).await?;
@@ -1050,6 +1057,109 @@ async fn a_relation_taking_over_a_name_forgets_the_table_the_lost_attempt_made()
         held.physical_table, None,
         "a dataset over a relation records no table of ours"
     );
+
+    Ok(())
+}
+
+/// The column is there, and its type is not one the declared type can read.
+/// A cast refuses a composite outright rather than answering nothing, so
+/// without this the declaration stores cleanly and every run over it fails.
+#[tokio::test]
+async fn a_column_the_declared_type_cannot_read_is_refused_when_it_is_declared() -> R {
+    let fixture = Fixture::new();
+    fixture.mock.add(handlers::provide(vec![ColumnRow::holding(
+        "tags",
+        "Array(UInt8)",
+    )]));
+    fixture
+        .mock
+        .add(handlers::provide(vec![EngineRow::plain()]));
+
+    let refused = fixture
+        .lifecycle()
+        .declare(
+            &name("collab"),
+            &over_a_relation(&json!([
+                { "name": "tags", "column": "tags", "type": "int" }
+            ])),
+        )
+        .await;
+
+    let Err(DatasetChangeError::Invalid(violations)) = refused else {
+        panic!("should be refused as invalid: {refused:?}")
+    };
+    assert_eq!(violations[0].field, "fields[0].type");
+    assert!(
+        violations[0].detail.contains("Array(UInt8)"),
+        "should name what the warehouse holds: {}",
+        violations[0].detail
+    );
+
+    Ok(())
+}
+
+/// Every value has a text form, so the same column reads as a string.
+#[tokio::test]
+async fn a_column_of_any_type_at_all_reads_as_a_string() -> R {
+    let fixture = Fixture::new();
+    fixture.mock.add(handlers::provide(vec![ColumnRow::holding(
+        "tags",
+        "Array(UInt8)",
+    )]));
+    fixture
+        .mock
+        .add(handlers::provide(vec![EngineRow::plain()]));
+
+    let declared = fixture
+        .lifecycle()
+        .declare(
+            &name("collab"),
+            &over_a_relation(&json!([
+                { "name": "tags", "column": "tags", "type": "string" }
+            ])),
+        )
+        .await;
+
+    assert!(declared.is_ok(), "{declared:?}");
+    Ok(())
+}
+
+/// Pointing a dataset at another relation leaves every field valid and every
+/// metric over it reading somewhere else — the same silent move as a field
+/// that changed where it reads from, and refused the same way.
+#[tokio::test]
+async fn a_replacement_may_not_point_the_dataset_at_another_relation() -> R {
+    let fixture = Fixture::new();
+    a_ready_relation_dataset(&fixture).await?;
+
+    fixture
+        .mock
+        .add(handlers::provide(vec![ColumnRow::named("metric_date")]));
+    fixture
+        .mock
+        .add(handlers::provide(vec![EngineRow::plain()]));
+    let refused = fixture
+        .lifecycle()
+        .declare(
+            &name("collab"),
+            &json!({
+                "title": "Collaboration observations",
+                "source": {
+                    "kind": "relation",
+                    "database": "insight",
+                    "table": "somewhere_else"
+                },
+                "fields": [
+                    { "name": "day", "column": "metric_date", "type": "datetime" }
+                ]
+            }),
+        )
+        .await;
+
+    let Err(DatasetChangeError::Invalid(violations)) = refused else {
+        panic!("should be refused as invalid: {refused:?}")
+    };
+    assert_eq!(violations[0].field, "source.table");
 
     Ok(())
 }

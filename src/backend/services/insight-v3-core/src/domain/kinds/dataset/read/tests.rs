@@ -23,7 +23,7 @@ fn a_value_that_is_not_there_reads_as_empty_and_never_as_a_zero() {
         let read = read(
             &field(json!({ "name": "value", "path": "value", "type": declared })),
             Form::Presented,
-            PAYLOAD_COLUMN,
+            None,
         );
 
         assert_eq!(
@@ -39,7 +39,7 @@ fn a_date_is_read_leniently_because_a_record_carries_what_its_sender_wrote() {
     let read = read(
         &field(json!({ "name": "day", "path": "day", "type": "datetime" })),
         Form::Presented,
-        PAYLOAD_COLUMN,
+        None,
     );
 
     assert!(read.contains("parseDateTime64BestEffortOrNull"), "{read}");
@@ -51,7 +51,7 @@ fn a_nested_key_is_read_one_segment_at_a_time() {
     let read = read(
         &field(json!({ "name": "lines", "path": "changed.lines", "type": "int" })),
         Form::Presented,
-        PAYLOAD_COLUMN,
+        None,
     );
 
     assert_eq!(
@@ -66,8 +66,8 @@ fn a_substitute_stands_in_only_for_what_a_reader_sees() {
         "name": "author", "path": "author", "type": "string", "absent_value": "unknown"
     }));
 
-    let presented = read(&with_substitute, Form::Presented, PAYLOAD_COLUMN);
-    let raw = read(&with_substitute, Form::Raw, PAYLOAD_COLUMN);
+    let presented = read(&with_substitute, Form::Presented, None);
+    let raw = read(&with_substitute, Form::Raw, None);
 
     assert_eq!(
         presented,
@@ -83,7 +83,7 @@ fn a_quote_in_a_substitute_or_a_key_cannot_end_the_literal_it_sits_in() {
             "name": "author", "path": "it's", "type": "string", "absent_value": "o'brien"
         })),
         Form::Presented,
-        PAYLOAD_COLUMN,
+        None,
     );
 
     assert!(read.contains("'it\\'s'"), "{read}");
@@ -180,7 +180,7 @@ fn a_field_over_a_relation_reads_the_column_it_names() {
         let read = read(
             &field(json!({ "name": "lines", "column": "lines", "type": declared })),
             Form::Presented,
-            PAYLOAD_COLUMN,
+            None,
         );
 
         assert_eq!(read, expected, "declared {declared}");
@@ -195,7 +195,7 @@ fn a_column_declared_a_string_is_read_as_its_text_whatever_it_holds() {
     let read = read(
         &field(json!({ "name": "tags", "column": "tags", "type": "string" })),
         Form::Presented,
-        PAYLOAD_COLUMN,
+        None,
     );
 
     assert_eq!(read, "toString(`tags`)");
@@ -213,7 +213,7 @@ fn a_column_that_holds_nothing_takes_the_substitute_the_field_declares() {
             "absent_value": "unassigned"
         })),
         Form::Presented,
-        PAYLOAD_COLUMN,
+        None,
     );
 
     assert_eq!(read, "ifNull(toString(`team`), 'unassigned')");
@@ -227,8 +227,43 @@ fn a_backtick_in_a_column_name_cannot_close_the_identifier() {
     let read = read(
         &field(json!({ "name": "odd", "column": "a`b", "type": "string" })),
         Form::Presented,
-        PAYLOAD_COLUMN,
+        None,
     );
 
     assert_eq!(read, "toString(`a``b`)");
+}
+
+/// An allow-list, like the engines a relation may be on: a type nobody
+/// thought of is read as its text, which always works, rather than cast.
+/// `accurateCastOrNull` refuses a composite outright rather than answering
+/// nothing, and that refusal would meet the reader on every run.
+#[test]
+fn a_column_is_read_as_a_declared_type_only_where_the_cast_can_answer() {
+    let cases = [
+        ("Int64", FieldType::Int, true),
+        ("Nullable(Float64)", FieldType::Float, true),
+        ("LowCardinality(String)", FieldType::String, true),
+        (
+            "Nullable(LowCardinality(String))",
+            FieldType::Datetime,
+            true,
+        ),
+        ("DateTime64(3)", FieldType::Datetime, true),
+        ("Decimal(18, 4)", FieldType::Float, true),
+        ("Enum8('a' = 1)", FieldType::String, true),
+        ("UUID", FieldType::String, true),
+        // Every value has a text form, so a string reads anything at all.
+        ("Array(UInt8)", FieldType::String, true),
+        ("Map(String, String)", FieldType::String, true),
+        // Nothing else reads a composite: the cast refuses it.
+        ("Array(UInt8)", FieldType::Int, false),
+        ("Tuple(String, String)", FieldType::Float, false),
+        ("Map(String, String)", FieldType::Bool, false),
+        ("Nullable(Array(String))", FieldType::Datetime, false),
+        ("SomethingNobodyThoughtOf", FieldType::Int, false),
+    ];
+
+    for (held, declared, expected) in cases {
+        assert_eq!(reads_as(held, declared), expected, "{held} as {declared:?}");
+    }
 }
