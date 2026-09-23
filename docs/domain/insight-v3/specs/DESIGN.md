@@ -200,8 +200,9 @@ other than the datasets one.
 **Answers.** A refusal the caller can act on carries every violation at once
 (§3.9). A name that is not free, a dataset an operation holds, and a removal a
 metric still reads are conflicts. A dataset that is not ready is not found,
-whichever surface asked. Records and dependents are bounded by named
-configuration, not by the caller.
+whichever surface asked. Records are bounded by named configuration,
+not by the caller; dependents are answered whole, because what a removal
+would break is not a page.
 
 ### 3.4 Internal Dependencies
 
@@ -248,7 +249,15 @@ that owns an in-flight create or removal, empty when none is running) and
 `updated_at`. The row is both the lock and the ownership
 record: every writer that depends on a dataset's state holds it for the whole
 of its decision, and a create or a removal — which must outlive one
-transaction to touch a table — owns a lease on it. The schema lives in the
+transaction to touch a table — owns a lease on it. Every write that changes a dataset records who asked for it in the service's
+structured log — the actor, the dataset and the action — and so does an
+operation refused as busy, an attempt that finished stale and a drop that
+failed. That log is the record: no table outlives a removed dataset, so how
+long "who removed this" can be answered for is the installation's log
+retention and nothing else. A queryable audit, and the declaration history it
+would sit beside, are a later iteration.
+
+The schema lives in the
 definitions migration, not here:
 [src/backend/services/insight-v3-core/src/definitions/migration.rs](../../../../src/backend/services/insight-v3-core/src/definitions/migration.rs).
 
@@ -298,14 +307,34 @@ TBD
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-design-dataset-contract`
 
 **The declaration.** A dataset body carries `title`, an optional
-`description`, `fields`, and an optional `row_identity`. A field carries
-`name` (an identifier, unique in the dataset, never `bucket`), `path` (a key
-path into the record's JSON), `type` (`string`, `int`, `float`, `bool` or
-`datetime`), and optionally `role` (`dimension`, `measurable` or `time`, which
+`description`, `source`, `fields`, and — over a stream — an optional
+`row_identity`.
+
+`source` says what the dataset is over and is written, never inferred:
+`{"kind": "stream"}`, or `{"kind": "relation", "database": ..., "table": ...}`
+naming a relation the warehouse already builds. Both names are identifiers of
+letters, digits and underscore, because each reaches a statement as one. The
+whole of `source` is fixed when the dataset is made; a replacement changing
+any part of it is refused.
+
+A field carries `name` (an identifier, unique in the dataset, never `bucket`),
+exactly one of `path` (a key path into the record's JSON, over a stream) or
+`column` (a column of the relation, over one) — carrying both, or neither, or
+the wrong one for the mode is refused — `type` (`string`, `int`, `float`,
+`bool` or `datetime`), and optionally `role` (`dimension`, `measurable` or `time`, which
 is descriptive only), `description`, `absent_value` (a string substitute shown
 and matched where the value is empty) and `person` (`email` or `id`).
 At most one field carries `default_clock`, and it must be a `datetime`.
-`row_identity` lists field names.
+`row_identity` lists field names, and is admissible only over a stream: a
+relation decides for itself which of its rows are current.
+
+**A dataset over a relation owns nothing.** Its row records no
+`physical_table` — that column is absent for it — nothing is provisioned when
+it is declared and nothing is dropped when it is removed, and records may not
+be sent into it. Its declaration is held to the warehouse when it is written:
+the relation must exist, its engine must be one a plain read counts once per
+row, and every declared column must exist and hold a type the declared type
+can read.
 
 **Key paths.** A path is one or more segments separated by `.`, each a key in
 the record's JSON — `commit.author.email` reads the nested object. A segment

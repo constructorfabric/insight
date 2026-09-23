@@ -249,12 +249,15 @@ Both ways: declarations replaced on write like every other definition, without v
 4. [ ] - `p1` - API: GET /v1/datasets/{name} (the declaration, and not found unless the dataset is ready) - `inst-ds-browse-get-api`
 5. [ ] - `p1` - **IF** the dataset is not found or not ready - `inst-ds-browse-missing`
    1. [ ] - `p1` - **RETURN** an empty state naming the dataset, asking for neither its records nor its dependents - `inst-ds-browse-missing-state`
-6. [ ] - `p1` - API: GET /v1/datasets/{name}/records (one page of records, ordered as asked; arrival order newest first when nothing is asked) - `inst-ds-browse-preview-api`
-   1. [ ] - `p1` - **IF** `order_by` names neither a declared field nor the arrival column - `inst-ds-browse-order-unknown`
+6. [ ] - `p1` - API: GET /v1/datasets/{name}/records (one page of rows, ordered as asked) - `inst-ds-browse-preview-api`
+   1. [ ] - `p1` - **IF** nothing is asked for - `inst-ds-browse-order-unasked`
+      1. [ ] - `p1` - Over a stream: newest first by the instant records arrived - `inst-ds-browse-order-arrival`
+      2. [ ] - `p1` - Over a relation, which has no arrival: the dataset's main date, or its first field where it declares none, and then every other declared field, so the order is total - `inst-ds-browse-order-declared`
+   2. [ ] - `p1` - **IF** `order_by` names neither a declared field nor, over a stream, the arrival column - `inst-ds-browse-order-unknown`
       1. [ ] - `p1` - Refuse against `order_by`, listing the fields the dataset declares - `inst-ds-browse-order-refuse`
-   2. [ ] - `p1` - **IF** `limit` is outside 1 to the configured cap - `inst-ds-browse-limit-range`
+   3. [ ] - `p1` - **IF** `limit` is outside 1 to the configured cap - `inst-ds-browse-limit-range`
       1. [ ] - `p1` - Refuse against `limit`, naming the range - `inst-ds-browse-limit-refuse`
-   3. [ ] - `p1` - **RETURN** the records, the total behind them, and the page size applied - `inst-ds-browse-page-return`
+   4. [ ] - `p1` - **RETURN** the rows, the total behind them, and the page size applied; a row of a relation carries neither an identity of its own nor an instant it arrived - `inst-ds-browse-page-return`
 7. [ ] - `p1` - API: GET /v1/datasets/{name}/dependents (every metric whose body names this dataset, exactly, unpaged) - `inst-ds-browse-dependents-api`
 8. [ ] - `p1` - **RETURN** the page: declaration, records, dependents, and the remove action - `inst-ds-browse-return`
 
