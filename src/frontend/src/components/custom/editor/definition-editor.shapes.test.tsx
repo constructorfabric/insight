@@ -536,6 +536,7 @@ describe("<DefinitionEditor> over a kind's shape", () => {
         document={{
           dataset: "commits",
           fields: [{ field: "actor", type: "string", as_name: "actor" }],
+          time: { field: "day" },
           group_by: ["actor"],
         }}
         onStored={vi.fn()}
@@ -550,5 +551,11 @@ describe("<DefinitionEditor> over a kind's shape", () => {
     expect(sent).not.toHaveProperty("dataset");
     expect(sent).toHaveProperty("table", "");
     expect(sent).toHaveProperty("group_by", ["actor"]);
+    // The column the metric produces survives; the declared field it read
+    // does not, and neither does a window by a declared date.
+    expect(sent).toHaveProperty("fields", [
+      { type: "string", as_name: "actor" },
+    ]);
+    expect(sent).not.toHaveProperty("time");
   });
 });
