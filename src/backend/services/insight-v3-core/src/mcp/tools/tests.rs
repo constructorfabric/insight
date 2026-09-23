@@ -640,3 +640,50 @@ async fn arranging_a_board_that_is_not_there_is_refused() {
         "dashboard `absent` was not found",
     );
 }
+
+#[tokio::test]
+async fn a_board_draws_a_metric_over_a_warehouse_table() -> R {
+    let surfaces = surfaces_without_a_dataset();
+    assert_accepted(
+        &surfaces
+            .put_metric(put(
+                "sessions_by_day",
+                json!({
+                    "table": "silver.class_ai_assistant_usage",
+                    "time": {"column": "day"},
+                    "fields": [{
+                        "column": "surface_metrics_json",
+                        "json": "session_count",
+                        "type": "int",
+                        "agg": "sum",
+                        "as_name": "sessions"
+                    }]
+                }),
+            ))
+            .await,
+    );
+
+    assert_accepted(
+        &surfaces
+            .put_widget(put(
+                "sessions_line",
+                json!({"type": "line", "metric": "sessions_by_day", "x": "bucket", "y": "sessions"}),
+            ))
+            .await,
+    );
+    assert_accepted(
+        &surfaces
+            .put_dashboard(put(
+                "ai_usage",
+                json!({
+                    "title": "AI usage",
+                    "items": [{"widget": "sessions_line"}],
+                    "time_ranges": ["P7D", "P30D"],
+                    "default_range": "P30D"
+                }),
+            ))
+            .await,
+    );
+
+    Ok(())
+}
