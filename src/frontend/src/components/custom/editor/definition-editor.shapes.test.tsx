@@ -558,4 +558,62 @@ describe("<DefinitionEditor> over a kind's shape", () => {
     ]);
     expect(sent).not.toHaveProperty("time");
   });
+
+  // A name the catalogue does not hold is a name half-typed: asking for it
+  // spends a request, and a retry, per keystroke.
+  it("asks for a table's columns only once the catalogue holds the name", async () => {
+    const user = userEvent.setup();
+    vi.mocked(customClient.fetchTables).mockResolvedValue({
+      tables: [{ database: "silver", table: "fct_commit", layer: "silver" }],
+      total: 1,
+    });
+    render(<DefinitionEditor kind="metrics" onStored={vi.fn()} />, { wrapper });
+
+    await user.selectOptions(screen.getByLabelText(/Source/), "table");
+    const table = screen.getByLabelText(/^Table/);
+    await waitFor(() => expect(offeredBy(table)).toEqual(["silver.fct_commit"]));
+
+    await user.type(table, "silver.fct_com");
+    expect(customClient.fetchTable).not.toHaveBeenCalled();
+
+    await user.type(table, "mit");
+    await waitFor(() =>
+      expect(customClient.fetchTable).toHaveBeenCalledTimes(1)
+    );
+    expect(customClient.fetchTable).toHaveBeenCalledWith("silver", "fct_commit");
+  });
+
+  // The service reads a `database` of its own in preference to the one a
+  // qualified name carries, so the two together name a table nothing holds.
+  it("drops the database when a qualified table name is written over it", async () => {
+    const user = userEvent.setup();
+    vi.mocked(customClient.fetchTables).mockResolvedValue({
+      tables: [{ database: "silver", table: "fct_commit", layer: "silver" }],
+      total: 1,
+    });
+    render(
+      <DefinitionEditor
+        kind="metrics"
+        name="lines"
+        document={{
+          database: "insight",
+          table: "account_attribute_values",
+          fields: [{ type: "int", agg: "count", as_name: "n" }],
+        }}
+        onStored={vi.fn()}
+      />,
+      { wrapper }
+    );
+
+    expect(screen.getByLabelText(/^Database/)).toHaveValue("insight");
+    await user.clear(screen.getByLabelText(/^Table/));
+    await user.type(screen.getByLabelText(/^Table/), "silver.fct_commit");
+
+    const sent = JSON.parse((await showText(user)).value) as Record<
+      string,
+      unknown
+    >;
+    expect(sent).not.toHaveProperty("database");
+    expect(sent).toHaveProperty("table", "silver.fct_commit");
+  });
 });

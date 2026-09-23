@@ -14,7 +14,7 @@ use crate::domain::kinds::dashboard::Item;
 use crate::domain::metric_run::MetricRuns;
 use crate::domain::query::time_window::WindowRequest;
 use crate::domain::surfaces::{CustomError, Surfaces};
-use crate::store::catalog::{CatalogError, TableSchema};
+use crate::store::catalog::{CatalogError, TableEntry, TableSchema};
 
 #[cfg(test)]
 mod tests;
@@ -22,6 +22,10 @@ mod tests;
 /// How many tables one description spells out. Columns run long, and an
 /// agent that wants more asks again.
 const DESCRIBE_LIMIT: usize = 20;
+
+/// How many tables one listing names. A warehouse holds more than a model can
+/// read in one answer, so a wider one is cut and said to be cut.
+const LIST_LIMIT: usize = 500;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct KindRequest {
@@ -327,7 +331,7 @@ impl CustomSurfaces {
 
     #[tool(
         name = "list_tables",
-        description = "Every warehouse table a metric may read, as `database` and `table` with the layer it belongs to: bronze is a provider's raw payloads, silver is cleaned per-source models, gold is the published metrics, identity is who people are. Columns are not listed here; call describe_tables for the tables you mean to query. The tables datasets keep their records in are not listed, since a dataset is read by name through list_datasets."
+        description = "Every warehouse table a metric may read, as `database` and `table` with the layer it belongs to: bronze is a provider's raw payloads, silver is cleaned per-source models, gold is the published metrics, identity is who people are. Pass `database` to list one database alone; a listing of every database is cut at 500 tables and says so, so narrow it rather than guess at what was left out. Columns are not listed here; call describe_tables for the tables you mean to query. The tables datasets keep their records in are not listed, since a dataset is read by name through list_datasets."
     )]
     async fn list_tables(
         &self,
@@ -340,13 +344,18 @@ impl CustomSurfaces {
             Err(error) => return catalog_error(&error),
         };
 
-        let listed: Vec<Value> = tables
+        let matching = tables
             .iter()
-            .filter(|schema| wanted.is_empty() || schema.database == wanted)
-            .map(table_entry)
-            .collect();
+            .filter(|listed| wanted.is_empty() || listed.database == wanted);
+        let total = matching.clone().count();
+        let shown: Vec<Value> = matching.take(LIST_LIMIT).map(table_entry).collect();
 
-        CallToolResult::structured(json!({ "total": listed.len(), "tables": listed }))
+        CallToolResult::structured(json!({
+            "total": total,
+            "shown": shown.len(),
+            "cut": total > shown.len(),
+            "tables": shown,
+        }))
     }
 
     #[tool(
@@ -371,21 +380,34 @@ impl CustomSurfaces {
             Err(error) => return catalog_error(&error),
         };
 
-        let unknown: Vec<&String> = tables
+        // A bare name means its table in every database that has one, so what
+        // comes back is capped by what is described, not by what was asked.
+        let shown: Vec<Value> = described
             .iter()
+            .take(DESCRIBE_LIMIT)
+            .map(table_description)
+            .collect();
+        let mut unknown: Vec<&str> = tables
+            .iter()
+            .map(String::as_str)
             .filter(|name| !described.iter().any(|schema| schema.is_named(name)))
             .collect();
-        let shown: Vec<Value> = described.iter().map(table_description).collect();
+        unknown.sort_unstable();
+        unknown.dedup();
 
-        CallToolResult::structured(json!({ "tables": shown, "unknown": unknown }))
+        CallToolResult::structured(json!({
+            "tables": shown,
+            "cut": described.len() > shown.len(),
+            "unknown": unknown,
+        }))
     }
 }
 
-fn table_entry(schema: &TableSchema) -> Value {
+fn table_entry(listed: &TableEntry) -> Value {
     json!({
-        "database": schema.database,
-        "table": schema.table,
-        "layer": schema.layer.name(),
+        "database": listed.database,
+        "table": listed.table,
+        "layer": listed.layer.name(),
     })
 }
 

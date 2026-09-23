@@ -2,13 +2,14 @@ import { useQueries, useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 
-import type { EditableKind } from "@/api/custom-client";
+import type { EditableKind, WarehouseTable } from "@/api/custom-client";
 import { FieldsView } from "@/components/custom/editor/fields-view";
 import { TextView } from "@/components/custom/editor/text-view";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import type { Path } from "@/lib/custom/editor/describe";
+import { spell } from "@/lib/custom/editor/describe";
 import {
   change,
   hold,
@@ -17,7 +18,12 @@ import {
   type Held,
 } from "@/lib/custom/editor/document";
 import { DESCRIPTIONS } from "@/lib/custom/editor/kinds";
-import { spelled, tableAddress } from "@/lib/custom/editor/source";
+import type { TableAddress } from "@/lib/custom/editor/source";
+import {
+  qualifies,
+  spelled,
+  tableAddress,
+} from "@/lib/custom/editor/source";
 import { place } from "@/lib/custom/editor/violations";
 import {
   catalogueNamesQuery,
@@ -30,6 +36,52 @@ import { TEXT_BODY, TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
 const KINDS: EditableKind[] = ["datasets", "metrics", "widgets", "dashboards"];
+
+/** Where a metric writes the table it reads, and the database beside it. */
+const TABLE_AT = { table: "table", database: "database" } as const;
+
+/**
+ * The catalogue's own entry for a written name.
+ *
+ * A table is asked for only once the catalogue says it is there, so typing a
+ * name spends no request per keystroke on tables that do not exist. A name
+ * written without a database resolves when exactly one database holds it.
+ */
+function found(
+  listed: readonly WarehouseTable[],
+  named: TableAddress
+): WarehouseTable | undefined {
+  if (named.database !== "") {
+    return listed.find(
+      (each) => each.database === named.database && each.table === named.table
+    );
+  }
+  const holders = listed.filter((each) => each.table === named.table);
+
+  return holders.length === 1 ? holders[0] : undefined;
+}
+
+/**
+ * One change to the document.
+ *
+ * INVARIANT: the service reads a `database` of its own in preference to the
+ * one a qualified name carries, so the two standing together name a table
+ * whose name holds a dot - which no warehouse has. Writing a qualified name
+ * takes the database with it.
+ */
+function written(
+  held: Held,
+  path: Path,
+  value: unknown,
+  overTables: boolean
+): Held {
+  const next = change(held, path, value);
+  if (!overTables || spell(path) !== TABLE_AT.table || !qualifies(value)) {
+    return next;
+  }
+
+  return change(next, [TABLE_AT.database], undefined);
+}
 
 export function DefinitionEditor({
   kind,
@@ -45,8 +97,10 @@ export function DefinitionEditor({
 }) {
   const description = DESCRIPTIONS[kind];
   const [called, setCalled] = useState(name ?? "");
+  // A copy: the description's own object is shared by every editor this
+  // session opens, and the document is edited in place from here on.
   const [held, setHeld] = useState<Held>(() =>
-    hold(document ?? description.starting)
+    hold(document ?? (description.starting && { ...description.starting }))
   );
   const [view, setView] = useState<"fields" | "text">("fields");
   const store = useStoreDefinition();
@@ -67,31 +121,32 @@ export function DefinitionEditor({
   const declared = () => dataset.data?.declaration.fields ?? [];
 
   // A metric over a table is offered the catalogue, and the columns of the
-  // table it names. A bare table is looked up in the catalogue for its
-  // database, so long as exactly one database has one.
+  // table it names.
   const overTables = kind === "metrics";
   const catalogue = useQuery({ ...tablesQuery(), enabled: overTables });
   const listed = catalogue.data?.tables ?? [];
-  const named = tableAddress(held.document, {
-    table: "table",
-    database: "database",
-  });
-  const holders = named ? listed.filter((each) => each.table === named.table) : [];
-  const address =
-    named === undefined
-      ? undefined
-      : named.database !== ""
-        ? named
-        : holders.length === 1 && holders[0]
-          ? { database: holders[0].database, table: named.table }
-          : undefined;
+  const named = tableAddress(held.document, TABLE_AT);
+  const address = named && found(listed, named);
   const table = useQuery({
     ...tableQuery(address?.database ?? "", address?.table ?? ""),
-    enabled: overTables && address !== undefined,
+    enabled: address !== undefined,
   });
+
   const tables = () => listed.map(spelled);
-  const columns = () =>
-    table.data?.columns.map((column) => column.name) ?? [];
+  const columns = (asked: TableAddress) => {
+    const resolved = found(listed, asked);
+    const held = table.data;
+    if (
+      resolved === undefined ||
+      held === undefined ||
+      held.database !== resolved.database ||
+      held.table !== resolved.table
+    ) {
+      return [];
+    }
+
+    return held.columns.map((column) => column.name);
+  };
 
   const placed = place(
     store.error,
@@ -215,7 +270,7 @@ export function DefinitionEditor({
             tables,
             columns,
             onChange: (path: Path, value: unknown) =>
-              setHeld((was) => change(was, path, value)),
+              setHeld((was) => written(was, path, value, overTables)),
           }}
         />
       ) : (

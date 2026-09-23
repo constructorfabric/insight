@@ -14,7 +14,7 @@ use utoipa::ToSchema;
 
 use super::AppState;
 use super::errors::ApiErrors;
-use crate::store::catalog::{CatalogError, TableSchema};
+use crate::store::catalog::{CatalogError, TableEntry as Listed, TableSchema};
 
 #[cfg(test)]
 mod tests;
@@ -183,11 +183,11 @@ async fn get_table(
     Ok(Json(detail(schema)).into_response())
 }
 
-fn entry(schema: TableSchema) -> TableEntry {
+fn entry(listed: Listed) -> TableEntry {
     TableEntry {
-        database: schema.database,
-        table: schema.table,
-        layer: schema.layer.name(),
+        database: listed.database,
+        table: listed.table,
+        layer: listed.layer.name(),
     }
 }
 

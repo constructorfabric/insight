@@ -34,14 +34,21 @@ fn catalog_over(rows: Vec<ColumnFixture>) -> (Mock, Catalog) {
     (mock, Catalog::new(client, "insight", "insight_datasets"))
 }
 
-async fn listing(catalog: &Catalog) -> Vec<TableSchema> {
+async fn listing(catalog: &Catalog) -> Vec<TableEntry> {
     catalog
         .tables()
         .await
         .unwrap_or_else(|error| panic!("the catalogue should list: {error}"))
 }
 
-fn names(tables: &[TableSchema]) -> Vec<String> {
+fn names(tables: &[TableEntry]) -> Vec<String> {
+    tables
+        .iter()
+        .map(|listed| format!("{}.{}", listed.database, listed.table))
+        .collect()
+}
+
+fn described(tables: &[TableSchema]) -> Vec<String> {
     tables.iter().map(TableSchema::qualified).collect()
 }
 
@@ -87,13 +94,17 @@ async fn each_table_becomes_one_schema_carrying_its_columns_in_position_order() 
     ]);
 
     let tables = listing(&catalog).await;
+    let described = catalog
+        .describe(&["bronze_github.issues".to_owned()])
+        .await
+        .unwrap_or_else(|error| panic!("describe answers: {error}"));
 
     assert_eq!(
         names(&tables),
         vec!["bronze_github.issues", "silver.fct_commit"]
     );
-    let Some(issues) = tables.first() else {
-        panic!("the first table is listed")
+    let Some(issues) = described.first() else {
+        panic!("the first table is described")
     };
     assert_eq!(issues.layer, Layer::Bronze);
     assert_eq!(
@@ -129,10 +140,10 @@ async fn a_bare_table_is_described_in_every_database_that_has_one() {
         .unwrap_or_else(|error| panic!("describe answers: {error}"));
 
     assert_eq!(
-        names(&bare),
+        described(&bare),
         vec!["bronze_github.issues", "bronze_gitlab.issues"]
     );
-    assert_eq!(names(&qualified), vec!["bronze_gitlab.issues"]);
+    assert_eq!(described(&qualified), vec!["bronze_gitlab.issues"]);
 }
 
 #[tokio::test]
@@ -180,7 +191,10 @@ async fn a_schema_carries_the_engine_as_the_warehouse_spells_it() {
         "ReplicatedReplacingMergeTree",
     )]);
 
-    let tables = listing(&catalog).await;
+    let tables = catalog
+        .describe(&["class_usage".to_owned()])
+        .await
+        .unwrap_or_else(|error| panic!("describe answers: {error}"));
 
     assert_eq!(
         tables.first().map(|schema| schema.engine.as_str()),

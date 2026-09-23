@@ -741,6 +741,8 @@ async fn every_warehouse_table_is_listed_by_database_name_and_layer() {
         listed,
         json!({
             "total": 2,
+            "shown": 2,
+            "cut": false,
             "tables": [
                 {"database": "bronze_github", "table": "issues", "layer": "bronze"},
                 {"database": "silver", "table": "fct_commit", "layer": "silver"}
@@ -781,6 +783,7 @@ async fn a_described_table_carries_its_columns_and_engine_and_an_unknown_name_is
                 "engine": "ReplacingMergeTree",
                 "columns": [{"name": "sha", "type": "String"}]
             }],
+            "cut": false,
             "unknown": ["silver.nothing"]
         })
     );
@@ -801,4 +804,72 @@ async fn a_description_of_nothing_or_of_too_much_is_refused() {
 
     assert_refused(&none, "at least one table");
     assert_refused(&many, "at most 20 tables");
+}
+
+/// A bare name means its table in every database that has one, so twenty
+/// names can mean far more than twenty tables. The cap has to count what is
+/// answered with, or the limit it promises is not the limit it keeps.
+#[tokio::test]
+async fn a_description_is_capped_by_the_tables_it_answers_with_not_the_names_asked() {
+    let many = (0..=DESCRIBE_LIMIT)
+        .map(|n| {
+            table(
+                &format!("bronze_{n}"),
+                "issues",
+                Layer::Bronze,
+                &[("number", "Int64")],
+            )
+        })
+        .collect();
+
+    let result = built_over(
+        Catalog::fixed(many),
+        crate::api::Datasets::offline("http://offline.invalid"),
+    )
+    .describe_tables(Parameters(DescribeTablesRequest {
+        tables: vec!["issues".to_owned()],
+    }))
+    .await;
+
+    let described = assert_accepted(&result);
+    let Some(shown) = described["tables"].as_array() else {
+        panic!("the description carries tables: {described}")
+    };
+    assert_eq!(shown.len(), DESCRIBE_LIMIT);
+    assert_eq!(described["cut"], json!(true));
+}
+
+/// A listing wider than one answer is cut, and the cut is stated: an agent
+/// that is not told cannot know to narrow it.
+#[tokio::test]
+async fn a_listing_wider_than_one_answer_is_cut_and_says_so() {
+    let many = (0..LIST_LIMIT + 5)
+        .map(|n| {
+            table(
+                "silver",
+                &format!("fct_{n:04}"),
+                Layer::Silver,
+                &[("sha", "String")],
+            )
+        })
+        .collect();
+
+    let result = built_over(
+        Catalog::fixed(many),
+        crate::api::Datasets::offline("http://offline.invalid"),
+    )
+    .list_tables(Parameters(TablesRequest { database: None }))
+    .await;
+
+    let listed = assert_accepted(&result);
+    assert_eq!(listed["total"], json!(LIST_LIMIT + 5));
+    assert_eq!(listed["shown"], json!(LIST_LIMIT));
+    assert_eq!(listed["cut"], json!(true));
+}
+
+/// A materialised view keeps its rows in a table of its own, which is not a
+/// relation anyone should name.
+#[test]
+fn a_materialised_views_own_storage_is_never_listed() {
+    assert!(crate::store::catalog::LIST_COLUMNS.contains("NOT startsWith(c.table, '.inner')"));
 }

@@ -27,11 +27,12 @@ const IDENTITY_DATABASE: &str = "identity";
 /// Every column of every table, in table order, with the engine that holds
 /// the table. The engine's own databases are left out, and so is the one
 /// datasets keep their records in.
-const LIST_COLUMNS: &str = "SELECT c.database AS database, c.table AS table, c.name AS name, c.type AS type, t.engine AS engine
+pub(crate) const LIST_COLUMNS: &str = "SELECT c.database AS database, c.table AS table, c.name AS name, c.type AS type, t.engine AS engine
 FROM system.columns AS c
 INNER JOIN system.tables AS t ON t.database = c.database AND t.name = c.table
 WHERE c.database NOT IN ('system', 'information_schema', 'INFORMATION_SCHEMA')
   AND c.database != ?
+  AND NOT startsWith(c.table, '.inner')
 ORDER BY c.database, c.table, c.position";
 
 /// Which part of the warehouse a table belongs to, read off its database.
@@ -54,6 +55,15 @@ impl Layer {
             Self::Other => "other",
         }
     }
+}
+
+/// One table as a listing names it, without the columns a listing never
+/// shows: reading those out of the cache would copy every string in it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TableEntry {
+    pub(crate) database: String,
+    pub(crate) table: String,
+    pub(crate) layer: Layer,
 }
 
 /// One column, as `system.columns` names and types it.
@@ -151,9 +161,11 @@ impl Catalog {
         }
     }
 
-    /// Every table the connected user can see, in database and table order.
-    pub(crate) async fn tables(&self) -> Result<Vec<TableSchema>, CatalogError> {
-        self.read(<[TableSchema]>::to_vec).await
+    /// Every table the connected user can see, in database and table order,
+    /// named but not spelled out.
+    pub(crate) async fn tables(&self) -> Result<Vec<TableEntry>, CatalogError> {
+        self.read(|tables| tables.iter().map(entry_of).collect())
+            .await
     }
 
     /// The tables these names mean: `database.table`, or a bare table name,
@@ -189,18 +201,25 @@ impl Catalog {
 
     /// Answers `pick` over the cached listing, reloading it once it has aged
     /// out. Only what `pick` keeps is copied.
+    ///
+    /// INVARIANT: the reload happens under the write lock and re-checks the
+    /// age, so a cold start or an expiry asks the warehouse once however many
+    /// callers arrive together. The listing is the heaviest read this service
+    /// makes; letting them all issue it is how a restart takes the warehouse
+    /// down with it.
     async fn read<T>(&self, pick: impl Fn(&[TableSchema]) -> T) -> Result<T, CatalogError> {
-        let ttl = Duration::from_secs(CACHE_TTL_SECS);
-        {
-            let cached = self.cached.read().await;
-            if let Some(fresh) = cached.as_ref().filter(|held| held.at.elapsed() < ttl) {
-                return Ok(pick(&fresh.tables));
-            }
+        if let Some(picked) = self.fresh(&pick).await {
+            return Ok(picked);
+        }
+
+        let mut cached = self.cached.write().await;
+        if let Some(fresh) = cached.as_ref().filter(|held| Self::young(held)) {
+            return Ok(pick(&fresh.tables));
         }
 
         let tables = self.load().await?;
         let picked = pick(&tables);
-        *self.cached.write().await = Some(Cached {
+        *cached = Some(Cached {
             at: Instant::now(),
             tables,
         });
@@ -208,10 +227,23 @@ impl Catalog {
         Ok(picked)
     }
 
+    async fn fresh<T>(&self, pick: &impl Fn(&[TableSchema]) -> T) -> Option<T> {
+        let cached = self.cached.read().await;
+        let held = cached.as_ref().filter(|held| Self::young(held))?;
+
+        Some(pick(&held.tables))
+    }
+
+    fn young(held: &Cached) -> bool {
+        held.at.elapsed() < Duration::from_secs(CACHE_TTL_SECS)
+    }
+
     async fn load(&self) -> Result<Vec<TableSchema>, CatalogError> {
+        // SAFETY: through the wrapper, not `inner()`: it attaches this
+        // installation's execution-time, thread and memory ceilings, and this
+        // is the widest statement the service issues.
         let rows = self
             .client
-            .inner()
             .query(LIST_COLUMNS)
             .bind(self.datasets_database.as_str())
             .fetch_all::<ColumnRow>();
@@ -233,6 +265,14 @@ impl fmt::Debug for Catalog {
             .field("gold_database", &self.gold_database)
             .field("datasets_database", &self.datasets_database)
             .finish_non_exhaustive()
+    }
+}
+
+fn entry_of(schema: &TableSchema) -> TableEntry {
+    TableEntry {
+        database: schema.database.clone(),
+        table: schema.table.clone(),
+        layer: schema.layer,
     }
 }
 

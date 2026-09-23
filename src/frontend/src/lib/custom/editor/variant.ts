@@ -73,10 +73,14 @@ function reconciled(from: Shape, to: Shape, value: unknown): unknown {
     const entries = Array.isArray(value) ? value : [];
 
     // An entry is a row the reader added, so it stays even where nothing
-    // inside it survives: a list must not silently shorten.
-    return entries.map(
-      (entry) => reconciled(from.entry, to.entry, entry) ?? {}
-    );
+    // inside it survives: a list must not silently shorten. Only a record
+    // empties to nothing; a scalar entry is carried as written, `null` and
+    // all, since the reader may have written it through the text view.
+    return entries.map((entry) => {
+      const settled = reconciled(from.entry, to.entry, entry);
+
+      return settled === undefined ? {} : settled;
+    });
   }
 
   return value;

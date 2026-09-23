@@ -139,7 +139,7 @@ function readsFrom(
     {
       name: "column",
       label: "Column",
-      hint: hint.table,
+      hint: required ? `${hint.table} This or a JSON key below.` : hint.table,
       shape: { of: "pick", from: TABLE },
     },
     {
@@ -183,7 +183,10 @@ function condition(source: Source): Shape {
       {
         name: "value",
         label: "Against",
-        hint: "What the field is compared with.",
+        hint:
+          source === "dataset"
+            ? "What the field is compared with, read as the field's declared type."
+            : "What the column is compared with, read as the type above.",
         shape:
           source === "dataset"
             ? {

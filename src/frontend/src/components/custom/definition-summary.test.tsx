@@ -54,11 +54,30 @@ describe("<MetricSummary>", () => {
 
     expect(screen.getByText("Table")).toBeInTheDocument();
     expect(screen.getByText("silver.class_usage")).toBeInTheDocument();
+    // A json key with no column is read inside the row's own payload, which
+    // is a different value from a column of that name.
     expect(
       screen.getByText(
-        "tool as tool, sum(metrics_json.sessions) as sessions, actor as actor"
+        "tool as tool, sum(metrics_json.sessions) as sessions, raw_data.actor as actor"
       )
     ).toBeInTheDocument();
+  });
+
+  // The service reads a `database` of its own in preference to the one a
+  // qualified name carries, so a summary that split the name would show a
+  // table the metric does not read.
+  it("names the table the service will read when both are written", () => {
+    render(
+      <MetricSummary
+        definition={{
+          database: "insight",
+          table: "silver.class_usage",
+          fields: [{ type: "int", agg: "count", as_name: "n" }],
+        }}
+      />
+    );
+
+    expect(screen.getByText("insight.silver.class_usage")).toBeInTheDocument();
   });
 
   it("shows a table written as database.table once", () => {
