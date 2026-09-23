@@ -69,6 +69,9 @@ permissions:
   # The coverage gate downloads the shards' artifacts from this run.
   actions: read
 
+# The self-hosted routing below is the same expression in every workflow; the
+# rule and what it does not close are explained in ci.yml. Only ci.yml and
+# connectors-ddl.yml have been exercised on the pool so far.
 jobs:
   # `e2e-suite` is the aggregate that emits the stable "Run E2E suite" check.
   #
@@ -101,7 +104,7 @@ jobs:
   changes:
     name: Detect changes
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' || (github.event.pull_request.user.login != 'dependabot[bot]' && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER' || github.event.pull_request.author_association == 'COLLABORATOR' || github.event.pull_request.author_association == 'CONTRIBUTOR'))) && fromJSON('["self-hosted","linux","x64","insight-vhc"]') || 'ubuntu-latest' }}
     timeout-minutes: 5
     outputs:
       relevant: ${{ steps.filter.outputs.relevant }}
@@ -188,8 +191,8 @@ jobs:
     name: Build backend
     needs: changes
     if: ${{ needs.changes.outputs.relevant == 'true' && needs.changes.outputs.backend == 'true' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
+    runs-on: ${{ (github.event_name != 'pull_request' || (github.event.pull_request.user.login != 'dependabot[bot]' && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER' || github.event.pull_request.author_association == 'COLLABORATOR' || github.event.pull_request.author_association == 'CONTRIBUTOR'))) && fromJSON('["self-hosted","linux","x64","insight-vhc"]') || 'ubuntu-latest' }}
+    timeout-minutes: 80
     permissions:
       contents: read
       # ghcr login for the read-only registry build cache.
@@ -299,8 +302,8 @@ jobs:
     # images) does not skip the shards along with it; the result check keeps a
     # FAILED build from letting them run against stale binaries.
     if: ${{ !cancelled() && github.event_name != 'push' && needs.changes.outputs.relevant == 'true' && (needs.build-backend.result == 'success' || needs.build-backend.result == 'skipped') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
+    runs-on: ${{ (github.event_name != 'pull_request' || (github.event.pull_request.user.login != 'dependabot[bot]' && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER' || github.event.pull_request.author_association == 'COLLABORATOR' || github.event.pull_request.author_association == 'CONTRIBUTOR'))) && fromJSON('["self-hosted","linux","x64","insight-vhc"]') || 'ubuntu-latest' }}
+    timeout-minutes: 80
     permissions:
       contents: read
       packages: read
@@ -477,7 +480,7 @@ jobs:
     name: Metric coverage gate
     needs: e2e-datapath
     if: ${{ !cancelled() && needs.e2e-datapath.result != 'skipped' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' || (github.event.pull_request.user.login != 'dependabot[bot]' && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER' || github.event.pull_request.author_association == 'COLLABORATOR' || github.event.pull_request.author_association == 'CONTRIBUTOR'))) && fromJSON('["self-hosted","linux","x64","insight-vhc"]') || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -519,7 +522,7 @@ jobs:
       - e2e-datapath
       - metric-coverage-gate
     if: ${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'push' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' || (github.event.pull_request.user.login != 'dependabot[bot]' && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER' || github.event.pull_request.author_association == 'COLLABORATOR' || github.event.pull_request.author_association == 'CONTRIBUTOR'))) && fromJSON('["self-hosted","linux","x64","insight-vhc"]') || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
       # A skipped shard has two possible meanings, and they are opposites:
