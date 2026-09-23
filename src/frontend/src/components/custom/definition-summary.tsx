@@ -43,6 +43,18 @@ export function DatasetSummary({
   return (
     <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5">
       <Row label="Title">{declaration.title}</Row>
+      <Row label="Over">
+        {declaration.source?.kind === "relation" ? (
+          <>
+            a relation the warehouse builds,{" "}
+            <span className="font-mono">
+              {declaration.source.database}.{declaration.source.table}
+            </span>
+          </>
+        ) : (
+          "records sent into it"
+        )}
+      </Row>
       <Row label="Fields">
         <span className="font-mono">
           {declaration.fields

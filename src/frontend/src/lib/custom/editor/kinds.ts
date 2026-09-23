@@ -154,6 +154,7 @@ const DATASET: Description = {
         ],
       },
       required: true,
+      atCreation: true,
       hint: "Records sent into this dataset, or a relation the warehouse already builds and this only reads. It cannot be changed afterwards.",
     },
     {

@@ -189,6 +189,7 @@ export function DefinitionEditor({
           at={[]}
           editing={{
             document: held.document,
+            made: name !== undefined,
             said: placed.at,
             names,
             declared,

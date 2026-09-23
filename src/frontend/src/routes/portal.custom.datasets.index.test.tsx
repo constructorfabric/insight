@@ -82,6 +82,31 @@ describe("/portal/custom/datasets", () => {
 
     expect(await screen.findByText("Main date")).toBeInTheDocument();
     expect(await screen.findByText("One record per")).toBeInTheDocument();
+    // What a dataset is over decides what a reader may do with it — send
+    // records into it or not — so the catalogue says it without opening one.
+    expect(await screen.findByText("records sent into it")).toBeInTheDocument();
+  });
+
+  it("names the relation a dataset reads, where it reads one", async () => {
+    vi.mocked(customClient.fetchDatasetNames).mockResolvedValue({
+      names: ["collab"],
+      total: 1,
+    });
+    vi.mocked(customClient.fetchDataset).mockResolvedValue({
+      name: "collab",
+      declaration: {
+        title: "Collaboration",
+        source: { kind: "relation", database: "insight", table: "collab" },
+        fields: [{ name: "day", column: "metric_date", type: "datetime" }],
+      },
+    });
+
+    render(<Component />, { wrapper });
+
+    expect(
+      await screen.findByText(/a relation the warehouse builds/)
+    ).toBeInTheDocument();
+    expect(await screen.findByText("insight.collab")).toBeInTheDocument();
   });
 
   it("says so when a declaration cannot be read", async () => {

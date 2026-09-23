@@ -55,6 +55,12 @@ export interface Field {
   shape: Shape;
   required?: boolean;
   hint?: string;
+  /**
+   * Set when the definition is made, and not afterwards. The editor shows it
+   * and stops offering it: the service refuses a change to it, and a control
+   * that takes an edit only to have it refused is a worse way to say so.
+   */
+  atCreation?: true;
 }
 
 export interface Description {

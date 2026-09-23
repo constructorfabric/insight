@@ -20,6 +20,8 @@ import { cn } from "@/lib/utils";
 
 export interface Editing {
   document: Record<string, unknown>;
+  /** Whether this definition already exists, rather than being written now. */
+  made: boolean;
   /** What the service said, by the path it named. */
   said: ReadonlyMap<string, string>;
   names: (kind: EditableKind) => readonly string[];
@@ -55,26 +57,51 @@ export function FieldsView({
           : "gap-4"
       )}
     >
-      {fields.map((field) =>
-        field.shape.of === "variants" ? (
-          <Variants
-            key={field.name}
-            field={field}
-            shape={field.shape}
-            at={at}
-            editing={editing}
-          />
-        ) : (
-          <FieldRow
-            key={field.name}
-            field={field}
-            at={[...at, field.name]}
-            editing={editing}
-            keepEmpty={keepEmpty?.includes(field.name)}
-          />
-        )
-      )}
+      {fields.map((field) => (
+        <Settled key={field.name} field={field} editing={editing}>
+          {field.shape.of === "variants" ? (
+            <Variants
+              field={field}
+              shape={field.shape}
+              at={at}
+              editing={editing}
+            />
+          ) : (
+            <FieldRow
+              field={field}
+              at={[...at, field.name]}
+              editing={editing}
+              keepEmpty={keepEmpty?.includes(field.name)}
+            />
+          )}
+        </Settled>
+      ))}
     </div>
+  );
+}
+
+/**
+ * A property the definition was made with, once it exists.
+ *
+ * A disabled fieldset takes every control under it out of reach, however deep
+ * — which is what this needs, since what cannot be changed here is a whole
+ * block rather than one input.
+ */
+function Settled({
+  field,
+  editing,
+  children,
+}: {
+  field: Field;
+  editing: Editing;
+  children: React.ReactNode;
+}) {
+  if (field.atCreation !== true || !editing.made) return children;
+
+  return (
+    <fieldset disabled className="contents opacity-60">
+      {children}
+    </fieldset>
   );
 }
 

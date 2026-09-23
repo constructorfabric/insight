@@ -546,4 +546,40 @@ describe("<DefinitionEditor> over a kind's shape", () => {
     expect(first.getByLabelText("Column")).toBeInTheDocument();
     expect(first.queryByLabelText("Path")).not.toBeInTheDocument();
   });
+
+  // The service refuses a change to what a dataset is over, so a control
+  // that took the edit only to have it refused is a worse way to say so.
+  it("stops offering what a dataset was made with, once it exists", async () => {
+    render(
+      <DefinitionEditor
+        kind="datasets"
+        name="collab"
+        document={{
+          title: "Collaboration",
+          source: { kind: "relation", database: "insight", table: "collab" },
+          fields: [],
+        }}
+        onStored={vi.fn()}
+      />,
+      { wrapper }
+    );
+
+    // Shown, so a reader can see what it reads — and out of reach, all of it,
+    // the choice and what the choice asked for.
+    expect(screen.getByLabelText("Kind")).toBeDisabled();
+    expect(screen.getByLabelText("Database")).toBeDisabled();
+    expect(screen.getByLabelText("Relation")).toBeDisabled();
+    expect(screen.getByLabelText("Relation")).toHaveValue("collab");
+
+    // Everything else is still the reader's to change.
+    expect(screen.getByLabelText("Title")).toBeEnabled();
+  });
+
+  it("offers it while the dataset is still being written", () => {
+    render(<DefinitionEditor kind="datasets" onStored={vi.fn()} />, {
+      wrapper,
+    });
+
+    expect(screen.getByLabelText("Kind")).toBeEnabled();
+  });
 });
