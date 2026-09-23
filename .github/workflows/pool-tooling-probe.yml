@@ -1,9 +1,10 @@
 name: Pool tooling probe
 
-# Temporary: installs the two tools the lanes assume the image carries — helm and
-# gh — on every runner in the pool, then reports what the image holds. Five legs
-# that each hold a distinct runner so no machine serves two of them. Delete once
-# the pool is level.
+# Temporary: puts helm and gh on the pool — the only two tools the lanes assume
+# the image carries and neither installs. The vendors' apt repositories are not
+# reachable from these runners (baltocdn.com rejects the TLS handshake), so both
+# come from release tarballs, and the step also maps which hosts answer at all.
+# Five legs, each holding a distinct runner. Delete once the pool is level.
 
 on:
   push:
@@ -12,6 +13,10 @@ on:
 
 permissions:
   contents: read
+
+env:
+  HELM_VERSION: v3.22.0
+  GH_VERSION: 2.101.0
 
 jobs:
   install:
@@ -27,31 +32,48 @@ jobs:
       - name: Hold the runner
         run: |
           echo "runner: ${RUNNER_NAME}"
-          sleep 120
+          sleep 180
 
-      - name: Install helm and gh
+      - name: Which hosts answer
+        run: |
+          set -uo pipefail
+          for h in github.com objects.githubusercontent.com get.helm.sh cli.github.com baltocdn.com; do
+            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "https://${h}/" 2>/dev/null)" \
+              || code="TLS/connect failure"
+            printf 'reach %-34s %s\n' "$h" "${code:-none}"
+          done
+
+      - name: Install gh
         run: |
           set -euo pipefail
-          sudo install -m 0755 -d /etc/apt/keyrings
+          tmp="$(mktemp -d)"
+          curl -fsSL -o "${tmp}/gh.tgz" \
+            "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz"
+          tar -xzf "${tmp}/gh.tgz" -C "${tmp}"
+          sudo install -m 0755 "${tmp}/gh_${GH_VERSION}_linux_amd64/bin/gh" /usr/local/bin/gh
+          rm -rf "${tmp}"
+          gh --version | head -1
 
-          curl -fsSL https://baltocdn.com/helm/signing.asc \
-            | sudo gpg --dearmor --yes -o /etc/apt/keyrings/helm.gpg
-          sudo chmod a+r /etc/apt/keyrings/helm.gpg
-          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/helm.gpg] https://baltocdn.com/helm/stable/debian/ all main" \
-            | sudo tee /etc/apt/sources.list.d/helm.list >/dev/null
-
-          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-            | sudo tee /etc/apt/keyrings/githubcli.gpg >/dev/null
-          sudo chmod a+r /etc/apt/keyrings/githubcli.gpg
-          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/githubcli.gpg] https://cli.github.com/packages stable main" \
-            | sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null
-
-          sudo apt-get update
-          sudo apt-get install -y helm gh
+      # helm publishes no binary asset on GitHub — only signatures — so the
+      # tarball has to come from get.helm.sh. The checksum does come from GitHub.
+      - name: Install helm
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          curl -fsSL -o "${tmp}/helm.tgz" \
+            "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          curl -fsSL -o "${tmp}/helm.sha" \
+            "https://github.com/helm/helm/releases/download/${HELM_VERSION}/helm-${HELM_VERSION}-linux-amd64.tar.gz.sha256sum.asc"
+          ( cd "${tmp}" && sed "s#helm-${HELM_VERSION}-linux-amd64.tar.gz#helm.tgz#" helm.sha | sha256sum -c - )
+          tar -xzf "${tmp}/helm.tgz" -C "${tmp}"
+          sudo install -m 0755 "${tmp}/linux-amd64/helm" /usr/local/bin/helm
+          rm -rf "${tmp}"
+          helm version --short
 
       - name: Report
+        if: always()
         run: |
           set -uo pipefail
           echo "runner: ${RUNNER_NAME}"
-          helm version --short
-          gh --version | head -1
+          command -v helm && helm version --short || echo "helm: MISSING"
+          command -v gh && gh --version | head -1 || echo "gh: MISSING"
