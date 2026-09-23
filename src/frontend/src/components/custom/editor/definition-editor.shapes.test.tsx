@@ -13,6 +13,8 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
     fetchDashboardNames: vi.fn(),
     fetchDatasetNames: vi.fn(),
     fetchDataset: vi.fn(),
+    fetchTables: vi.fn(),
+    fetchTable: vi.fn(),
   };
 });
 
@@ -22,7 +24,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as customClient from "@/api/custom-client";
 
-import { mockCatalogues, offeredBy, wrapper } from "./editor-test-helpers";
+import {
+  mockCatalogues,
+  offeredBy,
+  showText,
+  wrapper,
+} from "./editor-test-helpers";
 import { DefinitionEditor } from "./definition-editor";
 
 beforeEach(() => {
@@ -425,5 +432,123 @@ describe("<DefinitionEditor> over a kind's shape", () => {
       "how_many",
       "bucket",
     ]);
+  });
+
+  it("asks a metric which it reads, and offers a table's columns over one", async () => {
+    const user = userEvent.setup();
+    vi.mocked(customClient.fetchTables).mockResolvedValue({
+      tables: [{ database: "silver", table: "fct_commit", layer: "silver" }],
+      total: 1,
+    });
+    vi.mocked(customClient.fetchTable).mockResolvedValue({
+      database: "silver",
+      table: "fct_commit",
+      layer: "silver",
+      engine: "MergeTree",
+      columns: [
+        { name: "sha", type: "String" },
+        { name: "lines_added", type: "Int64" },
+      ],
+    });
+    render(<DefinitionEditor kind="metrics" onStored={vi.fn()} />, {
+      wrapper,
+    });
+
+    const reads = screen.getByLabelText(/Source/);
+    expect(
+      [...reads.querySelectorAll("option")].map((option) => option.value)
+    ).toEqual(expect.arrayContaining(["dataset", "table"]));
+    await user.selectOptions(reads, "table");
+
+    const table = screen.getByLabelText(/^Table/);
+    await waitFor(() =>
+      expect(offeredBy(table)).toEqual(["silver.fct_commit"])
+    );
+    await user.type(table, "silver.fct_commit");
+    await user.click(screen.getByRole("button", { name: "Add field" }));
+    const first = within(screen.getByRole("group", { name: "field 1" }));
+    await waitFor(() =>
+      expect(offeredBy(first.getByLabelText(/^Column/))).toEqual([
+        "sha",
+        "lines_added",
+      ])
+    );
+    expect(first.getByLabelText(/JSON key/)).toBeInTheDocument();
+    expect(first.queryByLabelText(/^Field/)).not.toBeInTheDocument();
+    expect(customClient.fetchTable).toHaveBeenCalledWith("silver", "fct_commit");
+  });
+
+  it("finds a bare table's database in the catalogue when only one has it", async () => {
+    vi.mocked(customClient.fetchTables).mockResolvedValue({
+      tables: [{ database: "bronze_github", table: "issues", layer: "bronze" }],
+      total: 1,
+    });
+    render(
+      <DefinitionEditor
+        kind="metrics"
+        name="open_issues"
+        document={{
+          table: "issues",
+          fields: [{ column: "number", type: "int", agg: "count", as_name: "n" }],
+        }}
+        onStored={vi.fn()}
+      />,
+      { wrapper }
+    );
+
+    await waitFor(() =>
+      expect(customClient.fetchTable).toHaveBeenCalledWith(
+        "bronze_github",
+        "issues"
+      )
+    );
+  });
+
+  it("reads a stored metric over a table as one, with the dataset rows out of sight", () => {
+    render(
+      <DefinitionEditor
+        kind="metrics"
+        name="lines"
+        document={{
+          database: "silver",
+          table: "fct_commit",
+          fields: [
+            { column: "lines_added", type: "int", agg: "sum", as_name: "lines" },
+          ],
+        }}
+        onStored={vi.fn()}
+      />,
+      { wrapper }
+    );
+
+    expect(screen.getByLabelText(/Source/)).toHaveValue("table");
+    expect(screen.getByLabelText(/^Table/)).toHaveValue("fct_commit");
+    expect(screen.getByLabelText(/^Database/)).toHaveValue("silver");
+    expect(screen.queryByLabelText(/^Dataset/)).not.toBeInTheDocument();
+  });
+
+  it("drops the dataset name when a metric is turned over a table, and keeps its fields", async () => {
+    const user = userEvent.setup();
+    render(
+      <DefinitionEditor
+        kind="metrics"
+        name="per_actor"
+        document={{
+          dataset: "commits",
+          fields: [{ field: "actor", type: "string", as_name: "actor" }],
+          group_by: ["actor"],
+        }}
+        onStored={vi.fn()}
+      />,
+      { wrapper }
+    );
+
+    await user.selectOptions(screen.getByLabelText(/Source/), "table");
+    const text = await showText(user);
+
+    const sent = JSON.parse(text.value) as Record<string, unknown>;
+    expect(sent).not.toHaveProperty("dataset");
+    expect(sent).toHaveProperty("table", "");
+    expect(sent).toHaveProperty("group_by", ["actor"]);
   });
 });

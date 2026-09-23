@@ -62,6 +62,11 @@ impl Gear for InsightV3CoreGear {
             chat,
             crate::store::identity::IdentityClient::new(config.identity_url())?,
             datasets,
+            crate::store::catalog::Catalog::new(
+                config.clickhouse_query_client(),
+                config.clickhouse_database(),
+                &config.datasets_database(),
+            ),
         ));
         let runtime = RuntimeState {
             app: Arc::clone(&app),

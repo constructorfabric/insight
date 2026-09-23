@@ -17,6 +17,8 @@ import type {
   ChatTurn,
   DefinitionResponse,
   MetricDefinition,
+  TableList,
+  TableSchema,
 } from "@/api/custom-types";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
@@ -182,6 +184,23 @@ export async function fetchDataset(name: string): Promise<Dataset> {
 }
 
 /** One page of the records a dataset holds, sized by the service. */
+/** Every warehouse table a metric may read, or one database's. */
+export async function fetchTables(database?: string): Promise<TableList> {
+  const query = database ? `?database=${encodeURIComponent(database)}` : "";
+  const res = await fetchWithAuth(`${BASE}/tables${query}`);
+  return readJson<TableList>(res);
+}
+
+export async function fetchTable(
+  database: string,
+  table: string
+): Promise<TableSchema> {
+  const res = await fetchWithAuth(
+    `${BASE}/tables/${encodeURIComponent(database)}/${encodeURIComponent(table)}`
+  );
+  return readJson<TableSchema>(res);
+}
+
 export async function fetchDatasetRecords(
   name: string,
   page: RecordPage

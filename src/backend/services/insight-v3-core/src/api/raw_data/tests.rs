@@ -87,6 +87,7 @@ fn state(mock: &Mock, datasets: crate::api::Datasets) -> Arc<AppState> {
         ChatClient::keyless(),
         crate::store::identity::IdentityClient::fixed(true),
         datasets,
+        crate::store::catalog::Catalog::fixed(Vec::new()),
     ))
 }
 

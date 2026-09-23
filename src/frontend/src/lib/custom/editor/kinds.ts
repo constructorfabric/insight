@@ -106,122 +106,169 @@ const DATASET: Description = {
 };
 
 const DECLARED = { dataset: "dataset" } as const;
-
-const CONDITION: Shape = {
-  of: "record",
-  fields: [
-    {
-      name: "field",
-      label: "Field",
-      hint: "The declared field this compares.",
-      shape: { of: "pick", from: DECLARED },
-      required: true,
-    },
-    {
-      name: "type",
-      label: "Type",
-      hint: "The type the value is written as here. The service compares as the field's declared type.",
-      shape: { of: "choice", options: ["string", "int", "float"] },
-      required: true,
-    },
-    {
-      name: "op",
-      label: "Compares",
-      hint: "eq and ne on any field; gt, gte, lt and lte on numbers and dates.",
-      shape: { of: "choice", options: OPERATORS },
-      required: true,
-    },
-    {
-      name: "value",
-      label: "Against",
-      hint: "What the field is compared with, read as the field's declared type.",
-      shape: {
-        of: "typed",
-        by: "type",
-        declared: { dataset: "dataset", named: "field" },
-      },
-      required: true,
-    },
-  ],
-};
-
+const TABLE = { table: "table", database: "database" } as const;
 const OWN_COLUMN = { list: "fields", property: "as_name" } as const;
 
-const METRIC: Description = {
-  kind: "metrics",
-  noun: "metric",
-  fields: [
-    {
-      name: "dataset",
-      label: "Dataset",
-      shape: { of: "reference", to: "datasets" },
-      required: true,
-      hint: "Every metric reads one, by its declared fields.",
-    },
-    {
-      name: "fields",
-      label: "Fields",
-      hint: "The columns this metric produces, one per entry: a field read as is, or an aggregate over one.",
-      shape: {
-        of: "list",
-        entryLabel: "field",
-        entry: {
-          of: "record",
-          fields: [
-            {
-              name: "field",
-              label: "Reads",
-              shape: { of: "pick", from: DECLARED },
-              hint: "A declared field. Leave empty for a count of the records.",
-            },
-            {
-              name: "type",
-              label: "Type",
-              hint: "The type of the column produced: int for a count, the field's type otherwise.",
-              shape: { of: "choice", options: ["string", "int", "float"] },
-              required: true,
-            },
-            {
-              name: "agg",
-              label: "Aggregate",
-              hint: "Leave empty to read the field as is. A count needs no field.",
-              shape: { of: "choice", options: AGGREGATES },
-            },
-            {
-              name: "as_name",
-              label: "Called",
-              hint: "The column's name in the result: what a widget, a grouping and an ordering refer to.",
-              shape: { of: "text" },
-              required: true,
-            },
-            {
-              name: "when",
-              label: "Counted only when",
-              shape: { of: "list", entry: CONDITION, entryLabel: "condition" },
-              hint: "Rows the aggregate takes in; the rest are left out of it alone.",
-            },
-            {
-              name: "divide",
-              label: "Divided",
-              shape: {
-                of: "list",
-                entry: { of: "pick", from: OWN_COLUMN },
-                entryLabel: "column",
-              },
-              hint: "Two of this metric's own columns: the numerator, then the denominator.",
-            },
-            {
-              name: "percent",
-              label: "As a percentage",
-              hint: "Show the division as a percentage rather than a ratio.",
-              shape: { of: "flag" },
-            },
-          ],
-        },
+/** What a metric reads: a dataset by its declared fields, or a table by its columns. */
+type Source = "dataset" | "table";
+
+const TYPE_OPTIONS = ["string", "int", "float"] as const;
+
+/**
+ * Where one field or one condition takes its value from, by what the metric
+ * reads. Over a dataset that is a declared field; over a table a column, a
+ * JSON key path inside one, or a key inside the row's `raw_data`.
+ */
+function readsFrom(
+  source: Source,
+  hint: { dataset: string; table: string },
+  required?: true
+): readonly Field[] {
+  if (source === "dataset") {
+    return [
+      {
+        name: "field",
+        label: required ? "Field" : "Reads",
+        hint: hint.dataset,
+        shape: { of: "pick", from: DECLARED },
+        required,
       },
-      required: true,
+    ];
+  }
+  return [
+    {
+      name: "column",
+      label: "Column",
+      hint: hint.table,
+      shape: { of: "pick", from: TABLE },
     },
     {
+      name: "json",
+      label: "JSON key",
+      hint: "A dot-separated key path read inside the column above, or inside the row's raw_data when no column is named. Leave empty to read the column as is.",
+      shape: { of: "text" },
+    },
+  ];
+}
+
+function condition(source: Source): Shape {
+  return {
+    of: "record",
+    fields: [
+      ...readsFrom(
+        source,
+        {
+          dataset: "The declared field this compares.",
+          table: "The column this compares.",
+        },
+        true
+      ),
+      {
+        name: "type",
+        label: "Type",
+        hint:
+          source === "dataset"
+            ? "The type the value is written as here. The service compares as the field's declared type."
+            : "The type the value is written as here, and compared as.",
+        shape: { of: "choice", options: TYPE_OPTIONS },
+        required: true,
+      },
+      {
+        name: "op",
+        label: "Compares",
+        hint: "eq and ne on any field; gt, gte, lt and lte on numbers and dates.",
+        shape: { of: "choice", options: OPERATORS },
+        required: true,
+      },
+      {
+        name: "value",
+        label: "Against",
+        hint: "What the field is compared with.",
+        shape:
+          source === "dataset"
+            ? {
+                of: "typed",
+                by: "type",
+                declared: { dataset: "dataset", named: "field" },
+              }
+            : { of: "typed", by: "type" },
+        required: true,
+      },
+    ],
+  };
+}
+
+function produced(source: Source): Field {
+  return {
+    name: "fields",
+    label: "Fields",
+    hint: "The columns this metric produces, one per entry: a value read as is, or an aggregate over one.",
+    shape: {
+      of: "list",
+      entryLabel: "field",
+      entry: {
+        of: "record",
+        fields: [
+          ...readsFrom(source, {
+            dataset: "A declared field. Leave empty for a count of the records.",
+            table: "A column of the table. Leave empty for a count of the rows.",
+          }),
+          {
+            name: "type",
+            label: "Type",
+            hint: "The type of the column produced: int for a count, the value's type otherwise.",
+            shape: { of: "choice", options: TYPE_OPTIONS },
+            required: true,
+          },
+          {
+            name: "agg",
+            label: "Aggregate",
+            hint: "Leave empty to read the value as is. A count needs no field.",
+            shape: { of: "choice", options: AGGREGATES },
+          },
+          {
+            name: "as_name",
+            label: "Called",
+            hint: "The column's name in the result: what a widget, a grouping and an ordering refer to.",
+            shape: { of: "text" },
+            required: true,
+          },
+          {
+            name: "when",
+            label: "Counted only when",
+            shape: {
+              of: "list",
+              entry: condition(source),
+              entryLabel: "condition",
+            },
+            hint: "Rows the aggregate takes in; the rest are left out of it alone.",
+          },
+          {
+            name: "divide",
+            label: "Divided",
+            shape: {
+              of: "list",
+              entry: { of: "pick", from: OWN_COLUMN },
+              entryLabel: "column",
+            },
+            hint: "Two of this metric's own columns: the numerator, then the denominator.",
+          },
+          {
+            name: "percent",
+            label: "As a percentage",
+            hint: "Show the division as a percentage rather than a ratio.",
+            shape: { of: "flag" },
+          },
+        ],
+      },
+    },
+    required: true,
+  };
+}
+
+function windowedBy(source: Source): Field {
+  if (source === "dataset") {
+    return {
       name: "time",
       label: "Window by",
       shape: {
@@ -236,6 +283,78 @@ const METRIC: Description = {
         ],
       },
       hint: "Leave empty to use the dataset's own main date.",
+    };
+  }
+  return {
+    name: "time",
+    label: "Window by",
+    shape: {
+      of: "record",
+      fields: readsFrom(source, {
+        dataset: "",
+        table: "A date or datetime column: when the thing happened, never when the row was loaded.",
+      }),
+    },
+    hint: "The timestamp a reader may window and bucket by. Without one the metric answers every row, whatever the board is set to.",
+  };
+}
+
+function filtered(source: Source): Field {
+  return {
+    name: "filters",
+    label: "Filtered",
+    hint: "Rows the whole metric reads. A condition on one aggregate alone goes under that aggregate.",
+    shape: { of: "list", entry: condition(source), entryLabel: "filter" },
+  };
+}
+
+const METRIC: Description = {
+  kind: "metrics",
+  noun: "metric",
+  // A metric with neither address is no variant at all and shows nothing to
+  // fill in, so a new one begins over a dataset until told otherwise.
+  starting: { dataset: "" },
+  fields: [
+    {
+      name: "source",
+      label: "Source",
+      hint: "A dataset, by the fields it declares, or any warehouse table, by its columns.",
+      required: true,
+      shape: {
+        of: "variants",
+        variants: {
+          dataset: [
+            {
+              name: "dataset",
+              label: "Dataset",
+              shape: { of: "reference", to: "datasets" },
+              required: true,
+              hint: "Where a value sits, its type and the main date all come from the declaration.",
+            },
+            produced("dataset"),
+            windowedBy("dataset"),
+            filtered("dataset"),
+          ],
+          table: [
+            {
+              name: "table",
+              label: "Table",
+              shape: { of: "pick", from: { catalogue: "tables" } },
+              required: true,
+              hint: "As database.table, any table the warehouse holds. A replacing table is read through FINAL without saying so.",
+            },
+            {
+              name: "database",
+              label: "Database",
+              shape: { of: "text" },
+              hint: "Only when the table above is written bare.",
+            },
+            produced("table"),
+            windowedBy("table"),
+            filtered("table"),
+          ],
+        },
+      },
     },
     {
       name: "max_range",
@@ -252,12 +371,6 @@ const METRIC: Description = {
         entryLabel: "column",
       },
       hint: "Names this metric produces: an `as_name`, or `bucket` for a windowed run.",
-    },
-    {
-      name: "filters",
-      label: "Filtered",
-      hint: "Rows the whole metric reads. A condition on one aggregate alone goes under that aggregate.",
-      shape: { of: "list", entry: CONDITION, entryLabel: "filter" },
     },
     {
       name: "order_by",

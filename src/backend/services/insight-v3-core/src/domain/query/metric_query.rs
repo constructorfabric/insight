@@ -331,7 +331,7 @@ pub(crate) enum MetricQueryError {
     FieldSource(String),
     #[error("`{0}` is not a field of the dataset this metric reads")]
     UnknownField(String),
-    #[error("a metric must name the `table` it reads")]
+    #[error("a metric must name the `dataset` or the `table` it reads")]
     NoTable,
     #[error("a metric reads a dataset, so it may not name a `table` or a `database`")]
     AddressesARelation,

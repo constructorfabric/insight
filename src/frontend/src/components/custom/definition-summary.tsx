@@ -4,6 +4,7 @@ import { Link } from "@tanstack/react-router";
 import type {
   DatasetDeclaration,
   MetricDefinition,
+  MetricRead,
   Widget,
 } from "@/api/custom-client";
 import { Badge } from "@/components/ui/badge";
@@ -19,16 +20,43 @@ import { cn } from "@/lib/utils";
  */
 
 /**
+ * Where a field or a condition reads from, as the body spells it: a declared
+ * field over a dataset; a column, or a JSON key inside one, over a table.
+ */
+function source(read: MetricRead): string {
+  if (read.field !== undefined) return read.field;
+  if (read.json !== undefined) {
+    return read.column ? `${read.column}.${read.json}` : read.json;
+  }
+
+  return read.column ?? "";
+}
+
+/**
  * One field, as the query reads it.
  *
  * A `count` naming no field counts the records rather than anything in them,
  * which is why the parentheses can be empty.
  */
 function reads(field: MetricDefinition["fields"][number]): string {
-  const read = field.field ?? "";
+  const read = source(field);
   const applied = field.agg ? `${field.agg}(${read})` : read;
 
   return `${applied} as ${field.as_name}`;
+}
+
+/** What the metric reads, named as the body names it. */
+function over(definition: MetricDefinition): { label: string; named: string } {
+  if (definition.dataset !== undefined) {
+    return { label: "Dataset", named: definition.dataset };
+  }
+  const table = definition.table ?? "";
+  const named =
+    definition.database && !table.includes(".")
+      ? `${definition.database}.${table}`
+      : table;
+
+  return { label: "Table", named };
 }
 
 /** What a dataset says about its records, as a catalogue row reads it. */
@@ -72,10 +100,12 @@ export function MetricSummary({
   const grouped = definition.group_by ?? [];
   const filters = definition.filters ?? [];
 
+  const read = over(definition);
+
   return (
     <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5">
-      <Row label="Dataset">
-        <code className="font-mono">{definition.dataset}</code>
+      <Row label={read.label}>
+        <code className="font-mono">{read.named}</code>
       </Row>
       <Row label="Fields">
         <span className="font-mono">
@@ -91,7 +121,7 @@ export function MetricSummary({
         <Row label="Filtered">
           <span className="font-mono">
             {filters
-              .map((f) => `${f.field ?? ""} ${f.op} ${String(f.value)}`)
+              .map((f) => `${source(f)} ${f.op} ${String(f.value)}`)
               .join(", ")}
           </span>
         </Row>

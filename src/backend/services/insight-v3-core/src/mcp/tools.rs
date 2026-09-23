@@ -14,9 +14,14 @@ use crate::domain::kinds::dashboard::Item;
 use crate::domain::metric_run::MetricRuns;
 use crate::domain::query::time_window::WindowRequest;
 use crate::domain::surfaces::{CustomError, Surfaces};
+use crate::store::catalog::{CatalogError, TableSchema};
 
 #[cfg(test)]
 mod tests;
+
+/// How many tables one description spells out. Columns run long, and an
+/// agent that wants more asks again.
+const DESCRIBE_LIMIT: usize = 20;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct KindRequest {
@@ -77,6 +82,19 @@ pub(crate) struct ArrangeRequest {
     /// over the widgets that follow) or `text` (a line of prose between
     /// them).
     pub(crate) items: Vec<Item>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct TablesRequest {
+    /// Only this database's tables. Leave it out to list every database.
+    pub(crate) database: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct DescribeTablesRequest {
+    /// Tables as `database.table`, at most 20 at a time. A bare table name
+    /// means it in every database that has one.
+    pub(crate) tables: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -222,7 +240,7 @@ impl CustomSurfaces {
 
     #[tool(
         name = "put_metric",
-        description = "Creates or replaces a metric: a declarative query over one warehouse table or one dataset. Over a table, the body names it as `database.table` - any database, bronze, silver or gold - and reads its columns; a `column` holding JSON is read into with `json`, a dot-separated key path: {\"table\": \"silver.class_ai_assistant_usage\", \"time\": {\"column\": \"day\"}, \"fields\": [{\"column\": \"tool\", \"type\": \"string\", \"as_name\": \"tool\"}, {\"column\": \"surface_metrics_json\", \"json\": \"session_count\", \"type\": \"int\", \"agg\": \"sum\", \"as_name\": \"sessions\"}], \"group_by\": [\"tool\"]}. A replacing table is read through FINAL, so a row is counted once. Over a dataset, the body names the dataset and the fields to read, for example {\"dataset\": \"commits\", \"fields\": [{\"field\": \"author\", \"type\": \"string\", \"as_name\": \"author\"}, {\"field\": \"lines\", \"type\": \"int\", \"agg\": \"sum\", \"as_name\": \"total\"}], \"group_by\": [\"author\"]}. Every `field` names a field the dataset declares; `group_by` and `order_by` name what this metric produces - an `as_name`, or `bucket` for a windowed run. `agg` is count, sum, avg, min or max, and only a number is summed or averaged. `count` alone counts the rows and names no field. Add `time` to window by a field other than the dataset's own main date: {\"time\": {\"field\": \"merged\"}}. `max_range` caps the widest window it will answer, as an ISO duration such as \"P1Y\". Optional `filters`, `order_by` and `limit`. Call list_datasets first so the dataset and its fields exist."
+        description = "Creates or replaces a metric: a declarative query over one warehouse table or one dataset. Over a table, the body names it as `database.table` - any database, bronze, silver or gold - and reads its columns; a `column` holding JSON is read into with `json`, a dot-separated key path: {\"table\": \"silver.class_ai_assistant_usage\", \"time\": {\"column\": \"day\"}, \"fields\": [{\"column\": \"tool\", \"type\": \"string\", \"as_name\": \"tool\"}, {\"column\": \"surface_metrics_json\", \"json\": \"session_count\", \"type\": \"int\", \"agg\": \"sum\", \"as_name\": \"sessions\"}], \"group_by\": [\"tool\"]}. A replacing table is read through FINAL, so a row is counted once. Over a dataset, the body names the dataset and the fields to read, for example {\"dataset\": \"commits\", \"fields\": [{\"field\": \"author\", \"type\": \"string\", \"as_name\": \"author\"}, {\"field\": \"lines\", \"type\": \"int\", \"agg\": \"sum\", \"as_name\": \"total\"}], \"group_by\": [\"author\"]}. Every `field` names a field the dataset declares; `group_by` and `order_by` name what this metric produces - an `as_name`, or `bucket` for a windowed run. `agg` is count, sum, avg, min or max, and only a number is summed or averaged. `count` alone counts the rows and names no field. Add `time` to window by a field other than the dataset's own main date: {\"time\": {\"field\": \"merged\"}}. `max_range` caps the widest window it will answer, as an ISO duration such as \"P1Y\". Optional `filters`, `order_by` and `limit`. Call list_tables and describe_tables first so the table and its columns exist, or list_datasets so the dataset and its fields do."
     )]
     async fn put_metric(&self, Parameters(request): Parameters<PutRequest>) -> CallToolResult {
         self.write(DefinitionKind::Metric, request).await
@@ -306,6 +324,97 @@ impl CustomSurfaces {
 
         CallToolResult::structured(json!({ "datasets": described.datasets }))
     }
+
+    #[tool(
+        name = "list_tables",
+        description = "Every warehouse table a metric may read, as `database` and `table` with the layer it belongs to: bronze is a provider's raw payloads, silver is cleaned per-source models, gold is the published metrics, identity is who people are. Columns are not listed here; call describe_tables for the tables you mean to query. The tables datasets keep their records in are not listed, since a dataset is read by name through list_datasets."
+    )]
+    async fn list_tables(
+        &self,
+        Parameters(TablesRequest { database }): Parameters<TablesRequest>,
+    ) -> CallToolResult {
+        let wanted = database.unwrap_or_default();
+        let wanted = wanted.trim();
+        let tables = match self.state.catalog().tables().await {
+            Ok(tables) => tables,
+            Err(error) => return catalog_error(&error),
+        };
+
+        let listed: Vec<Value> = tables
+            .iter()
+            .filter(|schema| wanted.is_empty() || schema.database == wanted)
+            .map(table_entry)
+            .collect();
+
+        CallToolResult::structured(json!({ "total": listed.len(), "tables": listed }))
+    }
+
+    #[tool(
+        name = "describe_tables",
+        description = "The columns of the named warehouse tables, each with its type, and the engine holding the table; a replacing engine is read through FINAL without the metric saying so. Name a table as `database.table`, at most 20 at a time. A name the warehouse does not hold is reported under `unknown` rather than left out."
+    )]
+    async fn describe_tables(
+        &self,
+        Parameters(DescribeTablesRequest { tables }): Parameters<DescribeTablesRequest>,
+    ) -> CallToolResult {
+        if tables.is_empty() {
+            return refuse("name at least one table as `database.table`");
+        }
+        if tables.len() > DESCRIBE_LIMIT {
+            return refuse(&format!(
+                "describe at most {DESCRIBE_LIMIT} tables at a time; {} were named",
+                tables.len()
+            ));
+        }
+        let described = match self.state.catalog().describe(&tables).await {
+            Ok(described) => described,
+            Err(error) => return catalog_error(&error),
+        };
+
+        let unknown: Vec<&String> = tables
+            .iter()
+            .filter(|name| !described.iter().any(|schema| schema.is_named(name)))
+            .collect();
+        let shown: Vec<Value> = described.iter().map(table_description).collect();
+
+        CallToolResult::structured(json!({ "tables": shown, "unknown": unknown }))
+    }
+}
+
+fn table_entry(schema: &TableSchema) -> Value {
+    json!({
+        "database": schema.database,
+        "table": schema.table,
+        "layer": schema.layer.name(),
+    })
+}
+
+fn table_description(schema: &TableSchema) -> Value {
+    let columns: Vec<Value> = schema
+        .columns
+        .iter()
+        .map(|column| json!({ "name": column.name, "type": column.kind }))
+        .collect();
+
+    json!({
+        "database": schema.database,
+        "table": schema.table,
+        "layer": schema.layer.name(),
+        "engine": schema.engine,
+        "columns": columns,
+    })
+}
+
+/// A catalogue that did not answer. The wait is the caller's to retry; what
+/// the warehouse said is logged, not answered.
+fn catalog_error(error: &CatalogError) -> CallToolResult {
+    match error {
+        CatalogError::Timeout => refuse(&error.to_string()),
+        CatalogError::ClickHouse(source) => {
+            tracing::error!(error = %source, "the warehouse catalogue could not be read");
+            refuse("the warehouse catalogue could not be read")
+        }
+    }
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -318,8 +427,9 @@ impl ServerHandler for CustomSurfaces {
             )
             .with_instructions(
                 "Author the metrics, widgets and dashboards the portal reads. Call \
-                 list_datasets to learn what data exists, put_metric to define a query over one \
-                 warehouse table or one dataset, run_metric to see the rows it yields, then \
+                 list_datasets and list_tables to learn what data exists, describe_tables for \
+                 the columns of the tables you mean to query, put_metric to define a query over \
+                 one warehouse table or one dataset, run_metric to see the rows it yields, then \
                  put_widget to draw those rows and put_dashboard to hold the widgets. A metric \
                  names a `table` and its columns, or a dataset and its declared fields; a widget \
                  names its metric's columns by their as_name; and a definition still in use \
