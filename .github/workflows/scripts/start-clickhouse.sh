@@ -22,6 +22,10 @@ NAME="${1:?usage: start-clickhouse.sh <container-name>}"
 : "${CLICKHOUSE_PASSWORD:?CLICKHOUSE_PASSWORD must be set}"
 : "${CLICKHOUSE_DATABASE:?CLICKHOUSE_DATABASE must be set}"
 
+# A self-hosted runner keeps whatever a killed job left behind, and both the
+# container name and port 8123 are fixed.
+docker rm -f "${NAME}" >/dev/null 2>&1 || true
+
 docker run -d --name "${NAME}" -p 8123:8123 \
   -e CLICKHOUSE_USER \
   -e CLICKHOUSE_PASSWORD \
