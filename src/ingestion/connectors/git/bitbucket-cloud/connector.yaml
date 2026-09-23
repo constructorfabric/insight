@@ -10,9 +10,10 @@ type: DeclarativeSource
 # `url_base` is a per-requester property, so mixing them needs no special
 # machinery.
 #
-# The manifest is FULLY INLINED (no $ref, no definitions.linked): the Builder
-# strict validator resolves no $ref, so a shared authenticator or url_base is
-# rejected. Duplication here is the price of Builder compatibility.
+# Shared pieces are YAML anchors. The pull-request children and pull_requests
+# take their parents by `$ref` to the top-level streams: one definition, and
+# one cached vendor read per listing for every stream that hangs off it. The
+# proxy walks still carry inlined repository parents, each bounded differently.
 #
 #   repositories     -> Bitbucket /2.0/repositories/{ws} incremental (updated_on)
 #   commits          -> proxy /v1/commits              incremental (committed_date), per repo
@@ -89,7 +90,7 @@ definitions:
   # operator asked for.
   #
   # `stream_interval.start_time` is the floor on the first run and stored state
-  # afterwards, which is what makes the floor affordable: the window is walked
+  # one lookback back afterwards, which is what makes the floor affordable: the window is walked
   # in full once, then only what changed. Both halves are required — the parent
   # carries a cursor so there IS state, and each child carries one plus
   # `incremental_dependency: true` so the state is persisted. VERIFIED in
@@ -97,17 +98,19 @@ definitions:
   # CHILD's, and it is keyed on the parent's own `cursor_field`, so a
   # full-refresh parent raises `unhashable type: 'list'` on the second sync.
   # Same keyset walk, on the request id (see pull_request_keyset_paginator):
-  # an integer the vendor assigns once per repository, so no ties. The upper
-  # bound is the slice end: a request updated while the walk runs leaves this
-  # walk's set instead of moving inside it, and the next sync lists it, because
-  # the cursor closes at the newest updated_on seen, below that end.
+  # an integer the vendor assigns once per repository, so no ties. No upper
+  # bound: the cursor is per repository, so a walk is one repository's few
+  # pages, and the P1D lookback covers a request updated while they are served.
+  # INVARIANT: nothing in this request reads the clock. pull_requests and its
+  # four children read this listing through the response cache, keyed by URL,
+  # and start hours apart; one clock value here would give each of them its
+  # own URL and turn one vendor read back into five.
   prs_since_start: &prs_since_start
     # pagelen HARD CAP on /pullrequests is 50 (400 above).
     pagelen: "50"
     sort: id
     q: >-
       updated_on >= "{{ stream_interval.start_time }}"
-      AND updated_on < "{{ stream_interval.end_time }}"
       AND id > {{ next_page_token['next_page_token'] if next_page_token else 0 }}
 
   # WORKAROUND: Bitbucket pages by number, so a listing ordered by a value the
@@ -378,6 +381,11 @@ streams:
             {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
         path: "/repositories/{{ stream_partition.workspace }}"
         http_method: GET
+        # INVARIANT: this stream is the parent of pull_requests and, through it,
+        # of the four pull-request children (`$ref`), so its response cache is
+        # what makes those listings one vendor read. The CDK enables the cache
+        # only on a direct parent; the nested copies need it stated here.
+        use_cache: true
         request_parameters:
           <<: *repos_since_start
           # Trim the payload: the full repository object is large and only
@@ -1186,6 +1194,9 @@ streams:
             {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
         path: "/repositories/{{ stream_partition.repo_full_name }}/pullrequests?state=OPEN&state=MERGED&state=DECLINED&state=SUPERSEDED"
         http_method: GET
+        # INVARIANT: parent of the four pull-request children (`$ref`); the
+        # response cache turns their four listings into this stream's one read.
+        use_cache: true
         request_parameters:
           <<: *prs_since_start
           fields: >-
@@ -1204,47 +1215,7 @@ streams:
             parent_key: full_name
             partition_field: repo_full_name
             stream:
-              type: DeclarativeStream
-              name: repositories_for_pull_requests
-              primary_key:
-                - uuid
-              schema_loader:
-                type: InlineSchemaLoader
-                schema:
-                  type: object
-                  $schema: http://json-schema.org/schema#
-                  properties:
-                    uuid: {type: [string, "null"]}
-                    full_name: {type: [string, "null"]}
-                    updated_on: {type: [string, "null"]}
-                  additionalProperties: true
-              retriever:
-                type: SimpleRetriever
-                requester:
-                  type: HttpRequester
-                  url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
-                  authenticator:
-                    type: ApiKeyAuthenticator
-                    inject_into:
-                      type: RequestOption
-                      inject_into: header
-                      field_name: Authorization
-                    # Personal API tokens are Basic username:token; workspace, project
-                    # and repository access tokens are Bearer and leave it empty.
-                    api_token: >-
-                      {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
-                  path: "/repositories/{{ stream_partition.workspace }}"
-                  http_method: GET
-                  request_parameters:
-                    <<: *repos_since_start
-                    fields: next,values.uuid,values.slug,values.full_name,values.updated_on,values.created_on
-                  error_handler: *discovery_error_handler
-                record_selector: *repos_selector
-                paginator: *repository_keyset_paginator
-                partition_router:
-                  type: ListPartitionRouter
-                  values: "{{ config['bitbucket_workspaces'] }}"
-                  cursor_field: workspace
+              $ref: "#/streams/0"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: updated_on
@@ -1372,8 +1343,8 @@ streams:
           - [destination]
 
   # ── Pull request comments (Bitbucket API) ───────────────────────────────
-  # Child of a stateless sliding window of recently updated PRs. Bodies are
-  # stored trimmed to 2048 chars — the silver comments model consumes them.
+  # Child of the pull_requests listing. Bodies are stored trimmed to 2048
+  # chars — the silver comments model consumes them.
   - type: DeclarativeStream
     name: pull_request_comments
     primary_key:
@@ -1483,114 +1454,7 @@ streams:
               - [repo_full_name]
               - [updated_on]
             stream:
-              type: DeclarativeStream
-              name: pull_requests_for_comments
-              primary_key:
-                - id
-              schema_loader:
-                type: InlineSchemaLoader
-                schema:
-                  type: object
-                  $schema: http://json-schema.org/schema#
-                  properties:
-                    id: {type: [integer, "null"]}
-                    repo_full_name: {type: [string, "null"]}
-                    updated_on: {type: [string, "null"]}
-                  additionalProperties: true
-              retriever:
-                type: SimpleRetriever
-                requester:
-                  type: HttpRequester
-                  url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
-                  authenticator:
-                    type: ApiKeyAuthenticator
-                    inject_into:
-                      type: RequestOption
-                      inject_into: header
-                      field_name: Authorization
-                    # Personal API tokens are Basic username:token; workspace, project
-                    # and repository access tokens are Bearer and leave it empty.
-                    api_token: >-
-                      {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
-                  path: "/repositories/{{ stream_partition.repo_full_name }}/pullrequests?state=OPEN&state=MERGED&state=DECLINED&state=SUPERSEDED"
-                  http_method: GET
-                  request_parameters:
-                    <<: *prs_since_start
-                    fields: next,values.id,values.updated_on
-                  error_handler: *prs_listing_error_handler
-                record_selector:
-                  type: RecordSelector
-                  extractor:
-                    type: DpathExtractor
-                    field_path: [values]
-                paginator: *pull_request_keyset_paginator
-                partition_router:
-                  type: SubstreamPartitionRouter
-                  parent_stream_configs:
-                    - type: ParentStreamConfig
-                      parent_key: full_name
-                      partition_field: repo_full_name
-                      stream:
-                        type: DeclarativeStream
-                        name: pull_requests_for_comments_repos
-                        primary_key:
-                          - uuid
-                        schema_loader:
-                          type: InlineSchemaLoader
-                          schema:
-                            type: object
-                            $schema: http://json-schema.org/schema#
-                            properties:
-                              uuid: {type: [string, "null"]}
-                              full_name: {type: [string, "null"]}
-                              updated_on: {type: [string, "null"]}
-                            additionalProperties: true
-                        retriever:
-                          type: SimpleRetriever
-                          requester:
-                            type: HttpRequester
-                            url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
-                            authenticator:
-                              type: ApiKeyAuthenticator
-                              inject_into:
-                                type: RequestOption
-                                inject_into: header
-                                field_name: Authorization
-                              # Personal API tokens are Basic username:token; workspace, project
-                              # and repository access tokens are Bearer and leave it empty.
-                              api_token: >-
-                                {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
-                            path: "/repositories/{{ stream_partition.workspace }}"
-                            http_method: GET
-                            request_parameters:
-                              <<: *repos_since_start
-                              fields: next,values.uuid,values.slug,values.full_name,values.updated_on,values.created_on
-                            error_handler: *discovery_error_handler
-                          record_selector: *repos_selector
-                          paginator: *repository_keyset_paginator
-                          partition_router:
-                            type: ListPartitionRouter
-                            values: "{{ config['bitbucket_workspaces'] }}"
-                            cursor_field: workspace
-              incremental_sync:
-                type: DatetimeBasedCursor
-                cursor_field: updated_on
-                datetime_format: "%Y-%m-%dT%H:%M:%SZ"
-                cursor_datetime_formats:
-                  - "%Y-%m-%dT%H:%M:%S.%f%z"
-                  - "%Y-%m-%dT%H:%M:%S%z"
-                lookback_window: P1D
-                start_datetime:
-                  type: MinMaxDatetime
-                  datetime: "{{ config['bitbucket_start_date'] }}"
-                  datetime_format: "%Y-%m-%d"
-              transformations:
-                - type: AddFields
-                  fields:
-                    - type: AddedFieldDefinition
-                      path: [repo_full_name]
-                      value: "{{ stream_partition.repo_full_name }}"
-                      value_type: string
+              $ref: "#/streams/5"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: updated_on
@@ -1786,114 +1650,7 @@ streams:
               - [repo_full_name]
               - [updated_on]
             stream:
-              type: DeclarativeStream
-              name: pull_requests_for_commits
-              primary_key:
-                - id
-              schema_loader:
-                type: InlineSchemaLoader
-                schema:
-                  type: object
-                  $schema: http://json-schema.org/schema#
-                  properties:
-                    id: {type: [integer, "null"]}
-                    repo_full_name: {type: [string, "null"]}
-                    updated_on: {type: [string, "null"]}
-                  additionalProperties: true
-              retriever:
-                type: SimpleRetriever
-                requester:
-                  type: HttpRequester
-                  url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
-                  authenticator:
-                    type: ApiKeyAuthenticator
-                    inject_into:
-                      type: RequestOption
-                      inject_into: header
-                      field_name: Authorization
-                    # Personal API tokens are Basic username:token; workspace, project
-                    # and repository access tokens are Bearer and leave it empty.
-                    api_token: >-
-                      {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
-                  path: "/repositories/{{ stream_partition.repo_full_name }}/pullrequests?state=OPEN&state=MERGED&state=DECLINED&state=SUPERSEDED"
-                  http_method: GET
-                  request_parameters:
-                    <<: *prs_since_start
-                    fields: next,values.id,values.updated_on
-                  error_handler: *prs_listing_error_handler
-                record_selector:
-                  type: RecordSelector
-                  extractor:
-                    type: DpathExtractor
-                    field_path: [values]
-                paginator: *pull_request_keyset_paginator
-                partition_router:
-                  type: SubstreamPartitionRouter
-                  parent_stream_configs:
-                    - type: ParentStreamConfig
-                      parent_key: full_name
-                      partition_field: repo_full_name
-                      stream:
-                        type: DeclarativeStream
-                        name: pull_requests_for_commits_repos
-                        primary_key:
-                          - uuid
-                        schema_loader:
-                          type: InlineSchemaLoader
-                          schema:
-                            type: object
-                            $schema: http://json-schema.org/schema#
-                            properties:
-                              uuid: {type: [string, "null"]}
-                              full_name: {type: [string, "null"]}
-                              updated_on: {type: [string, "null"]}
-                            additionalProperties: true
-                        retriever:
-                          type: SimpleRetriever
-                          requester:
-                            type: HttpRequester
-                            url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
-                            authenticator:
-                              type: ApiKeyAuthenticator
-                              inject_into:
-                                type: RequestOption
-                                inject_into: header
-                                field_name: Authorization
-                              # Personal API tokens are Basic username:token; workspace, project
-                              # and repository access tokens are Bearer and leave it empty.
-                              api_token: >-
-                                {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
-                            path: "/repositories/{{ stream_partition.workspace }}"
-                            http_method: GET
-                            request_parameters:
-                              <<: *repos_since_start
-                              fields: next,values.uuid,values.slug,values.full_name,values.updated_on,values.created_on
-                            error_handler: *discovery_error_handler
-                          record_selector: *repos_selector
-                          paginator: *repository_keyset_paginator
-                          partition_router:
-                            type: ListPartitionRouter
-                            values: "{{ config['bitbucket_workspaces'] }}"
-                            cursor_field: workspace
-              incremental_sync:
-                type: DatetimeBasedCursor
-                cursor_field: updated_on
-                datetime_format: "%Y-%m-%dT%H:%M:%SZ"
-                cursor_datetime_formats:
-                  - "%Y-%m-%dT%H:%M:%S.%f%z"
-                  - "%Y-%m-%dT%H:%M:%S%z"
-                lookback_window: P1D
-                start_datetime:
-                  type: MinMaxDatetime
-                  datetime: "{{ config['bitbucket_start_date'] }}"
-                  datetime_format: "%Y-%m-%d"
-              transformations:
-                - type: AddFields
-                  fields:
-                    - type: AddedFieldDefinition
-                      path: [repo_full_name]
-                      value: "{{ stream_partition.repo_full_name }}"
-                      value_type: string
+              $ref: "#/streams/5"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: pr_updated_on
@@ -2126,114 +1883,7 @@ streams:
               - [repo_full_name]
               - [updated_on]
             stream:
-              type: DeclarativeStream
-              name: pull_requests_for_diffstat
-              primary_key:
-                - id
-              schema_loader:
-                type: InlineSchemaLoader
-                schema:
-                  type: object
-                  $schema: http://json-schema.org/schema#
-                  properties:
-                    id: {type: [integer, "null"]}
-                    repo_full_name: {type: [string, "null"]}
-                    updated_on: {type: [string, "null"]}
-                  additionalProperties: true
-              retriever:
-                type: SimpleRetriever
-                requester:
-                  type: HttpRequester
-                  url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
-                  authenticator:
-                    type: ApiKeyAuthenticator
-                    inject_into:
-                      type: RequestOption
-                      inject_into: header
-                      field_name: Authorization
-                    # Personal API tokens are Basic username:token; workspace, project
-                    # and repository access tokens are Bearer and leave it empty.
-                    api_token: >-
-                      {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
-                  path: "/repositories/{{ stream_partition.repo_full_name }}/pullrequests?state=OPEN&state=MERGED&state=DECLINED&state=SUPERSEDED"
-                  http_method: GET
-                  request_parameters:
-                    <<: *prs_since_start
-                    fields: next,values.id,values.updated_on
-                  error_handler: *prs_listing_error_handler
-                record_selector:
-                  type: RecordSelector
-                  extractor:
-                    type: DpathExtractor
-                    field_path: [values]
-                paginator: *pull_request_keyset_paginator
-                partition_router:
-                  type: SubstreamPartitionRouter
-                  parent_stream_configs:
-                    - type: ParentStreamConfig
-                      parent_key: full_name
-                      partition_field: repo_full_name
-                      stream:
-                        type: DeclarativeStream
-                        name: pull_requests_for_diffstat_repos
-                        primary_key:
-                          - uuid
-                        schema_loader:
-                          type: InlineSchemaLoader
-                          schema:
-                            type: object
-                            $schema: http://json-schema.org/schema#
-                            properties:
-                              uuid: {type: [string, "null"]}
-                              full_name: {type: [string, "null"]}
-                              updated_on: {type: [string, "null"]}
-                            additionalProperties: true
-                        retriever:
-                          type: SimpleRetriever
-                          requester:
-                            type: HttpRequester
-                            url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
-                            authenticator:
-                              type: ApiKeyAuthenticator
-                              inject_into:
-                                type: RequestOption
-                                inject_into: header
-                                field_name: Authorization
-                              # Personal API tokens are Basic username:token; workspace, project
-                              # and repository access tokens are Bearer and leave it empty.
-                              api_token: >-
-                                {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
-                            path: "/repositories/{{ stream_partition.workspace }}"
-                            http_method: GET
-                            request_parameters:
-                              <<: *repos_since_start
-                              fields: next,values.uuid,values.slug,values.full_name,values.updated_on,values.created_on
-                            error_handler: *discovery_error_handler
-                          record_selector: *repos_selector
-                          paginator: *repository_keyset_paginator
-                          partition_router:
-                            type: ListPartitionRouter
-                            values: "{{ config['bitbucket_workspaces'] }}"
-                            cursor_field: workspace
-              incremental_sync:
-                type: DatetimeBasedCursor
-                cursor_field: updated_on
-                datetime_format: "%Y-%m-%dT%H:%M:%SZ"
-                cursor_datetime_formats:
-                  - "%Y-%m-%dT%H:%M:%S.%f%z"
-                  - "%Y-%m-%dT%H:%M:%S%z"
-                lookback_window: P1D
-                start_datetime:
-                  type: MinMaxDatetime
-                  datetime: "{{ config['bitbucket_start_date'] }}"
-                  datetime_format: "%Y-%m-%d"
-              transformations:
-                - type: AddFields
-                  fields:
-                    - type: AddedFieldDefinition
-                      path: [repo_full_name]
-                      value: "{{ stream_partition.repo_full_name }}"
-                      value_type: string
+              $ref: "#/streams/5"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: pr_updated_on
@@ -2413,114 +2063,7 @@ streams:
               - [repo_full_name]
               - [updated_on]
             stream:
-              type: DeclarativeStream
-              name: pull_requests_for_activity
-              primary_key:
-                - id
-              schema_loader:
-                type: InlineSchemaLoader
-                schema:
-                  type: object
-                  $schema: http://json-schema.org/schema#
-                  properties:
-                    id: {type: [integer, "null"]}
-                    repo_full_name: {type: [string, "null"]}
-                    updated_on: {type: [string, "null"]}
-                  additionalProperties: true
-              retriever:
-                type: SimpleRetriever
-                requester:
-                  type: HttpRequester
-                  url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
-                  authenticator:
-                    type: ApiKeyAuthenticator
-                    inject_into:
-                      type: RequestOption
-                      inject_into: header
-                      field_name: Authorization
-                    # Personal API tokens are Basic username:token; workspace, project
-                    # and repository access tokens are Bearer and leave it empty.
-                    api_token: >-
-                      {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
-                  path: "/repositories/{{ stream_partition.repo_full_name }}/pullrequests?state=OPEN&state=MERGED&state=DECLINED&state=SUPERSEDED"
-                  http_method: GET
-                  request_parameters:
-                    <<: *prs_since_start
-                    fields: next,values.id,values.updated_on
-                  error_handler: *prs_listing_error_handler
-                record_selector:
-                  type: RecordSelector
-                  extractor:
-                    type: DpathExtractor
-                    field_path: [values]
-                paginator: *pull_request_keyset_paginator
-                partition_router:
-                  type: SubstreamPartitionRouter
-                  parent_stream_configs:
-                    - type: ParentStreamConfig
-                      parent_key: full_name
-                      partition_field: repo_full_name
-                      stream:
-                        type: DeclarativeStream
-                        name: pull_requests_for_activity_repos
-                        primary_key:
-                          - uuid
-                        schema_loader:
-                          type: InlineSchemaLoader
-                          schema:
-                            type: object
-                            $schema: http://json-schema.org/schema#
-                            properties:
-                              uuid: {type: [string, "null"]}
-                              full_name: {type: [string, "null"]}
-                              updated_on: {type: [string, "null"]}
-                            additionalProperties: true
-                        retriever:
-                          type: SimpleRetriever
-                          requester:
-                            type: HttpRequester
-                            url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
-                            authenticator:
-                              type: ApiKeyAuthenticator
-                              inject_into:
-                                type: RequestOption
-                                inject_into: header
-                                field_name: Authorization
-                              # Personal API tokens are Basic username:token; workspace, project
-                              # and repository access tokens are Bearer and leave it empty.
-                              api_token: >-
-                                {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
-                            path: "/repositories/{{ stream_partition.workspace }}"
-                            http_method: GET
-                            request_parameters:
-                              <<: *repos_since_start
-                              fields: next,values.uuid,values.slug,values.full_name,values.updated_on,values.created_on
-                            error_handler: *discovery_error_handler
-                          record_selector: *repos_selector
-                          paginator: *repository_keyset_paginator
-                          partition_router:
-                            type: ListPartitionRouter
-                            values: "{{ config['bitbucket_workspaces'] }}"
-                            cursor_field: workspace
-              incremental_sync:
-                type: DatetimeBasedCursor
-                cursor_field: updated_on
-                datetime_format: "%Y-%m-%dT%H:%M:%SZ"
-                cursor_datetime_formats:
-                  - "%Y-%m-%dT%H:%M:%S.%f%z"
-                  - "%Y-%m-%dT%H:%M:%S%z"
-                lookback_window: P1D
-                start_datetime:
-                  type: MinMaxDatetime
-                  datetime: "{{ config['bitbucket_start_date'] }}"
-                  datetime_format: "%Y-%m-%d"
-              transformations:
-                - type: AddFields
-                  fields:
-                    - type: AddedFieldDefinition
-                      path: [repo_full_name]
-                      value: "{{ stream_partition.repo_full_name }}"
-                      value_type: string
+              $ref: "#/streams/5"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: event_date
@@ -3606,6 +3149,30 @@ api_budget:
           interval: PT1H
       matchers:
         - url_base: https://api.bitbucket.org
+
+# INVARIANT: repositories, pull_requests and the four pull-request children
+# read one listing chain through the response cache. A dependant waits while
+# its parent's group is active, and the children take turns, so every read
+# after the first is a cache hit instead of a race to the vendor.
+stream_groups:
+  repository_listing:
+    action:
+      type: BlockSimultaneousSyncsAction
+    streams:
+      - $ref: "#/streams/0"
+  pull_request_listing:
+    action:
+      type: BlockSimultaneousSyncsAction
+    streams:
+      - $ref: "#/streams/5"
+  pull_request_children:
+    action:
+      type: BlockSimultaneousSyncsAction
+    streams:
+      - $ref: "#/streams/6"
+      - $ref: "#/streams/7"
+      - $ref: "#/streams/8"
+      - $ref: "#/streams/9"
 
 concurrency_level:
   type: ConcurrencyLevel

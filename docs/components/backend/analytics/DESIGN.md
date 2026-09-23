@@ -117,7 +117,7 @@ graph TB
 
 | Layer | Responsibility | Technology |
 |-------|---------------|------------|
-| API | REST endpoints, OData query parsing, request validation | Axum (via cyberfabric api-gateway) |
+| API | REST endpoints, OData query parsing, request validation | Axum (via Constructor Gears api-gateway) |
 | Metric Catalog | CRUD for metric definitions, column catalog, threshold CRUD | MariaDB (modkit-db / SeaORM) |
 | Query Builder | Build parameterized ClickHouse SQL from metric's `query_ref` + OData filters + security scope | insight-clickhouse crate |
 | Threshold Evaluator | Evaluate each result row against metric's thresholds, attach `_thresholds` map | In-process (loaded from MariaDB per query) |

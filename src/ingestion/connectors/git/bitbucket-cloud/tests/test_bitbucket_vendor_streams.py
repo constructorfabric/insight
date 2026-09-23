@@ -21,9 +21,26 @@ from urllib.parse import parse_qs, unquote_plus, urlparse
 
 import freezegun
 import pytest
-from airbyte_cdk.models import AirbyteMessage, FailureType, SyncMode
+from airbyte_cdk.models import (
+    AirbyteMessage,
+    AirbyteStateBlob,
+    AirbyteStateMessage,
+    AirbyteStateType,
+    AirbyteStreamState,
+    FailureType,
+    StreamDescriptor,
+    SyncMode,
+)
 from config import BB_URL, PROXY_URL, BitbucketCloudConfigBuilder
-from connector_tests import ANY_QUERY_PARAMS, HttpMocker, HttpRequest, HttpResponse, assert_records_conform, read_stream
+from connector_tests import (
+    ANY_QUERY_PARAMS,
+    HttpMocker,
+    HttpRequest,
+    HttpResponse,
+    assert_records_conform,
+    read_stream,
+    read_streams,
+)
 
 _CONNECTOR = "git/bitbucket-cloud"
 _REPOS_URL = f"{BB_URL}/repositories/acme"
@@ -45,11 +62,16 @@ def _no_literal_none(records: Iterable[AirbyteMessage]) -> None:
 
 
 def _repo() -> dict[str, Any]:
+    # The clone link is what the repositories stream hoists to `clone_url`; every
+    # pull-request stream reads repositories as its parent, so the fixture
+    # carries it as the vendor does.
     return {
         "uuid": "{r-1}",
         "full_name": "acme/app",
+        "slug": "app",
         "size": 734003200,
         "updated_on": "2026-06-20T10:00:00.000000+00:00",
+        "links": {"clone": [{"name": "https", "href": "https://bot@bitbucket.org/acme/app.git"}]},
     }
 
 
@@ -282,8 +304,12 @@ def test_a_403_repository_does_not_truncate_a_child_streams_walk(
     updated after it. The refused repository sorts FIRST here so the healthy
     one is only reached if the walk survives."""
     config = BitbucketCloudConfigBuilder().build()
-    dead = {"uuid": "{r-0}", "full_name": "acme/suspended",
-            "updated_on": "2026-06-01T10:00:00.000000+00:00"}
+    dead = _repo() | {
+        "uuid": "{r-0}",
+        "full_name": "acme/suspended",
+        "slug": "suspended",
+        "updated_on": "2026-06-01T10:00:00.000000+00:00",
+    }
     http_mocker.get(
         HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS),
         HttpResponse(body=json.dumps({"values": [dead, _repo()]}), status_code=200),
@@ -666,9 +692,7 @@ def test_a_proxy_401_is_the_proxy_token_and_fails_as_a_config_error(http_mocker:
 
 
 def _repo_with_clone() -> dict[str, Any]:
-    return _repo() | {
-        "links": {"clone": [{"name": "https", "href": "https://bot@bitbucket.org/acme/app.git"}]}
-    }
+    return _repo()
 
 
 @freezegun.freeze_time(_FROZEN)
@@ -1034,7 +1058,7 @@ def test_pr_detail_state_advances_so_a_later_sync_resumes(http_mocker: HttpMocke
     )
     # The parent's own state is what a later sync resumes from. The CDK writes
     # it in its own datetime format, so the instant is what must match.
-    resumed = state["parent_state"]["pull_requests_for_diffstat"]["state"]["updated_on"]
+    resumed = state["parent_state"]["pull_requests"]["state"]["updated_on"]
     assert _instant(resumed) == _instant(updated), f"parent state must carry the listed PR's date: {state}"
 
 
@@ -1322,12 +1346,13 @@ def test_the_repository_listing_walks_by_created_on_not_by_page_number(http_mock
 
 
 @freezegun.freeze_time(_FROZEN)
-def test_the_pull_request_listing_walks_by_id_inside_the_slice(http_mocker: HttpMocker) -> None:
+def test_the_pull_request_listing_walks_by_id_from_the_cursor_with_no_upper_bound(
+    http_mocker: HttpMocker,
+) -> None:
     """Same walk for the requests of one repository, on the integer id the
-    vendor assigns once, with the slice end as the upper bound: a request
-    updated while the walk runs leaves this walk's set instead of moving inside
-    it, and the next sync lists it because the cursor never rises past what
-    this walk asked for."""
+    vendor assigns once, from the cursor up with no upper bound: the request
+    reads no clock, so every stream that shares the listing builds the same
+    URL whatever hour it starts in."""
     config = BitbucketCloudConfigBuilder().build()
     prs_url = f"{BB_URL}/repositories/acme/app/pullrequests"
     http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
@@ -1354,9 +1379,7 @@ def test_the_pull_request_listing_walks_by_id_inside_the_slice(http_mocker: Http
     for q in requests:
         clauses = [c.strip() for c in q["q"][0].split(" AND ")]
         assert any(c.startswith('updated_on >= "2026-06-01') for c in clauses), clauses
-        assert any(c.startswith('updated_on < "2026-07-01T00:00:00') for c in clauses), (
-            f"the slice end bounds the walk: {clauses}"
-        )
+        assert not any(c.startswith("updated_on <") for c in clauses), f"no upper bound: {clauses}"
 
 
 class _KeysetVendor:
@@ -1382,7 +1405,8 @@ class _KeysetVendor:
 
         eligible = [item for item in self.items if self._in_window(item, lower, upper) and self._past(item, bound)]
         eligible.sort(key=lambda item: item[query["sort"][0]])
-        page, rest = eligible[: self.pagelen], eligible[self.pagelen :]
+        page = [dict(item) for item in eligible[: self.pagelen]]
+        rest = eligible[self.pagelen :]
 
         self.served.append([item[self.key] for item in page])
         if self.on_page is not None:
@@ -1471,23 +1495,28 @@ def test_a_created_on_tie_across_a_page_edge_drops_the_second_repository(http_mo
     assert listed == sorted(r["slug"] for r in repos[:100]), "the tied repository past the page edge is not listed"
 
 
-def test_the_next_sync_lists_a_pull_request_updated_after_the_walk_began(http_mocker: HttpMocker) -> None:
-    """A request updated while the walk runs falls outside the slice end, so it
-    leaves this walk's set instead of moving inside it. The cursor closes at the
-    newest updated_on the walk did see, below that end, so the next sync's
-    window opens below the update and lists it."""
+def test_a_pull_request_updated_mid_walk_is_listed_now_when_its_page_is_ahead_and_next_sync_when_behind(
+    http_mocker: HttpMocker,
+) -> None:
+    """A request updated while the walk runs is listed by this walk when its
+    page is still ahead, and the cursor closes at that update. One whose page
+    was already served keeps its old row this walk; the next sync's window
+    opens one lookback below the cursor and lists it updated. A repository's
+    walk is minutes, the lookback a day."""
     config = BitbucketCloudConfigBuilder().build()
     prs_url = f"{BB_URL}/repositories/acme/app/pullrequests"
     prs = [
         _pr(i, author=None) | {"updated_on": f"2026-06-{10 + i // 10:02d}T{i % 10:02d}:00:00.000000+00:00"}
         for i in range(1, 121)
     ]
+    edited = "2026-07-01T05:00:00.000000+00:00"
 
-    def edit_an_unlisted_request(pages_served: int) -> None:
+    def edit_one_request_behind_the_walk_and_one_ahead(pages_served: int) -> None:
         if pages_served == 1:
-            prs[99]["updated_on"] = "2026-07-01T05:00:00.000000+00:00"
+            prs[9]["updated_on"] = edited
+            prs[99]["updated_on"] = edited
 
-    vendor = _KeysetVendor(prs, key="id", pagelen=50, on_page=edit_an_unlisted_request)
+    vendor = _KeysetVendor(prs, key="id", pagelen=50, on_page=edit_one_request_behind_the_walk_and_one_ahead)
     http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
     http_mocker._mocker.get(prs_url, json=vendor)
 
@@ -1495,8 +1524,11 @@ def test_the_next_sync_lists_a_pull_request_updated_after_the_walk_began(http_mo
         first = read_stream(_CONNECTOR, "pull_requests", config, sync_mode=SyncMode.incremental)
 
     assert not first.errors
-    assert sorted(r.record.data["id"] for r in first.records) == [i for i in range(1, 121) if i != 100], (
-        "the request edited mid-walk left this walk's set"
+    first_rows = {r.record.data["id"]: r.record.data for r in first.records}
+    assert sorted(first_rows) == list(range(1, 121)), "every request is listed once"
+    assert _instant(first_rows[100]["updated_on"]) == _instant(edited), "its page was ahead: listed updated"
+    assert _instant(first_rows[10]["updated_on"]) == _instant("2026-06-11T00:00:00Z"), (
+        "its page was already served: this walk keeps the old row"
     )
 
     pages_of_the_first_sync = len(vendor.served)
@@ -1505,12 +1537,14 @@ def test_the_next_sync_lists_a_pull_request_updated_after_the_walk_began(http_mo
         second = read_stream(_CONNECTOR, "pull_requests", config, state=state, sync_mode=SyncMode.incremental)
 
     assert not second.errors
-    assert 100 in [r.record.data["id"] for r in second.records], "the next sync must list it"
+    second_rows = {r.record.data["id"]: r.record.data for r in second.records}
+    assert {10, 100} <= set(second_rows), f"the next sync lists both edited requests: {sorted(second_rows)}"
+    assert _instant(second_rows[10]["updated_on"]) == _instant(edited), "the request behind the walk arrives updated"
 
     resumed = _listing_requests(http_mocker, prs_url)[pages_of_the_first_sync]
     lower, upper = _updated_on_window(resumed)
-    assert _instant(lower) == _instant("2026-06-21T00:00:00Z"), f"the cursor minus the P1D lookback: {lower}"
-    assert upper is not None and _instant(upper) == _instant("2026-07-02T00:00:00Z"), upper
+    assert _instant(lower) == _instant("2026-06-30T05:00:00Z"), f"the cursor minus the P1D lookback: {lower}"
+    assert upper is None, f"no upper bound: {upper}"
     assert _keyset_bound(resumed, "id") == "0", "the resumed walk still opens at the bottom of the id range"
 
 
@@ -1668,3 +1702,180 @@ def test_a_deployment_stamped_with_nine_fractional_digits_is_kept_and_advances_t
     saved = json.dumps(output.state_messages[-1].state.stream.stream_state.__dict__)
     assert "2026-06-25T10:00:00" in saved, f"the deployment's date must become the cursor: {saved}"
     assert_records_conform(output.records, _CONNECTOR, "deployments", strict=True)
+
+
+_PR_LISTING_URL = f"{BB_URL}/repositories/acme/app/pullrequests"
+
+
+def _listing_urls(mocker: HttpMocker, url_prefix: str) -> list[str]:
+    return [str(r.url) for r in mocker._mocker.request_history if str(r.url).startswith(url_prefix + "?")]
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_the_listing_chain_is_read_once_for_every_stream_on_it(http_mocker: HttpMocker) -> None:
+    """repositories, pull_requests and the children take their parents by reference,
+    so the CDK's response cache answers every later stream from the first read: one
+    sync over four streams, one request to the repository listing and one to the
+    pull-request listing. Each child still emits its own copy of the parent cursor."""
+    config = BitbucketCloudConfigBuilder().build()
+    updated = "2026-06-20T10:00:00.000000+00:00"
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(HttpRequest(_PR_LISTING_URL, query_params=ANY_QUERY_PARAMS), _pr_listing(31, updated))
+    http_mocker.get(
+        HttpRequest(f"{_PR_LISTING_URL}/31/diffstat", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(
+            body=json.dumps({"values": [{"status": "modified", "new": {"path": "a.txt"}, "lines_added": 3}]}),
+            status_code=200,
+        ),
+    )
+    http_mocker.get(
+        HttpRequest(f"{_PR_LISTING_URL}/31/commits", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "values": [
+                        {
+                            "hash": "b" * 40,
+                            "date": "2026-06-19T10:00:00+00:00",
+                            "message": "m",
+                            "author": {"raw": "Ada <ada@example.com>", "user": {"account_id": "acc-42"}},
+                            "parents": [],
+                        }
+                    ]
+                }
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_streams(
+        _CONNECTOR, ["repositories", "pull_requests", "pull_request_diffstat", "pull_request_commits"], config
+    )
+
+    assert not output.errors, output.errors
+    by_stream = {}
+    for r in output.records:
+        by_stream.setdefault(r.record.stream, []).append(r.record.data)
+    assert set(by_stream) == {"repositories", "pull_requests", "pull_request_diffstat", "pull_request_commits"}
+    assert len(_listing_urls(http_mocker, _PR_LISTING_URL)) == 1, (
+        f"pull_requests and two children, one listing read: {_listing_urls(http_mocker, _PR_LISTING_URL)}"
+    )
+    assert len(_listing_urls(http_mocker, _REPOS_URL)) == 1, (
+        f"four streams, one repository read: {_listing_urls(http_mocker, _REPOS_URL)}"
+    )
+    states = {
+        m.state.stream.stream_descriptor.name: m.state.stream.stream_state.__dict__ for m in output.state_messages
+    }
+    for child in ("pull_request_diffstat", "pull_request_commits"):
+        parent = states[child]["parent_state"]["pull_requests"]["state"]["updated_on"]
+        assert _instant(parent) == _instant(updated), (
+            f"{child} must carry its own copy of the parent cursor: {states[child]}"
+        )
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_children_with_diverging_parent_cursors_each_read_the_listing(http_mocker: HttpMocker) -> None:
+    """Sharing is an optimisation, never a coupling: when two children resume from
+    different parent cursors their listing URLs differ, so each reads the vendor
+    and neither sees the other's window."""
+    config = BitbucketCloudConfigBuilder().build()
+    config["bitbucket_start_date"] = "2026-01-01"
+    updated = "2026-06-20T10:00:00.000000+00:00"
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(HttpRequest(_PR_LISTING_URL, query_params=ANY_QUERY_PARAMS), _pr_listing(31, updated))
+    http_mocker.get(
+        HttpRequest(f"{_PR_LISTING_URL}/31/diffstat", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(
+            body=json.dumps({"values": [{"status": "modified", "new": {"path": "a.txt"}, "lines_added": 3}]}),
+            status_code=200,
+        ),
+    )
+    http_mocker.get(
+        HttpRequest(f"{_PR_LISTING_URL}/31/comments", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps({"values": []}), status_code=200),
+    )
+
+    def child_state(stream: str, parent_cursor: str):
+        return AirbyteStateMessage(
+            type=AirbyteStateType.STREAM,
+            stream=AirbyteStreamState(
+                stream_descriptor=StreamDescriptor(name=stream),
+                stream_state=AirbyteStateBlob(
+                    {
+                        "use_global_cursor": True,
+                        "state": {
+                            "pr_updated_on" if stream == "pull_request_diffstat" else "updated_on": parent_cursor
+                        },
+                        "lookback_window": 86400,
+                        "parent_state": {
+                            "pull_requests": {
+                                "state": {"updated_on": parent_cursor},
+                                "use_global_cursor": True,
+                                "lookback_window": 86400,
+                                "parent_state": {},
+                            }
+                        },
+                    }
+                ),
+            ),
+        )
+
+    state = [
+        child_state("pull_request_diffstat", "2026-06-10T00:00:00Z"),
+        child_state("pull_request_comments", "2026-06-15T00:00:00Z"),
+    ]
+
+    output = read_streams(_CONNECTOR, ["pull_request_diffstat", "pull_request_comments"], config, state=state)
+
+    assert not output.errors, output.errors
+    asked = sorted(unquote_plus(u) for u in _listing_urls(http_mocker, _PR_LISTING_URL))
+    assert len(asked) == 2 and asked[0] != asked[1], f"two windows, two reads: {asked}"
+    assert 'updated_on >= "2026-06-0' in asked[0] and 'updated_on >= "2026-06-1' in asked[1], asked
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_state_saved_under_a_previous_listing_name_restarts_that_child_at_the_floor(http_mocker: HttpMocker) -> None:
+    """The listing's cursor lives in the child's state under the listing's name. A
+    child resuming with state written under another name finds no parent cursor
+    and lists from the start date again — the whole window, every repository.
+    Renaming the listing therefore needs the saved key renamed with it; this pins
+    what happens when it is not."""
+    config = BitbucketCloudConfigBuilder().build()
+    config["bitbucket_start_date"] = "2026-01-01"
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(_PR_LISTING_URL, query_params=ANY_QUERY_PARAMS), _pr_listing(31, "2026-06-20T10:00:00.000000+00:00")
+    )
+    http_mocker.get(
+        HttpRequest(f"{_PR_LISTING_URL}/31/diffstat", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(
+            body=json.dumps({"values": [{"status": "modified", "new": {"path": "a.txt"}, "lines_added": 3}]}),
+            status_code=200,
+        ),
+    )
+    stale = AirbyteStateMessage(
+        type=AirbyteStateType.STREAM,
+        stream=AirbyteStreamState(
+            stream_descriptor=StreamDescriptor(name="pull_request_diffstat"),
+            stream_state=AirbyteStateBlob(
+                {
+                    "use_global_cursor": True,
+                    "state": {"pr_updated_on": "2026-06-15T00:00:00Z"},
+                    "lookback_window": 86400,
+                    "parent_state": {
+                        "pull_requests_for_diffstat": {
+                            "state": {"updated_on": "2026-06-15T00:00:00Z"},
+                            "use_global_cursor": True,
+                            "parent_state": {},
+                        }
+                    },
+                }
+            ),
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "pull_request_diffstat", config, state=[stale])
+
+    assert not output.errors, output.errors
+    asked = [unquote_plus(u) for u in _listing_urls(http_mocker, _PR_LISTING_URL)]
+    assert asked and 'updated_on >= "2026-01-01' in asked[0], f"no cursor under the current name, so the floor: {asked}"

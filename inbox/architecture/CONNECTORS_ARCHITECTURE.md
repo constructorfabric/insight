@@ -8,13 +8,13 @@ This document describes the connector architecture for the Metrics Layer — the
 
 ## Connector Ecosystem Strategy
 
-Self-service connector authoring is a strategic priority, not merely a technical option. With 2,000+ potential Cyber Fabric customers each using different tooling stacks, requiring the Constructor/Cyber Fabric team to build every new connector creates a permanent bottleneck that scales poorly with customer growth.
+Self-service connector authoring is a strategic priority, not merely a technical option. With 2,000+ potential Constructor Fabric customers each using different tooling stacks, requiring the Constructor Fabric team to build every new connector creates a permanent bottleneck that scales poorly with customer growth.
 
 The platform supports three connector authorship tiers:
 
 | Tier | Author | Maintenance | Examples |
 |------|--------|-------------|---------|
-| **First-party connectors** | Constructor / Cyber Fabric engineering | Fully maintained by platform team | GitLab, YouTrack, BambooHR, M365, Zulip |
+| **First-party connectors** | Constructor Fabric engineering | Fully maintained by platform team | GitLab, YouTrack, BambooHR, M365, Zulip |
 | **Community connectors** | Open-source contributors | Community-maintained, reviewed by platform team | Bitbucket, Linear, custom HR systems |
 | **Self-service connectors** | Customers writing their own | Customer-owned; platform provides SDK and validation | Internal proprietary tools, niche SaaS products |
 
