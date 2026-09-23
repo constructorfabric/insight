@@ -4,7 +4,9 @@ name: Git version probe
 # on the self-hosted pool. Delete once the answer lands in bootstrap.sh.
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - chore/self-hosted-runner-smoke-3515
 
 permissions:
   contents: read
