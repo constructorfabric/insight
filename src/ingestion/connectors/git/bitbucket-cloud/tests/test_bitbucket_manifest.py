@@ -155,9 +155,8 @@ _REPO_LISTING_PATH = "/repositories/{{ stream_partition.workspace }}"
 def _repository_listings(streams: list[dict]) -> list[tuple[str, str]]:
     """(owner, fields) for every requester that lists a workspace's repositories.
 
-    Eleven of the twelve are fan-out parents inlined inside a substream's
-    partition router — the Builder's strict validator rejects a whole-object
-    `$ref` for a substream parent — so they cannot share one definition and
+    The proxy walks carry fan-out parents inlined inside their partition
+    routers, each bounded differently, so they cannot share one definition and
     have to be audited instead.
     """
     found: list[tuple[str, str]] = []
@@ -280,7 +279,9 @@ def test_every_fan_out_listing_walks_by_created_on_instead_of_page_number() -> N
         else:
             paged.append(path)
             assert paginator.get("page_token_option") == {"type": "RequestPath"}, f"{path}: {paginator}"
-    assert len(keyset) == 17, keyset
+    # repositories and pull_requests (read by reference from every pull-request
+    # stream) plus the six inlined repository parents of the proxy walks.
+    assert len(keyset) == 8, keyset
     assert len(paged) == 7, paged
 
 
@@ -313,7 +314,7 @@ def test_a_parent_that_carries_state_lists_repositories_from_its_cursor() -> Non
     manifest = yaml.safe_load((connector_dir(_CONNECTOR) / "connector.yaml").read_text())
     seen = set()
     for parent_config in _parent_configs(manifest["streams"]):
-        parent = parent_config["stream"]
+        parent = _referenced_stream(manifest, parent_config["stream"])
         name = parent["name"]
         bound = (parent["retriever"]["requester"].get("request_parameters") or {}).get("q", "")
         if name not in _CURSOR_BOUNDED_PARENTS:
@@ -384,3 +385,69 @@ def test_every_proxy_request_carries_the_repository_size_hint() -> None:
         for parent in retriever["partition_router"]["parent_stream_configs"]:
             if parent.get("partition_field") == "repo_clone_url":
                 assert ["size"] in (parent.get("extra_fields") or []), retriever["requester"]["path"]
+
+
+def _referenced_stream(manifest: dict, node: dict) -> dict:
+    """Follow a `$ref: "#/streams/N"` to the stream it names; an inlined stream is returned as is."""
+    if "$ref" in node:
+        return manifest["streams"][int(node["$ref"].rsplit("/", 1)[1])]
+    return node
+
+
+def _direct_parent(manifest: dict, stream: dict) -> tuple[dict, dict]:
+    configs = stream["retriever"]["partition_router"]["parent_stream_configs"]
+    assert len(configs) == 1, stream["name"]
+    return configs[0], _referenced_stream(manifest, configs[0]["stream"])
+
+
+def test_the_pull_request_children_read_the_pull_requests_stream_itself() -> None:
+    """Each child hangs off the top-level pull_requests stream by reference, and
+    pull_requests off the top-level repositories stream, so one definition serves
+    every listing and the CDK's per-name response cache turns the five reads of
+    each into one. The cache flag is stated on both: the CDK enables it only on a
+    direct parent, and the nested copy under a child's parent would go without."""
+    manifest = yaml.safe_load((connector_dir(_CONNECTOR) / "connector.yaml").read_text())
+    by_name = {s["name"]: s for s in manifest["streams"]}
+    children = [s for s in manifest["streams"] if s["name"].startswith("pull_request_")]
+    assert len(children) == 4, [s["name"] for s in children]
+
+    for child in children:
+        config, parent = _direct_parent(manifest, child)
+        assert config["stream"] == {"$ref": "#/streams/5"}, child["name"]
+        assert parent is by_name["pull_requests"]
+        assert config.get("incremental_dependency") is True, child["name"]
+
+    prs_config, prs_parent = _direct_parent(manifest, by_name["pull_requests"])
+    assert prs_config["stream"] == {"$ref": "#/streams/0"}
+    assert prs_parent is by_name["repositories"]
+
+    for name in ("repositories", "pull_requests"):
+        assert by_name[name]["retriever"]["requester"].get("use_cache") is True, name
+
+    bound = by_name["pull_requests"]["retriever"]["requester"]["request_parameters"]["q"]
+    assert "updated_on <" not in bound and "now_utc" not in bound and "end_time" not in bound, (
+        f"the listing request must read no clock, or the five streams build five URLs: {bound}"
+    )
+
+
+def test_the_listing_chain_runs_one_level_at_a_time() -> None:
+    """A shared listing pays off only if the first read is cached before the next
+    stream asks; streams starting together race the vendor. One blocking group per
+    level — repositories, pull_requests, the four children — makes a dependant
+    wait for its parent's group and the children take turns."""
+    manifest = yaml.safe_load((connector_dir(_CONNECTOR) / "connector.yaml").read_text())
+    groups = manifest["stream_groups"]
+    assert all(group["action"]["type"] == "BlockSimultaneousSyncsAction" for group in groups.values())
+    members = {
+        name: {_referenced_stream(manifest, ref)["name"] for ref in group["streams"]} for name, group in groups.items()
+    }
+    assert members == {
+        "repository_listing": {"repositories"},
+        "pull_request_listing": {"pull_requests"},
+        "pull_request_children": {
+            "pull_request_comments",
+            "pull_request_commits",
+            "pull_request_diffstat",
+            "pull_request_activity",
+        },
+    }

@@ -3,7 +3,7 @@
 use serde::Deserialize;
 
 use super::MetricQueryError;
-use super::field::{FieldType, Source, is_identifier};
+use super::field::{FieldType, Source};
 use super::filter::FilterBind;
 use crate::domain::query::time_window::{Bounds, Grain, Window};
 
@@ -45,13 +45,8 @@ impl TimeField {
         if self.r#type != "datetime" {
             return Err(MetricQueryError::ClockType(self.r#type.clone()));
         }
-        let source = Source::resolve(self.json.as_deref(), self.column.as_deref())
-            .ok_or(MetricQueryError::ClockSource)?;
-        if !is_identifier(source.name()) {
-            return Err(MetricQueryError::Identifier(source.name().to_owned()));
-        }
-
-        Ok(source)
+        Source::resolve(self.json.as_deref(), self.column.as_deref())
+            .ok_or(MetricQueryError::ClockSource)
     }
 }
 

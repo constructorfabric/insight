@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use super::field::coerce_value;
+use super::field::{MAX_IDENTIFIER_CHARS, coerce_value};
 use super::*;
 use crate::domain::query::metric_query::TableEngine;
 use crate::domain::query::time_window::RequestedRange;
@@ -105,6 +105,21 @@ fn a_clock_reads_the_payload_column_it_names() {
     assert!(
         compiled.sql.contains(
             "parseDateTimeBestEffortOrNull(JSONExtractString(`event_json`, 'occurred_at'))"
+        ),
+        "{}",
+        compiled.sql
+    );
+}
+
+#[test]
+fn a_clock_reads_a_json_key_by_the_same_rule_a_field_does() {
+    let metric = timed_metric(&json!({ "json": "meta.Occurred At", "type": "datetime" }));
+
+    let compiled = compiled(&metric, "P7D", true, TableEngine::MergeTree);
+
+    assert!(
+        compiled.sql.contains(
+            "parseDateTimeBestEffortOrNull(JSONExtractString(raw_data, 'meta', 'Occurred At'))"
         ),
         "{}",
         compiled.sql
@@ -1378,7 +1393,7 @@ fn a_where_picks_the_one_array_element_the_field_means() {
     assert!(
         compiled.sql.contains(
             "JSONExtractString(arrayFirst(x -> JSONExtractString(x, 'field', 'name') = ?, \
-             JSONExtractArrayRaw(`field_values_json`)), 'name')"
+             JSONExtractArrayRaw(ifNull(`field_values_json`, ''))), 'name')"
         ),
         "{}",
         compiled.sql
@@ -1387,7 +1402,39 @@ fn a_where_picks_the_one_array_element_the_field_means() {
 }
 
 #[test]
-fn a_json_path_segment_outside_the_charset_is_refused() {
+fn a_json_key_may_hold_the_spaces_and_sigils_a_payload_names_it_with() {
+    let metric = query(json!({
+        "table": "launches",
+        "fields": [
+            { "json": "environment.Region Name", "type": "string", "as_name": "region" },
+            { "json": "$type", "type": "string", "as_name": "kind" }
+        ],
+        "group_by": ["region", "kind"],
+        "filters": []
+    }));
+
+    let compiled = metric
+        .compile(&people())
+        .unwrap_or_else(|error| panic!("compiles: {error}"));
+
+    assert!(
+        compiled
+            .sql
+            .contains("JSONExtractString(raw_data, 'environment', 'Region Name')"),
+        "{}",
+        compiled.sql
+    );
+    assert!(
+        compiled
+            .sql
+            .contains("JSONExtractString(raw_data, '$type')"),
+        "{}",
+        compiled.sql
+    );
+}
+
+#[test]
+fn a_json_key_cannot_break_out_of_the_literal_that_carries_it() {
     let metric = query(json!({
         "table": "events",
         "fields": [
@@ -1397,8 +1444,70 @@ fn a_json_path_segment_outside_the_charset_is_refused() {
         "filters": []
     }));
 
+    let compiled = metric
+        .compile(&people())
+        .unwrap_or_else(|error| panic!("compiles: {error}"));
+
+    assert!(
+        compiled
+            .sql
+            .contains(r"JSONExtractString(raw_data, 'field', 'name\'); DROP TABLE events; --')"),
+        "{}",
+        compiled.sql
+    );
+}
+
+#[test]
+fn a_json_key_holding_a_placeholder_does_not_consume_a_bind() {
+    let metric = query(json!({
+        "table": "events",
+        "fields": [{ "json": "who?", "type": "string", "as_name": "who" }],
+        "group_by": ["who"],
+        "filters": [{ "json": "state", "type": "string", "op": "eq", "value": "open" }]
+    }));
+
+    let compiled = metric
+        .compile(&people())
+        .unwrap_or_else(|error| panic!("compiles: {error}"));
+
+    assert!(
+        compiled
+            .sql
+            .contains("JSONExtractString(raw_data, 'who??')"),
+        "{}",
+        compiled.sql
+    );
+    assert_eq!(compiled.binds, vec!["open".to_owned()]);
+}
+
+#[test]
+fn a_json_key_longer_than_the_cap_is_refused() {
+    let metric = query(json!({
+        "table": "events",
+        "fields": [
+            { "json": "a".repeat(MAX_IDENTIFIER_CHARS + 1), "type": "string", "as_name": "bad" }
+        ],
+        "group_by": [],
+        "filters": []
+    }));
+
     assert!(matches!(
         metric.compile(&people()),
-        Err(MetricQueryError::Identifier(_))
+        Err(MetricQueryError::JsonKey(_))
+    ));
+}
+
+#[test]
+fn an_empty_json_key_is_refused() {
+    let metric = query(json!({
+        "table": "events",
+        "fields": [{ "json": "field..name", "type": "string", "as_name": "bad" }],
+        "group_by": [],
+        "filters": []
+    }));
+
+    assert!(matches!(
+        metric.compile(&people()),
+        Err(MetricQueryError::JsonKey(_))
     ));
 }

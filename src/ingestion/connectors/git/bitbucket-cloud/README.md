@@ -122,6 +122,27 @@ transformation. The API link is used rather than a URL derived from
 The streams are otherwise independent: each carries its own cursor and asks the
 proxy for its own window. They join downstream by `sha`.
 
+`pull_requests` takes `repositories` as its parent by reference, and the four
+pull-request children take `pull_requests` the same way: one definition per
+listing, no copies. The CDK caches parent-stream responses per stream name and
+URL for the life of the sync, so `pull_requests` and its four children share one
+read of the repository listing (the top-level `repositories` stream reads its own
+incremental window) and each repository's pull requests are listed once for all
+five. One blocking stream group per level runs
+`repositories`, then `pull_requests`, then the children one at a time, so every
+read after the first is a cache hit rather than a race to the vendor. Each child
+still keeps its own copy of the listing's cursor in its state; when two
+children's cursors for a repository differ (one of them lagged), their URLs
+differ, both read the vendor, and nothing is shared or lost. The listing request
+reads no clock for the same reason: its window opens at the cursor and has no
+upper bound, so the five streams, which start hours apart, build the same URL.
+The cursor is per repository, so a walk is one repository's few pages and the
+one-day lookback covers a request updated while they are served. Past the CDK's
+10,000-partition ceiling the cursor collapses to one global value: a walk becomes
+the whole sync, the CDK widens the next window by the previous sync's runtime on
+top of the lookback, and since each stream measures its own runtime the five
+URLs stop matching. Sharing is a per-repository-cursor property.
+
 `branches` is full refresh — bronze keeps the latest state per branch, and
 head-movement history is derived by the `snapshot` / `fields_history` dbt
 macros. Its `unique_key` excludes `head_sha`, so the ReplacingMergeTree
@@ -129,8 +150,9 @@ collapses to current state and a head move is a tracked-column change.
 
 ### Bitbucket-specific behaviours
 
-- **Pagination** is cursor-style: the response carries an absolute `next` URL,
-  consumed via `RequestPath`.
+- **Pagination** of the per-request children is cursor-style: the response
+  carries an absolute `next` URL, consumed via `RequestPath`. The repository and
+  pull-request listings walk by keyset instead (below).
 - **`fields=`** trims the response to the used properties; the full repository
   object is large and most of it is unused here.
 - **The "updated after" bound is server-side**, expressed as
@@ -165,8 +187,8 @@ forms so an omission is visible:
 
 | anchor | applies to | form |
 |---|---|---|
-| `repos_since_start` | every repository listing that feeds partitions (12 of them) | `q=updated_on >= start_date`, server-side |
-| `prs_since_start` | the four per-PR fan-out parents | `q=updated_on >= max(start_date, now - 30d)` |
+| `repos_since_start` | `repositories` (also the parent of every pull-request stream) and the repository listings of the branch, pipeline and deployment walks | `q=updated_on >= start_date`, server-side |
+| `prs_since_start` | `pull_requests`, the parent of the four per-PR children | `q=updated_on >= <the stream's own cursor>` |
 
 Filtering repositories server-side is what bounds the clone cost: an untouched
 repository is never returned, so the proxy never walks it. VERIFIED against the

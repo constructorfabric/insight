@@ -16,7 +16,7 @@ from airbyte_cdk.test.mock_http.request import ANY_QUERY_PARAMS
 from connector_tests.builders import ConfigBuilder
 from connector_tests.fixtures import load_fixture
 from connector_tests.schema_assert import assert_records_conform, stream_schema
-from connector_tests.source import connector_dir, get_source, read_stream
+from connector_tests.source import connector_dir, get_source, read_stream, read_streams
 
 __all__ = [
     "ANY_QUERY_PARAMS",
@@ -29,5 +29,6 @@ __all__ = [
     "get_source",
     "load_fixture",
     "read_stream",
+    "read_streams",
     "stream_schema",
 ]
