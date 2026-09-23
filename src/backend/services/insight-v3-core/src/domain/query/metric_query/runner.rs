@@ -36,6 +36,11 @@ pub(crate) struct RunResult {
     pub(crate) clock: Option<crate::domain::kinds::metric::answerable::EffectiveClock>,
 }
 
+#[derive(Debug, Deserialize, clickhouse::Row)]
+struct EngineRow {
+    engine: String,
+}
+
 #[derive(Debug, Deserialize)]
 struct ResultMeta {
     name: String,
@@ -75,22 +80,21 @@ impl MetricRunner {
         table: &str,
     ) -> Result<TableEngine, MetricRunError> {
         let database = database.unwrap_or_default();
-        let binds = [
-            FilterBind::Str(database.to_owned()),
-            FilterBind::Str(database.to_owned()),
-            FilterBind::Str(table.to_owned()),
-        ];
-        let bytes = self.fetch(READ_ENGINE, &binds).await?;
+        let rows = self
+            .client
+            .inner()
+            .query(READ_ENGINE)
+            .bind(database)
+            .bind(database)
+            .bind(table)
+            .fetch_all::<EngineRow>();
+        let found = tokio::time::timeout(self.fetch_timeout, rows)
+            .await
+            .map_err(|_| MetricRunError::Timeout)??;
 
-        let parsed: ClickHouseJsonResult = serde_json::from_slice(&bytes)?;
-        let engine = parsed
-            .data
+        Ok(found
             .first()
-            .and_then(|row| row.get("engine"))
-            .and_then(serde_json::Value::as_str)
-            .map_or(TableEngine::Other, TableEngine::parse);
-
-        Ok(engine)
+            .map_or(TableEngine::Other, |row| TableEngine::parse(&row.engine)))
     }
 
     pub(crate) async fn undated(

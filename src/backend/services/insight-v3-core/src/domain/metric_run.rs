@@ -7,7 +7,7 @@ use super::definition::{DefinitionKind, DefinitionName, Lookup};
 use super::kinds::dataset::declaration::Declaration;
 use super::kinds::metric::answerable::{self, EffectiveClock};
 use super::query::metric_query::over::Over;
-use super::query::metric_query::{MetricQuery, MetricQueryError, MetricRunner, RunResult};
+use super::query::metric_query::{CompiledQuery, MetricQuery, MetricRunner, RunResult};
 use super::query::time_window::{Window, WindowRequest};
 use super::query::undated::UndatedCount;
 use super::surfaces::CustomError;
@@ -76,11 +76,13 @@ impl<'a> MetricRuns<'a> {
         metric: &MetricQuery,
         request: &WindowRequest,
     ) -> Result<RunResult, CustomError> {
-        if request.is_ranged() && !metric.has_clock().map_err(CustomError::Compile)? {
-            return Err(CustomError::Compile(MetricQueryError::ClocklessWindow));
-        }
+        metric.check_table().map_err(CustomError::Compile)?;
 
-        let engine = self.engine_of(metric).await?;
+        let engine = self
+            .metrics
+            .engine_of(metric.database(), metric.table_name())
+            .await
+            .map_err(CustomError::Run)?;
         let window = request
             .resolve(Utc::now())
             .map_err(|error| CustomError::Compile(error.into()))?;
@@ -89,26 +91,32 @@ impl<'a> MetricRuns<'a> {
             .map_err(CustomError::Compile)?;
 
         let mut result = self
-            .metrics
-            .run(&compiled)
-            .await
-            .map_err(CustomError::Run)?;
-        if request.is_ranged() {
-            result.undated = Some(self.undated_of(metric, engine, None).await?.count());
-        }
+            .counted(metric, &compiled, request.is_ranged(), engine, None)
+            .await?;
+        result.clock = EffectiveClock::of_table(metric);
 
         Ok(result)
     }
 
-    async fn engine_of(&self, metric: &MetricQuery) -> Result<TableEngine, CustomError> {
-        if !metric.addresses_a_relation() {
-            return Err(CustomError::Compile(MetricQueryError::NoTable));
+    /// The rows of a compiled run, and beside them, for a ranged one, how many
+    /// rows the window left out. The two reads are independent.
+    async fn counted(
+        &self,
+        metric: &MetricQuery,
+        compiled: &CompiledQuery,
+        ranged: bool,
+        engine: TableEngine,
+        over: Option<Over<'_>>,
+    ) -> Result<RunResult, CustomError> {
+        let rows = async { self.metrics.run(compiled).await.map_err(CustomError::Run) };
+        if !ranged {
+            return rows.await;
         }
 
-        self.metrics
-            .engine_of(metric.database(), metric.table_name())
-            .await
-            .map_err(CustomError::Run)
+        let (mut result, undated) = tokio::try_join!(rows, self.undated_of(metric, engine, over))?;
+        result.undated = Some(undated.count());
+
+        Ok(result)
     }
 
     /// Runs a metric over the dataset it reads.
@@ -137,18 +145,15 @@ impl<'a> MetricRuns<'a> {
             .map_err(CustomError::Compile)?;
 
         let mut result = self
-            .metrics
-            .run(&compiled)
-            .await
-            .map_err(CustomError::Run)?;
+            .counted(
+                metric,
+                &compiled,
+                request.is_ranged(),
+                TableEngine::Other,
+                Some(over),
+            )
+            .await?;
         result.clock = EffectiveClock::of(metric, &declaration);
-        if request.is_ranged() {
-            result.undated = Some(
-                self.undated_of(metric, TableEngine::Other, Some(over))
-                    .await?
-                    .count(),
-            );
-        }
 
         Ok(result)
     }
@@ -157,12 +162,10 @@ impl<'a> MetricRuns<'a> {
     /// question and kept nowhere.
     pub(crate) async fn answer(&self, metric: &MetricQuery) -> Result<RunResult, CustomError> {
         let Some(named) = metric.dataset() else {
-            let engine = self.engine_of(metric).await?;
-            let compiled = metric
-                .compile_window(self.metrics.people(), &Window::legacy(), engine, None)
-                .map_err(CustomError::Compile)?;
+            let unranged = WindowRequest::parse(None, None)
+                .map_err(|error| CustomError::Compile(error.into()))?;
 
-            return self.metrics.run(&compiled).await.map_err(CustomError::Run);
+            return self.run_over_table(metric, &unranged).await;
         };
         let (declaration, table) = self.ready_dataset(named).await?;
 

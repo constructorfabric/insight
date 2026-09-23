@@ -212,7 +212,10 @@ impl<'a> Surfaces<'a> {
         }
 
         let metric: MetricQuery = serde_json::from_value(body.clone()).ok()?;
-        let held = datasets::ready(self.datasets, metric.dataset()?).await;
+        let Some(named) = metric.dataset() else {
+            return EffectiveClock::of_table(&metric);
+        };
+        let held = datasets::ready(self.datasets, named).await;
         let ready = match held {
             Ok(ready) => ready?,
             Err(error) => {

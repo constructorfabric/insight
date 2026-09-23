@@ -218,6 +218,13 @@ impl MetricQuery {
         self.split().1
     }
 
+    /// The column or json path a metric over a table windows by.
+    pub(crate) fn table_clock(&self) -> Option<&str> {
+        let time = self.time.as_ref()?;
+
+        time.column.as_deref().or(time.json.as_deref())
+    }
+
     /// A table written `database.table` is read as both.
     ///
     /// The map the model is shown, and the lookup tool it calls, both address
