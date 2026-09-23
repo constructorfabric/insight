@@ -81,17 +81,22 @@ jobs:
   # jobs run ONLY for changed components, so unchanged ones don't burn CI.
   changes:
     name: Detect changed components
-    # A pull request runs the workflow from its own merge commit, so this routing
-    # narrows the surface rather than enclosing it: an untrusted PR's code reaches
-    # a throwaway runner instead of a persistent one, but a PR that edits this
-    # expression is caught by the approval gate, not by the expression.
-    runs-on: ${{ (github.event_name != 'pull_request' || (github.event.pull_request.user.login != 'dependabot[bot]' && (github.event.pull_request.head.repo.full_name == github.repository || github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER' || github.event.pull_request.author_association == 'COLLABORATOR'))) && fromJSON('["self-hosted","linux","x64","insight-vhc"]') || 'ubuntu-latest' }}
+    # Routing, not a security boundary: a pull request runs the workflow from its
+    # own merge commit, so a fork can rewrite this line, and the runner is picked
+    # before any step executes. What keeps untrusted code off the pool is the
+    # approval setting for fork pull requests.
+    #
+    # CONTRIBUTOR is trusted because the association a workflow event carries is
+    # the publicly visible one, and no membership in this organisation is public —
+    # without it the whole lane leaves the pool. It also admits anyone with a past
+    # merged commit, which is the price of that.
+    runs-on: ${{ (github.event_name != 'pull_request' || (github.event.pull_request.user.login != 'dependabot[bot]' && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER' || github.event.pull_request.author_association == 'COLLABORATOR' || github.event.pull_request.author_association == 'CONTRIBUTOR'))) && fromJSON('["self-hosted","linux","x64","insight-vhc"]') || 'ubuntu-latest' }}
     outputs:
       rust: ${{ steps.detect.outputs.rust }}
       python: ${{ steps.detect.outputs.python }}
       js: ${{ steps.detect.outputs.js }}
       # Downstream jobs take the same verdict rather than recomputing it.
-      runner: ${{ (github.event_name != 'pull_request' || (github.event.pull_request.user.login != 'dependabot[bot]' && (github.event.pull_request.head.repo.full_name == github.repository || github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER' || github.event.pull_request.author_association == 'COLLABORATOR'))) && '["self-hosted","linux","x64","insight-vhc"]' || '["ubuntu-latest"]' }}
+      runner: ${{ (github.event_name != 'pull_request' || (github.event.pull_request.user.login != 'dependabot[bot]' && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER' || github.event.pull_request.author_association == 'COLLABORATOR' || github.event.pull_request.author_association == 'CONTRIBUTOR'))) && '["self-hosted","linux","x64","insight-vhc"]' || '["ubuntu-latest"]' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -131,7 +136,7 @@ jobs:
     name: Guards
     # Inline rather than `needs: changes`: this job runs beside change detection
     # today, and a dependency would serialise it for no gain.
-    runs-on: ${{ (github.event_name != 'pull_request' || (github.event.pull_request.user.login != 'dependabot[bot]' && (github.event.pull_request.head.repo.full_name == github.repository || github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER' || github.event.pull_request.author_association == 'COLLABORATOR'))) && fromJSON('["self-hosted","linux","x64","insight-vhc"]') || 'ubuntu-latest' }}
+    runs-on: ${{ (github.event_name != 'pull_request' || (github.event.pull_request.user.login != 'dependabot[bot]' && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER' || github.event.pull_request.author_association == 'COLLABORATOR' || github.event.pull_request.author_association == 'CONTRIBUTOR'))) && fromJSON('["self-hosted","linux","x64","insight-vhc"]') || 'ubuntu-latest' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
