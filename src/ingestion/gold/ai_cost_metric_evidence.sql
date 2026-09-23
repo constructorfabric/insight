@@ -425,9 +425,18 @@ FROM (
             -- What the vendor bills, in ITS OWN minor units: credits times the
             -- price of one. The rate then carries each of those minor units to
             -- USD cents, so no step needs the currency's exponent.
-            credit.credits * pricing.credit_price_minor_units             AS native_minor_units,
-            credit.credits * pricing.credit_price_minor_units
-                           * pricing.native_minor_to_usd_cents_rate       AS usd_cents,
+            --
+            -- toDecimal128 on the first operand, and it is not cosmetic.
+            -- ClickHouse ADDS the scales of a Decimal product and keeps the
+            -- precision of the widest operand, so three Decimal(18, 6) factors
+            -- give Decimal(18, 18) — eighteen digits, all of them fractional,
+            -- leaving no room for an integer part and overflowing on any
+            -- product of one or more. Widening once makes the chain
+            -- Decimal(38, 18), which is the same arithmetic with room to hold
+            -- its own answer.
+            toDecimal128(credit.credits, 6) * pricing.credit_price_minor_units  AS native_minor_units,
+            toDecimal128(credit.credits, 6) * pricing.credit_price_minor_units
+                                            * pricing.native_minor_to_usd_cents_rate AS usd_cents,
             row_number() OVER (
                 PARTITION BY credit.insight_tenant_id, credit.source_id,
                              credit.source, credit.day, credit.email
