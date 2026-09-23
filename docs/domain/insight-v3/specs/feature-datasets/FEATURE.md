@@ -758,7 +758,7 @@ The system **MUST** store dataset declarations as a fourth definition kind in th
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-dod-datasets-source`
 
-A declaration **MUST** say what its dataset is over, and **MUST NOT** leave it to be inferred from whether a relation happens to be named. Who provisions the relation, who may drop it, whether records may be sent and how every field is read all follow from it, which is more than the presence of a property should decide. A replacement **MUST NOT** change it: turning a stream into a relation strands the records already sent, with a table still recorded against a dataset that no longer reads it, and the other way round leaves a dataset whose row says ready and which has nothing to read, for good. Neither is a state the rest of this reasons about, so it is refused rather than handled — a dataset is removed and declared anew.
+A declaration **MUST** say what its dataset is over, and **MUST NOT** leave it to be inferred from whether a relation happens to be named. Who provisions the relation, who may drop it, whether records may be sent and how every field is read all follow from it, which is more than the presence of a property should decide. A replacement **MUST NOT** change any of it, neither which of the two it is nor which relation it names. Turning a stream into a relation strands the records already sent, with a table still recorded against a dataset that no longer reads it; the other way round leaves a dataset whose row says ready and which has nothing to read, for good; and pointing it at another relation leaves every field valid and every dependent metric reading somewhere else, which is the same silent move as a field that changed where it reads from. None of the three is a state the rest of this reasons about, so each is refused rather than handled — a dataset is removed and declared anew.
 
 A field **MUST** say where its value sits in the terms its mode uses: a key path into the record's payload, or a column of the relation. A field carrying both, or neither, **MUST** be refused before the body is read, so that nothing below has to referee one; a field carrying the wrong one for its mode **MUST** be refused against the key that carries it rather than read as though it were the other.
 
@@ -776,7 +776,7 @@ A field **MUST** say where its value sits in the terms its mode uses: a key path
 
 A dataset over a relation **MUST** be published without provisioning anything, and its removal **MUST** take the declaration and nothing else. That **MUST** hold by construction rather than by a check at the drop: only the stream mode may reach the table this service makes, a table name **MUST** be recorded against a dataset in one place only, and the connection that may create or drop a table **MUST** be bound to the datasets database — so the warehouse's own relations are out of its reach whatever a declaration says. An attempt that takes a name over from one that had already provisioned a table **MUST** forget that table as it publishes, or a dataset over a relation would inherit one and ingest, which decides by the table, would take records into it.
 
-A declaration over a relation **MUST** be checked against the warehouse when it is written: a relation the warehouse does not have is refused against the name that asked for it, and a column it does not hold against the field that named it. A declaration over a stream describes records that have not arrived, so there is nothing to hold it to; one over a relation describes something that exists now, and a column it does not have compiles into every metric over the dataset and then fails on every run, far from where the mistake was made.
+A declaration over a relation **MUST** be checked against the warehouse when it is written: a relation the warehouse does not have is refused against the name that asked for it, a column it does not hold against the field that named it, and a column whose own type the declared type cannot read against the type that asked for it. That last one **MUST** be an allow-list of the types a read is known to answer from, so a type nobody thought of is refused rather than trusted: a value that is not one value refuses the conversion outright rather than answering nothing, and that refusal would otherwise meet the reader on every run. Every value has a text form, so a string reads any column at all. A declaration over a stream describes records that have not arrived, so there is nothing to hold it to; one over a relation describes something that exists now, and a column it does not have compiles into every metric over the dataset and then fails on every run, far from where the mistake was made.
 
 The relation **MUST** be one a plain read is known to count once per row. Its rows **MUST NOT** be collapsed by a declared identity — the relation decides for itself which of its rows are current, and a second rule here would quietly disagree with it — so a relation on an engine that keeps superseded rows **MUST** be refused when it is declared, naming a view over it as the way through. What counts as such an engine **MUST** be an allow-list: an engine nobody thought of, one fronting another, or a view whose rows are really an inner table's, then defaults to refused rather than to a number a reader cannot tell is wrong. `FINAL` cannot stand in for this, because an engine that does not collapse refuses it outright.
 
@@ -879,7 +879,7 @@ The system **MUST** accept a record only into a dataset that is Ready, refusing 
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-dod-datasets-metrics`
 
-A metric **MUST** name a dataset and read its declared fields by name in its selected fields, its filters and its clock, while its grouping and ordering **MUST** name the columns the metric itself produces, as they do today; a body naming a table or a database **MUST** be refused with the dataset catalogue as the admissible set. Admissibility **MUST** follow the field's type: sum and average require a numeric field and a clock requires a datetime, while grouping, filtering, counting, min and max are open to every type. Compilation **MUST** read every value per `cpt-insightspec-v3-design-dataset-contract`, and **MUST** take the database, the table, every field's read expression and the effective clock from the declaration, and **MUST NOT** offer the warehouse catalogue to metrics or to the chat in this iteration.
+A metric **MUST** name a dataset and read its declared fields by name in its selected fields, its filters and its clock, while its grouping and ordering **MUST** name the columns the metric itself produces, as they do today; a body naming a table or a database **MUST** be refused with the dataset catalogue as the admissible set. Admissibility **MUST** follow the field's type: sum and average require a numeric field and a clock requires a datetime, while grouping, filtering, counting, min and max are open to every type. A metric **MUST** be able to filter by a field it also aggregates: over a relation a field is one of the relation's own columns, and an output name the metric chose would otherwise stand in front of the column it was computed from, refusing the whole query rather than reading it. Compilation **MUST** read every value per `cpt-insightspec-v3-design-dataset-contract`, and **MUST** take the database, the table, every field's read expression and the effective clock from the declaration, and **MUST NOT** offer the warehouse catalogue to metrics or to the chat in this iteration.
 
 **Implements**:
 - `cpt-insightspec-v3-flow-datasets-author-metric`
@@ -923,7 +923,9 @@ When a dataset declares a row identity, every run over it **MUST** count one rec
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-dod-datasets-assistant`
 
-The chat's system prompt, its look_up tool and the MCP describe tools **MUST** be built from dataset declarations rather than from sampled records, **MUST** leave out physical detail, and the create tools **MUST** refuse to create a dataset. The MCP list_tables tool **MUST** be replaced by dataset listing and description.
+The chat's system prompt, its look_up tool and the MCP describe tools **MUST** be built from dataset declarations rather than from sampled records, **MUST** leave out physical detail, and the create tools **MUST** refuse to create a dataset.
+
+Refusing that is not tidiness. A dataset is where the boundary of what an agent may read is drawn, and a dataset over a relation is a read path onto the warehouse — so a server that could declare one could widen its own reach to any relation there, without asking anybody. This service already keeps those two apart: reading the warehouse is a grant of its own, held by a different server under a read-only warehouse user, and the authoring server holds the grant to write definitions over what a person has already declared. An agent therefore works inside a boundary somebody drew, and moving it stays an administrator's act. The MCP list_tables tool **MUST** be replaced by dataset listing and description.
 
 **Implements**:
 - `cpt-insightspec-v3-flow-datasets-chat`
@@ -937,11 +939,13 @@ The chat's system prompt, its look_up tool and the MCP describe tools **MUST** b
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-dod-datasets-portal`
 
-The Custom zone **MUST** gain a Datasets catalogue beside Metrics, Widgets and Dashboards, a dataset page with the declaration, the records it holds and the dependent metrics, and a remove action that shows the dependents when refused. The rail **MUST** list the catalogue for administrators only. The dependent list **MUST** come from an exact dependency lookup, never from a catalogue search over stored bodies.
+The Custom zone **MUST** gain a Datasets catalogue beside Metrics, Widgets and Dashboards, a dataset page with the declaration, the records it holds and the dependent metrics, and a remove action that shows the dependents when refused. The catalogue **MUST** say what each dataset is over, and name the relation where it reads one: that is what decides whether records may be sent into it, and a reader should not have to open it to find out. The rail **MUST** list the catalogue for administrators only. The dependent list **MUST** come from an exact dependency lookup, never from a catalogue search over stored bodies.
 
 The records **MUST** be shown as a table whose columns are the declared fields, read exactly as the declaration says they are read, with the whole record a click away — the page exists to answer "is what arrives what I meant", so a table that read a path differently from the metrics over it would answer it wrongly. The table **MUST** page through the whole dataset and order by any declared field or by the instant records arrived. A dataset may declare more fields than a table can show, so which columns are drawn **MUST** be the reader's choice, and that choice **MUST** survive leaving the page.
 
 The page size **MUST** be the service's to decide and **MUST** be reported with the page, because the cap is an installation's setting: a reader stepping by a size of its own would walk over whatever a narrower page left behind, and nothing in the answer would say so.
+
+A page **MUST** be read in a total order. A record sent in is told apart by the instant it arrived and its own identity; a row of a relation has neither, so the order **MUST** run over every field the dataset declares. A partial order makes a page read by offset show one row twice and skip another, on data nobody has touched — and two rows agreeing on every declared field are interchangeable to every reader of the dataset, so that is as total an order as this can see.
 
 **Implements**:
 - `cpt-insightspec-v3-flow-datasets-browse`
@@ -962,7 +966,9 @@ The editor **MUST** be one editor over four descriptions, not four editors: what
 
 Beside the fields **MUST** sit the same document as text, holding what would be sent, so that one can be pasted whole or carried from another installation. The two **MUST** show one document rather than two copies: whichever was edited last is believed, text that does not parse leaves the fields as they stand and blocks sending until it does, and a property the fields do not know **MUST** be sent rather than dropped, so a mistyped one is refused by name instead of disappearing. One action sends what both show.
 
-A refusal **MUST** be shown where it belongs: a violation naming a place in the document against that place, in the fields and in the text alike, and one naming the document as a whole above it. Nothing about a kind's shape **MUST** be inferred from an example or a stored body; each description says what its kind admits.
+A property the definition is made with and cannot afterwards change **MUST** be shown and **MUST NOT** be offered: a control that takes an edit only to have the service refuse it is a worse way to say so than not offering it. What a dataset is over is such a property.
+
+A refusal **MUST** be shown where it belongs: a violation naming a place in the document against that place, in the fields and in the text alike, and one naming the document as a whole above it. A form that draws an input of its own outside the description — the definition's name is one — **MUST** place a refusal about it there too, rather than above the form with the offending input unmarked. Nothing about a kind's shape **MUST** be inferred from an example or a stored body; each description says what its kind admits.
 
 **Implements**:
 - `cpt-insightspec-v3-flow-datasets-create`
@@ -1034,7 +1040,12 @@ The service **MUST** stop creating an ingest-schema landing table in the warehou
 - [ ] A relation the warehouse does not have is refused against the name that asked for it, and a column it does not hold against the field that named it
 - [ ] A relation whose engine is not known to count each row once is refused when it is declared, naming a view over it as the way through
 - [ ] A record sent into a dataset over a relation is refused as the wrong kind of dataset, not as one that is absent
-- [ ] Replacing a declaration so that what the dataset is over would change is refused; removing it and declaring it anew is how it is done
+- [ ] Replacing a declaration so that what the dataset is over would change is refused — the mode and the relation alike; removing it and declaring it anew is how it is done
+- [ ] A column is refused when its own type is not one the declared type can read; the same column declared a string is accepted, because every value has a text form
+- [ ] Two pages of a relation, read one after the other on data nobody has touched, hold no row in common and leave none out
+- [ ] A metric filters by a field it also sums, over a relation whose column carries that field's name
+- [ ] The catalogue says what each dataset is over without it being opened, and names the relation where it reads one
+- [ ] Editing a dataset shows what it is over and does not offer to change it
 - [ ] A field of a dataset over a relation reads a column and one over a stream reads a path; the wrong one is refused against the key that carries it
 - [ ] A dataset over a relation declares no row identity, and its page shows rows with no arrival instant and no identity of their own
 - [ ] Two identical records, re-sent, count once in every metric over a dataset that declares a row identity, and twice over one that does not

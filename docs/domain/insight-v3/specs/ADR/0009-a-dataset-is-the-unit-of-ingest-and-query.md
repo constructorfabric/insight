@@ -147,9 +147,12 @@ The decisions the option carries, taken on 2026-09-15:
   The mode is written in the declaration rather than inferred from whether a
   relation happens to be named: who provisions the relation, who may drop it,
   whether records may be sent and how every field is read all follow from it.
-  It cannot be changed by replacing the declaration — turning a stream into a
-  relation strands the records already sent, and the other way round leaves a
-  dataset that says it is ready and has nothing to read.
+  None of it can be changed by replacing the declaration, neither which of the
+  two it is nor which relation it names: turning a stream into a relation
+  strands the records already sent, the other way round leaves a dataset that
+  says it is ready and has nothing to read, and pointing it at another
+  relation leaves every field valid while every metric over it reads
+  somewhere else. A dataset is removed and declared anew instead.
 * **A field says where its value sits in the terms its mode uses**: a key path
   into the record's payload, or a column of the relation. A field carrying
   both, or neither, is refused before the body is read.
