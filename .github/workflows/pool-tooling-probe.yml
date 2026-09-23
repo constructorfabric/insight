@@ -1,9 +1,9 @@
 name: Pool tooling probe
 
-# Temporary: reports which of the tools our workflows invoke on the host are
-# actually present on a pool runner, so the image can be brought up to what the
-# lanes assume instead of discovering it one red check at a time. Delete once
-# the gaps are closed.
+# Temporary: installs the two tools the lanes assume the image carries — helm and
+# gh — on every runner in the pool, then reports what the image holds. Five legs
+# that each hold a distinct runner so no machine serves two of them. Delete once
+# the pool is level.
 
 on:
   push:
@@ -14,36 +14,44 @@ permissions:
   contents: read
 
 jobs:
-  probe:
-    name: What the image has
+  install:
+    name: leg ${{ matrix.leg }}
     runs-on: [self-hosted, linux, x64, insight-vhc]
-    timeout-minutes: 10
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: [1, 2, 3, 4, 5]
     steps:
-      - name: Inventory
+      # First, so the five legs overlap and each lands on its own runner.
+      - name: Hold the runner
+        run: |
+          echo "runner: ${RUNNER_NAME}"
+          sleep 120
+
+      - name: Install helm and gh
+        run: |
+          set -euo pipefail
+          sudo install -m 0755 -d /etc/apt/keyrings
+
+          curl -fsSL https://baltocdn.com/helm/signing.asc \
+            | sudo gpg --dearmor --yes -o /etc/apt/keyrings/helm.gpg
+          sudo chmod a+r /etc/apt/keyrings/helm.gpg
+          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/helm.gpg] https://baltocdn.com/helm/stable/debian/ all main" \
+            | sudo tee /etc/apt/sources.list.d/helm.list >/dev/null
+
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+            | sudo tee /etc/apt/keyrings/githubcli.gpg >/dev/null
+          sudo chmod a+r /etc/apt/keyrings/githubcli.gpg
+          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/githubcli.gpg] https://cli.github.com/packages stable main" \
+            | sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null
+
+          sudo apt-get update
+          sudo apt-get install -y helm gh
+
+      - name: Report
         run: |
           set -uo pipefail
           echo "runner: ${RUNNER_NAME}"
-          echo
-          # Invoked by our workflows on the host, plus what a CI script commonly
-          # assumes the GitHub image provides.
-          for t in \
-            helm kubectl k3d kubeseal gh envsubst make \
-            python python3 pip pip3 pytest uv \
-            cargo rustc rustup node npm pnpm yarn \
-            dbt semgrep trivy clickhouse-client \
-            jq yq docker git curl wget unzip zip tar xz zstd \
-            rsync git-lfs sqlite3 psql mysql openssl shellcheck \
-            xmllint file lsof ss dig parallel tree gettext \
-            aws az terraform skopeo cosign
-          do
-            if p="$(command -v "$t" 2>/dev/null)"; then
-              printf 'HAVE %-18s %s\n' "$t" "$p"
-            else
-              printf 'MISS %-18s\n' "$t"
-            fi
-          done
-          echo
-          echo "--- os ---"
-          . /etc/os-release && echo "$PRETTY_NAME"
-          echo "--- disk ---"
-          df -h / /srv/gha | tail -n +1
+          helm version --short
+          gh --version | head -1
