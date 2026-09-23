@@ -1,0 +1,49 @@
+name: Pool tooling probe
+
+# Temporary: reports which of the tools our workflows invoke on the host are
+# actually present on a pool runner, so the image can be brought up to what the
+# lanes assume instead of discovering it one red check at a time. Delete once
+# the gaps are closed.
+
+on:
+  push:
+    branches:
+      - chore/self-hosted-runner-smoke-3515
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: What the image has
+    runs-on: [self-hosted, linux, x64, insight-vhc]
+    timeout-minutes: 10
+    steps:
+      - name: Inventory
+        run: |
+          set -uo pipefail
+          echo "runner: ${RUNNER_NAME}"
+          echo
+          # Invoked by our workflows on the host, plus what a CI script commonly
+          # assumes the GitHub image provides.
+          for t in \
+            helm kubectl k3d kubeseal gh envsubst make \
+            python python3 pip pip3 pytest uv \
+            cargo rustc rustup node npm pnpm yarn \
+            dbt semgrep trivy clickhouse-client \
+            jq yq docker git curl wget unzip zip tar xz zstd \
+            rsync git-lfs sqlite3 psql mysql openssl shellcheck \
+            xmllint file lsof ss dig parallel tree gettext \
+            aws az terraform skopeo cosign
+          do
+            if p="$(command -v "$t" 2>/dev/null)"; then
+              printf 'HAVE %-18s %s\n' "$t" "$p"
+            else
+              printf 'MISS %-18s\n' "$t"
+            fi
+          done
+          echo
+          echo "--- os ---"
+          . /etc/os-release && echo "$PRETTY_NAME"
+          echo "--- disk ---"
+          df -h / /srv/gha | tail -n +1
