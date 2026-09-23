@@ -194,11 +194,12 @@ jobs:
         if: ${{ !cancelled() }}
         run: python3 -m unittest discover -s scripts/ci/tests -p "test_logging_bar.py" -q
 
-      # Actions offers no way to share an expression between workflow files —
-      # `runs-on` reads neither `env` nor a composite action, `vars` never reach
-      # a fork's pull request, and anchors are not supported. So the rule is
-      # written out in each file and pinned here instead: this is the one place
-      # it is defined, and a file that drifts from it fails.
+      # Nothing in Actions shares an expression ACROSS workflow files: `runs-on`
+      # reads neither `env` nor a composite action, `vars` never reach a fork's
+      # pull request, and YAML anchors — which do work — resolve within one file,
+      # so they cannot be a single source of truth for all of them. The rule is
+      # therefore written out in each file and pinned here instead: this is the
+      # one place it is defined, and a file that drifts from it fails.
       #
       # Routing only. What keeps untrusted code off the pool is the approval
       # setting for fork pull requests, not this string.

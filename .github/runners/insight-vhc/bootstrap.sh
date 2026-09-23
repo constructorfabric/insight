@@ -50,9 +50,13 @@ apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin do
 systemctl enable --now docker
 usermod -aG docker runner
 
-curl -fsSL -o /usr/local/bin/yq \
-  https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
-chmod +x /usr/local/bin/yq
+YQ_VERSION=v4.53.6
+YQ_SHA256=c5f056448f973ae7d39b5401949648a78f2dc1947d6a8eb65be60d5c504b9385
+curl -fsSL -o /tmp/yq \
+  "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+echo "${YQ_SHA256}  /tmp/yq" | sha256sum -c -
+install -m 0755 /tmp/yq /usr/local/bin/yq
+rm -f /tmp/yq
 
 # Present on the GitHub-hosted images and assumed by lanes that install neither:
 # helm by the chart-contract workflows, gh by anything shelling out to the API.
@@ -63,9 +67,11 @@ HELM_VERSION=v3.22.0
 # its host, so it proves nothing against that host being wrong.
 HELM_SHA256=1e4ab49e429626cf6c6958d914248b78c9730803c2751b87627e171dc800e7bb
 GH_VERSION=2.101.0
+GH_SHA256=9bca2d1c16825f109907a23307628a2f0698fbf99662b73a5cf0b020293072b8
 
 curl -fsSL -o /tmp/gh.tgz \
   "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz"
+echo "${GH_SHA256}  /tmp/gh.tgz" | sha256sum -c -
 tar -xzf /tmp/gh.tgz -C /tmp
 install -m 0755 "/tmp/gh_${GH_VERSION}_linux_amd64/bin/gh" /usr/local/bin/gh
 rm -rf /tmp/gh.tgz "/tmp/gh_${GH_VERSION}_linux_amd64"
