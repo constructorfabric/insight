@@ -22,8 +22,10 @@ NAME="${1:?usage: start-clickhouse.sh <container-name>}"
 : "${CLICKHOUSE_PASSWORD:?CLICKHOUSE_PASSWORD must be set}"
 : "${CLICKHOUSE_DATABASE:?CLICKHOUSE_DATABASE must be set}"
 
-# A self-hosted runner keeps whatever a killed job left behind, and both the
-# container name and port 8123 are fixed.
+# A self-hosted runner keeps whatever a killed job left behind. Port 8123 is
+# fixed and shared across lanes under different container names, so reclaim the
+# port first and the name second. Safe because a runner serves one job at a time.
+docker ps -q --filter "publish=8123" | xargs -r docker rm -f >/dev/null 2>&1 || true
 docker rm -f "${NAME}" >/dev/null 2>&1 || true
 
 docker run -d --name "${NAME}" -p 8123:8123 \
