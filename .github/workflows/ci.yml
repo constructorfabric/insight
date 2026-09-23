@@ -194,6 +194,49 @@ jobs:
         if: ${{ !cancelled() }}
         run: python3 -m unittest discover -s scripts/ci/tests -p "test_logging_bar.py" -q
 
+      # Actions offers no way to share an expression between workflow files —
+      # `runs-on` reads neither `env` nor a composite action, `vars` never reach
+      # a fork's pull request, and anchors are not supported. So the rule is
+      # written out in each file and pinned here instead: this is the one place
+      # it is defined, and a file that drifts from it fails.
+      #
+      # Routing only. What keeps untrusted code off the pool is the approval
+      # setting for fork pull requests, not this string.
+      - name: One runner rule across the workflows
+        if: ${{ !cancelled() }}
+        run: |
+          python3 - <<'PY'
+          import pathlib, re, sys
+
+          RULE = (
+              "(github.event_name != 'pull_request'"
+              " || (github.event.pull_request.user.login != 'dependabot[bot]'"
+              " && contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\",\"CONTRIBUTOR\"]'),"
+              " github.event.pull_request.author_association)))"
+          )
+          POOL = 'fromJSON(\'["self-hosted","linux","x64","insight-vhc"]\')'
+
+          bad = []
+          for path in sorted(pathlib.Path(".github/workflows").glob("*.yml")):
+              for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                  if not re.match(r"\s*runs-on:", line):
+                      continue
+                  # Jobs that take the verdict from change detection, and the arm64
+                  # half of the image matrices, which the pool cannot serve.
+                  if "needs.changes.outputs.runner" in line:
+                      continue
+                  if "insight-vhc" not in line:
+                      bad.append(f"{path}:{n}: routed nowhere near the pool")
+                  elif RULE not in line or POOL not in line:
+                      bad.append(f"{path}:{n}: does not carry the canonical rule")
+
+          if bad:
+              print("::error title=Runner rule drift::a runs-on line no longer matches the rule pinned in ci.yml")
+              print("\n".join(bad))
+              sys.exit(1)
+          print("every runs-on carries the same rule")
+          PY
+
   # One unified job per Rust crate: fmt + clippy (when entry.lint) and coverage
   # (when entry.cover). Replaces the old standalone workspace rust-lint — fmt and
   # clippy now run per crate, gated by the lint flag from changed.py (a shared
