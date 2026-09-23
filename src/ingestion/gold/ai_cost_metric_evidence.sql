@@ -337,4 +337,144 @@ FROM seat_day_step
 WHERE tenant_id IS NOT NULL
   AND entity_id IS NOT NULL
   AND metric_date IS NOT NULL
+UNION ALL
+
+-- Codex on-demand credits, priced, feeding the SAME measures the Claude side
+-- feeds. Credits are what this vendor bills additional usage in; the money they
+-- become is additional spend, which is what daily_extra_usage_usd and
+-- extra_usage_usd already mean. A parallel pair of credit measures would split
+-- one economic quantity across two metric families.
+--
+-- INVARIANT: the two vendors derive these in OPPOSITE directions, and both are
+-- correct. Claude publishes a cumulative month-to-date amount, so the month is
+-- the fact and a day is the difference between two readings. This vendor
+-- publishes an exact per-day charge, so the day is the fact and the month is
+-- the sum of the days it has. Same measures, same meaning, inverted derivation
+-- — do not "unify" them.
+--
+-- The month is summed by ai_cost_metric_observations, which groups on
+-- metric_date: a day's row dated at the start of its month contributes to that
+-- month, and stays its own evidence row so the drilldown shows which days the
+-- total is made of.
+--
+-- A partial month is NOT suppressed. The ai_cost source declares
+-- revision: billing_month, so a month still accumulating is already reported as
+-- unsettled and a later backfill raising the sum is the ordinary case that rule
+-- describes. Refusing to report a month because some of its days have not
+-- arrived would replace a known-partial number with no number at all.
+SELECT
+    assumeNotNull(tenant_id)                    AS tenant_id,
+    'ai_cost'                                   AS source_key,
+    'person'                                    AS entity_type,
+    assumeNotNull(entity_id)                    AS entity_id,
+    assumeNotNull(credit_measure.4)             AS metric_date,
+    toNullable(observed_at)                     AS observed_at,
+    credit_measure.1                            AS measure_key,
+    -- Keyed on the DAY even for the month measure: each day is its own
+    -- drilldown row under the month it belongs to.
+    concat(
+        toString(day), ':', credit_measure.1, ':',
+        hex(sipHash64(concat(coalesce(source_id, ''), ':', coalesce(source, ''))))
+    )                                           AS record_id,
+    credit_measure.3                            AS record_kind,
+    'source_summary'                            AS granularity,
+    formatDateTime(day, '%Y-%m-%d')             AS record_label,
+    toNullable(toFloat64(credit_measure.2))     AS contribution,
+    CAST(NULL AS Nullable(String))              AS subject_key,
+    credit_dimensions                           AS dimensions,
+    -- Provenance of the estimate: the count, what one costs, in which currency,
+    -- the rate applied and what it produced. A reader can recompute the figure
+    -- from these and see which part moved when it changes.
+    map(
+        'credits', toString(credits),
+        'credit_kind', credit_kind,
+        -- Minor units, never a major-unit figure: dividing by 100 assumes an
+        -- exponent of two, which is wrong for a currency whose minor unit is
+        -- the unit itself.
+        'billed_currency', billed_currency,
+        'credit_price_minor_units', toString(credit_price_minor_units),
+        'native_minor_units', toString(native_minor_units),
+        'native_minor_to_usd_cents_rate', toString(native_minor_to_usd_cents_rate),
+        -- Both the price and the rate are current configuration, not history,
+        -- so this figure is an estimate and restates when either is changed.
+        -- The credits beside it do not.
+        'is_estimate', 'true'
+    )                                           AS details
+FROM (
+    -- One pricing row per credit row, chosen without a disjunction in any ON
+    -- clause: ClickHouse refuses a join mixing equality with OR, and scope
+    -- precedence is a ranking question rather than a join condition.
+    SELECT * FROM (
+        SELECT
+            credit.insight_tenant_id            AS tenant_id,
+            credit.email                        AS entity_id,
+            credit.source_id                    AS source_id,
+            credit.source                       AS source,
+            credit.day                          AS day,
+            credit.credits                      AS credits,
+            credit.credit_kind                  AS credit_kind,
+            toDateTime64(credit.collected_at, 3) AS observed_at,
+            CAST(
+                [
+                    tuple('tool', credit.tool, {{ ai_tool_label('credit.tool') }})
+                ] AS Array(Tuple(key String, value String, label Nullable(String)))
+            )                                   AS credit_dimensions,
+            pricing.credit_price_minor_units    AS credit_price_minor_units,
+            pricing.billed_currency             AS billed_currency,
+            pricing.native_minor_to_usd_cents_rate AS native_minor_to_usd_cents_rate,
+            -- What the vendor bills, in ITS OWN minor units: credits times the
+            -- price of one. The rate then carries each of those minor units to
+            -- USD cents, so no step needs the currency's exponent.
+            --
+            -- toDecimal128 on the first operand, and it is not cosmetic.
+            -- ClickHouse ADDS the scales of a Decimal product and keeps the
+            -- precision of the widest operand, so three Decimal(18, 6) factors
+            -- give Decimal(18, 18) — eighteen digits, all of them fractional,
+            -- leaving no room for an integer part and overflowing on any
+            -- product of one or more. Widening once makes the chain
+            -- Decimal(38, 18), which is the same arithmetic with room to hold
+            -- its own answer.
+            toDecimal128(credit.credits, 6) * pricing.credit_price_minor_units  AS native_minor_units,
+            toDecimal128(credit.credits, 6) * pricing.credit_price_minor_units
+                                            * pricing.native_minor_to_usd_cents_rate AS usd_cents,
+            row_number() OVER (
+                PARTITION BY credit.insight_tenant_id, credit.source_id,
+                             credit.source, credit.day, credit.email
+                -- An instance-scoped configuration wins over the vendor default.
+                ORDER BY (pricing.insight_source_id != '') DESC
+            )                                   AS pick
+        FROM {{ ref('class_ai_credit_usage') }} AS credit FINAL
+        -- Equi-join only. Scope is filtered below so the join condition carries
+        -- nothing but equalities.
+        INNER JOIN (
+            SELECT * FROM {{ source('config', 'ai_credit_pricing') }} FINAL WHERE is_deleted = 0
+        ) AS pricing
+                ON pricing.tenant_id = credit.insight_tenant_id
+               AND pricing.source = credit.source
+        WHERE credit.email IS NOT NULL
+          AND credit.email != ''
+          AND credit.collected_at IS NOT NULL
+          -- INVARIANT: money only where there is a charge. class_ai_credit_usage
+          -- carries zero-credit person-days on purpose, so that a charge revised
+          -- down to nothing replaces the positive row it corrects; admitting
+          -- those here would publish a $0 charge instead of no charge.
+          AND credit.credits > 0
+          -- Empty binds every instance of the vendor, as in ai_seat_tier_map.
+          -- IN is unsupported with a column on the right, and OR would put a
+          -- disjunction back into the join, so the scope test is has().
+          AND has([credit.source_id, ''], pricing.insight_source_id)
+    )
+    WHERE pick = 1
+) AS priced_day
+ARRAY JOIN [
+    -- The day, exact as this vendor reports it.
+    tuple('daily_extra_usage_usd', toFloat64(usd_cents) / 100,
+          'seat_day', day),
+    -- The same charge, dated at its month so the observations layer sums it.
+    tuple('extra_usage_usd', toFloat64(usd_cents) / 100,
+          'seat_month', toStartOfMonth(day))
+] AS credit_measure
+WHERE tenant_id IS NOT NULL
+  AND entity_id IS NOT NULL
+  AND day IS NOT NULL
 ) AS src
