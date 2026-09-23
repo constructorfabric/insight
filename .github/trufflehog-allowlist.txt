@@ -89,6 +89,7 @@ a1bf6f0828538dc7  JiraToken          tests/datapath/metrics/templates/jira_task.
 
 # Retired paths. The nightly sweep reads every ref, so a value stays reachable
 # while the commit that carried it does — the path leaving HEAD retires nothing.
+f805794a8092a445  Gitlab             docs/connectors/gitlab.md  # anchor slug fragment of a table-of-contents link, not a token
 248cd327790a9dbc  Gitlab             src/ingestion/connectors/git/gitlab/dev/config.example.json  # repeated-character placeholder in an example dev config
 968ddfbbb41c029f  Gitlab             src/ingestion/connectors/git/gitlab/source_gitlab/streams/issues.py  # stream class name, not a token
 135883ae40a7dd42  Gitlab             src/ingestion/connectors/git/gitlab/source_gitlab/streams/merge_request_child.py  # module constant name, not a token
