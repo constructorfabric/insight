@@ -1,0 +1,61 @@
+name: Pool job hook
+
+# Temporary: installs the job-started hook on every runner in the pool and
+# restarts each agent so it picks the .env up. Delete once the pool is level.
+
+on:
+  push:
+    branches:
+      - chore/self-hosted-runner-smoke-3515
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    name: leg ${{ matrix.leg }}
+    runs-on: [self-hosted, linux, x64, insight-vhc]
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: [1, 2, 3, 4, 5]
+    steps:
+      # First, so the five legs overlap and no machine serves two of them.
+      - name: Hold the runner
+        run: |
+          echo "runner: ${RUNNER_NAME}"
+          sleep 120
+
+      - name: Install the job-started hook
+        run: |
+          set -euo pipefail
+          sudo install -m 0755 /dev/stdin /usr/local/sbin/gha-job-started.sh <<'HOOK'
+          #!/usr/bin/env bash
+          set -uo pipefail
+          work="/srv/gha/work"
+          [ -d "$work" ] || exit 0
+          if sudo find "$work" -xdev ! -user "$(id -un)" -print -quit 2>/dev/null | grep -q .; then
+            echo "job-started hook: reclaiming $work"
+            sudo chown -R "$(id -u):$(id -g)" "$work" || true
+          else
+            echo "job-started hook: $work clean"
+          fi
+          HOOK
+          grep -q ACTIONS_RUNNER_HOOK_JOB_STARTED /opt/actions-runner/.env 2>/dev/null || \
+            echo 'ACTIONS_RUNNER_HOOK_JOB_STARTED=/usr/local/sbin/gha-job-started.sh' \
+              | sudo tee -a /opt/actions-runner/.env >/dev/null
+          echo "--- .env ---"; cat /opt/actions-runner/.env
+          echo "--- hook ---"; ls -l /usr/local/sbin/gha-job-started.sh
+
+      # The agent reads .env only at startup, and restarting it kills whatever it
+      # is running — which is this job. So the restart is queued to fire once the
+      # job has ended and the machine is idle.
+      - name: Queue the agent restart
+        run: |
+          set -euo pipefail
+          unit="$(systemctl list-units 'actions.runner.*' --no-legend --plain | awk '{print $1}' | head -1)"
+          [ -n "$unit" ] || { echo "::error::no runner unit found"; exit 1; }
+          echo "unit: $unit"
+          sudo systemd-run --on-active=45 --unit="gha-runner-restart-$$" \
+            systemctl restart "$unit"
