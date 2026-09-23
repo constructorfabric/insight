@@ -85,7 +85,22 @@ def read_stream(
     """Run a full protocol read of one stream and return the typed output
     (`output.records`, `output.state_messages`, `output.logs`, `output.errors`).
     """
+    return read_streams(connector_path, [stream], config, state, sync_mode, expecting_exception)
+
+
+def read_streams(
+    connector_path: str,
+    streams: list[str],
+    config: dict[str, Any],
+    state: list[AirbyteStateMessage] | None = None,
+    sync_mode: SyncMode = SyncMode.full_refresh,
+    expecting_exception: bool = False,
+) -> EntrypointOutput:
+    """Run one protocol read over several streams in a single catalog, the way a
+    scheduled sync does — the only way to observe what streams share in one
+    process (a cached parent listing, a rate-limit budget)."""
     source = get_source(connector_path, config, state)
-    catalog = CatalogBuilder().with_stream(stream, sync_mode).build()
-    return read(source, config=config, catalog=catalog, state=state,
-                expecting_exception=expecting_exception)
+    catalog = CatalogBuilder()
+    for stream in streams:
+        catalog = catalog.with_stream(stream, sync_mode)
+    return read(source, config=config, catalog=catalog.build(), state=state, expecting_exception=expecting_exception)
