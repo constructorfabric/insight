@@ -4,6 +4,13 @@ schemas:
     $schema: http://json-schema.org/draft-07/schema#
     type: object
     additionalProperties: false
+    required:
+      - tenant_id
+      - insight_source_id
+      - source
+      - credit_price_minor_units
+      - billed_currency
+      - native_minor_to_usd_cents_rate
     properties:
       tenant_id: &id001
         type: string
