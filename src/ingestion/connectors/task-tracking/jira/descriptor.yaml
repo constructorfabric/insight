@@ -75,7 +75,14 @@ name: jira
 # ceiling landed early and objects changing faster than that offset were never
 # collected. PATCH: collection widens, nothing needs re-deriving — the missed
 # objects arrive on the next sync and their substreams carry no date filter.
-version: "7.0.1"
+# 8.0.0 (major): the journal writes a `snapshot_diff` row wherever the issue
+# holds a value its changelog never reaches, not only where it was cleared, so
+# consumers of the newest state stop serving a value Jira no longer holds.
+# MAJOR because the rows change for issues bronze will not touch again: the
+# journal recomputes only issues with new input, and the class admits only rows
+# above its newest version, so only the full refresh a major dispatches
+# (ADR-0015) re-derives them.
+version: "8.0.0"
 schedule: "0 3 * * *"
 workflow: sync
 # CI build metadata + runtime image refs (ADR-0016). The `images:` block is
