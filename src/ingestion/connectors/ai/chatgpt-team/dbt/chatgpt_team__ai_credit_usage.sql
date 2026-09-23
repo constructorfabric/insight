@@ -54,9 +54,13 @@ WITH instance_watermark AS (
 SELECT
     bronze.tenant_id                                    AS insight_tenant_id,
     bronze.source_id                                    AS source_id,
+    -- Qualified: instance_watermark also carries source_id, so the bare name is
+    -- ambiguous once the incremental join is in place. tenant_id goes with it —
+    -- one half of a key expression qualified and the other not reads as an
+    -- oversight.
     CAST(concat(
-        coalesce(tenant_id, ''), '-',
-        coalesce(source_id, ''), '-',
+        coalesce(bronze.tenant_id, ''), '-',
+        coalesce(bronze.source_id, ''), '-',
         lower(trim(coalesce(email, ''))), '-',
         coalesce(date, '')
     ) AS String)                                        AS unique_key,
