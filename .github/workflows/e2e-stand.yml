@@ -303,7 +303,7 @@ jobs:
         run: |
           python3 scripts/ci/prebuilt_images.py \
             --run-id "$RUN_ID" --registry ghcr.io/constructorfabric \
-            --destination /tmp/e2e-prebuilt \
+            --destination "$RUNNER_TEMP/e2e-prebuilt" \
             --image "insight-analytics:${ANALYTICS_POLICY}" \
             --image "insight-authenticator:${AUTHENTICATOR_POLICY}" \
             --image "insight-identity-resolution:${IDENTITY_POLICY}" \

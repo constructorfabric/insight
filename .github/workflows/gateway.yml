@@ -95,7 +95,7 @@ jobs:
           if [ "$REQUIRED" = "true" ]; then policy=required; fi
           python3 scripts/ci/prebuilt_images.py \
             --run-id "$RUN_ID" --registry ghcr.io/constructorfabric \
-            --destination /tmp/e2e-prebuilt \
+            --destination "$RUNNER_TEMP/e2e-prebuilt" \
             --image "insight-gateway:${policy}"
           docker tag insight-gateway:e2e-prebuilt insight-gateway:ci
 
@@ -177,7 +177,7 @@ jobs:
           if [ "$AUTHENTICATOR_REQUIRED" = "true" ]; then authenticator_policy=required; fi
           python3 scripts/ci/prebuilt_images.py \
             --run-id "$RUN_ID" --registry ghcr.io/constructorfabric \
-            --destination /tmp/e2e-prebuilt \
+            --destination "$RUNNER_TEMP/e2e-prebuilt" \
             --image "insight-gateway:${gateway_policy}" \
             --image "insight-authenticator:${authenticator_policy}"
 
