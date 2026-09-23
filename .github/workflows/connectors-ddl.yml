@@ -60,7 +60,7 @@ permissions:
 jobs:
   connectors-ddl:
     name: connectors-ddl snapshot + field parity
-    runs-on: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch') && fromJSON('["self-hosted","linux","x64","insight-vhc"]') || 'ubuntu-latest' }}
+    runs-on: [self-hosted, linux, x64, insight-vhc]
     timeout-minutes: 60
     env:
       BOOTSTRAP_DIR: src/ingestion/scripts/bootstrap-db
@@ -161,9 +161,4 @@ jobs:
       - name: Remove the ClickHouse container
         if: always()
         run: docker rm -f "${CLICKHOUSE_CONTAINER}" >/dev/null 2>&1 || true
-
-      # Branch-only probe: proves the cleanup above on the runner that ran the job.
-      - name: Runner state after cleanup
-        if: always()
-        run: docker ps -a
 
