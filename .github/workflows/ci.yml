@@ -75,27 +75,6 @@ permissions:
   contents: read
 
 jobs:
-  # TEMPORARY: pinned to the pool so it answers while the hosted queue is deep —
-  # the routing question cannot be studied from a job the routing has parked.
-  # Remove together with the probe step below.
-  routing-probe:
-    name: Routing probe
-    runs-on: [self-hosted, linux, x64, insight-vhc]
-    timeout-minutes: 5
-    steps:
-      - env:
-          EVENT: ${{ github.event_name }}
-          ASSOC: ${{ github.event.pull_request.author_association }}
-          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
-          ACTOR: ${{ github.actor }}
-          VERDICT: ${{ (github.event_name != 'pull_request' || github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER' || github.event.pull_request.author_association == 'COLLABORATOR') && 'trusted' || 'untrusted' }}
-        run: |
-          echo "event=${EVENT}"
-          echo "assoc='${ASSOC}'"
-          echo "head_repo='${HEAD_REPO}'"
-          echo "actor='${ACTOR}'"
-          echo "verdict=${VERDICT}"
-
   # Detect which components a PR touches — via scripts/ci/coverage.py, the single
   # component↔path map — and emit a per-language matrix of rich entries (each
   # carries the fields its producer job needs to collect coverage). Downstream
@@ -106,23 +85,15 @@ jobs:
     # narrows the surface rather than enclosing it: an untrusted PR's code reaches
     # a throwaway runner instead of a persistent one, but a PR that edits this
     # expression is caught by the approval gate, not by the expression.
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER' || github.event.pull_request.author_association == 'COLLABORATOR') && fromJSON('["self-hosted","linux","x64","insight-vhc"]') || 'ubuntu-latest' }}
+    runs-on: ${{ (github.event_name != 'pull_request' || (github.event.pull_request.user.login != 'dependabot[bot]' && (github.event.pull_request.head.repo.full_name == github.repository || github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER' || github.event.pull_request.author_association == 'COLLABORATOR'))) && fromJSON('["self-hosted","linux","x64","insight-vhc"]') || 'ubuntu-latest' }}
     outputs:
       rust: ${{ steps.detect.outputs.rust }}
       python: ${{ steps.detect.outputs.python }}
       js: ${{ steps.detect.outputs.js }}
       # Downstream jobs take the same verdict rather than recomputing it.
-      runner: ${{ (github.event_name != 'pull_request' || github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER' || github.event.pull_request.author_association == 'COLLABORATOR') && '["self-hosted","linux","x64","insight-vhc"]' || '["ubuntu-latest"]' }}
+      runner: ${{ (github.event_name != 'pull_request' || (github.event.pull_request.user.login != 'dependabot[bot]' && (github.event.pull_request.head.repo.full_name == github.repository || github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER' || github.event.pull_request.author_association == 'COLLABORATOR'))) && '["self-hosted","linux","x64","insight-vhc"]' || '["ubuntu-latest"]' }}
     timeout-minutes: 10
     steps:
-      # TEMPORARY: prints what the routing expression above was given, so a wrong
-      # verdict can be told from a wrong input. Remove once the routing is trusted.
-      - name: Routing inputs
-        env:
-          EVENT: ${{ github.event_name }}
-          ASSOC: ${{ github.event.pull_request.author_association }}
-        run: echo "event=${EVENT} assoc='${ASSOC}' runner=${RUNNER_NAME:-github-hosted}"
-
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -160,7 +131,7 @@ jobs:
     name: Guards
     # Inline rather than `needs: changes`: this job runs beside change detection
     # today, and a dependency would serialise it for no gain.
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER' || github.event.pull_request.author_association == 'COLLABORATOR') && fromJSON('["self-hosted","linux","x64","insight-vhc"]') || 'ubuntu-latest' }}
+    runs-on: ${{ (github.event_name != 'pull_request' || (github.event.pull_request.user.login != 'dependabot[bot]' && (github.event.pull_request.head.repo.full_name == github.repository || github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER' || github.event.pull_request.author_association == 'COLLABORATOR'))) && fromJSON('["self-hosted","linux","x64","insight-vhc"]') || 'ubuntu-latest' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
