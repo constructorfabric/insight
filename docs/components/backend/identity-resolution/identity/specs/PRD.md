@@ -68,7 +68,7 @@ every connector behind a single schema (one row per
 value_type, value_hash)`). The platform needs a synchronous lookup
 path on top of that log that (a) sees every source
 the seed pipeline writes, (b) returns live data without a pod restart,
-(c) is tenant-safe by construction, and (d) follows the cyberfabric
+(c) is tenant-safe by construction, and (d) follows the Constructor Fabric
 gears-rust host / structured-JSON-logging / RFC 7807 conventions
 established for the other Rust services in the platform.
 
@@ -399,7 +399,7 @@ across all sources for a tenant". A violation indicates a corrupted
 `persons` table state; silently picking one record would mask the
 problem and risk wrong-person responses. 422 (RFC 9110 §15.5.21
 "semantically correct request, server cannot process due to
-data state") matches the cyberfabric platform convention used by
+data state") matches the Constructor Fabric platform convention used by
 the analytics service for similar invariant breaches.
 
 **Actors**: `cpt-insightspec-actor-platform-sre`
