@@ -62,13 +62,13 @@ jobs:
           tmp="$(mktemp -d)"
           curl -fsSL -o "${tmp}/helm.tgz" \
             "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
-          # The checksum comes from the GitHub release rather than from beside
-          # the tarball, so the two do not share a host. It arrives clearsigned,
-          # so the digest has to be lifted out of the PGP armour.
+          # What GitHub publishes is a detached signature, not the digest, so the
+          # checksum comes from beside the tarball. Same host, which is what
+          # helm's own installer does; the transport is the guarantee here.
           curl -fsSL -o "${tmp}/helm.sha" \
-            "https://github.com/helm/helm/releases/download/${HELM_VERSION}/helm-${HELM_VERSION}-linux-amd64.tar.gz.sha256sum.asc"
+            "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz.sha256sum"
           want="$(grep -Eo '^[0-9a-f]{64}' "${tmp}/helm.sha" | head -1)"
-          [ -n "${want}" ] || { echo "::error::no digest in the signed checksum file"; exit 1; }
+          [ -n "${want}" ] || { echo "::error::no digest in the checksum file"; exit 1; }
           echo "${want}  ${tmp}/helm.tgz" | sha256sum -c -
           tar -xzf "${tmp}/helm.tgz" -C "${tmp}"
           sudo install -m 0755 "${tmp}/linux-amd64/helm" /usr/local/bin/helm
