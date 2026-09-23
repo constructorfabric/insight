@@ -140,7 +140,7 @@ if [[ "$ready" != "true" ]]; then
   exit 1
 fi
 
-declaration='{"title":"Synthetic events","fields":[{"name":"kind","path":"kind","type":"string"}]}'
+declaration='{"title":"Synthetic events","source":{"kind":"stream"},"fields":[{"name":"kind","path":"kind","type":"string"}]}'
 
 status="$(curl --silent --connect-timeout 2 --max-time 10 \
   --output /dev/null --write-out '%{http_code}' \

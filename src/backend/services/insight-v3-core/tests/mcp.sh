@@ -88,7 +88,7 @@ say "a dataset is declared for the metric to read"
 curl -sS --fail-with-body -X PUT "${BASE_URL}/v1/datasets/${DATASET}" \
   -H 'Content-Type: application/json' \
   -H "Authorization: Bearer ${INSIGHT_MCP_TOKEN}" \
-  --data '{"title":"MCP end-to-end","fields":[{"name":"actor","path":"actor","type":"string"}]}' \
+  --data '{"title":"MCP end-to-end","source":{"kind":"stream"},"fields":[{"name":"actor","path":"actor","type":"string"}]}' \
   >/dev/null
 
 say "the catalogue names it"
