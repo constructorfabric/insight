@@ -81,7 +81,7 @@ jobs:
   # jobs run ONLY for changed components, so unchanged ones don't burn CI.
   changes:
     name: Detect changed components
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, insight-vhc]
     outputs:
       rust: ${{ steps.detect.outputs.rust }}
       python: ${{ steps.detect.outputs.python }}
@@ -123,7 +123,7 @@ jobs:
   # earlier one failed, so every verdict lands on the same run.
   guards:
     name: Guards
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, insight-vhc]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -189,7 +189,7 @@ jobs:
     name: Rust — ${{ matrix.entry.name }}
     needs: changes
     if: ${{ needs.changes.outputs.rust != '[]' }}
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, insight-vhc]
     strategy:
       fail-fast: false
       matrix:
@@ -246,6 +246,17 @@ jobs:
         if: ${{ matrix.entry.cover }}
         with:
           tool: cargo-llvm-cov
+
+      # Fixed names on fixed ports: a killed predecessor — this lane's or another
+      # on the same runner — keeps 3306/6379/8123 bound. Containers only; images
+      # and language caches are what make a persistent runner worth having.
+      - name: Reclaim the fixed ports
+        run: |
+          set -uo pipefail
+          docker rm -f insight-maria insight-redis insight-clickhouse >/dev/null 2>&1 || true
+          for port in 3306 6379 8123; do
+            docker ps -q --filter "publish=${port}" | xargs -r docker rm -f >/dev/null 2>&1 || true
+          done
 
       # DB-backed components (analytics) run their #[ignore]d live_tests
       # against a real MariaDB. Gated on live_db so only those entries pay the
@@ -379,13 +390,17 @@ jobs:
           # missing file means something went wrong — fail rather than ignore.
           if-no-files-found: error
 
+      - name: Remove the service containers
+        if: always()
+        run: docker rm -f insight-maria insight-redis insight-clickhouse >/dev/null 2>&1 || true
+
   # One producer job per changed Python connector. Collects inline with
   # pytest-cov in an isolated uv venv; exit-5 (no tests collected) is tolerated.
   python:
     name: Python coverage — ${{ matrix.entry.name }}
     needs: changes
     if: ${{ needs.changes.outputs.python != '[]' }}
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, insight-vhc]
     strategy:
       fail-fast: false
       matrix:
@@ -454,7 +469,7 @@ jobs:
     name: Frontend — ${{ matrix.entry.name }}
     needs: changes
     if: ${{ needs.changes.outputs.js != '[]' }}
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, insight-vhc]
     # Chromium for the browser `storybook` project comes baked in; downloading it
     # at CI time stalls the runner. The tag MUST track `playwright` in the
     # component's package.json so the pre-installed build matches.
@@ -466,6 +481,15 @@ jobs:
       matrix:
         entry: ${{ fromJson(needs.changes.outputs.js) }}
     steps:
+      # Recovery, not hygiene: a predecessor killed before its post steps leaves
+      # root-owned files here, and checkout's clean would fail on them. Runs
+      # before checkout for that reason; the mirror step at the end is the
+      # normal path.
+      - name: Reclaim the workspace from a killed predecessor
+        run: |
+          owner="$(stat -c '%u:%g' "$RUNNER_TEMP")"
+          chown -R "$owner" "$GITHUB_WORKSPACE" || true
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false # don't leave the token in .git/config
@@ -545,6 +569,15 @@ jobs:
           # something went wrong — fail rather than ignore.
           if-no-files-found: error
 
+      # The job runs as root inside the container while the workspace is mounted
+      # from the host, so whatever it writes would break the next job's checkout
+      # on this runner. RUNNER_TEMP is made by the agent, so it carries the uid.
+      - name: Hand the workspace back to the runner user
+        if: always()
+        run: |
+          owner="$(stat -c '%u:%g' "$RUNNER_TEMP")"
+          chown -R "$owner" "$GITHUB_WORKSPACE" || true
+
   # Single authority: per-component overall + the global new-code gate. Runs even
   # when some producers were skipped (unchanged languages) via `!cancelled()`,
   # and judges only the components that actually produced a report.
@@ -552,7 +585,7 @@ jobs:
     name: Coverage gate
     needs: [changes, rust, python, js]
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, insight-vhc]
     timeout-minutes: 15
     steps:
       # If detection failed, or any CHANGED component's producer job failed
