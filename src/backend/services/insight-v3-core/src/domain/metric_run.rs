@@ -64,10 +64,51 @@ impl<'a> MetricRuns<'a> {
         let metric: MetricQuery = serde_json::from_value(body).map_err(CustomError::Body)?;
 
         let Some(named) = metric.dataset() else {
-            return Err(CustomError::Compile(MetricQueryError::NoDataset));
+            return self.run_over_table(&metric, request).await;
         };
 
         self.run_over_dataset(&metric, named, request).await
+    }
+
+    /// Runs a metric over the warehouse table it names, as the table is.
+    async fn run_over_table(
+        &self,
+        metric: &MetricQuery,
+        request: &WindowRequest,
+    ) -> Result<RunResult, CustomError> {
+        if request.is_ranged() && !metric.has_clock().map_err(CustomError::Compile)? {
+            return Err(CustomError::Compile(MetricQueryError::ClocklessWindow));
+        }
+
+        let engine = self.engine_of(metric).await?;
+        let window = request
+            .resolve(Utc::now())
+            .map_err(|error| CustomError::Compile(error.into()))?;
+        let compiled = metric
+            .compile_window(self.metrics.people(), &window, engine, None)
+            .map_err(CustomError::Compile)?;
+
+        let mut result = self
+            .metrics
+            .run(&compiled)
+            .await
+            .map_err(CustomError::Run)?;
+        if request.is_ranged() {
+            result.undated = Some(self.undated_of(metric, engine, None).await?.count());
+        }
+
+        Ok(result)
+    }
+
+    async fn engine_of(&self, metric: &MetricQuery) -> Result<TableEngine, CustomError> {
+        if !metric.addresses_a_relation() {
+            return Err(CustomError::Compile(MetricQueryError::NoTable));
+        }
+
+        self.metrics
+            .engine_of(metric.database(), metric.table_name())
+            .await
+            .map_err(CustomError::Run)
     }
 
     /// Runs a metric over the dataset it reads.
@@ -102,7 +143,11 @@ impl<'a> MetricRuns<'a> {
             .map_err(CustomError::Run)?;
         result.clock = EffectiveClock::of(metric, &declaration);
         if request.is_ranged() {
-            result.undated = Some(self.undated_over(metric, over).await?.count());
+            result.undated = Some(
+                self.undated_of(metric, TableEngine::Other, Some(over))
+                    .await?
+                    .count(),
+            );
         }
 
         Ok(result)
@@ -112,7 +157,12 @@ impl<'a> MetricRuns<'a> {
     /// question and kept nowhere.
     pub(crate) async fn answer(&self, metric: &MetricQuery) -> Result<RunResult, CustomError> {
         let Some(named) = metric.dataset() else {
-            return Err(CustomError::Compile(MetricQueryError::NoDataset));
+            let engine = self.engine_of(metric).await?;
+            let compiled = metric
+                .compile_window(self.metrics.people(), &Window::legacy(), engine, None)
+                .map_err(CustomError::Compile)?;
+
+            return self.metrics.run(&compiled).await.map_err(CustomError::Run);
         };
         let (declaration, table) = self.ready_dataset(named).await?;
 
@@ -158,13 +208,14 @@ impl<'a> MetricRuns<'a> {
         Ok((ready.declaration, ready.table))
     }
 
-    async fn undated_over(
+    async fn undated_of(
         &self,
         metric: &MetricQuery,
-        over: Over<'_>,
+        engine: TableEngine,
+        over: Option<Over<'_>>,
     ) -> Result<UndatedCount, CustomError> {
         let Some(query) = metric
-            .undated_query(TableEngine::Other, Some(over))
+            .undated_query(engine, over)
             .map_err(CustomError::Compile)?
         else {
             return Ok(UndatedCount::default());

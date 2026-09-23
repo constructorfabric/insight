@@ -222,7 +222,7 @@ impl CustomSurfaces {
 
     #[tool(
         name = "put_metric",
-        description = "Creates or replaces a metric: a declarative query over one dataset. The body names the dataset and the fields to read, for example {\"dataset\": \"commits\", \"fields\": [{\"field\": \"author\", \"type\": \"string\", \"as_name\": \"author\"}, {\"field\": \"lines\", \"type\": \"int\", \"agg\": \"sum\", \"as_name\": \"total\"}], \"group_by\": [\"author\"]}. Every `field` names a field the dataset declares; `group_by` and `order_by` name what this metric produces - an `as_name`, or `bucket` for a windowed run. `agg` is count, sum, avg, min or max, and only a number is summed or averaged. `count` alone counts the rows and names no field. Add `time` to window by a field other than the dataset's own main date: {\"time\": {\"field\": \"merged\"}}. `max_range` caps the widest window it will answer, as an ISO duration such as \"P1Y\". Optional `filters`, `order_by` and `limit`. Call list_datasets first so the dataset and its fields exist."
+        description = "Creates or replaces a metric: a declarative query over one warehouse table or one dataset. Over a table, the body names it as `database.table` - any database, bronze, silver or gold - and reads its columns; a `column` holding JSON is read into with `json`, a dot-separated key path: {\"table\": \"silver.class_ai_assistant_usage\", \"time\": {\"column\": \"day\"}, \"fields\": [{\"column\": \"tool\", \"type\": \"string\", \"as_name\": \"tool\"}, {\"column\": \"surface_metrics_json\", \"json\": \"session_count\", \"type\": \"int\", \"agg\": \"sum\", \"as_name\": \"sessions\"}], \"group_by\": [\"tool\"]}. A replacing table is read through FINAL, so a row is counted once. Over a dataset, the body names the dataset and the fields to read, for example {\"dataset\": \"commits\", \"fields\": [{\"field\": \"author\", \"type\": \"string\", \"as_name\": \"author\"}, {\"field\": \"lines\", \"type\": \"int\", \"agg\": \"sum\", \"as_name\": \"total\"}], \"group_by\": [\"author\"]}. Every `field` names a field the dataset declares; `group_by` and `order_by` name what this metric produces - an `as_name`, or `bucket` for a windowed run. `agg` is count, sum, avg, min or max, and only a number is summed or averaged. `count` alone counts the rows and names no field. Add `time` to window by a field other than the dataset's own main date: {\"time\": {\"field\": \"merged\"}}. `max_range` caps the widest window it will answer, as an ISO duration such as \"P1Y\". Optional `filters`, `order_by` and `limit`. Call list_datasets first so the dataset and its fields exist."
     )]
     async fn put_metric(&self, Parameters(request): Parameters<PutRequest>) -> CallToolResult {
         self.write(DefinitionKind::Metric, request).await
@@ -319,11 +319,12 @@ impl ServerHandler for CustomSurfaces {
             .with_instructions(
                 "Author the metrics, widgets and dashboards the portal reads. Call \
                  list_datasets to learn what data exists, put_metric to define a query over one \
-                 dataset, run_metric to see the rows it yields, then put_widget to draw those \
-                 rows and put_dashboard to hold the widgets. A metric names a dataset and its \
-                 declared fields; a widget names its metric's columns by their as_name; and a \
-                 definition still in use cannot be deleted until its dependents are. Datasets \
-                 themselves are declared by an administrator, not here.",
+                 warehouse table or one dataset, run_metric to see the rows it yields, then \
+                 put_widget to draw those rows and put_dashboard to hold the widgets. A metric \
+                 names a `table` and its columns, or a dataset and its declared fields; a widget \
+                 names its metric's columns by their as_name; and a definition still in use \
+                 cannot be deleted until its dependents are. Datasets themselves are declared by \
+                 an administrator, not here.",
             )
     }
 }

@@ -214,6 +214,10 @@ impl MetricQuery {
         self.split().0
     }
 
+    pub(crate) fn table_name(&self) -> &str {
+        self.split().1
+    }
+
     /// A table written `database.table` is read as both.
     ///
     /// The map the model is shown, and the lookup tool it calls, both address
@@ -320,8 +324,8 @@ pub(crate) enum MetricQueryError {
     FieldSource(String),
     #[error("`{0}` is not a field of the dataset this metric reads")]
     UnknownField(String),
-    #[error("a metric must name the `dataset` it reads")]
-    NoDataset,
+    #[error("a metric must name the `table` it reads")]
+    NoTable,
     #[error("a metric reads a dataset, so it may not name a `table` or a `database`")]
     AddressesARelation,
     #[error("`{0}` selects an array element, so it and its `where` must read json")]

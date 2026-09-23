@@ -38,7 +38,7 @@ pub(crate) async fn check(
     let metric: MetricQuery = serde_json::from_value(body.clone()).map_err(KindError::Body)?;
 
     let Some(named) = metric.dataset() else {
-        return Err(KindError::Compile(MetricQueryError::NoDataset));
+        return compiles_over_its_table(&metric, over.people);
     };
     if metric.addresses_a_relation() {
         return Err(KindError::Compile(MetricQueryError::AddressesARelation));
@@ -97,6 +97,30 @@ fn compiles(
             .map_err(KindError::Compile)?;
         metric
             .undated_query(TableEngine::Other, Some(over))
+            .map_err(KindError::Compile)?;
+    }
+
+    Ok(())
+}
+
+/// Whether a metric over a warehouse table can be built. The engine is not
+/// known until it runs, and only decides whether the read adds `FINAL`.
+fn compiles_over_its_table(metric: &MetricQuery, people: &People) -> Result<(), KindError> {
+    if !metric.addresses_a_relation() {
+        return Err(KindError::Compile(MetricQueryError::NoTable));
+    }
+    metric.check_window().map_err(KindError::Compile)?;
+
+    metric
+        .compile_window(people, &Window::legacy(), TableEngine::Other, None)
+        .map_err(KindError::Compile)?;
+
+    if metric.has_clock().map_err(KindError::Compile)? {
+        metric
+            .compile_window(people, &A_WINDOW, TableEngine::Other, None)
+            .map_err(KindError::Compile)?;
+        metric
+            .undated_query(TableEngine::Other, None)
             .map_err(KindError::Compile)?;
     }
 

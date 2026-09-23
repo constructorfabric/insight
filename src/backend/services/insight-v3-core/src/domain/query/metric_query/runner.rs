@@ -6,12 +6,15 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use super::engine::TableEngine;
 use super::field::coerce_value;
 use super::filter::FilterBind;
 use super::people::People;
 use super::{CompiledQuery, UndatedQuery};
 use crate::domain::query::undated::UndatedCount;
 
+const READ_ENGINE: &str = "SELECT engine FROM system.tables
+WHERE database = if(empty(?), currentDatabase(), ?) AND name = ?";
 const FETCH_TIMEOUT_SECS: u64 = 30;
 const MAX_RESULT_BYTES: usize = 5 * 1024 * 1024;
 
@@ -62,6 +65,32 @@ impl MetricRunner {
     /// Where the queries this runs resolve a person's name from.
     pub(crate) fn people(&self) -> &People {
         &self.people
+    }
+
+    /// The engine holding a table, and `Other` for one the warehouse does not
+    /// list. Without a database, the connection's own is meant.
+    pub(crate) async fn engine_of(
+        &self,
+        database: Option<&str>,
+        table: &str,
+    ) -> Result<TableEngine, MetricRunError> {
+        let database = database.unwrap_or_default();
+        let binds = [
+            FilterBind::Str(database.to_owned()),
+            FilterBind::Str(database.to_owned()),
+            FilterBind::Str(table.to_owned()),
+        ];
+        let bytes = self.fetch(READ_ENGINE, &binds).await?;
+
+        let parsed: ClickHouseJsonResult = serde_json::from_slice(&bytes)?;
+        let engine = parsed
+            .data
+            .first()
+            .and_then(|row| row.get("engine"))
+            .and_then(serde_json::Value::as_str)
+            .map_or(TableEngine::Other, TableEngine::parse);
+
+        Ok(engine)
     }
 
     pub(crate) async fn undated(

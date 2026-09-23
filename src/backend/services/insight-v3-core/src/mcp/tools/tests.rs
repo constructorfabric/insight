@@ -337,18 +337,43 @@ async fn a_range_the_server_does_not_know_is_refused_by_the_tool() {
 }
 
 #[tokio::test]
-async fn a_metric_addressing_a_relation_of_its_own_is_not_stored() {
+async fn a_metric_over_any_warehouse_table_is_stored() {
+    let result = surfaces_without_a_dataset()
+        .put_metric(put(
+            "sessions_per_tool",
+            json!({
+                "table": "silver.class_ai_assistant_usage",
+                "time": {"column": "day"},
+                "fields": [
+                    {"column": "tool", "type": "string", "as_name": "tool"},
+                    {
+                        "column": "surface_metrics_json",
+                        "json": "session_count",
+                        "type": "int",
+                        "agg": "sum",
+                        "as_name": "sessions"
+                    }
+                ],
+                "group_by": ["tool"]
+            }),
+        ))
+        .await;
+
+    assert_accepted(&result);
+}
+
+#[tokio::test]
+async fn a_metric_naming_no_table_is_not_stored() {
     let result = surfaces()
         .put_metric(put(
-            "over_a_table",
+            "over_nothing",
             json!({
-                "table": "events",
                 "fields": [{"agg": "count", "type": "int", "as_name": "total"}]
             }),
         ))
         .await;
 
-    assert_refused(&result, "must name the `dataset` it reads");
+    assert_refused(&result, "must name the `table` it reads");
 }
 
 #[tokio::test]
