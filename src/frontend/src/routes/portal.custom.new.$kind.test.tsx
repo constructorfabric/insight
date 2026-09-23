@@ -11,6 +11,8 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
     ...actual,
     putDataset: vi.fn(),
     fetchDataset: vi.fn(),
+    fetchTables: vi.fn(),
+    fetchTable: vi.fn(),
     fetchMetricNames: vi.fn(),
     fetchWidgetNames: vi.fn(),
     fetchDashboardNames: vi.fn(),

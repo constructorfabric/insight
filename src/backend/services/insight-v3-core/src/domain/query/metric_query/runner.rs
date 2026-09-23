@@ -6,12 +6,15 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use super::engine::TableEngine;
 use super::field::coerce_value;
 use super::filter::FilterBind;
 use super::people::People;
 use super::{CompiledQuery, UndatedQuery};
 use crate::domain::query::undated::UndatedCount;
 
+const READ_ENGINE: &str = "SELECT engine FROM system.tables
+WHERE database = if(empty(?), currentDatabase(), ?) AND name = ?";
 const FETCH_TIMEOUT_SECS: u64 = 30;
 const MAX_RESULT_BYTES: usize = 5 * 1024 * 1024;
 
@@ -31,6 +34,11 @@ pub(crate) struct RunResult {
     /// nothing windowed the run at all.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) clock: Option<crate::domain::kinds::metric::answerable::EffectiveClock>,
+}
+
+#[derive(Debug, Deserialize, clickhouse::Row)]
+struct EngineRow {
+    engine: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -62,6 +70,31 @@ impl MetricRunner {
     /// Where the queries this runs resolve a person's name from.
     pub(crate) fn people(&self) -> &People {
         &self.people
+    }
+
+    /// The engine holding a table, and `Other` for one the warehouse does not
+    /// list. Without a database, the connection's own is meant.
+    pub(crate) async fn engine_of(
+        &self,
+        database: Option<&str>,
+        table: &str,
+    ) -> Result<TableEngine, MetricRunError> {
+        let database = database.unwrap_or_default();
+        let rows = self
+            .client
+            .inner()
+            .query(READ_ENGINE)
+            .bind(database)
+            .bind(database)
+            .bind(table)
+            .fetch_all::<EngineRow>();
+        let found = tokio::time::timeout(self.fetch_timeout, rows)
+            .await
+            .map_err(|_| MetricRunError::Timeout)??;
+
+        Ok(found
+            .first()
+            .map_or(TableEngine::Other, |row| TableEngine::parse(&row.engine)))
     }
 
     pub(crate) async fn undated(

@@ -26,6 +26,8 @@ import {
   fetchDependents,
   fetchMetric,
   fetchMetricNames,
+  fetchTable,
+  fetchTables,
   fetchWidget,
   fetchWidgetNames,
   putDataset,
@@ -143,6 +145,22 @@ export function datasetQuery(name: string) {
   return queryOptions({
     queryKey: [...DATASET_PREFIX, name],
     queryFn: () => fetchDataset(name),
+  });
+}
+
+/** Every warehouse table a metric may name. */
+export function tablesQuery() {
+  return queryOptions({
+    queryKey: ["custom", "tables"],
+    queryFn: () => fetchTables(),
+  });
+}
+
+/** One warehouse table's columns, for a metric over it to be offered. */
+export function tableQuery(database: string, table: string) {
+  return queryOptions({
+    queryKey: ["custom", "tables", database, table],
+    queryFn: () => fetchTable(database, table),
   });
 }
 

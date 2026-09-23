@@ -276,7 +276,12 @@ impl ValidatedConfig {
         &self.identity_url
     }
 
-    /// The database gold materialises into — `dbt_project.yml` sets
+    /// The database gold materialises into, which the catalogue calls the
+    /// gold layer.
+    pub(crate) fn clickhouse_database(&self) -> &str {
+        &self.clickhouse_database
+    }
+
     /// The database holding the names people are known by.
     pub(crate) fn identity_database(&self) -> &str {
         &self.identity_database

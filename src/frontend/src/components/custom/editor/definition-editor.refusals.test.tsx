@@ -13,6 +13,8 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
     fetchDashboardNames: vi.fn(),
     fetchDatasetNames: vi.fn(),
     fetchDataset: vi.fn(),
+    fetchTables: vi.fn(),
+    fetchTable: vi.fn(),
   };
 });
 

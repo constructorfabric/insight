@@ -2,6 +2,7 @@ import type { Describing } from "@/lib/custom/editor/aria";
 import type { Path, Shape } from "@/lib/custom/editor/describe";
 import { read } from "@/lib/custom/editor/document";
 import { called } from "@/lib/custom/editor/exclusive";
+import { tableAddress } from "@/lib/custom/editor/source";
 import {
   ChoiceControl,
   FlagControl,
@@ -125,9 +126,14 @@ function typedAs(type: unknown): Shape {
 
 type PickSource = Extract<Shape, { of: "pick" }>["from"];
 
-function offered(from: PickSource, editing: Editing): string[] {
+function offered(from: PickSource, editing: Editing): readonly string[] {
   if ("dataset" in from) {
     return declaration(from.dataset, editing).map((field) => field.name);
+  }
+  if ("catalogue" in from) return editing.tables();
+  if ("table" in from) {
+    const address = tableAddress(editing.document, from);
+    return address ? editing.columns(address) : [];
   }
 
   return called(read(editing.document, [from.list]), from.property);

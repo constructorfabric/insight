@@ -10,6 +10,7 @@ use crate::api::AppState;
 use crate::chat::ChatClient;
 use crate::domain::kinds::dashboard::{HeadingItem, TextItem, WidgetItem};
 use crate::domain::query::metric_query::{MetricRunner, People};
+use crate::store::catalog::{Catalog, Column, Layer, TableSchema};
 use crate::store::definitions::memory::MemoryDefinitions;
 use crate::store::identity::IdentityClient;
 
@@ -18,28 +19,66 @@ type R = Result<(), Box<dyn Error>>;
 /// A stand whose one dataset stands ready, since every stored metric reads
 /// one.
 fn surfaces() -> CustomSurfaces {
-    built(crate::api::Datasets::holding(
-        "http://offline.invalid",
-        &[(
-            "commits",
-            json!({
-                "title": "Commits",
-                "fields": [
-                    { "name": "actor", "path": "actor", "type": "string" },
-                    { "name": "lines_added", "path": "lines_added", "type": "int" },
-                    { "name": "occurred_at", "path": "occurred_at", "type": "datetime" }
-                ]
-            }),
-        )],
-    ))
+    built_over(
+        Catalog::fixed(Vec::new()),
+        crate::api::Datasets::holding(
+            "http://offline.invalid",
+            &[(
+                "commits",
+                json!({
+                    "title": "Commits",
+                    "fields": [
+                        { "name": "actor", "path": "actor", "type": "string" },
+                        { "name": "lines_added", "path": "lines_added", "type": "int" },
+                        { "name": "occurred_at", "path": "occurred_at", "type": "datetime" }
+                    ]
+                }),
+            )],
+        ),
+    )
 }
 
 /// A stand where nobody has declared anything.
 fn surfaces_without_a_dataset() -> CustomSurfaces {
-    built(crate::api::Datasets::offline("http://offline.invalid"))
+    built_over(
+        Catalog::fixed(Vec::new()),
+        crate::api::Datasets::offline("http://offline.invalid"),
+    )
 }
 
-fn built(datasets: crate::api::Datasets) -> CustomSurfaces {
+/// A stand whose warehouse holds two tables and no dataset.
+fn surfaces_over_a_warehouse() -> CustomSurfaces {
+    built_over(
+        Catalog::fixed(vec![
+            table(
+                "bronze_github",
+                "issues",
+                Layer::Bronze,
+                &[("number", "Int64"), ("title", "String")],
+            ),
+            table("silver", "fct_commit", Layer::Silver, &[("sha", "String")]),
+        ]),
+        crate::api::Datasets::offline("http://offline.invalid"),
+    )
+}
+
+fn table(database: &str, table: &str, layer: Layer, columns: &[(&str, &str)]) -> TableSchema {
+    TableSchema {
+        database: database.to_owned(),
+        table: table.to_owned(),
+        layer,
+        engine: "ReplacingMergeTree".to_owned(),
+        columns: columns
+            .iter()
+            .map(|(name, kind)| Column {
+                name: (*name).to_owned(),
+                kind: (*kind).to_owned(),
+            })
+            .collect(),
+    }
+}
+
+fn built_over(catalog: Catalog, datasets: crate::api::Datasets) -> CustomSurfaces {
     let client = || {
         insight_clickhouse::Client::new(insight_clickhouse::Config::new(
             "http://clickhouse.invalid",
@@ -57,6 +96,7 @@ fn built(datasets: crate::api::Datasets) -> CustomSurfaces {
         ChatClient::keyless(),
         identity,
         datasets,
+        catalog,
     ));
 
     CustomSurfaces::new(state)
@@ -136,7 +176,7 @@ fn assert_accepted(result: &CallToolResult) -> Value {
 }
 
 #[test]
-fn the_server_announces_exactly_the_ten_custom_surface_tools() {
+fn the_server_announces_exactly_the_twelve_custom_surface_tools() {
     let tools = CustomSurfaces::tool_router().list_all();
 
     let mut names: Vec<&str> = tools.iter().map(|tool| tool.name.as_ref()).collect();
@@ -147,9 +187,11 @@ fn the_server_announces_exactly_the_ten_custom_surface_tools() {
         [
             "arrange_dashboard",
             "delete_definition",
+            "describe_tables",
             "get_definition",
             "list_datasets",
             "list_definitions",
+            "list_tables",
             "put_dashboard",
             "put_metric",
             "put_widget",
@@ -337,18 +379,43 @@ async fn a_range_the_server_does_not_know_is_refused_by_the_tool() {
 }
 
 #[tokio::test]
-async fn a_metric_addressing_a_relation_of_its_own_is_not_stored() {
+async fn a_metric_over_any_warehouse_table_is_stored() {
+    let result = surfaces_without_a_dataset()
+        .put_metric(put(
+            "sessions_per_tool",
+            json!({
+                "table": "silver.class_ai_assistant_usage",
+                "time": {"column": "day"},
+                "fields": [
+                    {"column": "tool", "type": "string", "as_name": "tool"},
+                    {
+                        "column": "surface_metrics_json",
+                        "json": "session_count",
+                        "type": "int",
+                        "agg": "sum",
+                        "as_name": "sessions"
+                    }
+                ],
+                "group_by": ["tool"]
+            }),
+        ))
+        .await;
+
+    assert_accepted(&result);
+}
+
+#[tokio::test]
+async fn a_metric_naming_no_table_is_not_stored() {
     let result = surfaces()
         .put_metric(put(
-            "over_a_table",
+            "over_nothing",
             json!({
-                "table": "events",
                 "fields": [{"agg": "count", "type": "int", "as_name": "total"}]
             }),
         ))
         .await;
 
-    assert_refused(&result, "must name the `dataset` it reads");
+    assert_refused(&result, "must name the `dataset` or the `table` it reads");
 }
 
 #[tokio::test]
@@ -614,4 +681,124 @@ async fn arranging_a_board_that_is_not_there_is_refused() {
             .await,
         "dashboard `absent` was not found",
     );
+}
+
+#[tokio::test]
+async fn a_board_draws_a_metric_over_a_warehouse_table() -> R {
+    let surfaces = surfaces_without_a_dataset();
+    assert_accepted(
+        &surfaces
+            .put_metric(put(
+                "sessions_by_day",
+                json!({
+                    "table": "silver.class_ai_assistant_usage",
+                    "time": {"column": "day"},
+                    "fields": [{
+                        "column": "surface_metrics_json",
+                        "json": "session_count",
+                        "type": "int",
+                        "agg": "sum",
+                        "as_name": "sessions"
+                    }]
+                }),
+            ))
+            .await,
+    );
+
+    assert_accepted(
+        &surfaces
+            .put_widget(put(
+                "sessions_line",
+                json!({"type": "line", "metric": "sessions_by_day", "x": "bucket", "y": "sessions"}),
+            ))
+            .await,
+    );
+    assert_accepted(
+        &surfaces
+            .put_dashboard(put(
+                "ai_usage",
+                json!({
+                    "title": "AI usage",
+                    "items": [{"widget": "sessions_line"}],
+                    "time_ranges": ["P7D", "P30D"],
+                    "default_range": "P30D"
+                }),
+            ))
+            .await,
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn every_warehouse_table_is_listed_by_database_name_and_layer() {
+    let result = surfaces_over_a_warehouse()
+        .list_tables(Parameters(TablesRequest { database: None }))
+        .await;
+
+    let listed = assert_accepted(&result);
+    assert_eq!(
+        listed,
+        json!({
+            "total": 2,
+            "tables": [
+                {"database": "bronze_github", "table": "issues", "layer": "bronze"},
+                {"database": "silver", "table": "fct_commit", "layer": "silver"}
+            ]
+        })
+    );
+}
+
+#[tokio::test]
+async fn a_table_listing_can_be_narrowed_to_one_database() {
+    let result = surfaces_over_a_warehouse()
+        .list_tables(Parameters(TablesRequest {
+            database: Some("silver".to_owned()),
+        }))
+        .await;
+
+    let listed = assert_accepted(&result);
+    assert_eq!(listed["total"], json!(1));
+    assert_eq!(listed["tables"][0]["table"], json!("fct_commit"));
+}
+
+#[tokio::test]
+async fn a_described_table_carries_its_columns_and_engine_and_an_unknown_name_is_said_so() {
+    let result = surfaces_over_a_warehouse()
+        .describe_tables(Parameters(DescribeTablesRequest {
+            tables: vec!["silver.fct_commit".to_owned(), "silver.nothing".to_owned()],
+        }))
+        .await;
+
+    let described = assert_accepted(&result);
+    assert_eq!(
+        described,
+        json!({
+            "tables": [{
+                "database": "silver",
+                "table": "fct_commit",
+                "layer": "silver",
+                "engine": "ReplacingMergeTree",
+                "columns": [{"name": "sha", "type": "String"}]
+            }],
+            "unknown": ["silver.nothing"]
+        })
+    );
+}
+
+#[tokio::test]
+async fn a_description_of_nothing_or_of_too_much_is_refused() {
+    let surfaces = surfaces_over_a_warehouse();
+
+    let none = surfaces
+        .describe_tables(Parameters(DescribeTablesRequest { tables: Vec::new() }))
+        .await;
+    let many = surfaces
+        .describe_tables(Parameters(DescribeTablesRequest {
+            tables: (0..=DESCRIBE_LIMIT).map(|n| format!("db.t{n}")).collect(),
+        }))
+        .await;
+
+    assert_refused(&none, "at least one table");
+    assert_refused(&many, "at most 20 tables");
 }

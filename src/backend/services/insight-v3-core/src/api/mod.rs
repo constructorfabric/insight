@@ -12,12 +12,14 @@ pub(crate) mod definitions;
 mod errors;
 pub(crate) mod metric_run;
 pub(crate) mod raw_data;
+pub(crate) mod tables;
 
 use admission::IngestAdmission;
 
 use crate::chat::ChatClient;
 use crate::domain::definition::Definitions;
 use crate::domain::query::metric_query::MetricRunner;
+use crate::store::catalog::Catalog;
 use crate::store::dataset_tables::DatasetTables;
 use crate::store::identity::IdentityClient;
 
@@ -83,6 +85,7 @@ pub(crate) struct AppState {
     chat: ChatClient,
     identity: IdentityClient,
     datasets: Datasets,
+    catalog: Catalog,
 }
 
 /// Everything about datasets this service reaches: their rows, the tables
@@ -174,6 +177,7 @@ impl AppState {
         chat: ChatClient,
         identity: IdentityClient,
         datasets: Datasets,
+        catalog: Catalog,
     ) -> Self {
         Self {
             metrics,
@@ -181,6 +185,7 @@ impl AppState {
             chat,
             identity,
             datasets,
+            catalog,
         }
     }
 
@@ -207,6 +212,10 @@ impl AppState {
 
     pub(crate) fn assistant(&self) -> crate::domain::assistant::Assistant<'_> {
         crate::domain::assistant::Assistant::new(self.definitions.as_ref(), self.datasets())
+    }
+
+    pub(crate) fn catalog(&self) -> &Catalog {
+        &self.catalog
     }
 
     pub(crate) fn datasets(&self) -> &dyn crate::domain::datasets::Datasets {
@@ -291,6 +300,14 @@ pub(crate) fn openapi_document() -> anyhow::Result<utoipa::openapi::OpenApi> {
         ChatClient::keyless(),
         IdentityClient::new("http://identity.invalid")?,
         crate::api::Datasets::offline("http://offline.invalid"),
+        Catalog::new(
+            insight_clickhouse::Client::new(insight_clickhouse::Config::new(
+                "http://clickhouse.invalid",
+                "insight",
+            )),
+            "insight",
+            "insight_datasets",
+        ),
     ));
 
     let openapi = OpenApiRegistryImpl::new();
@@ -320,6 +337,7 @@ pub(crate) fn register_routes(
     let api = raw_data::register_routes(Router::new(), openapi, state.clone(), admission);
     let api = definitions::register_routes(api, openapi, &state);
     let api = datasets::register_routes(api, openapi, &state);
+    let api = tables::register_routes(api, openapi, &state);
     let api = metric_run::register_routes(api, openapi, state.clone());
     let api = chat::register_routes(api, openapi, state)
         .layer(insight_log_context::LogContextLayer::new());

@@ -7,7 +7,7 @@ use super::definition::{DefinitionKind, DefinitionName, Lookup};
 use super::kinds::dataset::declaration::Declaration;
 use super::kinds::metric::answerable::{self, EffectiveClock};
 use super::query::metric_query::over::Over;
-use super::query::metric_query::{MetricQuery, MetricQueryError, MetricRunner, RunResult};
+use super::query::metric_query::{CompiledQuery, MetricQuery, MetricRunner, RunResult};
 use super::query::time_window::{Window, WindowRequest};
 use super::query::undated::UndatedCount;
 use super::surfaces::CustomError;
@@ -64,10 +64,59 @@ impl<'a> MetricRuns<'a> {
         let metric: MetricQuery = serde_json::from_value(body).map_err(CustomError::Body)?;
 
         let Some(named) = metric.dataset() else {
-            return Err(CustomError::Compile(MetricQueryError::NoDataset));
+            return self.run_over_table(&metric, request).await;
         };
 
         self.run_over_dataset(&metric, named, request).await
+    }
+
+    /// Runs a metric over the warehouse table it names, as the table is.
+    async fn run_over_table(
+        &self,
+        metric: &MetricQuery,
+        request: &WindowRequest,
+    ) -> Result<RunResult, CustomError> {
+        metric.check_table().map_err(CustomError::Compile)?;
+
+        let engine = self
+            .metrics
+            .engine_of(metric.database(), metric.table_name())
+            .await
+            .map_err(CustomError::Run)?;
+        let window = request
+            .resolve(Utc::now())
+            .map_err(|error| CustomError::Compile(error.into()))?;
+        let compiled = metric
+            .compile_window(self.metrics.people(), &window, engine, None)
+            .map_err(CustomError::Compile)?;
+
+        let mut result = self
+            .counted(metric, &compiled, request.is_ranged(), engine, None)
+            .await?;
+        result.clock = EffectiveClock::of_table(metric);
+
+        Ok(result)
+    }
+
+    /// The rows of a compiled run, and beside them, for a ranged one, how many
+    /// rows the window left out. The two reads are independent.
+    async fn counted(
+        &self,
+        metric: &MetricQuery,
+        compiled: &CompiledQuery,
+        ranged: bool,
+        engine: TableEngine,
+        over: Option<Over<'_>>,
+    ) -> Result<RunResult, CustomError> {
+        let rows = async { self.metrics.run(compiled).await.map_err(CustomError::Run) };
+        if !ranged {
+            return rows.await;
+        }
+
+        let (mut result, undated) = tokio::try_join!(rows, self.undated_of(metric, engine, over))?;
+        result.undated = Some(undated.count());
+
+        Ok(result)
     }
 
     /// Runs a metric over the dataset it reads.
@@ -96,14 +145,15 @@ impl<'a> MetricRuns<'a> {
             .map_err(CustomError::Compile)?;
 
         let mut result = self
-            .metrics
-            .run(&compiled)
-            .await
-            .map_err(CustomError::Run)?;
+            .counted(
+                metric,
+                &compiled,
+                request.is_ranged(),
+                TableEngine::Other,
+                Some(over),
+            )
+            .await?;
         result.clock = EffectiveClock::of(metric, &declaration);
-        if request.is_ranged() {
-            result.undated = Some(self.undated_over(metric, over).await?.count());
-        }
 
         Ok(result)
     }
@@ -112,7 +162,10 @@ impl<'a> MetricRuns<'a> {
     /// question and kept nowhere.
     pub(crate) async fn answer(&self, metric: &MetricQuery) -> Result<RunResult, CustomError> {
         let Some(named) = metric.dataset() else {
-            return Err(CustomError::Compile(MetricQueryError::NoDataset));
+            let unranged = WindowRequest::parse(None, None)
+                .map_err(|error| CustomError::Compile(error.into()))?;
+
+            return self.run_over_table(metric, &unranged).await;
         };
         let (declaration, table) = self.ready_dataset(named).await?;
 
@@ -158,13 +211,14 @@ impl<'a> MetricRuns<'a> {
         Ok((ready.declaration, ready.table))
     }
 
-    async fn undated_over(
+    async fn undated_of(
         &self,
         metric: &MetricQuery,
-        over: Over<'_>,
+        engine: TableEngine,
+        over: Option<Over<'_>>,
     ) -> Result<UndatedCount, CustomError> {
         let Some(query) = metric
-            .undated_query(TableEngine::Other, Some(over))
+            .undated_query(engine, over)
             .map_err(CustomError::Compile)?
         else {
             return Ok(UndatedCount::default());

@@ -646,3 +646,64 @@ async fn a_json_key_outside_the_identifier_charset_reads_its_value() {
 
     stand.drop_table().await;
 }
+
+#[tokio::test]
+async fn a_replacing_table_is_found_as_one_and_its_json_counted_once() {
+    let Some(stand) = stand_or_skip(
+        "(tool String, day DateTime, payload Nullable(String), version UInt32) \
+         ENGINE = ReplacingMergeTree(version) ORDER BY (tool, day)",
+    )
+    .await
+    else {
+        return;
+    };
+    stand
+        .insert(
+            "tool, day, payload, version",
+            &["('claude', '2026-09-01 10:00:00', '{\"session_count\": 3}', 1)"],
+        )
+        .await;
+    stand
+        .insert(
+            "tool, day, payload, version",
+            &["('claude', '2026-09-01 10:00:00', '{\"session_count\": 5}', 2)"],
+        )
+        .await;
+
+    let engine = stand
+        .runner
+        .engine_of(None, &stand.table)
+        .await
+        .unwrap_or_else(|error| panic!("the engine reads: {error}"));
+    let metric = stand.metric(&json!({
+        "time": { "column": "day" },
+        "fields": [
+            { "column": "payload", "json": "session_count", "type": "int", "agg": "sum", "as_name": "sessions" }
+        ]
+    }));
+    let (result, _) = stand
+        .answer(&metric, &request("inf", Some(false)), engine)
+        .await;
+
+    assert_eq!(engine, TableEngine::ReplacingMergeTree);
+    assert_eq!(totals(&result), vec!["5".to_owned()]);
+
+    stand.drop_table().await;
+}
+
+#[tokio::test]
+async fn a_table_the_warehouse_does_not_list_is_read_as_it_is() {
+    let Some(stand) = stand_or_skip("(day DateTime) ENGINE = MergeTree ORDER BY day").await else {
+        return;
+    };
+
+    let engine = stand
+        .runner
+        .engine_of(None, "no_such_table_here")
+        .await
+        .unwrap_or_else(|error| panic!("the engine reads: {error}"));
+
+    assert_eq!(engine, TableEngine::Other);
+
+    stand.drop_table().await;
+}
