@@ -129,9 +129,9 @@ from a tenant's own report is that tenant's, and is never written globally.
 - [ ] `p2` - **ID**: `cpt-insightspec-aicost-principle-codex-pricing-is-current`
 
 Codex on-demand spend is derived from a usage credit count by two
-operator-authored settings — the price of a credit in the currency the vendor
-bills, and the rate presenting it in USD. Neither is dated, so a Codex monetary
-value is an **estimate** and restates when either setting changes.
+operator-authored settings — the price of a credit in the billed currency's minor
+units, and the USD cents one of those minor units carries. Neither is dated, so a
+Codex monetary value is an **estimate** and restates when either setting changes.
 
 This departs from `cpt-insightspec-aicost-principle-rates-are-data` deliberately.
 Neither figure comes from a vendor API, and no source of historical exchange rates

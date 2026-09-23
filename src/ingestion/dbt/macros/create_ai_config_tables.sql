@@ -54,7 +54,7 @@
 
     {#-
       What one Codex usage credit costs in the currency the vendor bills, and
-      the rate that presents that amount in USD.
+      the rate that carries one of that currency's minor units into USD cents.
       Operator-authored for the same reason as the tier map: no vendor API states
       either figure. A credit is a vendor-internal unit and the price arrives on a
       contract, not on an endpoint.
@@ -82,21 +82,30 @@
             -- The class's own `source` value ('chatgpt_team'), matching
             -- ai_seat_tier_map: the price is per vendor, not per connector run.
             source                  LowCardinality(String),
+            -- Informational only. The replacement key is the pricing scope
+            -- below, not this: a caller writing its own unique_key must not be
+            -- able to make two rows of one scope coexist.
             unique_key              String DEFAULT concat(tenant_id, ':', insight_source_id, ':', source),
             -- Minor units of billed_currency per ONE credit. Decimal so a
             -- sub-cent price does not round to nothing before it is summed.
             credit_price_minor_units Decimal(18, 6),
             -- ISO code of the currency the vendor bills in.
             billed_currency          LowCardinality(String),
-            -- Multiply the billed amount by this to present it in USD, which is
-            -- what every AI Cost measure reports. 1 where the two are the same.
-            native_to_usd_rate       Decimal(18, 6),
+            -- USD cents per ONE native minor unit. Stated this way so the
+            -- arithmetic never needs the currency's exponent: a currency whose
+            -- minor unit is the unit itself (JPY) is expressed by the operator
+            -- writing cents-per-yen here, not by dividing somewhere downstream.
+            native_minor_to_usd_cents_rate Decimal(18, 6),
             is_deleted              UInt8   DEFAULT 0,
             note                    String  DEFAULT '',
             recorded_by             String  DEFAULT '',
             _version                DateTime64(3) DEFAULT now64(3)
         )
         ENGINE = ReplacingMergeTree(_version)
-        ORDER BY (unique_key)
+        -- The natural pricing scope IS the key. An instance-specific row and the
+        -- vendor default differ by insight_source_id, so they stay separate
+        -- rows; two writes of one scope replace each other, whatever unique_key
+        -- either of them carries.
+        ORDER BY (tenant_id, insight_source_id, source)
     ") %}
 {% endmacro %}

@@ -35,9 +35,25 @@
     tags=['chatgpt-team', 'silver:class_ai_credit_usage']
 ) }}
 
+{% if is_incremental() %}
+-- One watermark per connector instance. A global max(day) lets a busy instance
+-- raise the floor for a quiet one and silently skip its days; the floor has to
+-- belong to the instance it filters. Grouped once and joined, rather than a
+-- correlated scalar subquery, which ClickHouse supports unevenly.
+WITH instance_watermark AS (
+
+    SELECT
+        insight_tenant_id,
+        source_id,
+        max(day)                                        AS latest_day
+    FROM {{ this }}
+    GROUP BY insight_tenant_id, source_id
+
+)
+{% endif %}
 SELECT
-    tenant_id                                           AS insight_tenant_id,
-    source_id,
+    bronze.tenant_id                                    AS insight_tenant_id,
+    bronze.source_id                                    AS source_id,
     CAST(concat(
         coalesce(tenant_id, ''), '-',
         coalesce(source_id, ''), '-',
@@ -58,7 +74,7 @@ SELECT
     -- unmetered is not established.
     'on_demand'                                         AS credit_kind,
     'chatgpt_team'                                      AS source,
-    data_source,
+    bronze.data_source,
     CAST(_airbyte_extracted_at AS Nullable(DateTime64(3))) AS collected_at,
     toUnixTimestamp64Milli(_airbyte_extracted_at)          AS _version
 FROM (
@@ -68,7 +84,12 @@ FROM (
     FROM {{ source('bronze_chatgpt_team', 'chatgpt_team_codex_user_daily') }}
     ORDER BY _airbyte_extracted_at DESC
     LIMIT 1 BY tenant_id, source_id, lower(trim(email)), date
-)
+) AS bronze
+{% if is_incremental() %}
+LEFT JOIN instance_watermark AS w
+       ON w.insight_tenant_id = bronze.tenant_id
+      AND w.source_id = bronze.source_id
+{% endif %}
 WHERE email IS NOT NULL
   AND trim(email) != ''
   AND date IS NOT NULL
@@ -88,14 +109,12 @@ WHERE email IS NOT NULL
   -- ai_cost_metric_evidence requires credits > 0, so a zero never becomes a
   -- $0 charge.
 {% if is_incremental() %}
-  -- Empty-table guard, as in chatgpt_team__ai_dev_usage: over an empty `this`
-  -- max(day) is the Date epoch and the interval underflows, filtering
-  -- everything out.
+  -- An instance this relation has never held reads everything: the LEFT JOIN
+  -- leaves latest_day NULL for it, and the whole predicate is skipped. One it
+  -- has read before is filtered by ITS OWN floor, three days back, which is the
+  -- same window as before — only no longer shared with every other instance.
   AND (
-    (SELECT count() FROM {{ this }}) = 0
-    OR toDate(date) > (
-        SELECT coalesce(max(day), toDate('1970-01-01')) - INTERVAL 3 DAY
-        FROM {{ this }}
-    )
+    w.latest_day IS NULL
+    OR toDate(bronze.date) > w.latest_day - INTERVAL 3 DAY
   )
 {% endif %}

@@ -13,7 +13,7 @@ schemas:
       credit_price_minor_units:
         type: number
       billed_currency: *id001
-      native_to_usd_rate:
+      native_minor_to_usd_cents_rate:
         type: number
       is_deleted:
         type: integer

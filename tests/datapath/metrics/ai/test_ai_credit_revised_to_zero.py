@@ -20,6 +20,8 @@ express without a second seed-and-rebuild phase. The fixture says so at length.
 from __future__ import annotations
 
 import pytest
+from insight_datapath import clickhouse
+from insight_datapath.instance import InstanceConfig
 from insight_datapath.metric_expect import approx
 from insight_datapath.spec_runner import SpecRun
 
@@ -78,13 +80,27 @@ def test_an_unrevised_charge_survives(spec: SpecRun) -> None:
     )
 
 
-def test_the_corrected_reading_is_what_silver_stores(spec: SpecRun) -> None:
-    """Silver holds alice's zero, not the 500 it superseded.
+def test_the_corrected_reading_is_what_silver_stores(
+    spec: SpecRun, instance_cfg: InstanceConfig
+) -> None:
+    """Silver holds one row for alice's day, and its credits are zero.
 
-    Read through the serving layer rather than the relation: the point is that
-    the later reading won, and a stored 500 would surface here as a charge.
+    Read from the relation, not through the serving layer: the two assertions
+    above prove gold serves no charge, which a row that never reached silver at
+    all would also satisfy. Only the relation can say that the later reading
+    replaced the earlier one instead of being dropped.
     """
-    r = _daily_extra_usage(spec, ALICE)
-    assert r.status == 200
-    row = r.row("ai.daily_approximate_extra_usage_cost", "period", entity_id=ALICE)
-    row.equals(value=None)
+    rows = clickhouse.query(
+        instance_cfg,
+        f"""
+        SELECT toString(credits)
+        FROM silver.class_ai_credit_usage FINAL
+        WHERE insight_tenant_id = '{spec.tenant}'
+          AND source_id = 'chatgpt-team-test'
+          AND email = '{ALICE}'
+          AND day = toDate('2026-12-02')
+        """,
+    )
+
+    assert len(rows) == 1, f"expected one stored reading for alice's day, got {rows}"
+    assert float(rows[0][0]) == 0.0, f"the withdrawn charge is still stored: {rows}"

@@ -388,10 +388,13 @@ SELECT
     map(
         'credits', toString(credits),
         'credit_kind', credit_kind,
+        -- Minor units, never a major-unit figure: dividing by 100 assumes an
+        -- exponent of two, which is wrong for a currency whose minor unit is
+        -- the unit itself.
         'billed_currency', billed_currency,
         'credit_price_minor_units', toString(credit_price_minor_units),
-        'native_amount', toString(native_minor_units / 100),
-        'native_to_usd_rate', toString(native_to_usd_rate),
+        'native_minor_units', toString(native_minor_units),
+        'native_minor_to_usd_cents_rate', toString(native_minor_to_usd_cents_rate),
         -- Both the price and the rate are current configuration, not history,
         -- so this figure is an estimate and restates when either is changed.
         -- The credits beside it do not.
@@ -418,12 +421,13 @@ FROM (
             )                                   AS credit_dimensions,
             pricing.credit_price_minor_units    AS credit_price_minor_units,
             pricing.billed_currency             AS billed_currency,
-            pricing.native_to_usd_rate          AS native_to_usd_rate,
-            -- What the vendor bills, in the currency it bills: credits times the
-            -- price of one. The USD beside it is this amount presented.
+            pricing.native_minor_to_usd_cents_rate AS native_minor_to_usd_cents_rate,
+            -- What the vendor bills, in ITS OWN minor units: credits times the
+            -- price of one. The rate then carries each of those minor units to
+            -- USD cents, so no step needs the currency's exponent.
             credit.credits * pricing.credit_price_minor_units             AS native_minor_units,
             credit.credits * pricing.credit_price_minor_units
-                           * pricing.native_to_usd_rate                   AS usd_cents,
+                           * pricing.native_minor_to_usd_cents_rate       AS usd_cents,
             row_number() OVER (
                 PARTITION BY credit.insight_tenant_id, credit.source_id,
                              credit.source, credit.day, credit.email

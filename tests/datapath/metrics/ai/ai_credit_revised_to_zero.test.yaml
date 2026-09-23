@@ -44,9 +44,10 @@ description: >
   lookback (P2D) is narrower, so the vendor's re-read bounds the correction
   before this model does.
 
-  Priced at 4 minor units per credit with a 1.08 conversion, so bob's 200
-  credits are 200 × 4 = 800 minor units billed, presented as 800 × 1.08 = 864
-  cents, i.e. 8.64.
+  Priced at 4 EUR cents per credit, with 1.08 USD cents per EUR cent. bob's 200
+  credits are 200 × 4 = 800 EUR cents billed, carried to 800 × 1.08 = 864 USD
+  cents, i.e. 8.64. The rate is stated per minor unit so the arithmetic never
+  needs the currency's exponent.
 
 bronze:
   bronze_bamboohr.employees:
@@ -57,7 +58,7 @@ bronze:
   config.ai_credit_pricing:
     - { tenant_id: "{{ tenant }}", insight_source_id: "chatgpt-team-test", source: chatgpt_team,
         unique_key: pricing-chatgpt, credit_price_minor_units: 4, billed_currency: EUR,
-        native_to_usd_rate: 1.08, is_deleted: 0, note: "", recorded_by: "",
+        native_minor_to_usd_cents_rate: 1.08, is_deleted: 0, note: "", recorded_by: "",
         _version: "2026-12-01T00:00:00.000Z" }
 
   bronze_chatgpt_team.chatgpt_team_codex_user_daily:

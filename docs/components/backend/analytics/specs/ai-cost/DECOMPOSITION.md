@@ -428,8 +428,10 @@ holds is a boundary, not an absence.
 
 **Money is priced, never stored — and the price is an assumption, not history.**
 `config.ai_credit_pricing` holds one current configuration per tenant and vendor:
-what a credit costs in the currency the vendor bills, and the rate that presents that
-amount in USD. Gold multiplies at read time and stores neither product.
+what a credit costs in the minor units of the currency the vendor bills, and the USD
+cents one of those minor units carries. Stating the rate per minor unit keeps the
+arithmetic free of the currency's exponent — a currency whose minor unit is the unit
+itself needs no special case. Gold multiplies at read time and stores neither product.
 
 This is an explicit exception to `cpt-insightspec-aicost-principle-rates-are-data`
 and to NFR-1, and it is taken knowingly. Neither number comes from a vendor API —
