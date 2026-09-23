@@ -1,8 +1,7 @@
 name: Pool hook verify
 
-# Temporary: proves the job-started hook runs and repairs ownership. Run once to
-# plant a root-owned probe, then re-run so the hook meets it. The probe sits
-# beside the checkout tree, not inside it, so a failure cannot break checkout.
+# Temporary, last pass: removes the probe the verification planted. Delete this
+# file once it has run.
 
 on:
   push:
@@ -13,7 +12,7 @@ permissions:
   contents: read
 
 jobs:
-  verify:
+  cleanup:
     name: leg ${{ matrix.leg }}
     runs-on: [self-hosted, linux, x64, insight-vhc]
     timeout-minutes: 10
@@ -22,24 +21,12 @@ jobs:
       matrix:
         leg: [1, 2, 3, 4, 5]
     steps:
-      - name: Report the probe this runner carries
+      - name: Remove the probe
         run: |
           set -uo pipefail
           echo "runner: ${RUNNER_NAME}"
-          probe=/srv/gha/work/_hook_probe/f
-          if [ -e "$probe" ]; then
-            echo "probe owner: $(stat -c '%U:%G' "$probe")"
-          else
-            echo "probe: none on this runner"
-          fi
-
-      - name: Plant a root-owned probe for the next run
-        run: |
-          set -euo pipefail
           sudo rm -rf /srv/gha/work/_hook_probe
-          docker run --rm -v /srv/gha/work:/w alpine:3 \
-            sh -c 'mkdir -p /w/_hook_probe && touch /w/_hook_probe/f'
-          echo "planted as: $(stat -c '%U:%G' /srv/gha/work/_hook_probe/f)"
+          ls -la /srv/gha/work | grep -c _hook_probe || echo "probe gone"
 
       # Holds so the five legs overlap and each lands on its own runner.
       - name: Hold the runner
