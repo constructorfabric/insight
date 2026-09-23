@@ -1,8 +1,12 @@
 use std::error::Error;
 use std::sync::Arc;
 
+use axum::http::request::Parts;
+use clickhouse::test::{Mock, handlers};
+use rmcp::handler::server::tool::Extension;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
+use serde::Serialize;
 use serde_json::{Value, json};
 
 use super::*;
@@ -20,6 +24,23 @@ type R = Result<(), Box<dyn Error>>;
 fn surfaces() -> CustomSurfaces {
     built(crate::api::Datasets::holding(
         "http://offline.invalid",
+        &[(
+            "commits",
+            json!({
+                "title": "Commits",
+                "fields": [
+                    { "name": "actor", "path": "actor", "type": "string" },
+                    { "name": "lines_added", "path": "lines_added", "type": "int" },
+                    { "name": "occurred_at", "path": "occurred_at", "type": "datetime" }
+                ]
+            }),
+        )],
+    ))
+}
+
+fn surfaces_over(url: &str) -> CustomSurfaces {
+    built(crate::api::Datasets::holding(
+        url,
         &[(
             "commits",
             json!({
@@ -80,6 +101,39 @@ fn put(name: &str, body: Value) -> Parameters<PutRequest> {
     })
 }
 
+#[derive(Debug, Serialize, clickhouse::Row)]
+struct NoTable {
+    sorting_key: String,
+}
+
+fn parts(caller: Option<&str>) -> Extension<Parts> {
+    let Ok(request) = axum::http::Request::builder().body(()) else {
+        panic!("an empty request builds");
+    };
+    let (mut parts, ()) = request.into_parts();
+    if let Some(caller) = caller {
+        parts
+            .extensions
+            .insert(super::super::auth::McpCaller(caller.to_owned()));
+    }
+
+    Extension(parts)
+}
+
+fn administrator() -> Extension<Parts> {
+    parts(Some("test-admin"))
+}
+
+fn reviews() -> Value {
+    json!({
+        "title": "Reviews",
+        "fields": [
+            { "name": "day", "path": "day", "type": "datetime", "default_clock": true },
+            { "name": "reviewer", "path": "reviewer", "type": "string" }
+        ]
+    })
+}
+
 fn listing(kind: DefinitionKind) -> Parameters<KindRequest> {
     Parameters(KindRequest {
         kind,
@@ -136,7 +190,7 @@ fn assert_accepted(result: &CallToolResult) -> Value {
 }
 
 #[test]
-fn the_server_announces_exactly_the_ten_custom_surface_tools() {
+fn the_server_announces_exactly_the_eleven_custom_surface_tools() {
     let tools = CustomSurfaces::tool_router().list_all();
 
     let mut names: Vec<&str> = tools.iter().map(|tool| tool.name.as_ref()).collect();
@@ -151,6 +205,7 @@ fn the_server_announces_exactly_the_ten_custom_surface_tools() {
             "list_datasets",
             "list_definitions",
             "put_dashboard",
+            "put_dataset",
             "put_metric",
             "put_widget",
             "run_metric",
@@ -613,5 +668,87 @@ async fn arranging_a_board_that_is_not_there_is_refused() {
             }))
             .await,
         "dashboard `absent` was not found",
+    );
+}
+
+#[tokio::test]
+async fn a_declared_dataset_is_listed_for_a_metric_to_read() {
+    let mock = Mock::new();
+    mock.add(handlers::provide(Vec::<NoTable>::new()));
+    mock.add(handlers::record_ddl());
+    let surfaces = surfaces_over(mock.url());
+
+    let stored = assert_accepted(
+        &surfaces
+            .put_dataset(administrator(), put("reviews", reviews()))
+            .await,
+    );
+    assert_eq!(stored["declaration"], reviews());
+
+    let listed = assert_accepted(&surfaces.list_datasets().await);
+    let Some(datasets) = listed["datasets"].as_str() else {
+        panic!("the listing describes the datasets: {listed}");
+    };
+    assert!(datasets.contains("reviews: Reviews"), "{datasets}");
+}
+
+#[tokio::test]
+async fn a_declaration_wrong_in_several_places_names_every_one() {
+    let surfaces = surfaces();
+
+    let refused = surfaces
+        .put_dataset(
+            administrator(),
+            put(
+                "reviews",
+                json!({
+                    "title": "Reviews",
+                    "fields": [
+                        { "name": "day", "path": "day", "type": "datetime" },
+                        { "name": "day", "path": "other", "type": "int" }
+                    ],
+                    "row_identity": ["nowhere"]
+                }),
+            ),
+        )
+        .await;
+
+    assert_refused(&refused, "fields[1].name");
+    assert_refused(&refused, "row_identity[0]");
+}
+
+#[tokio::test]
+async fn a_replacement_that_would_break_a_metric_names_the_metric() {
+    let surfaces = surfaces();
+    assert_accepted(&surfaces.put_metric(put("per-actor", metric_body())).await);
+
+    assert_refused(
+        &surfaces
+            .put_dataset(
+                administrator(),
+                put(
+                    "commits",
+                    json!({
+                        "title": "Commits",
+                        "fields": [
+                            { "name": "occurred_at", "path": "occurred_at", "type": "datetime" }
+                        ]
+                    }),
+                ),
+            )
+            .await,
+        "per-actor",
+    );
+}
+
+#[tokio::test]
+async fn a_declaration_no_verified_caller_stands_behind_is_refused() {
+    let surfaces = surfaces();
+
+    assert_refused(
+        &surfaces
+            .put_dataset(parts(None), put("reviews", reviews()))
+            .await,
+        "administrator",
     );
 }

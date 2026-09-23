@@ -36,7 +36,16 @@ fn surfaces() -> tools::CustomSurfaces {
         Arc::new(MemoryDefinitions::new()),
         ChatClient::keyless(),
         identity,
-        crate::api::Datasets::offline("http://offline.invalid"),
+        crate::api::Datasets::holding(
+            "http://offline.invalid",
+            &[(
+                "commits",
+                serde_json::json!({
+                    "title": "Commits",
+                    "fields": [{ "name": "day", "path": "day", "type": "datetime" }]
+                }),
+            )],
+        ),
     ));
 
     tools::CustomSurfaces::new(state)
@@ -267,6 +276,7 @@ async fn an_authorized_client_initializes_and_lists_the_tools_over_http() -> R {
             "list_datasets",
             "list_definitions",
             "put_dashboard",
+            "put_dataset",
             "put_metric",
             "put_widget",
             "run_metric",
@@ -305,6 +315,40 @@ async fn a_token_for_the_read_only_server_does_not_open_this_one_over_http() -> 
         .await?;
 
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    issuer.stop();
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_administrator_declares_a_dataset_over_http() -> R {
+    let issuer = Issuer::start().await;
+    let config = McpConfig {
+        enabled: true,
+        bind_addr: "127.0.0.1:0".to_owned(),
+        public_url: issuer.origin.clone(),
+        jwks_url: String::new(),
+        allow_insecure_private_network: true,
+    };
+    let router = router(&config, surfaces(), CancellationToken::new())?;
+    let token = issuer.sign(&issuer.claims());
+
+    let declared = router
+        .oneshot(mcp_request(
+            &token,
+            None,
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"put_dataset","arguments":{"name":"commits","body":{"title":"Commits","fields":[{"name":"day","path":"day","type":"datetime"},{"name":"lines","path":"lines","type":"int"}]}}}}"#,
+        )?)
+        .await?;
+
+    assert_eq!(declared.status(), StatusCode::OK);
+    let body = to_bytes(declared.into_body(), 64 * 1024).await?;
+    let declared: Value = serde_json::from_slice(&body)?;
+    assert_ne!(declared["result"]["isError"], true, "{declared}");
+    assert_eq!(
+        declared["result"]["structuredContent"]["declaration"]["fields"][1]["name"], "lines",
+        "{declared}"
+    );
 
     issuer.stop();
     Ok(())

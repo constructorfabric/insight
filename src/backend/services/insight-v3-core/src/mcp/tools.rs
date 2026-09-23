@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
+use axum::http::request::Parts;
 use rmcp::handler::server::router::tool::ToolRouter;
+use rmcp::handler::server::tool::Extension;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig};
 use rmcp::{ServerHandler, tool, tool_handler, tool_router};
@@ -8,12 +10,15 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use super::auth::McpCaller;
 use crate::api::AppState;
+use crate::domain::dataset_lifecycle::DatasetChangeError;
 use crate::domain::definition::{DefinitionKind, DefinitionName, Page};
 use crate::domain::kinds::dashboard::Item;
 use crate::domain::metric_run::MetricRuns;
 use crate::domain::query::time_window::WindowRequest;
 use crate::domain::surfaces::{CustomError, Surfaces};
+use crate::domain::violation::said;
 
 #[cfg(test)]
 mod tests;
@@ -298,8 +303,42 @@ impl CustomSurfaces {
     }
 
     #[tool(
+        name = "put_dataset",
+        description = "Declares a dataset, or replaces the declaration of one that stands: {\"title\": \"Commits\", \"fields\": [{\"name\": \"day\", \"path\": \"day\", \"type\": \"datetime\", \"default_clock\": true}, {\"name\": \"lines\", \"path\": \"lines\", \"type\": \"int\"}], \"row_identity\": [\"day\"]}. `type` is string, int, float, bool or datetime; `path` is where the value sits in a record, dot-separated. `default_clock` marks the date a window selects by. `row_identity` names the fields that make two records the same one; leave it out and every record stands alone. Optional per field: `role` (dimension, measurable, time), `description`, `absent_value`, `person` (email or id). A replacement that would change what a stored metric reads is refused and names the metric."
+    )]
+    async fn put_dataset(
+        &self,
+        Extension(parts): Extension<Parts>,
+        Parameters(request): Parameters<PutRequest>,
+    ) -> CallToolResult {
+        let Some(McpCaller(caller)) = parts.extensions.get::<McpCaller>() else {
+            return refuse("only an administrator declares a dataset");
+        };
+
+        let name = match parse_name(&request.name) {
+            Ok(name) => name,
+            Err(refusal) => return refusal,
+        };
+
+        tracing::info!(%caller, dataset = name.as_str(), "declaring a dataset over MCP");
+
+        match self
+            .state
+            .dataset_lifecycle()
+            .declare(&name, &request.body)
+            .await
+        {
+            Ok(stored) => CallToolResult::structured(json!({
+                "name": request.name,
+                "declaration": stored,
+            })),
+            Err(error) => change_refusal(error),
+        }
+    }
+
+    #[tool(
         name = "list_datasets",
-        description = "Every dataset this server can read, with what each of its fields holds and which records count as one. Call this before writing a metric, so the metric names a dataset and fields that exist. Only an administrator declares a dataset; this server cannot."
+        description = "Every dataset this server can read, with what each of its fields holds and which records count as one. Call this before writing a metric, so the metric names a dataset and fields that exist."
     )]
     async fn list_datasets(&self) -> CallToolResult {
         let described = self.state.assistant().briefing().await;
@@ -322,8 +361,8 @@ impl ServerHandler for CustomSurfaces {
                  dataset, run_metric to see the rows it yields, then put_widget to draw those \
                  rows and put_dashboard to hold the widgets. A metric names a dataset and its \
                  declared fields; a widget names its metric's columns by their as_name; and a \
-                 definition still in use cannot be deleted until its dependents are. Datasets \
-                 themselves are declared by an administrator, not here.",
+                 definition still in use cannot be deleted until its dependents are. \
+                 put_dataset declares a dataset for metrics to read.",
             )
     }
 }
@@ -342,6 +381,30 @@ fn tool_error(error: &CustomError) -> CallToolResult {
     tracing::error!(%error, "an MCP tool call failed");
 
     refuse("the request could not be completed")
+}
+
+fn change_refusal(error: DatasetChangeError) -> CallToolResult {
+    match error {
+        DatasetChangeError::Invalid(violations) => refuse(&format!(
+            "the declaration is not valid: {}",
+            said(&violations)
+        )),
+        DatasetChangeError::WouldBreak(broken) => refuse(&format!(
+            "the replacement would change what these metrics read: {}",
+            broken
+                .iter()
+                .map(|one| format!("{}: {}", one.metric, one.why))
+                .collect::<Vec<_>>()
+                .join("; ")
+        )),
+        DatasetChangeError::Table(_)
+        | DatasetChangeError::Store(_)
+        | DatasetChangeError::Definitions(_) => {
+            tracing::error!(%error, "an MCP dataset declaration failed");
+            refuse("the request could not be completed")
+        }
+        about_the_caller => refuse(&about_the_caller.to_string()),
+    }
 }
 
 fn refuse(message: &str) -> CallToolResult {
