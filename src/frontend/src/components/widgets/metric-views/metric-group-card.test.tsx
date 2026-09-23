@@ -87,7 +87,7 @@ describe("MetricGroupCard", () => {
     />);
     expect(screen.getByText("Time off in this period")).toBeInTheDocument();
     expect(screen.getByText("3 days")).toBeInTheDocument();
-    expect(screen.getByText("-70% vs median")).toBeInTheDocument();
+    expect(screen.queryByText(/vs median/)).not.toBeInTheDocument();
     expect(screen.queryByText("Needs attention")).not.toBeInTheDocument();
   });
   it("renders preview rows with response labels and values", () => {
