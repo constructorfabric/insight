@@ -249,6 +249,20 @@ describe("the folder mutations", () => {
     expectCountsAndListsRefreshed(invalidated);
   });
 
+  it.each([
+    ["a folder another admin took the name of", () => useCreateFolder(), "Platform", customClient.createFolder],
+    ["a move into a folder that went away", () => useMoveDashboard(), { name: "delivery", folder: "gone" }, customClient.moveDashboard],
+  ] as const)("refreshes the counts and the lists after %s is refused", async (_case, hook, variables, call) => {
+    vi.mocked(call).mockRejectedValueOnce(new Error("refused"));
+    const { result, invalidated } = rendered(hook);
+
+    await act(() =>
+      (result.current.mutateAsync as (v: unknown) => Promise<unknown>)(variables).catch(() => undefined),
+    );
+
+    expectCountsAndListsRefreshed(invalidated);
+  });
+
   it("refreshes the counts when a dashboard is removed", async () => {
     const { result, invalidated } = rendered(() => useRemoveDefinition());
 

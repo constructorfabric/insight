@@ -334,7 +334,7 @@ export function useCreateFolder() {
 
   return useMutation({
     mutationFn: (name: string) => createFolder(name),
-    onSuccess: () => invalidateDashboardList(queryClient),
+    onSettled: () => invalidateDashboardList(queryClient),
   });
 }
 
@@ -344,7 +344,7 @@ export function useRenameFolder() {
   return useMutation({
     mutationFn: ({ id, name }: { id: string; name: string }) =>
       renameFolder(id, name),
-    onSuccess: () => invalidateDashboardList(queryClient),
+    onSettled: () => invalidateDashboardList(queryClient),
   });
 }
 
@@ -353,7 +353,7 @@ export function useDeleteFolder() {
 
   return useMutation({
     mutationFn: (id: string) => deleteFolder(id),
-    onSuccess: () => invalidateDashboardList(queryClient),
+    onSettled: () => invalidateDashboardList(queryClient),
   });
 }
 
@@ -363,7 +363,7 @@ export function useMoveDashboard() {
   return useMutation({
     mutationFn: ({ name, folder }: { name: string; folder: string | null }) =>
       moveDashboard(name, folder),
-    onSuccess: () => invalidateDashboardList(queryClient),
+    onSettled: () => invalidateDashboardList(queryClient),
   });
 }
 
