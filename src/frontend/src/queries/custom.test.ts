@@ -249,15 +249,23 @@ describe("the folder mutations", () => {
     expectCountsAndListsRefreshed(invalidated);
   });
 
-  it.each([
-    ["a folder another admin took the name of", () => useCreateFolder(), "Platform", customClient.createFolder],
-    ["a move into a folder that went away", () => useMoveDashboard(), { name: "delivery", folder: "gone" }, customClient.moveDashboard],
-  ] as const)("refreshes the counts and the lists after %s is refused", async (_case, hook, variables, call) => {
-    vi.mocked(call).mockRejectedValueOnce(new Error("refused"));
-    const { result, invalidated } = rendered(hook);
+  it("refreshes the counts and the lists after a taken name is refused", async () => {
+    vi.mocked(customClient.createFolder).mockRejectedValueOnce(new Error("taken"));
+    const { result, invalidated } = rendered(() => useCreateFolder());
+
+    await act(() => result.current.mutateAsync("Platform").catch(() => undefined));
+
+    expectCountsAndListsRefreshed(invalidated);
+  });
+
+  it("refreshes the counts and the lists after a move into a gone folder is refused", async () => {
+    vi.mocked(customClient.moveDashboard).mockRejectedValueOnce(new Error("gone"));
+    const { result, invalidated } = rendered(() => useMoveDashboard());
 
     await act(() =>
-      (result.current.mutateAsync as (v: unknown) => Promise<unknown>)(variables).catch(() => undefined),
+      result.current
+        .mutateAsync({ name: "delivery", folder: "gone" })
+        .catch(() => undefined),
     );
 
     expectCountsAndListsRefreshed(invalidated);
