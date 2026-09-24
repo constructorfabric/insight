@@ -45,15 +45,25 @@ fn an_id_that_is_not_a_uuid_is_refused() {
 fn a_filter_reads_unfiled_or_a_folder_id() {
     let id = "0192a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b";
 
+    let dashboards = DefinitionKind::Dashboard;
+
     assert!(matches!(
-        FolderFilter::parse("unfiled"),
+        FolderFilter::parse(dashboards, "unfiled"),
         Ok(FolderFilter::Unfiled)
     ));
     assert!(
-        matches!(FolderFilter::parse(id), Ok(FolderFilter::In(parsed)) if parsed.to_string() == id)
+        matches!(FolderFilter::parse(dashboards, id), Ok(FolderFilter::In(parsed)) if parsed.to_string() == id)
     );
     assert!(matches!(
-        FolderFilter::parse("Platform"),
+        FolderFilter::parse(dashboards, "Platform"),
         Err(FolderError::Id)
+    ));
+}
+
+#[test]
+fn only_dashboards_are_filtered_by_folder() {
+    assert!(matches!(
+        FolderFilter::parse(DefinitionKind::Metric, "unfiled"),
+        Err(FolderError::NotFiled("metrics"))
     ));
 }

@@ -125,6 +125,7 @@ fn listing(kind: DefinitionKind) -> Parameters<KindRequest> {
         kind,
         limit: None,
         offset: None,
+        folder: None,
     })
 }
 
@@ -176,7 +177,7 @@ fn assert_accepted(result: &CallToolResult) -> Value {
 }
 
 #[test]
-fn the_server_announces_exactly_the_twelve_custom_surface_tools() {
+fn the_server_announces_exactly_the_fifteen_custom_surface_tools() {
     let tools = CustomSurfaces::tool_router().list_all();
 
     let mut names: Vec<&str> = tools.iter().map(|tool| tool.name.as_ref()).collect();
@@ -186,12 +187,15 @@ fn the_server_announces_exactly_the_twelve_custom_surface_tools() {
         names,
         [
             "arrange_dashboard",
+            "create_folder",
             "delete_definition",
             "describe_tables",
             "get_definition",
             "list_datasets",
             "list_definitions",
+            "list_folders",
             "list_tables",
+            "move_dashboard",
             "put_dashboard",
             "put_metric",
             "put_widget",
@@ -243,7 +247,7 @@ async fn a_stored_metric_is_listed_and_read_back() -> R {
             .get_definition(named(DefinitionKind::Metric, "per-actor"))
             .await,
     );
-    assert_eq!(read, metric_body());
+    assert_eq!(read, json!({ "body": metric_body() }));
 
     Ok(())
 }
@@ -525,6 +529,7 @@ async fn a_page_answers_its_own_slice_and_the_whole_count() {
                 kind: DefinitionKind::Metric,
                 limit: Some(2),
                 offset: None,
+                folder: None,
             }))
             .await,
     );
@@ -537,6 +542,7 @@ async fn a_page_answers_its_own_slice_and_the_whole_count() {
                 kind: DefinitionKind::Metric,
                 limit: Some(2),
                 offset: Some(2),
+                folder: None,
             }))
             .await,
     );
@@ -576,6 +582,7 @@ async fn a_page_beyond_the_cap_is_refused_rather_than_served() {
                 kind: DefinitionKind::Metric,
                 limit: Some(5_000),
                 offset: None,
+                folder: None,
             }))
             .await,
         "limit must be between 1 and 200",
@@ -801,4 +808,221 @@ async fn a_description_of_nothing_or_of_too_much_is_refused() {
 
     assert_refused(&none, "at least one table");
     assert_refused(&many, "at most 20 tables");
+}
+
+fn listing_in(kind: DefinitionKind, folder: &str) -> Parameters<KindRequest> {
+    Parameters(KindRequest {
+        kind,
+        limit: None,
+        offset: None,
+        folder: Some(folder.to_owned()),
+    })
+}
+
+fn folder_named(name: &str) -> Parameters<FolderRequest> {
+    Parameters(FolderRequest {
+        name: name.to_owned(),
+    })
+}
+
+fn moving(dashboard: &str, folder: Option<&str>) -> Parameters<MoveRequest> {
+    Parameters(MoveRequest {
+        dashboard: dashboard.to_owned(),
+        folder: folder.map(str::to_owned),
+    })
+}
+
+async fn board(surfaces: &CustomSurfaces, name: &str) {
+    assert_accepted(
+        &surfaces
+            .put_dashboard(put(name, json!({"title": name, "widgets": []})))
+            .await,
+    );
+}
+
+async fn made_folder(surfaces: &CustomSurfaces, name: &str) -> String {
+    let made = assert_accepted(&surfaces.create_folder(folder_named(name)).await);
+
+    made["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("a made folder names its id: {made}"))
+        .to_owned()
+}
+
+async fn folder_of(surfaces: &CustomSurfaces, dashboard: &str) -> Value {
+    let read = assert_accepted(
+        &surfaces
+            .get_definition(named(DefinitionKind::Dashboard, dashboard))
+            .await,
+    );
+
+    read["folder"].clone()
+}
+
+#[test]
+fn the_instructions_name_the_folder_tools() {
+    let info = rmcp::ServerHandler::get_info(&surfaces());
+
+    let Some(instructions) = info.instructions else {
+        panic!("the server carries instructions");
+    };
+    for tool in ["list_folders", "create_folder", "move_dashboard"] {
+        assert!(instructions.contains(tool), "{tool}: {instructions}");
+    }
+}
+
+#[tokio::test]
+async fn a_made_folder_is_listed_with_what_it_holds() {
+    let surfaces = surfaces();
+    board(&surfaces, "delivery").await;
+
+    let id = made_folder(&surfaces, "Platform").await;
+    let listed = assert_accepted(&surfaces.list_folders().await);
+
+    assert_eq!(
+        listed,
+        json!({
+            "folders": [{ "id": id, "name": "Platform", "dashboards": 0 }],
+            "unfiled": 1
+        })
+    );
+}
+
+#[tokio::test]
+async fn a_folder_name_another_folder_holds_in_another_case_is_refused_readably() {
+    let surfaces = surfaces();
+    made_folder(&surfaces, "Platform").await;
+
+    let clash = surfaces.create_folder(folder_named("platform")).await;
+
+    assert_refused(&clash, "already exists");
+}
+
+#[tokio::test]
+async fn a_folder_name_of_nothing_is_refused() {
+    let clash = surfaces().create_folder(folder_named("  ")).await;
+
+    assert_refused(&clash, "1 to 64 characters");
+}
+
+#[tokio::test]
+async fn a_dashboard_is_moved_into_a_folder_and_out_again() {
+    let surfaces = surfaces();
+    let id = made_folder(&surfaces, "Platform").await;
+    board(&surfaces, "delivery").await;
+
+    assert_accepted(&surfaces.move_dashboard(moving("delivery", Some(&id))).await);
+    let filed = folder_of(&surfaces, "delivery").await;
+    assert_accepted(&surfaces.move_dashboard(moving("delivery", None)).await);
+
+    assert_eq!(filed, json!({ "id": id, "name": "Platform" }));
+    assert_eq!(folder_of(&surfaces, "delivery").await, Value::Null);
+}
+
+#[tokio::test]
+async fn moving_into_a_folder_that_is_not_there_is_refused() {
+    let surfaces = surfaces();
+    board(&surfaces, "delivery").await;
+
+    let moved = surfaces
+        .move_dashboard(moving(
+            "delivery",
+            Some("0192a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"),
+        ))
+        .await;
+
+    assert_refused(&moved, "no folder has the id");
+}
+
+#[tokio::test]
+async fn moving_a_dashboard_that_is_not_there_is_refused() {
+    let surfaces = surfaces();
+    let id = made_folder(&surfaces, "Platform").await;
+
+    let moved = surfaces.move_dashboard(moving("nowhere", Some(&id))).await;
+
+    assert_refused(&moved, "no dashboard is named `nowhere`");
+}
+
+#[tokio::test]
+async fn rewriting_a_filed_dashboard_keeps_its_folder_and_a_new_one_lands_unfiled() {
+    let surfaces = surfaces();
+    let id = made_folder(&surfaces, "Platform").await;
+    board(&surfaces, "delivery").await;
+    assert_accepted(&surfaces.move_dashboard(moving("delivery", Some(&id))).await);
+
+    board(&surfaces, "delivery").await;
+    board(&surfaces, "hiring").await;
+
+    assert_eq!(folder_of(&surfaces, "delivery").await["id"], json!(id));
+    assert_eq!(folder_of(&surfaces, "hiring").await, Value::Null);
+}
+
+#[tokio::test]
+async fn a_dashboard_listing_narrows_to_one_folder_or_to_the_unfiled() {
+    let surfaces = surfaces();
+    let id = made_folder(&surfaces, "Platform").await;
+    board(&surfaces, "delivery").await;
+    board(&surfaces, "hiring").await;
+    assert_accepted(&surfaces.move_dashboard(moving("delivery", Some(&id))).await);
+
+    let filed = assert_accepted(
+        &surfaces
+            .list_definitions(listing_in(DefinitionKind::Dashboard, &id))
+            .await,
+    );
+    let unfiled = assert_accepted(
+        &surfaces
+            .list_definitions(listing_in(DefinitionKind::Dashboard, "unfiled"))
+            .await,
+    );
+
+    assert_eq!(filed["names"], json!(["delivery"]));
+    assert_eq!(unfiled["names"], json!(["hiring"]));
+}
+
+#[tokio::test]
+async fn only_dashboards_are_listed_by_folder() {
+    let listed = surfaces()
+        .list_definitions(listing_in(DefinitionKind::Metric, "unfiled"))
+        .await;
+
+    assert_refused(&listed, "are not filed in folders");
+}
+
+#[tokio::test]
+async fn a_listing_in_a_folder_that_is_not_an_id_is_refused() {
+    let listed = surfaces()
+        .list_definitions(listing_in(DefinitionKind::Dashboard, "Platform"))
+        .await;
+
+    assert_refused(&listed, "folder ids are UUIDs");
+}
+
+#[test]
+fn a_move_names_its_folder_even_when_the_folder_is_none() {
+    let tools = CustomSurfaces::tool_router().list_all();
+    let Some(tool) = tools.iter().find(|tool| tool.name == "move_dashboard") else {
+        panic!("move_dashboard is announced");
+    };
+
+    let schema = Value::Object((*tool.input_schema).clone());
+
+    assert_eq!(
+        schema["required"],
+        json!(["dashboard", "folder"]),
+        "{schema}"
+    );
+    assert_eq!(
+        schema["properties"]["folder"]["type"],
+        json!(["string", "null"])
+    );
+    assert!(schema["properties"]["folder"]["description"].is_string());
+}
+
+#[test]
+fn a_move_without_its_folder_is_not_read() {
+    let read = serde_json::from_value::<MoveRequest>(json!({ "dashboard": "delivery" }));
+
+    assert!(read.is_err(), "{read:?}");
 }

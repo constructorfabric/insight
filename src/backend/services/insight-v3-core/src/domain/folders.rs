@@ -5,7 +5,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::domain::definition::{
-    DefinitionName, DefinitionStoreError, Definitions, NamePage, Page,
+    DefinitionKind, DefinitionName, DefinitionStoreError, Definitions, NamePage, Page,
 };
 
 const MAX_NAME_CHARS: usize = 64;
@@ -75,7 +75,10 @@ pub(crate) enum FolderFilter {
 }
 
 impl FolderFilter {
-    pub(crate) fn parse(value: &str) -> Result<Self, FolderError> {
+    pub(crate) fn parse(kind: DefinitionKind, value: &str) -> Result<Self, FolderError> {
+        if kind != DefinitionKind::Dashboard {
+            return Err(FolderError::NotFiled(kind.plural()));
+        }
         if value == "unfiled" {
             return Ok(Self::Unfiled);
         }
@@ -96,8 +99,16 @@ pub(crate) enum FolderError {
     DashboardNotFound(String),
     #[error("a folder named `{0}` already exists")]
     NameTaken(String),
+    #[error("{0} are not filed in folders")]
+    NotFiled(&'static str),
     #[error(transparent)]
     Store(#[from] DefinitionStoreError),
+}
+
+impl FolderError {
+    pub(crate) fn is_about_the_caller(&self) -> bool {
+        !matches!(self, Self::Store(_))
+    }
 }
 
 impl From<sea_orm::DbErr> for FolderError {

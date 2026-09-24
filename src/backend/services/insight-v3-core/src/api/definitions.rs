@@ -14,7 +14,7 @@ use utoipa::ToSchema;
 
 use super::AppState;
 use super::errors::ApiErrors;
-use super::folders::{FolderBody, folder_error, folder_field_error};
+use super::folders::{folder_error, folder_field_error, folder_json};
 use crate::domain::definition::{DefinitionKind, DefinitionName, MAX_PAGE_LIMIT, Page, PageError};
 use crate::domain::folders::FolderFilter;
 use crate::domain::kinds::metric::answerable::EffectiveClock;
@@ -257,7 +257,7 @@ struct DefinitionResponse {
 
 #[derive(Debug, Serialize)]
 struct Filed {
-    folder: Option<FolderBody>,
+    folder: Option<serde_json::Value>,
 }
 
 pub(super) fn custom_error(error: CustomError) -> CanonicalError {
@@ -515,7 +515,7 @@ async fn get_definition(
                     .map_err(folder_error)?;
 
                 Some(Filed {
-                    folder: folder.as_ref().map(FolderBody::from),
+                    folder: folder.as_ref().map(folder_json),
                 })
             } else {
                 None
@@ -548,14 +548,9 @@ async fn list_definitions(
             .page(kind, &search.q, page)
             .await
             .map_err(custom_error)?,
-        Some(_) if kind != DefinitionKind::Dashboard => {
-            return Err(DefinitionApiError::invalid_field(
-                "folder",
-                format!("{} are not filed in folders", kind.plural()),
-            ));
-        }
         Some(folder) => {
-            let filter = FolderFilter::parse(folder).map_err(|error| folder_field_error(&error))?;
+            let filter =
+                FolderFilter::parse(kind, folder).map_err(|error| folder_field_error(&error))?;
             state
                 .folders()
                 .page_filed(search.q.trim(), page, filter)

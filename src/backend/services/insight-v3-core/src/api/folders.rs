@@ -5,7 +5,8 @@ use axum::extract::{Extension, Path};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde_json::{Value, json};
 use toolkit::api::{OpenApiRegistry, OperationBuilder, ParamLocation, ParamSpec};
 use toolkit_canonical_errors::{CanonicalError, resource_error};
 use utoipa::ToSchema;
@@ -53,48 +54,24 @@ struct MoveRequest {
 
 impl toolkit::api::api_dto::RequestApiDto for MoveRequest {}
 
-#[derive(Debug, Serialize)]
-pub(super) struct FolderBody {
-    id: String,
-    name: String,
+pub(crate) fn folder_json(folder: &Folder) -> Value {
+    json!({ "id": folder.id.to_string(), "name": folder.name.as_str() })
 }
 
-impl From<&Folder> for FolderBody {
-    fn from(folder: &Folder) -> Self {
-        Self {
-            id: folder.id.to_string(),
-            name: folder.name.as_str().to_owned(),
-        }
-    }
-}
+pub(crate) fn folders_json(list: &FolderList) -> Value {
+    let folders: Vec<Value> = list
+        .folders
+        .iter()
+        .map(|summary| {
+            json!({
+                "id": summary.folder.id.to_string(),
+                "name": summary.folder.name.as_str(),
+                "dashboards": summary.dashboards,
+            })
+        })
+        .collect();
 
-#[derive(Debug, Serialize)]
-struct FolderCount {
-    #[serde(flatten)]
-    folder: FolderBody,
-    dashboards: u64,
-}
-
-#[derive(Debug, Serialize)]
-struct FoldersResponse {
-    folders: Vec<FolderCount>,
-    unfiled: u64,
-}
-
-impl From<FolderList> for FoldersResponse {
-    fn from(list: FolderList) -> Self {
-        Self {
-            folders: list
-                .folders
-                .iter()
-                .map(|summary| FolderCount {
-                    folder: FolderBody::from(&summary.folder),
-                    dashboards: summary.dashboards,
-                })
-                .collect(),
-            unfiled: list.unfiled,
-        }
-    }
+    json!({ "folders": folders, "unfiled": list.unfiled })
 }
 
 pub(super) fn folder_error(error: FolderError) -> CanonicalError {
@@ -102,6 +79,7 @@ pub(super) fn folder_error(error: FolderError) -> CanonicalError {
 
     match error {
         FolderError::Name => FolderApiError::invalid_field("name", detail),
+        FolderError::NotFiled(_) => FolderApiError::invalid_field("folder", detail),
         FolderError::Id => FolderApiError::invalid_field("id", detail),
         FolderError::FolderNotFound(id) => FolderApiError::not_found(detail)
             .with_resource(id.to_string())
@@ -241,7 +219,7 @@ async fn list_folders(
 
     let listed = state.folders().list_folders().await.map_err(folder_error)?;
 
-    Ok(Json(FoldersResponse::from(listed)).into_response())
+    Ok(Json(folders_json(&listed)).into_response())
 }
 
 async fn create_folder(
@@ -259,7 +237,7 @@ async fn create_folder(
         .await
         .map_err(folder_error)?;
 
-    Ok((StatusCode::CREATED, Json(FolderBody::from(&folder))).into_response())
+    Ok((StatusCode::CREATED, Json(folder_json(&folder))).into_response())
 }
 
 async fn rename_folder(
@@ -279,7 +257,7 @@ async fn rename_folder(
         .await
         .map_err(folder_error)?;
 
-    Ok(Json(FolderBody::from(&folder)).into_response())
+    Ok(Json(folder_json(&folder)).into_response())
 }
 
 async fn delete_folder(
