@@ -325,6 +325,9 @@ const METRIC: Description = {
       required: true,
       shape: {
         of: "variants",
+        // A metric over another source is another query: its fields, window
+        // and filters all name the source it was written for.
+        resets: true,
         variants: {
           dataset: [
             {

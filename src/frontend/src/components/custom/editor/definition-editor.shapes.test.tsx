@@ -527,7 +527,9 @@ describe("<DefinitionEditor> over a kind's shape", () => {
     expect(screen.queryByLabelText(/^Dataset/)).not.toBeInTheDocument();
   });
 
-  it("drops the dataset name when a metric is turned over a table, and keeps its fields", async () => {
+  // A metric over another source is another query, so the form starts over
+  // rather than carrying reads the new source cannot make sense of.
+  it("starts a metric over when its source changes", async () => {
     const user = userEvent.setup();
     render(
       <DefinitionEditor
@@ -538,6 +540,7 @@ describe("<DefinitionEditor> over a kind's shape", () => {
           fields: [{ field: "actor", type: "string", as_name: "actor" }],
           time: { field: "day" },
           group_by: ["actor"],
+          limit: 20,
         }}
         onStored={vi.fn()}
       />,
@@ -545,18 +548,12 @@ describe("<DefinitionEditor> over a kind's shape", () => {
     );
 
     await user.selectOptions(screen.getByLabelText(/Source/), "table");
-    const text = await showText(user);
 
-    const sent = JSON.parse(text.value) as Record<string, unknown>;
-    expect(sent).not.toHaveProperty("dataset");
-    expect(sent).toHaveProperty("table", "");
-    expect(sent).toHaveProperty("group_by", ["actor"]);
-    // The column the metric produces survives; the declared field it read
-    // does not, and neither does a window by a declared date.
-    expect(sent).toHaveProperty("fields", [
-      { type: "string", as_name: "actor" },
-    ]);
-    expect(sent).not.toHaveProperty("time");
+    const sent = JSON.parse((await showText(user)).value) as Record<
+      string,
+      unknown
+    >;
+    expect(sent).toEqual({ table: "" });
   });
 
   // A name the catalogue does not hold is a name half-typed: asking for it
