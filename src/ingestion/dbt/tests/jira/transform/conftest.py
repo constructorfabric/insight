@@ -237,10 +237,15 @@ class Case:
     fields: list[dict[str, Any]]
     issues: list[dict[str, Any]]
     events: list[dict[str, Any]]
+    statuses: list[dict[str, Any]]
 
 
 def case(
-    *, fields: list[dict[str, Any]], issues: list[dict[str, Any]], events: list[dict[str, Any]] | None = None
+    *,
+    fields: list[dict[str, Any]],
+    issues: list[dict[str, Any]],
+    events: list[dict[str, Any]] | None = None,
+    statuses: list[dict[str, Any]] | None = None,
 ) -> Any:
     """Declare a test's bronze so its module can be seeded and built in one go.
 
@@ -256,7 +261,7 @@ def case(
     """
 
     def declare(test: Any) -> Any:
-        test.case = Case(fields=fields, issues=issues, events=events or [])
+        test.case = Case(fields=fields, issues=issues, events=events or [], statuses=statuses or [])
         return test
 
     return declare
@@ -275,11 +280,17 @@ class Scenario:
         self.source = source
 
     def seed(
-        self, *, fields: list[dict[str, Any]], issues: list[dict[str, Any]], events: list[dict[str, Any]] | None = None
+        self,
+        *,
+        fields: list[dict[str, Any]],
+        issues: list[dict[str, Any]],
+        events: list[dict[str, Any]] | None = None,
+        statuses: list[dict[str, Any]] | None = None,
     ) -> None:
         self.warehouse.insert("bronze_jira.jira_fields", self._stamp(fields))
         self.warehouse.insert("bronze_jira.jira_issue", self._stamp(issues))
         self.warehouse.insert("bronze_jira.jira_issue_history", self._stamp(events or []))
+        self.warehouse.insert("bronze_jira.jira_statuses", self._stamp(statuses or []))
 
     def _stamp(self, records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Re-address the builders' rows to this scenario's source.
@@ -386,6 +397,7 @@ def _truncate_bronze(warehouse: Warehouse) -> None:
     warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_fields")
     warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_issue")
     warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_issue_history")
+    warehouse.execute("TRUNCATE TABLE IF EXISTS bronze_jira.jira_statuses")
     warehouse.generation += 1
 
 
@@ -424,7 +436,7 @@ class Batch:
         _truncate_bronze(self.warehouse)
         for name, scenario in self.scenarios.items():
             spec = self._cases[name]
-            scenario.seed(fields=spec.fields, issues=spec.issues, events=spec.events)
+            scenario.seed(fields=spec.fields, issues=spec.issues, events=spec.events, statuses=spec.statuses)
         self.warehouse.build()
         self.generation = self.warehouse.generation
 

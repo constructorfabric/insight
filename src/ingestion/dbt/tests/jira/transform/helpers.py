@@ -105,6 +105,21 @@ def issue(
     }
 
 
+def status(status_id: str, *, name: str, category_key: str, extracted_at: str = OBSERVED_AT) -> dict[str, Any]:
+    """One row of the status dimension; `category_key` is Jira's statusCategory key."""
+    return {
+        **_airbyte(extracted_at),
+        "id": status_id,
+        "name": name,
+        "tenant_id": TENANT_ID,
+        "source_id": SOURCE_ID,
+        "unique_key": f"{SOURCE_ID}-status-{status_id}",
+        "status_id": int(status_id),
+        "category_key": category_key,
+        "collected_at": extracted_at,
+    }
+
+
 def item(
     field_id: str,
     *,
