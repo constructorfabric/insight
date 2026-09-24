@@ -17,10 +17,12 @@ runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name ==
 ```
 
 A pull request keeps the GitHub-hosted runner it had before; `merge_group`,
-`push`, `schedule`, `workflow_dispatch` and `workflow_run` come here. Merge-queue
-and post-merge runs are the bulk of the machine time and carry no fork code, so
-moving them off the organisation's shared 20-job ceiling is where the wait goes
-away. arm64 matrix legs never route here — the pool is x86-only and they stay on
+`push`, `schedule`, `workflow_dispatch` and `workflow_run` come here.
+Merge-queue and post-merge runs are the bulk of the machine time. Pull-request
+jobs stay hosted by default, while merge-group checks run on the self-hosted
+pool after the PR has entered the merge queue. Moving them off the
+organisation's shared 20-job ceiling is where the wait goes away. arm64 matrix
+legs never route here — the pool is x86-only and they stay on
 `ubuntu-24.04-arm` under every event, including when the switch below is on.
 
 Two lanes are exempt and stay on the pool for pull requests as well, because
