@@ -12160,21 +12160,18 @@ alerting:
         labels:
           severity: warning
         annotations:
-          summary: "config.{{ \"{{ $labels.missing_tables }}\" }} missing \u2014 issue-type coverage is\
-            \ UNMEASURED, not clean"
-          description: "The DDL for these tables is owned by the dbt on-run-start macro create_task_config_tables,\
-            \ which reached the umbrella in chart 0.7.36 (backported to the 0.6 line as 0.6.102). An install\
-            \ pinned below that floor has no config.field_value_map, no config.field_value_defaults and\
-            \ no config.task_field_roles, so neither the issue-type coverage rule (insight-issue-types-unclassified)\
-            \ nor the missing-default rule (insight-field-value-defaults-missing) can evaluate at all.\
-            \ Read the two states apart: while THIS rule fires, either rule's silence means nothing was\
-            \ measured \u2014 it does NOT mean every closed issue is classified or every standardized field\
-            \ decided. Fix by raising the environment's\
-            \ chartVersion to \u2265 0.7.36 (or \u2265 0.6.102 on the 0.6 line) and redeploying; dbt creates\
-            \ the tables on its next run. Tables present but empty is a different, honest condition: coverage\
-            \ then reads 100% unclassified, which is a true positive until an operator authors environments/<env>/clickhouse/field-value-map/*.tsv\
-            \ and enables clickhouse.fieldValueMap. for=15m rides out the window between a chart upgrade\
-            \ and the first dbt run that creates them."
+          summary: >-
+            Missing config tables: {{ "{{ $labels.missing_tables }}" }} — issue-type coverage
+            is UNMEASURED, not clean
+          description: >-
+            The listed config.* tables do not exist, so the issue-type coverage and default-decision
+            rules cannot evaluate. While this alert fires their silence means nothing was measured — not
+            that every closed issue is classified.
+
+            Confirm with: SELECT name FROM system.tables WHERE database = 'config'
+
+            Fix: raise the environment's chartVersion to >= 0.7.36 (>= 0.6.102 on the 0.6 line) and
+            redeploy; dbt creates the tables on its next run.
       - uid: insight-issue-types-unclassified
         title: Closed issues landing unclassified
         condition: C
@@ -12315,36 +12312,28 @@ alerting:
         labels:
           severity: warning
         annotations:
-          summary: "{{ \"{{ $labels.insight_source_id }}\" }} closed over 10% of its issues with no issue-type\
-            \ classification in the last 7d — bugs_fixed and closed_task are undercounting"
-          description: "Issue kind comes only from operator decisions in config.field_value_map; a type\
-            \ with no row falls to the tenant's config.field_value_defaults row, else resolves to issue_kind='unknown'\
-            \ and mints closed_unknown_type (served as tasks.closed_unknown) instead of bugs_fixed\
-            \ or closed_task, while tasks_closed still counts it — so the bug metrics degrade.\
-            \ Add the missing types to environments/<env>/clickhouse/field-value-map/*.tsv\
-            \ (insert-only, loaded on deploy) and redeploy. The population is built from silver field history,\
-            \ not gold task_issue_state, on purpose: gold keeps only assignee-resolved issues, and config\
-            \ coverage is independent of assignment — a source whose closed issues are all unassigned produces\
-            \ a series here (with noDataState=OK it would otherwise be invisible). Kind is resolved exactly\
-            \ as gold resolves it (mapping row, then tenant default, then 'unknown'); the close is gold's\
-            \ final_close_at (last transition into a done-category status), deleted/trashed issues are excluded.\
-            \ Simplifications vs gold: role bindings cover authored config.task_field_roles rows plus Jira's\
-            \ built-in status/issuetype defaults only — a non-Jira source is counted once its status/issuetype\
-            \ bindings are authored, which gold needs anyway; an issue with no observed issuetype event counts\
-            \ as unclassified, which is the honest reading. Find the offenders with: SELECT issue_type, issue_type_name,\
-            \ count() FROM insight.task_issue_state WHERE issue_kind = 'unknown' AND final_close_at >=\
-            \ now() - INTERVAL 7 DAY GROUP BY 1, 2 ORDER BY 3 DESC — noting it misses assignee-less closes;\
-            \ for those, group the alert query's population by issue_type_id. A trailing 7d window keeps\
-            \ the share stable on low-volume installs; the 50-close floor keeps a barely-used source from\
-            \ alerting on a handful of rows; for=6h rides out a backfill landing ahead of its decisions.\
-            \ A newly onboarded source with real volume and no decisions authored yet is a true positive,\
-            \ not noise. The converse also fails: a defaults row routes every unmapped type to its value\
-            \ (typically 'task'), so a low unknown share is not proof the mapping is complete. Silence\
-            \ here is only evidence of coverage while insight-task-config-tables-missing is quiet: below\
-            \ chart 0.7.36 (0.6.102 on the 0.6 line) the config tables do not exist and this query cannot\
-            \ evaluate at all, so nothing was measured. execErrState=OK makes that true of any evaluation\
-            \ error, not just a missing table: an errored evaluation yields no series, so this rule reads\
-            \ silent rather than clean. It is never on its own proof the mapping is complete."
+          summary: >-
+            {{ "{{ $labels.insight_source_id }}" }} closed over 10% of its issues with no
+            issue-type classification in the last 7d — bugs_fixed and closed_task are undercounting
+          description: >-
+            Issue kind comes only from operator decisions in config.field_value_map. A type with no row
+            falls to the source's config.field_value_defaults row, else resolves to issue_kind='unknown'
+            and mints closed_unknown_type instead of bugs_fixed or closed_task, while tasks_closed still
+            counts it. A type whose stored row says target_value='unknown' lands in the same bucket.
+
+            Find the offenders (gold drops assignee-less closes, so it can under-report): SELECT
+            issue_type, issue_type_name, count() FROM insight.task_issue_state WHERE issue_kind =
+            'unknown' AND insight_source_id = '{{ "{{ $labels.insight_source_id }}" }}' AND
+            final_close_at >= now() - INTERVAL 7 DAY GROUP BY 1, 2 ORDER BY 3 DESC
+
+            Fix a type with NO row: add it to environments/<env>/clickhouse/field-value-map/*.tsv and
+            redeploy. The loader is insert-only and anti-joins on (tenant_id, insight_source_id,
+            data_source, field, source_key), so a type already stored as 'unknown' holds a decision and
+            its TSV line is skipped — editing it is a no-op. Superseding a stored decision takes a new
+            row with a later recorded_at, which no tooling writes today: a direct INSERT into ClickHouse.
+
+            Caveat: a defaults row routes every unmapped type to its value, so a low unknown share is not
+            proof the mapping is complete.
       - uid: insight-field-value-defaults-missing
         title: Task field with no default decision
         condition: C

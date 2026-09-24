@@ -8,6 +8,10 @@ function unixSeconds(value: unknown): number {
     : 0;
 }
 
+/** Abort a hung probe: an unsettled promise leaves every caller waiting on a
+ *  answer that never comes, with no redirect in flight. */
+const REQUEST_TIMEOUT_MS = 10_000;
+
 /**
  * Probe `GET /auth/me` once and populate the store. The browser sends the
  * `__Host-sid` cookie (same-origin, credentials included); the authenticator
@@ -20,6 +24,7 @@ export async function loadSession(): Promise<AuthStatus> {
     const res = await fetch("/auth/me", {
       credentials: "include",
       headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     if (!res.ok) {
       authStore.setUnauthenticated();

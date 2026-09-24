@@ -287,6 +287,7 @@ AUTH_BASE="http://localhost:$AUTH_PORT" E2E_USER="$E2E_USER" \
 
 echo "==> run the refresh rotation-with-grace loop (step 10.1)"
 AUTH_BASE="http://localhost:$AUTH_PORT" E2E_USER="$E2E_USER" \
+IDENTITY_BASE="http://localhost:$IDENTITY_PORT" \
   cargo test --release -p authenticator --test e2e_refresh -- --ignored --nocapture
 
 echo "==> run the session-management loop (step 10.2)"

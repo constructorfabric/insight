@@ -170,7 +170,7 @@ print(json.dumps(out))
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # _adopt_one_connector <name> <connector_dir> <version> <type> <cdk_image> \
-#                      <dry_run> <opt_connector> <workspace_id> \
+#                      <dbt_select> <dry_run> <opt_connector> <workspace_id> \
 #                      <definitions_json> <sources_json> <connections_json>
 # Per-connector adopt body extracted so a single connector failure can't
 # kill the whole adopt run. `set +e` enforced; failures bubble through
@@ -178,9 +178,8 @@ print(json.dumps(out))
 # ---------------------------------------------------------------------------
 _adopt_one_connector() {
   local name="$1" connector_dir="$2" version="$3" type="$4" cdk_image="$5"
-  local enrich_image="$6" dbt_select="$7"
-  local dry_run="$8" opt_connector="$9" workspace_id="${10}"
-  local definitions_json="${11}" sources_json="${12}" connections_json="${13}"
+  local dbt_select="$6" dry_run="$7" opt_connector="$8" workspace_id="$9"
+  local definitions_json="${10}" sources_json="${11}" connections_json="${12}"
   set +e
 
   if [[ -n "${opt_connector}" && "${name}" != "${opt_connector}" ]]; then
@@ -288,8 +287,8 @@ for x in json.load(sys.stdin): print(x)')
     # ADOPT_DRY_RUN guarded above (would_call branch).
     local apply_rc=0
     argo_apply_cronworkflow "${name}" "${conn_name}" "${schedule}" "${tenant}" \
-                            "${source_id_label}" "${dbt_select}" \
-                            "${enrich_image}" >/dev/null 2>&1 || apply_rc=$?
+                            "${source_id_label}" "${dbt_select}" >/dev/null 2>&1 \
+      || apply_rc=$?
     if [[ "${apply_rc}" -eq 0 ]]; then
       log_line INFO "${name}: created Argo CronWorkflow $(argo_cron_workflow_name "${name}" "${tenant}" "${source_id_label}")"
     elif [[ "${apply_rc}" -eq 2 ]]; then
@@ -302,7 +301,7 @@ for x in json.load(sys.stdin): print(x)')
   fi
   # silence unused-arg shellcheck warning (workspace_id and connector_dir
   # are plumbed for symmetry with reconcile.sh; descriptor-derived
-  # parameters now flow via dbt_select / enrich_image arguments).
+  # parameters now flow via the dbt_select argument).
   : "${workspace_id}" "${connector_dir}"
   # @cpt-end:cpt-insightspec-flow-reconcile-run-adopt-v2:p1:inst-ad-if-matched
   return 0
@@ -339,11 +338,11 @@ adopt_run() {
   # later one left; and a reader short of the descriptor's columns absorbs the
   # remainder — namespace included — into the last variable it has, which here
   # is the dbt selector the CronWorkflow is rendered with.
-  while IFS=$'\037' read -r name connector_dir version type cdk_image enrich_image \
-        dbt_select ns_format; do
+  while IFS=$'\037' read -r name connector_dir version type cdk_image dbt_select \
+        ns_format; do
     [[ -n "${name}" ]] || continue
     if ! _adopt_one_connector "${name}" "${connector_dir}" "${version}" "${type}" "${cdk_image}" \
-         "${enrich_image}" "${dbt_select}" \
+         "${dbt_select}" \
          "${dry_run}" "${opt_connector}" "${workspace_id}" \
          "${definitions_json}" "${sources_json}" "${connections_json}"; then
       log_line ERROR "${name}: adopt failed (continuing with next)"

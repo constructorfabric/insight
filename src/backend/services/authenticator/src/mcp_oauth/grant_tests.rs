@@ -102,7 +102,7 @@ async fn state(redis_url: &str, identity_url: &str) -> Result<Arc<AppState>, Box
         cfg.gateway_issuer.clone(),
         cfg.jwt_audience.clone(),
         cfg.idp.source_type.clone(),
-    ));
+    )?);
     Ok(Arc::new(AppState {
         oidc: IssuerSelector::build(&cfg)?,
         service_registry: ServiceRegistry::build(&cfg.service_tokens)?,

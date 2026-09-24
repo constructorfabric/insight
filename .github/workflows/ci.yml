@@ -67,8 +67,8 @@ env:
   CARGO_TERM_COLOR: always
   # NB: `-D warnings` is intentionally NOT set globally. It belongs on the clippy
   # lint step only — applying it to the instrumented coverage build turns benign
-  # warnings (e.g. feature-gated dead code in jira-enrich's default build) into
-  # hard errors. Warnings are gated by clippy; coverage just measures coverage.
+  # warnings into hard errors. Warnings are gated by clippy; coverage just
+  # measures coverage.
 
 # Producers only read + upload artifacts; the gate only reads. No write scopes.
 permissions:
@@ -233,8 +233,7 @@ jobs:
       - name: Clippy (${{ matrix.entry.name }})
         if: ${{ matrix.entry.lint && matrix.entry.clippy }}
         working-directory: ${{ matrix.entry.root }}
-        # -D warnings stays on clippy only — never the coverage build (it would
-        # turn jira-enrich's feature-gated dead code into a hard error).
+        # -D warnings stays on clippy only — never the coverage build.
         env:
           RUSTFLAGS: "-D warnings"
         run: |

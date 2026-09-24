@@ -7,12 +7,12 @@
 #   argo_assert_distinct_cron_names      CONNECTOR TENANT SOURCE_ID...
 #   argo_cron_workflow_name_full_tenant  CONNECTOR TENANT
 #   argo_render_cronworkflow CONNECTOR CONNECTION_NAME SCHEDULE TENANT \
-#                            INSIGHT_SOURCE_ID DBT_SELECT ENRICH_IMAGE
+#                            INSIGHT_SOURCE_ID DBT_SELECT
 #   argo_apply_cronworkflow  CONNECTOR CONNECTION_NAME SCHEDULE TENANT \
-#                            INSIGHT_SOURCE_ID DBT_SELECT ENRICH_IMAGE
+#                            INSIGHT_SOURCE_ID DBT_SELECT
 #   argo_delete_cronworkflow CONNECTOR TENANT SOURCE_ID
 #   argo_submit_sync_trigger CONNECTOR CONNECTION_NAME TENANT \
-#                            INSIGHT_SOURCE_ID DBT_SELECT ENRICH_IMAGE [BUMP_KIND]
+#                            INSIGHT_SOURCE_ID DBT_SELECT [BUMP_KIND]
 #   argo_resolve_connection_id_by_name CONNECTION_NAME
 #
 # Depends on: lib/env.sh (env_load), lib/airbyte.sh (ab_workspace_id,
@@ -154,7 +154,7 @@ _argo_delete_cronworkflow_named() {
 # @cpt-begin:cpt-insightspec-algo-reconcile-render-cron-workflow:p1
 argo_render_cronworkflow() {
   local connector="$1" connection_name="$2" schedule="$3" tenant="$4"
-  local insight_source_id="$5" dbt_select="$6" enrich_image="$7"
+  local insight_source_id="$5" dbt_select="$6"
   local cron_name
   cron_name="$(argo_cron_workflow_name "$connector" "$tenant" "$insight_source_id")" || return 1
   python3 "${ARGO_PY_DIR}/render_cronworkflow.py" \
@@ -165,14 +165,13 @@ argo_render_cronworkflow() {
     --cron-name "$cron_name" \
     --insight-source-id "$insight_source_id" \
     --dbt-select "$dbt_select" \
-    --enrich-image "$enrich_image" \
     --tpl "${ARGO_TPL_DIR}/cron-workflow.yaml.tpl"
 }
 # @cpt-end:cpt-insightspec-algo-reconcile-render-cron-workflow:p1
 
 argo_apply_cronworkflow() {
   local connector="$1" connection_name="$2" schedule="$3" tenant="$4"
-  local insight_source_id="$5" dbt_select="$6" enrich_image="$7"
+  local insight_source_id="$5" dbt_select="$6"
 
   # INVARIANT: resolved before anything is rendered or applied. Argo rejects an
   # over-cap name only AFTER a successful apply, leaving an object that carries
@@ -184,7 +183,7 @@ argo_apply_cronworkflow() {
   local rendered apply_out
   rendered="$(argo_render_cronworkflow "$connector" "$connection_name" \
                 "$schedule" "$tenant" "$insight_source_id" \
-                "$dbt_select" "$enrich_image")" || return 1
+                "$dbt_select")" || return 1
   if ! apply_out="$(printf '%s' "$rendered" | kubectl apply -f - 2>&1)"; then
     printf '%s: kubectl apply failed: %s\n' \
       "$connector" "$apply_out" >&2
@@ -245,8 +244,8 @@ argo_delete_superseded_cronworkflows() {
 # @cpt-begin:cpt-insightspec-algo-reconcile-render-sync-trigger:p1
 argo_submit_sync_trigger() {
   local connector="$1" connection_name="$2" tenant="$3"
-  local insight_source_id="$4" dbt_select="$5" enrich_image="$6"
-  local bump_kind="${7:-none}"
+  local insight_source_id="$4" dbt_select="$5"
+  local bump_kind="${6:-none}"
   local rendered create_out
   rendered="$(python3 "${ARGO_PY_DIR}/render_sync_trigger.py" \
     --connector "$connector" \
@@ -254,7 +253,6 @@ argo_submit_sync_trigger() {
     --tenant "$tenant" \
     --insight-source-id "$insight_source_id" \
     --dbt-select "$dbt_select" \
-    --enrich-image "$enrich_image" \
     --bump-kind "$bump_kind" \
     --tpl "${ARGO_TPL_DIR}/sync-trigger.yaml.tpl")" || return 1
   if ! create_out="$(printf '%s' "$rendered" | kubectl create -f - 2>&1)"; then

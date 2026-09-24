@@ -32,8 +32,8 @@ from pathlib import Path
 
 from airbyte_sources import decode, load_definitions, owner_of
 
-PLAN_SOURCE_ID = 8
-PLAN_SECRET_NAME = 9
+PLAN_SOURCE_ID = 7
+PLAN_SECRET_NAME = 8
 
 SUBJECT = "find_removed_instances"
 
@@ -64,9 +64,7 @@ def instance_of(source_name: str, connector: str, tenant: str) -> str:
 
 def main() -> int:
     if not 4 <= len(sys.argv) <= 5:
-        sys.stderr.write(
-            f"{SUBJECT}: expected <plan_tsv> <tenant> <definitions_file> [connector]\n"
-        )
+        sys.stderr.write(f"{SUBJECT}: expected <plan_tsv> <tenant> <definitions_file> [connector]\n")
         return 2
     plan_path, tenant = sys.argv[1], sys.argv[2]
     only = sys.argv[4] if len(sys.argv) == 5 else ""

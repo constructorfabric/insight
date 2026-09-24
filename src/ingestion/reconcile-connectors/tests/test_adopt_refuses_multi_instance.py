@@ -25,9 +25,7 @@ DEFINITION = "def-1"
 AIRBYTE_SOURCE = "src-1"
 CONNECTION = "conn-1"
 
-DEFINITIONS = json.dumps(
-    [{"name": CONNECTOR, "sourceDefinitionId": DEFINITION, "custom": True}]
-)
+DEFINITIONS = json.dumps([{"name": CONNECTOR, "sourceDefinitionId": DEFINITION, "custom": True}])
 SOURCES = json.dumps([{"sourceId": AIRBYTE_SOURCE, "sourceDefinitionId": DEFINITION}])
 CONNECTIONS = json.dumps([{"connectionId": CONNECTION, "sourceId": AIRBYTE_SOURCE, "tags": []}])
 
@@ -60,12 +58,10 @@ def adopt(secret_rows: list[str], tmp_path: Path) -> tuple[int, list[str], str]:
     source "{ROOT}/lib/reconcile.sh"
     {STUBS}
     disc_load_secrets() {{ printf '%b\\n' {json.dumps(secrets)}; }}
-    _adopt_one_connector "{CONNECTOR}" dir 1 nocode "" "" "" \
+    _adopt_one_connector "{CONNECTOR}" dir 1 nocode "" "" \
       0 "" workspace-1 {json.dumps(DEFINITIONS)} {json.dumps(SOURCES)} {json.dumps(CONNECTIONS)}
     """
-    result = subprocess.run(
-        ["bash", "-c", script], capture_output=True, text=True, check=False
-    )
+    result = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=False)
     recorded = calls.read_text(encoding="utf-8").splitlines() if calls.exists() else []
     return result.returncode, recorded, result.stderr
 
@@ -77,11 +73,7 @@ def secret_row(source_id: str, name: str, cfg_hash: str = "hash") -> str:
 class TestTwoSecretsStopAdoption:
     def test_nothing_is_tagged_and_no_schedule_is_applied(self, tmp_path: Path) -> None:
         code, calls, _ = adopt(
-            [
-                secret_row("claude-team-main", "secret-main"),
-                secret_row("claude-team-second", "secret-second"),
-            ],
-            tmp_path,
+            [secret_row("claude-team-main", "secret-main"), secret_row("claude-team-second", "secret-second")], tmp_path
         )
 
         assert calls == [], f"adoption changed something it could not attribute: {calls}"
@@ -89,11 +81,7 @@ class TestTwoSecretsStopAdoption:
 
     def test_the_refusal_says_why(self, tmp_path: Path) -> None:
         _, _, stderr = adopt(
-            [
-                secret_row("claude-team-main", "secret-main"),
-                secret_row("claude-team-second", "secret-second"),
-            ],
-            tmp_path,
+            [secret_row("claude-team-main", "secret-main"), secret_row("claude-team-second", "secret-second")], tmp_path
         )
 
         assert "multi-instance adoption is unsupported" in stderr
