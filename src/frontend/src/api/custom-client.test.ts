@@ -6,11 +6,20 @@ import { fetchWithAuth } from "@/api/fetch-with-auth";
 
 import {
   CustomApiError,
+  deleteDataset,
+  deleteDefinition,
   fetchDashboard,
   fetchDashboardNames,
+  fetchDataset,
+  fetchDatasetDependents,
   fetchDatasetRecords,
+  fetchDependents,
   fetchMetric,
+  fetchTable,
   fetchWidget,
+  putDataset,
+  putDefinition,
+  renameDefinition,
   runMetric,
 } from "./custom-client";
 
@@ -194,18 +203,24 @@ describe("fetchDatasetRecords", () => {
   // asking for a size of our own is how a reader ends up stepping over what
   // a narrower page left behind.
   it("asks for no page size of its own", async () => {
-    mockFetch.mockResolvedValueOnce(response({ records: [], total: 0, limit: 20 }));
+    mockFetch.mockResolvedValueOnce(
+      response({ records: [], total: 0, limit: 20 })
+    );
 
     await fetchDatasetRecords("commits", {});
 
-    expect(mockFetch).toHaveBeenCalledWith("/api/v3/v1/datasets/commits/records?");
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/v3/v1/datasets/commits/records?"
+    );
   });
 
   // With no field named the service orders by the instant a record arrived,
   // and honours the direction there too; omitting it asks for the default,
   // which is the opposite of ascending.
   it("sends the direction whether or not a field is named", async () => {
-    mockFetch.mockResolvedValueOnce(response({ records: [], total: 0, limit: 20 }));
+    mockFetch.mockResolvedValueOnce(
+      response({ records: [], total: 0, limit: 20 })
+    );
 
     await fetchDatasetRecords("commits", { descending: false });
 
@@ -215,7 +230,9 @@ describe("fetchDatasetRecords", () => {
   });
 
   it("sends the field, the direction and the offset the reader is at", async () => {
-    mockFetch.mockResolvedValueOnce(response({ records: [], total: 0, limit: 20 }));
+    mockFetch.mockResolvedValueOnce(
+      response({ records: [], total: 0, limit: 20 })
+    );
 
     await fetchDatasetRecords("commits", {
       offset: 40,
@@ -226,5 +243,28 @@ describe("fetchDatasetRecords", () => {
     expect(mockFetch).toHaveBeenCalledWith(
       "/api/v3/v1/datasets/commits/records?offset=40&order_by=day&direction=desc"
     );
+  });
+});
+
+describe("a name that reached the client empty", () => {
+  it.each([
+    ["fetchDataset", () => fetchDataset("")],
+    ["fetchMetric", () => fetchMetric("")],
+    ["fetchWidget", () => fetchWidget("")],
+    ["fetchDashboard", () => fetchDashboard("")],
+    ["fetchDatasetRecords", () => fetchDatasetRecords("", { limit: 20 })],
+    ["putDataset", () => putDataset("", {})],
+    ["deleteDataset", () => deleteDataset("")],
+    ["deleteDefinition", () => deleteDefinition("metrics", "")],
+    ["renameDefinition", () => renameDefinition("metrics", "", "to")],
+    ["runMetric", () => runMetric("")],
+    ["putDefinition", () => putDefinition("metrics", "", {})],
+    ["fetchDependents", () => fetchDependents("metrics", "")],
+    ["fetchDatasetDependents", () => fetchDatasetDependents("")],
+    ["fetchTable (database)", () => fetchTable("", "commits")],
+    ["fetchTable (table)", () => fetchTable("insight", "")],
+  ])("is refused before %s asks for it", async (_name, call) => {
+    await expect(call()).rejects.toBeInstanceOf(CustomApiError);
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 });

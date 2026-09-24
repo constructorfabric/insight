@@ -48,6 +48,7 @@ TEST_USERS = [
     "viewer-switch@example.com",  # e2e_override: override_switch_without_logout…
     "viewer-unknown@example.com",  # e2e_override: override_with_unknown_target…
     "viewer-disabled@example.com",  # e2e_override: override_is_inert_when_disabled
+    "roles-stall@example.com",  # e2e_refresh: identity hangs mid-refresh
 ]
 
 

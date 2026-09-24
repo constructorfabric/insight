@@ -200,6 +200,13 @@ function Rows({ metric, options }: { metric: string; options?: RunOptions }) {
     enabled: definition.isSuccess,
   });
 
+  if (definition.isError) {
+    return (
+      <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
+        {refusal(definition.error, "That metric is not there.")}
+      </p>
+    );
+  }
   if (definition.isPending || result.isPending)
     return <CenteredSpinner className="min-h-40" />;
   if (result.isError) {

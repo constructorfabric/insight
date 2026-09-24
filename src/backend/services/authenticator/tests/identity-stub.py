@@ -9,6 +9,12 @@ identity-resolution's real handlers):
 - `GET /internal/persons/by-email-override?email=...` (admin `__override`)
 - `GET /internal/persons/active-roles?person_id=...` (live authorization)
 
+One test seam beyond the lookups: `POST /__test/roles-stall?person_id=P&seconds=N`
+arms a one-shot stall on the next active-roles call FOR THAT PERSON, so an e2e
+can hold Identity open the way a restarting one does. Addressed by person so a
+suite running its tests concurrently cannot consume another's stall, and so a
+stall left armed by a failed test dies with its own dedicated user.
+
 Each answers with a deterministic `insight_source_id`, so the login loop and
 the `__override` view-as loop can resolve a person without standing up the
 real identity-resolution service + seeding. The real endpoints gate on a
@@ -19,8 +25,10 @@ service gateway JWT; the stub ignores the bearer (test seam). Any other path
 import hashlib
 import json
 import sys
+import threading
+import time
 import uuid
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
 
@@ -30,11 +38,45 @@ def person_id_for(*parts: str) -> str:
     return str(uuid.UUID(bytes=digest[:16]))
 
 
+# person_id -> seconds its next active-roles call sleeps; consumed by that call.
+_roles_stalls: dict[str, float] = {}
+_stall_lock = threading.Lock()
+
+
+def take_roles_stall(person_id: str) -> float:
+    with _stall_lock:
+        return _roles_stalls.pop(person_id, 0.0)
+
+
 class Handler(BaseHTTPRequestHandler):
     BY_EXTERNAL_ID_PATH = "/internal/persons/by-external-id"
     BY_ROSTER_EMAIL_PATH = "/internal/persons/by-roster-email"
     BY_EMAIL_OVERRIDE_PATH = "/internal/persons/by-email-override"
     ACTIVE_ROLES_PATH = "/internal/persons/active-roles"
+    ROLES_STALL_PATH = "/__test/roles-stall"
+
+    def do_POST(self):  # noqa: N802
+        split = urlsplit(self.path)
+        if split.path != self.ROLES_STALL_PATH:
+            # 501, not 404: a 404 is how the lookups say "no such person", and
+            # the authenticator reads it that way (see provision's INVARIANT).
+            self.send_response(501)
+            self.end_headers()
+            return
+        query = parse_qs(split.query)
+        person_id = (query.get("person_id") or [""])[0]
+        try:
+            seconds = max(0.0, float((query.get("seconds") or ["0"])[0]))
+        except ValueError:
+            seconds = -1.0
+        if not person_id or seconds < 0:
+            self.send_response(400)
+            self.end_headers()
+            return
+        with _stall_lock:
+            _roles_stalls[person_id] = seconds
+        self.send_response(204)
+        self.end_headers()
 
     def do_GET(self):  # noqa: N802
         split = urlsplit(self.path)
@@ -46,6 +88,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_response(400)
                 self.end_headers()
                 return
+            time.sleep(take_roles_stall(person_id))
             body = json.dumps({"roles": ["user", "admin"]}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -125,4 +168,6 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     host, _, port = (sys.argv[1] if len(sys.argv) > 1 else "127.0.0.1:8092").partition(":")
-    HTTPServer((host, int(port)), Handler).serve_forever()
+    # Threading: an armed stall holds one connection open, and the rest of the
+    # rig must keep being served while it does.
+    ThreadingHTTPServer((host, int(port)), Handler).serve_forever()
