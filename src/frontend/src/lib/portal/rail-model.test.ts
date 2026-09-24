@@ -53,10 +53,6 @@ describe("visibleRailItems", () => {
     const planned = (items: ReturnType<typeof visibleRailItems>) =>
       Object.fromEntries(items.map((item) => [item.id, item.planned]));
 
-    expect(planned(visibleRailItems(zones("overview", "reports")))).toEqual({
-      home: false,
-      reports: true,
-    });
     expect(
       planned(
         visibleRailItems(

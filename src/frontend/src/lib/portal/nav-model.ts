@@ -7,6 +7,7 @@ import {
   Clock,
   Copy,
   DollarSign,
+  FileSpreadsheet,
   FileText,
   Filter,
   Database,
@@ -297,6 +298,9 @@ export const ZONE_SECTIONS: Record<string, readonly PaneGroup[]> = {
     },
   ],
   reports: [
+    {
+      items: [{ id: "report-builder", label: "Report builder", icon: FileSpreadsheet }],
+    },
     {
       label: PLANNED_GROUP_LABEL,
       items: [

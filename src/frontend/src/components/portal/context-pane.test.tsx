@@ -476,6 +476,12 @@ describe("Manage pane", () => {
 });
 
 describe("Reports pane", () => {
+  it("opens on the report builder", () => {
+    inZone("reports");
+    pane();
+    expect(buttonFor("Report builder")).toHaveAttribute("data-active");
+  });
+
   it("lists what is planned and opens none of it", () => {
     inZone("reports");
     mocks.showPlanned = true;

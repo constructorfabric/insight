@@ -5,6 +5,7 @@ import { OverviewView } from "@/components/portal/overview-view";
 import { ManageView } from "@/components/portal/manage-view";
 import { PeopleView } from "@/components/portal/people-view";
 import { PersonView } from "@/components/portal/person-view";
+import { ReportBuilderView } from "@/components/portal/report-builder-view";
 import { resolveZoneItem, zoneById } from "@/lib/portal/nav-model";
 import {
   usePortalDir,
@@ -15,8 +16,8 @@ import { useActiveZone } from "@/lib/portal/use-active-zone";
 
 /**
  * Content for the non-entity portal zones. Overview rolls the org up; Directions
- * route each lens to a focused domain view or an honest ComingSoon; Reports is
- * an honest scaffold.
+ * route each lens to a focused domain view or an honest ComingSoon; Reports
+ * opens the report builder.
  *
  * Org zones take no person prop — they read the global org scope (design §6) via
  * `useOrgScope`, so the topbar badge and every org subtitle always agree. Only
@@ -43,13 +44,18 @@ export function ZoneContent() {
       return <PeopleView person={activePerson} item={item} />;
     case "manage":
       return <ManageView item={item} />;
+    case "reports":
+      return item === "report-builder" ? (
+        <ReportBuilderView />
+      ) : (
+        <ZoneScaffold zone={activeZone} />
+      );
     default:
       return <ZoneScaffold zone={activeZone} />;
   }
 }
 
 function ZoneScaffold({ zone }: { zone: string }) {
-  const pending = zone === "reports" ? "snapshots, exports and templates" : "this lens";
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-4 p-8">
       <div className="flex flex-col items-center gap-1 text-center">
@@ -61,7 +67,7 @@ function ZoneScaffold({ zone }: { zone: string }) {
         </p>
       </div>
       <div className="w-full max-w-md">
-        <ComingSoon variant="card" state="empty" label={`Pending: ${pending}`} />
+        <ComingSoon variant="card" state="empty" label="Pending: this lens" />
       </div>
     </div>
   );

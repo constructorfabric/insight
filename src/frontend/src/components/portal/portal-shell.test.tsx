@@ -62,6 +62,9 @@ vi.mock("@/components/portal/ai-cost-view", () => ({
 vi.mock("@/components/portal/manage-view", () => ({
   ManageView: () => <div data-testid="manage" />,
 }));
+vi.mock("@/components/portal/report-builder-view", () => ({
+  ReportBuilderView: () => <div data-testid="report-builder" />,
+}));
 vi.mock("@/components/portal/team-state-view", () => ({
   TeamStateView: () => <div data-testid="team-state" />,
 }));
@@ -143,6 +146,7 @@ describe("ZoneContent routing", () => {
     ["aicost", "ai-cost"],
     ["people", "team-state"],
     ["manage", "manage"],
+    ["reports", "report-builder"],
   ];
   it.each(cases)("zone %s renders its view", (zone, testid) => {
     mocks.zone = { activeZone: zone, activePerson: pid("boss") };
@@ -150,12 +154,6 @@ describe("ZoneContent routing", () => {
     expect(screen.getByTestId(testid)).toBeInTheDocument();
   });
 
-  it("reports renders an honest scaffold naming what is planned", () => {
-    mocks.zone = { activeZone: "reports", activePerson: pid("boss") };
-    render(<ZoneContent />);
-    expect(screen.getByText("Reports")).toBeInTheDocument();
-    expect(screen.getByText(/snapshots, exports and templates/)).toBeInTheDocument();
-  });
 });
 
 describe("DirectionView", () => {

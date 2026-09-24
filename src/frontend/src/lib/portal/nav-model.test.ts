@@ -28,7 +28,7 @@ describe("zone item defaults", () => {
       person: null,
       people: "roster",
       aicost: "overview",
-      reports: null,
+      reports: "report-builder",
       custom: null,
       manage: "exclusions",
     });
@@ -111,7 +111,7 @@ describe("resolveZoneItem", () => {
   });
 
   it("never opens a row that has nothing behind it yet", () => {
-    expect(resolveZoneItem("reports", "snapshots")).toBeNull();
+    expect(resolveZoneItem("reports", "snapshots")).toBe("report-builder");
     expect(resolveZoneItem("manage", "access")).toBe("exclusions");
   });
 });

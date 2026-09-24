@@ -42,17 +42,6 @@ describe("useRailNav", () => {
     ]);
   });
 
-  it("mutes Reports, whose zone is planned", () => {
-    mocks.zones = ["overview", "reports"];
-
-    const { result } = renderHook(() => useRailNav());
-
-    expect(result.current.items.map((item) => [item.id, item.planned])).toEqual([
-      ["home", false],
-      ["reports", true],
-    ]);
-  });
-
   it("highlights Explore while AI & Cost is open", () => {
     mocks.activeZone = "aicost";
 
