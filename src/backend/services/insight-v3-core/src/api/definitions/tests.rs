@@ -88,6 +88,7 @@ impl TestHarness {
             ChatClient::keyless(),
             crate::store::identity::IdentityClient::fixed(is_admin),
             crate::api::Datasets::holding(url, &[("commits", commits()), ("deploys", deploys())]),
+            crate::store::catalog::Catalog::fixed(Vec::new()),
         ));
         let router = register_routes(Router::new(), &openapi, &state);
 

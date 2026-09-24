@@ -90,7 +90,22 @@ name: chatgpt-team
 #   meaning — the added columns land in tool_action_breakdown_json and a full
 #   refresh would reproduce what is already there for every day both endpoints
 #   covered.
-version: "3.1.0"
+# 3.2.0: adds chatgpt_team__ai_credit_usage, the connector's contribution to
+#   silver.class_ai_credit_usage. It carries every person-day the vendor
+#   reports credits for, deliberately without chatgpt_team__ai_dev_usage's
+#   emission filter: that filter admits a row on activity counters, and a
+#   person-day can carry credits while every activity counter reads zero, so
+#   routing spend through it would drop real charges. Priced in gold, the
+#   credits feed the existing daily_extra_usage_usd and extra_usage_usd rather
+#   than a second cost vocabulary, priced by one current operator-authored
+#   configuration rather than a dated rate history — a Codex monetary value
+#   is an estimate and restates when that configuration changes, while the
+#   credits behind it do not. No new stream and no new Bronze table — it
+#   reads the leaderboard Bronze the connector already collects, which is also
+#   the authoritative source of the total. MINOR per ADR-0015: the dbt step has
+#   to re-run so the new model materialises; nothing already stored changes
+#   meaning.
+version: "3.2.0"
 # Daily at 04:00 UTC — off-peak. The customer's proxy runs a single browser
 # instance, so we avoid scheduling chatgpt-team next to anything else that
 # may also hit it (same rationale as claude-team).

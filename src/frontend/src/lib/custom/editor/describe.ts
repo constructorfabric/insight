@@ -12,12 +12,17 @@ export type Shape =
   | { of: "flag"; alone?: true }
   /**
    * A value offered rather than asked for: what a list's entries are called
-   * under one property, or the fields the dataset named at the root declares,
-   * plus whatever else is always admissible.
+   * under one property, the fields the dataset named at the root declares,
+   * the columns of the warehouse table named at the root, or every table the
+   * warehouse lists - plus whatever else is always admissible.
    */
   | {
       of: "pick";
-      from: { list: string; property: string } | { dataset: string };
+      from:
+        | { list: string; property: string }
+        | { dataset: string }
+        | { table: string; database: string }
+        | { catalogue: "tables" };
       also?: readonly string[];
     }
   /**
@@ -53,6 +58,8 @@ export interface Description {
   kind: EditableKind;
   noun: string;
   fields: readonly Field[];
+  /** What a new definition begins as, where an empty document would be no variant at all. */
+  starting?: Record<string, unknown>;
 }
 
 /** A path into a document, as a violation names it: `fields[0].type`. */

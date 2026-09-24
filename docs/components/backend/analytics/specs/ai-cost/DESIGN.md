@@ -124,6 +124,26 @@ Prices live in a table with validity intervals and an optional tenant, never in 
 what makes a historical window reproducible and a discounted tenant correct. A rate derived
 from a tenant's own report is that tenant's, and is never written globally.
 
+#### Exception: Codex credit pricing is current configuration, not history
+
+- [ ] `p2` - **ID**: `cpt-insightspec-aicost-principle-codex-pricing-is-current`
+
+Codex on-demand spend is derived from a usage credit count by two
+operator-authored settings — the price of a credit in the billed currency's minor
+units, and the USD cents one of those minor units carries. Neither is dated, so a
+Codex monetary value is an **estimate** and restates when either setting changes.
+
+This departs from `cpt-insightspec-aicost-principle-rates-are-data` deliberately.
+Neither figure comes from a vendor API, and no source of historical exchange rates
+exists in this system, so dating the price alone would not make the USD figure
+reproducible while the rate beside it stays current. The reproducible quantity is
+the credit count, which never moves; the evidence rows carry it together with the
+price, the native amount and the rate applied, so any figure can be recomputed and
+its inputs seen.
+
+A genuine source of historical price and FX would make temporal pricing a later
+improvement rather than a precondition.
+
 #### Absence is expressed, not filled
 
 - [ ] `p1` - **ID**: `cpt-insightspec-aicost-principle-absence-expressed`

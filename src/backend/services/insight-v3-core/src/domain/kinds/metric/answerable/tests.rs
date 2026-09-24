@@ -198,3 +198,30 @@ fn a_dataset_that_marks_no_main_date_leaves_a_metric_answering_every_record() {
 
     assert_eq!(effective_clock(&written, &declared), None);
 }
+
+#[test]
+fn a_metric_over_a_table_windows_by_the_column_it_names() {
+    let written = metric(json!({
+        "table": "silver.class_ai_assistant_usage",
+        "time": { "column": "day" },
+        "fields": [{ "agg": "count", "type": "int", "as_name": "total" }]
+    }));
+
+    assert_eq!(
+        EffectiveClock::of_table(&written),
+        Some(EffectiveClock {
+            field: "day".to_owned(),
+            from: ClockSource::Metric,
+        })
+    );
+}
+
+#[test]
+fn a_metric_over_a_table_naming_no_time_has_no_clock() {
+    let written = metric(json!({
+        "table": "silver.class_ai_assistant_usage",
+        "fields": [{ "agg": "count", "type": "int", "as_name": "total" }]
+    }));
+
+    assert_eq!(EffectiveClock::of_table(&written), None);
+}

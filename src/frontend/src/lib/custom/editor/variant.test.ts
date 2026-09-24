@@ -30,6 +30,68 @@ const BY_TYPE: VariantsShape = {
   },
 };
 
+/**
+ * A shape whose variants share a property name but read it differently: the
+ * metric's own, where a source names either a declared field or a column.
+ */
+const BY_SOURCE: VariantsShape = {
+  of: "variants",
+  variants: {
+    dataset: [
+      { name: "dataset", label: "Dataset", shape: { of: "text" } },
+      {
+        name: "fields",
+        label: "Fields",
+        shape: {
+          of: "list",
+          entryLabel: "field",
+          entry: {
+            of: "record",
+            fields: [
+              { name: "field", label: "Field", shape: { of: "text" } },
+              { name: "as_name", label: "Called", shape: { of: "text" } },
+            ],
+          },
+        },
+      },
+      {
+        name: "time",
+        label: "Window by",
+        shape: {
+          of: "record",
+          fields: [{ name: "field", label: "Date", shape: { of: "text" } }],
+        },
+      },
+    ],
+    table: [
+      { name: "table", label: "Table", shape: { of: "text" } },
+      {
+        name: "fields",
+        label: "Fields",
+        shape: {
+          of: "list",
+          entryLabel: "field",
+          entry: {
+            of: "record",
+            fields: [
+              { name: "column", label: "Column", shape: { of: "text" } },
+              { name: "as_name", label: "Called", shape: { of: "text" } },
+            ],
+          },
+        },
+      },
+      {
+        name: "time",
+        label: "Window by",
+        shape: {
+          of: "record",
+          fields: [{ name: "column", label: "Date", shape: { of: "text" } }],
+        },
+      },
+    ],
+  },
+};
+
 const BY_CARRIED: VariantsShape = {
   of: "variants",
   variants: {
@@ -106,6 +168,54 @@ describe("switched", () => {
       switched(BY_TYPE, { type: "table", metric: "m", title: "T" }, "")
     ).toEqual({
       title: "T",
+    });
+  });
+
+  // A metric keeps the columns it produces when its source changes, but what
+  // each one read belongs to the source it was written for. Left behind, a
+  // stale read is invisible in the editor and refused on sending.
+  it("clears what only the outgoing shape could read, however deep it sits", () => {
+    const record = {
+      dataset: "commits",
+      fields: [
+        { field: "actor", as_name: "actor" },
+        { field: "lines", as_name: "total" },
+      ],
+      time: { field: "day" },
+      group_by: ["actor"],
+    };
+
+    expect(switched(BY_SOURCE, record, "table")).toEqual({
+      table: "",
+      fields: [{ as_name: "actor" }, { as_name: "total" }],
+      group_by: ["actor"],
+    });
+  });
+
+  // The other way round is the same rule, and a property no variant knows is
+  // the document's own either way.
+  it("clears a column when a metric is turned back over a dataset", () => {
+    const record = {
+      table: "silver.fct_commit",
+      fields: [{ column: "sha", as_name: "sha" }],
+      limit: 10,
+    };
+
+    expect(switched(BY_SOURCE, record, "dataset")).toEqual({
+      dataset: "",
+      fields: [{ as_name: "sha" }],
+      limit: 10,
+    });
+  });
+
+  // A row the reader added is theirs: emptying it would make the list shorten
+  // under them.
+  it("keeps a row that nothing in it survives", () => {
+    const record = { dataset: "commits", fields: [{ field: "actor" }] };
+
+    expect(switched(BY_SOURCE, record, "table")).toEqual({
+      table: "",
+      fields: [{}],
     });
   });
 });

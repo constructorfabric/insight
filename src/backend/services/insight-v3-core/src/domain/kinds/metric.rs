@@ -5,7 +5,7 @@ pub(crate) mod answerable;
 use serde_json::Value;
 
 use super::{KindError, Reference};
-use crate::domain::datasets::{self, Datasets, Ready};
+use crate::domain::datasets::{self, Datasets};
 use crate::domain::kinds::metric::answerable::effective_clock;
 use crate::domain::query::metric_query::TableEngine;
 use crate::domain::query::metric_query::over::Over;
@@ -38,7 +38,8 @@ pub(crate) async fn check(
     let metric: MetricQuery = serde_json::from_value(body.clone()).map_err(KindError::Body)?;
 
     let Some(named) = metric.dataset() else {
-        return Err(KindError::Compile(MetricQueryError::NoDataset));
+        let dated = metric.has_clock().map_err(KindError::Compile)?;
+        return compiles(&metric, over.people, None, dated);
     };
     if metric.addresses_a_relation() {
         return Err(KindError::Compile(MetricQueryError::AddressesARelation));
@@ -58,7 +59,14 @@ pub(crate) async fn check(
         return Err(KindError::Unanswerable(violations));
     }
 
-    compiles(&metric, &ready, over)
+    let relation = Over {
+        declaration: &ready.declaration,
+        database: over.database,
+        table: &ready.table,
+    };
+    let dated = effective_clock(&metric, &ready.declaration).is_some();
+
+    compiles(&metric, over.people, Some(relation), dated)
 }
 
 /// What a dry compilation needs beside the dataset: where the records are
@@ -74,29 +82,27 @@ pub(crate) struct CompileAgainst<'a> {
 /// INVARIANT: every rule the compiler enforces is enforced here, by running
 /// it. A metric that is stored and then refuses to run is a definition no
 /// reader can act on, and the place to say so is the write.
+///
+/// Over a warehouse table the engine is not known until it runs; it only
+/// decides whether the read adds `FINAL`, so `Other` compiles the same query.
 fn compiles(
     metric: &MetricQuery,
-    ready: &Ready,
-    against: CompileAgainst<'_>,
+    people: &People,
+    over: Option<Over<'_>>,
+    dated: bool,
 ) -> Result<(), KindError> {
-    let over = Over {
-        declaration: &ready.declaration,
-        database: against.database,
-        table: &ready.table,
-    };
-
     metric
-        .compile_over(against.people, &Window::legacy(), over)
+        .compile_window(people, &Window::legacy(), TableEngine::Other, over)
         .map_err(KindError::Compile)?;
 
     // A metric with a date answers windows too, and windowing is where the
     // bucket, the cap and the undated count come in.
-    if effective_clock(metric, &ready.declaration).is_some() {
+    if dated {
         metric
-            .compile_over(against.people, &A_WINDOW, over)
+            .compile_window(people, &A_WINDOW, TableEngine::Other, over)
             .map_err(KindError::Compile)?;
         metric
-            .undated_query(TableEngine::Other, Some(over))
+            .undated_query(TableEngine::Other, over)
             .map_err(KindError::Compile)?;
     }
 

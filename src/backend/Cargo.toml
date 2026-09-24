@@ -48,7 +48,7 @@ dbg_macro = "deny"
 # ClickHouse client
 clickhouse = { version = "0.15", features = ["uuid", "chrono"] }
 
-sqlparser = "0.62"
+sqlparser = "0.63"
 schemars = "1.2"
 rmcp = { version = "3.2", default-features = false, features = ["macros", "server", "transport-streamable-http-server"] }
 

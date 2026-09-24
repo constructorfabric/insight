@@ -158,11 +158,36 @@ describe("a dataset", () => {
 describe("a metric", () => {
   const metric = DESCRIPTIONS.metrics;
 
-  it("reads one dataset, named from the catalogue", () => {
-    const dataset = metric.fields.find((field) => field.name === "dataset");
+  // A metric names the one thing it reads, and a document naming neither is
+  // no variant at all: it begins over a dataset so there is something to fill.
+  it("begins over a dataset and may be turned over a warehouse table", () => {
+    const source = metric.fields.find((field) => field.name === "source");
+    const variants =
+      source?.shape.of === "variants" ? source.shape.variants : {};
+    const dataset = variants.dataset?.find((field) => field.name === "dataset");
+    const table = variants.table?.find((field) => field.name === "table");
 
+    expect(metric.starting).toEqual({ dataset: "" });
+    expect(Object.keys(variants)).toEqual(["dataset", "table"]);
     expect(dataset?.required).toBe(true);
     expect(dataset?.shape).toEqual({ of: "reference", to: "datasets" });
+    expect(table?.required).toBe(true);
+    expect(table?.shape).toEqual({
+      of: "pick",
+      from: { catalogue: "tables" },
+    });
+  });
+
+  // Over a table a value is a column, or a JSON key inside one; a declared
+  // field means nothing there.
+  it("reads columns over a table where it reads declared fields over a dataset", () => {
+    const paths = walk(metric.fields).map(({ path }) => path);
+
+    expect(paths).toContain("fields.field");
+    expect(paths).toContain("fields.column");
+    expect(paths).toContain("fields.json");
+    expect(paths).toContain("time.column");
+    expect(paths).toContain("filters.column");
   });
 
   // A field may be read by name or counted, but it is always called something.

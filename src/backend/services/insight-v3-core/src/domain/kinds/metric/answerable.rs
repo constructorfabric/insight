@@ -80,6 +80,14 @@ impl EffectiveClock {
             from,
         })
     }
+
+    /// A metric over a table windows only by the clock it names itself.
+    pub(crate) fn of_table(metric: &MetricQuery) -> Option<Self> {
+        metric.table_clock().map(|field| Self {
+            field: field.to_owned(),
+            from: ClockSource::Metric,
+        })
+    }
 }
 
 fn check_reference(
