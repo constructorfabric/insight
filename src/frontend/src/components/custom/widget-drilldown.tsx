@@ -64,7 +64,7 @@ export function WidgetDrilldown({
 
   return (
     <Dialog open={open} onOpenChange={change}>
-      <DialogContent className="max-w-3xl">
+      <DialogContent className="w-[min(96vw,80rem)] max-w-[min(96vw,80rem)]">
         <DialogHeader>
           <DialogTitle className="flex min-w-0 items-center gap-2">
             {view.kind === "rows" ? null : (
@@ -215,7 +215,7 @@ function Rows({ metric, options }: { metric: string; options?: RunOptions }) {
 
   return (
     <div className="flex min-w-0 flex-col gap-2">
-      <div className="max-h-[60vh] min-w-0 overflow-auto">
+      <div className="max-h-[70vh] min-w-0 overflow-auto">
         <CustomTable result={result.data} />
       </div>
     </div>
