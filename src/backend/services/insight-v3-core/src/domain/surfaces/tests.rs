@@ -881,6 +881,38 @@ async fn renaming_points_every_widget_that_drew_the_old_name_at_the_new_one() ->
 }
 
 #[tokio::test]
+async fn a_renamed_dashboard_stays_in_its_folder() -> R {
+    use crate::domain::folders::{FolderName, Folders};
+
+    let fixture = Fixture::new().await;
+    let surfaces = fixture.surfaces();
+    surfaces
+        .put(
+            DefinitionKind::Dashboard,
+            &name("board"),
+            &json!({"title": "Example board", "widgets": []}),
+        )
+        .await?;
+    let platform = fixture
+        .definitions
+        .create_folder(FolderName::parse("Platform")?)
+        .await?;
+    fixture
+        .definitions
+        .file(&name("board"), Some(platform.id))
+        .await?;
+
+    surfaces
+        .rename(DefinitionKind::Dashboard, &name("board"), &name("renamed"))
+        .await?;
+
+    let placed = fixture.definitions.folder_of(&name("renamed")).await?;
+    assert_eq!(placed.map(|folder| folder.id), Some(platform.id));
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_rename_onto_a_name_someone_holds_is_refused_and_writes_nothing() -> R {
     let fixture = Fixture::new().await;
     let surfaces = fixture.surfaces();

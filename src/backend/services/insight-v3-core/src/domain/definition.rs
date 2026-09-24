@@ -150,6 +150,10 @@ pub(crate) enum Change {
     /// between and the rename overwrites them; the store refuses instead.
     Create(DefinitionKind, DefinitionName, serde_json::Value),
     Delete(DefinitionKind, DefinitionName),
+    CarryFolder {
+        from: DefinitionName,
+        to: DefinitionName,
+    },
 }
 
 /// A definition as it stands: what kind it is, what it is called, and what it

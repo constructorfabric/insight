@@ -312,10 +312,14 @@ impl<'a> Surfaces<'a> {
             return Ok(Vec::new());
         }
 
-        let mut changes = vec![
-            Change::Create(kind, to.clone(), body),
-            Change::Delete(kind, from.clone()),
-        ];
+        let mut changes = vec![Change::Create(kind, to.clone(), body)];
+        if kind == DefinitionKind::Dashboard {
+            changes.push(Change::CarryFolder {
+                from: from.clone(),
+                to: to.clone(),
+            });
+        }
+        changes.push(Change::Delete(kind, from.clone()));
         let mut rewritten = Vec::new();
 
         for holder in self.holders_of(kind, from).await? {

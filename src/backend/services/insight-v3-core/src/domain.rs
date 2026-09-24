@@ -6,6 +6,7 @@ pub(crate) mod dataset_lifecycle;
 pub(crate) mod dataset_records;
 pub(crate) mod datasets;
 pub(crate) mod definition;
+pub(crate) mod folders;
 pub(crate) mod kinds;
 pub(crate) mod metric_run;
 pub(crate) mod query;

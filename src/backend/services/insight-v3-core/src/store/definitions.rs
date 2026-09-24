@@ -29,6 +29,11 @@ const INSERT_NEW: &str = "INSERT INTO {table} (name, body, updated_at)
 VALUES (?, ?, UTC_TIMESTAMP(6))";
 
 const DELETE_ONE: &str = "DELETE FROM {table} WHERE name = ?";
+
+const CARRY_FOLDER: &str = "UPDATE dashboards AS moved
+JOIN dashboards AS source ON source.name = ?
+SET moved.folder_id = source.folder_id
+WHERE moved.name = ?";
 const SELECT_BODY: &str = "SELECT body FROM {table} WHERE name = ?";
 const SELECT_NAMES: &str = "SELECT name FROM {table} ORDER BY name";
 
@@ -207,6 +212,11 @@ impl Definitions for MariaDefinitions {
                     DbBackend::MySql,
                     sql(DELETE_ONE, *kind),
                     [name.as_str().into()],
+                ),
+                Change::CarryFolder { from, to } => Statement::from_sql_and_values(
+                    DbBackend::MySql,
+                    CARRY_FOLDER,
+                    [from.as_str().into(), to.as_str().into()],
                 ),
             };
             transaction
