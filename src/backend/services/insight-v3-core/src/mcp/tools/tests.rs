@@ -867,13 +867,6 @@ async fn a_listing_wider_than_one_answer_is_cut_and_says_so() {
     assert_eq!(listed["cut"], json!(true));
 }
 
-/// A materialised view keeps its rows in a table of its own, which is not a
-/// relation anyone should name.
-#[test]
-fn a_materialised_views_own_storage_is_never_listed() {
-    assert!(crate::store::catalog::LIST_COLUMNS.contains("NOT startsWith(c.table, '.inner')"));
-}
-
 /// The mirror of the dataset rule. Without it the refusal names the column
 /// the metric produces and says nothing about the `field` that is the reason.
 #[tokio::test]

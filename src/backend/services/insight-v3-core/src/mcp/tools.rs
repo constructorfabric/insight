@@ -375,29 +375,25 @@ impl CustomSurfaces {
                 tables.len()
             ));
         }
-        let described = match self.state.catalog().describe(&tables).await {
+        let described = match self.state.catalog().describe(&tables, DESCRIBE_LIMIT).await {
             Ok(described) => described,
             Err(error) => return catalog_error(&error),
         };
 
-        // A bare name means its table in every database that has one, so what
-        // comes back is capped by what is described, not by what was asked.
-        let shown: Vec<Value> = described
-            .iter()
-            .take(DESCRIBE_LIMIT)
-            .map(table_description)
-            .collect();
+        let shown: Vec<Value> = described.tables.iter().map(table_description).collect();
+        // Against what was described, not against the cut: a name the cap left
+        // out is not a name the warehouse does not hold.
         let mut unknown: Vec<&str> = tables
             .iter()
             .map(String::as_str)
-            .filter(|name| !described.iter().any(|schema| schema.is_named(name)))
+            .filter(|name| !described.tables.iter().any(|schema| schema.is_named(name)))
             .collect();
         unknown.sort_unstable();
         unknown.dedup();
 
         CallToolResult::structured(json!({
             "tables": shown,
-            "cut": described.len() > shown.len(),
+            "cut": described.total > shown.len(),
             "unknown": unknown,
         }))
     }

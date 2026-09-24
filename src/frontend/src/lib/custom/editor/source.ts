@@ -66,7 +66,15 @@ export function dotted(
 ): Record<string, unknown> {
   const database = document.database;
   const table = document.table;
-  if (typeof database !== "string" || database === "") return document;
+  if (typeof database !== "string") return document;
+  // An empty one is no database, and the service reads it as one it must
+  // honour: left in, it makes a name the editor showed whole unreadable.
+  if (database === "") {
+    const settled: Record<string, unknown> = { ...document };
+    delete settled.database;
+
+    return settled;
+  }
   if (typeof table !== "string" || table === "") return document;
 
   const settled: Record<string, unknown> = {

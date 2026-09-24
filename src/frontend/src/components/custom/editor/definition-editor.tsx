@@ -45,21 +45,56 @@ const TABLE_AT = { table: "table", database: "database" } as const;
  * The catalogue's own entry for a written name.
  *
  * A table is asked for only once the catalogue says it is there, so typing a
- * name spends no request per keystroke on tables that do not exist. A name
- * written without a database resolves when exactly one database holds it.
+ * name spends no request per keystroke on tables that do not exist.
+ *
+ * INVARIANT: only a qualified name resolves. The service reads a bare one
+ * against the warehouse's own database, which the catalogue cannot stand in
+ * for - answering with the one database that happens to hold that name would
+ * offer the columns of a table the metric does not read.
  */
 function found(
   listed: readonly WarehouseTable[],
   named: TableAddress
 ): WarehouseTable | undefined {
-  if (named.database !== "") {
-    return listed.find(
-      (each) => each.database === named.database && each.table === named.table
-    );
-  }
-  const holders = listed.filter((each) => each.table === named.table);
+  if (named.database === "") return undefined;
 
-  return holders.length === 1 ? holders[0] : undefined;
+  return listed.find(
+    (each) => each.database === named.database && each.table === named.table
+  );
+}
+
+/**
+ * What the catalogue has to say about the name written, where the reader
+ * would otherwise be left guessing.
+ *
+ * None of it refuses the name: a table made in the last few minutes is
+ * readable before it is listed, and a bare name is a shape the service takes.
+ */
+function notice(
+  failed: boolean,
+  listedOk: boolean,
+  named: TableAddress | undefined,
+  listed: readonly WarehouseTable[],
+  address: WarehouseTable | undefined
+): string | undefined {
+  if (failed) {
+    return "The catalogue could not be read, so nothing is offered here. A name written out in full is still stored and still runs.";
+  }
+  if (named === undefined || !listedOk) return undefined;
+
+  const holders = listed.filter((each) => each.table === named.table);
+  if (named.database === "" && holders.length > 0) {
+    const where = holders.map((each) => each.database);
+
+    return `A bare name reads the warehouse's own database. ${
+      where.length === 1
+        ? `${where[0]} holds a table called \`${named.table}\``
+        : `${where.length} databases hold one: ${where.join(", ")}`
+    }. Write the one you mean, as database.table.`;
+  }
+  if (address !== undefined) return undefined;
+
+  return "The catalogue does not list this table. It can still be saved - a table made in the last few minutes is readable before it is listed - but a metric over a table that is not there fails when it runs.";
 }
 
 /**
@@ -136,22 +171,10 @@ export function DefinitionEditor({
   // What the catalogue says about the table the metric names, where that is
   // something the reader would want to know before saving and finding out.
   const notes = new Map<string, string>();
-  if (overTables && named !== undefined && catalogue.isSuccess) {
-    const holders = listed.filter((each) => each.table === named.table);
-    if (named.database === "" && holders.length > 1) {
-      notes.set(
-        TABLE_AT.table,
-        `${holders.length} databases hold a table called \`${named.table}\`: ${holders
-          .map((each) => each.database)
-          .join(", ")}. Write the one you mean, as database.table.`
-      );
-    } else if (address === undefined) {
-      notes.set(
-        TABLE_AT.table,
-        "The catalogue does not list this table. It can still be saved - a table made in the last few minutes is readable before it is listed - but a metric over a table that is not there fails when it runs."
-      );
-    }
-  }
+  const noticed = overTables
+    ? notice(catalogue.isError, catalogue.isSuccess, named, listed, address)
+    : undefined;
+  if (noticed !== undefined) notes.set(TABLE_AT.table, noticed);
 
   const tables = () => listed.map(spelled);
   const columns = (asked: TableAddress) => {

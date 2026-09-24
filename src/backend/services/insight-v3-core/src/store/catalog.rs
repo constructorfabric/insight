@@ -26,8 +26,12 @@ const IDENTITY_DATABASE: &str = "identity";
 
 /// Every column of every table, in table order, with the engine that holds
 /// the table. The engine's own databases are left out, and so is the one
-/// datasets keep their records in.
-pub(crate) const LIST_COLUMNS: &str = "SELECT c.database AS database, c.table AS table, c.name AS name, c.type AS type, t.engine AS engine
+/// datasets keep their records in, and a materialised view's own storage.
+///
+/// INVARIANT: the listing is derived from the columns, so a relation with no
+/// column of its own is not in it. `ClickHouse` has none, and reading the
+/// columns and the tables apart would cost a round trip to say the same.
+const LIST_COLUMNS: &str = "SELECT c.database AS database, c.table AS table, c.name AS name, c.type AS type, t.engine AS engine
 FROM system.columns AS c
 INNER JOIN system.tables AS t ON t.database = c.database AND t.name = c.table
 WHERE c.database NOT IN ('system', 'information_schema', 'INFORMATION_SCHEMA')
@@ -71,6 +75,13 @@ pub(crate) struct TableEntry {
 pub(crate) struct Column {
     pub(crate) name: String,
     pub(crate) kind: String,
+}
+
+/// The tables a description asked for, and how many there were to describe.
+#[derive(Debug)]
+pub(crate) struct Described {
+    pub(crate) tables: Vec<TableSchema>,
+    pub(crate) total: usize,
 }
 
 /// One table the warehouse holds, with everything a metric author needs to
@@ -170,16 +181,25 @@ impl Catalog {
 
     /// The tables these names mean: `database.table`, or a bare table name,
     /// which means it in every database that has one.
+    ///
+    /// At most `most` of them: a bare name can mean a table in every database
+    /// the warehouse holds, and each carries every column it has, so the cap
+    /// belongs here rather than over what has already been copied out.
     pub(crate) async fn describe(
         &self,
         names: &[String],
-    ) -> Result<Vec<TableSchema>, CatalogError> {
+        most: usize,
+    ) -> Result<Described, CatalogError> {
         self.read(|tables| {
-            tables
+            let matching = tables
                 .iter()
-                .filter(|schema| names.iter().any(|name| schema.is_named(name)))
-                .cloned()
-                .collect()
+                .filter(|schema| names.iter().any(|name| schema.is_named(name)));
+            let total = matching.clone().count();
+
+            Described {
+                tables: matching.take(most).cloned().collect(),
+                total,
+            }
         })
         .await
     }
@@ -217,7 +237,19 @@ impl Catalog {
             return Ok(pick(&fresh.tables));
         }
 
-        let tables = self.load().await?;
+        let listed = self.load().await;
+        let tables = match (listed, cached.take()) {
+            (Ok(tables), _) => tables,
+            // SAFETY: a warehouse that did not answer must not send every
+            // caller behind this lock to wait on it in turn. What was last
+            // listed serves another term instead - a schema catalogue a few
+            // minutes stale is worth more than a queue of ten-second waits.
+            (Err(error), Some(stale)) => {
+                tracing::warn!(%error, "the warehouse catalogue could not be reloaded");
+                stale.tables
+            }
+            (Err(error), None) => return Err(error),
+        };
         let picked = pick(&tables);
         *cached = Some(Cached {
             at: Instant::now(),

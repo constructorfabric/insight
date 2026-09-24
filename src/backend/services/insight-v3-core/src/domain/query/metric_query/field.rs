@@ -93,6 +93,12 @@ impl Field {
     }
 
     /// The conditions this aggregate alone keeps rows by.
+    /// The one condition that picks an element out of an array payload, when
+    /// this field selects from one.
+    pub(super) fn selector(&self) -> Option<&Filter> {
+        self.r#where.as_ref()
+    }
+
     pub(super) fn conditions(&self) -> &[Filter] {
         &self.when
     }

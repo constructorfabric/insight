@@ -285,8 +285,6 @@ impl<'a> Surfaces<'a> {
         Ok(())
     }
 
-    /// Every definition that names this one: what a removal would break, and
-    /// what a rename would rewrite.
     /// What still holds this definition, and whether each holder would be
     /// accepted as it stands.
     ///
@@ -299,6 +297,11 @@ impl<'a> Surfaces<'a> {
     /// INVARIANT: broken means exactly what a write means by it, because it
     /// is the same check. The two cannot come to disagree about whether a
     /// stored body still holds up.
+    ///
+    /// SAFETY: only a refusal the holder itself earns is reported as broken.
+    /// A store that did not answer is ours, and answering "broken" for it
+    /// would paint a healthy board as damaged over a blip; the read fails
+    /// instead, which is what the reader is shown.
     pub(crate) async fn dependents_state(
         &self,
         kind: DefinitionKind,
@@ -316,17 +319,26 @@ impl<'a> Surfaces<'a> {
                 self.over,
             )
             .await
-            .err();
+            .err()
+            .map(CustomError::from);
+
+            let broken = match refused {
+                None => None,
+                Some(error) if error.is_about_the_caller() => Some(error.to_string()),
+                Some(error) => return Err(error),
+            };
 
             state.push(Dependent {
                 reference: Reference::new(holder.kind, holder.name.into_string()),
-                broken: refused.map(|error| error.to_string()),
+                broken,
             });
         }
 
         Ok(state)
     }
 
+    /// Every definition that names this one: what a removal would break, and
+    /// what a rename would rewrite.
     pub(crate) async fn dependents_of(
         &self,
         kind: DefinitionKind,

@@ -13,32 +13,15 @@ use toolkit_canonical_errors::{CanonicalError, resource_error};
 use utoipa::ToSchema;
 
 use super::AppState;
-use super::errors::ApiErrors;
 use crate::store::catalog::{CatalogError, TableEntry as Listed, TableSchema};
 
 #[cfg(test)]
 mod tests;
 
+/// These endpoints only read, so they answer none of the refusals a write
+/// does and do not carry the shared `ApiErrors` policy.
 #[resource_error("gts.cf.insight.insight_v3_core.tables.v1~")]
 struct TableApiError;
-
-impl ApiErrors for TableApiError {
-    fn invalid_field(field: &str, detail: String) -> CanonicalError {
-        Self::invalid_argument()
-            .with_field_violation(field, detail, "INVALID")
-            .create()
-    }
-
-    fn timed_out(detail: &str) -> CanonicalError {
-        Self::deadline_exceeded(detail).create()
-    }
-
-    fn name_taken(name: &str) -> CanonicalError {
-        Self::already_exists(format!("`{name}` is already taken"))
-            .with_resource(name)
-            .create()
-    }
-}
 
 /// One table as the catalogue lists it: enough to name it in a metric.
 #[derive(Debug, Serialize, ToSchema)]
@@ -212,7 +195,9 @@ fn detail(schema: TableSchema) -> TableDetail {
 /// what the warehouse said is logged, not answered.
 fn catalog_error(error: CatalogError) -> CanonicalError {
     match error {
-        CatalogError::Timeout => TableApiError::timed_out("the warehouse catalogue timed out"),
+        CatalogError::Timeout => {
+            TableApiError::deadline_exceeded("the warehouse catalogue timed out").create()
+        }
         CatalogError::ClickHouse(source) => {
             tracing::error!(error = %source, "the warehouse catalogue could not be read");
             CanonicalError::internal("the warehouse catalogue could not be read").create()

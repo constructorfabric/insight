@@ -479,7 +479,10 @@ describe("<DefinitionEditor> over a kind's shape", () => {
     expect(customClient.fetchTable).toHaveBeenCalledWith("silver", "fct_commit");
   });
 
-  it("finds a bare table's database in the catalogue when only one has it", async () => {
+  // The service reads a bare name against the warehouse's own database, not
+  // against whichever database happens to hold that name, so the editor must
+  // not offer another table's columns for it.
+  it("offers nothing for a bare name, and says which database holds one", async () => {
     vi.mocked(customClient.fetchTables).mockResolvedValue({
       tables: [{ database: "bronze_github", table: "issues", layer: "bronze" }],
       total: 1,
@@ -498,11 +501,13 @@ describe("<DefinitionEditor> over a kind's shape", () => {
     );
 
     await waitFor(() =>
-      expect(customClient.fetchTable).toHaveBeenCalledWith(
-        "bronze_github",
-        "issues"
+      expect(rowOf(screen.getByLabelText(/^Table/))).toHaveTextContent(
+        /bronze_github holds a table called `issues`. Write the one you mean/
       )
     );
+    expect(customClient.fetchTable).not.toHaveBeenCalled();
+    const field = within(screen.getByRole("group", { name: "field 1" }));
+    expect(offeredBy(field.getByLabelText(/^Column/))).toEqual([]);
   });
 
   it("reads a stored metric over a table as one, with the dataset rows out of sight", () => {
@@ -688,7 +693,7 @@ describe("<DefinitionEditor> over a kind's shape", () => {
 
     await waitFor(() =>
       expect(rowOf(screen.getByLabelText(/^Table/))).toHaveTextContent(
-        /2 databases hold a table called `issues`: bronze_github, bronze_gitlab/
+        /2 databases hold one: bronze_github, bronze_gitlab/
       )
     );
     expect(customClient.fetchTable).not.toHaveBeenCalled();
@@ -732,5 +737,26 @@ describe("<DefinitionEditor> over a kind's shape", () => {
 
     await waitFor(() => expect(customClient.fetchTable).toHaveBeenCalled());
     expect(rowOf(table)).not.toHaveTextContent(/catalogue does not list/);
+  });
+
+  // A catalogue that did not answer leaves every picker empty, which reads as
+  // "this table has no columns" unless it is said.
+  it("says when the catalogue itself could not be read", async () => {
+    vi.mocked(customClient.fetchTables).mockRejectedValue(
+      new Error("the catalogue is away")
+    );
+    render(
+      <DefinitionEditor kind="metrics" name="probe" onStored={vi.fn()} />,
+      { wrapper }
+    );
+
+    await userEvent.setup().selectOptions(screen.getByLabelText(/Source/), "table");
+
+    await waitFor(() =>
+      expect(rowOf(screen.getByLabelText(/^Table/))).toHaveTextContent(
+        /catalogue could not be read/
+      )
+    );
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
   });
 });

@@ -79,13 +79,20 @@ describe("dotted", () => {
   it("leaves a body with nothing to join", () => {
     for (const body of [
       { table: "fct" },
-      { database: "", table: "fct" },
       { database: "silver" },
       { database: "silver", table: "" },
       { dataset: "commits" },
     ]) {
       expect(dotted(body), JSON.stringify(body)).toEqual(body);
     }
+  });
+
+  // The service honours a `database` it is given, empty or not, and reads the
+  // name beside it whole - so an empty one makes a qualified name unreadable.
+  it("drops a database that holds nothing", () => {
+    expect(dotted({ database: "", table: "silver.fct" })).toEqual({
+      table: "silver.fct",
+    });
   });
 
   // Joining what the service would refuse keeps the refusal, rather than

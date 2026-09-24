@@ -216,7 +216,11 @@ export function Row({
         </p>
       ) : null}
       {note ? (
-        <p id={noteId(id)} className={cn(TEXT_LABEL, "text-warning")}>
+        <p
+          id={noteId(id)}
+          role="status"
+          className={cn(TEXT_LABEL, "text-warning")}
+        >
           {note}
         </p>
       ) : null}

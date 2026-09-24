@@ -156,6 +156,16 @@ impl MetricQuery {
                     });
                 }
             }
+
+            if let Some(selector) = field.selector()
+                && let Some(read) = selector.reads()
+            {
+                named.push(Reference {
+                    at: format!("fields[{index}].where.field"),
+                    field: read,
+                    used: Used::Compared(&selector.value),
+                });
+            }
         }
 
         for (index, filter) in self.filters.iter().enumerate() {

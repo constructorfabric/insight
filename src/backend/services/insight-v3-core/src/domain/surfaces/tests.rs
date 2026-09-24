@@ -1057,3 +1057,109 @@ async fn running_a_metric_over_a_dataset_still_being_made_says_so() -> R {
 
     Ok(())
 }
+
+/// A store that answers everything except one kind's bodies, for the cases
+/// about a read of ours that did not come back.
+#[derive(Debug)]
+struct Unreadable {
+    inner: MemoryDefinitions,
+    silent: DefinitionKind,
+}
+
+#[async_trait::async_trait]
+impl crate::domain::definition::Lookup for Unreadable {
+    async fn get(
+        &self,
+        kind: DefinitionKind,
+        name: &DefinitionName,
+    ) -> Result<Option<serde_json::Value>, DefinitionStoreError> {
+        if kind == self.silent {
+            return Err(DefinitionStoreError::Database(sea_orm::DbErr::Custom(
+                "store is down".to_owned(),
+            )));
+        }
+
+        self.inner.get(kind, name).await
+    }
+}
+
+#[async_trait::async_trait]
+impl Definitions for Unreadable {
+    async fn put(
+        &self,
+        kind: DefinitionKind,
+        name: &DefinitionName,
+        body: &serde_json::Value,
+    ) -> Result<(), DefinitionStoreError> {
+        self.inner.put(kind, name, body).await
+    }
+
+    async fn list(&self, kind: DefinitionKind) -> Result<Vec<String>, DefinitionStoreError> {
+        self.inner.list(kind).await
+    }
+
+    async fn page(
+        &self,
+        kind: DefinitionKind,
+        needle: &str,
+        page: Page,
+    ) -> Result<NamePage, DefinitionStoreError> {
+        self.inner.page(kind, needle, page).await
+    }
+
+    async fn delete(
+        &self,
+        kind: DefinitionKind,
+        name: &DefinitionName,
+    ) -> Result<bool, DefinitionStoreError> {
+        self.inner.delete(kind, name).await
+    }
+
+    async fn apply(&self, changes: &[Change]) -> Result<(), DefinitionStoreError> {
+        self.inner.apply(changes).await
+    }
+}
+
+/// A store that did not answer is ours, not the holder's. Reporting it as
+/// "broken" would paint a healthy board as damaged over a blip, and the
+/// reader would go looking for a fault in a definition that has none.
+#[tokio::test]
+async fn a_holder_is_not_called_broken_because_a_read_of_ours_failed() -> R {
+    let fixture = Fixture::new().await;
+    fixture
+        .surfaces()
+        .put(DefinitionKind::Metric, &name("per_day"), &json!({"dataset": "commits", "fields": [{"agg": "count", "type": "int", "as_name": "total"}]}))
+        .await?;
+    fixture
+        .surfaces()
+        .put(
+            DefinitionKind::Widget,
+            &name("per_day_table"),
+            &json!({"type": "table", "metric": "per_day", "columns": ["total"]}),
+        )
+        .await?;
+
+    // The widgets are still listed and read; the metric each one checks
+    // against is what the store will not answer for.
+    let definitions = Unreadable {
+        inner: std::mem::take(&mut { fixture.definitions }),
+        silent: DefinitionKind::Metric,
+    };
+    let surfaces = Surfaces::new(
+        &definitions,
+        &fixture.datasets,
+        "insight_datasets",
+        fixture.metrics.people(),
+    );
+
+    let asked = surfaces
+        .dependents_state(DefinitionKind::Metric, &name("per_day"))
+        .await;
+
+    assert!(
+        matches!(asked, Err(CustomError::Store(_))),
+        "a read of ours is not a holder's fault: {asked:?}"
+    );
+
+    Ok(())
+}
