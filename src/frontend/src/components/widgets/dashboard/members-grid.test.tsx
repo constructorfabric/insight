@@ -286,6 +286,26 @@ describe("MembersGrid", () => {
     ).toBeInTheDocument();
   });
 
+  it("keeps the peer standing in the accessible name when time off is present", () => {
+    render(
+      <MembersGrid
+        members={[MEMBERS[0]!]}
+        metricKeys={["ai.active_days"]}
+        byKey={normalizeMetricResults(
+          [metric("ai.active_days", [{ id: "ann@x.com", value: 20 }])],
+          [{ person_id: "ann@x.com", period_overlap: true, compare_to_overlap: false }],
+        )}
+        caption="Members grid"
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", {
+        name: "Ann — Active AI days: 20 days — No comparison — Time off in this period",
+      }),
+    ).toBeInTheDocument();
+  });
+
   it("shows the standing facet: chip, worst line, and behind-first default sort", () => {
     render(
       <MembersGrid

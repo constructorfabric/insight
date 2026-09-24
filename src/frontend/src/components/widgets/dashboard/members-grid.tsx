@@ -661,7 +661,7 @@ function GridCell({
             }}
             aria-label={
               observed
-                ? `${memberName} — ${col.label}: ${displayWithUnit} — ${leaveLabel ?? PEER_LABEL[focused]}`
+                ? `${memberName} — ${col.label}: ${displayWithUnit} — ${PEER_LABEL[focused]}${leaveLabel ? ` — ${leaveLabel}` : ""}`
                 : `${memberName} — ${col.label}: not recorded`
             }
             className={cn(
