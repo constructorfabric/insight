@@ -60,10 +60,10 @@ permissions:
 jobs:
   connectors-ddl:
     name: connectors-ddl snapshot + field parity
-    # Inlined rather than shared: this lane has no change-detection job to carry
-    # the verdict. Same rule as ci.yml — see the note there on what it does and
-    # does not close.
-    runs-on: ${{ (github.event_name != 'pull_request' || (github.event.pull_request.user.login != 'dependabot[bot]' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR","CONTRIBUTOR"]'), github.event.pull_request.author_association))) && fromJSON('["self-hosted","linux","x64","insight-vhc"]') || 'ubuntu-latest' }}
+    # Like ci.yml, this lane stays on the pool for pull requests too — see
+    # .github/runners/insight-vhc/README.md for the default rule and why these
+    # two are exempt from it.
+    runs-on: [self-hosted, linux, x64, insight-vhc]
     timeout-minutes: 60
     env:
       BOOTSTRAP_DIR: src/ingestion/scripts/bootstrap-db
