@@ -27,6 +27,7 @@ import * as customClient from "@/api/custom-client";
 import {
   mockCatalogues,
   offeredBy,
+  rowOf,
   showText,
   wrapper,
 } from "./editor-test-helpers";
@@ -478,7 +479,10 @@ describe("<DefinitionEditor> over a kind's shape", () => {
     expect(customClient.fetchTable).toHaveBeenCalledWith("silver", "fct_commit");
   });
 
-  it("finds a bare table's database in the catalogue when only one has it", async () => {
+  // The service reads a bare name against the warehouse's own database, not
+  // against whichever database happens to hold that name, so the editor must
+  // not offer another table's columns for it.
+  it("offers nothing for a bare name, and says which database holds one", async () => {
     vi.mocked(customClient.fetchTables).mockResolvedValue({
       tables: [{ database: "bronze_github", table: "issues", layer: "bronze" }],
       total: 1,
@@ -497,11 +501,13 @@ describe("<DefinitionEditor> over a kind's shape", () => {
     );
 
     await waitFor(() =>
-      expect(customClient.fetchTable).toHaveBeenCalledWith(
-        "bronze_github",
-        "issues"
+      expect(rowOf(screen.getByLabelText(/^Table/))).toHaveTextContent(
+        /bronze_github holds a table called `issues`. Write the one you mean/
       )
     );
+    expect(customClient.fetchTable).not.toHaveBeenCalled();
+    const field = within(screen.getByRole("group", { name: "field 1" }));
+    expect(offeredBy(field.getByLabelText(/^Column/))).toEqual([]);
   });
 
   it("reads a stored metric over a table as one, with the dataset rows out of sight", () => {
@@ -523,11 +529,69 @@ describe("<DefinitionEditor> over a kind's shape", () => {
 
     expect(screen.getByLabelText(/Source/)).toHaveValue("table");
     expect(screen.getByLabelText(/^Table/)).toHaveValue("fct_commit");
-    expect(screen.getByLabelText(/^Database/)).toHaveValue("silver");
     expect(screen.queryByLabelText(/^Dataset/)).not.toBeInTheDocument();
+    // The form asks for one name, so the database of its own is not a row.
+    expect(screen.queryByLabelText(/^Database/)).not.toBeInTheDocument();
   });
 
-  it("drops the dataset name when a metric is turned over a table, and keeps its fields", async () => {
+  // A body written with a database of its own compiles the same, but the
+  // editor writes one form, so saving settles it on that one.
+  it("writes a database of its own back as one dotted name", async () => {
+    const user = userEvent.setup();
+    render(
+      <DefinitionEditor
+        kind="metrics"
+        name="lines"
+        document={{
+          database: "silver",
+          table: "fct_commit",
+          fields: [{ column: "lines_added", type: "int", as_name: "lines" }],
+        }}
+        onStored={vi.fn()}
+      />,
+      { wrapper }
+    );
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(customClient.putDefinition).toHaveBeenCalledWith(
+        "metrics",
+        "lines",
+        {
+          table: "silver.fct_commit",
+          fields: [{ column: "lines_added", type: "int", as_name: "lines" }],
+        }
+      )
+    );
+  });
+
+  // The text view is the fallback for a body the form does not ask about, so
+  // a database written there by hand still settles on save.
+  it("settles a database written by hand in the text view", async () => {
+    const user = userEvent.setup();
+    render(
+      <DefinitionEditor kind="metrics" name="lines" onStored={vi.fn()} />,
+      { wrapper }
+    );
+
+    const text = await showText(user);
+    await user.clear(text);
+    await user.type(text, '{{"database":"silver","table":"fct_commit"}');
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(customClient.putDefinition).toHaveBeenCalledWith(
+        "metrics",
+        "lines",
+        { table: "silver.fct_commit" }
+      )
+    );
+  });
+
+  // A metric over another source is another query, so the form starts over
+  // rather than carrying reads the new source cannot make sense of.
+  it("starts a metric over when its source changes", async () => {
     const user = userEvent.setup();
     render(
       <DefinitionEditor
@@ -538,6 +602,7 @@ describe("<DefinitionEditor> over a kind's shape", () => {
           fields: [{ field: "actor", type: "string", as_name: "actor" }],
           time: { field: "day" },
           group_by: ["actor"],
+          limit: 20,
         }}
         onStored={vi.fn()}
       />,
@@ -545,17 +610,153 @@ describe("<DefinitionEditor> over a kind's shape", () => {
     );
 
     await user.selectOptions(screen.getByLabelText(/Source/), "table");
-    const text = await showText(user);
 
-    const sent = JSON.parse(text.value) as Record<string, unknown>;
-    expect(sent).not.toHaveProperty("dataset");
-    expect(sent).toHaveProperty("table", "");
-    expect(sent).toHaveProperty("group_by", ["actor"]);
-    // The column the metric produces survives; the declared field it read
-    // does not, and neither does a window by a declared date.
-    expect(sent).toHaveProperty("fields", [
-      { type: "string", as_name: "actor" },
-    ]);
-    expect(sent).not.toHaveProperty("time");
+    const sent = JSON.parse((await showText(user)).value) as Record<
+      string,
+      unknown
+    >;
+    expect(sent).toEqual({ table: "" });
+  });
+
+  // A name the catalogue does not hold is a name half-typed: asking for it
+  // spends a request, and a retry, per keystroke.
+  it("asks for a table's columns only once the catalogue holds the name", async () => {
+    const user = userEvent.setup();
+    vi.mocked(customClient.fetchTables).mockResolvedValue({
+      tables: [{ database: "silver", table: "fct_commit", layer: "silver" }],
+      total: 1,
+    });
+    render(<DefinitionEditor kind="metrics" onStored={vi.fn()} />, { wrapper });
+
+    await user.selectOptions(screen.getByLabelText(/Source/), "table");
+    const table = screen.getByLabelText(/^Table/);
+    await waitFor(() => expect(offeredBy(table)).toEqual(["silver.fct_commit"]));
+
+    await user.type(table, "silver.fct_com");
+    expect(customClient.fetchTable).not.toHaveBeenCalled();
+
+    await user.type(table, "mit");
+    await waitFor(() =>
+      expect(customClient.fetchTable).toHaveBeenCalledTimes(1)
+    );
+    expect(customClient.fetchTable).toHaveBeenCalledWith("silver", "fct_commit");
+  });
+
+  // The service reads a `database` of its own in preference to the one a
+  // qualified name carries, so the two together name a table nothing holds.
+  it("drops the database when a qualified table name is written over it", async () => {
+    const user = userEvent.setup();
+    vi.mocked(customClient.fetchTables).mockResolvedValue({
+      tables: [{ database: "silver", table: "fct_commit", layer: "silver" }],
+      total: 1,
+    });
+    render(
+      <DefinitionEditor
+        kind="metrics"
+        name="lines"
+        document={{
+          database: "insight",
+          table: "account_attribute_values",
+          fields: [{ type: "int", agg: "count", as_name: "n" }],
+        }}
+        onStored={vi.fn()}
+      />,
+      { wrapper }
+    );
+
+    await user.clear(screen.getByLabelText(/^Table/));
+    await user.type(screen.getByLabelText(/^Table/), "silver.fct_commit");
+
+    const sent = JSON.parse((await showText(user)).value) as Record<
+      string,
+      unknown
+    >;
+    expect(sent).not.toHaveProperty("database");
+    expect(sent).toHaveProperty("table", "silver.fct_commit");
+  });
+
+  // A table name several databases hold cannot be resolved, and a form that
+  // silently offers nothing looks broken rather than ambiguous.
+  it("says so when several databases hold the table that was named", async () => {
+    const user = userEvent.setup();
+    vi.mocked(customClient.fetchTables).mockResolvedValue({
+      tables: [
+        { database: "bronze_github", table: "issues", layer: "bronze" },
+        { database: "bronze_gitlab", table: "issues", layer: "bronze" },
+      ],
+      total: 2,
+    });
+    render(<DefinitionEditor kind="metrics" onStored={vi.fn()} />, { wrapper });
+
+    await user.selectOptions(screen.getByLabelText(/Source/), "table");
+    await user.type(screen.getByLabelText(/^Table/), "issues");
+
+    await waitFor(() =>
+      expect(rowOf(screen.getByLabelText(/^Table/))).toHaveTextContent(
+        /2 databases hold one: bronze_github, bronze_gitlab/
+      )
+    );
+    expect(customClient.fetchTable).not.toHaveBeenCalled();
+  });
+
+  // Saving is still allowed: a table made minutes ago is readable before the
+  // catalogue lists it, so this is a warning and not a refusal.
+  it("says when the catalogue does not list the table, without refusing it", async () => {
+    const user = userEvent.setup();
+    vi.mocked(customClient.fetchTables).mockResolvedValue({
+      tables: [{ database: "silver", table: "fct_commit", layer: "silver" }],
+      total: 1,
+    });
+    render(
+      <DefinitionEditor kind="metrics" name="probe" onStored={vi.fn()} />,
+      { wrapper }
+    );
+
+    await user.selectOptions(screen.getByLabelText(/Source/), "table");
+    const table = screen.getByLabelText(/^Table/);
+    await user.type(table, "silver.nothing");
+
+    await waitFor(() =>
+      expect(rowOf(table)).toHaveTextContent(/catalogue does not list this table/)
+    );
+    expect(table).not.toHaveAttribute("aria-invalid");
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  });
+
+  it("says nothing about a table the catalogue holds", async () => {
+    const user = userEvent.setup();
+    vi.mocked(customClient.fetchTables).mockResolvedValue({
+      tables: [{ database: "silver", table: "fct_commit", layer: "silver" }],
+      total: 1,
+    });
+    render(<DefinitionEditor kind="metrics" onStored={vi.fn()} />, { wrapper });
+
+    await user.selectOptions(screen.getByLabelText(/Source/), "table");
+    const table = screen.getByLabelText(/^Table/);
+    await user.type(table, "silver.fct_commit");
+
+    await waitFor(() => expect(customClient.fetchTable).toHaveBeenCalled());
+    expect(rowOf(table)).not.toHaveTextContent(/catalogue does not list/);
+  });
+
+  // A catalogue that did not answer leaves every picker empty, which reads as
+  // "this table has no columns" unless it is said.
+  it("says when the catalogue itself could not be read", async () => {
+    vi.mocked(customClient.fetchTables).mockRejectedValue(
+      new Error("the catalogue is away")
+    );
+    render(
+      <DefinitionEditor kind="metrics" name="probe" onStored={vi.fn()} />,
+      { wrapper }
+    );
+
+    await userEvent.setup().selectOptions(screen.getByLabelText(/Source/), "table");
+
+    await waitFor(() =>
+      expect(rowOf(screen.getByLabelText(/^Table/))).toHaveTextContent(
+        /catalogue could not be read/
+      )
+    );
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
   });
 });

@@ -189,6 +189,14 @@ export interface Holder {
   /** The kind it is, as the API path spells it. */
   kind: "metrics" | "widgets" | "dashboards";
   name: string;
+  /**
+   * Why this holder no longer works, when it does not.
+   *
+   * A widget names the columns its metric produces, and renaming one is
+   * allowed, so a widget can be left drawing a column that is gone. The
+   * service says which, in the words it would refuse the widget with.
+   */
+  broken?: string;
 }
 
 /** What one page of a dataset's records is asked for. */

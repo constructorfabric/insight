@@ -31,11 +31,13 @@ const BY_TYPE: VariantsShape = {
 };
 
 /**
- * A shape whose variants share a property name but read it differently: the
- * metric's own, where a source names either a declared field or a column.
+ * A shape whose variants ask for the same names but read them differently:
+ * the metric's own, where a source names either a declared field or a column.
+ * Choosing another one starts the record over.
  */
 const BY_SOURCE: VariantsShape = {
   of: "variants",
+  resets: true,
   variants: {
     dataset: [
       { name: "dataset", label: "Dataset", shape: { of: "text" } },
@@ -171,10 +173,10 @@ describe("switched", () => {
     });
   });
 
-  // A metric keeps the columns it produces when its source changes, but what
-  // each one read belongs to the source it was written for. Left behind, a
-  // stale read is invisible in the editor and refused on sending.
-  it("clears what only the outgoing shape could read, however deep it sits", () => {
+  // A metric over another source is another query: every field, filter and
+  // window names the source it was written for, and a value carried across
+  // would leave a body that looks filled in and cannot be sent.
+  it("starts the record over where the shape says it resets", () => {
     const record = {
       dataset: "commits",
       fields: [
@@ -183,39 +185,38 @@ describe("switched", () => {
       ],
       time: { field: "day" },
       group_by: ["actor"],
+      limit: 20,
     };
 
-    expect(switched(BY_SOURCE, record, "table")).toEqual({
-      table: "",
-      fields: [{ as_name: "actor" }, { as_name: "total" }],
-      group_by: ["actor"],
-    });
+    expect(switched(BY_SOURCE, record, "table")).toEqual({ table: "" });
   });
 
-  // The other way round is the same rule, and a property no variant knows is
-  // the document's own either way.
-  it("clears a column when a metric is turned back over a dataset", () => {
+  it("starts over the other way round too", () => {
     const record = {
       table: "silver.fct_commit",
       fields: [{ column: "sha", as_name: "sha" }],
-      limit: 10,
     };
 
-    expect(switched(BY_SOURCE, record, "dataset")).toEqual({
-      dataset: "",
-      fields: [{ as_name: "sha" }],
-      limit: 10,
-    });
+    expect(switched(BY_SOURCE, record, "dataset")).toEqual({ dataset: "" });
   });
 
-  // A row the reader added is theirs: emptying it would make the list shorten
-  // under them.
-  it("keeps a row that nothing in it survives", () => {
-    const record = { dataset: "commits", fields: [{ field: "actor" }] };
+  // Clearing the choice is unreachable through the editor, but a reset that
+  // then put a key back would leave a record that is a variant after all.
+  it("leaves nothing behind when the choice is cleared", () => {
+    expect(switched(BY_SOURCE, { dataset: "commits", limit: 5 }, "")).toEqual(
+      {}
+    );
+  });
 
-    expect(switched(BY_SOURCE, record, "table")).toEqual({
-      table: "",
-      fields: [{}],
+  // Only a shape that says so resets: a chart is the same chart drawn another
+  // way, and its metric and axes are read the same by every variant.
+  it("keeps carrying shared fields where the shape does not reset", () => {
+    const record = { type: "stat", metric: "m", value: "total" };
+
+    expect(switched(BY_TYPE, record, "pie")).toEqual({
+      type: "pie",
+      metric: "m",
+      value: "total",
     });
   });
 });

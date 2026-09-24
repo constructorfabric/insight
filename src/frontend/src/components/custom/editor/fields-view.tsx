@@ -23,6 +23,11 @@ export interface Editing {
   document: Record<string, unknown>;
   /** What the service said, by the path it named. */
   said: ReadonlyMap<string, string>;
+  /**
+   * What the editor noticed about a row, by the path it sits at: a value that
+   * is sendable but that the catalogue says is probably not what was meant.
+   */
+  notes: ReadonlyMap<string, string>;
   names: (kind: EditableKind) => readonly string[];
   /** What a dataset declares, for a metric's fields to be offered and typed by. */
   declared: (dataset: string) => readonly DeclaredField[];
@@ -114,6 +119,7 @@ function FieldRow({
   const id = spell(at);
   const value = read(editing.document, at);
   const said = editing.said.get(id);
+  const note = editing.notes.get(id);
   const set = (next: unknown) => editing.onChange(at, next);
   const last = at.at(-1);
 
@@ -123,6 +129,7 @@ function FieldRow({
       label={field.label}
       property={typeof last === "string" ? last : undefined}
       hint={field.hint}
+      note={note}
       required={field.required}
       said={said}
     >
@@ -136,6 +143,7 @@ function FieldRow({
         keepEmpty={keepEmpty}
         describe={describing(id, {
           hint: field.hint,
+          note,
           said,
           required: field.required,
         })}

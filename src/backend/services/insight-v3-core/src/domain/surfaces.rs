@@ -21,6 +21,14 @@ use crate::domain::violation::Violation;
 #[cfg(test)]
 mod tests;
 
+/// One definition that names another, and why it no longer works if it does
+/// not.
+#[derive(Debug)]
+pub(crate) struct Dependent {
+    pub(crate) reference: Reference,
+    pub(crate) broken: Option<String>,
+}
+
 #[derive(Debug, Error)]
 pub(crate) enum CustomError {
     #[error("{} `{name}` was not found", kind.singular())]
@@ -275,6 +283,58 @@ impl<'a> Surfaces<'a> {
         }
 
         Ok(())
+    }
+
+    /// What still holds this definition, and whether each holder would be
+    /// accepted as it stands.
+    ///
+    /// A widget names the columns its metric produces, so a metric that stops
+    /// producing one leaves the widget drawing nothing. That write is not
+    /// refused - a column could then never be renamed at all, since no widget
+    /// may name a column its metric does not yet produce - so the damage is
+    /// reported here instead of being left to be found on a board.
+    ///
+    /// INVARIANT: broken means exactly what a write means by it, because it
+    /// is the same check. The two cannot come to disagree about whether a
+    /// stored body still holds up.
+    ///
+    /// SAFETY: only a refusal the holder itself earns is reported as broken.
+    /// A store that did not answer is ours, and answering "broken" for it
+    /// would paint a healthy board as damaged over a blip; the read fails
+    /// instead, which is what the reader is shown.
+    pub(crate) async fn dependents_state(
+        &self,
+        kind: DefinitionKind,
+        name: &DefinitionName,
+    ) -> Result<Vec<Dependent>, CustomError> {
+        let holders = self.holders_of(kind, name).await?;
+        let mut state = Vec::with_capacity(holders.len());
+
+        for holder in holders {
+            let refused = kinds::check(
+                holder.kind,
+                &holder.body,
+                self.definitions,
+                self.datasets,
+                self.over,
+            )
+            .await
+            .err()
+            .map(CustomError::from);
+
+            let broken = match refused {
+                None => None,
+                Some(error) if error.is_about_the_caller() => Some(error.to_string()),
+                Some(error) => return Err(error),
+            };
+
+            state.push(Dependent {
+                reference: Reference::new(holder.kind, holder.name.into_string()),
+                broken,
+            });
+        }
+
+        Ok(state)
     }
 
     /// Every definition that names this one: what a removal would break, and

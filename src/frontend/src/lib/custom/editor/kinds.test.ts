@@ -176,6 +176,12 @@ describe("a metric", () => {
       of: "pick",
       from: { catalogue: "tables" },
     });
+    // One name, written database.table. A `database` of its own is a shape the
+    // service still takes, so a stored body may carry it, but the form does
+    // not ask for it and a save settles it onto the name.
+    expect(variants.table?.map((field) => field.name)).not.toContain(
+      "database"
+    );
   });
 
   // Over a table a value is a column, or a JSON key inside one; a declared

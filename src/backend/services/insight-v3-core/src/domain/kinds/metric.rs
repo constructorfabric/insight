@@ -38,6 +38,7 @@ pub(crate) async fn check(
     let metric: MetricQuery = serde_json::from_value(body.clone()).map_err(KindError::Body)?;
 
     let Some(named) = metric.dataset() else {
+        names_a_declared_field(&metric)?;
         let dated = metric.has_clock().map_err(KindError::Compile)?;
         return compiles(&metric, over.people, None, dated);
     };
@@ -127,6 +128,33 @@ fn reaches_past_the_declaration(metric: &MetricQuery) -> Result<(), KindError> {
                         "a metric over a dataset names a declared `field`; \
                          `{key}` reads the record itself"
                     ),
+                )
+            })
+            .collect(),
+    ))
+}
+
+/// Every place a metric over a table names a field of a dataset.
+///
+/// The mirror of the check above. Without it the read falls through to "this
+/// field names neither a column nor a json key", which names the column the
+/// metric produces and says nothing about the `field` that is the reason.
+fn names_a_declared_field(metric: &MetricQuery) -> Result<(), KindError> {
+    let named = metric.field_references();
+    if named.is_empty() {
+        return Ok(());
+    }
+
+    Err(KindError::Unanswerable(
+        named
+            .into_iter()
+            .map(|reference| {
+                Violation::new(
+                    reference.at,
+                    Reason::NotAdmissible,
+                    "a metric over a table names a `column`, or a `json` key inside one; \
+                     `field` names a field of a dataset"
+                        .to_owned(),
                 )
             })
             .collect(),

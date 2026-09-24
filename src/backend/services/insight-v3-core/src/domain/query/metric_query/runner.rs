@@ -82,7 +82,6 @@ impl MetricRunner {
         let database = database.unwrap_or_default();
         let rows = self
             .client
-            .inner()
             .query(READ_ENGINE)
             .bind(database)
             .bind(database)

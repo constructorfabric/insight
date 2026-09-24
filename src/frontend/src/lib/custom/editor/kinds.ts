@@ -139,7 +139,7 @@ function readsFrom(
     {
       name: "column",
       label: "Column",
-      hint: hint.table,
+      hint: required ? `${hint.table} This or a JSON key below.` : hint.table,
       shape: { of: "pick", from: TABLE },
     },
     {
@@ -183,7 +183,10 @@ function condition(source: Source): Shape {
       {
         name: "value",
         label: "Against",
-        hint: "What the field is compared with.",
+        hint:
+          source === "dataset"
+            ? "What the field is compared with, read as the field's declared type."
+            : "What the column is compared with, read as the type above.",
         shape:
           source === "dataset"
             ? {
@@ -322,6 +325,9 @@ const METRIC: Description = {
       required: true,
       shape: {
         of: "variants",
+        // A metric over another source is another query: its fields, window
+        // and filters all name the source it was written for.
+        resets: true,
         variants: {
           dataset: [
             {
@@ -342,12 +348,6 @@ const METRIC: Description = {
               shape: { of: "pick", from: { catalogue: "tables" } },
               required: true,
               hint: "As database.table, any table the warehouse holds. A replacing table is read through FINAL without saying so.",
-            },
-            {
-              name: "database",
-              label: "Database",
-              shape: { of: "text" },
-              hint: "Only when the table above is written bare.",
             },
             produced("table"),
             windowedBy("table"),

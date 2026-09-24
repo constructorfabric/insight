@@ -1,7 +1,12 @@
 import type { ReactNode } from "react";
 
 import { Input } from "@/components/ui/input";
-import { hintId, saidId, type Describing } from "@/lib/custom/editor/aria";
+import {
+  hintId,
+  noteId,
+  saidId,
+  type Describing,
+} from "@/lib/custom/editor/aria";
 import { Textarea } from "@/components/ui/textarea";
 import { TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
@@ -172,6 +177,7 @@ export function Row({
   label,
   property,
   hint,
+  note,
   required,
   said,
   children,
@@ -181,6 +187,8 @@ export function Row({
   /** The property's name in the document, as the text view spells it. */
   property?: string;
   hint?: string;
+  /** What the editor noticed, where the value is sendable but probably wrong. */
+  note?: string;
   required?: boolean;
   said?: string;
   children: ReactNode;
@@ -205,6 +213,15 @@ export function Row({
       {hint ? (
         <p id={hintId(id)} className={cn(TEXT_LABEL, "text-muted-foreground")}>
           {hint}
+        </p>
+      ) : null}
+      {note ? (
+        <p
+          id={noteId(id)}
+          role="status"
+          className={cn(TEXT_LABEL, "text-warning")}
+        >
+          {note}
         </p>
       ) : null}
       {said ? (

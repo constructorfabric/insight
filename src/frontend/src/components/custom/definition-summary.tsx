@@ -8,6 +8,7 @@ import type {
   Widget,
 } from "@/api/custom-client";
 import { Badge } from "@/components/ui/badge";
+import { addressOf, spelled } from "@/lib/custom/editor/source";
 import { TEXT_BODY, TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
@@ -26,7 +27,9 @@ import { cn } from "@/lib/utils";
 function source(read: MetricRead): string {
   if (read.field !== undefined) return read.field;
   if (read.json !== undefined) {
-    return read.column ? `${read.column}.${read.json}` : read.json;
+    // A json key with no column is read inside the row's own payload, which
+    // is a different value from a column of that name.
+    return `${read.column ?? "raw_data"}.${read.json}`;
   }
 
   return read.column ?? "";
@@ -50,13 +53,9 @@ function over(definition: MetricDefinition): { label: string; named: string } {
   if (definition.dataset !== undefined) {
     return { label: "Dataset", named: definition.dataset };
   }
-  const table = definition.table ?? "";
-  const named =
-    definition.database && !table.includes(".")
-      ? `${definition.database}.${table}`
-      : table;
+  const named = addressOf(definition.table, definition.database);
 
-  return { label: "Table", named };
+  return { label: "Table", named: named ? spelled(named) : "" };
 }
 
 /** What a dataset says about its records, as a catalogue row reads it. */

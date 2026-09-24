@@ -43,6 +43,12 @@ export type Shape =
   | {
       of: "variants";
       recorded?: string;
+      /**
+       * Whether choosing another variant starts the record over. For variants
+       * that ask for the same names but read them differently, carrying a
+       * value across would leave a body that cannot be sent.
+       */
+      resets?: true;
       variants: Readonly<Record<string, readonly Field[]>>;
     };
 

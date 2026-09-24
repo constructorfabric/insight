@@ -85,9 +85,15 @@ describe("/portal/custom/new/$kind", () => {
         title: "Deployments",
       })
     );
-    expect(portalRouter.navigations).toContainEqual({
-      to: "/portal/custom/datasets",
-    });
+    // A save lands on what was saved: that page says what it now is, and what
+    // it has stopped feeding. Awaited, because the navigation happens once the
+    // write has come back, not once it has gone out.
+    await waitFor(() =>
+      expect(portalRouter.navigations).toContainEqual({
+        to: "/portal/custom/datasets/$name",
+        params: { name: "deployments" },
+      })
+    );
   });
 
   it("will not store anything until it has been named", () => {

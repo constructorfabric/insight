@@ -20,6 +20,14 @@ const CATALOGUE: Record<EditableKind, string> = {
   dashboards: "/portal/custom",
 };
 
+/** Where one definition is read, which is where a save lands. */
+const PAGE: Record<EditableKind, string> = {
+  datasets: "/portal/custom/datasets/$name",
+  metrics: "/portal/custom/metrics/$name",
+  widgets: "/portal/custom/widgets/$name",
+  dashboards: "/portal/custom/$name",
+};
+
 export function EditorPage({
   kind,
   name,
@@ -40,7 +48,12 @@ export function EditorPage({
   // overwrite whatever changed it since.
   const fresh = stored.isFetchedAfterMount && stored.isSuccess;
 
-  const done = () => void navigate({ to: CATALOGUE[kind] });
+  // A save lands on what was saved, not back in the list: that page is where
+  // the definition says what it now is, what it answers, and - for a metric
+  // whose columns have just changed - which widgets it has stopped feeding.
+  const opened = (called: string) =>
+    void navigate({ to: PAGE[kind], params: { name: called } });
+  const gone = () => void navigate({ to: CATALOGUE[kind] });
 
   return (
     <div className="flex flex-col gap-4 p-4 md:p-6">
@@ -60,7 +73,7 @@ export function EditorPage({
       </div>
 
       {name === undefined ? (
-        <DefinitionEditor kind={kind} onStored={done} />
+        <DefinitionEditor kind={kind} onStored={opened} />
       ) : stored.isError ? (
         <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
           {refusal(stored.error, `That ${description.noun} is not there.`)}
@@ -71,9 +84,9 @@ export function EditorPage({
             kind={kind}
             name={name}
             document={stored.data}
-            onStored={done}
+            onStored={opened}
           />
-          <Removal kind={kind} name={name} onRemoved={done} />
+          <Removal kind={kind} name={name} onRemoved={gone} />
         </>
       ) : (
         <CenteredSpinner className="min-h-40" />
