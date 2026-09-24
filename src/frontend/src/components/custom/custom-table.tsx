@@ -1,5 +1,9 @@
+import { useState } from "react";
+import { ArrowDown, ArrowUp } from "lucide-react";
+
 import type { MetricResult } from "@/api/custom-client";
 import { groupedNumber, unitFor } from "@/components/custom/chart-format";
+import { nextOrder, ordered, type RowOrder } from "@/lib/custom/row-order";
 import { TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 import {
@@ -45,8 +49,49 @@ function Cell({ value, unit }: { value: unknown; unit: string }) {
   );
 }
 
+/** A column header that orders the table: up, down, and back as it came. */
+function Sortable({
+  column,
+  index,
+  order,
+  onOrder,
+}: {
+  column: string;
+  index: number;
+  order: RowOrder | undefined;
+  onOrder: (order: RowOrder | undefined) => void;
+}) {
+  const chosen = order?.column === index ? order.direction : "none";
+
+  return (
+    <TableHead aria-sort={chosen}>
+      <button
+        type="button"
+        className="inline-flex items-center gap-1 hover:underline"
+        aria-label={
+          chosen === "none"
+            ? `Order by ${column}`
+            : `Order by ${column}, now ${chosen}`
+        }
+        onClick={() => onOrder(nextOrder(order, index))}
+      >
+        {column}
+        {/* The slot is there whether or not an arrow is in it: a column that
+            widened when it was ordered by would shift every column beside it. */}
+        <span className="inline-flex size-3 shrink-0 items-center justify-center">
+          {chosen === "ascending" ? <ArrowUp className="size-3" aria-hidden /> : null}
+          {chosen === "descending" ? (
+            <ArrowDown className="size-3" aria-hidden />
+          ) : null}
+        </span>
+      </button>
+    </TableHead>
+  );
+}
+
 export function CustomTable({ result }: CustomTableProps) {
-  const rows = result.rows.slice(0, SHOWN);
+  const [order, setOrder] = useState<RowOrder | undefined>(undefined);
+  const rows = ordered(result.rows, order).slice(0, SHOWN);
 
   return (
     <>
@@ -59,14 +104,24 @@ export function CustomTable({ result }: CustomTableProps) {
       <Table>
         <TableHeader>
           <TableRow>
-            {result.columns.map((column) => (
-              <TableHead key={column}>{column}</TableHead>
+            <TableHead className="w-0 text-muted-foreground">#</TableHead>
+            {result.columns.map((column, index) => (
+              <Sortable
+                key={column}
+                column={column}
+                index={index}
+                order={order}
+                onOrder={setOrder}
+              />
             ))}
           </TableRow>
         </TableHeader>
         <TableBody>
           {rows.map((row, rowIndex) => (
             <TableRow key={rowIndex}>
+              <TableCell className="w-0 pe-3 text-end tabular-nums text-muted-foreground">
+                {rowIndex + 1}
+              </TableCell>
               {result.columns.map((column, columnIndex) => (
                 <TableCell key={columnIndex}>
                   {columnIndex < row.length ? (

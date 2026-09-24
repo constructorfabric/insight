@@ -9,7 +9,8 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
 });
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { createElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -108,4 +109,41 @@ describe("<WidgetDrilldown>", () => {
     });
   });
 
+  // The dialog is sized for a result of a few columns. A wider one is read by
+  // filling the window rather than by scrolling a small frame.
+  it("fills the window when asked, and gives the room back", async () => {
+    const user = userEvent.setup();
+    vi.mocked(customClient.fetchMetric).mockResolvedValue(CLOCKLESS);
+    vi.mocked(customClient.runMetric).mockResolvedValue({
+      columns: ["total"],
+      rows: [[144]],
+    });
+
+    render(
+      <WidgetDrilldown
+        widget={{ type: "table", metric: "total", columns: ["total"] }}
+        name="all_table"
+        label="Pull requests ever opened"
+        open
+        onOpenChange={vi.fn()}
+      />,
+      { wrapper },
+    );
+
+    const dialog = await screen.findByRole("dialog");
+    const width = () => dialog.className;
+
+    expect(width()).toContain("80rem");
+
+    await user.click(screen.getByRole("button", { name: "Fill the window" }));
+
+    expect(width()).toContain("98vw");
+    expect(width()).not.toContain("80rem");
+
+    await user.click(
+      screen.getByRole("button", { name: "Shrink the dialog back" })
+    );
+
+    expect(width()).toContain("80rem");
+  });
 });

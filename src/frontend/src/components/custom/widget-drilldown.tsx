@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Maximize2, Minimize2 } from "lucide-react";
 
 import type { Widget } from "@/api/custom-client";
 import { CustomTable } from "@/components/custom/custom-table";
@@ -52,10 +52,15 @@ export function WidgetDrilldown({
   options?: RunOptions;
 }) {
   const [view, setView] = useState<View>({ kind: "rows" });
+  /** Whether the dialog has been asked to fill the window. */
+  const [filling, setFilling] = useState(false);
 
   /** Closing returns to the rows, so the next visit starts where it should. */
   function change(next: boolean) {
-    if (!next) setView({ kind: "rows" });
+    if (!next) {
+      setView({ kind: "rows" });
+      setFilling(false);
+    }
     onOpenChange(next);
   }
 
@@ -64,7 +69,13 @@ export function WidgetDrilldown({
 
   return (
     <Dialog open={open} onOpenChange={change}>
-      <DialogContent className="max-w-3xl">
+      <DialogContent
+        className={cn(
+          filling
+            ? "h-[96vh] w-[98vw] max-w-[98vw] content-start"
+            : "w-[min(96vw,80rem)] max-w-[min(96vw,80rem)]"
+        )}
+      >
         <DialogHeader>
           <DialogTitle className="flex min-w-0 items-center gap-2">
             {view.kind === "rows" ? null : (
@@ -85,6 +96,20 @@ export function WidgetDrilldown({
             >
               {heading}
             </span>
+            {/* me-7 clears the kit's own close button, which is positioned
+                over the corner rather than laid out in this row. */}
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="ms-auto me-7"
+              aria-pressed={filling}
+              aria-label={
+                filling ? "Shrink the dialog back" : "Fill the window"
+              }
+              onClick={() => setFilling((was) => !was)}
+            >
+              {filling ? <Minimize2 /> : <Maximize2 />}
+            </Button>
           </DialogTitle>
           {view.kind === "rows" ? null : (
             <DialogDescription>
@@ -97,7 +122,11 @@ export function WidgetDrilldown({
 
         {open && view.kind === "rows" ? (
           <>
-            <Rows metric={widget.detail ?? widget.metric} options={options} />
+            <Rows
+              metric={widget.detail ?? widget.metric}
+              options={options}
+              filling={filling}
+            />
             <Definitions widget={widget} name={name} onOpen={setView} />
           </>
         ) : null}
@@ -188,7 +217,16 @@ function StoredMetric({ name }: { name: string }) {
   return <MetricSummary definition={definition.data.definition} />;
 }
 
-function Rows({ metric, options }: { metric: string; options?: RunOptions }) {
+function Rows({
+  metric,
+  options,
+  filling,
+}: {
+  metric: string;
+  options?: RunOptions;
+  /** Filling the window, the dialog scrolls rather than the rows inside it. */
+  filling: boolean;
+}) {
   const definition = useQuery(metricQuery(metric));
 
   // The rows have to be the rows behind the number on the card, so they take
@@ -222,7 +260,12 @@ function Rows({ metric, options }: { metric: string; options?: RunOptions }) {
 
   return (
     <div className="flex min-w-0 flex-col gap-2">
-      <div className="max-h-[60vh] min-w-0 overflow-auto">
+      <div
+        className={cn(
+          "min-w-0 overflow-auto",
+          filling ? "max-h-none" : "max-h-[70vh]"
+        )}
+      >
         <CustomTable result={result.data} />
       </div>
     </div>
