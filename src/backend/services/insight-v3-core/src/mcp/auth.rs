@@ -27,8 +27,7 @@ pub(crate) const MCP_PATH: &str = "/mcp/v3";
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct McpAccessClaims {
-    #[serde(rename = "sub")]
-    _sub: String,
+    sub: String,
     #[serde(rename = "tenant_id")]
     _tenant_id: String,
     roles: String,
@@ -43,6 +42,9 @@ pub(crate) struct McpAccessClaims {
     #[serde(rename = "jti")]
     _jti: String,
 }
+
+#[derive(Debug, Clone)]
+pub(crate) struct McpCaller(pub(crate) String);
 
 #[derive(Debug)]
 pub(crate) enum AuthFailure {
@@ -246,7 +248,7 @@ impl TokenVerifier {
 pub(crate) async fn authenticate(
     State(verifier): State<TokenVerifier>,
     headers: HeaderMap,
-    request: Request,
+    mut request: Request,
     next: Next,
 ) -> Response {
     let result = match bearer_token(&headers) {
@@ -255,7 +257,10 @@ pub(crate) async fn authenticate(
     };
 
     match result {
-        Ok(_) => next.run(request).await,
+        Ok(claims) => {
+            request.extensions_mut().insert(McpCaller(claims.sub));
+            next.run(request).await
+        }
         Err(AuthFailure::Unauthorized) => {
             verifier.challenge(StatusCode::UNAUTHORIZED, "invalid_token")
         }

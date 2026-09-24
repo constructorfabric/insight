@@ -84,7 +84,8 @@ grep -q 'insight-custom-surfaces' <<<"${init}" || fail "unexpected initialize: $
 say "every tool is advertised"
 tools="$(rpc '{"jsonrpc":"2.0","id":2,"method":"tools/list"}')"
 for tool in list_definitions get_definition put_metric put_widget put_dashboard \
-            delete_definition run_metric list_datasets list_tables describe_tables; do
+            delete_definition run_metric list_datasets list_tables describe_tables \
+            put_dataset; do
   grep -q "\"${tool}\"" <<<"${tools}" || fail "${tool} is not advertised: ${tools}"
 done
 
