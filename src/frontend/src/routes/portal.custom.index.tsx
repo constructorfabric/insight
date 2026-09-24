@@ -9,12 +9,14 @@ import {
 } from "@/components/custom/definition-paging";
 import { DefinitionSearch } from "@/components/custom/definition-search";
 import { EditLink, NewLink } from "@/components/custom/editor/edit-link";
+import { MoveToFolder } from "@/components/custom/move-to-folder";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { useDefinitionCatalogue } from "@/hooks/use-definition-catalogue";
-import { dashboardQuery } from "@/queries/custom";
+import { usePortalSearch } from "@/lib/portal/portal-search";
+import { dashboardQuery, foldersQuery } from "@/queries/custom";
 import { TEXT_BODY, TEXT_LABEL, TEXT_NAME, TEXT_TITLE } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
@@ -22,14 +24,45 @@ export const Route = createFileRoute("/portal/custom/")({
   component: CustomDashboardIndex,
 });
 
+const UNFILED = "unfiled";
+
+interface Shown {
+  folder?: string;
+  heading: string;
+  pending?: boolean;
+  lost?: boolean;
+}
+
+function useShownFolder(): Shown {
+  const { folder: asked } = usePortalSearch();
+  const folders = useQuery({
+    ...foldersQuery(),
+    enabled: asked != null && asked !== UNFILED,
+  });
+
+  if (!asked) return { heading: "Custom" };
+  if (asked === UNFILED) return { folder: UNFILED, heading: "Unfiled" };
+  if (folders.isError) return { folder: asked, heading: "Custom" };
+  if (!folders.data) return { heading: "Custom", pending: true };
+
+  const found = folders.data.folders.find((folder) => folder.id === asked);
+  return found
+    ? { folder: found.id, heading: found.name }
+    : { heading: "Custom", lost: true };
+}
+
 function CustomDashboardIndex() {
-  const catalogue = useDefinitionCatalogue("dashboards");
+  const shown = useShownFolder();
+  const catalogue = useDefinitionCatalogue("dashboards", {
+    folder: shown.folder,
+    enabled: !shown.pending,
+  });
 
   return (
     <>
       <header className="mb-3 flex flex-wrap items-start gap-3 pe-12">
         <div className="min-w-0 grow">
-          <h1 className={TEXT_TITLE}>Custom</h1>
+          <h1 className={TEXT_TITLE}>{shown.heading}</h1>
           <p className={cn(TEXT_BODY, "text-muted-foreground")}>
             Dashboards built from your own data. Ask the assistant for a new
             one, or write one by hand.
@@ -37,6 +70,14 @@ function CustomDashboardIndex() {
         </div>
         <NewLink kind="dashboards" noun="dashboard" />
       </header>
+      {shown.lost ? (
+        <p
+          role="status"
+          className={cn(TEXT_BODY, "mb-3 text-muted-foreground")}
+        >
+          That folder no longer exists, so every dashboard is shown.
+        </p>
+      ) : null}
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <DefinitionSearch
           label="Search dashboards"
@@ -88,6 +129,7 @@ function DashboardCard({ name }: { name: string }) {
           </span>
         </Link>
         <span className="flex shrink-0 items-center gap-1">
+          <MoveToFolder name={name} />
           <EditLink kind="dashboards" name={name} />
           <Button
             variant="ghost"

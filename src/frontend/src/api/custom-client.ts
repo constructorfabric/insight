@@ -167,6 +167,8 @@ export async function fetchDashboardFolder(
   return read.folder ?? null;
 }
 
+export const FOLDER_NAME_MAX = 64;
+
 export async function fetchFolders(): Promise<FolderList> {
   const res = await fetchWithAuth(`${BASE}/folders`);
   return readJson<FolderList>(res);

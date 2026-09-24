@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Ellipsis, Folder, Inbox, Pencil, Plus, Trash2 } from "lucide-react";
 import { useId, useState } from "react";
 
-import type { FolderSummary } from "@/api/custom-client";
+import { FOLDER_NAME_MAX, type FolderSummary } from "@/api/custom-client";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { refusal } from "@/components/custom/refusal";
 import { CountBadge } from "@/components/portal/pane-nav";
@@ -32,7 +32,6 @@ import {
 } from "@/queries/custom";
 
 const LIST_PATH = /^\/portal\/custom\/?$/;
-const MAX_NAME = 64;
 const NEW_FOLDER = "new";
 const UNDER_THE_MENU =
   "md:group-focus-within/menu-item:opacity-0 md:group-hover/menu-item:opacity-0 max-md:end-8";
@@ -202,7 +201,7 @@ function FolderNameField({
           aria-invalid={error != null}
           aria-describedby={error ? errorId : undefined}
           className="h-8"
-          maxLength={MAX_NAME}
+          maxLength={FOLDER_NAME_MAX}
           readOnly={saving}
           value={value}
           onChange={(event) => {
