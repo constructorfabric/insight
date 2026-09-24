@@ -120,8 +120,13 @@ fi
 find "$work" -maxdepth 4 -type d -name .git -print0 2>/dev/null |
   while IFS= read -r -d '' gitdir; do
     dropped=0
+    # --no-deref: origin/HEAD is symbolic, and without it the delete follows the
+    # symlink — origin/main goes instead and origin/HEAD is left dangling.
+    # core.hooksPath: update-ref fires reference-transaction, and a container job
+    # runs as root over this tree, so it can plant one for this hook to execute.
     for ref in $(git --git-dir="$gitdir" for-each-ref --format='%(refname)' refs/remotes/ 2>/dev/null); do
-      git --git-dir="$gitdir" update-ref -d "$ref" 2>/dev/null && dropped=$((dropped + 1))
+      git -c core.hooksPath=/dev/null --git-dir="$gitdir" update-ref -d --no-deref "$ref" 2>/dev/null &&
+        dropped=$((dropped + 1))
     done
     if [ "$dropped" -gt 0 ]; then
       echo "job-started hook: dropped $dropped remote-tracking ref(s) in $gitdir"

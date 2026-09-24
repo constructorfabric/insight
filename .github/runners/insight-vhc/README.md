@@ -88,7 +88,10 @@ missing binary.
   only when a step fetches it and never refreshes one it finds, so a ref left
   behind turns anything comparing against `origin/main` into a comparison with a
   base that has fallen behind. A runner starting from an empty tree has no such
-  ref; dropping them keeps these machines equivalent. The hook must exit zero —
-  the runner fails the job otherwise — so it ends with an explicit `exit 0`.
+  ref; dropping them keeps these machines equivalent. Deleting a ref fires
+  `reference-transaction`, and a container job runs as root over this tree, so
+  the delete runs with `core.hooksPath=/dev/null` — otherwise a hook planted
+  from inside a container would execute here as the runner user. The hook must
+  exit zero — the runner fails the job otherwise — so it ends with `exit 0`.
 - **Docker's data root on `/srv/gha`**, the attached volume, so image layers do
   not fill the system disk.
