@@ -239,3 +239,36 @@ async fn a_description_copies_no_more_tables_than_it_was_asked_to() {
     assert_eq!(described.tables.len(), 2);
     assert_eq!(described.total, 5);
 }
+
+/// The cap decides how much is copied out, never whether the warehouse holds a
+/// name. A caller told that an existing table is absent builds on the wrong one.
+#[tokio::test]
+async fn a_name_the_cap_left_out_is_not_reported_as_one_the_warehouse_lacks() {
+    let mut rows: Vec<ColumnFixture> = (0..5)
+        .map(|n| column(&format!("bronze_{n}"), "issues", "number", "Int64"))
+        .collect();
+    rows.push(column("silver", "fct_commit", "sha", "String"));
+
+    let (_mock, catalog) = catalog_over(rows);
+
+    let described = catalog
+        .describe(&["issues".to_owned(), "silver.fct_commit".to_owned()], 2)
+        .await
+        .unwrap_or_else(|error| panic!("describe answers: {error}"));
+
+    assert_eq!(described.tables.len(), 2);
+    assert!(
+        described.unknown.is_empty(),
+        "nothing is unknown here, yet: {:?}",
+        described.unknown
+    );
+}
+
+#[tokio::test]
+async fn a_name_no_table_answers_to_is_reported_as_unknown() {
+    let (_mock, catalog) = catalog_over(vec![column("silver", "fct_commit", "sha", "String")]);
+
+    let described = described_by(&catalog, &["silver.fct_commit", "nowhere.nothing"]).await;
+
+    assert_eq!(described.unknown, vec!["nowhere.nothing"]);
+}

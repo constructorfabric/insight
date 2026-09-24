@@ -381,13 +381,7 @@ impl CustomSurfaces {
         };
 
         let shown: Vec<Value> = described.tables.iter().map(table_description).collect();
-        // Against what was described, not against the cut: a name the cap left
-        // out is not a name the warehouse does not hold.
-        let mut unknown: Vec<&str> = tables
-            .iter()
-            .map(String::as_str)
-            .filter(|name| !described.tables.iter().any(|schema| schema.is_named(name)))
-            .collect();
+        let mut unknown: Vec<&str> = described.unknown.iter().map(String::as_str).collect();
         unknown.sort_unstable();
         unknown.dedup();
 

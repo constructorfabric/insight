@@ -82,6 +82,12 @@ pub(crate) struct Column {
 pub(crate) struct Described {
     pub(crate) tables: Vec<TableSchema>,
     pub(crate) total: usize,
+    /// The asked-for names no table answers to.
+    ///
+    /// INVARIANT: read over the whole listing, before the cap. A name the cap
+    /// left out is still a name the warehouse holds, and reporting it as
+    /// unknown tells a caller the opposite of the truth.
+    pub(crate) unknown: Vec<String>,
 }
 
 /// One table the warehouse holds, with everything a metric author needs to
@@ -196,9 +202,16 @@ impl Catalog {
                 .filter(|schema| names.iter().any(|name| schema.is_named(name)));
             let total = matching.clone().count();
 
+            let unknown = names
+                .iter()
+                .filter(|name| !tables.iter().any(|schema| schema.is_named(name)))
+                .cloned()
+                .collect();
+
             Described {
                 tables: matching.take(most).cloned().collect(),
                 total,
+                unknown,
             }
         })
         .await
