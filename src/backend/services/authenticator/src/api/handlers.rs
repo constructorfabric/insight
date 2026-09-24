@@ -31,6 +31,13 @@ use crate::identity::PersonResolution;
 use crate::jwt::GatewayClaims;
 use crate::session::{LoginState, NewSession, SessionRecord};
 
+/// How long `/auth/refresh` may spend converging roles.
+///
+/// INVARIANT: under the SPA's own abort on the request (`REQUEST_TIMEOUT_MS`
+/// in `src/frontend/src/auth/refresh.ts`). The credential is rotated before
+/// this call, so a slower answer strands the new cookie on the server.
+const ROLES_CONVERGE_BUDGET_SECS: u64 = 3;
+
 /// Header carrying the minted JWT back to nginx (`auth_request_set`).
 static X_GATEWAY_JWT: HeaderName = HeaderName::from_static("x-gateway-jwt");
 
@@ -1007,11 +1014,16 @@ pub async fn refresh(
     // Roles converge on refresh; the JWT catches up at its next reissue. An
     // unreachable identity keeps the current roles — a refresh must not fail,
     // or downgrade a session, over a roles blip.
-    match state
-        .resolver
-        .active_roles(&record.person_id, &record.tenant_id)
-        .await
-    {
+    let converged = tokio::time::timeout(
+        std::time::Duration::from_secs(ROLES_CONVERGE_BUDGET_SECS),
+        state
+            .resolver
+            .active_roles(&record.person_id, &record.tenant_id),
+    )
+    .await
+    .unwrap_or_else(|_| Err(anyhow::anyhow!("roles re-fetch exceeded its budget")));
+
+    match converged {
         Ok(fetched) => {
             let roles = effective_roles(Some(fetched), &state.cfg.default_roles);
             if roles != record.roles

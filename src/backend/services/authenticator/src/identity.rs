@@ -31,6 +31,15 @@ use uuid::Uuid;
 
 use crate::jwt::{GatewayClaims, KeyStore};
 
+/// Outer bound on one internal Identity lookup — `reqwest` has none by
+/// default, and a hung lookup must not outlive the request that made it.
+/// Generous on purpose: the login callback resolves, provisions and reads
+/// roles serially, and a caller needing a tighter budget sets its own.
+const IDENTITY_REQUEST_TIMEOUT_SECS: u64 = 20;
+/// Connect budget within the request budget above — a half-open TCP to a
+/// restarting Identity must fail fast rather than spend the whole allowance.
+const IDENTITY_CONNECT_TIMEOUT_SECS: u64 = 5;
+
 /// How to resolve an [`IdpIdentity`] to a person — set explicitly by the
 /// caller, never inferred from field emptiness. This is the fix for the
 /// login/override confusion: a normal login MUST carry `ExternalId` (built
@@ -160,22 +169,34 @@ impl IdentityPersonResolver {
     /// `keystore` / `issuer` / `audience` are used to mint the service JWT that
     /// authenticates the internal lookup call. `source_type` is `idp.source_type`
     /// — the identity-resolution source the login-bootstrap resolve is scoped to.
-    #[must_use]
+    ///
+    /// # Errors
+    /// The HTTP client could not be built.
     pub fn new(
         base_url: &str,
         keystore: Arc<KeyStore>,
         issuer: String,
         audience: String,
         source_type: String,
-    ) -> Self {
-        Self {
+    ) -> anyhow::Result<Self> {
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(
+                IDENTITY_REQUEST_TIMEOUT_SECS,
+            ))
+            .connect_timeout(std::time::Duration::from_secs(
+                IDENTITY_CONNECT_TIMEOUT_SECS,
+            ))
+            .build()
+            .context("building the Identity HTTP client")?;
+
+        Ok(Self {
             base_url: base_url.trim_end_matches('/').to_owned(),
-            http: reqwest::Client::new(),
+            http,
             keystore,
             issuer,
             audience,
             source_type,
-        }
+        })
     }
 
     /// Mint a short-lived service gateway JWT (`sub_type = service`) for the
