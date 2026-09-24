@@ -182,6 +182,14 @@ The system **MUST** let a dashboard be created in realtime.
 
 **Actors**: `cpt-insightspec-v3-actor-dashboard-author`
 
+#### Organise Dashboards into Folders
+
+- [ ] `p2` - **ID**: `cpt-insightspec-v3-fr-dashboard-folders`
+
+The system **MUST** let dashboards be kept in named folders, one level deep. A folder can be created, renamed and deleted; a dashboard sits in at most one folder, or in none; deleting a folder leaves its dashboards in none. Everyone who can see dashboards sees the same folders, and the AI can list folders, create one and move a dashboard between them.
+
+**Actors**: `cpt-insightspec-v3-actor-dashboard-author`
+
 ### 5.5 AI
 
 #### Answer a Question

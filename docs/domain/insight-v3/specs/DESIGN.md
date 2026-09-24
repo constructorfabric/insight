@@ -117,6 +117,7 @@ TBD
 - Metric — a named calculation over raw data.
 - Widget — any visual representation of data over chosen columns.
 - Dashboard — a named, addressable page arranging widgets.
+- Folder — a named group of dashboards, one level deep; a dashboard is in at most one.
 - Alert — a condition on a metric plus where to send it when it fires.
 
 ### 3.2 Component Model
@@ -199,6 +200,18 @@ The schema lives in the migration, not here: [src/backend/services/insight-v3-co
 a physical table of its own with the identical columns, requested by an
 administrator through `PUT /v1/tables/{table}` — see
 [ADR-0006](./ADR/0006-a-table-per-ingest-stream.md).
+
+- [ ] `p2` - **ID**: `cpt-insightspec-v3-db-definitions`
+
+#### Definitions store (MariaDB)
+
+Metric, widget, dashboard and dataset definitions, one table per kind. The scripts are in [src/backend/services/insight-v3-core/src/store/definitions/sql/](../../../../src/backend/services/insight-v3-core/src/store/definitions/sql/).
+
+#### Table: folders
+
+**ID**: `cpt-insightspec-v3-dbtable-folders`
+
+A folder is a row of its own, so an empty folder exists. A dashboard names its folder in a nullable `folder_id` column beside its body, not inside it: a whole-body write — the UI's `PUT` or the MCP `put_dashboard` — leaves the folder alone, and a rename carries it to the new name. Deleting a folder clears the column on its dashboards. Implements `cpt-insightspec-v3-fr-dashboard-folders`.
 
 ### 3.8 Deployment Topology
 
