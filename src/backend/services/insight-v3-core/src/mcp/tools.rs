@@ -514,7 +514,10 @@ fn change_refusal(error: DatasetChangeError) -> CallToolResult {
             tracing::error!(%error, "an MCP dataset declaration failed");
             refuse("the request could not be completed")
         }
-        about_the_caller => refuse(&about_the_caller.to_string()),
+        about_the_caller @ (DatasetChangeError::NotFound
+        | DatasetChangeError::StillRead(_)
+        | DatasetChangeError::Unreadable(_)
+        | DatasetChangeError::Refused(_)) => refuse(&about_the_caller.to_string()),
     }
 }
 
