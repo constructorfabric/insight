@@ -154,6 +154,27 @@ describe("/portal/custom in a folder", () => {
     expect(screen.getByRole("heading", { level: 1, name: "Custom" })).toBeInTheDocument();
   });
 
+  it("says how to fill an empty folder rather than that nothing exists", async () => {
+    portalRouter.set({ folder: "f1" });
+    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: [], total: 0 });
+
+    render(<Component />, { wrapper });
+
+    expect(
+      await screen.findByText("No dashboards in this folder yet. Move one here from its ··· menu."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/no dashboards yet\. describe/i)).toBeNull();
+  });
+
+  it("says every dashboard is filed when Unfiled is empty", async () => {
+    portalRouter.set({ folder: "unfiled" });
+    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: [], total: 0 });
+
+    render(<Component />, { wrapper });
+
+    expect(await screen.findByText("Every dashboard is in a folder.")).toBeInTheDocument();
+  });
+
   it("checks the folder a dashboard is in", async () => {
     vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: ["delivery"], total: 1 });
     vi.mocked(customClient.fetchDashboardFolder).mockResolvedValue({ id: "f1", name: "Platform" });

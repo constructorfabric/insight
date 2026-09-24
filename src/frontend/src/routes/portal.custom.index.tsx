@@ -26,6 +26,14 @@ export const Route = createFileRoute("/portal/custom/")({
 
 const UNFILED = "unfiled";
 
+function emptyLabel(folder: string | undefined): string {
+  if (folder === UNFILED) return "Every dashboard is in a folder.";
+  if (folder) {
+    return "No dashboards in this folder yet. Move one here from its ··· menu.";
+  }
+  return "No dashboards yet. Describe one to the assistant and it will build it.";
+}
+
 interface Shown {
   folder?: string;
   heading: string;
@@ -96,6 +104,7 @@ function CustomDashboardIndex() {
         isError={catalogue.isError}
         onRetry={catalogue.refetch}
         paging={catalogue.paging}
+        emptyLabel={emptyLabel(shown.folder)}
       />
     </>
   );
@@ -153,12 +162,14 @@ function CustomDashboardList({
   isError,
   onRetry,
   paging,
+  emptyLabel,
 }: {
   names: string[] | undefined;
   isLoading: boolean;
   isError: boolean;
   onRetry: () => void;
   paging: Paging;
+  emptyLabel: string;
 }) {
   if (isLoading) return <CenteredSpinner className="min-h-40" />;
   if (isError) {
@@ -175,13 +186,7 @@ function CustomDashboardList({
   if (!names) return null;
 
   if (names.length === 0) {
-    return (
-      <ComingSoon
-        variant="card"
-        state="empty"
-        label="No dashboards yet. Describe one to the assistant and it will build it."
-      />
-    );
+    return <ComingSoon variant="card" state="empty" label={emptyLabel} />;
   }
 
   return (
