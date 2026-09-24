@@ -101,7 +101,7 @@ describe("/portal/custom/edit/$kind/$name", () => {
     expect(customClient.fetchMetric).toHaveBeenCalledWith("lines_per_day");
   });
 
-  it("returns to the catalogue once it is stored", async () => {
+  it("opens what was stored, where it says what it now is", async () => {
     const user = userEvent.setup();
     vi.mocked(customClient.fetchMetric).mockResolvedValue({
       definition: { dataset: "commits", fields: [] },
@@ -114,7 +114,8 @@ describe("/portal/custom/edit/$kind/$name", () => {
 
     await waitFor(() =>
       expect(portalRouter.navigations).toContainEqual({
-        to: "/portal/custom/metrics",
+        to: "/portal/custom/metrics/$name",
+        params: { name: "lines_per_day" },
       })
     );
   });

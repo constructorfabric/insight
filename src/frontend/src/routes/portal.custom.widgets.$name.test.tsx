@@ -175,4 +175,29 @@ describe("/portal/custom/widgets/$name", () => {
       "That widget is not there."
     );
   });
+
+  // The card itself already says a metric stopped returning a column it
+  // draws, wherever it is drawn - here and on a board alike. This page needs
+  // nothing of its own; the test is here so that stays true.
+  it("says so when its metric no longer returns what it draws", async () => {
+    vi.mocked(customClient.runMetric).mockResolvedValue({
+      columns: ["author", "counted"],
+      rows: [["ada", 120]],
+    });
+
+    render(<Component />, { wrapper });
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        /draws lines, which lines_by_author does not return/
+      )
+    );
+  });
+
+  it("says nothing of the sort while the metric still returns it", async () => {
+    render(<Component />, { wrapper });
+
+    await screen.findByText("Lines by author");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
 });

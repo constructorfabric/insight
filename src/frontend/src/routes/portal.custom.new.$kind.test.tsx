@@ -85,8 +85,11 @@ describe("/portal/custom/new/$kind", () => {
         title: "Deployments",
       })
     );
+    // A save lands on what was saved: that page says what it now is, and what
+    // it has stopped feeding.
     expect(portalRouter.navigations).toContainEqual({
-      to: "/portal/custom/datasets",
+      to: "/portal/custom/datasets/$name",
+      params: { name: "deployments" },
     });
   });
 
