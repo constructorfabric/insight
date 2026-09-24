@@ -1,5 +1,6 @@
 //! The definitions as `MariaDB` holds them.
 
+mod folders;
 pub(crate) mod migration;
 
 #[cfg(test)]
