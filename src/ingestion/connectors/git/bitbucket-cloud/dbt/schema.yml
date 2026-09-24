@@ -83,8 +83,6 @@ models:
       - name: value
         description: "The account_id itself for an id row, the claimed e-mail address, or the display name"
 
-  - name: bitbucket_cloud__bronze_promoted
-    description: "Promotes every Bitbucket bronze table to ReplacingMergeTree keyed on unique_key"
 
   - name: bitbucket_cloud__repositories
     description: "Bitbucket Cloud repositories -> staging, feeds class_git_repositories"

@@ -41,8 +41,8 @@ WITH source_data AS (
     -- (e.g. an erroneous Airbyte full_refresh|append re-appending every row)
     -- are each compared to the snapshot high-water mark and written as spurious
     -- SCD2 history versions — data corruption, not just dupes. See ADR-0001.
-    -- Every source_ref MUST therefore be a ReplacingMergeTree relation (bronze is
-    -- promoted; intermediate models like slack__users_latest are RMT too).
+    -- Every source_ref MUST therefore be a ReplacingMergeTree relation (bronze by
+    -- construction; intermediate models like slack__users_latest are RMT too).
     FROM {{ source_ref }} FINAL
 )
 

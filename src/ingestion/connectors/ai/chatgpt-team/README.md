@@ -107,8 +107,7 @@ Shipped (this connector's `dbt/`):
   history → `chatgpt_team__identity_inputs` → **`identity_inputs`**
   (`source_type='chatgpt-team'`, contributing `email` and `display_name`).
 
-Plus the bronze→RMT promotion (`chatgpt_team__bronze_promoted`). The class
-relations then feed the `ai_usage` gold models and the metric registry.
+The class relations then feed the `ai_usage` gold models and the metric registry.
 
 ## Related
 

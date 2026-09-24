@@ -1,5 +1,10 @@
 name: slack
-version: "2026.05.04"
+# 2026.6.0: connections carry destinationSyncMode append_dedup with
+#   primaryKey unique_key, so the Airbyte destination owns the bronze table
+#   shape and the RMT promotion step is gone (#2877). MINOR per ADR-0015:
+#   reconcile must republish this connector so the connection catalog is
+#   refreshed; nothing already stored changes meaning.
+version: "2026.6.0"
 schedule: 0 4 * * *
 dbt_select: tag:slack+
 workflow: sync

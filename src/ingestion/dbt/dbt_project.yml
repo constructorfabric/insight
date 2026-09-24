@@ -114,10 +114,6 @@ vars:
   # boards is something an operator can actually do.
   task_board_bindings_enforced: false
 
-# Bronze MergeTree → ReplacingMergeTree promotion happens per-connector via
-# a dedicated bootstrap model (e.g. `jira__bronze_promoted`) using `pre_hook`,
-# so all the connector's other models depend on it via `-- depends_on:`. This
-# keeps connector-specific table lists co-located with the connector code.
 on-run-start:
   # config.task_field_roles / config.task_value_map — operator-authored
   # bindings from a vendor field or value to the role and canonical value gold

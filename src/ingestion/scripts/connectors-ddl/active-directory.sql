@@ -25,10 +25,10 @@ CREATE TABLE IF NOT EXISTS bronze_active_directory.users
     `whenChanged` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String)
+    `unique_key` String
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 

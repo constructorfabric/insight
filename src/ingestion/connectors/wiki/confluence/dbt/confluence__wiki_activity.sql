@@ -1,4 +1,3 @@
--- depends_on: {{ ref('confluence__bronze_promoted') }}
 -- Bronze → Silver step 1: Confluence page versions → class_wiki_activity
 --
 -- Per-user per-day edit activity rolled up from wiki_page_versions. One row

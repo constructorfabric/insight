@@ -1,6 +1,11 @@
 name: bamboohr
 type: cdk
-version: "2.7.0"
+# 2.8.0: connections carry destinationSyncMode append_dedup with
+#   primaryKey unique_key, so the Airbyte destination owns the bronze table
+#   shape and the RMT promotion step is gone (#2877). MINOR per ADR-0015:
+#   reconcile must republish this connector so the connection catalog is
+#   refreshed; nothing already stored changes meaning.
+version: "2.8.0"
 schedule: 0 * * * *
 dbt_select: tag:bamboohr+
 workflow: sync

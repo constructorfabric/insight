@@ -1,4 +1,3 @@
--- depends_on: {{ ref('bamboohr__bronze_promoted') }}
 -- Bronze → Silver step 1: BambooHR Employees → class_people
 -- Full-refresh source. Maps employee records to unified person registry.
 -- Current-state snapshot: exactly one row per employee. `valid_from` records

@@ -19,5 +19,16 @@ sources:
       - name: deployment_events
 
 models:
-  - name: compass__bronze_promoted
-    description: "Promotes every bronze_compass table to ReplacingMergeTree ordered by unique_key, so later FINAL reads are well-defined. Required for deployment_events, whose rows are rewritten in place as a deployment progresses."
+  - name: compass__components
+    description: "Deduplicated Compass component catalog — one row per component, with its owning team id and the raw JSON columns (labels, links, event sources, dependency edges) that silver will flatten."
+    columns:
+      - name: unique_key
+        tests:
+          - not_null
+          - unique
+      - name: component_id
+        tests:
+          - not_null
+      - name: name
+        tests:
+          - not_null

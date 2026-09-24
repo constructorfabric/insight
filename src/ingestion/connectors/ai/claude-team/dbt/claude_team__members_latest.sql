@@ -1,4 +1,3 @@
--- depends_on: {{ ref('claude_team__bronze_promoted') }}
 {{ config(
     materialized='table',
     engine='ReplacingMergeTree',
@@ -11,7 +10,7 @@
 -- Flattens the serialized `account` object of bronze_claude_team.claude_team_members.
 -- The snapshot macro hashes named columns and fields_history tracks them by
 -- name, so neither can reach a field nested inside it; the identity chain needs
--- them as ordinary columns. FINAL dedups the promoted ReplacingMergeTree source
+-- them as ordinary columns. FINAL dedups the ReplacingMergeTree bronze source
 -- before the snapshot compares versions (ADR-0001).
 
 -- WORKAROUND: the destination represents `account` as String or as JSON

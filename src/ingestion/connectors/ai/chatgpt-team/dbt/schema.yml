@@ -193,7 +193,7 @@ models:
   - name: chatgpt_team__seats_latest
     description: >
       Roster projection for the identity chain: one row per seat, deduped with
-      FINAL over the promoted Bronze table. Rows without user_id are dropped;
+      FINAL over the Bronze table. Rows without user_id are dropped;
       rows without an email are kept so the account stays bindable by hand.
       Every tracked column is '' rather than NULL, because fields_history diffs
       consecutive versions and a comparison against NULL yields NULL — a cleared
@@ -230,7 +230,6 @@ models:
               arguments:
                 values: ['chatgpt-team']
 
-# Bronze→RMT promotion is bootstrapped by chatgpt_team__bronze_promoted.sql.
 # subscription_usage/balance have no Silver model: the class contracts are
 # per-seat and these two streams are workspace totals, so there is nothing to
 # map them onto yet.

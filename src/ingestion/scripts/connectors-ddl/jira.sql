@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_board_configuration
     `location` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `board_id` Nullable(Decimal(38, 9)),
     `board_type` Nullable(String),
     `estimation_field_id` Nullable(String),
@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_board_configuration
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_jira.jira_boards
@@ -45,12 +45,12 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_boards
     `isPrivate` Nullable(Bool),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `collected_at` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_jira.jira_comments
@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_comments
     `jsdPublic` Nullable(Bool),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `comment_id` Nullable(Decimal(38, 9)),
     `id_readable` Nullable(String),
     `jira_id` Nullable(String),
@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_comments
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_jira.jira_fields
@@ -99,7 +99,7 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_fields
     `schema` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `field_id` Nullable(String),
     `schema_type` Nullable(String),
     `schema_items` Nullable(String),
@@ -109,7 +109,7 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_fields
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_jira.jira_issue
@@ -124,7 +124,7 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_issue
     `key` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `jira_id` Nullable(String),
     `id_readable` Nullable(String),
     `project_key` Nullable(String),
@@ -144,7 +144,7 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_issue
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_jira.jira_issue_census
@@ -156,14 +156,14 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_issue_census
     `id` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `jira_id` Nullable(String),
     `project_key` Nullable(String),
     `collected_at` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_jira.jira_issue_history
@@ -178,7 +178,7 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_issue_history
     `items` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `id_readable` Nullable(String),
     `jira_id` Nullable(String),
     `author_account_id` Nullable(String),
@@ -188,7 +188,7 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_issue_history
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_jira.jira_issue_keys
@@ -201,7 +201,7 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_issue_keys
     `key` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `id_readable` Nullable(String),
     `jira_id` Nullable(String),
     `updated` Nullable(String),
@@ -209,7 +209,7 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_issue_keys
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_jira.jira_issuetypes
@@ -229,7 +229,7 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_issuetypes
     `hierarchyLevel` Nullable(Decimal(38, 9)),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `issuetype_id` Nullable(Decimal(38, 9)),
     `hierarchy_level` Nullable(Decimal(38, 9)),
     `collected_at` Nullable(String),
@@ -237,7 +237,7 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_issuetypes
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_jira.jira_priorities
@@ -254,13 +254,13 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_priorities
     `id` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `priority_id` Nullable(Decimal(38, 9)),
     `collected_at` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_jira.jira_project_visibility
@@ -283,7 +283,7 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_project_visibility
     `properties` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `project_id` Nullable(Decimal(38, 9)),
     `project_key` Nullable(String),
     `project_status` Nullable(String),
@@ -292,7 +292,7 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_project_visibility
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_jira.jira_projects
@@ -315,7 +315,7 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_projects
     `properties` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `project_id` Nullable(Decimal(38, 9)),
     `project_key` Nullable(String),
     `project_type` Nullable(String),
@@ -328,7 +328,7 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_projects
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_jira.jira_resolutions
@@ -343,13 +343,13 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_resolutions
     `name` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `resolution_id` Nullable(Decimal(38, 9)),
     `collected_at` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_jira.jira_sprints
@@ -368,7 +368,7 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_sprints
     `originBoardId` Nullable(Decimal(38, 9)),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `sprint_id` Nullable(Decimal(38, 9)),
     `board_id` Nullable(Decimal(38, 9)),
     `sprint_name` Nullable(String),
@@ -381,7 +381,7 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_sprints
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_jira.jira_statuses
@@ -400,7 +400,7 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_statuses
     `scope` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `status_id` Nullable(Decimal(38, 9)),
     `category_id` Nullable(Decimal(38, 9)),
     `category_name` Nullable(String),
@@ -409,7 +409,7 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_statuses
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_jira.jira_user
@@ -427,7 +427,7 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_user
     `active` Nullable(Bool),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `account_id` Nullable(String),
     `email` Nullable(String),
     `display_name` Nullable(String),
@@ -438,7 +438,7 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_user
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_jira.jira_worklog_deleted
@@ -452,14 +452,14 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_worklog_deleted
     `properties` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `worklog_id` Nullable(Decimal(38, 9)),
     `deleted_at_ms` Nullable(Decimal(38, 9)),
     `collected_at` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_jira.jira_worklogs
@@ -480,7 +480,7 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_worklogs
     `issueId` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `worklog_id` Nullable(Decimal(38, 9)),
     `id_readable` Nullable(String),
     `jira_id` Nullable(String),
@@ -491,6 +491,6 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_worklogs
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 

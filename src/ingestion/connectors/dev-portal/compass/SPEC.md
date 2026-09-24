@@ -1,8 +1,9 @@
 # Compass + Atlassian Teams connector — design spec
 
-Status: **implemented (bronze-only).** Manifest, descriptor, bronze→RMT
-promotion and mock suites are in place; every stream has been read against a
-live site. Silver is deliberately deferred (see §7).
+Status: **implemented (bronze plus one staging projection).** Manifest,
+descriptor, the `compass__components` staging model and mock suites are in
+place; every stream has been read against a live site. Silver is deliberately
+deferred (see §7).
 
 Source: Atlassian Compass (internal developer portal — a catalog of software
 components) plus the Atlassian Teams directory that Compass uses for component
@@ -651,6 +652,6 @@ Per the connector skill:
 - [x] connectors-ddl snapshot regenerated per the bootstrap-db README
 - [x] per-stream mock tests — 100% stream coverage, including a `QueryError`-in-200 case and a `hasNextPage`-lies case per [Traversal](#4-traversal-contracts)
 - [x] `scripts/ci/connector_wiring.py` green
-- [x] bronze dbt conventions (RMT engine, `order_by=['unique_key']`) — the promotion model
+- [x] bronze dbt conventions (RMT engine, `order_by=['unique_key']`) — `compass__components`
 - [ ] `class_people.sql` `depends_on` entry — not applicable while no stream feeds people; revisit with the account-id join in §9
 - [ ] silver dbt conventions (read-time dedup, `delete+insert`) — deferred with silver itself (§7)

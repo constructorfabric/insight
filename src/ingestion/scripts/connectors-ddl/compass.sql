@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS bronze_compass.component_scorecard_scores
     `_airbyte_generation_id` UInt32,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `collected_at` Nullable(String),
     `data_source` Nullable(String),
     `scorecard_id` Nullable(String),
@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS bronze_compass.component_scorecard_scores
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_compass.components
@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS bronze_compass.components
     `_airbyte_generation_id` UInt32,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `collected_at` Nullable(String),
     `data_source` Nullable(String),
     `component_id` Nullable(String),
@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS bronze_compass.components
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_compass.deployment_events
@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS bronze_compass.deployment_events
     `_airbyte_generation_id` UInt32,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `collected_at` Nullable(String),
     `data_source` Nullable(String),
     `component_id` Nullable(String),
@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS bronze_compass.deployment_events
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_compass.scorecards
@@ -92,7 +92,7 @@ CREATE TABLE IF NOT EXISTS bronze_compass.scorecards
     `_airbyte_generation_id` UInt32,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `collected_at` Nullable(String),
     `data_source` Nullable(String),
     `scorecard_id` Nullable(String),
@@ -106,7 +106,7 @@ CREATE TABLE IF NOT EXISTS bronze_compass.scorecards
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_compass.team_members
@@ -117,7 +117,7 @@ CREATE TABLE IF NOT EXISTS bronze_compass.team_members
     `_airbyte_generation_id` UInt32,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `collected_at` Nullable(String),
     `data_source` Nullable(String),
     `team_id` Nullable(String),
@@ -129,7 +129,7 @@ CREATE TABLE IF NOT EXISTS bronze_compass.team_members
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_compass.teams
@@ -140,7 +140,7 @@ CREATE TABLE IF NOT EXISTS bronze_compass.teams
     `_airbyte_generation_id` UInt32,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `collected_at` Nullable(String),
     `data_source` Nullable(String),
     `team_id` Nullable(String),
@@ -153,6 +153,6 @@ CREATE TABLE IF NOT EXISTS bronze_compass.teams
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 

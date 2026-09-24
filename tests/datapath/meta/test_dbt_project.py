@@ -80,7 +80,7 @@ def test_a_relation_is_named_by_the_schema_dbt_writes_it_to(dbt_runner: DbtRunne
 def test_a_model_holding_no_rows_never_reaches_the_ledger(dbt_runner: DbtRunner) -> None:
     """A view and an ephemeral model have nothing to truncate."""
     assert (
-        dbt_runner.materialized_relations(["github__bronze_promoted", "cursor__event_cost_daily"])
+        dbt_runner.materialized_relations(["github__task_users", "cursor__event_cost_daily"])
         == []
     )
 
@@ -104,18 +104,6 @@ def test_every_materialized_model_declares_its_schema(manifest: dict[str, Any]) 
     assert undeclared == [], (
         f"these models materialize into the fallback schema {PROFILE_SCHEMA!r}: {undeclared}"
     )
-
-
-def test_the_jira_promotion_is_selected_by_the_deploy_staging_pass(
-    manifest: dict[str, Any],
-) -> None:
-    """The promotion flips bronze to ReplacingMergeTree, and the staging models that
-    run next read it FINAL. Tagged `jira` alone it matches no pass, and every real sync
-    fails on a storage that does not support FINAL."""
-    selected = {
-        manifest["nodes"][uid]["name"] for uid in _selected(manifest, "tag:staging,tag:jira")
-    }
-    assert "jira__bronze_promoted" in selected
 
 
 def test_every_jira_model_is_built_by_some_deploy_pass(manifest: dict[str, Any]) -> None:

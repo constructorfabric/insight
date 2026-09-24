@@ -3,7 +3,7 @@ version: 2
 sources:
   - name: bronze_zendesk
     schema: bronze_zendesk
-    description: Raw Zendesk records landed by the declarative connector (ADR-0002 RMT-promoted via zendesk__bronze_promoted).
+    description: Raw Zendesk records landed by the declarative connector (ReplacingMergeTree ORDER BY unique_key, created by the destination in append_dedup mode).
     tables:
       - name: support_tickets
         description: Ticket snapshot (current state). Context only — not for activity attribution.

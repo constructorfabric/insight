@@ -1,5 +1,10 @@
 name: claude-team-invoices
-version: "0.12.0"
+# 0.13.0: connections carry destinationSyncMode append_dedup with
+#   primaryKey unique_key, so the Airbyte destination owns the bronze table
+#   shape and the RMT promotion step is gone (#2877). MINOR per ADR-0015:
+#   reconcile must republish this connector so the connection catalog is
+#   refreshed; nothing already stored changes meaning.
+version: "0.13.0"
 type: cdk
 schedule: "0 4 * * *" # daily at 04:00 UTC — invoices are monthly; a daily pass keeps a new one within a day
 workflow: sync
