@@ -211,6 +211,16 @@ describe("/portal/custom/$name — the window it is read over", () => {
     });
   });
 
+  it("keeps the window picker pinned to the top while the board scrolls", async () => {
+    board({ time_ranges: ["PDC", "P30D"], default_range: "P30D" });
+    vi.mocked(customClient.fetchMetric).mockResolvedValue(CLOCKED);
+
+    render(<Component />, { wrapper });
+
+    const picker = await screen.findByRole("button", { name: "Last 30 days" });
+    expect(picker.closest("header")).toHaveClass("sticky");
+  });
+
   it("puts the reader's choice in the URL", async () => {
     board({ time_ranges: ["PDC", "P30D"], default_range: "P30D" });
     vi.mocked(customClient.fetchMetric).mockResolvedValue(CLOCKED);
