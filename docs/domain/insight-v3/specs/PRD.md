@@ -155,7 +155,7 @@ The system **MUST** support first-class connectors, such as a GitHub mirror.
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-fr-create-dataset`
 
-The system **MUST** let an administrator create a dataset, in the portal under their role and over the API under an administration credential distinct from the one data is sent with, declaring its name, title, description, fields with their payload key, type and role, its default time field and its row identity.
+The system **MUST** let an administrator create a dataset, in the portal and over the API under a session carrying their role, declaring its name, title, description, fields with their payload key, type and role, its default time field and its row identity. The token data is sent with **MUST** be refused, and no credential of the lifecycle's own **MUST** be offered in its place.
 
 **Actors**: `cpt-insightspec-v3-actor-administrator`
 
@@ -163,7 +163,7 @@ The system **MUST** let an administrator create a dataset, in the portal under t
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-fr-remove-dataset`
 
-The system **MUST** let an administrator remove a dataset together with its records, in the portal under their role and over the API under the same administration credential, and **MUST** refuse while a metric reads it, naming the metrics.
+The system **MUST** let an administrator remove a dataset together with its records, in the portal and over the API under a session carrying their role, and **MUST** refuse while a metric reads it, naming the metrics.
 
 **Actors**: `cpt-insightspec-v3-actor-administrator`
 
@@ -233,11 +233,11 @@ The system **MUST** let a person create and change every definition it holds —
 
 **Actors**: `cpt-insightspec-v3-actor-administrator`, `cpt-insightspec-v3-actor-dashboard-author`
 
-#### Metrics Read Datasets
+#### Metrics Read a Dataset or a Warehouse Table
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-fr-metrics-over-datasets`
 
-A metric **MUST** name a dataset and refer to its declared fields by name, never a table; the system **MUST** refuse a metric over an unknown dataset or an undeclared field.
+A metric **MUST** name exactly one of a dataset and a table the warehouse holds. Over a dataset it **MUST** refer to declared fields by name, and the system **MUST** refuse a metric over an unknown dataset or an undeclared field. Over a table it **MUST** name its columns, and the system **MUST** offer the warehouse catalogue so that an author can see which tables there are and what each holds.
 
 **Actors**: `cpt-insightspec-v3-actor-dashboard-author`
 
@@ -272,7 +272,7 @@ prefer, the words it uses — and answer in those terms.
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-fr-assistant-reads-datasets`
 
-The chat and the MCP tools **MUST** be told the datasets — their descriptions and declared fields — and **MUST** answer and build from datasets only.
+The chat and the MCP tools **MUST** be told the datasets — their descriptions and declared fields — and the MCP tools **MUST** also be told which tables the warehouse holds, so an agent can build a metric over one. Neither **MUST** be given any way to declare a dataset: that is a person's act, in the portal.
 
 **Actors**: `cpt-insightspec-v3-actor-dashboard-author`
 

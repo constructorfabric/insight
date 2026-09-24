@@ -116,9 +116,10 @@ TBD
 ### 3.1 Domain Model
 
 - Raw record — arbitrary JSON received into a dataset and stored whole.
-- Dataset — a named, described set of raw records at one grain: fields with a payload key and a type, one default clock, a row identity. The only relation a metric reads; its records live in a table of the datasets database, which this service owns.
+- Dataset — a named, described set of raw records at one grain: fields with a payload key and a type, one default clock, a row identity. Its records live in a table of the datasets database, which this service owns.
 - Dataset field — a name, a key path into the payload, a type, and optionally a descriptive role, an absent value, a person handle. The **type** decides what a metric may do with the field; the role only guides the catalogue and the assistant.
-- Metric — a named calculation over one dataset's fields.
+- Metric — a named calculation over one dataset's declared fields, or over the columns of one table the warehouse holds.
+- Warehouse catalogue — every table the connected user can see, by database and layer, with the columns and engine of the ones asked for. What a metric over a table may name, read from the warehouse's own metadata and cached.
 - Widget — any visual representation of data over chosen columns.
 - Dashboard — a named, addressable page arranging widgets.
 - Alert — a condition on a metric plus where to send it when it fires.
@@ -188,14 +189,15 @@ here, because a generated document cannot say which endpoints ought to exist.
 
 `PUT /v1/tables/{table}` is withdrawn: a dataset is what a caller creates.
 
-A dataset is over one of two things, and says which. Records are sent into
-one, and this service owns the table they land in. The other names a relation
-the warehouse already builds, and this service only reads it: nothing is
-provisioned, nothing is ever dropped, no record may be sent, and its rows
-carry neither an identity of their own nor an instant they arrived. The
-relation is read through the connection that reaches every database read-only
-(ADR-0007), which is the only handle in these surfaces addressing a database
-other than the datasets one.
+A dataset is over records sent into it, and this service owns the table they
+land in. A metric, though, reads either a dataset or one table the warehouse
+holds: `GET /v1/tables` and `GET /v1/tables/{database}/{table}` say which
+tables there are and what each holds, for an administrator and, over MCP, for
+an agent. Both the catalogue and a metric over a table are read through the
+connection that reaches every database read-only (ADR-0007), which is the only
+handle in these surfaces addressing a database other than the datasets one.
+The catalogue leaves out the datasets database, so a dataset's own table is
+never offered as something to name directly.
 
 **Answers.** A refusal the caller can act on carries every violation at once
 (§3.9). A name that is not free, a dataset an operation holds, and a removal a
@@ -273,11 +275,11 @@ service will serve, which it reports with every page because a caller cannot
 know an installation's setting. All three ship with defaults an installation
 may override.
 
-The dataset lifecycle has no credential of its own in this iteration: it is
-opened by the admin role and nothing else, so declaring or removing a dataset
-means a portal session. A token that could be handed to whoever may declare
-and remove datasets, and rotated apart from the ingest one, is a later
-iteration.
+The dataset lifecycle has no credential of its own, and will not get one: it
+is opened by the admin role and nothing else, so declaring or removing a
+dataset means a portal session. The ingest token carries records and nothing
+else. Declaring a dataset is a person saying what their records mean, and no
+automated caller — an agent least of all — is given a way to do it.
 
 #### Database: the datasets database
 
@@ -307,34 +309,25 @@ TBD
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-design-dataset-contract`
 
 **The declaration.** A dataset body carries `title`, an optional
-`description`, `source`, `fields`, and — over a stream — an optional
-`row_identity`.
-
-`source` says what the dataset is over and is written, never inferred:
-`{"kind": "stream"}`, or `{"kind": "relation", "database": ..., "table": ...}`
-naming a relation the warehouse already builds. Both names are identifiers of
-letters, digits and underscore, because each reaches a statement as one. The
-whole of `source` is fixed when the dataset is made; a replacement changing
-any part of it is refused.
+`description`, `fields` and an optional `row_identity`.
 
 A field carries `name` (an identifier, unique in the dataset, never `bucket`),
-exactly one of `path` (a key path into the record's JSON, over a stream) or
-`column` (a column of the relation, over one) — carrying both, or neither, or
-the wrong one for the mode is refused — `type` (`string`, `int`, `float`,
+`path` (a key path into the record's JSON), `type` (`string`, `int`, `float`,
 `bool` or `datetime`), and optionally `role` (`dimension`, `measurable` or `time`, which
 is descriptive only), `description`, `absent_value` (a string substitute shown
 and matched where the value is empty) and `person` (`email` or `id`).
 At most one field carries `default_clock`, and it must be a `datetime`.
-`row_identity` lists field names, and is admissible only over a stream: a
-relation decides for itself which of its rows are current.
+`row_identity` lists field names.
 
-**A dataset over a relation owns nothing.** Its row records no
-`physical_table` — that column is absent for it — nothing is provisioned when
-it is declared and nothing is dropped when it is removed, and records may not
-be sent into it. Its declaration is held to the warehouse when it is written:
-the relation must exist, its engine must be one a plain read counts once per
-row, and every declared column must exist and hold a type the declared type
-can read.
+**A metric names what it reads.** A body carries `dataset`, or `table` as
+`database.table`, and naming both or neither is refused. Over a dataset every
+field, filter and clock names a declared field, and a body that says where a
+value sits in a record is refused against the key that says it. Over a table
+they name a `column`, a `json` key path inside one, or a `json` key alone,
+which reads the row's own payload column; a body naming a declared field is
+refused against the key that names it. The engine holding a table is read from
+the warehouse at the run, not declared, and one that keeps superseded rows is
+read through `FINAL`.
 
 **Key paths.** A path is one or more segments separated by `.`, each a key in
 the record's JSON — `commit.author.email` reads the nested object. A segment

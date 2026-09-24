@@ -28,9 +28,9 @@ Supersedes [ADR-0006](0006-a-table-per-ingest-stream.md). The physical table
 per uploaded dataset that ADR-0006 describes stays; what changes is what a
 caller creates, writes to, reads and is told about.
 
-A dataset is the unit of query always, and the unit of ingest where records
-are sent into it. One over a relation the warehouse already builds is read
-and described exactly like any other, and is written into by nothing.
+A dataset is the unit of ingest, and the unit of query wherever a reader
+wants what a declaration knows. It is not the only thing a metric may read:
+a metric names a dataset or any table the warehouse holds.
 
 ## Context and Problem Statement
 
@@ -99,9 +99,9 @@ The decisions the option carries, taken on 2026-09-15:
   Ingest keeps its own token and can no longer create anything, and that token
   is refused on the lifecycle surfaces — whoever is trusted to send records is
   not thereby trusted to declare a dataset or to remove one with its records.
-  A credential of the lifecycle's own, which would open these surfaces without
-  a portal session and rotate apart from the ingest token, is left to a later
-  iteration.
+  The lifecycle gets no credential of its own: a portal session is the way
+  in, by decision. Declaring a dataset is a person saying what their records
+  mean, and an agent is never given a way to do it.
 * **The dataset's row is the lock, and a create or a removal owns a lease on
   it.** Every decision that depends on a dataset's state holds that row for the
   whole of the decision; a replacement touches no table and so commits as one
@@ -138,34 +138,23 @@ The decisions the option carries, taken on 2026-09-15:
 * A metric with no clock of its own inherits the dataset's default clock, and
   the API reports that effective clock so the portal windows the card instead
   of reading the metric body.
-* Custom metrics read datasets and nothing else. A body naming a table or a
-  database is refused; the analytics service and its metrics are outside this
-  decision.
-* **A dataset says what it is over, and it is one of two things.** Records are
-  sent into it, and this service owns the table they land in; or it names a
-  relation the warehouse already builds, which this service only ever reads.
-  The mode is written in the declaration rather than inferred from whether a
-  relation happens to be named: who provisions the relation, who may drop it,
-  whether records may be sent and how every field is read all follow from it.
-  None of it can be changed by replacing the declaration, neither which of the
-  two it is nor which relation it names: turning a stream into a relation
-  strands the records already sent, the other way round leaves a dataset that
-  says it is ready and has nothing to read, and pointing it at another
-  relation leaves every field valid while every metric over it reads
-  somewhere else. A dataset is removed and declared anew instead.
-* **A field says where its value sits in the terms its mode uses**: a key path
-  into the record's payload, or a column of the relation. A field carrying
-  both, or neither, is refused before the body is read.
-* **A relation is never provisioned and never dropped.** Only the stream mode
-  reaches the table this service makes, and the connection that may drop one
-  is bound to the datasets database, so the warehouse's own relations are out
-  of its reach whatever a declaration says.
-* **A relation must be one a plain read counts once per row.** Its rows are
-  not collapsed by a declared identity — the relation decides for itself which
-  of its rows are current — so a relation on an engine that keeps superseded
-  rows is refused when it is declared, with a view over it as the way through.
-  The allow-list is deliberate: an engine nobody thought of defaults to
-  refused rather than to a number quietly too high.
+* **A metric names one of two things: a dataset, or a table the warehouse
+  holds.** Which it is follows from which the body names; naming both, or
+  neither, is refused. A dataset gives the metric a declaration — where each
+  value sits, its type, the date that windows it, which records count as one —
+  and the metric names only declared fields. A table gives it columns, read as
+  written, and a key path inside a column that holds JSON. This is what a
+  metric was before datasets, kept rather than replaced: nothing a stand has
+  already built stops working, and a reader who wants a number off a warehouse
+  table does not have to declare a dataset to get it. The analytics service and
+  its metrics are outside this decision.
+* **A dataset is over records sent into it, and nothing else.** Binding one to
+  a relation the warehouse already builds was tried and taken out: it asked the
+  declaration to describe something that already exists, which made a dataset
+  two things held under one name, and the reason for wanting it — reading a
+  warehouse table — is answered by the metric naming the table directly.
+* **A field says where its value sits** as a key path into the record's
+  payload.
 * **Nothing is carried over.** No stream table is adopted, moved or renamed,
   and no stored metric is rewritten. A stand that already holds them keeps them
   where they are, unreachable: the metrics name tables and are refused, the
@@ -192,32 +181,34 @@ The decisions the option carries, taken on 2026-09-15:
   with a row identity.
 * Bad, because migrated metrics can answer differently: an average over records
   missing a key rises once that key stops reading as a zero.
-* Bad, because a relation's rows are shown and read through one text form per
-  value: what the warehouse holds reaches a reader as text, not as the column's
-  own type.
-* Bad, because a declaration over a relation is checked against the warehouse
-  when it is written and not afterwards. A column dropped or an engine changed
-  later is met by the reader, not by the author.
-* Bad, because every custom metric a stand already holds is refused from the
-  moment this ships, and every dataset it wants must be declared again by hand.
+* Bad, because a metric over a warehouse table is checked for shape and not
+  for existence: a table that is not there, or a column that has gone, is met
+  by the reader on the run rather than by the author on the write. The
+  catalogue is offered so the author can see what is there, but it is a help
+  and not a gate — a table made minutes ago is readable before it is listed.
 * Bad, because whatever sends records must address a dataset from that moment,
   with no alias to ease it across.
+* Bad, because there are now two ways to write the same metric, and which one
+  a stand should prefer is a matter of judgement rather than of rule: a
+  declaration pays off where several metrics read the same records, and costs
+  more than it returns for one number off one table.
 
 ### Confirmation
 
 Unit tests over the handlers, the validator, the operation protocol and the
 compiler: a record into an
-unknown dataset is refused without a create statement; a metric naming a table
-is refused while one grouping by a numeric field is accepted; a declaration's
+unknown dataset is refused without a create statement; a metric names a
+dataset or a table and is refused for naming both or neither, and one over a
+table reads a column, a json key inside one, and an engine that keeps
+superseded rows through `FINAL`; a declaration's
 violations are reported together; a run over a dataset with a row identity
 reads one record per identity and keeps incomplete identities apart; a create
 whose provisioning fails stores nothing and holds its name; a second attempt is
 refused while a lease holds and takes over once it lapses; an attempt that
 finishes after losing its operation writes nothing; two removals drop one
 table once; a dataset that is not ready is refused by every read and write
-path; every statement names the datasets database and the physical table its
-declaration records; and nothing addresses a relation the service did not
-create as a dataset. A stand check confirms that a
+path; and every statement that writes names the datasets
+database and the physical table its declaration records. A stand check confirms that a
 non-administrator cannot create or remove a dataset, and a component test
 confirms a card follows the board's window on an inherited clock. The feature
 and its scenarios are in

@@ -19,7 +19,7 @@ date: 2026-09-15
   - [Send Records Into a Dataset](#send-records-into-a-dataset)
   - [Browse Datasets in the Portal](#browse-datasets-in-the-portal)
   - [Remove a Dataset](#remove-a-dataset)
-  - [Author a Metric Over a Dataset](#author-a-metric-over-a-dataset)
+  - [Author a Metric](#author-a-metric)
   - [Ask the Assistant About a Dataset](#ask-the-assistant-about-a-dataset)
   - [Edit a Definition by Hand](#edit-a-definition-by-hand)
   - [Read a Board Over a Window](#read-a-board-over-a-window)
@@ -42,19 +42,19 @@ date: 2026-09-15
   - [Dataset Lifecycle](#dataset-lifecycle)
 - [5. Definitions of Done](#5-definitions-of-done)
   - [Declaration Store and Validation](#declaration-store-and-validation)
-  - [A Dataset Says What It Is Over](#a-dataset-says-what-it-is-over)
-  - [A Relation Is Read and Never Owned](#a-relation-is-read-and-never-owned)
   - [Datasets Own Their Own Database](#datasets-own-their-own-database)
   - [One Owner per Operation, and Every Step Repeatable](#one-owner-per-operation-and-every-step-repeatable)
   - [Operations Can See and Tune What This Adds](#operations-can-see-and-tune-what-this-adds)
   - [Only a Ready Dataset Is Reachable](#only-a-ready-dataset-is-reachable)
   - [Ingest Addresses a Dataset](#ingest-addresses-a-dataset)
-  - [Metrics Read Datasets Only](#metrics-read-datasets-only)
+  - [A Metric Reads a Dataset or a Warehouse Table](#a-metric-reads-a-dataset-or-a-warehouse-table)
+  - [The Warehouse Says What a Metric May Name](#the-warehouse-says-what-a-metric-may-name)
   - [An Inherited Clock Is Visible to the Reader](#an-inherited-clock-is-visible-to-the-reader)
   - [Duplicates Collapse on Read](#duplicates-collapse-on-read)
   - [Assistant and MCP Read Declarations](#assistant-and-mcp-read-declarations)
   - [Portal Dataset Catalogue](#portal-dataset-catalogue)
   - [One Editor for Every Definition](#one-editor-for-every-definition)
+  - [A Holder Says When It Has Stopped Working](#a-holder-says-when-it-has-stopped-working)
   - [Refusals Say Where They Belong](#refusals-say-where-they-belong)
   - [Existing Streams and Definitions Are Not Carried Over](#existing-streams-and-definitions-are-not-carried-over)
 - [6. Acceptance Criteria](#6-acceptance-criteria)
@@ -76,17 +76,13 @@ Today a stream is a physical table that appears on the first write of anyone hol
 
 The feature implements the decision in [ADR-0009](../ADR/0009-a-dataset-is-the-unit-of-ingest-and-query.md): the declaration of the data lives in one dataset, the rows keep their raw JSON shape, and everything that reads or writes rows goes through the dataset.
 
-**Scope of this iteration**: a dataset says what it is over, and it is one of two things.
+**Scope of this iteration**: a dataset is over a stream of records sent into it. This service owns the table they land in, they are stored whole as JSON and read through the declared fields, and duplicates collapse on read by the declared row identity. Declarations are replaced on write like every other definition, without versions; datasets are created and removed by administrators only, in the portal and over the API; the portal reads a metric's effective clock instead of guessing it from the metric body.
 
-*Over a stream*: records are sent into it, this service owns the table they land in, they are stored whole as JSON and read through the declared fields, and duplicates collapse on read by the declared row identity.
+**A dataset is not the only thing a metric may read.** A metric names either a dataset, by the fields it declares, or any table the warehouse holds, by its columns. The two are told apart by which the body names, and a metric over a table is the shape metrics had before this feature — [#3524](https://github.com/constructorfabric/insight/pull/3524) restored it. What a dataset gives a metric is the declaration: where each value sits, what type it is, which date windows it, and which records count as one. What a warehouse table gives it is every column, read as written.
 
-*Over a relation*: it names a relation the warehouse already builds — `database` and `table` — and this service only ever reads it. Nothing is provisioned when it is declared and nothing is ever dropped when it is removed; no records may be sent into it; its rows carry neither an identity of their own nor an instant they arrived; and the relation decides for itself which of its rows are current, so no row identity is declared over one.
+**The portal also gains a hand editor for every definition.** A dataset needs one, and a metric, a widget and a dashboard have never had one — each is authored only by the assistant or an agent today. They are one editor over four descriptions rather than four editors, because what differs between them is the shape of the document, not the act of editing it. Typed columns, declaration history, access policies and anything list-shaped over a value that is not a scalar ([#3499](https://github.com/constructorfabric/insight/issues/3499)) are later iterations. The analytics service and its own metrics are untouched.
 
-Both ways: declarations replaced on write like every other definition, without versions; datasets created and removed by administrators only, in the portal and over the API; metrics, the assistant and MCP read the declaration and cannot tell the two apart except where the difference is the point; the portal reads a metric's effective clock instead of guessing it from the metric body.
-
-**The portal also gains a hand editor for every definition.** A dataset needs one, and a metric, a widget and a dashboard have never had one — each is authored only by the assistant or an agent today. They are one editor over four descriptions rather than four editors, because what differs between them is the shape of the document, not the act of editing it. Typed columns, declaration history, access policies, anything list-shaped over a value that is not a scalar ([#3499](https://github.com/constructorfabric/insight/issues/3499)) and a credential of the lifecycle's own — one that lets a dataset be declared or removed over the API without a portal session, and is rotated apart from the ingest token ([#3496](https://github.com/constructorfabric/insight/issues/3496)) — are later iterations. The analytics service and its own metrics are untouched.
-
-**Nothing is carried over.** This is a clean break: no stream table is adopted, moved or renamed, and no stored metric is rewritten. On a stand that already holds them, the tables stay where they are and the metrics stay as they are, refused from the moment this ships because they name a table. Datasets are declared anew and records are sent again through the ordinary ingest path. Whoever sends records addresses a dataset from that point on; there is no compatibility alias.
+**Nothing is carried over.** This is a clean break for ingest: no stream table is adopted, moved or renamed. On a stand that already holds them, the tables stay where they are, and a stored metric that names one keeps working, because a metric may name a table. Datasets are declared anew and records are sent again through the ordinary ingest path. Whoever sends records addresses a dataset from that point on; there is no compatibility alias.
 
 **Requirements**:
 
@@ -128,7 +124,7 @@ Both ways: declarations replaced on write like every other definition, without v
 
 - **PRD**: [PRD.md](../PRD.md)
 - **Design**: [DESIGN.md](../DESIGN.md)
-- **Decisions**: [ADR-0009](../ADR/0009-a-dataset-is-the-unit-of-ingest-and-query.md) (this feature), [ADR-0006](../ADR/0006-a-table-per-ingest-stream.md) (superseded; the physical table per uploaded dataset stays), [ADR-0002](../ADR/0002-static-ingest-token.md) (the static-token path both credentials follow)
+- **Decisions**: [ADR-0009](../ADR/0009-a-dataset-is-the-unit-of-ingest-and-query.md) (this feature), [ADR-0006](../ADR/0006-a-table-per-ingest-stream.md) (superseded; the physical table per uploaded dataset stays), [ADR-0002](../ADR/0002-static-ingest-token.md) (the ingest token, which is the only static credential here)
 - **Dependencies**: `cpt-insightspec-v3-feature-data-ingestion` (the ingest endpoint and the definitions store this feature extends)
 - **Tracking**: constructorfabric/insight#3408
 
@@ -151,8 +147,6 @@ Both ways: declarations replaced on write like every other definition, without v
 **Error Scenarios**:
 - The name is not an identifier, or is one of the catalogue's reserved path segments
 - The body fails validation: an unknown type, a default clock that is not a datetime, two default clocks, a row identity naming an undeclared field
-- The replacement would change what the dataset is over, which is not a change a replacement makes
-- The declaration names a relation the warehouse does not have, a column it does not hold, or one whose engine a plain read cannot count once per row
 - The replacement leaves a stored metric invalid — a field it reads is gone, retyped, or the default clock it inherits has changed
 - The replacement would silently move numbers: a field a metric reads now reads from somewhere else, or the row identity changed
 - The name is held by a removal, or another attempt owns an operation on it, so it is not free
@@ -164,15 +158,6 @@ Both ways: declarations replaced on write like every other definition, without v
 3. [ ] - `p1` - **IF** the caller does not hold the admin role — the ingest token is not a way in, and presenting it here is refused - `inst-ds-create-authz`
    1. [ ] - `p1` - **RETURN** permission denied, nothing written - `inst-ds-create-authz-reject`
 4. [ ] - `p1` - Validate the body per `cpt-insightspec-v3-algo-datasets-validate-declaration` - `inst-ds-create-validate`
-   1. [ ] - `p1` - **IF** the declaration is over a relation - `inst-ds-create-relation`
-      1. [ ] - `p1` - Warehouse: SELECT system.columns (the columns of the named relation) - `inst-ds-create-relation-columns`
-      2. [ ] - `p1` - **IF** it holds none — the warehouse has no such relation - `inst-ds-create-relation-absent`
-         1. [ ] - `p1` - Record a violation against `source.table` - `inst-ds-create-relation-absent-violation`
-      3. [ ] - `p1` - Warehouse: SELECT system.tables (the relation's engine) - `inst-ds-create-relation-engine`
-      4. [ ] - `p1` - **IF** the engine is not one a plain read counts once per row - `inst-ds-create-relation-collapses`
-         1. [ ] - `p1` - Record a violation against `source.table`, naming a view over it as the way through - `inst-ds-create-relation-collapses-violation`
-      5. [ ] - `p1` - **FOR EACH** declared field whose column the relation does not hold - `inst-ds-create-relation-column-unknown`
-         1. [ ] - `p1` - Record a violation against that field's `column` - `inst-ds-create-relation-column-violation`
 5. [ ] - `p1` - **IF** validation reports violations - `inst-ds-create-invalid`
    1. [ ] - `p1` - **RETURN** every violation with its field path, nothing written - `inst-ds-create-invalid-reject`
 6. [ ] - `p1` - DB: BEGIN and hold the dataset's row per `cpt-insightspec-v3-algo-datasets-serialize` - `inst-ds-create-hold`
@@ -210,7 +195,6 @@ Both ways: declarations replaced on write like every other definition, without v
 - The dataset is not ready — absent, still being created, or being removed — or the name is misspelled: nothing is created
 - The request names no dataset, or still names a table as earlier releases accepted
 - The dataset was removed between the lookup and the write: the record is refused, not accepted
-- The dataset reads a relation the warehouse builds: there is nowhere to write, and the refusal says so rather than saying the dataset is absent
 
 **Steps**:
 1. [ ] - `p1` - Connector sends one record naming the dataset - `inst-ds-ingest-send`
@@ -218,8 +202,6 @@ Both ways: declarations replaced on write like every other definition, without v
 3. [ ] - `p1` - **IF** the ingest token does not verify - `inst-ds-ingest-token`
    1. [ ] - `p1` - **RETURN** unauthenticated - `inst-ds-ingest-token-reject`
 4. [ ] - `p1` - DB: SELECT datasets (the declaration under the given name, and its state) - `inst-ds-ingest-lookup`
-5. [ ] - `p1` - **IF** the dataset is over a relation — there is nowhere to write, and it is not the dataset that is missing - `inst-ds-ingest-relation`
-   1. [ ] - `p1` - **RETURN** a refusal against the field that named it, saying what the dataset is - `inst-ds-ingest-relation-refuse`
 6. [ ] - `p1` - **IF** the dataset is not ready — absent, claimed by an unfinished create, or removing - `inst-ds-ingest-unknown`
    1. [ ] - `p1` - **RETURN** not found naming the dataset; no table is created, and a claimed dataset has no table to write into - `inst-ds-ingest-unknown-reject`
 7. [ ] - `p1` - ClickHouse: INSERT into the table the declaration names (id, table_name, raw_data, received_at); the row is read without a hold, because a write per record cannot wait on a lock a removal might be holding - `inst-ds-ingest-insert`
@@ -252,12 +234,11 @@ Both ways: declarations replaced on write like every other definition, without v
 6. [ ] - `p1` - API: GET /v1/datasets/{name}/records (one page of rows, ordered as asked) - `inst-ds-browse-preview-api`
    1. [ ] - `p1` - **IF** nothing is asked for - `inst-ds-browse-order-unasked`
       1. [ ] - `p1` - Over a stream: newest first by the instant records arrived - `inst-ds-browse-order-arrival`
-      2. [ ] - `p1` - Over a relation, which has no arrival: the dataset's main date, or its first field where it declares none, and then every other declared field, so the order is total - `inst-ds-browse-order-declared`
    2. [ ] - `p1` - **IF** `order_by` names neither a declared field nor, over a stream, the arrival column - `inst-ds-browse-order-unknown`
       1. [ ] - `p1` - Refuse against `order_by`, listing the fields the dataset declares - `inst-ds-browse-order-refuse`
    3. [ ] - `p1` - **IF** `limit` is outside 1 to the configured cap - `inst-ds-browse-limit-range`
       1. [ ] - `p1` - Refuse against `limit`, naming the range - `inst-ds-browse-limit-refuse`
-   4. [ ] - `p1` - **RETURN** the rows, the total behind them, and the page size applied; a row of a relation carries neither an identity of its own nor an instant it arrived - `inst-ds-browse-page-return`
+   4. [ ] - `p1` - **RETURN** the rows, the total behind them, and the page size applied - `inst-ds-browse-page-return`
 7. [ ] - `p1` - API: GET /v1/datasets/{name}/dependents (every metric whose body names this dataset, exactly, unpaged) - `inst-ds-browse-dependents-api`
 8. [ ] - `p1` - **RETURN** the page: declaration, records, dependents, and the remove action - `inst-ds-browse-return`
 
@@ -305,7 +286,7 @@ Both ways: declarations replaced on write like every other definition, without v
     1. [ ] - `p1` - **RETURN** conflict without deleting anything: another attempt owns the dataset now - `inst-ds-remove-stale-return`
 15. [ ] - `p1` - **RETURN** removed; the portal refreshes the catalogue and the rail - `inst-ds-remove-return`
 
-### Author a Metric Over a Dataset
+### Author a Metric
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-flow-datasets-author-metric`
 
@@ -314,25 +295,35 @@ Both ways: declarations replaced on write like every other definition, without v
 **Success Scenarios**:
 - A metric names a dataset, reads its fields by their declared names, and orders and groups by the output names it gives them; the widgets and dashboards over it are unchanged
 - A metric with no time field of its own is windowed by the dataset's default time field
+- A metric names a warehouse table as `database.table` and reads its columns, or a key path inside a column that holds JSON
 
 **Error Scenarios**:
-- The body names a table or a database: metrics read datasets only
-- The dataset does not exist, is being removed, or a field, filter, grouping or time reference names an undeclared field
+- The body names both a dataset and a table, or neither
+- Over a dataset: it does not exist, is being removed, or a field, filter, grouping or time reference names an undeclared field; or the body says where a value sits in a record, which the declaration answers
+- Over a table: the body names a declared field, which only a dataset has
 - A sum or an average is applied to a field that is not numeric, or the clock names a field that is not a datetime
 
 **Steps**:
-1. [ ] - `p1` - Author submits a metric body naming `dataset` and fields by their declared names - `inst-ds-metric-submit`
+1. [ ] - `p1` - Author submits a metric body naming either `dataset` and its declared fields, or `table` and its columns - `inst-ds-metric-submit`
 2. [ ] - `p1` - API: PUT /v1/metrics/{name} (also reached by the chat's create tool and the MCP put_metric tool) - `inst-ds-metric-api`
-3. [ ] - `p1` - **IF** the body names `table` or `database` - `inst-ds-metric-table`
-   1. [ ] - `p1` - **RETURN** refusal saying metrics read datasets, with the dataset catalogue as the admissible set - `inst-ds-metric-table-reject`
-4. [ ] - `p1` - DB: BEGIN, then SELECT datasets holding the named dataset's row against a concurrent removal per `cpt-insightspec-v3-algo-datasets-serialize` - `inst-ds-metric-dataset`
-5. [ ] - `p1` - **IF** the dataset is not ready - `inst-ds-metric-unknown`
+3. [ ] - `p1` - **IF** the body names both a dataset and a table, or neither - `inst-ds-metric-address`
+   1. [ ] - `p1` - **RETURN** refusal saying a metric names the one thing it reads - `inst-ds-metric-address-reject`
+4. [ ] - `p1` - **IF** the body names a table - `inst-ds-metric-table`
+   1. [ ] - `p1` - **FOR EACH** place the body names a declared field, which only a dataset has - `inst-ds-metric-table-declared`
+      1. [ ] - `p1` - Record a violation against the key that names it - `inst-ds-metric-table-declared-violation`
+   2. [ ] - `p1` - **IF** any violation was recorded - `inst-ds-metric-table-invalid`
+      1. [ ] - `p1` - **RETURN** every violation, nothing stored - `inst-ds-metric-table-invalid-reject`
+   3. [ ] - `p1` - Compile it dry, so a body that would not run is not stored - `inst-ds-metric-table-compile`
+   4. [ ] - `p1` - DB: UPSERT metrics (the body as submitted) - `inst-ds-metric-table-store`
+   5. [ ] - `p1` - **RETURN** the stored metric with the clock it names itself; a run reads the engine holding the table and adds `FINAL` where the engine keeps superseded rows - `inst-ds-metric-table-return`
+5. [ ] - `p1` - DB: BEGIN, then SELECT datasets holding the named dataset's row against a concurrent removal per `cpt-insightspec-v3-algo-datasets-serialize` - `inst-ds-metric-dataset`
+6. [ ] - `p1` - **IF** the dataset is not ready - `inst-ds-metric-unknown`
    1. [ ] - `p1` - **RETURN** refusal naming the dataset and listing the ones a metric may read - `inst-ds-metric-unknown-reject`
-6. [ ] - `p1` - Check the body against the declaration per `cpt-insightspec-v3-algo-datasets-validate-metric` - `inst-ds-metric-fields`
-7. [ ] - `p1` - **IF** any violation was recorded - `inst-ds-metric-invalid`
+7. [ ] - `p1` - Check the body against the declaration per `cpt-insightspec-v3-algo-datasets-validate-metric` - `inst-ds-metric-fields`
+8. [ ] - `p1` - **IF** any violation was recorded - `inst-ds-metric-invalid`
    1. [ ] - `p1` - **RETURN** every violation, nothing stored - `inst-ds-metric-invalid-reject`
-8. [ ] - `p1` - DB: UPSERT metrics (the body as submitted) and COMMIT, so the metric and the dataset it depends on cannot disagree - `inst-ds-metric-store`
-9. [ ] - `p1` - **RETURN** the stored metric with its effective clock, per `cpt-insightspec-v3-algo-datasets-effective-clock`; a run compiles per `cpt-insightspec-v3-algo-datasets-compile-metric` - `inst-ds-metric-return`
+9. [ ] - `p1` - DB: UPSERT metrics (the body as submitted) and COMMIT, so the metric and the dataset it depends on cannot disagree - `inst-ds-metric-store`
+10. [ ] - `p1` - **RETURN** the stored metric with its effective clock, per `cpt-insightspec-v3-algo-datasets-effective-clock`; a run compiles per `cpt-insightspec-v3-algo-datasets-compile-metric` - `inst-ds-metric-return`
 
 ### Ask the Assistant About a Dataset
 
@@ -711,6 +702,7 @@ Both ways: declarations replaced on write like every other definition, without v
 3. [ ] - `p1` - **IF** no dataset exists - `inst-ds-describe-none`
    1. [ ] - `p1` - Emit that nothing has been declared yet and that an administrator creates datasets - `inst-ds-describe-none-text`
 4. [ ] - `p1` - Leave out the database, the table, the key paths and the read expressions - `inst-ds-describe-hide`
+5. [ ] - `p1` - Offer no way to declare a dataset: an agent reads what a person has declared and never adds to it - `inst-ds-describe-no-create`
 5. [ ] - `p1` - **RETURN** the rendered section - `inst-ds-describe-return`
 
 ## 4. States (CDSL)
@@ -744,7 +736,7 @@ Both ways: declarations replaced on write like every other definition, without v
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-dod-datasets-store`
 
-The system **MUST** store dataset declarations as a fourth definition kind in the definitions store, keyed by name and replaced on write like the others, and **MUST** validate every declaration before storing it, reporting all violations together. A field's type **MUST** decide what a metric may do with it; its role **MUST** remain descriptive, so that a numeric identifier can be grouped by. A replacement **MUST** be refused when any dependent metric fails to validate against it, when the clock a dependent inherits would change, when a field a dependent reads would read from a different place in the record, or when the row identity changes — naming each metric and why. The first two break a metric; the last two leave it valid and move every number it has answered, which a reader cannot see happen. Stored records **MUST NOT** be rewritten by any declaration change: a declaration says how records are read, so a change reinterprets what is already stored. Creation and removal **MUST** require the admin role, and the ingest token **MUST** be refused on both, so that whoever is trusted to send records cannot declare a dataset or remove one with its records. A credential of its own for the lifecycle, so that the two can be handed to different parties and rotated apart, is a later iteration: in this one the only way in is a session carrying the role.
+The system **MUST** store dataset declarations as a fourth definition kind in the definitions store, keyed by name and replaced on write like the others, and **MUST** validate every declaration before storing it, reporting all violations together. A field's type **MUST** decide what a metric may do with it; its role **MUST** remain descriptive, so that a numeric identifier can be grouped by. A replacement **MUST** be refused when any dependent metric fails to validate against it, when the clock a dependent inherits would change, when a field a dependent reads would read from a different place in the record, or when the row identity changes — naming each metric and why. The first two break a metric; the last two leave it valid and move every number it has answered, which a reader cannot see happen. Stored records **MUST NOT** be rewritten by any declaration change: a declaration says how records are read, so a change reinterprets what is already stored. Creation and removal **MUST** require the admin role, and the ingest token **MUST** be refused on both, so that whoever is trusted to send records cannot declare a dataset or remove one with its records. The lifecycle **MUST NOT** gain a credential of its own: a session carrying the role is the only way in, by decision and not for now.
 
 **Implements**:
 - `cpt-insightspec-v3-flow-datasets-create`
@@ -756,44 +748,6 @@ The system **MUST** store dataset declarations as a fourth definition kind in th
 - API: `PUT /v1/datasets/{name}`, `GET /v1/datasets`, `GET /v1/datasets/{name}`
 - DB: `datasets`
 - Entities: `Dataset`, `DatasetField`
-
-### A Dataset Says What It Is Over
-
-- [ ] `p1` - **ID**: `cpt-insightspec-v3-dod-datasets-source`
-
-A declaration **MUST** say what its dataset is over, and **MUST NOT** leave it to be inferred from whether a relation happens to be named. Who provisions the relation, who may drop it, whether records may be sent and how every field is read all follow from it, which is more than the presence of a property should decide. A replacement **MUST NOT** change any of it, neither which of the two it is nor which relation it names. Turning a stream into a relation strands the records already sent, with a table still recorded against a dataset that no longer reads it; the other way round leaves a dataset whose row says ready and which has nothing to read, for good; and pointing it at another relation leaves every field valid and every dependent metric reading somewhere else, which is the same silent move as a field that changed where it reads from. None of the three is a state the rest of this reasons about, so each is refused rather than handled — a dataset is removed and declared anew.
-
-A field **MUST** say where its value sits in the terms its mode uses: a key path into the record's payload, or a column of the relation. A field carrying both, or neither, **MUST** be refused before the body is read, so that nothing below has to referee one; a field carrying the wrong one for its mode **MUST** be refused against the key that carries it rather than read as though it were the other.
-
-**Implements**:
-- `cpt-insightspec-v3-flow-datasets-create`
-- `cpt-insightspec-v3-algo-datasets-validate-declaration`
-
-**Touches**:
-- API: `PUT /v1/datasets/{name}`
-- Entities: `Dataset`, `DatasetField`
-
-### A Relation Is Read and Never Owned
-
-- [ ] `p1` - **ID**: `cpt-insightspec-v3-dod-datasets-relation`
-
-A dataset over a relation **MUST** be published without provisioning anything, and its removal **MUST** take the declaration and nothing else. That **MUST** hold by construction rather than by a check at the drop: only the stream mode may reach the table this service makes, a table name **MUST** be recorded against a dataset in one place only, and the connection that may create or drop a table **MUST** be bound to the datasets database — so the warehouse's own relations are out of its reach whatever a declaration says. An attempt that takes a name over from one that had already provisioned a table **MUST** forget that table as it publishes, or a dataset over a relation would inherit one and ingest, which decides by the table, would take records into it.
-
-A declaration over a relation **MUST** be checked against the warehouse when it is written: a relation the warehouse does not have is refused against the name that asked for it, a column it does not hold against the field that named it, and a column whose own type the declared type cannot read against the type that asked for it. That last one **MUST** be an allow-list of the types a read is known to answer from, so a type nobody thought of is refused rather than trusted: a value that is not one value refuses the conversion outright rather than answering nothing, and that refusal would otherwise meet the reader on every run. Every value has a text form, so a string reads any column at all. A declaration over a stream describes records that have not arrived, so there is nothing to hold it to; one over a relation describes something that exists now, and a column it does not have compiles into every metric over the dataset and then fails on every run, far from where the mistake was made.
-
-The relation **MUST** be one a plain read is known to count once per row. Its rows **MUST NOT** be collapsed by a declared identity — the relation decides for itself which of its rows are current, and a second rule here would quietly disagree with it — so a relation on an engine that keeps superseded rows **MUST** be refused when it is declared, naming a view over it as the way through. What counts as such an engine **MUST** be an allow-list: an engine nobody thought of, one fronting another, or a view whose rows are really an inner table's, then defaults to refused rather than to a number a reader cannot tell is wrong. `FINAL` cannot stand in for this, because an engine that does not collapse refuses it outright.
-
-Records **MUST NOT** be sent into a dataset over a relation, and the refusal **MUST** say what the dataset is rather than that it is not there: it is there, it is ready, and saying otherwise sends a sender looking for a name in front of them.
-
-**Implements**:
-- `cpt-insightspec-v3-flow-datasets-create`
-- `cpt-insightspec-v3-flow-datasets-remove`
-- `cpt-insightspec-v3-flow-datasets-ingest`
-- `cpt-insightspec-v3-algo-datasets-table-is-ours`
-
-**Touches**:
-- API: `PUT /v1/datasets/{name}`, `DELETE /v1/datasets/{name}`, `POST /v1/raw-data`
-- DB: `datasets`, the warehouse relation named by the declaration
 
 ### Datasets Own Their Own Database
 
@@ -878,11 +832,17 @@ The system **MUST** accept a record only into a dataset that is Ready, refusing 
 - API: `POST /v1/raw-data`
 - DB: the dataset's table in the datasets database
 
-### Metrics Read Datasets Only
+### A Metric Reads a Dataset or a Warehouse Table
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-dod-datasets-metrics`
 
-A metric **MUST** name a dataset and read its declared fields by name in its selected fields, its filters and its clock, while its grouping and ordering **MUST** name the columns the metric itself produces, as they do today; a body naming a table or a database **MUST** be refused with the dataset catalogue as the admissible set. Admissibility **MUST** follow the field's type: sum and average require a numeric field and a clock requires a datetime, while grouping, filtering, counting, min and max are open to every type. A metric **MUST** be able to filter by a field it also aggregates: over a relation a field is one of the relation's own columns, and an output name the metric chose would otherwise stand in front of the column it was computed from, refusing the whole query rather than reading it. Compilation **MUST** read every value per `cpt-insightspec-v3-design-dataset-contract`, and **MUST** take the database, the table, every field's read expression and the effective clock from the declaration, and **MUST NOT** offer the warehouse catalogue to metrics or to the chat in this iteration.
+A metric **MUST** name exactly one of a dataset and a table, and the one it names **MUST** decide how every value in it is written. A body naming both, or neither, **MUST** be refused.
+
+Over a dataset, a metric **MUST** name declared fields by name in its selected fields, its filters and its clock, and a body that says where a value sits in a record **MUST** be refused against the key that says it — the declaration is what answers that. Admissibility **MUST** follow the field's declared type: sum and average require a numeric field and a clock requires a datetime, while grouping, filtering, counting, min and max are open to every type. Compilation **MUST** read every value per `cpt-insightspec-v3-design-dataset-contract`, and **MUST** take the database, the table, every field's read expression and the effective clock from the declaration.
+
+Over a table, a metric **MUST** name it as `database.table` and read its columns, or a key path inside a column that holds JSON, and a body naming a declared field **MUST** be refused against the key that names it. Nothing else changes: the same aggregates, filters, window and limit. The table **MUST** be read as the warehouse holds it — an engine that keeps superseded rows is read through `FINAL`, so a row counts once — and which engine that is **MUST** be read from the warehouse at the run rather than declared.
+
+Either way the grouping and the ordering **MUST** name the columns the metric itself produces, as they do today.
 
 **Implements**:
 - `cpt-insightspec-v3-flow-datasets-author-metric`
@@ -892,8 +852,24 @@ A metric **MUST** name a dataset and read its declared fields by name in its sel
 
 **Touches**:
 - API: `PUT /v1/metrics/{name}`, `POST /v1/metrics/{name}/run`
-- DB: `metrics`, `datasets`
+- DB: `metrics`, `datasets`, any relation the warehouse holds
 - Entities: `MetricQuery`
+
+### The Warehouse Says What a Metric May Name
+
+- [ ] `p1` - **ID**: `cpt-insightspec-v3-dod-datasets-catalogue`
+
+A metric over a table is only as good as knowing which tables there are, so the warehouse's own catalogue **MUST** be readable: every table the connected user can see, with the database it is in, the layer its database puts it in, and — asked for by name — its columns and the engine holding it. It **MUST** be offered to an administrator over the API and to an agent over MCP, and **MUST** leave out the database datasets keep their records in, so that a dataset's own table is never offered as something to name directly.
+
+The listing **MUST** be bounded: it is read from the warehouse's own metadata, which grows with the installation, so what it copies and what it answers with **MUST** both be capped, and an answer that was cut **MUST** say so. A listing **MUST** be cached for a named period, and a warehouse that does not answer **MUST NOT** send every caller to wait on it in turn.
+
+**Implements**:
+- `cpt-insightspec-v3-flow-datasets-author-metric`
+
+**Touches**:
+- API: `GET /v1/tables`, `GET /v1/tables/{database}/{table}`
+- MCP: `list_tables`, `describe_tables`
+- DB: the warehouse's own metadata
 
 ### An Inherited Clock Is Visible to the Reader
 
@@ -926,9 +902,11 @@ When a dataset declares a row identity, every run over it **MUST** count one rec
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-dod-datasets-assistant`
 
-The chat's system prompt, its look_up tool and the MCP describe tools **MUST** be built from dataset declarations rather than from sampled records, **MUST** leave out physical detail, and the create tools **MUST** refuse to create a dataset.
+The chat's system prompt, its look_up tool and the MCP describe tools **MUST** be built from dataset declarations rather than from sampled records, **MUST** leave out physical detail, and the create tools **MUST** refuse to create a dataset. MCP **MUST** also be told which tables the warehouse holds and what each one holds, so that an agent can write a metric over one; the chat **MUST NOT** be, in this iteration, so it builds over datasets alone.
 
-Refusing that is not tidiness. A dataset is where the boundary of what an agent may read is drawn, and a dataset over a relation is a read path onto the warehouse — so a server that could declare one could widen its own reach to any relation there, without asking anybody. This service already keeps those two apart: reading the warehouse is a grant of its own, held by a different server under a read-only warehouse user, and the authoring server holds the grant to write definitions over what a person has already declared. An agent therefore works inside a boundary somebody drew, and moving it stays an administrator's act. The MCP list_tables tool **MUST** be replaced by dataset listing and description.
+Refusing that is not tidiness, and it is not an iteration either: **no agent may ever declare a dataset.** A dataset is what a person has said their records mean, and declaring one provisions a table and claims a name that ingest then writes into. A server that could declare one could decide, unasked, what the product holds. This service keeps the two grants apart: reading the warehouse is a grant of its own, held by a different server under a read-only warehouse user, and the authoring server holds the grant to write definitions over datasets somebody has already declared. An agent therefore works inside a boundary a person drew, and moving it is an administrator's act in the portal.
+
+There is no credential that changes this. The lifecycle **MUST NOT** gain one of its own: the ingest token carries records and nothing else, and declaring or removing a dataset **MUST** stay a session carrying the admin role. An automated caller has the ingest token for what it is for; what it does not have is a way to declare what it is sending into.
 
 **Implements**:
 - `cpt-insightspec-v3-flow-datasets-chat`
@@ -936,7 +914,7 @@ Refusing that is not tidiness. A dataset is where the boundary of what an agent 
 
 **Touches**:
 - API: `POST /v1/chat`, MCP tools on `/mcp/v3`
-- DB: `datasets`
+- DB: `datasets`, the warehouse's own metadata
 
 ### Portal Dataset Catalogue
 
@@ -948,7 +926,7 @@ The records **MUST** be shown as a table whose columns are the declared fields, 
 
 The page size **MUST** be the service's to decide and **MUST** be reported with the page, because the cap is an installation's setting: a reader stepping by a size of its own would walk over whatever a narrower page left behind, and nothing in the answer would say so.
 
-A page **MUST** be read in a total order. A record sent in is told apart by the instant it arrived and its own identity; a row of a relation has neither, so the order **MUST** run over every field the dataset declares. A partial order makes a page read by offset show one row twice and skip another, on data nobody has touched — and two rows agreeing on every declared field are interchangeable to every reader of the dataset, so that is as total an order as this can see.
+A page **MUST** be read in a total order: a record is told apart by the instant it arrived and its own identity. A partial order makes a page read by offset show one row twice and skip another, on data nobody has touched — and two rows agreeing on every declared field are interchangeable to every reader of the dataset, so that is as total an order as this can see.
 
 **Implements**:
 - `cpt-insightspec-v3-flow-datasets-browse`
@@ -980,6 +958,32 @@ A refusal **MUST** be shown where it belongs: a violation naming a place in the 
 **Touches**:
 - API: `PUT /v1/datasets/{name}`, `PUT /v1/metrics/{name}`, `PUT /v1/widgets/{name}`, `PUT /v1/dashboards/{name}`
 - Entities: the Custom zone's definition editor and one description per kind
+
+### A Holder Says When It Has Stopped Working
+
+- [ ] `p1` - **ID**: `cpt-insightspec-v3-dod-datasets-holders`
+
+A widget draws the columns its metric produces, and a metric may be changed
+out from under it. That write **MUST NOT** be refused — no widget may name a
+column its metric does not yet produce, so refusing would leave a column that
+can never be renamed — so what it broke **MUST** be reported instead. Every
+holder of a definition **MUST** say whether it would still be accepted as it
+stands, and **MUST** say it by running the check a write runs, so that the two
+cannot come to disagree. A refusal of the service's own **MUST NOT** be
+reported as a holder's fault: a store that did not answer fails the read,
+because answering "broken" for it paints a working board as damaged.
+
+The reader who changed the definition **MUST** be shown this without looking
+for it: storing one **MUST** land on the page that says what it now is and
+what it has stopped feeding.
+
+**Implements**:
+- `cpt-insightspec-v3-flow-datasets-author-metric`
+- `cpt-insightspec-v3-algo-datasets-dependents`
+
+**Touches**:
+- API: `GET /v1/metrics/{name}/dependents`
+- DB: `metrics`, `widgets`, `dashboards`
 
 ### Refusals Say Where They Belong
 
@@ -1033,24 +1037,20 @@ The service **MUST** stop creating an ingest-schema landing table in the warehou
 - [ ] A page asked to be wider than the installation allows is refused rather than quietly cut down, and every page says the size that was applied
 - [ ] Shortening the configured lease lets an abandoned create be taken over sooner, and the three values this feature adds are read from configuration rather than compiled in
 - [ ] A removed dataset leaves a record of who removed it and when
-- [ ] The ingest token cannot declare or remove a dataset
+- [ ] The ingest token cannot declare or remove a dataset, and no other credential can either — the only way in is a session carrying the admin role
+- [ ] A widget left drawing a column its metric no longer produces is named as broken on the metric's page, and a store that did not answer fails the read rather than calling a holder broken
+- [ ] Storing a definition lands on its own page, not back in the catalogue
 - [ ] A dataset whose name is held by a table of another shape is refused, and no table outside the datasets database is ever created, read or dropped
 - [ ] A declaration with several problems is refused once, with every problem and its field path
 - [ ] A metric groups by a numeric field and is stored; the same field summed as a string field is refused
-- [ ] A metric body naming a table is refused; the same metric rewritten onto a dataset is stored and runs
-- [ ] A dataset declared over a relation the warehouse already builds is listed, described and read exactly like one records are sent into, and a metric over it runs
-- [ ] Declaring one over a relation creates nothing, and removing it leaves the relation where it was; no path in the service can drop or alter it
-- [ ] A relation the warehouse does not have is refused against the name that asked for it, and a column it does not hold against the field that named it
-- [ ] A relation whose engine is not known to count each row once is refused when it is declared, naming a view over it as the way through
-- [ ] A record sent into a dataset over a relation is refused as the wrong kind of dataset, not as one that is absent
-- [ ] Replacing a declaration so that what the dataset is over would change is refused — the mode and the relation alike; removing it and declaring it anew is how it is done
+- [ ] A metric names a dataset by its declared fields, or a warehouse table by its columns; one naming both, or neither, is refused
+- [ ] A metric over a table reads a key path inside a column that holds JSON, and one over a table whose engine keeps superseded rows counts each row once
+- [ ] A metric written before this feature, over a table and its columns, is stored and runs unchanged
+- [ ] The warehouse catalogue lists every table a metric may name, by database and layer, and describes the columns and engine of the ones asked for
+- [ ] The catalogue leaves out the database datasets keep their records in
+- [ ] A listing wider than one answer is cut and says it was cut
 - [ ] A column is refused when its own type is not one the declared type can read; the same column declared a string is accepted, because every value has a text form
-- [ ] Two pages of a relation, read one after the other on data nobody has touched, hold no row in common and leave none out
-- [ ] A metric filters by a field it also sums, over a relation whose column carries that field's name
-- [ ] The catalogue says what each dataset is over without it being opened, and names the relation where it reads one
 - [ ] Editing a dataset shows what it is over and does not offer to change it
-- [ ] A field of a dataset over a relation reads a column and one over a stream reads a path; the wrong one is refused against the key that carries it
-- [ ] A dataset over a relation declares no row identity, and its page shows rows with no arrival instant and no identity of their own
 - [ ] Two identical records, re-sent, count once in every metric over a dataset that declares a row identity, and twice over one that does not
 - [ ] Two different records missing the same identity field are counted separately, not collapsed into one, even when that field declares a substitute for absent values
 - [ ] A metric ordering by the name of an aggregate it computes is stored and runs
@@ -1082,7 +1082,7 @@ The risks are a silent mismatch between what a declaration says and what a run r
   **Requirements**: `cpt-insightspec-v3-fr-metrics-over-datasets`.
   **Covers**: `cpt-insightspec-v3-dod-datasets-metrics`.
   **Test**: Not implemented.
-- [ ] 4. **A metric naming a table is refused** — Reliability · rust-unit — put a metric body with `table` → refused with the dataset catalogue as the admissible set; the same body with `dataset` is stored.
+- [ ] 4. **A metric names the one thing it reads** — Reliability · rust-unit — put a metric body naming both a dataset and a table → refused; naming neither → refused; naming a table and its columns → stored and runs; naming a dataset and its declared fields → stored and runs.
   **Requirements**: `cpt-insightspec-v3-fr-metrics-over-datasets`.
   **Covers**: `cpt-insightspec-v3-dod-datasets-metrics`.
   **Test**: Not implemented.
