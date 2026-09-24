@@ -66,13 +66,16 @@ permissions:
   id-token: write # keyless OIDC identity for attest-build-provenance
   attestations: write # store SLSA provenance in the repo attestation store
 
+# The self-hosted routing below is the same expression in every workflow; the
+# rule and what it does not close are explained in ci.yml. Only ci.yml and
+# connectors-ddl.yml have been exercised on the pool so far.
 jobs:
   # ─── Backend / chart change detection ──────────────────────────────────────
   # Per-service filters so a single-service code change only rebuilds that one
   # image. Connector image builds are NOT handled here — see discover-images,
   # which scans every descriptor.yaml's `images:` block (ADR-0016).
   changes:
-    runs-on: ubuntu-latest
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     outputs:
       analytics: ${{ steps.filter.outputs.analytics }}
       authenticator: ${{ steps.filter.outputs.authenticator }}
@@ -301,7 +304,7 @@ jobs:
   # `outputs.any`, so they cascade-skip with it.
   discover-images:
     if: github.event_name != 'merge_group' && (github.event_name != 'workflow_dispatch' || !inputs.frontend_only)
-    runs-on: ubuntu-latest
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     outputs:
       matrix: ${{ steps.scan.outputs.matrix }}
       any: ${{ steps.scan.outputs.any }}
@@ -336,26 +339,28 @@ jobs:
 
           # Full-rebuild semantics on workflow_dispatch: emit every image entry
           # regardless of changed paths.
+          # The diff is written before it is read: on a runner that outlives the
+          # job, testing first would read the previous run's file.
+          if ! git rev-parse "$BASE" >/dev/null 2>&1; then
+            echo "WARN: base $BASE not resolvable; treating as no changes (matrix may be empty)" >&2
+            : > "$RUNNER_TEMP/changed.txt"
+          else
+            git diff --name-only "$BASE" "$GITHUB_SHA" > "$RUNNER_TEMP/changed.txt" || true
+          fi
+
           ALL_FLAG=""
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
             ALL_FLAG="--all"
-          elif grep -Fxq '.github/workflows/build-images.yml' /tmp/changed.txt; then
+          elif grep -Fxq '.github/workflows/build-images.yml' "$RUNNER_TEMP/changed.txt"; then
             ALL_FLAG="--all"
           fi
-
-          if ! git rev-parse "$BASE" >/dev/null 2>&1; then
-            echo "WARN: base $BASE not resolvable; treating as no changes (matrix may be empty)" >&2
-            : > /tmp/changed.txt
-          else
-            git diff --name-only "$BASE" "$GITHUB_SHA" > /tmp/changed.txt || true
-          fi
           echo "--- changed paths vs $BASE ---"
-          cat /tmp/changed.txt
+          cat "$RUNNER_TEMP/changed.txt"
           echo "--- end ---"
 
           MATRIX="$(python3 .github/workflows/scripts/discover-image-matrix.py \
             --connectors-root src/ingestion/connectors \
-            --changed /tmp/changed.txt \
+            --changed "$RUNNER_TEMP/changed.txt" \
             $ALL_FLAG)"
           echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
           LEN="$(echo "$MATRIX" | jq 'length')"
@@ -384,7 +389,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -404,7 +409,7 @@ jobs:
           # PR and merge-group amd64 legs write a loadable tarball instead of
           # discarding the result. Other legs keep the push-by-digest output.
           tags: ${{ needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64' && 'insight-analytics:e2e-prebuilt' || '' }}
-          outputs: ${{ needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64' && 'type=docker,dest=/tmp/e2e-prebuilt.tar' || format('type=image,name={0}/insight-analytics,push-by-digest=true,name-canonical=true,push={1}', env.IMAGE_PREFIX, needs.changes.outputs.should_push == 'true') }}
+          outputs: ${{ needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64' && format('type=docker,dest={0}/e2e-prebuilt.tar', runner.temp) || format('type=image,name={0}/insight-analytics,push-by-digest=true,name-canonical=true,push={1}', env.IMAGE_PREFIX, needs.changes.outputs.should_push == 'true') }}
           no-cache: ${{ needs.changes.outputs.no_cache == 'true' }}
           cache-from: |
             type=registry,ref=${{ env.BUILDCACHE }}:analytics-${{ matrix.arch }}
@@ -418,22 +423,22 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: e2e-prebuilt-insight-analytics
-          path: /tmp/e2e-prebuilt.tar
+          path: ${{ runner.temp }}/e2e-prebuilt.tar
           if-no-files-found: error
           retention-days: 1
           overwrite: true
       - name: Export digest
         if: needs.changes.outputs.should_push == 'true'
         run: |
-          mkdir -p /tmp/digests
+          mkdir -p "$RUNNER_TEMP/digests"
           digest="${{ steps.build.outputs.digest }}"
-          touch "/tmp/digests/${digest#sha256:}"
+          touch "$RUNNER_TEMP/digests/${digest#sha256:}"
       - name: Upload digest
         if: needs.changes.outputs.should_push == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: digests-analytics-${{ matrix.arch }}
-          path: /tmp/digests/*
+          path: ${{ runner.temp }}/digests/*
           if-no-files-found: error
           retention-days: 1
 
@@ -445,7 +450,7 @@ jobs:
       always()
       && needs.backend-analytics.result != 'skipped'
       && needs.changes.outputs.should_push == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     timeout-minutes: 60
     steps:
       - name: Require the platform builds to have passed
@@ -456,7 +461,7 @@ jobs:
       - name: Download digests
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          path: /tmp/digests
+          path: ${{ runner.temp }}/digests
           pattern: digests-analytics-*
           merge-multiple: true
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
@@ -482,7 +487,7 @@ jobs:
           registry-username: ${{ github.actor }}
           registry-password: ${{ secrets.GITHUB_TOKEN }}
       - name: Create multi-arch manifest and push
-        working-directory: /tmp/digests
+        working-directory: ${{ runner.temp }}/digests
         run: |
           docker buildx imagetools create \
             $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
@@ -514,7 +519,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -532,7 +537,7 @@ jobs:
           target: authenticator
           platforms: linux/${{ matrix.arch }}
           tags: ${{ needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64' && 'insight-authenticator:e2e-prebuilt' || '' }}
-          outputs: ${{ needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64' && 'type=docker,dest=/tmp/e2e-prebuilt.tar' || format('type=image,name={0}/insight-authenticator,push-by-digest=true,name-canonical=true,push={1}', env.IMAGE_PREFIX, needs.changes.outputs.should_push == 'true') }}
+          outputs: ${{ needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64' && format('type=docker,dest={0}/e2e-prebuilt.tar', runner.temp) || format('type=image,name={0}/insight-authenticator,push-by-digest=true,name-canonical=true,push={1}', env.IMAGE_PREFIX, needs.changes.outputs.should_push == 'true') }}
           no-cache: ${{ needs.changes.outputs.no_cache == 'true' }}
           cache-from: |
             type=registry,ref=${{ env.BUILDCACHE }}:authenticator-${{ matrix.arch }}
@@ -545,22 +550,22 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: e2e-prebuilt-insight-authenticator
-          path: /tmp/e2e-prebuilt.tar
+          path: ${{ runner.temp }}/e2e-prebuilt.tar
           if-no-files-found: error
           retention-days: 1
           overwrite: true
       - name: Export digest
         if: needs.changes.outputs.should_push == 'true'
         run: |
-          mkdir -p /tmp/digests
+          mkdir -p "$RUNNER_TEMP/digests"
           digest="${{ steps.build.outputs.digest }}"
-          touch "/tmp/digests/${digest#sha256:}"
+          touch "$RUNNER_TEMP/digests/${digest#sha256:}"
       - name: Upload digest
         if: needs.changes.outputs.should_push == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: digests-authenticator-${{ matrix.arch }}
-          path: /tmp/digests/*
+          path: ${{ runner.temp }}/digests/*
           if-no-files-found: error
           retention-days: 1
 
@@ -570,7 +575,7 @@ jobs:
       always()
       && needs.backend-authenticator.result != 'skipped'
       && needs.changes.outputs.should_push == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     timeout-minutes: 60
     steps:
       - name: Require the platform builds to have passed
@@ -581,7 +586,7 @@ jobs:
       - name: Download digests
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          path: /tmp/digests
+          path: ${{ runner.temp }}/digests
           pattern: digests-authenticator-*
           merge-multiple: true
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
@@ -607,7 +612,7 @@ jobs:
           registry-username: ${{ github.actor }}
           registry-password: ${{ secrets.GITHUB_TOKEN }}
       - name: Create multi-arch manifest and push
-        working-directory: /tmp/digests
+        working-directory: ${{ runner.temp }}/digests
         run: |
           docker buildx imagetools create \
             $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
@@ -639,7 +644,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -656,7 +661,7 @@ jobs:
           file: src/backend/services/gateway/Dockerfile
           platforms: linux/${{ matrix.arch }}
           tags: ${{ needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64' && 'insight-gateway:e2e-prebuilt' || '' }}
-          outputs: ${{ needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64' && 'type=docker,dest=/tmp/e2e-prebuilt.tar' || format('type=image,name={0}/insight-gateway,push-by-digest=true,name-canonical=true,push={1}', env.IMAGE_PREFIX, needs.changes.outputs.should_push == 'true') }}
+          outputs: ${{ needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64' && format('type=docker,dest={0}/e2e-prebuilt.tar', runner.temp) || format('type=image,name={0}/insight-gateway,push-by-digest=true,name-canonical=true,push={1}', env.IMAGE_PREFIX, needs.changes.outputs.should_push == 'true') }}
           no-cache: ${{ needs.changes.outputs.no_cache == 'true' }}
           cache-from: type=registry,ref=${{ env.BUILDCACHE }}:gateway-${{ matrix.arch }}
           cache-to: ${{ needs.changes.outputs.write_cache == 'true' && format('type=registry,ref={0}:gateway-{1},mode=max,ignore-error=true', env.BUILDCACHE, matrix.arch) || '' }}
@@ -665,22 +670,22 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: e2e-prebuilt-insight-gateway
-          path: /tmp/e2e-prebuilt.tar
+          path: ${{ runner.temp }}/e2e-prebuilt.tar
           if-no-files-found: error
           retention-days: 1
           overwrite: true
       - name: Export digest
         if: needs.changes.outputs.should_push == 'true'
         run: |
-          mkdir -p /tmp/digests
+          mkdir -p "$RUNNER_TEMP/digests"
           digest="${{ steps.build.outputs.digest }}"
-          touch "/tmp/digests/${digest#sha256:}"
+          touch "$RUNNER_TEMP/digests/${digest#sha256:}"
       - name: Upload digest
         if: needs.changes.outputs.should_push == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: digests-gateway-${{ matrix.arch }}
-          path: /tmp/digests/*
+          path: ${{ runner.temp }}/digests/*
           if-no-files-found: error
           retention-days: 1
 
@@ -690,7 +695,7 @@ jobs:
       always()
       && needs.backend-gateway.result != 'skipped'
       && needs.changes.outputs.should_push == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     timeout-minutes: 60
     steps:
       - name: Require the platform builds to have passed
@@ -701,7 +706,7 @@ jobs:
       - name: Download digests
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          path: /tmp/digests
+          path: ${{ runner.temp }}/digests
           pattern: digests-gateway-*
           merge-multiple: true
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
@@ -727,7 +732,7 @@ jobs:
           registry-username: ${{ github.actor }}
           registry-password: ${{ secrets.GITHUB_TOKEN }}
       - name: Create multi-arch manifest and push
-        working-directory: /tmp/digests
+        working-directory: ${{ runner.temp }}/digests
         run: |
           docker buildx imagetools create \
             $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
@@ -760,7 +765,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -781,7 +786,7 @@ jobs:
           platforms: linux/${{ matrix.arch }}
           # PR amd64 legs feed the e2e rig — see backend-analytics.
           tags: ${{ github.event_name == 'pull_request' && matrix.arch == 'amd64' && 'insight-git-cli-proxy:e2e-prebuilt' || '' }}
-          outputs: ${{ github.event_name == 'pull_request' && matrix.arch == 'amd64' && 'type=docker,dest=/tmp/e2e-prebuilt.tar' || format('type=image,name={0}/insight-git-cli-proxy,push-by-digest=true,name-canonical=true,push={1}', env.IMAGE_PREFIX, needs.changes.outputs.should_push == 'true') }}
+          outputs: ${{ github.event_name == 'pull_request' && matrix.arch == 'amd64' && format('type=docker,dest={0}/e2e-prebuilt.tar', runner.temp) || format('type=image,name={0}/insight-git-cli-proxy,push-by-digest=true,name-canonical=true,push={1}', env.IMAGE_PREFIX, needs.changes.outputs.should_push == 'true') }}
           no-cache: ${{ needs.changes.outputs.no_cache == 'true' }}
           cache-from: |
             type=registry,ref=${{ env.BUILDCACHE }}:git-cli-proxy-${{ matrix.arch }}
@@ -794,22 +799,22 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: e2e-prebuilt-insight-git-cli-proxy
-          path: /tmp/e2e-prebuilt.tar
+          path: ${{ runner.temp }}/e2e-prebuilt.tar
           if-no-files-found: error
           retention-days: 1
           overwrite: true
       - name: Export digest
         if: needs.changes.outputs.should_push == 'true'
         run: |
-          mkdir -p /tmp/digests
+          mkdir -p "$RUNNER_TEMP/digests"
           digest="${{ steps.build.outputs.digest }}"
-          touch "/tmp/digests/${digest#sha256:}"
+          touch "$RUNNER_TEMP/digests/${digest#sha256:}"
       - name: Upload digest
         if: needs.changes.outputs.should_push == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: digests-git-cli-proxy-${{ matrix.arch }}
-          path: /tmp/digests/*
+          path: ${{ runner.temp }}/digests/*
           if-no-files-found: error
           retention-days: 1
 
@@ -819,7 +824,7 @@ jobs:
       always()
       && needs.backend-git-cli-proxy.result != 'skipped'
       && needs.changes.outputs.should_push == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     timeout-minutes: 60
     steps:
       - name: Require the platform builds to have passed
@@ -830,7 +835,7 @@ jobs:
       - name: Download digests
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          path: /tmp/digests
+          path: ${{ runner.temp }}/digests
           pattern: digests-git-cli-proxy-*
           merge-multiple: true
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
@@ -856,7 +861,7 @@ jobs:
           registry-username: ${{ github.actor }}
           registry-password: ${{ secrets.GITHUB_TOKEN }}
       - name: Create multi-arch manifest and push
-        working-directory: /tmp/digests
+        working-directory: ${{ runner.temp }}/digests
         run: |
           docker buildx imagetools create \
             $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
@@ -889,7 +894,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -910,7 +915,7 @@ jobs:
           platforms: linux/${{ matrix.arch }}
           # PR amd64 legs feed the e2e rig — see backend-analytics.
           tags: ${{ needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64' && 'insight-identity-resolution:e2e-prebuilt' || '' }}
-          outputs: ${{ needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64' && 'type=docker,dest=/tmp/e2e-prebuilt.tar' || format('type=image,name={0}/insight-identity-resolution,push-by-digest=true,name-canonical=true,push={1}', env.IMAGE_PREFIX, needs.changes.outputs.should_push == 'true') }}
+          outputs: ${{ needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64' && format('type=docker,dest={0}/e2e-prebuilt.tar', runner.temp) || format('type=image,name={0}/insight-identity-resolution,push-by-digest=true,name-canonical=true,push={1}', env.IMAGE_PREFIX, needs.changes.outputs.should_push == 'true') }}
           no-cache: ${{ needs.changes.outputs.no_cache == 'true' }}
           cache-from: |
             type=registry,ref=${{ env.BUILDCACHE }}:identity-resolution-${{ matrix.arch }}
@@ -923,22 +928,22 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: e2e-prebuilt-insight-identity-resolution
-          path: /tmp/e2e-prebuilt.tar
+          path: ${{ runner.temp }}/e2e-prebuilt.tar
           if-no-files-found: error
           retention-days: 1
           overwrite: true
       - name: Export digest
         if: needs.changes.outputs.should_push == 'true'
         run: |
-          mkdir -p /tmp/digests
+          mkdir -p "$RUNNER_TEMP/digests"
           digest="${{ steps.build.outputs.digest }}"
-          touch "/tmp/digests/${digest#sha256:}"
+          touch "$RUNNER_TEMP/digests/${digest#sha256:}"
       - name: Upload digest
         if: needs.changes.outputs.should_push == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: digests-identity-resolution-${{ matrix.arch }}
-          path: /tmp/digests/*
+          path: ${{ runner.temp }}/digests/*
           if-no-files-found: error
           retention-days: 1
 
@@ -948,7 +953,7 @@ jobs:
       always()
       && needs.backend-identity-resolution.result != 'skipped'
       && needs.changes.outputs.should_push == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     timeout-minutes: 60
     steps:
       - name: Require the platform builds to have passed
@@ -959,7 +964,7 @@ jobs:
       - name: Download digests
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          path: /tmp/digests
+          path: ${{ runner.temp }}/digests
           pattern: digests-identity-resolution-*
           merge-multiple: true
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
@@ -985,7 +990,7 @@ jobs:
           registry-username: ${{ github.actor }}
           registry-password: ${{ secrets.GITHUB_TOKEN }}
       - name: Create multi-arch manifest and push
-        working-directory: /tmp/digests
+        working-directory: ${{ runner.temp }}/digests
         run: |
           docker buildx imagetools create \
             $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
@@ -1019,7 +1024,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1049,15 +1054,15 @@ jobs:
       - name: Export digest
         if: needs.changes.outputs.should_push == 'true'
         run: |
-          mkdir -p /tmp/digests
+          mkdir -p "$RUNNER_TEMP/digests"
           digest="${{ steps.build.outputs.digest }}"
-          touch "/tmp/digests/${digest#sha256:}"
+          touch "$RUNNER_TEMP/digests/${digest#sha256:}"
       - name: Upload digest
         if: needs.changes.outputs.should_push == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: digests-insight-v3-core-${{ matrix.arch }}
-          path: /tmp/digests/*
+          path: ${{ runner.temp }}/digests/*
           if-no-files-found: error
           retention-days: 1
 
@@ -1067,7 +1072,7 @@ jobs:
       always()
       && needs.backend-insight-v3-core.result != 'skipped'
       && needs.changes.outputs.should_push == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     timeout-minutes: 60
     steps:
       - name: Require the platform builds to have passed
@@ -1078,7 +1083,7 @@ jobs:
       - name: Download digests
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          path: /tmp/digests
+          path: ${{ runner.temp }}/digests
           pattern: digests-insight-v3-core-*
           merge-multiple: true
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
@@ -1104,7 +1109,7 @@ jobs:
           registry-username: ${{ github.actor }}
           registry-password: ${{ secrets.GITHUB_TOKEN }}
       - name: Create multi-arch manifest and push
-        working-directory: /tmp/digests
+        working-directory: ${{ runner.temp }}/digests
         run: |
           docker buildx imagetools create \
             $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
@@ -1137,7 +1142,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1167,15 +1172,15 @@ jobs:
       - name: Export digest
         if: needs.changes.outputs.should_push == 'true'
         run: |
-          mkdir -p /tmp/digests
+          mkdir -p "$RUNNER_TEMP/digests"
           digest="${{ steps.build.outputs.digest }}"
-          touch "/tmp/digests/${digest#sha256:}"
+          touch "$RUNNER_TEMP/digests/${digest#sha256:}"
       - name: Upload digest
         if: needs.changes.outputs.should_push == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: digests-previews-${{ matrix.arch }}
-          path: /tmp/digests/*
+          path: ${{ runner.temp }}/digests/*
           if-no-files-found: error
           retention-days: 1
 
@@ -1185,7 +1190,7 @@ jobs:
       always()
       && needs.backend-previews.result != 'skipped'
       && needs.changes.outputs.should_push == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     timeout-minutes: 60
     steps:
       - name: Require the platform builds to have passed
@@ -1196,7 +1201,7 @@ jobs:
       - name: Download digests
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          path: /tmp/digests
+          path: ${{ runner.temp }}/digests
           pattern: digests-previews-*
           merge-multiple: true
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
@@ -1222,7 +1227,7 @@ jobs:
           registry-username: ${{ github.actor }}
           registry-password: ${{ secrets.GITHUB_TOKEN }}
       - name: Create multi-arch manifest and push
-        working-directory: /tmp/digests
+        working-directory: ${{ runner.temp }}/digests
         run: |
           docker buildx imagetools create \
             $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
@@ -1263,7 +1268,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     timeout-minutes: 30
     # Narrower than the workflow-level set: this job builds PR-authored source.
     permissions:
@@ -1294,15 +1299,15 @@ jobs:
       - name: Export digest
         if: needs.changes.outputs.should_push == 'true'
         run: |
-          mkdir -p /tmp/digests
+          mkdir -p "$RUNNER_TEMP/digests"
           digest="${{ steps.build.outputs.digest }}"
-          touch "/tmp/digests/${digest#sha256:}"
+          touch "$RUNNER_TEMP/digests/${digest#sha256:}"
       - name: Upload digest
         if: needs.changes.outputs.should_push == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: digests-frontend-${{ matrix.arch }}
-          path: /tmp/digests/*
+          path: ${{ runner.temp }}/digests/*
           if-no-files-found: error
           retention-days: 1
 
@@ -1312,7 +1317,7 @@ jobs:
       always()
       && needs.frontend.result != 'skipped'
       && needs.changes.outputs.should_push == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     # OIDC identity + attestation store for attest-build-provenance.
     permissions:
       contents: read
@@ -1331,7 +1336,7 @@ jobs:
       - name: Download digests
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          path: /tmp/digests
+          path: ${{ runner.temp }}/digests
           pattern: digests-frontend-*
           merge-multiple: true
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
@@ -1357,7 +1362,7 @@ jobs:
           registry-username: ${{ github.actor }}
           registry-password: ${{ secrets.GITHUB_TOKEN }}
       - name: Create multi-arch manifest and push
-        working-directory: /tmp/digests
+        working-directory: ${{ runner.temp }}/digests
         run: |
           docker buildx imagetools create \
             $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
@@ -1395,7 +1400,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1441,8 +1446,8 @@ jobs:
         # dummy profile below is never connected, the adapter just
         # needs to be loadable.
         run: |
-          mkdir -p /tmp/dbt-ci-profiles
-          cat > /tmp/dbt-ci-profiles/profiles.yml <<'YAML'
+          mkdir -p "$RUNNER_TEMP/dbt-ci-profiles"
+          cat > "$RUNNER_TEMP/dbt-ci-profiles/profiles.yml" <<'YAML'
           ingestion:
             target: ci-parse
             outputs:
@@ -1456,7 +1461,7 @@ jobs:
                 secure: false
           YAML
           docker run --rm \
-            -v /tmp/dbt-ci-profiles:/profiles:ro \
+            -v "$RUNNER_TEMP/dbt-ci-profiles":/profiles:ro \
             -w /ingestion/dbt \
             insight-toolbox:ci-validate \
             dbt parse --profiles-dir /profiles
@@ -1476,15 +1481,15 @@ jobs:
       - name: Export digest
         if: needs.changes.outputs.should_push == 'true'
         run: |
-          mkdir -p /tmp/digests
+          mkdir -p "$RUNNER_TEMP/digests"
           digest="${{ steps.build.outputs.digest }}"
-          touch "/tmp/digests/${digest#sha256:}"
+          touch "$RUNNER_TEMP/digests/${digest#sha256:}"
       - name: Upload digest
         if: needs.changes.outputs.should_push == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: digests-toolbox-${{ matrix.arch }}
-          path: /tmp/digests/*
+          path: ${{ runner.temp }}/digests/*
           if-no-files-found: error
           retention-days: 1
 
@@ -1494,7 +1499,7 @@ jobs:
       always()
       && needs.toolbox.result != 'skipped'
       && needs.changes.outputs.should_push == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     timeout-minutes: 60
     steps:
       - name: Require the platform builds to have passed
@@ -1505,7 +1510,7 @@ jobs:
       - name: Download digests
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          path: /tmp/digests
+          path: ${{ runner.temp }}/digests
           pattern: digests-toolbox-*
           merge-multiple: true
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
@@ -1531,7 +1536,7 @@ jobs:
           registry-username: ${{ github.actor }}
           registry-password: ${{ secrets.GITHUB_TOKEN }}
       - name: Create multi-arch manifest and push
-        working-directory: /tmp/digests
+        working-directory: ${{ runner.temp }}/digests
         run: |
           docker buildx imagetools create \
             $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
@@ -1572,7 +1577,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1641,15 +1646,15 @@ jobs:
       - name: Export digest
         if: needs.changes.outputs.should_push == 'true'
         run: |
-          mkdir -p /tmp/digests
+          mkdir -p "$RUNNER_TEMP/digests"
           digest="${{ steps.build.outputs.digest }}"
-          touch "/tmp/digests/${digest#sha256:}"
+          touch "$RUNNER_TEMP/digests/${digest#sha256:}"
       - name: Upload digest
         if: needs.changes.outputs.should_push == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: digests-seed-${{ matrix.arch }}
-          path: /tmp/digests/*
+          path: ${{ runner.temp }}/digests/*
           if-no-files-found: error
           retention-days: 1
 
@@ -1659,7 +1664,7 @@ jobs:
       always()
       && needs.seed.result != 'skipped'
       && needs.changes.outputs.should_push == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     timeout-minutes: 60
     steps:
       - name: Require the platform builds to have passed
@@ -1670,7 +1675,7 @@ jobs:
       - name: Download digests
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          path: /tmp/digests
+          path: ${{ runner.temp }}/digests
           pattern: digests-seed-*
           merge-multiple: true
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
@@ -1687,7 +1692,7 @@ jobs:
             type=raw,value=${{ needs.changes.outputs.build_tag }}
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
       - name: Create multi-arch manifest and push
-        working-directory: /tmp/digests
+        working-directory: ${{ runner.temp }}/digests
         run: |
           docker buildx imagetools create \
             $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
@@ -1724,7 +1729,7 @@ jobs:
       matrix:
         entry: ${{ fromJson(needs.discover-images.outputs.matrix) }}
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1749,15 +1754,15 @@ jobs:
       - name: Export digest
         if: needs.changes.outputs.should_push == 'true'
         run: |
-          mkdir -p /tmp/digests
+          mkdir -p "$RUNNER_TEMP/digests"
           digest="${{ steps.build.outputs.digest }}"
-          touch "/tmp/digests/${digest#sha256:}"
+          touch "$RUNNER_TEMP/digests/${digest#sha256:}"
       - name: Upload digest
         if: needs.changes.outputs.should_push == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: digests-${{ matrix.entry.name }}-${{ matrix.arch }}
-          path: /tmp/digests/*
+          path: ${{ runner.temp }}/digests/*
           if-no-files-found: error
           retention-days: 1
 
@@ -1771,7 +1776,7 @@ jobs:
       && needs.discover-images.outputs.any == 'true'
       && needs.build-image.result != 'skipped'
       && needs.changes.outputs.should_push == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     strategy:
       fail-fast: false
       matrix:
@@ -1786,7 +1791,7 @@ jobs:
       - name: Download digests
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          path: /tmp/digests
+          path: ${{ runner.temp }}/digests
           pattern: digests-${{ matrix.entry.name }}-*
           merge-multiple: true
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
@@ -1812,7 +1817,7 @@ jobs:
           registry-username: ${{ github.actor }}
           registry-password: ${{ secrets.GITHUB_TOKEN }}
       - name: Create multi-arch manifest and push
-        working-directory: /tmp/digests
+        working-directory: ${{ runner.temp }}/digests
         run: |
           docker buildx imagetools create \
             $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
@@ -1887,7 +1892,7 @@ jobs:
       && (needs.merge-previews.result      == 'success' || needs.merge-previews.result      == 'skipped')
       && (needs.merge-frontend.result      == 'success' || needs.merge-frontend.result      == 'skipped')
       && (needs.merge-toolbox.result       == 'success' || needs.merge-toolbox.result       == 'skipped')
-    runs-on: ubuntu-latest
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     outputs:
       # `committed` is set to 'true' when this job actually pushed a
       # descriptor-bump commit. publish-chart reads it to skip itself in
@@ -2101,7 +2106,7 @@ jobs:
         || needs.changes.outputs.seed         == 'true'
         || needs.changes.outputs.umbrella     == 'true'
       )
-    runs-on: ubuntu-latest
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     timeout-minutes: 60
     steps:
       # Mint a short-lived (1h) installation token from the

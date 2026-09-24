@@ -72,6 +72,9 @@ permissions:
 env:
   UI_TESTS_IMAGE: mcr.microsoft.com/playwright/python@sha256:aa81288e738725378becba5b3e06cb0f3a7f012a610e87e8d767a090ea3f740d
 
+# The self-hosted routing below is the same expression in every workflow; the
+# rule and what it does not close are explained in ci.yml. Only ci.yml and
+# connectors-ddl.yml have been exercised on the pool so far.
 jobs:
   # Stages 2 (CI stand) and 3 (E2E stand) are meant to add a target to
   # `resolve-target` below rather than copy this file.
@@ -86,7 +89,7 @@ jobs:
   changes:
     name: Detect changes
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     timeout-minutes: 5
     outputs:
       relevant: ${{ steps.filter.outputs.relevant }}
@@ -228,7 +231,7 @@ jobs:
     name: Resolve target
     needs: changes
     if: ${{ github.event_name != 'pull_request' && needs.changes.outputs.relevant == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     timeout-minutes: 5
     outputs:
       target: ${{ steps.resolve.outputs.target }}
@@ -263,11 +266,11 @@ jobs:
       && needs.resolve-target.result == 'success'
       && needs.resolve-target.outputs.target == 'compose'
       && (needs.build-pr-images.result == 'success' || needs.build-pr-images.result == 'skipped')
-    runs-on: ubuntu-latest
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     outputs:
       api: ${{ steps.results.outputs.api }}
       ui: ${{ steps.results.outputs.ui }}
-    timeout-minutes: ${{ needs.changes.outputs.backend == 'true' && 75 || 45 }}
+    timeout-minutes: ${{ needs.changes.outputs.backend == 'true' && 120 || 80 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -300,7 +303,7 @@ jobs:
         run: |
           python3 scripts/ci/prebuilt_images.py \
             --run-id "$RUN_ID" --registry ghcr.io/constructorfabric \
-            --destination /tmp/e2e-prebuilt \
+            --destination "$RUNNER_TEMP/e2e-prebuilt" \
             --image "insight-analytics:${ANALYTICS_POLICY}" \
             --image "insight-authenticator:${AUTHENTICATOR_POLICY}" \
             --image "insight-identity-resolution:${IDENTITY_POLICY}" \
@@ -568,7 +571,7 @@ jobs:
     name: api-smoke
     needs: [changes, stand-runner]
     if: ${{ !cancelled() && github.event_name != 'pull_request' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     timeout-minutes: 5
     steps:
       - name: Report the API lane
@@ -596,7 +599,7 @@ jobs:
     name: ui-journeys
     needs: [changes, stand-runner]
     if: ${{ !cancelled() && github.event_name != 'pull_request' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     timeout-minutes: 5
     steps:
       - name: Report the UI lane
@@ -629,7 +632,7 @@ jobs:
     name: Stand E2E
     needs: [changes, api-smoke, ui-journeys]
     if: ${{ !cancelled() && github.event_name != 'pull_request' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     timeout-minutes: 5
     steps:
       - name: Require both lanes to have passed, or to have been skipped as irrelevant

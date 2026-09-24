@@ -52,10 +52,13 @@ env:
   MARIADB_ROOT_PASSWORD: insightroot123
   REDIS_PASSWORD: insightpass123
 
+# The self-hosted routing below is the same expression in every workflow; the
+# rule and what it does not close are explained in ci.yml. Only ci.yml and
+# connectors-ddl.yml have been exercised on the pool so far.
 jobs:
   cluster-smoke:
     name: K3s GitOps Deploy
-    runs-on: ubuntu-latest
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     timeout-minutes: 30
 
     steps:

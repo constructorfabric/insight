@@ -47,10 +47,13 @@ concurrency:
 permissions:
   contents: read
 
+# The self-hosted routing below is the same expression in every workflow; the
+# rule and what it does not close are explained in ci.yml. Only ci.yml and
+# connectors-ddl.yml have been exercised on the pool so far.
 jobs:
   transformations:
     name: transformations + dbt tests
-    runs-on: ubuntu-latest
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     # The lane grows by a scenario with most changes and a runner varies by a
     # third between runs; 74 scenarios took 31 to 42 minutes, so 45 was the
     # edge, and a timeout reads as `cancelled` rather than as a failing test.

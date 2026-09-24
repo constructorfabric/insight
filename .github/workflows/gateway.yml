@@ -44,11 +44,14 @@ permissions:
   contents: read
   actions: read
 
+# The self-hosted routing below is the same expression in every workflow; the
+# rule and what it does not close are explained in ci.yml. Only ci.yml and
+# connectors-ddl.yml have been exercised on the pool so far.
 jobs:
   # routegen unit/golden tests + committed-config up-to-date assertion + nginx -t.
   config:
     name: routegen + nginx -t
-    runs-on: ubuntu-latest
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -92,7 +95,7 @@ jobs:
           if [ "$REQUIRED" = "true" ]; then policy=required; fi
           python3 scripts/ci/prebuilt_images.py \
             --run-id "$RUN_ID" --registry ghcr.io/constructorfabric \
-            --destination /tmp/e2e-prebuilt \
+            --destination "$RUNNER_TEMP/e2e-prebuilt" \
             --image "insight-gateway:${policy}"
           docker tag insight-gateway:e2e-prebuilt insight-gateway:ci
 
@@ -142,7 +145,7 @@ jobs:
   # needs python + pytest (+ uv for the realm generator).
   e2e:
     name: e2e (5 scenarios)
-    runs-on: ubuntu-latest
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -174,7 +177,7 @@ jobs:
           if [ "$AUTHENTICATOR_REQUIRED" = "true" ]; then authenticator_policy=required; fi
           python3 scripts/ci/prebuilt_images.py \
             --run-id "$RUN_ID" --registry ghcr.io/constructorfabric \
-            --destination /tmp/e2e-prebuilt \
+            --destination "$RUNNER_TEMP/e2e-prebuilt" \
             --image "insight-gateway:${gateway_policy}" \
             --image "insight-authenticator:${authenticator_policy}"
 
