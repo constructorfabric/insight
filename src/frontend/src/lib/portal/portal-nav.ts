@@ -2,6 +2,7 @@ import { useRouterState } from "@tanstack/react-router";
 import { useMemo } from "react";
 
 import { normalizePersonId } from "@/lib/metrics/entity";
+import { zoneById } from "@/lib/portal/nav-model";
 import { type OrgScope, usePortalShowPlanned } from "@/lib/portal/portal-store";
 import { recordUsageEvent, scopeLabel } from "@/telemetry";
 import { usePortalSearch, useSetPortalSearch } from "@/lib/portal/portal-search";
@@ -24,7 +25,7 @@ export function usePortalZone(): string | null {
   if (/^\/portal\/custom(\/|$)/.test(pathname)) return "custom";
   if (/^\/ic\/[^/]+\/team\/?$/.test(pathname)) return "people";
   if (/^\/ic\/[^/]+\/personal\/?$/.test(pathname)) return "person";
-  return zone ?? null;
+  return zoneById(zone ?? null)?.id ?? null;
 }
 
 /** The selected item within a zone; null when the zone shows its default. */

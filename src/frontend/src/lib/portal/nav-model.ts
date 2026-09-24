@@ -26,6 +26,7 @@ import {
   Settings2,
   Share2,
   Sparkles,
+  Star,
   Ticket,
   TrendingUp,
   User,
@@ -35,8 +36,10 @@ import {
 
 import {
   itemHidden,
+  EMPTY_NAV_POLICY,
   itemPlanned,
   navPolicy,
+  zonePlanned,
   type InstanceNavPolicy,
 } from "./nav-policy";
 
@@ -65,20 +68,27 @@ export type Readiness = "planned";
 export interface Zone {
   id: string;
   label: string;
-  icon: LucideIcon;
   kind: ZoneKind;
 }
 
 export const ZONES: readonly Zone[] = [
-  { id: "overview", label: "Overview", icon: LayoutGrid, kind: "theme" },
-  { id: "directions", label: "Directions", icon: Layers, kind: "directions" },
-  { id: "person", label: "Person", icon: User, kind: "person" },
-  { id: "people", label: "People", icon: Users, kind: "people" },
-  { id: "aicost", label: "AI & Cost", icon: DollarSign, kind: "theme" },
-  { id: "reports", label: "Reports", icon: FileText, kind: "theme" },
-  { id: "custom", label: "Custom", icon: Sparkles, kind: "custom" },
-  { id: "manage", label: "Manage", icon: Settings2, kind: "manage" },
+  { id: "overview", label: "Overview", kind: "theme" },
+  { id: "directions", label: "Directions", kind: "directions" },
+  { id: "person", label: "Person", kind: "person" },
+  { id: "people", label: "People", kind: "people" },
+  { id: "aicost", label: "AI & Cost", kind: "theme" },
+  { id: "reports", label: "Reports", kind: "theme" },
+  { id: "custom", label: "Custom", kind: "custom" },
+  { id: "manage", label: "Manage", kind: "manage" },
 ];
+
+export function zoneIsPlanned(zone: Zone, policy: InstanceNavPolicy = navPolicy()): boolean {
+  const items = zoneItems(zone.id);
+  return (
+    zonePlanned(zone.id, policy) ||
+    (items.length > 0 && items.every((item) => item.unbuilt))
+  );
+}
 
 /** The zone a URL names, or undefined for an id no longer in the rail. */
 export function lensSlug(lens: string): string {
@@ -193,19 +203,28 @@ export const PLANNED_GROUP_LABEL = "Planned";
  * Split entries into the views a reader can open and the marked ones that
  * belong under the demoted "Planned" group. Nothing marked survives
  * `showPlanned: false` — a reader who turned planned sections off is asking
- * for navigation that only lists what renders.
+ * for navigation that only lists what renders. An `unbuilt` entry stays among
+ * the live ones, under the same switch.
  */
-export function partitionByReadiness<T extends { readiness?: Readiness }>(
-  entries: readonly T[],
-  showPlanned: boolean,
-): { live: T[]; planned: T[] } {
+export function partitionByReadiness<
+  T extends { readiness?: Readiness; unbuilt?: boolean },
+>(entries: readonly T[], showPlanned: boolean): { live: T[]; planned: T[] } {
   const live: T[] = [];
   const planned: T[] = [];
   for (const e of entries) {
-    if (e.readiness == null) live.push(e);
+    if (e.unbuilt) {
+      if (showPlanned) live.push(e);
+    } else if (e.readiness == null) live.push(e);
     else if (showPlanned) planned.push(e);
   }
   return { live, planned };
+}
+
+export function orderByReadiness<
+  T extends { readiness?: Readiness; unbuilt?: boolean },
+>(entries: readonly T[], showPlanned: boolean): T[] {
+  const { live, planned } = partitionByReadiness(entries, showPlanned);
+  return [...live, ...planned];
 }
 
 function withConfigReadiness(
@@ -279,7 +298,7 @@ export const ZONE_SECTIONS: Record<string, readonly PaneGroup[]> = {
   ],
   reports: [
     {
-      label: "Planned",
+      label: PLANNED_GROUP_LABEL,
       items: [
         { id: "snapshots", label: "Snapshots", icon: FileText, unbuilt: true },
         { id: "export", label: "Export PDF / HTML", icon: Share2, unbuilt: true },
@@ -289,11 +308,21 @@ export const ZONE_SECTIONS: Record<string, readonly PaneGroup[]> = {
   ],
 };
 
+const MY_DASHBOARDS: PaneItem = { id: "mine", label: "My dashboards", icon: User, unbuilt: true };
+const STARTER_DASHBOARDS: PaneItem = { id: "starter", label: "Starter", icon: Sparkles, unbuilt: true };
+
+export const DASHBOARD_BROWSE_PLANNED: readonly PaneItem[] = [
+  MY_DASHBOARDS,
+  { id: "shared", label: "Shared with me", icon: Share2, unbuilt: true },
+  { id: "starred", label: "Starred", icon: Star, unbuilt: true },
+  STARTER_DASHBOARDS,
+];
+
 export const HOME_DASHBOARD_GROUP: PaneGroup = {
   label: "Dashboards",
   items: [
-    { id: "my-dashboards", label: "My dashboards", icon: LayoutGrid, unbuilt: true },
-    { id: "starter-dashboards", label: "Starter dashboards", icon: Sparkles, unbuilt: true },
+    { ...MY_DASHBOARDS, icon: LayoutGrid },
+    { ...STARTER_DASHBOARDS, label: "Starter dashboards" },
   ],
 };
 
@@ -407,7 +436,7 @@ export function zoneItems(zoneId: string): readonly PaneItem[] {
 }
 
 export function defaultZoneItem(zoneId: string): string | null {
-  return zoneItems(zoneId).find((i) => !i.unbuilt && !i.adminOnly)?.id ?? null;
+  return resolveZoneItem(zoneId, null, EMPTY_NAV_POLICY);
 }
 
 export function resolveZoneItem(

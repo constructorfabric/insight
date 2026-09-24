@@ -35,22 +35,6 @@ describe("landingDecision", () => {
       "keep",
     ],
     [
-      "manager on a retired zone lands on the org rollup",
-      { zone: "scorecard", ...resolved, canSeeOthers: true, isAdmin: false },
-      "pin-overview",
-    ],
-    [
-      "manager on a retired zone is reset when Overview is absent from navigation",
-      {
-        zone: "scorecard",
-        ...resolved,
-        canSeeOthers: true,
-        isAdmin: false,
-        overviewVisible: false,
-      },
-      "reset",
-    ],
-    [
       "manager stays route-driven when Overview is absent from navigation",
       {
         zone: null,

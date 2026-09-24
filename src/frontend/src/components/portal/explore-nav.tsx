@@ -1,5 +1,5 @@
-import { Layers } from "lucide-react";
-import { useState } from "react";
+import { Layers, type LucideIcon } from "lucide-react";
+import { useState, type ReactNode } from "react";
 
 import { CountBadge, ItemBadge, ItemButton } from "@/components/portal/pane-nav";
 import {
@@ -19,7 +19,7 @@ import {
   visibleLenses,
 } from "@/lib/portal/lens-configs";
 import {
-  partitionByReadiness,
+  orderByReadiness,
   resolveZoneItem,
   zoneSections,
   type Direction,
@@ -35,11 +35,67 @@ import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import { useActiveZone } from "@/lib/portal/use-active-zone";
 import { useDismissDrawer } from "@/lib/portal/use-dismiss-drawer";
 
+interface FolderRow {
+  key: string;
+  label: string;
+  active: boolean;
+  muted: boolean;
+  badge?: ReactNode;
+  onPick: () => void;
+}
+
 export function ExploreNav({ visibleZones }: { visibleZones: ReadonlySet<string> }) {
   return (
     <>
       {visibleZones.has("directions") ? <DirectionsGroup /> : null}
       {visibleZones.has("aicost") ? <AiCostGroup /> : null}
+    </>
+  );
+}
+
+function Folder({
+  icon: Icon,
+  label,
+  expanded,
+  onToggle,
+  rows,
+}: {
+  icon: LucideIcon;
+  label: string;
+  expanded: boolean;
+  onToggle: () => void;
+  rows: readonly FolderRow[];
+}) {
+  const dismiss = useDismissDrawer();
+  return (
+    <>
+      <SidebarMenuItem>
+        <SidebarMenuButton isActive={expanded} onClick={onToggle} aria-expanded={expanded}>
+          <Icon />
+          <span>{label}</span>
+        </SidebarMenuButton>
+        <CountBadge>{rows.length}</CountBadge>
+      </SidebarMenuItem>
+
+      {expanded ? (
+        <SidebarMenuSub>
+          {rows.map((row) => (
+            <SidebarMenuSubItem key={row.key}>
+              <SidebarMenuSubButton
+                isActive={row.active}
+                className={row.muted ? "text-muted-foreground" : undefined}
+                onClick={() => {
+                  row.onPick();
+                  dismiss();
+                }}
+              >
+                <span>{row.label}</span>
+                {row.badge}
+              </SidebarMenuSubButton>
+            </SidebarMenuSubItem>
+          ))}
+        </SidebarMenuSub>
+      ) : null}
     </>
   );
 }
@@ -63,58 +119,31 @@ function DirectionsGroup() {
 
 function DirectionItem({ direction }: { direction: Direction }) {
   const { setDir, openDirection } = usePortalNavActions();
-  const dismiss = useDismissDrawer();
   const { activeZone } = useActiveZone();
   const activeDir = usePortalDir();
   const activeLens = usePortalLens();
   const showPlanned = usePortalShowPlanned();
   const expanded = activeZone === "directions" && activeDir === direction.id;
-  const Icon = direction.icon;
   const lenses = visibleLenses(direction, showPlanned);
 
-  function toggle() {
-    if (expanded) {
-      setDir("");
-    } else {
-      openDirection(direction.id, lenses[0] ?? direction.lenses[0]!);
-    }
-  }
-
   return (
-    <>
-      <SidebarMenuItem>
-        <SidebarMenuButton
-          isActive={expanded}
-          onClick={toggle}
-          aria-expanded={expanded}
-        >
-          <Icon />
-          <span>{direction.name}</span>
-          <CountBadge>{lenses.length}</CountBadge>
-        </SidebarMenuButton>
-      </SidebarMenuItem>
-
-      {expanded ? (
-        <SidebarMenuSub>
-          {lenses.map((lens) => (
-            <SidebarMenuSubItem key={lens}>
-              <SidebarMenuSubButton
-                isActive={activeLens === lens}
-                className={
-                  lensRoadmap(direction, lens) ? "text-muted-foreground" : undefined
-                }
-                onClick={() => {
-                  openDirection(direction.id, lens);
-                  dismiss();
-                }}
-              >
-                <span>{lens}</span>
-              </SidebarMenuSubButton>
-            </SidebarMenuSubItem>
-          ))}
-        </SidebarMenuSub>
-      ) : null}
-    </>
+    <Folder
+      icon={direction.icon}
+      label={direction.name}
+      expanded={expanded}
+      onToggle={() =>
+        expanded
+          ? setDir("")
+          : openDirection(direction.id, lenses[0] ?? direction.lenses[0]!)
+      }
+      rows={lenses.map((lens) => ({
+        key: lens,
+        label: lens,
+        active: activeLens === lens,
+        muted: Boolean(lensRoadmap(direction, lens)),
+        onPick: () => openDirection(direction.id, lens),
+      }))}
+    />
   );
 }
 
@@ -130,21 +159,20 @@ function AiCostGroup() {
       <SidebarGroupLabel>AI &amp; Cost</SidebarGroupLabel>
       <SidebarGroupContent>
         <SidebarMenu>
-          {zoneSections("aicost").map((group, i) => {
-            if (group.label) {
-              return <AiCostFolder key={group.label} group={group} active={active} />;
-            }
-            const { live, planned } = partitionByReadiness(group.items, showPlanned);
-            return [...live, ...planned].map((item) => (
-              <ItemButton
-                key={`${i}-${item.id}`}
-                item={item}
-                active={active === item.id}
-                planned={item.readiness != null}
-                onPick={() => openItem("aicost", item.id)}
-              />
-            ));
-          })}
+          {zoneSections("aicost").map((group, i) =>
+            group.label ? (
+              <AiCostFolder key={group.label} group={group} active={active} />
+            ) : (
+              orderByReadiness(group.items, showPlanned).map((item) => (
+                <ItemButton
+                  key={`${i}-${item.id}`}
+                  item={item}
+                  active={active === item.id}
+                  onPick={() => openItem("aicost", item.id)}
+                />
+              ))
+            )
+          )}
         </SidebarMenu>
       </SidebarGroupContent>
     </SidebarGroup>
@@ -153,55 +181,35 @@ function AiCostGroup() {
 
 function AiCostFolder({ group, active }: { group: PaneGroup; active: string | null }) {
   const { openItem } = usePortalNavActions();
-  const dismiss = useDismissDrawer();
   const showPlanned = usePortalShowPlanned();
   const [collapsed, setCollapsed] = useState(false);
-  const { live, planned } = partitionByReadiness(group.items, showPlanned);
-  const items = [...live, ...planned];
+  const items = orderByReadiness(group.items, showPlanned);
   const holdsActive = items.some((item) => item.id === active);
   const expanded = holdsActive && !collapsed;
-  const Icon = group.icon ?? Layers;
 
   if (!items.length) return null;
 
-  function toggle() {
-    if (expanded) {
-      setCollapsed(true);
-      return;
-    }
-    setCollapsed(false);
-    if (!holdsActive) openItem("aicost", items[0]!.id);
-  }
-
   return (
-    <>
-      <SidebarMenuItem>
-        <SidebarMenuButton isActive={expanded} onClick={toggle} aria-expanded={expanded}>
-          <Icon />
-          <span>{group.label}</span>
-          <CountBadge>{items.length}</CountBadge>
-        </SidebarMenuButton>
-      </SidebarMenuItem>
-
-      {expanded ? (
-        <SidebarMenuSub>
-          {items.map((item) => (
-            <SidebarMenuSubItem key={item.id}>
-              <SidebarMenuSubButton
-                isActive={active === item.id}
-                className={item.readiness != null ? "text-muted-foreground" : undefined}
-                onClick={() => {
-                  openItem("aicost", item.id);
-                  dismiss();
-                }}
-              >
-                <span>{item.label}</span>
-                <ItemBadge item={item} />
-              </SidebarMenuSubButton>
-            </SidebarMenuSubItem>
-          ))}
-        </SidebarMenuSub>
-      ) : null}
-    </>
+    <Folder
+      icon={group.icon ?? Layers}
+      label={group.label ?? ""}
+      expanded={expanded}
+      onToggle={() => {
+        if (expanded) {
+          setCollapsed(true);
+          return;
+        }
+        setCollapsed(false);
+        if (!holdsActive) openItem("aicost", items[0]!.id);
+      }}
+      rows={items.map((item) => ({
+        key: item.id,
+        label: item.label,
+        active: active === item.id,
+        muted: item.readiness != null,
+        badge: <ItemBadge item={item} />,
+        onPick: () => openItem("aicost", item.id),
+      }))}
+    />
   );
 }

@@ -31,17 +31,14 @@ import {
   zoneSections,
 } from "@/lib/portal/nav-model";
 import { usePortalItem } from "@/lib/portal/portal-nav";
-import { railItemFor } from "@/lib/portal/rail-model";
-import { useActiveZone } from "@/lib/portal/use-active-zone";
+import { railItemFor, type RailId } from "@/lib/portal/rail-model";
 import { useDismissDrawer } from "@/lib/portal/use-dismiss-drawer";
 import { useRailNav } from "@/lib/portal/use-rail-nav";
 import { useShellLayout } from "@/lib/portal/use-shell-layout";
-import { useZoneNav } from "@/lib/portal/use-zone-nav";
+import { useZoneNav, type ZoneNav } from "@/lib/portal/use-zone-nav";
 import { cn } from "@/lib/utils";
 import { useIsAdmin } from "@/queries/identity-me";
 import { usePreviewsGate } from "@/queries/previews";
-
-const HOME_TITLE = "Constructor Insight";
 
 /**
  * Secondary navigation for the rail item that owns the active zone.
@@ -59,15 +56,10 @@ export function ContextPane() {
   // content its 256px back.
   const isPhone = layout === "phone";
   const drawer = layout !== "wide";
-  const { activeZone } = useActiveZone();
-  const { zones, selectZone } = useZoneNav();
-  const visibleZones = new Set(zones.map((zone) => zone.id));
-  const rail = railItemFor(activeZone);
-  const title = rail?.id === "home" ? HOME_TITLE : (rail?.label ?? "Insight");
-  const active = resolveZoneItem(activeZone, usePortalItem());
+  const nav = useZoneNav();
+  const rail = railItemFor(nav.activeZone);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const dismissDrawer = useDismissDrawer();
-  const personZone = zones.find((zone) => zone.id === "person");
 
   return (
     <Sidebar
@@ -82,36 +74,13 @@ export function ContextPane() {
       {isPhone ? null : (
         <SidebarHeader>
           <span className="px-2 py-1.5 text-sm font-semibold tracking-tight text-sidebar-foreground">
-            {title}
+            {rail?.paneTitle ?? rail?.label ?? "Insight"}
           </span>
         </SidebarHeader>
       )}
       <SidebarContent>
         {isPhone ? <MobileRailNav /> : null}
-        {rail?.id === "home" ? (
-          <GroupsNav
-            groups={[
-              ...zoneSections("overview"),
-              ...(visibleZones.has("custom") ? [HOME_DASHBOARD_GROUP] : []),
-            ]}
-            active={active}
-          />
-        ) : rail?.id === "dashboards" ? (
-          <CustomNav />
-        ) : rail?.id === "explore" ? (
-          <ExploreNav visibleZones={visibleZones} />
-        ) : rail?.id === "people" ? (
-          <PeopleNav
-            visibleZones={visibleZones}
-            onOpenMe={() => {
-              if (personZone) selectZone(personZone);
-            }}
-          />
-        ) : rail?.id === "reports" ? (
-          <GroupsNav groups={zoneSections("reports")} active={active} />
-        ) : rail?.id === "manage" ? (
-          <ManageNav active={active} />
-        ) : null}
+        {rail ? <RailPane rail={rail.id} nav={nav} /> : null}
       </SidebarContent>
       {isPhone ? (
         <SidebarFooter>
@@ -234,6 +203,34 @@ function MobileRailNav() {
       </SidebarGroupContent>
     </SidebarGroup>
   );
+}
+
+function RailPane({ rail, nav }: { rail: RailId; nav: ZoneNav }) {
+  const active = resolveZoneItem(nav.activeZone, usePortalItem());
+  const visibleZones = new Set(nav.zones.map((zone) => zone.id));
+
+  switch (rail) {
+    case "home":
+      return (
+        <GroupsNav
+          groups={[
+            ...zoneSections("overview"),
+            ...(visibleZones.has("custom") ? [HOME_DASHBOARD_GROUP] : []),
+          ]}
+          active={active}
+        />
+      );
+    case "dashboards":
+      return <CustomNav />;
+    case "explore":
+      return <ExploreNav visibleZones={visibleZones} />;
+    case "people":
+      return <PeopleNav nav={nav} />;
+    case "reports":
+      return <GroupsNav groups={zoneSections("reports")} active={active} />;
+    case "manage":
+      return <ManageNav active={active} />;
+  }
 }
 
 function ManageNav({ active }: { active: string | null }) {

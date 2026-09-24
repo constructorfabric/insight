@@ -5,43 +5,11 @@ vi.mock("@/api/custom-client");
 import * as customClient from "@/api/custom-client";
 
 import {
-  dashboardNamesQuery,
   dashboardQuery,
   definitionPagesQuery,
   metricResultQuery,
   widgetQuery,
 } from "./custom";
-
-describe("dashboardNamesQuery", () => {
-  it("passes a needle through, and keys the cache by it", async () => {
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({
-      names: ["engineering"],
-      total: 1,
-    });
-
-    const searched = dashboardNamesQuery("git");
-
-    await searched.queryFn?.(undefined as never);
-    expect(customClient.fetchDashboardNames).toHaveBeenCalledWith({
-      search: "git",
-      limit: 200,
-    });
-    expect(searched.queryKey).not.toEqual(dashboardNamesQuery().queryKey);
-  });
-
-  it("asks fetchDashboardNames for its data", async () => {
-    const page = { names: ["engineering"], total: 1 };
-    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue(page);
-
-    const options = dashboardNamesQuery();
-
-    await expect(options.queryFn?.(undefined as never)).resolves.toEqual(page);
-    expect(customClient.fetchDashboardNames).toHaveBeenCalledWith({
-      search: "",
-      limit: 200,
-    });
-  });
-});
 
 describe("definitionPagesQuery", () => {
   it("asks for one page at a time, and stops once it has them all", async () => {

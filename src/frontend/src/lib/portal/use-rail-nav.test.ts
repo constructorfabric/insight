@@ -4,20 +4,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   zones: [] as string[],
   activeZone: "overview",
-  showPlanned: false,
   selected: [] as string[],
 }));
 
-vi.mock("@/lib/portal/use-zone-nav", () => ({
-  useZoneNav: () => ({
-    zones: mocks.zones.map((id) => ({ id, label: id, kind: "theme" })),
-    activeZone: mocks.activeZone,
-    selectZone: (zone: { id: string }) => mocks.selected.push(zone.id),
-  }),
-}));
-vi.mock("@/lib/portal/portal-store", () => ({
-  usePortalShowPlanned: () => mocks.showPlanned,
-}));
+vi.mock("@/lib/portal/use-zone-nav", async () => {
+  const { ZONES } = await import("@/lib/portal/nav-model");
+  return {
+    useZoneNav: () => ({
+      zones: ZONES.filter((zone) => mocks.zones.includes(zone.id)),
+      activeZone: mocks.activeZone,
+      selectZone: (zone: { id: string }) => mocks.selected.push(zone.id),
+    }),
+  };
+});
 
 import { RAIL } from "./rail-model";
 import { useRailNav } from "./use-rail-nav";
@@ -27,7 +26,6 @@ const rail = (id: string) => RAIL.find((item) => item.id === id)!;
 beforeEach(() => {
   mocks.zones = [];
   mocks.activeZone = "overview";
-  mocks.showPlanned = false;
   mocks.selected = [];
 });
 
@@ -44,13 +42,15 @@ describe("useRailNav", () => {
     ]);
   });
 
-  it("offers Reports once planned sections are shown", () => {
+  it("mutes Reports, whose zone is planned", () => {
     mocks.zones = ["overview", "reports"];
-    mocks.showPlanned = true;
 
     const { result } = renderHook(() => useRailNav());
 
-    expect(result.current.items.map((item) => item.id)).toEqual(["home", "reports"]);
+    expect(result.current.items.map((item) => [item.id, item.planned])).toEqual([
+      ["home", false],
+      ["reports", true],
+    ]);
   });
 
   it("highlights Explore while AI & Cost is open", () => {

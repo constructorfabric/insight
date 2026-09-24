@@ -1,8 +1,6 @@
-import { useNavigate } from "@tanstack/react-router";
 import { Layers, LayoutGrid, Search, User } from "lucide-react";
 import { useState } from "react";
 
-import { useViewer } from "@/auth";
 import { OrgTree } from "@/components/org-tree";
 import { ItemButton } from "@/components/portal/pane-nav";
 import { Input } from "@/components/ui/input";
@@ -17,7 +15,7 @@ import {
 } from "@/components/ui/sidebar";
 import { visibleGroups } from "@/lib/insight/groups";
 import {
-  partitionByReadiness,
+  orderByReadiness,
   peopleItemsFor,
   resolveZoneItem,
 } from "@/lib/portal/nav-model";
@@ -26,6 +24,7 @@ import { usePortalItem, usePortalNavActions } from "@/lib/portal/portal-nav";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import { useActiveZone } from "@/lib/portal/use-active-zone";
 import { useDismissDrawer } from "@/lib/portal/use-dismiss-drawer";
+import type { ZoneNav } from "@/lib/portal/use-zone-nav";
 import {
   usePersonSectionStandings,
   useSelectedPersonSection,
@@ -34,70 +33,39 @@ import { STATUS_BG_CLASS } from "@/lib/status";
 import { cn } from "@/lib/utils";
 import { useVisibilityPolicy } from "@/queries/identity-me";
 
-export function PeopleNav({
-  visibleZones,
-  onOpenMe,
-}: {
-  visibleZones: ReadonlySet<string>;
-  onOpenMe: () => void;
-}) {
-  const { activeZone } = useActiveZone();
+export function PeopleNav({ nav }: { nav: ZoneNav }) {
   return (
     <>
-      <PeopleViews visibleZones={visibleZones} onOpenMe={onOpenMe} />
-      {activeZone === "person" ? <PersonSectionsNav /> : null}
-      {activeZone === "people" ? <WorkChart /> : null}
+      <PeopleViews nav={nav} />
+      {nav.activeZone === "person" ? <PersonSectionsNav /> : null}
+      {nav.activeZone === "people" ? <WorkChart /> : null}
     </>
   );
 }
 
-function PeopleViews({
-  visibleZones,
-  onOpenMe,
-}: {
-  visibleZones: ReadonlySet<string>;
-  onOpenMe: () => void;
-}) {
-  const navigate = useNavigate();
+function PeopleViews({ nav }: { nav: ZoneNav }) {
+  const { zones, activeZone, me, selectZone } = nav;
   const { setItem } = usePortalNavActions();
   const dismiss = useDismissDrawer();
-  const { activeZone, activePerson } = useActiveZone();
-  const { personId } = useViewer();
+  const { activePerson } = useActiveZone();
   const { isFlat } = useVisibilityPolicy();
   const showPlanned = usePortalShowPlanned();
   const item = resolveZoneItem("people", usePortalItem());
-  const me = personId ?? activePerson;
-  const teamViews = visibleZones.has("people") ? peopleItemsFor(isFlat) : [];
-  const { live, planned } = partitionByReadiness(teamViews, showPlanned);
-
-  function openTeamView(id: string) {
-    if (activeZone === "people") {
-      setItem(id);
-      return;
-    }
-    void navigate({
-      to: "/ic/$person/team",
-      params: { person: me },
-      search: (prev: Record<string, unknown>) => ({
-        ...prev,
-        item: id,
-        acct: undefined,
-        zone: undefined,
-      }),
-    });
-  }
+  const personZone = zones.find((zone) => zone.id === "person");
+  const peopleZone = zones.find((zone) => zone.id === "people");
+  const teamViews = peopleZone ? orderByReadiness(peopleItemsFor(isFlat), showPlanned) : [];
 
   return (
     <SidebarGroup>
       <SidebarGroupLabel>Views</SidebarGroupLabel>
       <SidebarGroupContent>
         <SidebarMenu>
-          {visibleZones.has("person") ? (
+          {personZone ? (
             <SidebarMenuItem>
               <SidebarMenuButton
                 isActive={activeZone === "person" && activePerson === me}
                 onClick={() => {
-                  onOpenMe();
+                  selectZone(personZone);
                   dismiss();
                 }}
               >
@@ -106,15 +74,20 @@ function PeopleViews({
               </SidebarMenuButton>
             </SidebarMenuItem>
           ) : null}
-          {[...live, ...planned].map((view) => (
-            <ItemButton
-              key={view.id}
-              item={view}
-              active={activeZone === "people" && item === view.id}
-              planned={view.readiness != null}
-              onPick={() => openTeamView(view.id)}
-            />
-          ))}
+          {peopleZone
+            ? teamViews.map((view) => (
+                <ItemButton
+                  key={view.id}
+                  item={view}
+                  active={activeZone === "people" && item === view.id}
+                  onPick={() =>
+                    activeZone === "people"
+                      ? setItem(view.id)
+                      : selectZone(peopleZone, view.id)
+                  }
+                />
+              ))
+            : null}
         </SidebarMenu>
       </SidebarGroupContent>
     </SidebarGroup>

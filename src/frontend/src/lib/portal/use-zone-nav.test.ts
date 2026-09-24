@@ -87,6 +87,17 @@ describe("useZoneNav", () => {
     expect(zoneIds()).toContain("overview");
   });
 
+  it("keeps Reports out until planned sections are shown", () => {
+    mocks.canSeeOthers = true;
+    mocks.reachPending = false;
+    mocks.showPlanned = false;
+    expect(zoneIds()).not.toContain("reports");
+
+    mocks.showPlanned = true;
+    expect(zoneIds()).toContain("reports");
+    mocks.showPlanned = false;
+  });
+
   it("opens Person on the viewer's own page, not on the person on screen", () => {
     const { result } = renderHook(() => useZoneNav());
     const person = result.current.zones.find((z) => z.id === "person")!;

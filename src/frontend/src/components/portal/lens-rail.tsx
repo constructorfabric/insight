@@ -23,7 +23,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { useShellLayout } from "@/lib/portal/use-shell-layout";
-import type { RailItem } from "@/lib/portal/rail-model";
+import type { RailEntry, RailItem } from "@/lib/portal/rail-model";
 import { useRailNav } from "@/lib/portal/use-rail-nav";
 import { cn } from "@/lib/utils";
 
@@ -363,7 +363,7 @@ function RailItemButton({
   open,
   onSelect,
 }: {
-  item: RailItem;
+  item: RailEntry;
   active: boolean;
   open: boolean;
   onSelect: (item: RailItem, viaPointer: boolean) => void;

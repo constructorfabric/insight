@@ -3,14 +3,10 @@ import {
   Database,
   LayoutDashboard,
   LayoutGrid,
-  Share2,
   Sigma,
-  Sparkles,
-  Star,
-  User,
   type LucideIcon,
 } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 
 import { CountBadge, UnbuiltRow } from "@/components/portal/pane-nav";
 import {
@@ -21,16 +17,9 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-import type { PaneItem } from "@/lib/portal/nav-model";
+import { DASHBOARD_BROWSE_PLANNED } from "@/lib/portal/nav-model";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
-import { dashboardNamesQuery } from "@/queries/custom";
-
-const PLANNED_BROWSE: readonly PaneItem[] = [
-  { id: "mine", label: "My dashboards", icon: User, unbuilt: true },
-  { id: "shared", label: "Shared with me", icon: Share2, unbuilt: true },
-  { id: "starred", label: "Starred", icon: Star, unbuilt: true },
-  { id: "starter", label: "Starter", icon: Sparkles, unbuilt: true },
-];
+import { definitionPagesQuery } from "@/queries/custom";
 
 const CATALOGUES: readonly {
   to: "/portal/custom/metrics" | "/portal/custom/widgets" | "/portal/custom/datasets";
@@ -42,17 +31,14 @@ const CATALOGUES: readonly {
   { to: "/portal/custom/datasets", label: "Datasets", icon: Database },
 ];
 
-const NOT_A_DASHBOARD = new Set(["metrics", "widgets", "datasets", "new", "edit"]);
-
-function onDashboards(pathname: string): boolean {
-  const rest = pathname.replace(/\/$/, "").split("/").slice(3);
-  return rest.length === 0 || (rest.length === 1 && !NOT_A_DASHBOARD.has(rest[0]!));
-}
+const DASHBOARD_ROUTES = new Set(["/portal/custom/", "/portal/custom/$name"]);
 
 export function CustomNav() {
   const showPlanned = usePortalShowPlanned();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const { data } = useQuery(dashboardNamesQuery());
+  const routeId = useRouterState({ select: (s) => s.matches.at(-1)?.routeId });
+  const { data } = useInfiniteQuery(definitionPagesQuery("dashboards"));
+  const total = data?.pages[0]?.total;
 
   return (
     <>
@@ -62,16 +48,18 @@ export function CustomNav() {
           <SidebarMenu>
             <SidebarMenuItem>
               <SidebarMenuButton
-                isActive={onDashboards(pathname)}
+                isActive={routeId != null && DASHBOARD_ROUTES.has(routeId)}
                 render={<Link to="/portal/custom" />}
               >
                 <LayoutGrid />
                 <span>All dashboards</span>
-                {data ? <CountBadge>{data.total}</CountBadge> : null}
               </SidebarMenuButton>
+              {total != null ? <CountBadge>{total}</CountBadge> : null}
             </SidebarMenuItem>
             {showPlanned
-              ? PLANNED_BROWSE.map((item) => <UnbuiltRow key={item.id} item={item} />)
+              ? DASHBOARD_BROWSE_PLANNED.map((item) => (
+                  <UnbuiltRow key={item.id} item={item} />
+                ))
               : null}
           </SidebarMenu>
         </SidebarGroupContent>

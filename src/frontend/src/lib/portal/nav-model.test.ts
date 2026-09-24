@@ -4,6 +4,7 @@ import {
   defaultZoneItem,
   MANAGE_ITEMS,
   manageGroupsFor,
+  orderByReadiness,
   partitionByReadiness,
   peopleItemsFor,
   resolveZoneItem,
@@ -50,6 +51,34 @@ describe("zone item defaults", () => {
     for (const [zone, id] of defaults) {
       expect(zoneItems(zone).find((i) => i.id === id)?.adminOnly, zone).toBeFalsy();
     }
+  });
+});
+
+describe("readiness", () => {
+  const rows = [
+    { id: "live" },
+    { id: "unbuilt", unbuilt: true },
+    { id: "install-planned", readiness: "planned" as const },
+  ];
+  const ids = (items: readonly { id: string }[]) => items.map((i) => i.id);
+
+  it("keeps an unbuilt row in place, and only while planned sections are shown", () => {
+    const shown = partitionByReadiness(rows, true);
+    const hidden = partitionByReadiness(rows, false);
+
+    expect(ids(shown.live)).toEqual(["live", "unbuilt"]);
+    expect(ids(shown.planned)).toEqual(["install-planned"]);
+    expect(ids(hidden.live)).toEqual(["live"]);
+    expect(ids(hidden.planned)).toEqual([]);
+  });
+
+  it("orders live rows before install-planned ones", () => {
+    expect(ids(orderByReadiness(rows, true))).toEqual([
+      "live",
+      "unbuilt",
+      "install-planned",
+    ]);
+    expect(ids(orderByReadiness(rows, false))).toEqual(["live"]);
   });
 });
 

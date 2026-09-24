@@ -52,12 +52,9 @@ vi.mock("@/lib/portal/portal-store", async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
   usePortalShowPlanned: () => mocks.showPlanned,
 }));
-vi.mock("@/queries/custom", async (orig) => ({
+vi.mock("@/api/custom-client", async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
-  dashboardNamesQuery: () => ({
-    queryKey: ["custom", "dashboard-names", ""],
-    queryFn: async () => ({ names: ["delivery"], total: 14 }),
-  }),
+  fetchDashboardNames: async () => ({ names: ["delivery"], total: 14 }),
 }));
 
 import {

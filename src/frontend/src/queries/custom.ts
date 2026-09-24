@@ -119,14 +119,6 @@ export function catalogueNamesQuery(kind: EditableKind) {
   });
 }
 
-/** Every dashboard in one answer, for the rail that lists them all. */
-export function dashboardNamesQuery(search = "") {
-  return queryOptions({
-    queryKey: ["custom", "dashboard-names", search],
-    queryFn: () => fetchDashboardNames({ search, limit: MAX_PAGE }),
-  });
-}
-
 export function dashboardQuery(name: string) {
   return queryOptions({
     queryKey: ["custom", "dashboard", name],
@@ -319,14 +311,9 @@ export function useSendChat() {
 }
 
 export function invalidateDashboardList(queryClient: QueryClient) {
-  return Promise.all([
-    queryClient.invalidateQueries({
-      queryKey: ["custom", "dashboard-names"],
-    }),
-    // Every catalogue page reads these, and a chat that built a dashboard
-    // built its metric and widgets too.
-    queryClient.invalidateQueries({ queryKey: NAME_PAGES_PREFIX }),
-  ]);
+  // Every catalogue page reads these, and a chat that built a dashboard
+  // built its metric and widgets too.
+  return queryClient.invalidateQueries({ queryKey: NAME_PAGES_PREFIX });
 }
 
 export function invalidateDashboardPage(

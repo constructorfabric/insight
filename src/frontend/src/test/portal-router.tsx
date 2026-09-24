@@ -116,7 +116,7 @@ export function portalRouterMock(): Record<string, unknown> {
         () => portalRouter.search,
         () => portalRouter.search,
       );
-      return select({ location: { pathname: path, search } });
+      return select({ location: { pathname: path, search }, matches: [] });
     },
     // The shell hosts child routes, so a test that renders the shell alone
     // gets the slot rather than a page.

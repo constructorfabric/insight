@@ -5,6 +5,7 @@ import {
   SidebarGroupContent,
   SidebarGroupLabel,
   SidebarMenu,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
@@ -27,9 +28,9 @@ const BADGE_TONE: Record<string, string> = {
 
 export function CountBadge({ children }: { children: ReactNode }) {
   return (
-    <span className="ms-auto rounded-full bg-muted px-1.5 text-xs text-muted-foreground tabular-nums">
+    <SidebarMenuBadge className="rounded-full bg-muted px-1.5 font-normal text-muted-foreground">
       {children}
-    </span>
+    </SidebarMenuBadge>
   );
 }
 
@@ -57,8 +58,10 @@ export function UnbuiltRow({ item }: { item: PaneItem }) {
       >
         <Icon />
         <span>{item.label}</span>
-        <span className="ms-auto text-xs">{PLANNED_GROUP_LABEL}</span>
       </SidebarMenuButton>
+      <SidebarMenuBadge className="font-normal text-muted-foreground">
+        {PLANNED_GROUP_LABEL}
+      </SidebarMenuBadge>
     </SidebarMenuItem>
   );
 }
@@ -66,13 +69,10 @@ export function UnbuiltRow({ item }: { item: PaneItem }) {
 export function ItemButton({
   item,
   active,
-  planned = false,
   onPick,
 }: {
   item: PaneItem;
   active: boolean;
-  /** Demoted rendering: same affordance, visibly lighter weight. */
-  planned?: boolean;
   onPick?: () => void;
 }) {
   const { setItem } = usePortalNavActions();
@@ -89,7 +89,7 @@ export function ItemButton({
           else setItem(item.id);
           dismiss();
         }}
-        className={planned ? "text-muted-foreground" : undefined}
+        className={item.readiness != null ? "text-muted-foreground" : undefined}
       >
         <Icon />
         <span>{item.label}</span>
@@ -99,8 +99,6 @@ export function ItemButton({
   );
 }
 
-// INVARIANT: an `unbuilt` row opens nothing and stays in its group; an
-// install-planned entry still opens and moves to the demoted group below.
 export function GroupsNav({
   groups,
   active,
@@ -109,12 +107,7 @@ export function GroupsNav({
   active: string | null;
 }) {
   const showPlanned = usePortalShowPlanned();
-  const split = groups.map((g) =>
-    partitionByReadiness(
-      g.items.filter((item) => !item.unbuilt || showPlanned),
-      showPlanned,
-    ),
-  );
+  const split = groups.map((g) => partitionByReadiness(g.items, showPlanned));
   const planned = split.flatMap((s) => s.planned);
 
   return (
@@ -139,12 +132,7 @@ export function GroupsNav({
           <SidebarGroupContent>
             <SidebarMenu>
               {planned.map((it) => (
-                <ItemButton
-                  key={it.id}
-                  item={it}
-                  active={active === it.id}
-                  planned
-                />
+                <ItemButton key={it.id} item={it} active={active === it.id} />
               ))}
             </SidebarMenu>
           </SidebarGroupContent>

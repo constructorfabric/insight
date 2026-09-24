@@ -250,6 +250,12 @@ describe("PeopleView", () => {
 });
 
 describe("PortalLayout landing", () => {
+  it("reads a zone id the portal no longer has as no zone", () => {
+    act(() => portalRouter.set({ zone: "scorecard" }));
+    const zone = renderHook(() => usePortalZone());
+    expect(zone.result.current).toBeNull();
+  });
+
   it("pins a manager's landing zone to Overview once resolved", () => {
     const zone = renderHook(() => usePortalZone());
     render(<PortalLayout />);
