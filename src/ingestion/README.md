@@ -265,7 +265,6 @@ kubectl get workflows -n argo --sort-by=.metadata.creationTimestamp --no-headers
 src/ingestion/
 │
 ├── run-sync.sh                      # Manual one-shot pipeline run (single connector)
-├── run-tt-enrich-jira.sh            # Manual Jira silver re-run (no Airbyte sync)
 ├── reconcile-connectors.sh          # Single declarative entrypoint
 │                                    #   [adopt|reconcile] [--dry-run]
 │                                    #   [--connector NAME] [--no-gc]
@@ -304,8 +303,7 @@ src/ingestion/
 │
 ├── workflows/
 │   └── onetime/                     #   One-shot Workflow templates for the manual
-│       ├── sync.yaml.tpl            #     run-sync.sh / run-tt-enrich-jira.sh tools
-│       └── tt-enrich-jira.yaml.tpl  #     (shared WorkflowTemplates are chart-owned)
+│       └── sync.yaml.tpl            #     run-sync.sh tool
 │
 ├── reconcile-connectors/            # Declarative reconcile engine (also runs in-cluster
 │   ├── main.sh                      #   via the reconcile CronWorkflow). Entrypoint:

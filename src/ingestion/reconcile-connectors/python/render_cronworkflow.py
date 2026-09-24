@@ -11,7 +11,6 @@ CLI:
     --cron-name NAME             # object name, computed by lib/argo.sh:argo_cron_workflow_name
     --insight-source-id SLUG     # secret annotation insight.cyberfabric.com/source-id
     --dbt-select SEL             # descriptor.dbt_select (may be empty)
-    --enrich-image REF           # descriptor.images.enrich.image (may be empty)
     --tpl PATH
 
 Stdout: rendered YAML.
@@ -26,12 +25,17 @@ other file beyond the template. All descriptor-derived values are passed
 by the bash caller (which already loads them via `disc_load_descriptors`),
 keeping descriptor reading centralized in one place.
 
-The rendered CronWorkflow targets `ingestion-pipeline` (sync → dbt-run,
-plus tt-enrich-jira-run for jira) instead of the bare `airbyte-sync`
-template. Without this dispatch, Bronze rows would land but Silver /
-class_* tables would never get rebuilt.
+The rendered CronWorkflow targets `ingestion-pipeline` (sync → dbt-run) instead
+of the bare `airbyte-sync` template. Without this dispatch, Bronze rows would
+land but Silver / class_* tables would never get rebuilt.
 """
-import argparse, json, os, string, sys
+
+import argparse
+import json
+import os
+import string
+import sys
+from pathlib import Path
 
 
 def main() -> int:
@@ -43,15 +47,11 @@ def main() -> int:
     p.add_argument("--cron-name", required=True)
     p.add_argument("--insight-source-id", required=True)
     p.add_argument("--dbt-select", default="")
-    p.add_argument("--enrich-image", default="")
     p.add_argument("--tpl", required=True)
     args = p.parse_args()
 
-    # The pipeline dispatches on `data_source == 'jira'` for the
-    # enrich-then-silver path; everything else falls through to the
-    # legacy single-dbt path. Set data_source = the connector slug so
-    # operators can see what the workflow is for in Argo UI; only
-    # `jira` triggers the enriched branch.
+    # The pipeline dispatches on `data_source == 'jira'` for its two-step dbt
+    # path; everything else falls through to the legacy single-dbt path.
     data_source = args.connector
     # Intersection of the `staging` and `jira` tags = exactly the jira staging
     # models (jira__changelog_items, jira__issue_field_snapshot). The old
@@ -81,12 +81,11 @@ def main() -> int:
         "DATA_SOURCE": data_source,
         "DBT_SELECT": args.dbt_select,
         "DBT_SELECT_STAGING": dbt_select_staging,
-        "JIRA_ENRICH_IMAGE": args.enrich_image,
         "INSIGHT_NAMESPACE": os.environ["INSIGHT_NAMESPACE"],
         "ARGO_INSTANCE_ID": os.environ.get("ARGO_INSTANCE_ID", ""),
         "ARGO_SERVICE_ACCOUNT": os.environ["ARGO_SERVICE_ACCOUNT"],
     }
-    with open(args.tpl, "r", encoding="utf-8") as f:
+    with Path(args.tpl).open(encoding="utf-8") as f:
         tpl = f.read()
     try:
         rendered = string.Template(tpl).substitute(env)
@@ -97,10 +96,12 @@ def main() -> int:
     # otherwise we'd emit an empty label value, which Argo accepts but
     # loses meaning.
     if not env["ARGO_INSTANCE_ID"]:
-        rendered = "\n".join(
-            line for line in rendered.splitlines()
-            if "workflows.argoproj.io/controller-instanceid" not in line
-        ) + "\n"
+        rendered = (
+            "\n".join(
+                line for line in rendered.splitlines() if "workflows.argoproj.io/controller-instanceid" not in line
+            )
+            + "\n"
+        )
     sys.stdout.write(rendered)
     return 0
 

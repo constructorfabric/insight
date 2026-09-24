@@ -8,7 +8,6 @@ CLI:
     --tenant SLUG
     --insight-source-id SLUG     # secret annotation insight.cyberfabric.com/source-id
     --dbt-select SEL             # descriptor.dbt_select (may be empty)
-    --enrich-image REF           # descriptor.images.enrich.image (may be empty)
     --bump-kind KIND             # none|patch|minor|major|migration (default: none)
     --tpl PATH
 
@@ -20,15 +19,20 @@ other file beyond the template. All descriptor-derived values are passed by
 the bash caller (which already loads them via `disc_load_descriptors`),
 keeping descriptor reading centralized in one place.
 
-The rendered Workflow targets `ingestion-pipeline` (sync → dbt-run, plus
-tt-enrich-jira-run for jira), not the bare `airbyte-sync` template, so
+The rendered Workflow targets `ingestion-pipeline` (sync → dbt-run), not the
+bare `airbyte-sync` template, so
 data-affecting reconcile changes also rebuild Silver / class_* tables.
 
 `--bump-kind=major` dispatches a one-shot `dbt --full-refresh` for the
 connector's `dbt_select` scope. Any other value renders with
 dbt_full_refresh=false.
 """
-import argparse, os, string, sys
+
+import argparse
+import os
+import string
+import sys
+from pathlib import Path
 
 
 def main() -> int:
@@ -38,12 +42,7 @@ def main() -> int:
     p.add_argument("--tenant", required=True)
     p.add_argument("--insight-source-id", required=True)
     p.add_argument("--dbt-select", default="")
-    p.add_argument("--enrich-image", default="")
-    p.add_argument(
-        "--bump-kind",
-        default="none",
-        choices=["none", "patch", "minor", "major", "migration"],
-    )
+    p.add_argument("--bump-kind", default="none", choices=["none", "patch", "minor", "major", "migration"])
     p.add_argument("--tpl", required=True)
     args = p.parse_args()
 
@@ -68,12 +67,11 @@ def main() -> int:
         "DBT_SELECT": args.dbt_select,
         "DBT_SELECT_STAGING": dbt_select_staging,
         "DBT_FULL_REFRESH": dbt_full_refresh,
-        "JIRA_ENRICH_IMAGE": args.enrich_image,
         "INSIGHT_NAMESPACE": os.environ["INSIGHT_NAMESPACE"],
         "ARGO_INSTANCE_ID": os.environ.get("ARGO_INSTANCE_ID", ""),
         "ARGO_SERVICE_ACCOUNT": os.environ["ARGO_SERVICE_ACCOUNT"],
     }
-    with open(args.tpl, "r", encoding="utf-8") as f:
+    with Path(args.tpl).open(encoding="utf-8") as f:
         tpl = f.read()
     try:
         rendered = string.Template(tpl).substitute(env)
@@ -81,10 +79,12 @@ def main() -> int:
         print(f"render_sync_trigger: missing variable {e}", file=sys.stderr)
         return 2
     if not env["ARGO_INSTANCE_ID"]:
-        rendered = "\n".join(
-            line for line in rendered.splitlines()
-            if "workflows.argoproj.io/controller-instanceid" not in line
-        ) + "\n"
+        rendered = (
+            "\n".join(
+                line for line in rendered.splitlines() if "workflows.argoproj.io/controller-instanceid" not in line
+            )
+            + "\n"
+        )
     sys.stdout.write(rendered)
     return 0
 
