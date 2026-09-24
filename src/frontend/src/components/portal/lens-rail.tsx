@@ -1,4 +1,4 @@
-import { Bug, Settings, type LucideIcon } from "lucide-react";
+import { MessageSquare, Settings2, type LucideIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import brandSymbol from "@/assets/brand-symbol.svg";
@@ -23,21 +23,15 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { useShellLayout } from "@/lib/portal/use-shell-layout";
-import type { Zone } from "@/lib/portal/nav-model";
-import { useZoneNav } from "@/lib/portal/use-zone-nav";
+import type { RailEntry, RailItem } from "@/lib/portal/rail-model";
+import { useRailNav } from "@/lib/portal/use-rail-nav";
 import { cn } from "@/lib/utils";
 
 /**
- * The zone rail: one icon per zone, expanding to labels on hover.
- *
- * Zones that are dashboards in their own right (Person, People) link to the
- * existing dashboard routes and clear the theme-zone selection; other zones set
- * the active zone so the context pane switches. Zones the active role can't see
- * are filtered out (permission layer — FE stub over the future
- * role_section_visibility entity).
+ * The rail: one icon per rail item (`rail-model.ts`), expanding to labels on hover.
  *
  * Below 768px the rail renders nothing: 56px of icons plus a 256px pane left a
- * phone with ~60px of content. The same zones (labelled, not icon-only) live in
+ * phone with ~60px of content. The same items (labelled, not icon-only) live in
  * the context pane's drawer instead — see `ContextPane`. On a tablet the rail
  * stays: 56px is affordable, and it is the pane that collapses.
  *
@@ -103,7 +97,7 @@ const OPEN_AFTER_MS = 200;
 
 export function LensRail() {
   const layout = useShellLayout();
-  const { zones, activeZone, selectZone } = useZoneNav();
+  const { items, activeItem, selectItem } = useRailNav();
   const { state: paneState } = useSidebar();
   const paneIsBeside = paneState === "expanded";
   const [open, setOpen] = useState(false);
@@ -271,18 +265,18 @@ export function LensRail() {
             the list unable to scroll at all, open or shut. */}
         <SidebarContent className={open ? "overflow-visible" : undefined}>
           <SidebarMenu className="items-start gap-1 ps-2">
-            {zones.map((z) => (
-              <ZoneItem
-                key={z.id}
-                zone={z}
-                active={activeZone === z.id}
+            {items.map((item) => (
+              <RailItemButton
+                key={item.id}
+                item={item}
+                active={activeItem === item.id}
                 open={open}
-                onSelect={(zone, viaPointer) => {
+                onSelect={(picked, viaPointer) => {
                   if (viaPointer) {
                     setDismissed(true);
                     close();
                   }
-                  selectZone(zone);
+                  selectItem(picked);
                 }}
               />
             ))}
@@ -293,7 +287,7 @@ export function LensRail() {
           <Popover open={settingsOpen} onOpenChange={setSettingsOpen}>
             <PopoverTrigger
               render={
-                <RailButton icon={Settings} label="Settings" />
+                <RailButton icon={Settings2} label="Settings" />
               }
             />
             <PopoverContent
@@ -330,7 +324,7 @@ function FeedbackButton() {
 
   return (
     <RailButton
-      icon={Bug}
+      icon={MessageSquare}
       label={t("feedback.nav_label")}
       onClick={feedback.openFeedback}
     />
@@ -363,34 +357,35 @@ function RailButton({
 const RAIL_BUTTON =
   "flex size-10 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground";
 
-function ZoneItem({
-  zone,
+function RailItemButton({
+  item,
   active,
   open,
   onSelect,
 }: {
-  zone: Zone;
+  item: RailEntry;
   active: boolean;
   open: boolean;
-  onSelect: (zone: Zone, viaPointer: boolean) => void;
+  onSelect: (item: RailItem, viaPointer: boolean) => void;
 }) {
-  const Icon = zone.icon;
+  const Icon = item.icon;
 
   return (
     <SidebarMenuItem className="relative z-10">
       <SidebarMenuButton
         isActive={active}
-        title={zone.label}
+        title={item.label}
         // 40px shut, the full open width while open — see note 2 above. The
         // icon does not move between the two: the button starts its content at
         // the same offset either way.
         className={cn(
           "h-10 justify-start gap-2 overflow-hidden p-0 ps-[10px] transition-[width] duration-150",
-          open || "w-10"
+          open || "w-10",
+          item.planned && "text-muted-foreground"
         )}
         style={open ? { width: `calc(${OPEN_WIDTH} - 1rem)` } : undefined}
         // `detail` counts pointer clicks: keyboard activation reports 0.
-        onClick={(e) => onSelect(zone, e.detail > 0)}
+        onClick={(e) => onSelect(item, e.detail > 0)}
       >
         <Icon className="shrink-0" />
         {/* Visible only while open, and never a pointer target of its own —
@@ -401,7 +396,7 @@ function ZoneItem({
             open ? "opacity-100" : "opacity-0"
           )}
         >
-          {zone.label}
+          {item.label}
         </span>
       </SidebarMenuButton>
     </SidebarMenuItem>

@@ -1,7 +1,8 @@
 import { useNavigate } from "@tanstack/react-router";
 
-import { zoneHidden, zonePlanned } from "@/lib/portal/nav-policy";
-import { ZONES, type Zone } from "@/lib/portal/nav-model";
+import { useViewer } from "@/auth";
+import { zoneHidden } from "@/lib/portal/nav-policy";
+import { ZONES, zoneIsPlanned, type Zone } from "@/lib/portal/nav-model";
 import {
   usePortalShowPlanned,
 } from "@/lib/portal/portal-store";
@@ -15,6 +16,13 @@ import { useIsAdmin } from "@/queries/identity-me";
  */
 const IC_ZONES = new Set(["person"]);
 
+export interface ZoneNav {
+  zones: Zone[];
+  activeZone: string;
+  me: string;
+  selectZone: (zone: Zone, item?: string) => void;
+}
+
 /**
  * The zone list the viewer may see plus the selection behaviour, shared by the
  * desktop icon rail and the mobile drawer so both offer exactly the same zones
@@ -22,13 +30,11 @@ const IC_ZONES = new Set(["person"]);
  * navigate and clear the pinned zone, which is what lets a person-name click
  * inside a roster drill straight into Person; the rest pin the zone.
  */
-export function useZoneNav(): {
-  zones: Zone[];
-  activeZone: string;
-  selectZone: (zone: Zone) => void;
-} {
+export function useZoneNav(): ZoneNav {
   const navigate = useNavigate();
   const { activeZone, activePerson } = useActiveZone();
+  const { personId: viewerPersonId } = useViewer();
+  const me = viewerPersonId ?? activePerson;
   const { canSeeOthers, isPending: reachPending } = useViewerReach();
   // A rail of scaffolds makes the built zones look unreliable.
   const showPlanned = usePortalShowPlanned();
@@ -42,7 +48,7 @@ export function useZoneNav(): {
   const { isAdmin } = useIsAdmin();
 
   const zones = ZONES.filter((z) => {
-    if (zoneHidden(z.id) || (zonePlanned(z.id) && !showPlanned)) return false;
+    if (zoneHidden(z.id) || (zoneIsPlanned(z) && !showPlanned)) return false;
     // Custom writes definitions and spends the model budget, so the role
     // decides on its own: having a cohort does not open it, and the service
     // refuses the surfaces either way. (Manage keeps its older rule below,
@@ -52,12 +58,12 @@ export function useZoneNav(): {
     return orgZonesVisible || IC_ZONES.has(z.id) || (z.id === "manage" && isAdmin);
   });
 
-  function selectZone(zone: Zone) {
+  function selectZone(zone: Zone, item?: string) {
     // ONE navigation per click. Three separate writes (clear item, clear zone,
     // change path) meant three history entries, so Back walked through
     // half-states nobody chose.
     const entity = zone.kind === "person" || zone.kind === "people";
-    if (entity && !activePerson) return;
+    if (entity && !me) return;
     // Custom is route-driven like the entity zones, but needs no person.
     if (zone.kind === "custom") {
       void navigate({
@@ -75,7 +81,7 @@ export function useZoneNav(): {
       ...(entity
         ? {
             to: zone.kind === "person" ? "/ic/$person/personal" : "/ic/$person/team",
-            params: { person: activePerson },
+            params: { person: me },
           }
         : { to: "/portal" }),
       // `item` is per-zone: carrying it over renders a fallback view while the
@@ -83,11 +89,13 @@ export function useZoneNav(): {
       // a lingering `?zone=` there would only contradict it.
       search: (prev: Record<string, unknown>) => ({
         ...prev,
-        ...(activeZone !== zone.id ? { item: undefined, acct: undefined } : {}),
+        ...(item !== undefined || activeZone !== zone.id
+          ? { item, acct: undefined }
+          : {}),
         zone: entity ? undefined : zone.id,
       }),
     });
   }
 
-  return { zones, activeZone, selectZone };
+  return { zones, activeZone, me, selectZone };
 }

@@ -127,11 +127,6 @@ describe("AppSidebarFooter", () => {
   it("names the portal's Manage surfaces", () => {
     render(<AppSidebarFooter />);
 
-    expect(linkOf("Metric catalog")).toHaveAttribute("data-to", "/portal");
-    expect(linkOf("Metric catalog")).toHaveAttribute(
-      "data-search",
-      "zone=manage&item=metric-catalog&acct=undefined"
-    );
     expect(linkOf("What's new")).toHaveAttribute("data-to", "/portal");
     expect(linkOf("What's new")).toHaveAttribute(
       "data-search",
@@ -144,14 +139,13 @@ describe("AppSidebarFooter", () => {
     render(<AppSidebarFooter />);
 
     expect(entry("What's new")).toHaveAttribute("data-active", "true");
-    expect(entry("Metric catalog")).toHaveAttribute("data-active", "false");
   });
 
-  it("marks the zone's default when the URL names no item", () => {
+  it("marks nothing when Manage shows its default", () => {
     currentSearch = { zone: "manage" };
     render(<AppSidebarFooter />);
 
-    expect(entry("Metric catalog")).toHaveAttribute("data-active", "true");
+    expect(entry("What's new")).toHaveAttribute("data-active", "false");
   });
 
   it("marks nothing from a zone the portal is not showing", () => {
@@ -163,16 +157,13 @@ describe("AppSidebarFooter", () => {
     expect(entry("What's new")).toHaveAttribute("data-active", "false");
   });
 
-  it("reports a navigation from either destination", async () => {
+  it("reports a navigation", async () => {
     const user = userEvent.setup();
     const onNavigate = vi.fn();
     render(<AppSidebarFooter onNavigate={onNavigate} />);
 
-    await user.click(screen.getByText("Metric catalog"));
-    expect(onNavigate).toHaveBeenCalledTimes(1);
-
     await user.click(screen.getByText("What's new"));
-    expect(onNavigate).toHaveBeenCalledTimes(2);
+    expect(onNavigate).toHaveBeenCalledTimes(1);
   });
 
   it("asks the shell for the feedback dialog and dismisses the menu it sits in", async () => {

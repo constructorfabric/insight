@@ -11,9 +11,11 @@ const mocks = vi.hoisted(() => ({
   reachPending: false,
   isAdmin: false,
   showPlanned: false,
+  navigate: vi.fn(),
 }));
 
-vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
+vi.mock("@tanstack/react-router", () => ({ useNavigate: () => mocks.navigate }));
+vi.mock("@/auth", () => ({ useViewer: () => ({ personId: "me-1" }) }));
 vi.mock("@/lib/portal/use-active-zone", () => ({
   useActiveZone: () => ({ activeZone: "person", activePerson: "p-1" }),
 }));
@@ -83,6 +85,27 @@ describe("useZoneNav", () => {
     mocks.reachPending = true;
 
     expect(zoneIds()).toContain("overview");
+  });
+
+  it("offers Reports with planned sections off, now that it has a page", () => {
+    mocks.canSeeOthers = true;
+    mocks.reachPending = false;
+    mocks.showPlanned = false;
+    expect(zoneIds()).toContain("reports");
+  });
+
+  it("opens Person on the viewer's own page, not on the person on screen", () => {
+    const { result } = renderHook(() => useZoneNav());
+    const person = result.current.zones.find((z) => z.id === "person")!;
+
+    result.current.selectZone(person);
+
+    expect(mocks.navigate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "/ic/$person/personal",
+        params: { person: "me-1" },
+      }),
+    );
   });
 
   it("opens Manage on the admin role rather than on a cohort", () => {
