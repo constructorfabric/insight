@@ -16,6 +16,9 @@ import type {
   ChatReply,
   ChatTurn,
   DefinitionResponse,
+  Folder,
+  FolderFilter,
+  FolderList,
   MetricDefinition,
   TableList,
   TableSchema,
@@ -122,13 +125,20 @@ export interface PageRequest {
   search?: string;
   limit?: number;
   offset?: number;
+  folder?: FolderFilter;
 }
 
-function pageQuery({ search = "", limit, offset }: PageRequest): string {
+function pageQuery({
+  search = "",
+  limit,
+  offset,
+  folder,
+}: PageRequest): string {
   const query = new URLSearchParams();
   if (search) query.set("q", search);
   if (limit !== undefined) query.set("limit", String(limit));
   if (offset) query.set("offset", String(offset));
+  if (folder) query.set("folder", folder);
   const asked = query.toString();
 
   return asked ? `?${asked}` : "";
@@ -146,6 +156,57 @@ export async function fetchDashboard(name: string): Promise<Dashboard> {
   const read = await readJson<DefinitionResponse<Dashboard>>(res);
 
   return read.body;
+}
+
+export async function fetchDashboardFolder(
+  name: string
+): Promise<Folder | null> {
+  const res = await fetchWithAuth(`${BASE}/dashboards/${named(name)}`);
+  const read = await readJson<DefinitionResponse<Dashboard>>(res);
+
+  return read.folder ?? null;
+}
+
+export async function fetchFolders(): Promise<FolderList> {
+  const res = await fetchWithAuth(`${BASE}/folders`);
+  return readJson<FolderList>(res);
+}
+
+export async function createFolder(name: string): Promise<Folder> {
+  const res = await fetchWithAuth(`${BASE}/folders`, {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ name }),
+  });
+  return readJson<Folder>(res);
+}
+
+export async function renameFolder(id: string, name: string): Promise<Folder> {
+  const res = await fetchWithAuth(`${BASE}/folders/${named(id)}`, {
+    method: "PATCH",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ name }),
+  });
+  return readJson<Folder>(res);
+}
+
+export async function deleteFolder(id: string): Promise<void> {
+  const res = await fetchWithAuth(`${BASE}/folders/${named(id)}`, {
+    method: "DELETE",
+  });
+  await ensureOk(res);
+}
+
+export async function moveDashboard(
+  name: string,
+  folder: string | null
+): Promise<void> {
+  const res = await fetchWithAuth(`${BASE}/dashboards/${named(name)}/folder`, {
+    method: "PUT",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ folder }),
+  });
+  await ensureOk(res);
 }
 
 export async function fetchMetricNames(

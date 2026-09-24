@@ -6,20 +6,26 @@ import { fetchWithAuth } from "@/api/fetch-with-auth";
 
 import {
   CustomApiError,
+  createFolder,
   deleteDataset,
   deleteDefinition,
+  deleteFolder,
   fetchDashboard,
+  fetchDashboardFolder,
   fetchDashboardNames,
   fetchDataset,
   fetchDatasetDependents,
   fetchDatasetRecords,
   fetchDependents,
+  fetchFolders,
   fetchMetric,
   fetchTable,
   fetchWidget,
+  moveDashboard,
   putDataset,
   putDefinition,
   renameDefinition,
+  renameFolder,
   runMetric,
 } from "./custom-client";
 
@@ -252,6 +258,10 @@ describe("a name that reached the client empty", () => {
     ["fetchMetric", () => fetchMetric("")],
     ["fetchWidget", () => fetchWidget("")],
     ["fetchDashboard", () => fetchDashboard("")],
+    ["fetchDashboardFolder", () => fetchDashboardFolder("")],
+    ["moveDashboard", () => moveDashboard("", null)],
+    ["renameFolder", () => renameFolder("", "Product")],
+    ["deleteFolder", () => deleteFolder("")],
     ["fetchDatasetRecords", () => fetchDatasetRecords("", { limit: 20 })],
     ["putDataset", () => putDataset("", {})],
     ["deleteDataset", () => deleteDataset("")],
@@ -266,5 +276,120 @@ describe("a name that reached the client empty", () => {
   ])("is refused before %s asks for it", async (_name, call) => {
     await expect(call()).rejects.toBeInstanceOf(CustomApiError);
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("folders", () => {
+  it("lists every folder with what it holds, and the unfiled count", async () => {
+    const list = {
+      folders: [{ id: "f1", name: "Platform", dashboards: 2 }],
+      unfiled: 3,
+    };
+    mockFetch.mockResolvedValueOnce(response(list));
+
+    await expect(fetchFolders()).resolves.toEqual(list);
+    expect(mockFetch).toHaveBeenCalledWith("/api/v3/v1/folders");
+  });
+
+  it("makes a folder from a name", async () => {
+    mockFetch.mockResolvedValueOnce(
+      response({ id: "f1", name: "Platform" }, { status: 201 })
+    );
+
+    await expect(createFolder("Platform")).resolves.toEqual({
+      id: "f1",
+      name: "Platform",
+    });
+    expect(mockFetch).toHaveBeenCalledWith("/api/v3/v1/folders", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Platform" }),
+    });
+  });
+
+  it("refuses a name another folder holds with what the service said", async () => {
+    mockFetch.mockResolvedValueOnce(
+      response({ detail: "taken" }, { ok: false, status: 409 })
+    );
+
+    await expect(createFolder("platform")).rejects.toMatchObject({
+      status: 409,
+      body: { detail: "taken" },
+    });
+  });
+
+  it("renames a folder by its id", async () => {
+    mockFetch.mockResolvedValueOnce(response({ id: "f1", name: "Product" }));
+
+    await expect(renameFolder("f1", "Product")).resolves.toEqual({
+      id: "f1",
+      name: "Product",
+    });
+    expect(mockFetch).toHaveBeenCalledWith("/api/v3/v1/folders/f1", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Product" }),
+    });
+  });
+
+  it("removes a folder by its id", async () => {
+    mockFetch.mockResolvedValueOnce(response(null, { status: 204 }));
+
+    await expect(deleteFolder("f1")).resolves.toBeUndefined();
+    expect(mockFetch).toHaveBeenCalledWith("/api/v3/v1/folders/f1", {
+      method: "DELETE",
+    });
+  });
+
+  it("moves a dashboard into a folder, and out of every folder", async () => {
+    mockFetch.mockResolvedValue(response(null, { status: 204 }));
+
+    await moveDashboard("delivery", "f1");
+    await moveDashboard("delivery", null);
+
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      1,
+      "/api/v3/v1/dashboards/delivery/folder",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ folder: "f1" }),
+      }
+    );
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      2,
+      "/api/v3/v1/dashboards/delivery/folder",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ folder: null }),
+      }
+    );
+  });
+
+  it("reads the folder a dashboard is filed in, or none", async () => {
+    const body = { title: "Delivery", items: [] };
+    mockFetch
+      .mockResolvedValueOnce(
+        response({ body, folder: { id: "f1", name: "Platform" } })
+      )
+      .mockResolvedValueOnce(response({ body, folder: null }));
+
+    await expect(fetchDashboardFolder("delivery")).resolves.toEqual({
+      id: "f1",
+      name: "Platform",
+    });
+    await expect(fetchDashboardFolder("delivery")).resolves.toBeNull();
+    expect(mockFetch).toHaveBeenCalledWith("/api/v3/v1/dashboards/delivery");
+  });
+
+  it("asks for one folder's dashboards, or the unfiled ones", async () => {
+    mockFetch.mockResolvedValue(response({ names: [], total: 0 }));
+
+    await fetchDashboardNames({ folder: "unfiled", limit: 50 });
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/v3/v1/dashboards?limit=50&folder=unfiled"
+    );
   });
 });

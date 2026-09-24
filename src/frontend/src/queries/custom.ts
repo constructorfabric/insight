@@ -11,28 +11,35 @@ import type {
   RecordPage,
   DefinitionKind,
   EditableKind,
+  FolderFilter,
   NamePage,
   PageRequest,
 } from "@/api/custom-client";
 import {
+  createFolder,
   deleteDataset,
   deleteDefinition,
+  deleteFolder,
   fetchDashboard,
+  fetchDashboardFolder,
   fetchDashboardNames,
   fetchDataset,
   fetchDatasetDependents,
   fetchDatasetNames,
   fetchDatasetRecords,
   fetchDependents,
+  fetchFolders,
   fetchMetric,
   fetchMetricNames,
   fetchTable,
   fetchTables,
   fetchWidget,
   fetchWidgetNames,
+  moveDashboard,
   putDataset,
   putDefinition,
   renameDefinition,
+  renameFolder,
   runMetric,
   sendChat,
 } from "@/api/custom-client";
@@ -40,6 +47,7 @@ import type { RunOptions } from "@/api/custom-client";
 
 const WIDGET_QUERY_PREFIX = ["custom", "widget"] as const;
 const NAME_PAGES_PREFIX = ["custom", "names"] as const;
+const FOLDERS_PREFIX = ["custom", "folders"] as const;
 
 /** How many names a catalogue asks for at a time. */
 const PAGE_SIZE = 50;
@@ -65,13 +73,22 @@ const FETCH_NAMES: Record<
  * `total` counts the matches rather than the page, so the list can say what
  * is behind it and stop asking once it has them all.
  */
-export function definitionPagesQuery(kind: EditableKind, search = "") {
+export function definitionPagesQuery(
+  kind: EditableKind,
+  search = "",
+  folder?: FolderFilter
+) {
   return infiniteQueryOptions({
     // The needle is part of the key, so a search is its own cached answer
     // rather than overwriting the list everyone else is reading.
-    queryKey: [...NAME_PAGES_PREFIX, kind, search],
+    queryKey: [...NAME_PAGES_PREFIX, kind, search, folder ?? null],
     queryFn: ({ pageParam }) =>
-      FETCH_NAMES[kind]({ search, limit: PAGE_SIZE, offset: pageParam }),
+      FETCH_NAMES[kind]({
+        search,
+        limit: PAGE_SIZE,
+        offset: pageParam,
+        ...(folder ? { folder } : {}),
+      }),
     initialPageParam: 0,
     getNextPageParam: (last: NamePage, pages: NamePage[]) => {
       const read = pages.reduce((count, page) => count + page.names.length, 0);
@@ -123,6 +140,20 @@ export function dashboardQuery(name: string) {
   return queryOptions({
     queryKey: ["custom", "dashboard", name],
     queryFn: () => fetchDashboard(name),
+  });
+}
+
+export function foldersQuery() {
+  return queryOptions({
+    queryKey: FOLDERS_PREFIX,
+    queryFn: fetchFolders,
+  });
+}
+
+export function dashboardFolderQuery(name: string) {
+  return queryOptions({
+    queryKey: [...FOLDERS_PREFIX, "of", name],
+    queryFn: () => fetchDashboardFolder(name),
   });
 }
 
@@ -298,6 +329,44 @@ export function useRenameDefinition() {
   });
 }
 
+export function useCreateFolder() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (name: string) => createFolder(name),
+    onSuccess: () => invalidateDashboardList(queryClient),
+  });
+}
+
+export function useRenameFolder() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) =>
+      renameFolder(id, name),
+    onSuccess: () => invalidateDashboardList(queryClient),
+  });
+}
+
+export function useDeleteFolder() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: string) => deleteFolder(id),
+    onSuccess: () => invalidateDashboardList(queryClient),
+  });
+}
+
+export function useMoveDashboard() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ name, folder }: { name: string; folder: string | null }) =>
+      moveDashboard(name, folder),
+    onSuccess: () => invalidateDashboardList(queryClient),
+  });
+}
+
 export function useSendChat() {
   return useMutation({
     mutationFn: ({
@@ -313,7 +382,10 @@ export function useSendChat() {
 export function invalidateDashboardList(queryClient: QueryClient) {
   // Every catalogue page reads these, and a chat that built a dashboard
   // built its metric and widgets too.
-  return queryClient.invalidateQueries({ queryKey: NAME_PAGES_PREFIX });
+  return Promise.all([
+    queryClient.invalidateQueries({ queryKey: NAME_PAGES_PREFIX }),
+    queryClient.invalidateQueries({ queryKey: FOLDERS_PREFIX }),
+  ]);
 }
 
 export function invalidateDashboardPage(

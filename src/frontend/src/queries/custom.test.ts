@@ -1,3 +1,6 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, renderHook } from "@testing-library/react";
+import { createElement, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/api/custom-client");
@@ -5,9 +8,16 @@ vi.mock("@/api/custom-client");
 import * as customClient from "@/api/custom-client";
 
 import {
+  dashboardFolderQuery,
   dashboardQuery,
   definitionPagesQuery,
+  foldersQuery,
   metricResultQuery,
+  useCreateFolder,
+  useDeleteFolder,
+  useMoveDashboard,
+  useRemoveDefinition,
+  useRenameFolder,
   widgetQuery,
 } from "./custom";
 
@@ -125,5 +135,127 @@ describe("metricResultQuery cache identity", () => {
       range: "P30D",
       bucket: false,
     });
+  });
+});
+
+describe("definitionPagesQuery in a folder", () => {
+  it("asks for that folder's dashboards and keeps them apart in the cache", async () => {
+    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({
+      names: [],
+      total: 0,
+    });
+
+    const options = definitionPagesQuery("dashboards", "", "f1");
+    await options.queryFn?.({ pageParam: 0 } as never);
+
+    expect(customClient.fetchDashboardNames).toHaveBeenCalledWith({
+      search: "",
+      limit: 50,
+      offset: 0,
+      folder: "f1",
+    });
+    const keys = [
+      definitionPagesQuery("dashboards", ""),
+      definitionPagesQuery("dashboards", "", "f1"),
+      definitionPagesQuery("dashboards", "", "unfiled"),
+    ].map((query) => JSON.stringify(query.queryKey));
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+});
+
+describe("foldersQuery", () => {
+  it("asks fetchFolders", async () => {
+    const list = { folders: [], unfiled: 0 };
+    vi.mocked(customClient.fetchFolders).mockResolvedValue(list);
+
+    await expect(foldersQuery().queryFn?.(undefined as never)).resolves.toEqual(
+      list,
+    );
+  });
+});
+
+describe("dashboardFolderQuery", () => {
+  it("asks for one dashboard's folder and is refreshed with the folders", async () => {
+    vi.mocked(customClient.fetchDashboardFolder).mockResolvedValue(null);
+
+    const options = dashboardFolderQuery("delivery");
+    await options.queryFn?.(undefined as never);
+
+    expect(customClient.fetchDashboardFolder).toHaveBeenCalledWith("delivery");
+    expect(options.queryKey.slice(0, foldersQuery().queryKey.length)).toEqual(
+      foldersQuery().queryKey,
+    );
+  });
+});
+
+describe("the folder mutations", () => {
+  function rendered<T>(hook: () => T) {
+    const queryClient = new QueryClient({
+      defaultOptions: { mutations: { retry: false } },
+    });
+    const invalidated = vi.spyOn(queryClient, "invalidateQueries");
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children);
+
+    return { result: renderHook(hook, { wrapper }).result, invalidated };
+  }
+
+  function expectCountsAndListsRefreshed(
+    invalidated: ReturnType<typeof vi.spyOn>,
+  ) {
+    expect(invalidated).toHaveBeenCalledWith({
+      queryKey: foldersQuery().queryKey,
+    });
+    expect(invalidated).toHaveBeenCalledWith({
+      queryKey: ["custom", "names"],
+    });
+  }
+
+  it("makes a folder, then refreshes the counts and the lists", async () => {
+    const { result, invalidated } = rendered(() => useCreateFolder());
+
+    await act(() => result.current.mutateAsync("Platform"));
+
+    expect(customClient.createFolder).toHaveBeenCalledWith("Platform");
+    expectCountsAndListsRefreshed(invalidated);
+  });
+
+  it("renames a folder, then refreshes the counts and the lists", async () => {
+    const { result, invalidated } = rendered(() => useRenameFolder());
+
+    await act(() => result.current.mutateAsync({ id: "f1", name: "Product" }));
+
+    expect(customClient.renameFolder).toHaveBeenCalledWith("f1", "Product");
+    expectCountsAndListsRefreshed(invalidated);
+  });
+
+  it("removes a folder, then refreshes the counts and the lists", async () => {
+    const { result, invalidated } = rendered(() => useDeleteFolder());
+
+    await act(() => result.current.mutateAsync("f1"));
+
+    expect(customClient.deleteFolder).toHaveBeenCalledWith("f1");
+    expectCountsAndListsRefreshed(invalidated);
+  });
+
+  it("moves a dashboard, then refreshes the counts and the lists", async () => {
+    const { result, invalidated } = rendered(() => useMoveDashboard());
+
+    await act(() =>
+      result.current.mutateAsync({ name: "delivery", folder: null }),
+    );
+
+    expect(customClient.moveDashboard).toHaveBeenCalledWith("delivery", null);
+    expectCountsAndListsRefreshed(invalidated);
+  });
+
+  it("refreshes the counts when a dashboard is removed", async () => {
+    const { result, invalidated } = rendered(() => useRemoveDefinition());
+
+    await act(() =>
+      result.current.mutateAsync({ kind: "dashboards", name: "delivery" }),
+    );
+
+    expectCountsAndListsRefreshed(invalidated);
   });
 });

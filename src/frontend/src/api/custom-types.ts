@@ -105,7 +105,25 @@ export interface DefinitionResponse<T> {
   body: T;
   /** Only a metric has one, and only when a window has a date to select by. */
   clock?: EffectiveClock;
+  folder?: Folder | null;
 }
+
+export interface Folder {
+  id: string;
+  name: string;
+}
+
+export interface FolderSummary extends Folder {
+  dashboards: number;
+}
+
+export interface FolderList {
+  folders: FolderSummary[];
+  unfiled: number;
+}
+
+/** A folder id, or `"unfiled"` for the dashboards in none. */
+export type FolderFilter = string;
 
 /** A metric as it is stored, with the clock a window over it would use. */
 export interface StoredMetric {
