@@ -87,7 +87,7 @@ jobs:
     # fork can rewrite this line, and the runner is picked before any step
     # executes. What keeps untrusted code off the pool is the approval setting
     # for fork pull requests.
-    runs-on: [self-hosted, linux, x64, insight-vhc]
+    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     outputs:
       rust: ${{ steps.detect.outputs.rust }}
       python: ${{ steps.detect.outputs.python }}
@@ -131,7 +131,7 @@ jobs:
     name: Guards
     # Inline rather than `needs: changes`: this job runs beside change detection
     # today, and a dependency would serialise it for no gain.
-    runs-on: [self-hosted, linux, x64, insight-vhc]
+    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -197,7 +197,7 @@ jobs:
     name: Rust — ${{ matrix.entry.name }}
     needs: changes
     if: ${{ needs.changes.outputs.rust != '[]' }}
-    runs-on: [self-hosted, linux, x64, insight-vhc]
+    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     strategy:
       fail-fast: false
       matrix:
@@ -408,7 +408,7 @@ jobs:
     name: Python coverage — ${{ matrix.entry.name }}
     needs: changes
     if: ${{ needs.changes.outputs.python != '[]' }}
-    runs-on: [self-hosted, linux, x64, insight-vhc]
+    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     strategy:
       fail-fast: false
       matrix:
@@ -477,7 +477,7 @@ jobs:
     name: Frontend — ${{ matrix.entry.name }}
     needs: changes
     if: ${{ needs.changes.outputs.js != '[]' }}
-    runs-on: [self-hosted, linux, x64, insight-vhc]
+    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     # Chromium for the browser `storybook` project comes baked in; downloading it
     # at CI time stalls the runner. The tag MUST track `playwright` in the
     # component's package.json so the pre-installed build matches.
@@ -593,7 +593,7 @@ jobs:
     name: Coverage gate
     needs: [changes, rust, python, js]
     if: ${{ !cancelled() }}
-    runs-on: [self-hosted, linux, x64, insight-vhc]
+    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     timeout-minutes: 15
     steps:
       # If detection failed, or any CHANGED component's producer job failed

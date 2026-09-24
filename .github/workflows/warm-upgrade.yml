@@ -63,7 +63,7 @@ permissions:
 jobs:
   warm-upgrade:
     name: Deploy onto a warm installation
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     timeout-minutes: 30
     env:
       CLICKHOUSE_CONTAINER: warm-upgrade-clickhouse

@@ -49,13 +49,10 @@ concurrency:
 permissions:
   contents: read
 
-# The self-hosted routing below is the same expression in every workflow; the
-# rule and what it does not close are explained in ci.yml. Only ci.yml and
-# connectors-ddl.yml have been exercised on the pool so far.
 jobs:
   test-stand:
     name: deploy → seed → smoke → suite
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ubuntu-latest
     # `environment:` cannot sit on a job that `uses:` a reusable workflow, so
     # it is declared here rather than on the caller.
     environment: insight-test-stand

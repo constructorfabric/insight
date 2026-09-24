@@ -13,7 +13,7 @@ it changes whether those lanes pass, which is why it is versioned beside them.
 The default rule, carried by every x64 `runs-on` in `.github/workflows`:
 
 ```yaml
-runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
 ```
 
 A pull request keeps the GitHub-hosted runner it had before; `merge_group`,
@@ -21,22 +21,33 @@ A pull request keeps the GitHub-hosted runner it had before; `merge_group`,
 and post-merge runs are the bulk of the machine time and carry no fork code, so
 moving them off the organisation's shared 20-job ceiling is where the wait goes
 away. arm64 matrix legs never route here — the pool is x86-only and they stay on
-`ubuntu-24.04-arm` under every event.
+`ubuntu-24.04-arm` under every event, including when the switch below is on.
 
 Two lanes are exempt and stay on the pool for pull requests as well, because
 they have been measured here and the win is large: `ci.yml` (`Lint and test`)
-and `connectors-ddl.yml`. Both carry a literal label list rather than the
-expression.
+and `connectors-ddl.yml`. They carry the switch without the event test.
 
-Routing is not a security boundary. A pull request runs the workflow from its
-own merge commit, so a fork can rewrite any of these lines, and the runner is
-picked before the first step executes. The approval setting for fork pull
-requests is what keeps untrusted code off these machines.
+`deploy-test-stand.yml` never routes here. It reads `TEST_STAND_KUBECONFIG` and
+the persona password, and this pool is persistent and also runs pull-request
+code, so a deploy job holding stand credentials does not belong on it.
 
-An emergency switch belongs in a repository variable read by the same
-expression, so the pool can be abandoned from repository settings without a pull
-request. It is not wired yet; until it is, the fallback is reverting the routing
-commit.
+## The kill switch
+
+`INSIGHT_FORCE_GITHUB_HOSTED` is a repository variable. Set it to exactly `true`
+and every x64 job that would otherwise take the pool goes to `ubuntu-latest`;
+unset, empty or `false` leaves routing exactly as described above. The polarity
+is deliberate — an absent variable must not change policy, least of all for pull
+requests, and a variable nobody has created yet reads as empty.
+
+It does not reach a pull request opened from a fork: Actions withholds `vars`
+from those runs, so the expression sees an empty string. For the default rule
+that is harmless, since a fork's pull request is hosted anyway. For the two
+exempt lanes it means the switch cannot pull a fork's pull request off the pool
+— the lever there is the approval setting for fork pull requests.
+
+Routing is not a security boundary either. A pull request runs the workflow from
+its own merge commit, so a fork can rewrite any of these lines, and the runner is
+picked before the first step executes.
 
 ## No secrets here
 

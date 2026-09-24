@@ -14,7 +14,7 @@ permissions:
 # connectors-ddl.yml have been exercised on the pool so far.
 jobs:
   watch:
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     timeout-minutes: 10
     steps:
       - name: Collect failed Dependabot runs
