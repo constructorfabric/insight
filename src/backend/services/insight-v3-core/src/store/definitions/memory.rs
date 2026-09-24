@@ -14,6 +14,7 @@ use crate::domain::definition::{
 };
 use crate::domain::folders::{
     Folder, FolderError, FolderFilter, FolderId, FolderList, FolderName, FolderSummary, Folders,
+    MAX_FOLDERS,
 };
 
 const DASHBOARDS: &str = "dashboards";
@@ -254,6 +255,9 @@ impl Folders for MemoryDefinitions {
         let mut stored = self.lock();
         if stored.name_taken(&name, None) {
             return Err(FolderError::NameTaken(name.as_str().to_owned()));
+        }
+        if stored.folders.len() >= MAX_FOLDERS {
+            return Err(FolderError::TooMany);
         }
         let id = FolderId::new();
         stored.folders.insert(id, name.clone());

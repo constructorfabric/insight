@@ -8,7 +8,7 @@ use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use toolkit::api::{OpenApiRegistry, OperationBuilder, ParamLocation, ParamSpec};
-use toolkit_canonical_errors::{CanonicalError, resource_error};
+use toolkit_canonical_errors::{CanonicalError, Http, resource_error};
 use utoipa::ToSchema;
 
 use super::AppState;
@@ -88,6 +88,10 @@ pub(super) fn folder_error(error: FolderError) -> CanonicalError {
             .with_resource(name)
             .create(),
         FolderError::NameTaken(name) => FolderApiError::name_taken(&name),
+        FolderError::TooMany => FolderApiError::failed_precondition()
+            .with_precondition_violation("name", detail, "too_many")
+            .with_override(Http::status_code(StatusCode::CONFLICT.as_u16()))
+            .create(),
         FolderError::Store(source) => FolderApiError::definition_store_error(source),
     }
 }

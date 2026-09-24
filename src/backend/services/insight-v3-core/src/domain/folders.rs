@@ -10,6 +10,8 @@ use crate::domain::definition::{
 
 const MAX_NAME_CHARS: usize = 64;
 
+pub(crate) const MAX_FOLDERS: usize = 200;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct FolderId(Uuid);
 
@@ -101,6 +103,8 @@ pub(crate) enum FolderError {
     NameTaken(String),
     #[error("{0} are not filed in folders")]
     NotFiled(&'static str),
+    #[error("at most {MAX_FOLDERS} folders can exist; delete one first")]
+    TooMany,
     #[error(transparent)]
     Store(#[from] DefinitionStoreError),
 }

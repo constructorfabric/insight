@@ -502,3 +502,20 @@ async fn a_store_that_is_down_answers_a_server_error() {
 
     assert_eq!(refused.status, StatusCode::INTERNAL_SERVER_ERROR);
 }
+
+#[tokio::test]
+async fn a_folder_past_the_cap_is_refused_and_says_why() {
+    let harness = Harness::new();
+    for index in 0..crate::domain::folders::MAX_FOLDERS {
+        harness.created_id(&format!("f{index}")).await;
+    }
+
+    let refused = harness.create("one more").await;
+
+    assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.body);
+    assert!(
+        refused.body.to_string().contains("200 folders"),
+        "{}",
+        refused.body
+    );
+}

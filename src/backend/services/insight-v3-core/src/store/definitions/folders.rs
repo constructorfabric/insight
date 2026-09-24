@@ -7,6 +7,7 @@ use super::{MariaDefinitions, NameRow, TotalRow};
 use crate::domain::definition::{DefinitionName, NamePage, Page};
 use crate::domain::folders::{
     Folder, FolderError, FolderFilter, FolderId, FolderList, FolderName, FolderSummary, Folders,
+    MAX_FOLDERS,
 };
 use crate::store::like_escaped;
 
@@ -16,6 +17,8 @@ GROUP BY folders.id, folders.name
 ORDER BY folders.name";
 
 const COUNT_UNFILED: &str = "SELECT COUNT(*) AS total FROM dashboards WHERE folder_id IS NULL";
+
+const COUNT_FOLDERS: &str = "SELECT COUNT(*) AS total FROM folders";
 
 const INSERT_FOLDER: &str = "INSERT INTO folders (id, name, created_at, updated_at)
 VALUES (?, ?, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))";
@@ -135,14 +138,24 @@ impl Folders for MariaDefinitions {
     }
 
     async fn create_folder(&self, name: FolderName) -> Result<Folder, FolderError> {
+        let transaction = self.db.begin().await?;
+        let held = TotalRow::find_by_statement(statement(COUNT_FOLDERS, Vec::new()))
+            .one(&transaction)
+            .await?
+            .map_or(0, |row| row.total);
+        if usize::try_from(held).unwrap_or(usize::MAX) >= MAX_FOLDERS {
+            return Err(FolderError::TooMany);
+        }
+
         let id = FolderId::new();
-        self.db
+        transaction
             .execute_raw(statement(
                 INSERT_FOLDER,
                 vec![id.to_string().into(), name.as_str().into()],
             ))
             .await
             .map_err(|error| taken_or(error, &name))?;
+        transaction.commit().await?;
 
         Ok(Folder { id, name })
     }

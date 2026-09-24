@@ -310,3 +310,19 @@ async fn a_name_freed_earlier_in_the_batch_may_be_created_again() -> R {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn a_folder_past_the_cap_is_refused() -> R {
+    let store = MemoryDefinitions::new();
+    for index in 0..crate::domain::folders::MAX_FOLDERS {
+        store
+            .create_folder(folder_name(&format!("f{index}")))
+            .await?;
+    }
+
+    let refused = store.create_folder(folder_name("one more")).await;
+
+    assert!(matches!(refused, Err(FolderError::TooMany)), "{refused:?}");
+
+    Ok(())
+}
