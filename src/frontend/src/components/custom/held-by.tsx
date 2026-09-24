@@ -6,7 +6,7 @@ import { refusal } from "@/components/custom/refusal";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { dependentsQuery } from "@/queries/custom";
-import { TEXT_BODY, TEXT_HEADING } from "@/lib/type-scale";
+import { TEXT_BODY, TEXT_HEADING, TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
 /** Where a holder of each kind is looked at. */
@@ -73,22 +73,52 @@ export function Held({
         ) : !holders || holders.length === 0 ? (
           <p className={cn(TEXT_BODY, "text-muted-foreground")}>{empty}</p>
         ) : (
-          <ul className="flex flex-col gap-1">
-            {holders.map((holder) => (
-              <li key={`${holder.kind}/${holder.name}`} className={TEXT_BODY}>
-                <Link
-                  to={PAGE[holder.kind]}
-                  params={{ name: holder.name }}
-                  className="font-mono underline decoration-dotted underline-offset-4"
-                >
-                  {holder.name}
-                </Link>{" "}
-                <span className="text-muted-foreground">{holder.kind}</span>
-              </li>
-            ))}
-          </ul>
+          <div className="flex flex-col gap-3">
+            <Broken holders={holders} />
+            <ul className="flex flex-col gap-2">
+              {holders.map((holder) => (
+                <li key={`${holder.kind}/${holder.name}`} className={TEXT_BODY}>
+                  <Link
+                    to={PAGE[holder.kind]}
+                    params={{ name: holder.name }}
+                    className="font-mono underline decoration-dotted underline-offset-4"
+                  >
+                    {holder.name}
+                  </Link>{" "}
+                  <span className="text-muted-foreground">{holder.kind}</span>
+                  {holder.broken ? (
+                    <p className={cn(TEXT_LABEL, "text-destructive")}>
+                      {holder.broken}
+                    </p>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * What no longer draws, said once and by name.
+ *
+ * A metric may be changed out from under the widgets that draw it, and the
+ * write is not refused - so the reader who just changed it is told here,
+ * plainly, rather than finding an empty card on a board later.
+ */
+function Broken({ holders }: { holders: Holder[] }) {
+  const broken = holders.filter((holder) => holder.broken);
+  if (broken.length === 0) return null;
+
+  const named = broken.map((holder) => holder.name).join(", ");
+
+  return (
+    <p role="alert" className={cn(TEXT_BODY, "font-medium text-destructive")}>
+      {broken.length === 1
+        ? `${named} no longer draws what this produces.`
+        : `${broken.length} of these no longer draw what this produces: ${named}.`}
+    </p>
   );
 }

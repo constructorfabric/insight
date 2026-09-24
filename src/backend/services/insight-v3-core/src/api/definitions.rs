@@ -429,6 +429,10 @@ struct Dependents {
 struct Holder {
     kind: String,
     name: String,
+    /// Why this holder no longer works, when it does not: a widget drawing a
+    /// column its metric stopped producing says so here.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    broken: Option<String>,
 }
 
 /// Every definition that names this one, so a reader sees what a removal would
@@ -454,13 +458,14 @@ async fn definition_dependents(
     }
 
     let holders = surfaces
-        .dependents_of(kind, &name)
+        .dependents_state(kind, &name)
         .await
         .map_err(custom_error)?
         .into_iter()
-        .map(|holder| Holder {
-            kind: holder.kind.plural().to_owned(),
-            name: holder.name,
+        .map(|held| Holder {
+            kind: held.reference.kind.plural().to_owned(),
+            name: held.reference.name,
+            broken: held.broken,
         })
         .collect();
 

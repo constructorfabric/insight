@@ -27,6 +27,7 @@ import * as customClient from "@/api/custom-client";
 import {
   mockCatalogues,
   offeredBy,
+  rowOf,
   showText,
   wrapper,
 } from "./editor-test-helpers";
@@ -612,5 +613,69 @@ describe("<DefinitionEditor> over a kind's shape", () => {
     >;
     expect(sent).not.toHaveProperty("database");
     expect(sent).toHaveProperty("table", "silver.fct_commit");
+  });
+
+  // A table name several databases hold cannot be resolved, and a form that
+  // silently offers nothing looks broken rather than ambiguous.
+  it("says so when several databases hold the table that was named", async () => {
+    const user = userEvent.setup();
+    vi.mocked(customClient.fetchTables).mockResolvedValue({
+      tables: [
+        { database: "bronze_github", table: "issues", layer: "bronze" },
+        { database: "bronze_gitlab", table: "issues", layer: "bronze" },
+      ],
+      total: 2,
+    });
+    render(<DefinitionEditor kind="metrics" onStored={vi.fn()} />, { wrapper });
+
+    await user.selectOptions(screen.getByLabelText(/Source/), "table");
+    await user.type(screen.getByLabelText(/^Table/), "issues");
+
+    await waitFor(() =>
+      expect(rowOf(screen.getByLabelText(/^Database/))).toHaveTextContent(
+        /2 databases hold a table called `issues`: bronze_github, bronze_gitlab/
+      )
+    );
+    expect(customClient.fetchTable).not.toHaveBeenCalled();
+  });
+
+  // Saving is still allowed: a table made minutes ago is readable before the
+  // catalogue lists it, so this is a warning and not a refusal.
+  it("says when the catalogue does not list the table, without refusing it", async () => {
+    const user = userEvent.setup();
+    vi.mocked(customClient.fetchTables).mockResolvedValue({
+      tables: [{ database: "silver", table: "fct_commit", layer: "silver" }],
+      total: 1,
+    });
+    render(
+      <DefinitionEditor kind="metrics" name="probe" onStored={vi.fn()} />,
+      { wrapper }
+    );
+
+    await user.selectOptions(screen.getByLabelText(/Source/), "table");
+    const table = screen.getByLabelText(/^Table/);
+    await user.type(table, "silver.nothing");
+
+    await waitFor(() =>
+      expect(rowOf(table)).toHaveTextContent(/catalogue does not list this table/)
+    );
+    expect(table).not.toHaveAttribute("aria-invalid");
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  });
+
+  it("says nothing about a table the catalogue holds", async () => {
+    const user = userEvent.setup();
+    vi.mocked(customClient.fetchTables).mockResolvedValue({
+      tables: [{ database: "silver", table: "fct_commit", layer: "silver" }],
+      total: 1,
+    });
+    render(<DefinitionEditor kind="metrics" onStored={vi.fn()} />, { wrapper });
+
+    await user.selectOptions(screen.getByLabelText(/Source/), "table");
+    const table = screen.getByLabelText(/^Table/);
+    await user.type(table, "silver.fct_commit");
+
+    await waitFor(() => expect(customClient.fetchTable).toHaveBeenCalled());
+    expect(rowOf(table)).not.toHaveTextContent(/catalogue does not list/);
   });
 });

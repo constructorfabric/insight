@@ -873,3 +873,37 @@ async fn a_listing_wider_than_one_answer_is_cut_and_says_so() {
 fn a_materialised_views_own_storage_is_never_listed() {
     assert!(crate::store::catalog::LIST_COLUMNS.contains("NOT startsWith(c.table, '.inner')"));
 }
+
+/// The mirror of the dataset rule. Without it the refusal names the column
+/// the metric produces and says nothing about the `field` that is the reason.
+#[tokio::test]
+async fn a_metric_over_a_table_naming_a_declared_field_is_told_which_key_is_wrong() {
+    let result = surfaces_over_a_warehouse()
+        .put_metric(put(
+            "over_a_table",
+            json!({
+                "table": "silver.fct_commit",
+                "fields": [{"field": "sha", "agg": "count", "type": "int", "as_name": "total"}]
+            }),
+        ))
+        .await;
+
+    assert_refused(&result, "fields[0].field");
+    assert_refused(&result, "`field` names a field of a dataset");
+}
+
+/// A count over a table names nothing at all, and still counts the rows.
+#[tokio::test]
+async fn a_count_over_a_table_naming_nothing_is_stored() {
+    let result = surfaces_over_a_warehouse()
+        .put_metric(put(
+            "rows",
+            json!({
+                "table": "silver.fct_commit",
+                "fields": [{"agg": "count", "type": "int", "as_name": "total"}]
+            }),
+        ))
+        .await;
+
+    assert_accepted(&result);
+}

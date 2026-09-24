@@ -132,6 +132,26 @@ export function DefinitionEditor({
     enabled: address !== undefined,
   });
 
+  // What the catalogue says about the table the metric names, where that is
+  // something the reader would want to know before saving and finding out.
+  const notes = new Map<string, string>();
+  if (overTables && named !== undefined && catalogue.isSuccess) {
+    const holders = listed.filter((each) => each.table === named.table);
+    if (named.database === "" && holders.length > 1) {
+      notes.set(
+        TABLE_AT.database,
+        `${holders.length} databases hold a table called \`${named.table}\`: ${holders
+          .map((each) => each.database)
+          .join(", ")}. Name one, or write the table as database.table.`
+      );
+    } else if (address === undefined) {
+      notes.set(
+        TABLE_AT.table,
+        "The catalogue does not list this table. It can still be saved - a table made in the last few minutes is readable before it is listed - but a metric over a table that is not there fails when it runs."
+      );
+    }
+  }
+
   const tables = () => listed.map(spelled);
   const columns = (asked: TableAddress) => {
     const resolved = found(listed, asked);
@@ -265,6 +285,7 @@ export function DefinitionEditor({
           editing={{
             document: held.document,
             said: placed.at,
+            notes,
             names,
             declared,
             tables,

@@ -278,6 +278,81 @@ async fn a_definition_names_what_holds_it() {
     );
 }
 
+/// A widget names the columns its metric produces. Renaming one is allowed -
+/// the alternative is a column that can never be renamed, since no widget may
+/// name a column its metric does not yet produce - so the widget left drawing
+/// nothing has to be said out loud.
+#[tokio::test]
+async fn a_widget_left_drawing_a_column_the_metric_dropped_is_named_as_broken() {
+    let harness = TestHarness::new().await;
+    harness
+        .put_json("/v1/metrics/commits_per_day", metric_body())
+        .await;
+    harness
+        .put_json(
+            "/v1/widgets/commits_table",
+            json!({
+                "type": "table",
+                "metric": "commits_per_day",
+                "columns": ["total"]
+            }),
+        )
+        .await;
+
+    let renamed = harness
+        .put_json(
+            "/v1/metrics/commits_per_day",
+            json!({
+                "dataset": "commits",
+                "fields": [{ "agg": "count", "type": "int", "as_name": "counted" }]
+            }),
+        )
+        .await;
+    assert_eq!(renamed.status(), StatusCode::NO_CONTENT);
+
+    let held = harness
+        .get_json("/v1/metrics/commits_per_day/dependents")
+        .await;
+    let holders = held.json().await;
+    let Some(first) = holders["holders"].get(0) else {
+        panic!("the widget still holds the metric: {holders}")
+    };
+
+    assert_eq!(first["name"], json!("commits_table"));
+    let said = first["broken"].as_str().unwrap_or_default();
+    assert!(said.contains("total"), "names the column it lost: {said}");
+    assert!(said.contains("counted"), "names what it has now: {said}");
+}
+
+/// A holder that still works says nothing, so a reader can tell the two apart
+/// at a glance.
+#[tokio::test]
+async fn a_widget_that_still_draws_what_its_metric_produces_is_not_called_broken() {
+    let harness = TestHarness::new().await;
+    harness
+        .put_json("/v1/metrics/commits_per_day", metric_body())
+        .await;
+    harness
+        .put_json(
+            "/v1/widgets/commits_table",
+            json!({
+                "type": "table",
+                "metric": "commits_per_day",
+                "columns": ["total"]
+            }),
+        )
+        .await;
+
+    let held = harness
+        .get_json("/v1/metrics/commits_per_day/dependents")
+        .await;
+
+    assert_eq!(
+        held.json().await["holders"],
+        json!([{ "kind": "widgets", "name": "commits_table" }])
+    );
+}
+
 #[tokio::test]
 async fn a_definition_nothing_holds_names_nothing() {
     let harness = TestHarness::new().await;
