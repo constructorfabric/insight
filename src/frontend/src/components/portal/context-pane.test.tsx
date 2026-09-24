@@ -151,12 +151,13 @@ describe("Home pane", () => {
   it("shows an admin the planned Dashboards group only with planned sections on", () => {
     mocks.isAdmin = true;
     const { unmount } = pane();
-    expect(screen.queryByText("Starter dashboards")).toBeNull();
+    expect(screen.queryByText("My dashboards")).toBeNull();
     unmount();
 
     mocks.showPlanned = true;
     pane();
-    expect(buttonFor("Starter dashboards")).toHaveAttribute("aria-disabled", "true");
+    expect(buttonFor("My dashboards")).toHaveAttribute("aria-disabled", "true");
+    expect(screen.queryByText("Starter dashboards")).toBeNull();
   });
 
   it("goes nowhere from a planned row", async () => {
@@ -526,9 +527,10 @@ describe("Dashboards pane", () => {
 
     mocks.showPlanned = true;
     pane();
-    for (const label of ["My dashboards", "Shared with me", "Starred", "Starter"]) {
+    for (const label of ["My dashboards", "Shared with me", "Starred"]) {
       expect(buttonFor(label)).toHaveAttribute("aria-disabled", "true");
     }
+    expect(screen.queryByText("Starter")).toBeNull();
   });
 });
 
