@@ -183,3 +183,31 @@ async fn a_folder_renamed_to_its_own_name_in_another_case_keeps_its_id() {
         .await
         .unwrap_or_else(|error| panic!("{error}"));
 }
+
+#[tokio::test]
+async fn names_differing_by_accent_or_emoji_are_different_folders() {
+    let Some(store) = store_or_skip().await else {
+        return;
+    };
+    let tag = Uuid::now_v7().simple().to_string();
+    let pairs = [
+        (format!("Café {tag}"), format!("Cafe {tag}")),
+        (format!("🚀 {tag}"), format!("🔥 {tag}")),
+    ];
+
+    for (first, second) in pairs {
+        let one = store
+            .create_folder(folder_name(&first))
+            .await
+            .unwrap_or_else(|error| panic!("{first}: {error}"));
+        let other = store.create_folder(folder_name(&second)).await;
+
+        assert!(other.is_ok(), "{second} beside {first}: {other:?}");
+        for made in [Some(one), other.ok()].into_iter().flatten() {
+            store
+                .delete_folder(made.id)
+                .await
+                .unwrap_or_else(|error| panic!("{error}"));
+        }
+    }
+}

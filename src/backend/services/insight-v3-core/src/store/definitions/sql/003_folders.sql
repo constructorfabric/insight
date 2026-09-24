@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS folders (
     id CHAR(36) NOT NULL PRIMARY KEY,
-    name VARCHAR(64) NOT NULL,
+    name VARCHAR(64) NOT NULL COLLATE utf8mb4_uca1400_as_ci,
     created_at DATETIME(6) NOT NULL,
     updated_at DATETIME(6) NOT NULL,
     UNIQUE KEY folders_name (name)
