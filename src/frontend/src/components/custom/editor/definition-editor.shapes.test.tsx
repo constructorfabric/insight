@@ -524,8 +524,64 @@ describe("<DefinitionEditor> over a kind's shape", () => {
 
     expect(screen.getByLabelText(/Source/)).toHaveValue("table");
     expect(screen.getByLabelText(/^Table/)).toHaveValue("fct_commit");
-    expect(screen.getByLabelText(/^Database/)).toHaveValue("silver");
     expect(screen.queryByLabelText(/^Dataset/)).not.toBeInTheDocument();
+    // The form asks for one name, so the database of its own is not a row.
+    expect(screen.queryByLabelText(/^Database/)).not.toBeInTheDocument();
+  });
+
+  // A body written with a database of its own compiles the same, but the
+  // editor writes one form, so saving settles it on that one.
+  it("writes a database of its own back as one dotted name", async () => {
+    const user = userEvent.setup();
+    render(
+      <DefinitionEditor
+        kind="metrics"
+        name="lines"
+        document={{
+          database: "silver",
+          table: "fct_commit",
+          fields: [{ column: "lines_added", type: "int", as_name: "lines" }],
+        }}
+        onStored={vi.fn()}
+      />,
+      { wrapper }
+    );
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(customClient.putDefinition).toHaveBeenCalledWith(
+        "metrics",
+        "lines",
+        {
+          table: "silver.fct_commit",
+          fields: [{ column: "lines_added", type: "int", as_name: "lines" }],
+        }
+      )
+    );
+  });
+
+  // The text view is the fallback for a body the form does not ask about, so
+  // a database written there by hand still settles on save.
+  it("settles a database written by hand in the text view", async () => {
+    const user = userEvent.setup();
+    render(
+      <DefinitionEditor kind="metrics" name="lines" onStored={vi.fn()} />,
+      { wrapper }
+    );
+
+    const text = await showText(user);
+    await user.clear(text);
+    await user.type(text, '{{"database":"silver","table":"fct_commit"}');
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(customClient.putDefinition).toHaveBeenCalledWith(
+        "metrics",
+        "lines",
+        { table: "silver.fct_commit" }
+      )
+    );
   });
 
   // A metric over another source is another query, so the form starts over
@@ -603,7 +659,6 @@ describe("<DefinitionEditor> over a kind's shape", () => {
       { wrapper }
     );
 
-    expect(screen.getByLabelText(/^Database/)).toHaveValue("insight");
     await user.clear(screen.getByLabelText(/^Table/));
     await user.type(screen.getByLabelText(/^Table/), "silver.fct_commit");
 
@@ -632,7 +687,7 @@ describe("<DefinitionEditor> over a kind's shape", () => {
     await user.type(screen.getByLabelText(/^Table/), "issues");
 
     await waitFor(() =>
-      expect(rowOf(screen.getByLabelText(/^Database/))).toHaveTextContent(
+      expect(rowOf(screen.getByLabelText(/^Table/))).toHaveTextContent(
         /2 databases hold a table called `issues`: bronze_github, bronze_gitlab/
       )
     );

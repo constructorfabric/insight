@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { addressOf, qualifies, spelled } from "./source";
+import { addressOf, dotted, qualifies, spelled } from "./source";
 
 describe("addressOf", () => {
   // The service returns early on a `database` of its own and never splits the
@@ -57,5 +57,42 @@ describe("spelled", () => {
   it("writes a database back onto the name, and leaves a bare one bare", () => {
     expect(spelled({ database: "silver", table: "fct" })).toBe("silver.fct");
     expect(spelled({ database: "", table: "fct" })).toBe("fct");
+  });
+});
+
+describe("dotted", () => {
+  // The service takes either form and compiles both the same; the editor asks
+  // for one name, so what is stored settles on the one form.
+  it("joins a database of its own onto the name", () => {
+    expect(dotted({ database: "silver", table: "fct", fields: [] })).toEqual({
+      table: "silver.fct",
+      fields: [],
+    });
+  });
+
+  it("leaves a name that already carries its database", () => {
+    const body = { table: "silver.fct" };
+
+    expect(dotted(body)).toEqual(body);
+  });
+
+  it("leaves a body with nothing to join", () => {
+    for (const body of [
+      { table: "fct" },
+      { database: "", table: "fct" },
+      { database: "silver" },
+      { database: "silver", table: "" },
+      { dataset: "commits" },
+    ]) {
+      expect(dotted(body), JSON.stringify(body)).toEqual(body);
+    }
+  });
+
+  // Joining what the service would refuse keeps the refusal, rather than
+  // inventing a name that reads differently.
+  it("joins a name the service would refuse just the same", () => {
+    expect(dotted({ database: "a", table: "b.c" })).toEqual({
+      table: "a.b.c",
+    });
   });
 });

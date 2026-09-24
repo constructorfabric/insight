@@ -52,6 +52,32 @@ export function tableAddress(
   return addressOf(read(document, [at.table]), read(document, [at.database]));
 }
 
+/**
+ * The body as the service is given it: the table named once, as
+ * `database.table`.
+ *
+ * The service also takes a `database` of its own beside a bare name, and a
+ * metric stored before the editor offered the catalogue is written that way.
+ * The editor asks for one name, so a body settles on the one form the moment
+ * anything about it is saved. The two compile to the same query.
+ */
+export function dotted(
+  document: Record<string, unknown>
+): Record<string, unknown> {
+  const database = document.database;
+  const table = document.table;
+  if (typeof database !== "string" || database === "") return document;
+  if (typeof table !== "string" || table === "") return document;
+
+  const settled: Record<string, unknown> = {
+    ...document,
+    table: `${database}.${table}`,
+  };
+  delete settled.database;
+
+  return settled;
+}
+
 /** `database.table`, or the bare table where no database is known. */
 export function spelled({ database, table }: TableAddress): string {
   return database === "" ? table : `${database}.${table}`;

@@ -349,12 +349,6 @@ const METRIC: Description = {
               required: true,
               hint: "As database.table, any table the warehouse holds. A replacing table is read through FINAL without saying so.",
             },
-            {
-              name: "database",
-              label: "Database",
-              shape: { of: "text" },
-              hint: "Only when the table above is written bare.",
-            },
             produced("table"),
             windowedBy("table"),
             filtered("table"),

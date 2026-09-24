@@ -20,6 +20,7 @@ import {
 import { DESCRIPTIONS } from "@/lib/custom/editor/kinds";
 import type { TableAddress } from "@/lib/custom/editor/source";
 import {
+  dotted,
   qualifies,
   spelled,
   tableAddress,
@@ -139,10 +140,10 @@ export function DefinitionEditor({
     const holders = listed.filter((each) => each.table === named.table);
     if (named.database === "" && holders.length > 1) {
       notes.set(
-        TABLE_AT.database,
+        TABLE_AT.table,
         `${holders.length} databases hold a table called \`${named.table}\`: ${holders
           .map((each) => each.database)
-          .join(", ")}. Name one, or write the table as database.table.`
+          .join(", ")}. Write the one you mean, as database.table.`
       );
     } else if (address === undefined) {
       notes.set(
@@ -184,7 +185,7 @@ export function DefinitionEditor({
   const submit = () => {
     if (given === "" || taken || !sendable(held)) return;
     store.mutate(
-      { kind, name: given, body: held.document },
+      { kind, name: given, body: overTables ? dotted(held.document) : held.document },
       { onSuccess: () => onStored(given) }
     );
   };
