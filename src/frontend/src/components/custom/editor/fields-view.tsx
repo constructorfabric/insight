@@ -6,6 +6,7 @@ import { Row } from "@/components/custom/editor/controls";
 import { Variants } from "@/components/custom/editor/variants";
 import { Button } from "@/components/ui/button";
 import type { Field, Path, Shape } from "@/lib/custom/editor/describe";
+import type { TableAddress } from "@/lib/custom/editor/source";
 import { spell } from "@/lib/custom/editor/describe";
 import { describing } from "@/lib/custom/editor/aria";
 import { blank } from "@/lib/custom/editor/blank";
@@ -25,6 +26,10 @@ export interface Editing {
   names: (kind: EditableKind) => readonly string[];
   /** What a dataset declares, for a metric's fields to be offered and typed by. */
   declared: (dataset: string) => readonly DeclaredField[];
+  /** Every warehouse table the catalogue lists, as `database.table`. */
+  tables: () => readonly string[];
+  /** The columns of one warehouse table, for a metric over it to be offered. */
+  columns: (address: TableAddress) => readonly string[];
   onChange: (path: Path, value: unknown) => void;
 }
 

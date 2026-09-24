@@ -46,6 +46,7 @@ fn surfaces() -> tools::CustomSurfaces {
                 }),
             )],
         ),
+        crate::store::catalog::Catalog::fixed(Vec::new()),
     ));
 
     tools::CustomSurfaces::new(state)
@@ -272,9 +273,11 @@ async fn an_authorized_client_initializes_and_lists_the_tools_over_http() -> R {
         [
             "arrange_dashboard",
             "delete_definition",
+            "describe_tables",
             "get_definition",
             "list_datasets",
             "list_definitions",
+            "list_tables",
             "put_dashboard",
             "put_dataset",
             "put_metric",

@@ -61,6 +61,12 @@ struct MeBody {
     refresh_at: u64,
 }
 
+/// `/auth/me`'s person id — who the stall is addressed to.
+#[derive(Deserialize)]
+struct MePerson {
+    user: String,
+}
+
 #[derive(Deserialize)]
 struct JwtSid {
     sid: String,
@@ -187,4 +193,73 @@ async fn refresh_rotates_with_grace_and_stable_session() {
     assert_eq!(me.status(), 200);
     let me_body: MeBody = me.json().await.unwrap();
     assert!(me_body.refresh_at < me_body.expires_at);
+}
+
+/// A hung Identity must not cost the caller its session.
+///
+/// The credential is rotated before roles converge, so an unbounded lookup
+/// holds the new cookie back past the client's abort and its retry then
+/// presents a superseded credential.
+#[tokio::test]
+#[ignore = "requires a running authenticator + Keycloak + Redis stack"]
+async fn refresh_answers_within_the_client_budget_when_identity_hangs() {
+    /// What the SPA's refresh driver waits before it aborts the request.
+    const SPA_ABORT_SECS: u64 = 10;
+
+    let auth_base = env("AUTH_BASE", "http://localhost:8083");
+    let identity_base = env("IDENTITY_BASE", "http://localhost:8092");
+    // Its own realm user (kc-realm-overlay.py): the stall is addressed by
+    // person, so no sibling test running beside this one can consume it.
+    let test_user = "roles-stall@example.com";
+    let http = client();
+
+    let token = common::kc::login(&http, &auth_base, test_user).await;
+    let csrf = get_csrf(&http, &auth_base, &token).await;
+
+    let me = http
+        .get(format!("{auth_base}/auth/me"))
+        .header(reqwest::header::COOKIE, format!("{COOKIE}={token}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(me.status(), 200, "the fresh session must resolve");
+    let person_id = me.json::<MePerson>().await.unwrap().user;
+
+    let armed = http
+        .post(format!(
+            "{identity_base}/__test/roles-stall?person_id={person_id}&seconds=30"
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(armed.status(), 204, "the identity stub must arm the stall");
+
+    let started = std::time::Instant::now();
+    let refresh = http
+        .post(format!("{auth_base}/auth/refresh"))
+        .header(reqwest::header::COOKIE, format!("{COOKIE}={token}"))
+        .header("X-CSRF-Token", &csrf)
+        .send()
+        .await
+        .unwrap();
+    let took = started.elapsed();
+
+    assert_eq!(
+        refresh.status(),
+        200,
+        "a roles blip must not fail a refresh"
+    );
+    assert!(
+        took < std::time::Duration::from_secs(SPA_ABORT_SECS),
+        "refresh took {took:?}, past the {SPA_ABORT_SECS} s the client waits"
+    );
+
+    // The rotated credential reached the caller and resolves: the session is
+    // the same one, carrying the roles the stalled lookup never replaced.
+    let rotated = cookie_from(&refresh).expect("refresh must re-issue the cookie");
+    assert_ne!(rotated, token, "credential must rotate");
+    assert!(
+        authz_sid(&http, &auth_base, &rotated).await.is_some(),
+        "the rotated credential must resolve"
+    );
 }

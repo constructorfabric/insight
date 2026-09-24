@@ -42,35 +42,48 @@ export interface PieWidget extends WidgetBase {
 export type Widget = TableWidget | SeriesWidget | StatWidget | PieWidget;
 
 /**
+ * Where one field or one condition of a metric reads its value from.
+ *
+ * Over a dataset it names a declared field, and where the value sits in a
+ * record is the declaration's to say. Over a warehouse table it names a
+ * column, or a JSON key path inside one; a key with no column is read inside
+ * the row's `raw_data`.
+ */
+export interface MetricRead {
+  field?: string;
+  column?: string;
+  json?: string;
+}
+
+/**
  * A metric's stored query, as the service interprets it.
  *
- * Every field names a field the dataset declares. Where a value sits in a
- * record is the declaration's to say, so a metric never says it.
+ * It reads one dataset or one warehouse table: `dataset` names the first,
+ * `table` (as `database.table`, or beside a `database` of its own) the second.
  */
 export interface MetricDefinition {
-  /** The dataset this metric reads. Every metric reads one. */
-  dataset: string;
+  dataset?: string;
+  table?: string;
+  database?: string;
   /**
-   * The declared field a reader may window and bucket by. Left out, the
+   * The date a reader may window and bucket by. Over a dataset, left out, the
    * dataset's own main date is used - which only the declaration knows, so
    * the service reports the one in force rather than the body implying it.
    */
-  time?: { field?: string };
+  time?: MetricRead;
   /** The widest window this metric will answer, as an ISO duration. */
   max_range?: string;
-  fields: {
-    field?: string;
+  fields: (MetricRead & {
     type: string;
     agg?: string;
     as_name: string;
-  }[];
+  })[];
   group_by?: string[];
-  filters?: {
-    field?: string;
+  filters?: (MetricRead & {
     type: string;
     op: string;
     value: unknown;
-  }[];
+  })[];
   order_by?: { field: string; direction?: "asc" | "desc" };
   limit?: number;
 }
@@ -128,6 +141,34 @@ export interface DatasetDeclaration {
   fields: DeclaredField[];
   /** The fields that make two records the same record. */
   row_identity?: string[];
+}
+
+/** Which part of the warehouse a table belongs to, read off its database. */
+export type TableLayer = "bronze" | "silver" | "gold" | "identity" | "other";
+
+/** One warehouse table as the catalogue lists it: enough to name it. */
+export interface WarehouseTable {
+  database: string;
+  table: string;
+  layer: TableLayer;
+}
+
+export interface TableList {
+  tables: WarehouseTable[];
+  total: number;
+}
+
+export interface TableColumn {
+  name: string;
+  /** As the warehouse spells it, `Nullable(Int64)` and the like. */
+  type: string;
+}
+
+/** One warehouse table with what a metric over it needs. */
+export interface TableSchema extends WarehouseTable {
+  /** A replacing engine is read through FINAL without the metric saying so. */
+  engine: string;
+  columns: TableColumn[];
 }
 
 /** A dataset as the catalogue and its page read it. */

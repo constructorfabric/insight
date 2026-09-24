@@ -25,6 +25,19 @@ export function mockCatalogues(): void {
     name,
     declaration: { title: name, fields: [] },
   }));
+  vi.mocked(customClient.fetchTables).mockResolvedValue({
+    tables: [],
+    total: 0,
+  });
+  vi.mocked(customClient.fetchTable).mockImplementation(
+    async (database, table) => ({
+      database,
+      table,
+      layer: "other",
+      engine: "MergeTree",
+      columns: [],
+    })
+  );
 }
 
 /** A 400 as the service sends it: places in the document, each with a reason. */

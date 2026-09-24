@@ -17,10 +17,13 @@ import {
   type Held,
 } from "@/lib/custom/editor/document";
 import { DESCRIPTIONS } from "@/lib/custom/editor/kinds";
+import { spelled, tableAddress } from "@/lib/custom/editor/source";
 import { place } from "@/lib/custom/editor/violations";
 import {
   catalogueNamesQuery,
   datasetQuery,
+  tableQuery,
+  tablesQuery,
   useStoreDefinition,
 } from "@/queries/custom";
 import { TEXT_BODY, TEXT_LABEL } from "@/lib/type-scale";
@@ -42,7 +45,9 @@ export function DefinitionEditor({
 }) {
   const description = DESCRIPTIONS[kind];
   const [called, setCalled] = useState(name ?? "");
-  const [held, setHeld] = useState<Held>(() => hold(document));
+  const [held, setHeld] = useState<Held>(() =>
+    hold(document ?? description.starting)
+  );
   const [view, setView] = useState<"fields" | "text">("fields");
   const store = useStoreDefinition();
 
@@ -60,6 +65,33 @@ export function DefinitionEditor({
     enabled: typeof reads === "string" && reads !== "",
   });
   const declared = () => dataset.data?.declaration.fields ?? [];
+
+  // A metric over a table is offered the catalogue, and the columns of the
+  // table it names. A bare table is looked up in the catalogue for its
+  // database, so long as exactly one database has one.
+  const overTables = kind === "metrics";
+  const catalogue = useQuery({ ...tablesQuery(), enabled: overTables });
+  const listed = catalogue.data?.tables ?? [];
+  const named = tableAddress(held.document, {
+    table: "table",
+    database: "database",
+  });
+  const holders = named ? listed.filter((each) => each.table === named.table) : [];
+  const address =
+    named === undefined
+      ? undefined
+      : named.database !== ""
+        ? named
+        : holders.length === 1 && holders[0]
+          ? { database: holders[0].database, table: named.table }
+          : undefined;
+  const table = useQuery({
+    ...tableQuery(address?.database ?? "", address?.table ?? ""),
+    enabled: overTables && address !== undefined,
+  });
+  const tables = () => listed.map(spelled);
+  const columns = () =>
+    table.data?.columns.map((column) => column.name) ?? [];
 
   const placed = place(
     store.error,
@@ -180,6 +212,8 @@ export function DefinitionEditor({
             said: placed.at,
             names,
             declared,
+            tables,
+            columns,
             onChange: (path: Path, value: unknown) =>
               setHeld((was) => change(was, path, value)),
           }}

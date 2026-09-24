@@ -457,7 +457,16 @@ impl MetricQuery {
             .transpose()
     }
 
+    /// Whether the table this metric names could be read at all, checked
+    /// before anything asks the warehouse about it.
+    pub(crate) fn check_table(&self) -> Result<(), MetricQueryError> {
+        self.validate_shape(self.split().1)
+    }
+
     fn validate_shape(&self, table: &str) -> Result<(), MetricQueryError> {
+        if table.is_empty() {
+            return Err(MetricQueryError::NoTable);
+        }
         if !is_identifier(table) {
             return Err(MetricQueryError::Identifier(self.table.clone()));
         }

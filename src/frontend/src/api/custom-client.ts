@@ -17,6 +17,8 @@ import type {
   ChatTurn,
   DefinitionResponse,
   MetricDefinition,
+  TableList,
+  TableSchema,
 } from "@/api/custom-types";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
@@ -45,6 +47,21 @@ async function readJson<T>(res: Response): Promise<T> {
   return (await res.json()) as T;
 }
 
+/**
+ * One name — a definition's, a database's, a table's — as a path segment.
+ *
+ * INVARIANT: an empty name is never a request. It would address the
+ * collection above it with a trailing slash, which no service routes — and an
+ * unrouted path answers 401, which reads at the caller as a session that
+ * ended rather than as the bug it is.
+ */
+function named(name: string): string {
+  if (name === "") {
+    throw new CustomApiError(400, { detail: "A name is required." });
+  }
+  return encodeURIComponent(name);
+}
+
 /** What a definition is, in the API's path segments. */
 export type DefinitionKind = "metrics" | "widgets" | "dashboards";
 
@@ -61,12 +78,9 @@ export async function deleteDefinition(
   kind: DefinitionKind,
   name: string
 ): Promise<void> {
-  const res = await fetchWithAuth(
-    `${BASE}/${kind}/${encodeURIComponent(name)}`,
-    {
-      method: "DELETE",
-    }
-  );
+  const res = await fetchWithAuth(`${BASE}/${kind}/${named(name)}`, {
+    method: "DELETE",
+  });
   await ensureOk(res);
 }
 
@@ -87,10 +101,11 @@ export async function renameDefinition(
   name: string,
   to: string
 ): Promise<Renamed> {
-  const res = await fetchWithAuth(
-    `${BASE}/${kind}/${encodeURIComponent(name)}/rename`,
-    { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ to }) }
-  );
+  const res = await fetchWithAuth(`${BASE}/${kind}/${named(name)}/rename`, {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ to }),
+  });
   await ensureOk(res);
 
   return (await res.json()) as Renamed;
@@ -127,9 +142,7 @@ export async function fetchDashboardNames(
 }
 
 export async function fetchDashboard(name: string): Promise<Dashboard> {
-  const res = await fetchWithAuth(
-    `${BASE}/dashboards/${encodeURIComponent(name)}`
-  );
+  const res = await fetchWithAuth(`${BASE}/dashboards/${named(name)}`);
   const read = await readJson<DefinitionResponse<Dashboard>>(res);
 
   return read.body;
@@ -143,9 +156,7 @@ export async function fetchMetricNames(
 }
 
 export async function fetchMetric(name: string): Promise<StoredMetric> {
-  const res = await fetchWithAuth(
-    `${BASE}/metrics/${encodeURIComponent(name)}`
-  );
+  const res = await fetchWithAuth(`${BASE}/metrics/${named(name)}`);
   const read = await readJson<DefinitionResponse<MetricDefinition>>(res);
 
   return { definition: read.body, clock: read.clock };
@@ -159,9 +170,7 @@ export async function fetchWidgetNames(
 }
 
 export async function fetchWidget(name: string): Promise<Widget> {
-  const res = await fetchWithAuth(
-    `${BASE}/widgets/${encodeURIComponent(name)}`
-  );
+  const res = await fetchWithAuth(`${BASE}/widgets/${named(name)}`);
   const read = await readJson<DefinitionResponse<Widget>>(res);
 
   return read.body;
@@ -175,10 +184,25 @@ export async function fetchDatasetNames(
 }
 
 export async function fetchDataset(name: string): Promise<Dataset> {
-  const res = await fetchWithAuth(
-    `${BASE}/datasets/${encodeURIComponent(name)}`
-  );
+  const res = await fetchWithAuth(`${BASE}/datasets/${named(name)}`);
   return readJson<Dataset>(res);
+}
+
+/** Every warehouse table a metric may read, or one database's. */
+export async function fetchTables(database?: string): Promise<TableList> {
+  const query = database ? `?database=${encodeURIComponent(database)}` : "";
+  const res = await fetchWithAuth(`${BASE}/tables${query}`);
+  return readJson<TableList>(res);
+}
+
+export async function fetchTable(
+  database: string,
+  table: string
+): Promise<TableSchema> {
+  const res = await fetchWithAuth(
+    `${BASE}/tables/${named(database)}/${named(table)}`
+  );
+  return readJson<TableSchema>(res);
 }
 
 /** One page of the records a dataset holds, sized by the service. */
@@ -196,7 +220,7 @@ export async function fetchDatasetRecords(
     query.set("direction", page.descending ? "desc" : "asc");
   }
   const res = await fetchWithAuth(
-    `${BASE}/datasets/${encodeURIComponent(name)}/records?${query}`
+    `${BASE}/datasets/${named(name)}/records?${query}`
   );
 
   return readJson<DatasetRecords>(res);
@@ -207,9 +231,7 @@ export async function fetchDependents(
   kind: DefinitionKind,
   name: string
 ): Promise<Holder[]> {
-  const res = await fetchWithAuth(
-    `${BASE}/${kind}/${encodeURIComponent(name)}/dependents`
-  );
+  const res = await fetchWithAuth(`${BASE}/${kind}/${named(name)}/dependents`);
   const read = await readJson<{ holders: Holder[] }>(res);
 
   return read.holders;
@@ -222,9 +244,7 @@ export async function fetchDependents(
  * the name in a label is not one of them.
  */
 export async function fetchDatasetDependents(name: string): Promise<string[]> {
-  const res = await fetchWithAuth(
-    `${BASE}/datasets/${encodeURIComponent(name)}/dependents`
-  );
+  const res = await fetchWithAuth(`${BASE}/datasets/${named(name)}/dependents`);
   const read = await readJson<{ metrics: string[] }>(res);
 
   return read.metrics;
@@ -240,10 +260,11 @@ export async function putDataset(
   name: string,
   declaration: unknown
 ): Promise<Dataset> {
-  const res = await fetchWithAuth(
-    `${BASE}/datasets/${encodeURIComponent(name)}`,
-    { method: "PUT", headers: JSON_HEADERS, body: JSON.stringify(declaration) }
-  );
+  const res = await fetchWithAuth(`${BASE}/datasets/${named(name)}`, {
+    method: "PUT",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(declaration),
+  });
   return readJson<Dataset>(res);
 }
 
@@ -253,10 +274,11 @@ export async function putDefinition(
   name: string,
   body: unknown
 ): Promise<void> {
-  const res = await fetchWithAuth(
-    `${BASE}/${kind}/${encodeURIComponent(name)}`,
-    { method: "PUT", headers: JSON_HEADERS, body: JSON.stringify(body) }
-  );
+  const res = await fetchWithAuth(`${BASE}/${kind}/${named(name)}`, {
+    method: "PUT",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(body),
+  });
   await ensureOk(res);
 }
 
@@ -266,10 +288,9 @@ export async function putDefinition(
  * Refused while a metric reads it, and the reply names every one.
  */
 export async function deleteDataset(name: string): Promise<void> {
-  const res = await fetchWithAuth(
-    `${BASE}/datasets/${encodeURIComponent(name)}`,
-    { method: "DELETE" }
-  );
+  const res = await fetchWithAuth(`${BASE}/datasets/${named(name)}`, {
+    method: "DELETE",
+  });
   await ensureOk(res);
 }
 
@@ -286,15 +307,12 @@ export async function runMetric(
   name: string,
   options?: RunOptions
 ): Promise<MetricResult> {
-  const res = await fetchWithAuth(
-    `${BASE}/metrics/${encodeURIComponent(name)}/run`,
-    {
-      method: "POST",
-      ...(options
-        ? { headers: JSON_HEADERS, body: JSON.stringify(options) }
-        : {}),
-    }
-  );
+  const res = await fetchWithAuth(`${BASE}/metrics/${named(name)}/run`, {
+    method: "POST",
+    ...(options
+      ? { headers: JSON_HEADERS, body: JSON.stringify(options) }
+      : {}),
+  });
   return readJson<MetricResult>(res);
 }
 
