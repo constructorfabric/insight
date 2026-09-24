@@ -48,7 +48,12 @@ name: zendesk
 # from images.cdk.image). MUST be `nocode`/absent for declarative connectors:
 # reconcile only branches on `nocode` vs `cdk` — any other value (e.g.
 # `declarative`) falls through to the cdk image path and fails with no image.
-version: "1.3.2"
+# 1.4.0: connections carry destinationSyncMode append_dedup with
+#   primaryKey unique_key, so the Airbyte destination owns the bronze table
+#   shape and the RMT promotion step is gone (#2877). MINOR per ADR-0015:
+#   reconcile must republish this connector so the connection catalog is
+#   refreshed; nothing already stored changes meaning.
+version: "1.4.0"
 type: nocode
 schedule: "0 5 * * *"       # 05:00 UTC daily
 workflow: sync               # Argo workflow template: ingestion-pipeline
