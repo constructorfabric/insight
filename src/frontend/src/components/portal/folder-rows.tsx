@@ -33,8 +33,6 @@ import {
 
 const LIST_PATH = /^\/portal\/custom\/?$/;
 const NEW_FOLDER = "new";
-const UNDER_THE_MENU =
-  "md:group-focus-within/menu-item:opacity-0 md:group-hover/menu-item:opacity-0 max-md:end-8";
 
 export function FoldersGroup() {
   const { data } = useQuery(foldersQuery());
@@ -67,6 +65,7 @@ export function FoldersGroup() {
               <SidebarMenuItem key={folder.id}>
                 <SidebarMenuButton
                   isActive={isShown(folder.id)}
+                  className="group-has-data-[sidebar=menu-action]/menu-item:pe-14"
                   render={
                     <Link to="/portal/custom" search={{ folder: folder.id }} />
                   }
@@ -74,9 +73,7 @@ export function FoldersGroup() {
                   <Folder />
                   <span>{folder.name}</span>
                 </SidebarMenuButton>
-                <CountBadge className={UNDER_THE_MENU}>
-                  {folder.dashboards}
-                </CountBadge>
+                <CountBadge>{folder.dashboards}</CountBadge>
                 <FolderMenu
                   name={folder.name}
                   onRename={() => setEditing(folder.id)}
@@ -142,7 +139,11 @@ function FolderMenu({
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <SidebarMenuAction showOnHover aria-label={`More for ${name}`} />
+          <SidebarMenuAction
+            showOnHover
+            className="end-7"
+            aria-label={`More for ${name}`}
+          />
         }
       >
         <Ellipsis />
