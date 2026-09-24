@@ -41,9 +41,11 @@ impl Stored {
     }
 
     fn name_taken(&self, name: &FolderName, except: Option<FolderId>) -> bool {
+        let wanted = name.as_str().to_lowercase();
+
         self.folders
             .iter()
-            .any(|(id, held)| Some(*id) != except && held.same_as(name))
+            .any(|(id, held)| Some(*id) != except && held.as_str().to_lowercase() == wanted)
     }
 
     fn folder(&self, id: FolderId) -> Option<Folder> {
@@ -263,7 +265,7 @@ impl Folders for MemoryDefinitions {
         self.writable()?;
         let mut stored = self.lock();
         if !stored.folders.contains_key(&id) {
-            return Err(FolderError::FolderNotFound);
+            return Err(FolderError::FolderNotFound(id));
         }
         if stored.name_taken(&name, Some(id)) {
             return Err(FolderError::NameTaken(name.as_str().to_owned()));
@@ -298,10 +300,12 @@ impl Folders for MemoryDefinitions {
         self.writable()?;
         let mut stored = self.lock();
         if !stored.has_dashboard(dashboard) {
-            return Err(FolderError::DashboardNotFound);
+            return Err(FolderError::DashboardNotFound(
+                dashboard.as_str().to_owned(),
+            ));
         }
         match folder {
-            Some(id) if !stored.folders.contains_key(&id) => Err(FolderError::FolderNotFound),
+            Some(id) if !stored.folders.contains_key(&id) => Err(FolderError::FolderNotFound(id)),
             Some(id) => {
                 stored.filed.insert(dashboard.as_str().to_owned(), id);
                 Ok(())

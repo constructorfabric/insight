@@ -4,7 +4,9 @@ use async_trait::async_trait;
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::domain::definition::{DefinitionName, DefinitionStoreError, NamePage, Page};
+use crate::domain::definition::{
+    DefinitionName, DefinitionStoreError, Definitions, NamePage, Page,
+};
 
 const MAX_NAME_CHARS: usize = 64;
 
@@ -20,10 +22,6 @@ impl FolderId {
         Uuid::parse_str(value)
             .map(Self)
             .map_err(|_| FolderError::Id)
-    }
-
-    pub(crate) fn as_uuid(self) -> Uuid {
-        self.0
     }
 }
 
@@ -49,10 +47,6 @@ impl FolderName {
 
     pub(crate) fn as_str(&self) -> &str {
         &self.0
-    }
-
-    pub(crate) fn same_as(&self, other: &Self) -> bool {
-        self.0.to_lowercase() == other.0.to_lowercase()
     }
 }
 
@@ -80,16 +74,26 @@ pub(crate) enum FolderFilter {
     In(FolderId),
 }
 
+impl FolderFilter {
+    pub(crate) fn parse(value: &str) -> Result<Self, FolderError> {
+        if value == "unfiled" {
+            return Ok(Self::Unfiled);
+        }
+
+        FolderId::parse(value).map(Self::In)
+    }
+}
+
 #[derive(Debug, Error)]
 pub(crate) enum FolderError {
     #[error("folder names are 1 to 64 characters, not counting the spaces around them")]
     Name,
     #[error("folder ids are UUIDs")]
     Id,
-    #[error("no such folder")]
-    FolderNotFound,
-    #[error("no such dashboard")]
-    DashboardNotFound,
+    #[error("no folder has the id `{0}`")]
+    FolderNotFound(FolderId),
+    #[error("no dashboard is named `{0}`")]
+    DashboardNotFound(String),
     #[error("a folder named `{0}` already exists")]
     NameTaken(String),
     #[error(transparent)]
@@ -127,6 +131,12 @@ pub(crate) trait Folders: Send + Sync + fmt::Debug {
         filter: FolderFilter,
     ) -> Result<NamePage, FolderError>;
 }
+
+/// INVARIANT: one store holds both, because a dashboard rename carries its
+/// folder inside the definitions' own transaction.
+pub(crate) trait DefinitionStore: Definitions + Folders {}
+
+impl<T: Definitions + Folders> DefinitionStore for T {}
 
 #[cfg(test)]
 mod tests;

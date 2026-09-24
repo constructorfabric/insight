@@ -121,7 +121,7 @@ async fn filing_into_a_folder_that_is_gone_leaves_the_dashboard_where_it_was() -
     let refused = store.file(&name("delivery"), Some(gone.id)).await;
 
     assert!(
-        matches!(refused, Err(FolderError::FolderNotFound)),
+        matches!(refused, Err(FolderError::FolderNotFound(_))),
         "{refused:?}"
     );
     assert_eq!(
@@ -140,7 +140,7 @@ async fn filing_a_dashboard_that_does_not_exist_is_refused() -> R {
     let refused = store.file(&name("nowhere"), Some(platform.id)).await;
 
     assert!(
-        matches!(refused, Err(FolderError::DashboardNotFound)),
+        matches!(refused, Err(FolderError::DashboardNotFound(_))),
         "{refused:?}"
     );
 

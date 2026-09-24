@@ -10,6 +10,7 @@ pub(crate) mod chat;
 pub(crate) mod datasets;
 pub(crate) mod definitions;
 mod errors;
+pub(crate) mod folders;
 pub(crate) mod metric_run;
 pub(crate) mod raw_data;
 pub(crate) mod tables;
@@ -18,6 +19,7 @@ use admission::IngestAdmission;
 
 use crate::chat::ChatClient;
 use crate::domain::definition::Definitions;
+use crate::domain::folders::{DefinitionStore, Folders};
 use crate::domain::query::metric_query::MetricRunner;
 use crate::store::catalog::Catalog;
 use crate::store::dataset_tables::DatasetTables;
@@ -81,7 +83,7 @@ pub(crate) async fn require_admin(
 #[derive(Debug)]
 pub(crate) struct AppState {
     metrics: MetricRunner,
-    definitions: Arc<dyn Definitions>,
+    definitions: Arc<dyn DefinitionStore>,
     chat: ChatClient,
     identity: IdentityClient,
     datasets: Datasets,
@@ -173,7 +175,7 @@ impl Datasets {
 impl AppState {
     pub(crate) fn new(
         metrics: MetricRunner,
-        definitions: Arc<dyn Definitions>,
+        definitions: Arc<dyn DefinitionStore>,
         chat: ChatClient,
         identity: IdentityClient,
         datasets: Datasets,
@@ -190,6 +192,10 @@ impl AppState {
     }
 
     pub(crate) fn definitions(&self) -> &dyn Definitions {
+        self.definitions.as_ref()
+    }
+
+    pub(crate) fn folders(&self) -> &dyn Folders {
         self.definitions.as_ref()
     }
 
@@ -336,6 +342,7 @@ pub(crate) fn register_routes(
     // their own context.
     let api = raw_data::register_routes(Router::new(), openapi, state.clone(), admission);
     let api = definitions::register_routes(api, openapi, &state);
+    let api = folders::register_routes(api, openapi, &state);
     let api = datasets::register_routes(api, openapi, &state);
     let api = tables::register_routes(api, openapi, &state);
     let api = metric_run::register_routes(api, openapi, state.clone());

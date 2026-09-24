@@ -60,7 +60,7 @@ impl TestHarness {
                 insight_clickhouse::Client::new(insight_clickhouse::Config::new(url, "insight")),
                 crate::domain::query::metric_query::People::new("identity"),
             ),
-            Arc::clone(&definitions) as Arc<dyn crate::domain::definition::Definitions>,
+            definitions.clone(),
             ChatClient::keyless(),
             crate::store::identity::IdentityClient::fixed(is_admin),
             datasets,

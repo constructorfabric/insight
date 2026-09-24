@@ -14,7 +14,9 @@ use utoipa::ToSchema;
 
 use super::AppState;
 use super::errors::ApiErrors;
+use super::folders::{FolderBody, folder_error, folder_field_error};
 use crate::domain::definition::{DefinitionKind, DefinitionName, MAX_PAGE_LIMIT, Page, PageError};
+use crate::domain::folders::FolderFilter;
 use crate::domain::kinds::metric::answerable::EffectiveClock;
 use crate::domain::surfaces::CustomError;
 use crate::domain::violation::Violation;
@@ -27,6 +29,7 @@ struct Search {
     q: String,
     limit: Option<u64>,
     offset: Option<u64>,
+    folder: Option<String>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -97,7 +100,7 @@ fn register_list(
     kind: DefinitionKind,
     segment: &str,
 ) -> Router {
-    OperationBuilder::get(format!("/v1/{segment}"))
+    let builder = OperationBuilder::get(format!("/v1/{segment}"))
         .operation_id(format!("insight_v3_core.{segment}.list"))
         .summary("List definition names, or the ones matching ?q=")
         .anonymous()
@@ -112,7 +115,18 @@ fn register_list(
             "integer",
             &format!("Page size, 1 to {MAX_PAGE_LIMIT}"),
         ))
-        .param(query_param("offset", "integer", "Names to skip"))
+        .param(query_param("offset", "integer", "Names to skip"));
+    let builder = if kind == DefinitionKind::Dashboard {
+        builder.param(query_param(
+            "folder",
+            "string",
+            "Only the dashboards in this folder id, or `unfiled` for those in none",
+        ))
+    } else {
+        builder
+    };
+
+    builder
         .json_response(StatusCode::OK, "One page of names, and how many match")
         .error_400(openapi)
         .error_403(openapi)
@@ -237,6 +251,13 @@ struct DefinitionResponse {
     body: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     clock: Option<EffectiveClock>,
+    #[serde(flatten)]
+    filed: Option<Filed>,
+}
+
+#[derive(Debug, Serialize)]
+struct Filed {
+    folder: Option<FolderBody>,
 }
 
 pub(super) fn custom_error(error: CustomError) -> CanonicalError {
@@ -486,8 +507,21 @@ async fn get_definition(
     match surfaces.get(kind, &name).await {
         Ok(body) => {
             let clock = surfaces.clock_of(kind, &body).await;
+            let filed = if kind == DefinitionKind::Dashboard {
+                let folder = state
+                    .folders()
+                    .folder_of(&name)
+                    .await
+                    .map_err(folder_error)?;
 
-            Ok(Json(DefinitionResponse { body, clock }).into_response())
+                Some(Filed {
+                    folder: folder.as_ref().map(FolderBody::from),
+                })
+            } else {
+                None
+            };
+
+            Ok(Json(DefinitionResponse { body, clock, filed }).into_response())
         }
         Err(CustomError::NotFound { .. }) => Ok(StatusCode::NOT_FOUND.into_response()),
         Err(other) => Err(custom_error(other)),
@@ -508,11 +542,27 @@ async fn list_definitions(
     .await?;
 
     let page = Page::parse(search.limit, search.offset).map_err(page_error)?;
-    let found = state
-        .surfaces()
-        .page(kind, &search.q, page)
-        .await
-        .map_err(custom_error)?;
+    let found = match search.folder.as_deref() {
+        None => state
+            .surfaces()
+            .page(kind, &search.q, page)
+            .await
+            .map_err(custom_error)?,
+        Some(_) if kind != DefinitionKind::Dashboard => {
+            return Err(DefinitionApiError::invalid_field(
+                "folder",
+                format!("{} are not filed in folders", kind.plural()),
+            ));
+        }
+        Some(folder) => {
+            let filter = FolderFilter::parse(folder).map_err(|error| folder_field_error(&error))?;
+            state
+                .folders()
+                .page_filed(search.q.trim(), page, filter)
+                .await
+                .map_err(folder_error)?
+        }
+    };
 
     Ok(Json(serde_json::json!({
         "names": found.names,

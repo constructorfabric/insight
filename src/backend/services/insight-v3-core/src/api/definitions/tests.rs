@@ -11,7 +11,7 @@ use tower::ServiceExt as _;
 use super::*;
 use crate::api::AppState;
 use crate::chat::ChatClient;
-use crate::domain::definition::Definitions;
+use crate::domain::folders::DefinitionStore;
 use crate::domain::query::metric_query::MetricRunner;
 use crate::store::definitions::memory::MemoryDefinitions;
 
@@ -61,7 +61,7 @@ impl TestHarness {
     async fn with_a_store_that_is_down() -> Self {
         Self::build(
             true,
-            &(Arc::new(MemoryDefinitions::refusing()) as Arc<dyn Definitions>),
+            &(Arc::new(MemoryDefinitions::refusing()) as Arc<dyn DefinitionStore>),
         )
     }
 
@@ -70,11 +70,11 @@ impl TestHarness {
     async fn with_caller(is_admin: bool) -> Self {
         Self::build(
             is_admin,
-            &(Arc::new(MemoryDefinitions::new()) as Arc<dyn Definitions>),
+            &(Arc::new(MemoryDefinitions::new()) as Arc<dyn DefinitionStore>),
         )
     }
 
-    fn build(is_admin: bool, definitions: &Arc<dyn Definitions>) -> Self {
+    fn build(is_admin: bool, definitions: &Arc<dyn DefinitionStore>) -> Self {
         let mut mock = Mock::new();
         mock.non_exhaustive();
         let openapi = OpenApiRegistryImpl::new();

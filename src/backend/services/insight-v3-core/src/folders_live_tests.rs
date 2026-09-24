@@ -147,12 +147,12 @@ async fn a_folder_keeps_its_dashboards_through_writes_renames_and_its_own_deleti
     assert_eq!(store.folder_of(&renamed).await.ok().flatten(), None);
     let into_the_gone = store.file(&renamed, Some(platform.id)).await;
     assert!(
-        matches!(into_the_gone, Err(FolderError::FolderNotFound)),
+        matches!(into_the_gone, Err(FolderError::FolderNotFound(_))),
         "{into_the_gone:?}"
     );
     let nowhere = store.file(&dashboard(&unique("nowhere")), None).await;
     assert!(
-        matches!(nowhere, Err(FolderError::DashboardNotFound)),
+        matches!(nowhere, Err(FolderError::DashboardNotFound(_))),
         "{nowhere:?}"
     );
 

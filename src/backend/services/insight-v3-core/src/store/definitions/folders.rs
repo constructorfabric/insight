@@ -157,7 +157,7 @@ impl Folders for MariaDefinitions {
             .await
             .map_err(|error| taken_or(error, &name))?;
         if result.rows_affected() == 0 {
-            return Err(FolderError::FolderNotFound);
+            return Err(FolderError::FolderNotFound(id));
         }
 
         Ok(Folder { id, name })
@@ -195,15 +195,17 @@ impl Folders for MariaDefinitions {
         .await?
         .map_or(0, |row| row.total);
         if held == 0 {
-            return Err(FolderError::DashboardNotFound);
+            return Err(FolderError::DashboardNotFound(
+                dashboard.as_str().to_owned(),
+            ));
         }
 
         transaction
             .execute_raw(file_statement(dashboard, folder))
             .await
-            .map_err(|error| match error.sql_err() {
-                Some(sea_orm::SqlErr::ForeignKeyConstraintViolation(_)) => {
-                    FolderError::FolderNotFound
+            .map_err(|error| match (error.sql_err(), folder) {
+                (Some(sea_orm::SqlErr::ForeignKeyConstraintViolation(_)), Some(id)) => {
+                    FolderError::FolderNotFound(id)
                 }
                 _ => error.into(),
             })?;

@@ -76,7 +76,7 @@ impl TestHarness {
         mock.non_exhaustive();
         let openapi = OpenApiRegistryImpl::new();
         let url = mock.url();
-        let definitions: Arc<dyn Definitions> = Arc::new(MemoryDefinitions::new());
+        let definitions = Arc::new(MemoryDefinitions::new());
         let state = Arc::new(AppState::new(
             MetricRunner::new(
                 insight_clickhouse::Client::new(insight_clickhouse::Config::new(
