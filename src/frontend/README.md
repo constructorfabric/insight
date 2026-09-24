@@ -137,13 +137,13 @@ them as still in development, with the `nav` chart value rendered into
 ```yaml
 nav:
   hide:
-    - "zone:scorecard"
+    - "zone:reports"
     - "zone:aicost/item:idle-seats"
     - "zone:directions/dir:sales"
     - "zone:directions/dir:dev/lens:git-output"
     - "zone:person/section:git_output"
   planned:
-    - "zone:reports/item:report-builder"
+    - "zone:manage/item:config"
 ```
 
 A hidden entry disappears from every menu and from default/deep-link
@@ -217,7 +217,6 @@ minified bundle rather than your code.
 | `/ic/$person` | (redirects to `/ic/$person/personal`) | |
 | `/ic/$person/personal` | Dashboard | KPI row, attention list, metric group cards + drilldowns. |
 | `/ic/$person/team` | Team view | Members heatmap, attention list, metric group drilldowns. |
-| `/metrics` | Metric catalog | Metric definitions browser. |
 | `/whats-new` | Release notes | |
 
 ## Theming

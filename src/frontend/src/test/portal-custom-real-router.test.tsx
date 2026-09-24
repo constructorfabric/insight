@@ -20,7 +20,7 @@ import {
   createMemoryHistory,
   createRouter,
 } from "@tanstack/react-router";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -96,23 +96,16 @@ describe("the /portal/custom routes, through the real router", () => {
 
     renderAt("/portal/custom");
 
-    // The card on the page and the row in the context pane: the pane is the
-    // nav the reader picks dashboards from, so it has to be one of them. They
-    // read the catalogue through different queries — a page of names, and all
-    // of them — so they arrive one after the other.
-    // Two independent queries — a page of names and all of them — so the
-    // second link can land well after the first on a loaded runner.
-    const links = await waitFor(
-      () => {
-        const found = screen.getAllByRole("link", { name: "engineering" });
-        expect(found.length).toBeGreaterThan(1);
-        return found;
-      },
-      { timeout: 10000 }
+    const card = await screen.findByRole(
+      "link",
+      { name: "engineering" },
+      { timeout: 10000 },
     );
-    for (const link of links) {
-      expect(link).toHaveAttribute("href", "/portal/custom/engineering");
-    }
+    expect(card).toHaveAttribute("href", "/portal/custom/engineering");
+    expect(screen.getByRole("link", { name: /All dashboards/ })).toHaveAttribute(
+      "href",
+      "/portal/custom",
+    );
     expect(
       document.querySelector('[data-slot="sidebar-wrapper"]')
     ).toBeInTheDocument();

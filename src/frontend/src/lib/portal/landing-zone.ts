@@ -1,3 +1,5 @@
+import { zoneById } from "./nav-model";
+
 /**
  * The landing-zone decision: what the portal shell does with the zone in the
  * URL once the viewer's shape (manager? admin?) resolves.
@@ -37,8 +39,9 @@ export function landingDecision(args: {
 
   if (mgrPending) return { kind: "wait" };
   if (canSeeOthers) {
-    if (zone != null) return { kind: "keep" };
-    return overviewVisible ? { kind: "pin-overview" } : { kind: "keep" };
+    if (zone != null && zoneById(zone)) return { kind: "keep" };
+    if (overviewVisible) return { kind: "pin-overview" };
+    return zone == null ? { kind: "keep" } : { kind: "reset" };
   }
 
   // A viewer with nobody to look at collapses to Person — except Manage, which is

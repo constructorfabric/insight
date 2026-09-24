@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   defaultZoneItem,
   MANAGE_ITEMS,
-  manageItemsFor,
+  manageGroupsFor,
   partitionByReadiness,
   peopleItemsFor,
   resolveZoneItem,
@@ -13,6 +13,12 @@ import {
 
 const defaults = ZONES.map((z) => [z.id, defaultZoneItem(z.id)] as const);
 
+const openable = (zone: string) =>
+  partitionByReadiness(
+    zoneItems(zone).filter((i) => !i.unbuilt),
+    false,
+  ).live;
+
 describe("zone item defaults", () => {
   it("open each zone on its first catalog entry", () => {
     expect(Object.fromEntries(defaults)).toEqual({
@@ -21,25 +27,22 @@ describe("zone item defaults", () => {
       person: null,
       people: "roster",
       aicost: "overview",
-      scorecard: "fixed",
-      reports: "delivery-trend",
+      reports: null,
       custom: null,
-      manage: "metric-catalog",
+      manage: "exclusions",
     });
   });
 
   it("name an item the pane always renders", () => {
     for (const [zone, id] of defaults) {
       if (id == null) continue;
-      const { live } = partitionByReadiness(zoneItems(zone), false);
-      expect(live.map((i) => i.id), zone).toContain(id);
+      expect(openable(zone).map((i) => i.id), zone).toContain(id);
     }
   });
 
-  it("are null only where the zone lists no items", () => {
+  it("are null only where the zone lists nothing to open", () => {
     for (const [zone, id] of defaults) {
-      const { live } = partitionByReadiness(zoneItems(zone), false);
-      expect(id === null, zone).toBe(live.length === 0);
+      expect(id === null, zone).toBe(openable(zone).length === 0);
     }
   });
 
@@ -47,6 +50,12 @@ describe("zone item defaults", () => {
     for (const [zone, id] of defaults) {
       expect(zoneItems(zone).find((i) => i.id === id)?.adminOnly, zone).toBeFalsy();
     }
+  });
+});
+
+describe("the retired zones", () => {
+  it("no longer lists Scorecard", () => {
+    expect(ZONES.map((z) => z.id)).not.toContain("scorecard");
   });
 });
 
@@ -65,36 +74,32 @@ describe("resolveZoneItem", () => {
 
   it("keeps a Manage item the URL names, and falls back for one it does not", () => {
     expect(resolveZoneItem("manage", "connector-health")).toBe("connector-health");
-    expect(resolveZoneItem("manage", "trend")).toBe("metric-catalog");
+    expect(resolveZoneItem("manage", "trend")).toBe("exclusions");
   });
 
   it("stays null for a zone with no catalog items", () => {
     expect(resolveZoneItem("person", null)).toBeNull();
   });
+
+  it("never opens a row that has nothing behind it yet", () => {
+    expect(resolveZoneItem("reports", "snapshots")).toBeNull();
+    expect(resolveZoneItem("manage", "access")).toBe("exclusions");
+  });
 });
 
-/**
- * The Manage pane per viewer: admin-only surfaces exist for admins alone.
- * The non-admin list must stay a strict subset — dropping a shared item or
- * reordering would silently reshape the pane every operator already knows.
- */
 describe("the ingestion lens", () => {
   it("is admin-only: bronze rows carry no tenant to scope it by", () => {
     const item = MANAGE_ITEMS.find((i) => i.id === "ingestion");
     expect(item?.adminOnly).toBe(true);
     const shows = (isAdmin: boolean) =>
-      manageItemsFor({ isAdmin, canManagePreviews: false }).some(
-        (i) => i.id === "ingestion",
-      );
+      manageGroupsFor({ isAdmin, canManagePreviews: false })
+        .flatMap((g) => g.items)
+        .some((i) => i.id === "ingestion");
     expect(shows(false)).toBe(false);
     expect(shows(true)).toBe(true);
   });
 
   it("is its own lens, beside connector health rather than inside it", () => {
-    // The two read different things and must not be conflated: connector
-    // health reports what the mover says about its syncs, this reports the rows
-    // that actually landed in bronze. A sync the mover calls successful and one
-    // that wrote rows are not the same claim.
     const ids = MANAGE_ITEMS.map((i) => i.id);
     expect(ids).toContain("connector-health");
     expect(ids).toContain("ingestion");
@@ -102,65 +107,77 @@ describe("the ingestion lens", () => {
   });
 });
 
-describe("manageItemsFor", () => {
-  it("gives a viewer passing every gate the full pane", () => {
-    expect(
-      manageItemsFor({ isAdmin: true, canManagePreviews: true }),
-    ).toEqual(MANAGE_ITEMS);
+describe("manageGroupsFor", () => {
+  const labelsOf = (isAdmin: boolean, canManagePreviews = false) =>
+    Object.fromEntries(
+      manageGroupsFor({ isAdmin, canManagePreviews }).map((g) => [
+        g.label,
+        g.items.map((i) => i.label),
+      ]),
+    );
+
+  it("groups an admin's pane into Data, People & access and Platform", () => {
+    expect(labelsOf(true, true)).toEqual({
+      Data: ["Sources & connectors", "Data exclusions", "Org snapshots"],
+      "People & access": [
+        "Identities · roles & taxonomy",
+        "Access",
+        "Group management",
+      ],
+      Platform: [
+        "Ingestion",
+        "Previews",
+        "AI assistant config",
+        "What's new",
+        "Platform usage",
+        "MCP servers",
+        "Config & setup",
+        "Scorecard management",
+      ],
+    });
   });
 
   it("drops exactly the gated surfaces for everyone else", () => {
-    const visible = manageItemsFor({
-      isAdmin: false,
-      canManagePreviews: false,
+    expect(labelsOf(false)).toEqual({
+      Data: ["Data exclusions", "Org snapshots"],
+      "People & access": ["Access", "Group management"],
+      Platform: [
+        "AI assistant config",
+        "What's new",
+        "MCP servers",
+        "Config & setup",
+        "Scorecard management",
+      ],
     });
-
-    expect(visible.map((i) => i.id)).not.toContain("identities");
-    expect(visible.map((i) => i.id)).not.toContain("previews");
-    expect(visible).toEqual(
-      MANAGE_ITEMS.filter((i) => !i.adminOnly && !i.previewsGated),
-    );
   });
 
   it("gates previews independently of admin-ness", () => {
-    const previewsOnly = manageItemsFor({
-      isAdmin: false,
-      canManagePreviews: true,
-    });
+    const ids = manageGroupsFor({ isAdmin: false, canManagePreviews: true })
+      .flatMap((g) => g.items)
+      .map((i) => i.id);
 
-    expect(previewsOnly.map((i) => i.id)).toContain("previews");
-    expect(previewsOnly.map((i) => i.id)).not.toContain("identities");
+    expect(ids).toContain("previews");
+    expect(ids).not.toContain("identities");
+  });
+
+  it("marks Access as a row with nothing behind it yet", () => {
+    const access = MANAGE_ITEMS.find((i) => i.id === "access");
+    expect(access?.unbuilt).toBe(true);
   });
 });
 
 describe("peopleItemsFor", () => {
-  it("keeps the reporting-line names when there is a reporting line", () => {
-    const labels = peopleItemsFor(false).map((item) => item.label);
+  it("names the team views for an organisation with reporting lines", () => {
+    const items = peopleItemsFor(false);
 
-    expect(labels).toContain("Employees");
-    expect(labels).toContain("Median by Role");
+    expect(items.map((item) => item.id)).toEqual(["roster", "employees"]);
+    expect(items.map((item) => item.label)).toEqual(["My team", "Roster · by role"]);
   });
 
   it("names the same views for an organisation with no reporting lines", () => {
-    // Same ids, because the pane routes on them.
     const items = peopleItemsFor(true);
 
     expect(items.map((item) => item.id)).toEqual(["roster", "employees"]);
     expect(items.map((item) => item.label)).toEqual(["Overview", "Roster"]);
-  });
-
-  it("drops the by-role cut a flat roster cannot make", () => {
-    // No job titles in that roster, so the median has nothing to group by.
-    expect(peopleItemsFor(true).map((item) => item.id)).not.toContain(
-      "median-by-role",
-    );
-  });
-});
-
-describe("the consoles the legacy shell used to own", () => {
-  it("lists both in Manage, so removing their routes loses nothing", () => {
-    const ids = MANAGE_ITEMS.map((i) => i.id);
-    expect(ids).toContain("custom-metrics");
-    expect(ids).toContain("query-console");
   });
 });

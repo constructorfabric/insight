@@ -150,11 +150,11 @@ describe("ZoneContent routing", () => {
     expect(screen.getByTestId(testid)).toBeInTheDocument();
   });
 
-  it("scorecard renders an honest scaffold, not a fake dashboard", () => {
-    mocks.zone = { activeZone: "scorecard", activePerson: pid("boss") };
+  it("reports renders an honest scaffold naming what is planned", () => {
+    mocks.zone = { activeZone: "reports", activePerson: pid("boss") };
     render(<ZoneContent />);
-    expect(screen.getByText("Scorecard")).toBeInTheDocument();
-    expect(screen.getByText(/org snapshots/)).toBeInTheDocument();
+    expect(screen.getByText("Reports")).toBeInTheDocument();
+    expect(screen.getByText(/snapshots, exports and templates/)).toBeInTheDocument();
   });
 });
 

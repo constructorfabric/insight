@@ -18,6 +18,7 @@ import "@/i18n";
 const mocks = vi.hoisted(() => ({
   layout: "wide" as "phone" | "narrow" | "wide",
   selected: [] as string[],
+  activeItem: "home",
   openFeedback: vi.fn(),
 }));
 
@@ -28,14 +29,14 @@ vi.mock("@/components/feedback-context", () => ({
 vi.mock("@/lib/portal/use-shell-layout", () => ({
   useShellLayout: () => mocks.layout,
 }));
-vi.mock("@/lib/portal/use-zone-nav", () => ({
-  useZoneNav: () => ({
-    zones: [
-      { id: "overview", label: "Overview", icon: () => null },
-      { id: "people", label: "People", icon: () => null },
+vi.mock("@/lib/portal/use-rail-nav", () => ({
+  useRailNav: () => ({
+    items: [
+      { id: "home", label: "Home", icon: () => null, zones: ["overview"] },
+      { id: "people", label: "People", icon: () => null, zones: ["person", "people"] },
     ],
-    activeZone: "overview",
-    selectZone: (z: { id: string }) => mocks.selected.push(z.id),
+    activeItem: mocks.activeItem,
+    selectItem: (item: { id: string }) => mocks.selected.push(item.id),
   }),
 }));
 vi.mock("@/components/app-sidebar-footer", () => ({
@@ -73,6 +74,7 @@ beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   mocks.layout = "wide";
   mocks.selected = [];
+  mocks.activeItem = "home";
   window.matchMedia ??= ((query: string) => ({
     matches: false,
     media: query,
@@ -89,11 +91,11 @@ describe("LensRail", () => {
   it("shows labels while the pointer is on it", async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     rail();
-    expect(labelOf("Overview")).toHaveClass("opacity-0");
+    expect(labelOf("Home")).toHaveClass("opacity-0");
 
     await user.hover(screen.getByTestId("lens-rail"));
     settle();
-    expect(labelOf("Overview")).toHaveClass("opacity-100");
+    expect(labelOf("Home")).toHaveClass("opacity-100");
   });
 
   it("collapses on a click and stays collapsed under the pointer", async () => {
@@ -141,6 +143,13 @@ describe("LensRail", () => {
     expect(labelOf("People")).toHaveClass("opacity-100");
   });
 
+  it("marks the item that owns the open zone", () => {
+    mocks.activeItem = "people";
+    rail();
+    expect(screen.getByRole("button", { name: "People" })).toHaveAttribute("data-active");
+    expect(screen.getByRole("button", { name: "Home" })).not.toHaveAttribute("data-active");
+  });
+
   it("renders nothing on a phone", () => {
     // 56px of rail plus a 256px pane left a phone with almost no content; the
     // zones live in the context pane's drawer there instead.
@@ -179,7 +188,7 @@ describe("LensRail state that only breaks in a particular order", () => {
     rail();
     await user.tab();
     await user.tab();
-    expect(labelOf("Overview")).toHaveClass("opacity-100");
+    expect(labelOf("Home")).toHaveClass("opacity-100");
   });
 
   it("comes back shut after the rail is unmounted under the pointer", async () => {
@@ -190,13 +199,13 @@ describe("LensRail state that only breaks in a particular order", () => {
     const { rerender } = rail();
     await user.hover(screen.getByTestId("lens-rail"));
     settle();
-    expect(labelOf("Overview")).toHaveClass("opacity-100");
+    expect(labelOf("Home")).toHaveClass("opacity-100");
 
     mocks.layout = "phone";
     rerender(<SidebarProvider><LensRail /></SidebarProvider>);
     mocks.layout = "wide";
     rerender(<SidebarProvider><LensRail /></SidebarProvider>);
-    expect(labelOf("Overview")).toHaveClass("opacity-0");
+    expect(labelOf("Home")).toHaveClass("opacity-0");
   });
 
   it("keeps the labels while the keyboard is still inside it", async () => {
@@ -232,7 +241,7 @@ describe("LensRail state that only breaks in a particular order", () => {
     await user.hover(el);
     await user.unhover(el);
     settle();
-    expect(labelOf("Overview")).toHaveClass("opacity-0");
+    expect(labelOf("Home")).toHaveClass("opacity-0");
   });
 
   it("offers feedback from the rail itself, not from inside the settings menu", async () => {

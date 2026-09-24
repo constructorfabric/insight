@@ -12,12 +12,11 @@ import {
   usePortalLens,
 } from "@/lib/portal/portal-nav";
 import { useActiveZone } from "@/lib/portal/use-active-zone";
-import { ReportBuilderView } from "@/components/portal/report-builder-view";
 
 /**
  * Content for the non-entity portal zones. Overview rolls the org up; Directions
- * route each lens to a focused domain view or an honest ComingSoon; Manage reads
- * the live catalog; Scorecard / Reports are honest scaffolds.
+ * route each lens to a focused domain view or an honest ComingSoon; Reports is
+ * an honest scaffold.
  *
  * Org zones take no person prop — they read the global org scope (design §6) via
  * `useOrgScope`, so the topbar badge and every org subtitle always agree. Only
@@ -44,22 +43,13 @@ export function ZoneContent() {
       return <PeopleView person={activePerson} item={item} />;
     case "manage":
       return <ManageView item={item} />;
-    case "reports":
-      return item === "report-builder" ? (
-        <ReportBuilderView />
-      ) : (
-        <ZoneScaffold zone={activeZone} />
-      );
-    case "scorecard":
-      return <ZoneScaffold zone={activeZone} />;
     default:
       return <ZoneScaffold zone={activeZone} />;
   }
 }
 
 const PENDING_BY_ZONE: Record<string, string> = {
-  scorecard: "org snapshots + unit × quarter aggregation",
-  reports: "diagnosis circuit + report builder",
+  reports: "snapshots, exports and templates",
 };
 
 function ZoneScaffold({ zone }: { zone: string }) {

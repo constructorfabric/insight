@@ -1,5 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
 
+import { useViewer } from "@/auth";
 import { zoneHidden, zonePlanned } from "@/lib/portal/nav-policy";
 import { ZONES, type Zone } from "@/lib/portal/nav-model";
 import {
@@ -29,6 +30,7 @@ export function useZoneNav(): {
 } {
   const navigate = useNavigate();
   const { activeZone, activePerson } = useActiveZone();
+  const { personId: viewerPersonId } = useViewer();
   const { canSeeOthers, isPending: reachPending } = useViewerReach();
   // A rail of scaffolds makes the built zones look unreliable.
   const showPlanned = usePortalShowPlanned();
@@ -57,7 +59,8 @@ export function useZoneNav(): {
     // change path) meant three history entries, so Back walked through
     // half-states nobody chose.
     const entity = zone.kind === "person" || zone.kind === "people";
-    if (entity && !activePerson) return;
+    const person = zone.kind === "person" ? (viewerPersonId ?? activePerson) : activePerson;
+    if (entity && !person) return;
     // Custom is route-driven like the entity zones, but needs no person.
     if (zone.kind === "custom") {
       void navigate({
@@ -75,7 +78,7 @@ export function useZoneNav(): {
       ...(entity
         ? {
             to: zone.kind === "person" ? "/ic/$person/personal" : "/ic/$person/team",
-            params: { person: activePerson },
+            params: { person },
           }
         : { to: "/portal" }),
       // `item` is per-zone: carrying it over renders a fallback view while the

@@ -70,6 +70,7 @@ export interface PortalNavActions {
   replaceScope: (patch: Partial<OrgScope>) => void;
   setZone: (zone: string | null) => void;
   setItem: (item: string | null) => void;
+  openItem: (zone: string, item: string) => void;
   setAcct: (acct: string | null) => void;
   setDir: (dir: string) => void;
   setLens: (lens: string) => void;
@@ -105,6 +106,7 @@ export function usePortalNavActions(): PortalNavActions {
           { replace: true },
         ),
       setItem: (item) => setSearch({ item: item ?? undefined, acct: undefined }),
+      openItem: (zone, item) => setSearch({ zone, item, acct: undefined }),
       setAcct: (acct) => setSearch({ acct: acct ?? undefined }),
       // `repo` drops with the direction and the lens the same way `item` drops
       // with the zone: one repository under inspection means nothing on another
