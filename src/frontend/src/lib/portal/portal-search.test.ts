@@ -179,3 +179,14 @@ describe("the picked time range", () => {
     expect(PORTAL_SEARCH_KEYS).toContain("range");
   });
 });
+
+describe("the dashboard folder param", () => {
+  it("keeps the folder a link names", () => {
+    expect(validatePortalSearch({ folder: "unfiled" }).folder).toBe("unfiled");
+    expect(validatePortalSearch({ folder: "" }).folder).toBeUndefined();
+  });
+
+  it("rides only on the link that names it, never into another zone", () => {
+    expect(PORTAL_SEARCH_KEYS).not.toContain("folder");
+  });
+});

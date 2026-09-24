@@ -69,6 +69,7 @@ export interface PortalSearch {
    * this one speaks these tokens.
    */
   range?: string;
+  folder?: string;
   /** Period preset. A custom range rides in `from`/`to` beside it. */
   period?: PeriodValue;
   from?: string;
@@ -133,6 +134,7 @@ export function validatePortalSearch(raw: Record<string, unknown>): PortalSearch
     // The same check the run endpoint makes, so a hand-edited token
     // degrades to the board's default.
     range: isRangeToken(str(raw.range) ?? "") ? str(raw.range) : undefined,
+    folder: str(raw.folder),
     period: period && PERIODS.has(period) ? (period as PeriodValue) : undefined,
     ...(custom ? { from, to } : {}),
   };

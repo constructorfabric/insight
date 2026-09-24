@@ -26,6 +26,9 @@ const mocks = vi.hoisted(() => ({
   isAdmin: false,
   canSeeOthers: true,
   showPlanned: false,
+  createFolder: vi.fn(),
+  renameFolder: vi.fn(),
+  deleteFolder: vi.fn(),
 }));
 
 vi.mock("@/lib/portal/use-active-zone", () => ({ useActiveZone: () => mocks.zone }));
@@ -55,7 +58,19 @@ vi.mock("@/lib/portal/portal-store", async (orig) => ({
 vi.mock("@/api/custom-client", async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
   fetchDashboardNames: async () => ({ names: ["delivery"], total: 14 }),
+  fetchFolders: async () => ({
+    folders: [
+      { id: "f1", name: "Platform", dashboards: 3 },
+      { id: "f2", name: "Product", dashboards: 0 },
+    ],
+    unfiled: 11,
+  }),
+  createFolder: (name: string) => mocks.createFolder(name),
+  renameFolder: (id: string, name: string) => mocks.renameFolder(id, name),
+  deleteFolder: (id: string) => mocks.deleteFolder(id),
 }));
+
+import { CustomApiError } from "@/api/custom-client";
 
 import {
   usePortalDir,
@@ -107,6 +122,9 @@ beforeEach(() => {
   mocks.canSeeOthers = true;
   mocks.showPlanned = false;
   mocks.standings = [];
+  mocks.createFolder.mockReset().mockResolvedValue({ id: "f3", name: "Hiring" });
+  mocks.renameFolder.mockReset().mockResolvedValue({ id: "f1", name: "Core" });
+  mocks.deleteFolder.mockReset().mockResolvedValue(undefined);
   act(() => {
     portalRouter.reset();
     portalRouter.set({ dir: "dev" });
@@ -564,5 +582,120 @@ describe("ContextPane highlight", () => {
     act(() => portalRouter.set({ item: "trend" }));
     pane();
     expect(buttonFor("My team")).toHaveAttribute("data-active");
+  });
+});
+
+describe("Dashboards pane folders", () => {
+  const onTheList = (folder?: string) => {
+    inZone("custom");
+    act(() => {
+      portalRouter.go("/portal/custom");
+      if (folder) portalRouter.set({ folder });
+    });
+  };
+
+  it("lists each folder with its count, then the unfiled", async () => {
+    onTheList();
+    pane();
+
+    const platform = await screen.findByRole("link", { name: /Platform/ });
+    expect(platform).toHaveAttribute("href", "/portal/custom?folder=f1");
+    expect(platform.closest("li")).toHaveTextContent("3");
+    const unfiled = screen.getByRole("link", { name: /Unfiled/ });
+    expect(unfiled).toHaveAttribute("href", "/portal/custom?folder=unfiled");
+    expect(unfiled.closest("li")).toHaveTextContent("11");
+  });
+
+  it("marks the folder the URL names, and not All dashboards", async () => {
+    onTheList("f1");
+    pane();
+
+    expect(await screen.findByRole("link", { name: /Platform/ })).toHaveAttribute(
+      "data-active",
+    );
+    expect(buttonFor("Product")).not.toHaveAttribute("data-active");
+    expect(buttonFor("All dashboards")).not.toHaveAttribute("data-active");
+  });
+
+  it("marks nothing for a folder the URL names that is not there", async () => {
+    onTheList("gone");
+    pane();
+
+    await screen.findByRole("link", { name: /Platform/ });
+    for (const label of ["Platform", "Product", "Unfiled", "All dashboards"]) {
+      expect(buttonFor(label)).not.toHaveAttribute("data-active");
+    }
+  });
+
+  it("makes a folder on Enter", async () => {
+    onTheList();
+    pane();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: /New folder/ }));
+    await user.type(screen.getByRole("textbox", { name: "Folder name" }), "Hiring{Enter}");
+
+    expect(mocks.createFolder).toHaveBeenCalledWith("Hiring");
+    expect(await screen.findByRole("button", { name: /New folder/ })).toBeInTheDocument();
+  });
+
+  it("drops a new folder on Esc without asking the service", async () => {
+    onTheList();
+    pane();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: /New folder/ }));
+    await user.type(screen.getByRole("textbox", { name: "Folder name" }), "Hir{Escape}");
+
+    expect(screen.queryByRole("textbox", { name: "Folder name" })).toBeNull();
+    expect(mocks.createFolder).not.toHaveBeenCalled();
+  });
+
+  it("says under the field why a name was refused, and keeps the field", async () => {
+    mocks.createFolder.mockRejectedValue(
+      new CustomApiError(409, { detail: "a folder named `platform` already exists" }),
+    );
+    onTheList();
+    pane();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: /New folder/ }));
+    await user.type(screen.getByRole("textbox", { name: "Folder name" }), "platform{Enter}");
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "a folder named `platform` already exists",
+    );
+    expect(screen.getByRole("textbox", { name: "Folder name" })).toHaveValue("platform");
+  });
+
+  it("renames a folder from its menu, in the same field", async () => {
+    onTheList();
+    pane();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: "More for Platform" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Rename" }));
+    const field = screen.getByRole("textbox", { name: "Folder name" });
+    expect(field).toHaveValue("Platform");
+    await user.clear(field);
+    await user.type(field, "Core{Enter}");
+
+    expect(mocks.renameFolder).toHaveBeenCalledWith("f1", "Core");
+  });
+
+  it("asks before deleting a folder, and says where its dashboards go", async () => {
+    onTheList();
+    pane();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: "More for Platform" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
+
+    expect(await screen.findByRole("dialog")).toHaveTextContent(
+      "Its 3 dashboards move to Unfiled.",
+    );
+    expect(mocks.deleteFolder).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Delete folder" }));
+    expect(mocks.deleteFolder).toHaveBeenCalledWith("f1");
   });
 });
