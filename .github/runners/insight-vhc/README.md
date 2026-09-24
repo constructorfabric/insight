@@ -25,7 +25,12 @@ away. arm64 matrix legs never route here — the pool is x86-only and they stay 
 
 Two lanes are exempt and stay on the pool for pull requests as well, because
 they have been measured here and the win is large: `ci.yml` (`Lint and test`)
-and `connectors-ddl.yml`. They carry the switch without the event test.
+and `connectors-ddl.yml`. Their exemption covers only a pull request opened
+from a branch of this repository:
+
+```yaml
+runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+```
 
 `deploy-test-stand.yml` never routes here. It reads `TEST_STAND_KUBECONFIG` and
 the persona password, and this pool is persistent and also runs pull-request
@@ -39,11 +44,11 @@ unset, empty or `false` leaves routing exactly as described above. The polarity
 is deliberate — an absent variable must not change policy, least of all for pull
 requests, and a variable nobody has created yet reads as empty.
 
-It does not reach a pull request opened from a fork: Actions withholds `vars`
-from those runs, so the expression sees an empty string. For the default rule
-that is harmless, since a fork's pull request is hosted anyway. For the two
-exempt lanes it means the switch cannot pull a fork's pull request off the pool
-— the lever there is the approval setting for fork pull requests.
+Actions withholds `vars` from a pull request opened from a fork, so in those
+runs the expression reads an empty string and the switch cannot speak. That is
+why the two exempt lanes compare the head repository against this one rather
+than relying on the variable: a fork's pull request is hosted by the shape of
+the expression, under every value the variable could have held.
 
 Routing is not a security boundary either. A pull request runs the workflow from
 its own merge commit, so a fork can rewrite any of these lines, and the runner is
