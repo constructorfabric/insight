@@ -211,7 +211,7 @@ jobs:
       - name: Install protoc + curl headers
         # INVARIANT: grpc-hub's generated code requires protoc; the authenticator's
         # rdkafka OAUTHBEARER build requires curl/curl.h even with WITH_CURL=0.
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libcurl4-openssl-dev
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libprotobuf-dev libcurl4-openssl-dev
 
       - name: Install CMake for authenticator
         if: ${{ matrix.entry.name == 'authenticator' }}
