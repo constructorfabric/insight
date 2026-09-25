@@ -88,6 +88,31 @@ A rebuilt machine must be provisioned from this script, or it will come up
 without those and the chart-contract and API-calling lanes will fail on a
 missing binary.
 
+## What a job inherits from the one before it
+
+These machines are persistent: nothing is torn down between jobs, and the work
+tree, the local repository objects and the Docker cache are all still there when
+the next job starts. That reuse is the point — it is most of why a job here
+starts faster than a fresh hosted image.
+
+It also means a job can read state no step of its own produced, and two kinds of
+that are repaired by `ACTIONS_RUNNER_HOOK_JOB_STARTED` before the first step
+runs:
+
+- **Ownership.** A container job runs as root over the mounted work tree, so one
+  killed before its cleanup leaves root-owned paths the next job's checkout
+  cannot remove. The hook reclaims them.
+- **Remote-tracking refs.** `actions/checkout` puts the requested ref in the
+  work tree, but it does not remove the `refs/remotes/*` an earlier job fetched.
+  A lane that resolves a remote ref would get whichever one happened to be left
+  on that machine — a different answer per machine, and a stale one. The hook
+  deletes them, so a job sees only the remote refs its own checkout or fetch
+  created.
+
+The hook deletes nothing else: local branches, tags, `HEAD`, the object store,
+the index and the working tree all survive, and it never fetches. A job that
+needs a remote ref is the thing that must fetch it.
+
 ## Notes on what it installs
 
 - **git from the git-core PPA.** Ubuntu 24.04 ships 2.43, whose partial-clone
@@ -96,9 +121,8 @@ missing binary.
 - **helm and gh from release tarballs**, not the vendors' apt repositories:
   `baltocdn.com` rejects the TLS handshake from this network. The helm digest is
   pinned here because the checksum published beside the tarball shares its host.
-- **`ACTIONS_RUNNER_HOOK_JOB_STARTED`.** A container job runs as root over the
-  mounted work tree, so one killed before its cleanup leaves root-owned paths
-  that the next job's checkout cannot remove. The hook repairs ownership on the
-  host before every job.
+- **`ACTIONS_RUNNER_HOOK_JOB_STARTED`.** Runs on the host before every job,
+  container jobs included, and repairs the two things a previous job leaves
+  behind — see the section above.
 - **Docker's data root on `/srv/gha`**, the attached volume, so image layers do
   not fill the system disk.
