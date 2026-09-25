@@ -214,7 +214,8 @@ def test_a_display_only_item_keeps_the_event(scenario: Scenario) -> None:
     )
     scenario.build()
 
-    changed = scenario.journal(field=ASSISTING)[-1]
+    # The issue holds Alice alone, so a `snapshot_diff` row follows the event.
+    changed = [r for r in scenario.journal(field=ASSISTING) if r["event_kind"] == "changelog"][-1]
     assert changed["value_ids"] == ["Alice Alpha", "Bob Beta"]
     assert changed["value_displays"] == ["Alice Alpha", "Bob Beta"]
 

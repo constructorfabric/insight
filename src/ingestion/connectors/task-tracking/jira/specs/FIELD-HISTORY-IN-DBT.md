@@ -453,8 +453,9 @@ Both sides of the item agree with each other, so it is not a choice between the
 id side and the display side either.
 
 What remains is a bulk or automated postponement by one day that Jira did not
-journal. Nothing in the data says which issues it touched, so nothing here can
-repair it. It is small, and the round trip is what surfaces it.
+journal. Nothing in the data says which issues it touched, so the history cannot
+be repaired; the value the issue holds now is written back as observed (§6.1).
+The round trip is what surfaces it.
 
 The same shape appears on `datetime` fields as a fixed offset of a couple of
 hours, on a related pair of fields at once — a planned window shifted as a
@@ -515,10 +516,10 @@ the issue's — two streams read at different points of one sync.
 
 **Only an absent key qualifies.** A key present with an empty value means the
 field still applies to the issue and is unset (§6), which is an ordinary state.
-If the journal disagrees with that, a clearing event is genuinely missing, and
-that must surface as a round-trip failure rather than be overwritten by a
-synthetic row — masking it would blind the invariant to the very defect class
-this design exists to remove.
+If the journal disagrees with that, a clearing event is genuinely missing: the
+observed state is recorded as a `snapshot_diff` row (§6.1), and the pair still
+fails the round trip, which excludes that kind so the invariant keeps seeing the
+defect class this design exists to remove.
 
 Note that this is a **narrower** mechanism than the failure class it was
 expected to close. A journal state that the resource does not confirm has
@@ -715,6 +716,50 @@ exception: it arrives as `to` NULL on an element-wise field, as an empty right
 side on a snapshot-shaped field, and both must be honoured. The genuinely
 degenerate case is an item where the id sides *and* the string sides are all
 NULL, which carries no information; those are skipped.
+
+### 6.1 A value the issue holds that its events never reach
+
+The source can change a value without journaling it (§3.5.1, §3.5.2), and
+history imported from another tracker can lack entries outright. The journal
+then ends on a value the issue does not hold, and every consumer that reads the
+newest state — the current status, the close time, the time spent in progress —
+serves the stale one indefinitely.
+
+One `snapshot_diff` row per `(issue, field)` records the value observed, with
+`event_id = 'snapshot_diff:{issue_id}'` and no author. It is emitted when the
+events' final state and the snapshot disagree in one of two ways:
+
+| disagreement | condition | row |
+|---|---|---|
+| cleared | the snapshot holds nothing and the key is still present in the issue JSON | empty arrays; `remove` on a multi field, `set` otherwise |
+| differs | the snapshot holds a value, and its ids **and** its displays both differ from the events' final state | the snapshot's value, `set` |
+
+Ids alone differing is an id space replaced by a migration (§3.4); displays
+alone differing is a rename. Neither changes the value, and treating either as
+one would write an event for every issue that ever held a recreated option.
+`long_text` is excluded from `differs`: its two sides never share a content
+address (§8). A pair whose last event is newer than the issue row is skipped —
+the changelog substream is read after the issue page, so the snapshot is the
+stale side there (§7).
+
+**The date must not depend on the run.** The row is re-derived whenever its
+issue is, so a sync-time stamp would move a closure forward on every run, into
+whichever reporting period the run falls in. A `differs` row is dated:
+
+- by the issue's `resolutiondate`, for the status field, when the status the
+  issue holds is in the `done` category and the resolution is later than the
+  last recorded event — the one stable date Jira keeps for that closure;
+- otherwise one millisecond after the last recorded event, the earliest moment
+  the missing change can have happened, which also orders it after that event
+  for every reader.
+
+A `cleared` row keeps the observation stamp. The row stands in for an event only
+until one exists: once the changelog reaches the value, the recomputed issue no
+longer disagrees and `delete+insert` removes it.
+
+The round trip excludes `snapshot_diff`, since counting it would compare the
+snapshot with itself; the pair keeps failing there, which is what keeps the
+source condition visible.
 
 ## 7. Incremental strategy
 
@@ -1143,9 +1188,11 @@ issue's payload at once, and that hash table alone can exceed a server's memory
 budget. A question about the JSON ("does this issue still carry this key?") is
 answered by streaming the keys out of the column (`ARRAY JOIN JSONExtractKeys`)
 on the LEFT and hashing the small set of pairs being asked about on the RIGHT,
-after every other filter has already shrunk that set. `cleared_pairs` is built
-this way; probed over a full-size dataset, the streaming form peaks well below
-the hashing one.
+after every other filter has already shrunk that set. `snapshot_diff_pairs` is
+built this way; probed over a full-size dataset, the streaming form peaks well
+below the hashing one. The disagreement it probes for is found the same way
+round: the snapshot streams on the left carrying its arrays, and the right side
+holds one digest of the ids and one of the displays per pair, never the arrays.
 
 ## 14. Tests
 
