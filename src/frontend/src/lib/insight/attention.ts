@@ -131,6 +131,7 @@ export function metricAttentionItems(
     const metric = byKey.get(metricConfig.key);
     if (!metric) continue;
     const data = forEntity(metric, entityId);
+    if (data.absence?.period_overlap) continue;
     const value = data.value;
     // One judgment layer, the same one the tile above this block reads.
     // Deciding "bottom quartile" here from raw percentiles skipped every
@@ -165,6 +166,7 @@ export function metricAttentionItems(
       : (value - median) / denom;
 
     const fell =
+      !data.absence?.compare_to_overlap &&
       hasPrevious &&
       (higherIsBetter ? value < previous : value > previous) &&
       Math.abs(value - previous) / peerSpread(stats) >=

@@ -1,4 +1,5 @@
 import { formatMetricNumber, formatMetricValue } from "@/lib/format";
+import { absenceLabel } from "@/lib/metrics/absence";
 import { computeDelta, formatTileDelta } from "@/lib/metrics/delta";
 import {
   forEntity,
@@ -6,6 +7,7 @@ import {
 } from "@/lib/metrics/collection";
 
 export interface MetricComparisons {
+  absenceLabel?: string;
   /** "+17%" against this person's own previous period. */
   change: string | null;
   /** "median 512" over the comparison pool. */
@@ -37,7 +39,9 @@ export function metricComparisons(
     metric.format
   );
   const median = data.peer?.median ?? null;
+  const label = absenceLabel(data.absence);
   return {
+    ...(label ? { absenceLabel: label } : {}),
     change: delta ? formatTileDelta(delta) : null,
     median:
       median != null

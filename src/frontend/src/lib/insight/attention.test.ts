@@ -85,6 +85,21 @@ function before(value: number) {
 }
 
 describe("metricAttentionItems", () => {
+  it("does not flag a person absent in the current period", () => {
+    const metrics = normalizeMetricResults([aiMetric(2, "ai.sessions")], [{
+      person_id: "me@x.com", period_overlap: true, compare_to_overlap: false,
+    }]);
+    expect(metricAttentionItems(AI_DEF, metrics, before(9), "me@x.com", HEADLINE)).toEqual([]);
+  });
+
+  it("previous-only absence removes decline wording but retains a peer finding", () => {
+    const metrics = normalizeMetricResults([aiMetric(2, "ai.sessions")], [{
+      person_id: "me@x.com", period_overlap: false, compare_to_overlap: true,
+    }]);
+    const items = metricAttentionItems(AI_DEF, metrics, before(9), "me@x.com", HEADLINE);
+    expect(items[0]?.kind).toBe("behind");
+  });
+
   it("surfaces bottom-quartile metrics with the same item shape", () => {
     const items = metricAttentionItems(
       AI_DEF,

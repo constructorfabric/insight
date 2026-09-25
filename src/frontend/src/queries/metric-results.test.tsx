@@ -142,6 +142,23 @@ describe("useMetricCollection", () => {
     expect(mock).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps absence context tied to the selected period", async () => {
+    const context = { person_id: ENTITY.ids[0]!, period_overlap: true, compare_to_overlap: null };
+    mock.mockImplementation(async (request) => ({
+      ...respond(request),
+      absence_context: request.period.from === RANGE.from ? [context] : [],
+    }));
+    const { result, rerender } = renderHook(
+      (range) => useMetricCollection(COLLECTION, ENTITY, range),
+      { wrapper: wrapper(), initialProps: RANGE },
+    );
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+    expect(result.current.byKey.get("m")?.absenceContext?.get(ENTITY.ids[0]!)).toEqual(context);
+    rerender({ from: "2026-07-01", to: "2026-07-31" });
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+    expect(result.current.byKey.get("m")?.absenceContext).toBeUndefined();
+  });
+
   it("serves the previous period as the comparison window of one request", async () => {
     const { result } = renderHook(
       () => useMetricCollection(COLLECTION, ENTITY, RANGE, { previousPeriod: "month" }),

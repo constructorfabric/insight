@@ -54,6 +54,28 @@ const COLLECTION: MetricCollectionConfig = {
 
 const RANGE = { from: "2026-06-01", to: "2026-06-30" };
 
+describe("absence context", () => {
+  it("retains person-scoped context across entity chunks", () => {
+    const first = { person_id: "person-a", period_overlap: true, compare_to_overlap: false };
+    const second = { person_id: "person-b", period_overlap: false, compare_to_overlap: true };
+    const merged = mergeNormalizedResults([
+      normalizeMetricResults([SUM_METRIC_FIXTURE], [first]),
+      normalizeMetricResults([SUM_METRIC_FIXTURE], [second]),
+    ]);
+    const metric = merged.get("ai.accepted_lines")!;
+    expect(forEntity(metric, "person-a").absence).toEqual(first);
+    expect(forEntity(metric, "person-b").absence).toEqual(second);
+    expect(forEntity(metric, "person-c").absence).toBeUndefined();
+    expect(SUM_METRIC_FIXTURE).not.toHaveProperty("absenceContext");
+  });
+
+  it("keeps responses without confirmed absence context unchanged", () => {
+    expect(normalizeMetricResults([SUM_METRIC_FIXTURE], [])).toEqual(
+      normalizeMetricResults([SUM_METRIC_FIXTURE]),
+    );
+  });
+});
+
 describe("buildMetricCollectionRequest", () => {
   it("derives the wire request from the collection", () => {
     const request = buildMetricCollectionRequest(

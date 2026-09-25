@@ -175,6 +175,7 @@ export function usePersonSectionStandings(personId: string): SectionStanding[] {
       const data = forEntity(metric, entityId);
       const standing = derivePeerStanding(metric.direction, {
         value: data.value,
+        absence: data.absence,
         peer:
           metric.peer?.values.find(
             (v: { entity_id: string }) => v.entity_id === entityId,

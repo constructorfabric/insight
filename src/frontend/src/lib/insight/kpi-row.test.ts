@@ -39,6 +39,23 @@ function metricResult(
 }
 
 describe("metricKpiTiles", () => {
+  it.each([
+    [true, false, "Time off in this period"],
+    [false, true, "Time off in previous period"],
+    [true, true, "Time off in both periods"],
+  ])("keeps numbers but neutralizes leave-affected trends (%s, %s)", (period, previous, label) => {
+    const current = normalizeMetricResults([metricResult("git.commits", 3)], [
+      { person_id: "me@x.com", period_overlap: period, compare_to_overlap: previous },
+    ]);
+    const before = normalizeMetricResults([metricResult("git.commits", 100)]);
+    const [tile] = metricKpiTiles(current, before, "me@x.com", "all");
+    expect(tile?.value).toBe("3");
+    expect(tile?.delta).toMatchObject({ text: "-97%", status: "neutral" });
+    expect(tile?.medianLabel).toBe("median 10");
+    expect(tile?.gapText).toBeTruthy();
+    expect(tile?.absenceLabel).toBe(label);
+  });
+
   it("builds display-ready tiles with rank status and delta", () => {
     const byKey = normalizeMetricResults([
       metricResult("ai.active_days", 14),
