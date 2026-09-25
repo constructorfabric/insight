@@ -3,7 +3,7 @@ use serde_json::json;
 use super::field::{MAX_IDENTIFIER_CHARS, coerce_value};
 use super::*;
 use crate::domain::query::metric_query::TableEngine;
-use crate::domain::query::time_window::RequestedRange;
+use crate::domain::query::time_window::{RequestedRange, Window};
 
 fn query(value: serde_json::Value) -> MetricQuery {
     serde_json::from_value(value).unwrap_or_else(|error| panic!("valid metric: {error}"))
@@ -1510,4 +1510,265 @@ fn an_empty_json_key_is_refused() {
         metric.compile(&people()),
         Err(MetricQueryError::JsonKey(_))
     ));
+}
+
+fn paged(value: serde_json::Value) -> CompiledQuery {
+    query(value)
+        .compile_paged(
+            &people(),
+            &crate::domain::query::time_window::Window::legacy(),
+            TableEngine::Other,
+            None,
+        )
+        .unwrap_or_else(|error| panic!("compiles paged: {error}"))
+}
+
+/// The reader paging the result cuts it; a cut inside would hide rows from
+/// every page after the first.
+#[test]
+fn a_paged_read_of_a_metric_with_no_limit_of_its_own_is_neither_ordered_nor_cut() {
+    let compiled = paged(json!({
+        "table": "events",
+        "fields": [
+            { "column": "day", "type": "string", "as_name": "day" },
+            { "column": "lines", "type": "int", "agg": "sum", "as_name": "total" }
+        ],
+        "group_by": ["day"]
+    }));
+
+    assert!(!compiled.sql.contains(" ORDER BY "), "{}", compiled.sql);
+    assert!(!compiled.sql.contains(" LIMIT "), "{}", compiled.sql);
+}
+
+/// A limit the author wrote is part of what the metric means - the top
+/// fifty, not the first fifty of whatever order the page asked for - so it
+/// stays, and the order behind it is made total so every page cuts the same
+/// fifty.
+#[test]
+fn a_paged_read_keeps_an_authored_limit_behind_a_total_order() {
+    let compiled = paged(json!({
+        "table": "events",
+        "fields": [
+            { "column": "day", "type": "string", "as_name": "day" },
+            { "column": "author", "type": "string", "as_name": "author" },
+            { "column": "lines", "type": "int", "agg": "sum", "as_name": "total" }
+        ],
+        "group_by": ["day", "author"],
+        "order_by": { "field": "total", "direction": "desc" },
+        "limit": 50
+    }));
+
+    assert!(
+        compiled
+            .sql
+            .ends_with(" ORDER BY `total` DESC, `day`, `author` LIMIT 50"),
+        "{}",
+        compiled.sql
+    );
+
+    let grouped_only = paged(json!({
+        "table": "events",
+        "fields": [
+            { "column": "day", "type": "string", "as_name": "day" },
+            { "column": "lines", "type": "int", "agg": "sum", "as_name": "total" }
+        ],
+        "group_by": ["day"],
+        "limit": 50
+    }));
+
+    assert!(
+        grouped_only
+            .sql
+            .ends_with(" GROUP BY `day` ORDER BY `day`, `total` LIMIT 50"),
+        "{}",
+        grouped_only.sql
+    );
+}
+
+#[test]
+fn a_whole_read_is_cut_and_ordered_as_it_always_was() {
+    let compiled = query(json!({
+        "table": "events",
+        "fields": [
+            { "column": "day", "type": "string", "as_name": "day" },
+            { "column": "lines", "type": "int", "agg": "sum", "as_name": "total" }
+        ],
+        "group_by": ["day"]
+    }))
+    .compile(&people())
+    .unwrap_or_else(|error| panic!("compiles: {error}"));
+
+    assert!(
+        compiled
+            .sql
+            .ends_with(" GROUP BY `day` ORDER BY `day` LIMIT 1000"),
+        "{}",
+        compiled.sql
+    );
+}
+
+#[test]
+fn column_kinds_follow_what_each_column_holds() {
+    let declaration: crate::domain::kinds::dataset::declaration::Declaration =
+        serde_json::from_value(json!({
+            "title": "Commits",
+            "fields": [
+                { "name": "day", "path": "day", "type": "string" },
+                { "name": "at", "path": "at", "type": "datetime", "default_clock": true },
+                { "name": "lines", "path": "lines", "type": "int" }
+            ]
+        }))
+        .unwrap_or_else(|error| panic!("the declaration parses: {error}"));
+    let metric = query(json!({
+        "dataset": "commits",
+        "fields": [
+            { "field": "day", "type": "string", "as_name": "day" },
+            { "field": "at", "type": "string", "as_name": "at" },
+            { "field": "lines", "type": "int", "as_name": "lines" },
+            { "agg": "count", "type": "int", "as_name": "total" },
+            { "field": "lines", "type": "int", "agg": "max", "as_name": "most" },
+            { "divide": ["lines", "total"], "type": "float", "as_name": "share" }
+        ],
+        "group_by": ["day", "at", "lines"]
+    }));
+
+    let kinds = metric.column_kinds(Some(&declaration), true);
+
+    assert_eq!(
+        kinds,
+        vec![
+            ("bucket".to_owned(), ColumnKind::Date),
+            ("day".to_owned(), ColumnKind::Text),
+            ("at".to_owned(), ColumnKind::Date),
+            ("lines".to_owned(), ColumnKind::Number),
+            ("total".to_owned(), ColumnKind::Number),
+            ("most".to_owned(), ColumnKind::Number),
+            ("share".to_owned(), ColumnKind::Number),
+        ]
+    );
+
+    let over_table = query(json!({
+        "table": "events",
+        "fields": [
+            { "column": "repo", "type": "string", "as_name": "repo" },
+            { "column": "lines", "type": "float", "as_name": "lines" }
+        ]
+    }));
+
+    assert_eq!(
+        over_table.column_kinds(None, false),
+        vec![
+            ("repo".to_owned(), ColumnKind::Text),
+            ("lines".to_owned(), ColumnKind::Number),
+        ]
+    );
+}
+
+/// Two records that agree in every selected column are still two records,
+/// and a reader paging by position has to be able to tell them apart.
+#[test]
+fn a_paged_plain_read_over_a_dataset_carries_the_records_id_beside_the_columns() {
+    let declaration: crate::domain::kinds::dataset::declaration::Declaration =
+        serde_json::from_value(json!({
+            "title": "Commits",
+            "fields": [{ "name": "author", "path": "author", "type": "string" }]
+        }))
+        .unwrap_or_else(|error| panic!("the declaration parses: {error}"));
+    let over = over::Over {
+        declaration: &declaration,
+        database: "insight_datasets",
+        table: "ds_commits_1",
+    };
+    let plain = query(json!({
+        "dataset": "commits",
+        "fields": [{ "field": "author", "type": "string", "as_name": "author" }]
+    }));
+    let grouped = query(json!({
+        "dataset": "commits",
+        "fields": [
+            { "field": "author", "type": "string", "as_name": "author" },
+            { "agg": "count", "type": "int", "as_name": "total" }
+        ],
+        "group_by": ["author"]
+    }));
+
+    let paged = plain
+        .compile_paged(&people(), &Window::legacy(), TableEngine::Other, Some(over))
+        .unwrap_or_else(|error| panic!("compiles: {error}"));
+    assert!(
+        paged.sql.contains(", `id` AS `__drilldown_record` FROM"),
+        "{}",
+        paged.sql
+    );
+    assert_eq!(paged.hidden(), ["__drilldown_record"]);
+
+    let whole = plain
+        .compile_over(&people(), &Window::legacy(), over)
+        .unwrap_or_else(|error| panic!("compiles: {error}"));
+    assert!(!whole.sql.contains("__drilldown_record"), "{}", whole.sql);
+
+    let paged_grouped = grouped
+        .compile_paged(&people(), &Window::legacy(), TableEngine::Other, Some(over))
+        .unwrap_or_else(|error| panic!("compiles: {error}"));
+    assert!(paged_grouped.hidden().is_empty());
+}
+
+/// The cut inside the metric has to fall between the same two records every
+/// time, or a walk of it would see a different fifty on every page.
+#[test]
+fn an_authored_limit_over_a_dataset_cuts_behind_the_records_id() {
+    let declaration: crate::domain::kinds::dataset::declaration::Declaration =
+        serde_json::from_value(json!({
+            "title": "Commits",
+            "fields": [{ "name": "author", "path": "author", "type": "string" }]
+        }))
+        .unwrap_or_else(|error| panic!("the declaration parses: {error}"));
+    let over = over::Over {
+        declaration: &declaration,
+        database: "insight_datasets",
+        table: "ds_commits_1",
+    };
+    let top = query(json!({
+        "dataset": "commits",
+        "fields": [{ "field": "author", "type": "string", "as_name": "author" }],
+        "limit": 50
+    }));
+
+    let paged = top
+        .compile_paged(&people(), &Window::legacy(), TableEngine::Other, Some(over))
+        .unwrap_or_else(|error| panic!("compiles: {error}"));
+
+    assert!(
+        paged
+            .sql
+            .ends_with(" ORDER BY `author`, `__drilldown_record` LIMIT 50"),
+        "{}",
+        paged.sql
+    );
+}
+
+/// The twin number is written by whoever pages the result, outside this
+/// query; an inner order naming it would name a column that is not there.
+#[test]
+fn an_authored_limit_over_a_table_orders_by_its_columns_and_never_by_the_twin_number() {
+    let compiled = paged(json!({
+        "table": "events",
+        "fields": [
+            { "column": "day", "type": "string", "as_name": "day" },
+            { "column": "lines", "type": "int", "as_name": "total" }
+        ],
+        "limit": 50
+    }));
+
+    assert!(compiled.numbered());
+    assert!(
+        compiled.sql.ends_with(" ORDER BY `day`, `total` LIMIT 50"),
+        "{}",
+        compiled.sql
+    );
+    assert!(
+        !compiled.sql.contains("__drilldown_twin"),
+        "{}",
+        compiled.sql
+    );
 }

@@ -73,7 +73,15 @@ function Sortable({
             ? `Order by ${column}`
             : `Order by ${column}, now ${chosen}`
         }
-        onClick={() => onOrder(nextOrder(order, index))}
+        // SAFETY: the card around a widget opens the drilldown on any click
+        // or Enter inside it. Ordering the rows is not that decision.
+        onClick={(event) => {
+          event.stopPropagation();
+          onOrder(nextOrder(order, index));
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") event.stopPropagation();
+        }}
       >
         {column}
         {/* The slot is there whether or not an arrow is in it: a column that

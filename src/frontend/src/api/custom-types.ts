@@ -1,5 +1,11 @@
 /** What the Custom zone's service hands back and takes, as shapes. */
 
+import type {
+  MetricEvidenceColumn,
+  MetricEvidenceRow,
+  MetricEvidenceSort,
+} from "@/api/metric-drilldown-client";
+
 /** What every widget carries, whatever it draws. */
 interface WidgetBase {
   metric: string;
@@ -219,6 +225,46 @@ export interface MetricResult {
   rows: unknown[][];
   /** The columns whose numbers are percentages, named by the metric. */
   percents?: string[];
+}
+
+export type DrilldownSort = MetricEvidenceSort;
+
+/**
+ * One ordered page of a metric's rows, asked for by the reader.
+ *
+ * The window is the card's own; the order, the page and the cursor are the
+ * reader's. A cursor is what the previous page handed back, and nothing else.
+ */
+export interface DrilldownRequest {
+  range?: string;
+  bucket?: boolean;
+  sort?: DrilldownSort;
+  limit?: number;
+  cursor?: string;
+}
+
+/**
+ * One column of a page, as the analytics table draws one, plus what the
+ * metric says its numbers are.
+ */
+export interface DrilldownColumn extends MetricEvidenceColumn {
+  sortable: boolean;
+  percent: boolean;
+}
+
+export type DrilldownRow = Pick<MetricEvidenceRow, "values">;
+
+export interface DrilldownPage {
+  /** The read as the service performed it. `sort` is always the effective order. */
+  selection: {
+    metric: string;
+    range?: string;
+    bucket?: boolean;
+    sort: DrilldownSort;
+  };
+  columns: DrilldownColumn[];
+  rows: DrilldownRow[];
+  next_cursor: string | null;
 }
 
 /**

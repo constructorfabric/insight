@@ -8,6 +8,8 @@ import type {
   Dashboard,
   Dataset,
   DatasetRecords,
+  DrilldownPage,
+  DrilldownRequest,
   Holder,
   RecordPage,
   MetricResult,
@@ -314,6 +316,21 @@ export async function runMetric(
       : {}),
   });
   return readJson<MetricResult>(res);
+}
+
+/** One ordered page of a metric's rows. The signal cancels a page the reader has moved past. */
+export async function fetchDrilldownPage(
+  name: string,
+  request: DrilldownRequest,
+  signal?: AbortSignal
+): Promise<DrilldownPage> {
+  const res = await fetchWithAuth(`${BASE}/metrics/${named(name)}/drilldown`, {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(request),
+    signal,
+  });
+  return readJson<DrilldownPage>(res);
 }
 
 export async function sendChat(

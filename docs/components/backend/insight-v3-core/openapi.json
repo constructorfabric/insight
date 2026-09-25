@@ -19,6 +19,55 @@
         ],
         "type": "object"
       },
+      "Direction": {
+        "enum": [
+          "asc",
+          "desc"
+        ],
+        "type": "string"
+      },
+      "DrilldownBody": {
+        "additionalProperties": false,
+        "description": "What a caller may ask a page for. An absent body asks for the first page\nof the whole result, in the metric's own order.",
+        "properties": {
+          "bucket": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "limit": {
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "range": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sort": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SortBody"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      },
       "Problem": {
         "description": "RFC 9457 problem+json. `context` varies by error category.",
         "properties": {
@@ -78,6 +127,21 @@
         },
         "required": [
           "to"
+        ],
+        "type": "object"
+      },
+      "SortBody": {
+        "properties": {
+          "direction": {
+            "$ref": "#/components/schemas/Direction"
+          },
+          "key": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "direction"
         ],
         "type": "object"
       },
@@ -1619,6 +1683,107 @@
           }
         },
         "summary": "Every definition that names this one",
+        "x-toolkit-visibility": "exposed"
+      }
+    },
+    "/v1/metrics/{name}/drilldown": {
+      "post": {
+        "operationId": "insight_v3_core.metrics.drilldown",
+        "parameters": [
+          {
+            "description": "Metric name",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DrilldownBody"
+              }
+            }
+          },
+          "description": "How the page is ordered, cut and continued",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "One page of rows, and the cursor to the next"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "504": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Gateway Timeout"
+          }
+        },
+        "summary": "Read a metric's rows one ordered page at a time",
         "x-toolkit-visibility": "exposed"
       }
     },
