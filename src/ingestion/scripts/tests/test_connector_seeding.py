@@ -125,6 +125,19 @@ def test_the_bind_mounted_workdir_lands_under_runner_temp(tmp_path: Path) -> Non
     )
 
 
+def test_the_workdir_is_allocated_from_a_template_not_the_p_flag() -> None:
+    """`mktemp -p` is a GNU extension, and the lane is not the only caller.
+
+    Nothing about the resulting path betrays which spelling produced it, so the
+    behavioural tests above cannot catch a return to the non-portable one.
+    """
+    allocation = next(line for line in CREATE_CONNECTOR_TABLES.read_text().splitlines() if line.startswith("WORKDIR="))
+
+    assert "mktemp -d " in allocation and " -p " not in allocation, (
+        f"the workdir must be allocated from an explicit template: {allocation}"
+    )
+
+
 @requires_shell_tooling
 def test_the_workdir_falls_back_to_tmp_without_runner_temp(tmp_path: Path) -> None:
     source = _bind_mount_source(_run_create_connector_tables(tmp_path, None), "/work")
