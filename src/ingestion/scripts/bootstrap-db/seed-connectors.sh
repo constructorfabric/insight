@@ -29,6 +29,11 @@ while IFS= read -r name; do
   rm -f "${config_json}"
 done < <(yq -r '.connectors | keys | .[]' "${CONFIG_FILE}")
 
+# Every connector is attempted before this point so one run reports every
+# failure. Exiting non-zero is what stops bootstrap-db.sh from running dbt over
+# a partial bronze layer, where the primary error would resurface as one
+# UNKNOWN_DATABASE per downstream model.
 if (( ${#FAILED[@]} > 0 )); then
   echo "failed connectors: ${FAILED[*]}" >&2
+  exit 1
 fi

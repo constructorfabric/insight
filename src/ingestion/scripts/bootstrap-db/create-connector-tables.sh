@@ -20,7 +20,11 @@ NAME="$(yq -r '.name' "${DESCRIPTOR}")"
 CONNECTOR_TYPE="$(yq -r '.type // "nocode"' "${DESCRIPTOR}")"
 NAMESPACE="$(yq -r '.connection.namespace' "${DESCRIPTOR}")"
 
-WORKDIR="$(mktemp -d)"
+# INVARIANT: a directory handed to `docker -v` is resolved by the DAEMON, not by
+# the client, so it must live where both can see it. RUNNER_TEMP is that place
+# under Actions (including a docker-in-docker runner, where the client's own
+# /tmp is private to it); /tmp stays the local fallback.
+WORKDIR="$(mktemp -d -p "${RUNNER_TEMP:-/tmp}")"
 trap 'rm -rf "${WORKDIR}"' EXIT
 # The images run as their own non-root user, while `mktemp -d` is 0700 owned by
 # the invoking user — so on a Linux host the bind-mounted /work is unreadable
