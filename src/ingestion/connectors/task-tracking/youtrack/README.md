@@ -5,15 +5,19 @@ This declarative connector collects the YouTrack task-tracking domain into
 
 ## Configuration
 
-Copy `credentials.yaml.example` and provide:
+Copy `credentials.yaml.example` into the gitignored
+`src/ingestion/secrets/connectors/` directory and provide:
 
-- `insight_tenant_id` and `insight_source_id` for record isolation;
 - `youtrack_base_url`, the service URL without `/api`;
 - `youtrack_token`, a permanent token with access to the required projects and
   administration metadata;
 - `youtrack_start_date`, the earliest date read by incremental streams.
 - `youtrack_page_size` and `youtrack_activities_page_size`, optional request
   limits with defaults of 100 and 200.
+
+The platform injects `insight_tenant_id` from the tenant configuration and
+`insight_source_id` from the Secret annotation. They do not belong in
+`stringData`.
 
 The token determines visibility. Objects or activities hidden from the token
 cannot be distinguished from absent data.
