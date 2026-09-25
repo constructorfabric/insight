@@ -642,7 +642,16 @@ def test_a_429_is_retried_rather_than_failing_the_stream(http_mocker: HttpMocker
             query_params=ANY_QUERY_PARAMS,
         ),
         [
-            HttpResponse(body="", status_code=429, headers={"Retry-After": "0"}),
+            # A real 429 still reports the hourly budget left. Without
+            # x-ratelimit-remaining the api_budget layer reads a ratelimit-hit
+            # status as budget 0 and, with no reset header, sleeps out the rest
+            # of the one-hour window — which hangs this test for an hour
+            # instead of retrying instantly.
+            HttpResponse(
+                body="",
+                status_code=429,
+                headers={"Retry-After": "0", "x-ratelimit-remaining": "999"},
+            ),
             HttpResponse(
                 body=json.dumps({"values": [_pr(1, author={"uuid": "{u-1}", "display_name": "Alice"})]}),
                 status_code=200,
@@ -1107,7 +1116,7 @@ def test_a_resumed_sync_asks_for_less_than_the_first(http_mocker: HttpMocker) ->
         if "/pullrequests?" in str(r.url)
     ]
     assert 'updated_on >= "2026-06-01' in asked[0], f"first run starts at the floor: {asked[0]}"
-    assert 'updated_on >= "2026-06-19' in asked[-1], (
+    assert 'updated_on >= "2026-06-20T09' in asked[-1], (
         f"a resumed run starts at stored state, not the floor: {asked[-1]}"
     )
 
@@ -1270,162 +1279,6 @@ def test_a_superseded_snapshot_restarts_the_walk_from_the_last_commit_seen(
     assert "page_token" not in calls[2], f"the restart must begin from the first page: {calls[2]}"
     assert "since=2026-06-11T10:00:00" in calls[2], f"narrowed to the last committed_date seen: {calls[2]}"
     assert_records_conform(output.records, _CONNECTOR, "commits", strict=True)
-
-
-def _repository_listing_bounds(mocker: HttpMocker) -> list[str]:
-    """The `updated_on >= "<bound>"` value of every repository listing request."""
-    bounds = []
-    listing_path = urlparse(_REPOS_URL).path
-    for request in mocker._mocker.request_history:
-        parsed = urlparse(request.url)
-        if parsed.path.rstrip("/") != listing_path:
-            continue
-        q = parse_qs(parsed.query).get("q", [""])[0]
-        bounds.append(q.split('"')[1] if '"' in q else "<unbounded>")
-    return bounds
-
-
-@freezegun.freeze_time(_FROZEN)
-def test_a_resumed_commits_sync_lists_repositories_from_one_window_before_the_saved_cursor(
-    http_mocker: HttpMocker,
-) -> None:
-    """The repository listing is what fans a commits sync out to one proxy walk
-    per repository. A first run bounds it by the start date; a run carrying
-    state bounds it by the newest repository update it saw, one lookback window
-    earlier, so a repository nobody has pushed to since is neither listed nor
-    walked."""
-    config = BitbucketCloudConfigBuilder().build()
-    repo_updated = "2026-06-20T10:00:00+00:00"
-    one_window_before = "2026-06-19T10:00:00+00:00"
-    http_mocker.get(
-        HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS),
-        HttpResponse(body=json.dumps({"values": [_repo_with_clone()]}), status_code=200),
-    )
-    http_mocker.get(
-        HttpRequest(f"{PROXY_URL}/v1/commits", query_params=ANY_QUERY_PARAMS),
-        _commits_page(_commit_row("a" * 40, "2026-06-15T10:00:00+00:00"), next_page_token=None),
-    )
-
-    first = read_stream(_CONNECTOR, "commits", config, sync_mode=SyncMode.incremental)
-
-    assert not first.errors
-    assert [_instant(b) for b in _repository_listing_bounds(http_mocker)] == [_instant("2026-06-01T00:00:00+00:00")]
-    saved = first.state_messages[-1].state.stream.stream_state.__dict__
-    parent = saved["parent_state"]["repositories_for_commits"]["state"]["updated_on"]
-    assert _instant(parent) == _instant(repo_updated), f"the parent cursor must follow the listing: {saved}"
-
-    resume_mocker = HttpMocker()
-    with resume_mocker:
-        resume_mocker.get(
-            HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS),
-            HttpResponse(body=json.dumps({"values": [_repo_with_clone()]}), status_code=200),
-        )
-        resume_mocker.get(
-            HttpRequest(f"{PROXY_URL}/v1/commits", query_params=ANY_QUERY_PARAMS), _commits_page(next_page_token=None)
-        )
-
-        second = read_stream(
-            _CONNECTOR,
-            "commits",
-            config,
-            state=[m.state for m in first.state_messages][-1:],
-            sync_mode=SyncMode.incremental,
-        )
-
-        assert not second.errors
-        bounds = _repository_listing_bounds(resume_mocker)
-        assert bounds, "the resumed run must list repositories"
-        assert all(_instant(b) == _instant(one_window_before) for b in bounds), bounds
-
-
-_NINE_DIGIT_STAMP = "2026-06-25T10:00:00.123456789Z"
-_SIX_DIGIT_STAMP = "2026-06-25T10:00:00.123456Z"
-
-
-def _cursor_update_skipped(output) -> list[str]:
-    return [m.log.message for m in output.logs if "Skipping cursor update" in m.log.message]
-
-
-@freezegun.freeze_time(_FROZEN)
-def test_a_pipeline_stamped_with_nine_fractional_digits_advances_the_cursor(http_mocker: HttpMocker) -> None:
-    """The vendor stamps pipelines to the nanosecond; a cursor that cannot read
-    the stamp never moves, and every later sync walks the whole history again.
-    The stamp is cut to the precision the cursor reads before it is observed."""
-    config = BitbucketCloudConfigBuilder().build()
-    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
-    http_mocker.get(
-        HttpRequest(f"{BB_URL}/repositories/acme/app/pipelines/", query_params=ANY_QUERY_PARAMS),
-        HttpResponse(
-            body=json.dumps(
-                {
-                    "values": [
-                        {
-                            "uuid": "{p-1}",
-                            "build_number": 42,
-                            "state": {"name": "COMPLETED", "result": {"name": "SUCCESSFUL"}},
-                            "created_on": _NINE_DIGIT_STAMP,
-                            "completed_on": "2026-06-25T10:05:00.000000000Z",
-                            "target": {"ref_name": "main"},
-                            "trigger": {"name": "SCHEDULE"},
-                        }
-                    ]
-                }
-            ),
-            status_code=200,
-        ),
-    )
-
-    output = read_stream(_CONNECTOR, "pipelines", config, sync_mode=SyncMode.incremental)
-
-    assert not output.errors
-    assert [r.record.data["created_on"] for r in output.records] == [_SIX_DIGIT_STAMP]
-    assert not _cursor_update_skipped(output), _cursor_update_skipped(output)
-    saved = json.dumps(output.state_messages[-1].state.stream.stream_state.__dict__)
-    assert "2026-06-25T10:00:00" in saved, f"the pipeline's date must become the cursor: {saved}"
-    assert_records_conform(output.records, _CONNECTOR, "pipelines", strict=True)
-
-
-@freezegun.freeze_time(_FROZEN)
-def test_a_deployment_stamped_with_nine_fractional_digits_is_kept_and_advances_the_cursor(
-    http_mocker: HttpMocker,
-) -> None:
-    """Deployments are bounded on the client, so an unreadable stamp would both
-    fail to advance the cursor and leave the bound unable to place the row. The
-    bound reads the stamp after it is cut, and the row is kept."""
-    config = BitbucketCloudConfigBuilder().build()
-    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
-    http_mocker.get(
-        HttpRequest(f"{BB_URL}/repositories/acme/app/deployments/", query_params=ANY_QUERY_PARAMS),
-        HttpResponse(
-            body=json.dumps(
-                {
-                    "values": [
-                        {
-                            "uuid": "{d-1}",
-                            "state": {"name": "COMPLETED", "status": {"name": "SUCCESSFUL"}},
-                            "environment": {"uuid": "{e-1}"},
-                            "deployable": {
-                                "commit": {"hash": "a" * 12},
-                                "pipeline": {"uuid": "{p-1}"},
-                                "created_on": _NINE_DIGIT_STAMP,
-                            },
-                            "last_update_time": "2026-06-25T10:05:00.000000000Z",
-                        }
-                    ]
-                }
-            ),
-            status_code=200,
-        ),
-    )
-
-    output = read_stream(_CONNECTOR, "deployments", config, sync_mode=SyncMode.incremental)
-
-    assert not output.errors
-    assert [r.record.data["created_on"] for r in output.records] == [_SIX_DIGIT_STAMP]
-    assert not _cursor_update_skipped(output), _cursor_update_skipped(output)
-    saved = json.dumps(output.state_messages[-1].state.stream.stream_state.__dict__)
-    assert "2026-06-25T10:00:00" in saved, f"the deployment's date must become the cursor: {saved}"
-    assert_records_conform(output.records, _CONNECTOR, "deployments", strict=True)
 
 
 def _listing_requests(mocker: HttpMocker, url_prefix: str) -> list[dict[str, list[str]]]:
@@ -1658,7 +1511,7 @@ def test_a_pull_request_updated_mid_walk_is_listed_now_when_its_page_is_ahead_an
     page is still ahead, and the cursor closes at that update. One whose page
     was already served keeps its old row this walk; the next sync's window
     opens one lookback below the cursor and lists it updated. A repository's
-    walk is minutes, the lookback a day."""
+    walk is minutes, the lookback an hour."""
     config = BitbucketCloudConfigBuilder().build()
     prs_url = f"{BB_URL}/repositories/acme/app/pullrequests"
     prs = [
@@ -1699,9 +1552,258 @@ def test_a_pull_request_updated_mid_walk_is_listed_now_when_its_page_is_ahead_an
 
     resumed = _listing_requests(http_mocker, prs_url)[pages_of_the_first_sync]
     lower, upper = _updated_on_window(resumed)
-    assert _instant(lower) == _instant("2026-06-30T05:00:00Z"), f"the cursor minus the P1D lookback: {lower}"
+    assert _instant(lower) == _instant("2026-07-01T04:00:00Z"), f"the cursor minus the PT1H lookback: {lower}"
     assert upper is None, f"no upper bound: {upper}"
     assert _keyset_bound(resumed, "id") == "0", "the resumed walk still opens at the bottom of the id range"
+
+
+def _repository_listing_bounds(mocker: HttpMocker) -> list[str]:
+    """The `updated_on >= "<bound>"` value of every repository listing request."""
+    bounds = []
+    listing_path = urlparse(_REPOS_URL).path
+    for request in mocker._mocker.request_history:
+        parsed = urlparse(request.url)
+        if parsed.path.rstrip("/") != listing_path:
+            continue
+        q = parse_qs(parsed.query).get("q", [""])[0]
+        bounds.append(q.split('"')[1] if '"' in q else "<unbounded>")
+    return bounds
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_a_resumed_commits_sync_lists_repositories_from_one_window_before_the_saved_cursor(
+    http_mocker: HttpMocker,
+) -> None:
+    """The repository listing is what fans a commits sync out to one proxy walk
+    per repository. A first run bounds it by the start date; a run carrying
+    state bounds it by the newest repository update it saw, one lookback window
+    earlier, so a repository nobody has pushed to since is neither listed nor
+    walked."""
+    config = BitbucketCloudConfigBuilder().build()
+    repo_updated = "2026-06-20T10:00:00+00:00"
+    one_window_before = "2026-06-19T10:00:00+00:00"
+    http_mocker.get(
+        HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps({"values": [_repo_with_clone()]}), status_code=200),
+    )
+    http_mocker.get(
+        HttpRequest(f"{PROXY_URL}/v1/commits", query_params=ANY_QUERY_PARAMS),
+        _commits_page(_commit_row("a" * 40, "2026-06-15T10:00:00+00:00"), next_page_token=None),
+    )
+
+    first = read_stream(_CONNECTOR, "commits", config, sync_mode=SyncMode.incremental)
+
+    assert not first.errors
+    assert [_instant(b) for b in _repository_listing_bounds(http_mocker)] == [_instant("2026-06-01T00:00:00+00:00")]
+    saved = first.state_messages[-1].state.stream.stream_state.__dict__
+    parent = saved["parent_state"]["repositories"]["state"]["updated_on"]
+    assert _instant(parent) == _instant(repo_updated), f"the parent cursor must follow the listing: {saved}"
+
+    resume_mocker = HttpMocker()
+    with resume_mocker:
+        resume_mocker.get(
+            HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS),
+            HttpResponse(body=json.dumps({"values": [_repo_with_clone()]}), status_code=200),
+        )
+        resume_mocker.get(
+            HttpRequest(f"{PROXY_URL}/v1/commits", query_params=ANY_QUERY_PARAMS), _commits_page(next_page_token=None)
+        )
+
+        second = read_stream(
+            _CONNECTOR,
+            "commits",
+            config,
+            state=[m.state for m in first.state_messages][-1:],
+            sync_mode=SyncMode.incremental,
+        )
+
+        assert not second.errors
+        bounds = _repository_listing_bounds(resume_mocker)
+        assert bounds, "the resumed run must list repositories"
+        assert all(_instant(b) == _instant(one_window_before) for b in bounds), bounds
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_a_resumed_pull_requests_sync_lists_repositories_from_one_window_before_the_saved_cursor(
+    http_mocker: HttpMocker,
+) -> None:
+    """The pull-request listing costs one request per repository it visits, so
+    the repository cursor persists in this stream's state and a resumed run
+    visits only the repositories pushed to since one lookback window before
+    the newest update it saw. The parent copy the children read is bounded the
+    same way, one level deeper in their state."""
+    config = BitbucketCloudConfigBuilder().build()
+    one_window_before = "2026-06-19T10:00:00+00:00"
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(f"{BB_URL}/repositories/acme/app/pullrequests", query_params=ANY_QUERY_PARAMS),
+        _pr_listing(7, "2026-06-15T10:00:00.000000+00:00"),
+    )
+
+    first = read_stream(_CONNECTOR, "pull_requests", config, sync_mode=SyncMode.incremental)
+
+    assert not first.errors
+    assert [_instant(b) for b in _repository_listing_bounds(http_mocker)] == [_instant("2026-06-01T00:00:00+00:00")]
+    saved = first.state_messages[-1].state.stream.stream_state.__dict__
+    parent = saved["parent_state"]["repositories"]["state"]["updated_on"]
+    assert _instant(parent) == _instant(_repo()["updated_on"]), f"the repository cursor must persist: {saved}"
+
+    resume_mocker = HttpMocker()
+    with resume_mocker:
+        resume_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+        resume_mocker.get(
+            HttpRequest(f"{BB_URL}/repositories/acme/app/pullrequests", query_params=ANY_QUERY_PARAMS),
+            HttpResponse(body=json.dumps({"values": []}), status_code=200),
+        )
+
+        second = read_stream(
+            _CONNECTOR,
+            "pull_requests",
+            config,
+            state=[m.state for m in first.state_messages][-1:],
+            sync_mode=SyncMode.incremental,
+        )
+
+        assert not second.errors
+        bounds = _repository_listing_bounds(resume_mocker)
+        assert bounds, "the resumed run must list repositories"
+        assert all(_instant(b) == _instant(one_window_before) for b in bounds), bounds
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_a_resumed_pipelines_sync_lists_repositories_from_one_window_before_the_saved_cursor(
+    http_mocker: HttpMocker,
+) -> None:
+    """Same bound for the pipeline listing: one request per repository visited,
+    so a resumed run visits only the repositories pushed to since one lookback
+    window before the newest update it saw."""
+    config = BitbucketCloudConfigBuilder().build()
+    one_window_before = "2026-06-19T10:00:00+00:00"
+    pipelines_url = f"{BB_URL}/repositories/acme/app/pipelines/"
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(pipelines_url, query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps({"values": []}), status_code=200),
+    )
+
+    first = read_stream(_CONNECTOR, "pipelines", config, sync_mode=SyncMode.incremental)
+
+    assert not first.errors
+    assert [_instant(b) for b in _repository_listing_bounds(http_mocker)] == [_instant("2026-06-01T00:00:00+00:00")]
+    saved = first.state_messages[-1].state.stream.stream_state.__dict__
+    parent = saved["parent_state"]["repositories"]["state"]["updated_on"]
+    assert _instant(parent) == _instant(_repo()["updated_on"]), f"the repository cursor must persist: {saved}"
+
+    resume_mocker = HttpMocker()
+    with resume_mocker:
+        resume_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+        resume_mocker.get(
+            HttpRequest(pipelines_url, query_params=ANY_QUERY_PARAMS),
+            HttpResponse(body=json.dumps({"values": []}), status_code=200),
+        )
+
+        second = read_stream(
+            _CONNECTOR,
+            "pipelines",
+            config,
+            state=[m.state for m in first.state_messages][-1:],
+            sync_mode=SyncMode.incremental,
+        )
+
+        assert not second.errors
+        bounds = _repository_listing_bounds(resume_mocker)
+        assert bounds, "the resumed run must list repositories"
+        assert all(_instant(b) == _instant(one_window_before) for b in bounds), bounds
+
+
+_NINE_DIGIT_STAMP = "2026-06-25T10:00:00.123456789Z"
+_SIX_DIGIT_STAMP = "2026-06-25T10:00:00.123456Z"
+
+
+def _cursor_update_skipped(output) -> list[str]:
+    return [m.log.message for m in output.logs if "Skipping cursor update" in m.log.message]
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_a_pipeline_stamped_with_nine_fractional_digits_advances_the_cursor(http_mocker: HttpMocker) -> None:
+    """The vendor stamps pipelines to the nanosecond; a cursor that cannot read
+    the stamp never moves, and every later sync walks the whole history again.
+    The stamp is cut to the precision the cursor reads before it is observed."""
+    config = BitbucketCloudConfigBuilder().build()
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(f"{BB_URL}/repositories/acme/app/pipelines/", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "values": [
+                        {
+                            "uuid": "{p-1}",
+                            "build_number": 42,
+                            "state": {"name": "COMPLETED", "result": {"name": "SUCCESSFUL"}},
+                            "created_on": _NINE_DIGIT_STAMP,
+                            "completed_on": "2026-06-25T10:05:00.000000000Z",
+                            "target": {"ref_name": "main"},
+                            "trigger": {"name": "SCHEDULE"},
+                        }
+                    ]
+                }
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "pipelines", config, sync_mode=SyncMode.incremental)
+
+    assert not output.errors
+    assert [r.record.data["created_on"] for r in output.records] == [_SIX_DIGIT_STAMP]
+    assert not _cursor_update_skipped(output), _cursor_update_skipped(output)
+    saved = json.dumps(output.state_messages[-1].state.stream.stream_state.__dict__)
+    assert "2026-06-25T10:00:00" in saved, f"the pipeline's date must become the cursor: {saved}"
+    assert_records_conform(output.records, _CONNECTOR, "pipelines", strict=True)
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_a_deployment_stamped_with_nine_fractional_digits_is_kept_and_advances_the_cursor(
+    http_mocker: HttpMocker,
+) -> None:
+    """Deployments are bounded on the client, so an unreadable stamp would both
+    fail to advance the cursor and leave the bound unable to place the row. The
+    bound reads the stamp after it is cut, and the row is kept."""
+    config = BitbucketCloudConfigBuilder().build()
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(f"{BB_URL}/repositories/acme/app/deployments/", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "values": [
+                        {
+                            "uuid": "{d-1}",
+                            "state": {"name": "COMPLETED", "status": {"name": "SUCCESSFUL"}},
+                            "environment": {"uuid": "{e-1}"},
+                            "deployable": {
+                                "commit": {"hash": "a" * 12},
+                                "pipeline": {"uuid": "{p-1}"},
+                                "created_on": _NINE_DIGIT_STAMP,
+                            },
+                            "last_update_time": "2026-06-25T10:05:00.000000000Z",
+                        }
+                    ]
+                }
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "deployments", config, sync_mode=SyncMode.incremental)
+
+    assert not output.errors
+    assert [r.record.data["created_on"] for r in output.records] == [_SIX_DIGIT_STAMP]
+    assert not _cursor_update_skipped(output), _cursor_update_skipped(output)
+    saved = json.dumps(output.state_messages[-1].state.stream.stream_state.__dict__)
+    assert "2026-06-25T10:00:00" in saved, f"the deployment's date must become the cursor: {saved}"
+    assert_records_conform(output.records, _CONNECTOR, "deployments", strict=True)
 
 
 _PR_LISTING_URL = f"{BB_URL}/repositories/acme/app/pullrequests"
