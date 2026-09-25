@@ -177,4 +177,24 @@ describe("<CustomTable>", () => {
       screen.getByRole("button", { name: "Order by runs, now descending" })
     ).toBeInTheDocument();
   });
+
+  // A long result scrolls inside whatever holds the table. The header has to
+  // stay in view there, or the columns can only be re-ordered from the top.
+  it("keeps its header in view while the rows scroll past it", () => {
+    render(<CustomTable result={{ columns: ["runs"], rows: [[9]] }} />);
+
+    const [header] = screen.getAllByRole("rowgroup");
+    expect(header.className).toContain("sticky");
+    expect(header.className).toContain("top-0");
+  });
+
+  // A cell the warehouse left empty is empty, not the word "null".
+  it("writes a missing value as a dash rather than as the word null", () => {
+    render(
+      <CustomTable result={{ columns: ["author"], rows: [[null]] }} />
+    );
+
+    expect(screen.getByText("\u2014")).toBeInTheDocument();
+    expect(screen.queryByText("null")).not.toBeInTheDocument();
+  });
 });
