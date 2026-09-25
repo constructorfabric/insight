@@ -314,6 +314,11 @@ jobs:
         with:
           # Need parent commit for the changed-paths diff.
           fetch-depth: 0
+      # The interpreter comes from the action, not the machine: a distro python
+      # is marked externally managed (PEP 668) and refuses `pip install`.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
       - name: Install PyYAML
         run: python3 -m pip install --quiet pyyaml
       - name: Scan descriptors and filter by changed paths
