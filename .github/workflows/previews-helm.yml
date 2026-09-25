@@ -23,10 +23,13 @@ concurrency:
 permissions:
   contents: read
 
-# Routing, stated once in .github/runners/insight-vhc/README.md: a pull request
-# from a branch of this repository takes the ephemeral ARC scale set, a fork's
-# takes a GitHub-hosted runner, everything else takes the persistent pool, and
-# INSIGHT_FORCE_GITHUB_HOSTED returns all of it to hosted.
+# Routing exception to the rule in .github/runners/insight-vhc/README.md: EVERY
+# pull request stays on a GitHub-hosted runner here, a same-repository one
+# included. The render contract asserts an issuer URL carrying the namespace
+# helm resolved, and a runner pod supplies its own — so on the ARC scale set the
+# lane renders the runners' namespace where the test expects `default`. Pinning
+# the namespace in the test is what lifts this; until then the exception stands.
+# Non-pull-request events and INSIGHT_FORCE_GITHUB_HOSTED follow the usual rule.
 jobs:
   helm-contract:
     name: render contract
