@@ -23,9 +23,13 @@ concurrency:
 permissions:
   contents: read
 
-# The self-hosted routing below is the same expression in every workflow; the
-# rule and what it does not close are explained in ci.yml. Only ci.yml and
-# connectors-ddl.yml have been exercised on the pool so far.
+# Routing exception to the rule in .github/runners/insight-vhc/README.md: EVERY
+# pull request stays on a GitHub-hosted runner here, a same-repository one
+# included. The render contract asserts an issuer URL carrying the namespace
+# helm resolved, and a runner pod supplies its own — so on the ARC scale set the
+# lane renders the runners' namespace where the test expects `default`. Pinning
+# the namespace in the test is what lifts this; until then the exception stands.
+# Non-pull-request events and INSIGHT_FORCE_GITHUB_HOSTED follow the usual rule.
 jobs:
   helm-contract:
     name: render contract

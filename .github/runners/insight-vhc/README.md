@@ -10,47 +10,63 @@ it changes whether those lanes pass, which is why it is versioned beside them.
 
 ## Which runs land here
 
-The default rule, carried by every x64 `runs-on` in `.github/workflows`:
+Every x64 `runs-on` in `.github/workflows` carries one rule:
 
 ```yaml
-runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
 ```
 
-A pull request keeps the GitHub-hosted runner it had before; `merge_group`,
-`push`, `schedule`, `workflow_dispatch` and `workflow_run` come here.
-Merge-queue and post-merge runs are the bulk of the machine time. Pull-request
-jobs stay hosted by default, while merge-group checks run on the self-hosted
-pool after the PR has entered the merge queue. Moving them off the
-organisation's shared 20-job ceiling is where the wait goes away. arm64 matrix
-legs never route here — the pool is x86-only and they stay on
-`ubuntu-24.04-arm` under every event, including when the switch below is on.
+| Event | Runner |
+|---|---|
+| pull request from a branch of this repository | `insight-vhc-arc` — the ARC scale set, one ephemeral pod per job |
+| pull request from a fork | `ubuntu-latest` |
+| `push`, `merge_group`, `schedule`, `workflow_dispatch`, `workflow_run` | the shared `[self-hosted, linux, x64, insight-vhc]` pool — these five machines **and** the scale set, whichever takes the job |
+| any of the above with the kill switch on | `ubuntu-latest` |
 
-Two lanes are exempt and stay on the pool for pull requests as well, because
-they have been measured here and the win is large: `ci.yml` (`Lint and test`)
-and `connectors-ddl.yml`. Their exemption covers only a pull request opened
-from a branch of this repository:
+**A pull request runs on an ephemeral pod, not on these machines.** A machine
+here is persistent, its job user has passwordless sudo and sits in the docker
+group, and what one job leaves behind the next one finds. Pull-request code is
+the one workload where that matters, so it goes to a pod that is destroyed
+afterwards. These machines keep the work that reaches them only after review or
+merge.
 
-```yaml
-runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
-```
+The scale set answers to its own name here rather than to the pool's labels. It
+also carries `[self-hosted, linux, x64, insight-vhc]`, so it takes a share of
+the non-PR work alongside these five; naming it directly is what pins a pull
+request to it.
 
-`deploy-test-stand.yml` never routes here. It reads `TEST_STAND_KUBECONFIG` and
-the persona password, and this pool is persistent and also runs pull-request
-code, so a deploy job holding stand credentials does not belong on it.
+**A fork's pull request stays on a GitHub-hosted runner.** Approval for a fork
+workflow is an admission gate, not a sandbox — the code still executes once
+approved. The scale set runs docker-in-docker on a shared node, which is not a
+boundary to put arbitrary external code behind, so that work goes to a runner
+GitHub throws away.
+
+**arm64 never routes here.** The pool is x86-only; the matrix legs stay on
+`ubuntu-24.04-arm` under every event and with the kill switch on.
+
+Left on hosted runners deliberately:
+
+- `deploy-test-stand.yml` and `run-stand-suite.yml` — both read
+  `TEST_STAND_KUBECONFIG` and the persona password against the
+  `insight-test-stand` environment.
+- `previews-helm.yml` — its render-contract test asserts an issuer URL that
+  embeds the namespace helm resolved, and a runner pod supplies its own, so the
+  lane renders `arc-runners` where the test expects `default`. Pinning the
+  namespace in the test is the fix.
 
 ## The kill switch
 
 `INSIGHT_FORCE_GITHUB_HOSTED` is a repository variable. Set it to exactly `true`
-and every x64 job that would otherwise take the pool goes to `ubuntu-latest`;
-unset, empty or `false` leaves routing exactly as described above. The polarity
-is deliberate — an absent variable must not change policy, least of all for pull
-requests, and a variable nobody has created yet reads as empty.
+and every x64 job that would otherwise take a self-hosted runner, pool or scale
+set, goes to `ubuntu-latest`; unset, empty or `false` leaves routing as
+described above. The polarity is deliberate — an absent variable must not change
+policy, and a variable nobody has created yet reads as empty.
 
 Actions withholds `vars` from a pull request opened from a fork, so in those
 runs the expression reads an empty string and the switch cannot speak. That is
-why the two exempt lanes compare the head repository against this one rather
-than relying on the variable: a fork's pull request is hosted by the shape of
-the expression, under every value the variable could have held.
+why the rule compares the head repository against this one rather than relying
+on the variable: a fork's pull request is hosted by the shape of the expression,
+under every value the variable could have held.
 
 Routing is not a security boundary either. A pull request runs the workflow from
 its own merge commit, so a fork can rewrite any of these lines, and the runner is

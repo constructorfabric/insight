@@ -72,9 +72,10 @@ permissions:
 env:
   UI_TESTS_IMAGE: mcr.microsoft.com/playwright/python@sha256:aa81288e738725378becba5b3e06cb0f3a7f012a610e87e8d767a090ea3f740d
 
-# The self-hosted routing below is the same expression in every workflow; the
-# rule and what it does not close are explained in ci.yml. Only ci.yml and
-# connectors-ddl.yml have been exercised on the pool so far.
+# Routing, stated once in .github/runners/insight-vhc/README.md: a pull request
+# from a branch of this repository takes the ephemeral ARC scale set, a fork's
+# takes a GitHub-hosted runner, everything else takes the shared self-hosted
+# pool, and INSIGHT_FORCE_GITHUB_HOSTED returns all of it to hosted.
 jobs:
   # Stages 2 (CI stand) and 3 (E2E stand) are meant to add a target to
   # `resolve-target` below rather than copy this file.
@@ -330,6 +331,24 @@ jobs:
           key: e2e-backend-${{ steps.toolchain.outputs.image }}-${{ hashFiles('src/backend/Cargo.lock') }}
           restore-keys: |
             e2e-backend-${{ steps.toolchain.outputs.image }}-
+
+      # Two things dev-compose.sh needs from the host that no runner guarantees.
+      # It resolves the host IP with `ip route` — a minimal image need not carry
+      # iproute2, and an empty IP aborts bring-up — and it publishes ClickHouse
+      # on a fixed 8123, which a long-lived runner can still have allocated to a
+      # container the previous job left behind. The reclaim is the one from
+      # .github/workflows/scripts/start-clickhouse.sh: a self-hosted runner
+      # serves one job at a time, so whatever holds that port has finished.
+      # It belongs here and not in dev-compose.sh, which a developer runs
+      # against their own Docker.
+      - name: Prepare the test-stand host
+        run: |
+          set -euo pipefail
+          if ! command -v ip >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends iproute2
+          fi
+          docker ps -q --filter "publish=8123" | xargs -r docker rm -f >/dev/null 2>&1 || true
 
       # `up` writes .env.compose.test-stand, forces the pinned frontend and
       # Keycloak, seeds, and then blocks until EVERY gold observation table the
