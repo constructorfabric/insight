@@ -297,101 +297,105 @@ fn a_cursor_survives_the_round_trip_and_refuses_what_it_did_not_issue() {
     assert!(matches!(decode(&other_version), Err(CursorError::Version)));
 }
 
+/// Everything one page is bound to, so a case can vary one input.
+struct Bound {
+    name: &'static str,
+    body: serde_json::Value,
+    range: &'static str,
+    bucket: Option<bool>,
+    window: Window,
+    sort: Sort,
+    columns: Vec<Column>,
+}
+
+impl Bound {
+    fn digest(&self) -> String {
+        fingerprint(
+            self.name,
+            &self.body,
+            Some(self.range),
+            self.bucket,
+            &self.window,
+            &self.sort,
+            &self.columns,
+        )
+    }
+}
+
+fn a_bound_page() -> Bound {
+    Bound {
+        name: "m",
+        body: json!({ "table": "events", "fields": [] }),
+        range: "P30D",
+        bucket: None,
+        window: Window::legacy(),
+        sort: sort("day", false),
+        columns: columns(),
+    }
+}
+
 #[test]
 fn the_fingerprint_moves_with_anything_a_page_is_bound_to() {
-    let body = json!({ "table": "events", "fields": [] });
-    let base = fingerprint(
-        "m",
-        &body,
-        Some("P30D"),
-        None,
-        &sort("day", false),
-        &columns(),
-    );
+    let base = a_bound_page().digest();
+    assert_eq!(base, a_bound_page().digest());
 
-    assert_eq!(
-        base,
-        fingerprint(
-            "m",
-            &body,
-            Some("P30D"),
-            None,
-            &sort("day", false),
-            &columns()
-        )
-    );
-
-    let other_body = json!({ "table": "other", "fields": [] });
+    let unbounded = Window::Requested {
+        bounds: crate::domain::query::time_window::Bounds::Unbounded,
+        grain: None,
+    };
     let cases = [
         (
             "the metric's name",
-            fingerprint(
-                "n",
-                &body,
-                Some("P30D"),
-                None,
-                &sort("day", false),
-                &columns(),
-            ),
+            Bound {
+                name: "n",
+                ..a_bound_page()
+            },
         ),
         (
             "the metric's body",
-            fingerprint(
-                "m",
-                &other_body,
-                Some("P30D"),
-                None,
-                &sort("day", false),
-                &columns(),
-            ),
+            Bound {
+                body: json!({ "table": "other", "fields": [] }),
+                ..a_bound_page()
+            },
         ),
         (
-            "the window",
-            fingerprint(
-                "m",
-                &body,
-                Some("P7D"),
-                None,
-                &sort("day", false),
-                &columns(),
-            ),
+            "the range as written",
+            Bound {
+                range: "P7D",
+                ..a_bound_page()
+            },
         ),
         (
             "the bucketing",
-            fingerprint(
-                "m",
-                &body,
-                Some("P30D"),
-                Some(false),
-                &sort("day", false),
-                &columns(),
-            ),
+            Bound {
+                bucket: Some(false),
+                ..a_bound_page()
+            },
+        ),
+        (
+            "the window as resolved",
+            Bound {
+                window: unbounded,
+                ..a_bound_page()
+            },
         ),
         (
             "the order",
-            fingerprint(
-                "m",
-                &body,
-                Some("P30D"),
-                None,
-                &sort("day", true),
-                &columns(),
-            ),
+            Bound {
+                sort: sort("day", true),
+                ..a_bound_page()
+            },
         ),
         (
             "the columns",
-            fingerprint(
-                "m",
-                &body,
-                Some("P30D"),
-                None,
-                &sort("day", false),
-                &columns()[..1],
-            ),
+            Bound {
+                columns: columns().drain(..1).collect(),
+                ..a_bound_page()
+            },
         ),
     ];
     for (label, other) in cases {
-        assert_ne!(base, other, "should differ: {label}");
+        assert_ne!(base, other.digest(), "should differ: {label}");
     }
 }
 

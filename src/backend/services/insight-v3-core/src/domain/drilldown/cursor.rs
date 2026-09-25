@@ -86,16 +86,20 @@ pub(super) fn decode(written: &str) -> Result<Envelope, CursorError> {
 }
 
 /// Everything a page is bound to, as one digest. Any edit to the metric
-/// changes what the rows are, so the body itself is in it.
+/// changes what the rows are, so the body itself is in it; so is the
+/// resolved window, so an envelope whose window was edited no longer
+/// matches the digest it carries.
 pub(super) fn fingerprint(
     name: &str,
     body: &serde_json::Value,
     range: Option<&str>,
     bucket: Option<bool>,
+    window: &Window,
     sort: &Sort,
     columns: &[Column],
 ) -> String {
-    let bytes = serde_json::to_vec(&(name, body, range, bucket, sort, columns)).unwrap_or_default();
+    let bytes =
+        serde_json::to_vec(&(name, body, range, bucket, window, sort, columns)).unwrap_or_default();
 
     Sha256::digest(bytes)
         .iter()

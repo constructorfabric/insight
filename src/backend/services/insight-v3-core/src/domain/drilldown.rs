@@ -146,6 +146,7 @@ impl<'a> Drilldowns<'a> {
             &prepared.body,
             asked.range.as_deref(),
             asked.bucket,
+            &window,
             &sort,
             &columns,
         );
