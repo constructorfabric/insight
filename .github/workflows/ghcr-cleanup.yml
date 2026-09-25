@@ -33,8 +33,8 @@ env:
 
 # Routing, stated once in .github/runners/insight-vhc/README.md: a pull request
 # from a branch of this repository takes the ephemeral ARC scale set, a fork's
-# takes a GitHub-hosted runner, everything else takes the persistent pool, and
-# INSIGHT_FORCE_GITHUB_HOSTED returns all of it to hosted.
+# takes a GitHub-hosted runner, everything else takes the shared self-hosted
+# pool, and INSIGHT_FORCE_GITHUB_HOSTED returns all of it to hosted.
 jobs:
   trunk:
     runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}

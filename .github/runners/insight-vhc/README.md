@@ -20,7 +20,7 @@ runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (g
 |---|---|
 | pull request from a branch of this repository | `insight-vhc-arc` — the ARC scale set, one ephemeral pod per job |
 | pull request from a fork | `ubuntu-latest` |
-| `push`, `merge_group`, `schedule`, `workflow_dispatch`, `workflow_run` | these five machines |
+| `push`, `merge_group`, `schedule`, `workflow_dispatch`, `workflow_run` | the shared `[self-hosted, linux, x64, insight-vhc]` pool — these five machines **and** the scale set, whichever takes the job |
 | any of the above with the kill switch on | `ubuntu-latest` |
 
 **A pull request runs on an ephemeral pod, not on these machines.** A machine

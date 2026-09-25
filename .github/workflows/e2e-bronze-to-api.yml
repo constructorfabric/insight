@@ -71,8 +71,8 @@ permissions:
 
 # Routing, stated once in .github/runners/insight-vhc/README.md: a pull request
 # from a branch of this repository takes the ephemeral ARC scale set, a fork's
-# takes a GitHub-hosted runner, everything else takes the persistent pool, and
-# INSIGHT_FORCE_GITHUB_HOSTED returns all of it to hosted.
+# takes a GitHub-hosted runner, everything else takes the shared self-hosted
+# pool, and INSIGHT_FORCE_GITHUB_HOSTED returns all of it to hosted.
 jobs:
   # `e2e-suite` is the aggregate that emits the stable "Run E2E suite" check.
   #
@@ -367,6 +367,24 @@ jobs:
         run: |
           set -euo pipefail
           for tar in "$RUNNER_TEMP"/e2e-images/*.tar; do docker load --input "$tar"; done
+
+      # Two things dev-compose.sh needs from the host that no runner guarantees.
+      # It resolves the host IP with `ip route` — a minimal image need not carry
+      # iproute2, and an empty IP aborts bring-up — and it publishes ClickHouse
+      # on a fixed 8123, which a long-lived runner can still have allocated to a
+      # container the previous job left behind. The reclaim is the one from
+      # .github/workflows/scripts/start-clickhouse.sh: a self-hosted runner
+      # serves one job at a time, so whatever holds that port has finished.
+      # It belongs here and not in dev-compose.sh, which a developer runs
+      # against their own Docker.
+      - name: Prepare the test-stand host
+        run: |
+          set -euo pipefail
+          if ! command -v ip >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends iproute2
+          fi
+          docker ps -q --filter "publish=8123" | xargs -r docker rm -f >/dev/null 2>&1 || true
 
       # `minimal` seeds identity and the realm and leaves the warehouse empty:
       # the suite writes its own bronze and clears it between specs, and the

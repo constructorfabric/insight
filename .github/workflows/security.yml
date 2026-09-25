@@ -67,8 +67,8 @@ env:
 
 # Routing, stated once in .github/runners/insight-vhc/README.md: a pull request
 # from a branch of this repository takes the ephemeral ARC scale set, a fork's
-# takes a GitHub-hosted runner, everything else takes the persistent pool, and
-# INSIGHT_FORCE_GITHUB_HOSTED returns all of it to hosted.
+# takes a GitHub-hosted runner, everything else takes the shared self-hosted
+# pool, and INSIGHT_FORCE_GITHUB_HOSTED returns all of it to hosted.
 jobs:
   secrets-diff:
     # INVARIANT: `secrets (diff)` is a required status check named in the ruleset.
