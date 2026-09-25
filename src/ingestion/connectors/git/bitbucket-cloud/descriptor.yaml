@@ -41,7 +41,7 @@ name: bitbucket-cloud
 #   major bump dispatches re-materializes them. Safe: the merge hash and the
 #   commits have been in Bronze all along, and a request the activity does
 #   date is untouched. #3051
-version: "7.5.0"
+version: "7.6.0"
 # Every four hours, off the hours other connectors use: replication pods sharing
 # a slot with other connector syncs can be starved of workers, which surfaces as
 # startup and activity timeouts rather than as a connector error.
