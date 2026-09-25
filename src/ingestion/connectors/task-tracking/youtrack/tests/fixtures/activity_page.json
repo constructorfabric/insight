@@ -1,0 +1,41 @@
+{
+  "afterCursor": "synthetic-next-cursor",
+  "hasAfter": true,
+  "activities": [
+    {
+      "id": "2-1.0-1",
+      "$type": "CustomFieldActivityItem",
+      "timestamp": 1782864000000,
+      "targetMember": "Affected versions",
+      "category": {
+        "id": "CustomFieldCategory",
+        "$type": "ActivityCategory"
+      },
+      "author": {
+        "id": "1-1",
+        "login": "example.user",
+        "fullName": "Example User",
+        "$type": "User"
+      },
+      "field": {
+        "id": "58-1",
+        "name": "Affected versions",
+        "presentation": "Affected versions",
+        "$type": "CustomFilterField"
+      },
+      "added": [
+        {
+          "id": "133-1",
+          "name": "Example Version",
+          "$type": "VersionBundleElement"
+        }
+      ],
+      "removed": [],
+      "target": {
+        "id": "2-1",
+        "idReadable": "EX-1",
+        "$type": "Issue"
+      }
+    }
+  ]
+}

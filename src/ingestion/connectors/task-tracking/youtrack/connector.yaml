@@ -1,0 +1,1873 @@
+version: 7.0.4
+
+type: DeclarativeSource
+
+check:
+  type: CheckStream
+  stream_names:
+    - youtrack_projects
+
+definitions:
+  linked:
+    HttpRequester:
+      authenticator:
+        type: BearerAuthenticator
+        api_token: "{{ config['youtrack_token'] }}"
+
+streams:
+  - type: DeclarativeStream
+    name: youtrack_projects
+    primary_key:
+      - unique_key
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        http_method: GET
+        authenticator:
+          type: BearerAuthenticator
+          api_token: "{{ config['youtrack_token'] }}"
+        request_headers:
+          Accept: application/json
+        request_parameters:
+          fields: id,archived,createdBy(id,login,fullName,email),customFields(id,$type,field(id,name,fieldType(id))),description,fromEmail,iconUrl,issues(id,idReadable,created,updated,resolved),leader(id,login,fullName,email),name,replyToEmail,shortName,team(id,name,ringId,usersCount,icon,allUsersGroup,users(id,login,fullName,email),ownUsers(id,login,fullName,email),groups(id,name,ringId)),template
+        url: "{{ config['youtrack_base_url'].rstrip('/') }}/api/admin/projects"
+      paginator:
+        type: DefaultPaginator
+        page_size_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: $top
+        page_token_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: $skip
+        pagination_strategy:
+          type: OffsetIncrement
+          page_size: "{{ config.get('youtrack_page_size', 100) }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
+          - type: AddedFieldDefinition
+            path: [project_json]
+            value: "{{ record | tojson | tojson }}"
+          - type: AddedFieldDefinition
+            path: [observed_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z' }}"
+      - type: RemoveFields
+        field_pointers:
+          - [createdBy]
+          - [customFields]
+          - [issues]
+          - [leader]
+          - [team]
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        properties:
+          id: {type: [string, "null"]}
+          $type: {type: [string, "null"]}
+          name: {type: [string, "null"]}
+          shortName: {type: [string, "null"]}
+          description: {type: [string, "null"]}
+          archived: {type: [boolean, "null"]}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          unique_key: {type: string}
+          project_json: {type: [string, "null"]}
+          observed_at: {type: [string, "null"]}
+        required: [unique_key]
+        additionalProperties: true
+
+  - type: DeclarativeStream
+    name: youtrack_users
+    primary_key:
+      - unique_key
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        http_method: GET
+        authenticator:
+          type: BearerAuthenticator
+          api_token: "{{ config['youtrack_token'] }}"
+        request_headers:
+          Accept: application/json
+        request_parameters:
+          fields: id,login,fullName,email,ringId,guest,online,banned,banBadge,banReason,isAnonymized,tags(id,name),savedQueries(id,name),avatarUrl,profiles(id,general(id),notifications(id),timetracking(id)),userType(id)
+        url: "{{ config['youtrack_base_url'].rstrip('/') }}/api/users"
+      paginator:
+        type: DefaultPaginator
+        page_size_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: $top
+        page_token_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: $skip
+        pagination_strategy:
+          type: OffsetIncrement
+          page_size: "{{ config.get('youtrack_page_size', 100) }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
+          - type: AddedFieldDefinition
+            path: [user_json]
+            value: "{{ record | tojson | tojson }}"
+          - type: AddedFieldDefinition
+            path: [observed_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z' }}"
+      - type: RemoveFields
+        field_pointers:
+          - [tags]
+          - [savedQueries]
+          - [profiles]
+          - [userType]
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        properties:
+          id: {type: [string, "null"]}
+          login: {type: [string, "null"]}
+          fullName: {type: [string, "null"]}
+          email: {type: [string, "null"]}
+          banned: {type: [boolean, "null"]}
+          isAnonymized: {type: [boolean, "null"]}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          unique_key: {type: string}
+          user_json: {type: [string, "null"]}
+          observed_at: {type: [string, "null"]}
+        required: [unique_key]
+        additionalProperties: true
+
+  - type: DeclarativeStream
+    name: youtrack_custom_fields
+    primary_key:
+      - unique_key
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        http_method: GET
+        authenticator:
+          type: BearerAuthenticator
+          api_token: "{{ config['youtrack_token'] }}"
+        request_headers:
+          Accept: application/json
+        request_parameters:
+          fields: id,name,localizedName,fieldType(id),isAutoAttached,isDisplayedInIssueList,ordinal,aliases,fieldDefaults(id,$type,canBeEmpty,emptyFieldText,isPublic),hasRunningJob,isUpdateable,instances(id,$type,canBeEmpty,emptyFieldText,ordinal,isPublic,hasRunningJob,condition(id,$type),project(id,name,shortName),field(id,name,fieldType(id)),bundle(id,$type,name),defaultValues(id,$type,name,login,fullName))
+        url: "{{ config['youtrack_base_url'].rstrip('/') }}/api/admin/customFieldSettings/customFields"
+      paginator:
+        type: DefaultPaginator
+        page_size_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: $top
+        page_token_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: $skip
+        pagination_strategy:
+          type: OffsetIncrement
+          page_size: "{{ config.get('youtrack_page_size', 100) }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [field_type_id]
+            value: "{{ (record.get('fieldType') or {}).get('id') }}"
+          - type: AddedFieldDefinition
+            path: [metadata_json]
+            value: "{{ record | tojson | tojson }}"
+          - type: AddedFieldDefinition
+            path: [observed_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z' }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}-{{ now_utc().strftime('%Y%m%dT%H%M%S%f') }}"
+      - type: RemoveFields
+        field_pointers:
+          - [fieldType]
+          - [fieldDefaults]
+          - [instances]
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        properties:
+          id: {type: [string, "null"]}
+          name: {type: [string, "null"]}
+          field_type_id: {type: [string, "null"]}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          unique_key: {type: string}
+          metadata_json: {type: [string, "null"]}
+          observed_at: {type: [string, "null"]}
+        required: [unique_key]
+        additionalProperties: true
+
+  - type: DeclarativeStream
+    name: youtrack_project_fields
+    primary_key:
+      - unique_key
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        http_method: GET
+        authenticator:
+          type: BearerAuthenticator
+          api_token: "{{ config['youtrack_token'] }}"
+        request_headers:
+          Accept: application/json
+        request_parameters:
+          fields: id,$type,canBeEmpty,emptyFieldText,ordinal,isPublic,hasRunningJob,condition(id,$type),project(id,name,shortName),field(id,name,localizedName,aliases,fieldType(id)),bundle(id,$type,name,values(id,$type,name,description,archived,ordinal,isResolved,released,releaseDate,owner(id,login,fullName))),defaultValues(id,$type,name,login,fullName)
+        url: "{{ config['youtrack_base_url'].rstrip('/') }}/api/admin/projects/{{ stream_partition.project_id }}/customFields"
+      paginator:
+        type: DefaultPaginator
+        page_size_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: $top
+        page_token_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: $skip
+        pagination_strategy:
+          type: OffsetIncrement
+          page_size: "{{ config.get('youtrack_page_size', 100) }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: id
+            partition_field: project_id
+            stream:
+              type: DeclarativeStream
+              name: _youtrack_projects_for_fields
+              primary_key: [id]
+              retriever:
+                type: SimpleRetriever
+                requester:
+                  type: HttpRequester
+                  http_method: GET
+                  authenticator:
+                    type: BearerAuthenticator
+                    api_token: "{{ config['youtrack_token'] }}"
+                  request_parameters:
+                    fields: id
+                  url: "{{ config['youtrack_base_url'].rstrip('/') }}/api/admin/projects"
+                paginator:
+                  type: DefaultPaginator
+                  page_size_option:
+                    type: RequestOption
+                    inject_into: request_parameter
+                    field_name: $top
+                  page_token_option:
+                    type: RequestOption
+                    inject_into: request_parameter
+                    field_name: $skip
+                  pagination_strategy:
+                    type: OffsetIncrement
+                    page_size: "{{ config.get('youtrack_page_size', 100) }}"
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path: []
+              schema_loader:
+                type: InlineSchemaLoader
+                schema:
+                  $schema: http://json-schema.org/schema#
+                  type: object
+                  properties:
+                    id: {type: string}
+                  required: [id]
+                  additionalProperties: true
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [project_id]
+            value: "{{ stream_partition.project_id }}"
+          - type: AddedFieldDefinition
+            path: [field_type_id]
+            value: "{{ ((record.get('field') or {}).get('fieldType') or {}).get('id') }}"
+          - type: AddedFieldDefinition
+            path: [metadata_json]
+            value: "{{ record | tojson | tojson }}"
+          - type: AddedFieldDefinition
+            path: [observed_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z' }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_partition.project_id }}-{{ record['id'] }}-{{ now_utc().strftime('%Y%m%dT%H%M%S%f') }}"
+      - type: RemoveFields
+        field_pointers:
+          - [condition]
+          - [project]
+          - [field]
+          - [bundle]
+          - [defaultValues]
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        properties:
+          id: {type: [string, "null"]}
+          $type: {type: [string, "null"]}
+          project_id: {type: [string, "null"]}
+          field_type_id: {type: [string, "null"]}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          unique_key: {type: string}
+          metadata_json: {type: [string, "null"]}
+          observed_at: {type: [string, "null"]}
+        required: [unique_key]
+        additionalProperties: true
+
+  - type: DeclarativeStream
+    name: youtrack_field_values
+    primary_key:
+      - unique_key
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        http_method: GET
+        authenticator:
+          type: BearerAuthenticator
+          api_token: "{{ config['youtrack_token'] }}"
+        request_headers:
+          Accept: application/json
+        request_parameters:
+          fields: id,$type,field(id,name,fieldType(id)),bundle(id,$type,name,values(id,$type,name,description,archived,ordinal,isResolved,released,releaseDate,owner(id,login,fullName)))
+        url: "{{ config['youtrack_base_url'].rstrip('/') }}/api/admin/projects/{{ stream_partition.project_id }}/customFields"
+      paginator:
+        type: DefaultPaginator
+        page_size_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: $top
+        page_token_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: $skip
+        pagination_strategy:
+          type: OffsetIncrement
+          page_size: "{{ config.get('youtrack_page_size', 100) }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: id
+            partition_field: project_id
+            stream:
+              type: DeclarativeStream
+              name: _youtrack_projects_for_values
+              primary_key: [id]
+              retriever:
+                type: SimpleRetriever
+                requester:
+                  type: HttpRequester
+                  http_method: GET
+                  authenticator:
+                    type: BearerAuthenticator
+                    api_token: "{{ config['youtrack_token'] }}"
+                  request_parameters:
+                    fields: id
+                  url: "{{ config['youtrack_base_url'].rstrip('/') }}/api/admin/projects"
+                paginator:
+                  type: DefaultPaginator
+                  page_size_option:
+                    type: RequestOption
+                    inject_into: request_parameter
+                    field_name: $top
+                  page_token_option:
+                    type: RequestOption
+                    inject_into: request_parameter
+                    field_name: $skip
+                  pagination_strategy:
+                    type: OffsetIncrement
+                    page_size: "{{ config.get('youtrack_page_size', 100) }}"
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path: []
+              schema_loader:
+                type: InlineSchemaLoader
+                schema:
+                  $schema: http://json-schema.org/schema#
+                  type: object
+                  properties:
+                    id: {type: string}
+                  required: [id]
+                  additionalProperties: true
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [project_id]
+            value: "{{ stream_partition.project_id }}"
+          - type: AddedFieldDefinition
+            path: [field_id]
+            value: "{{ (record.get('field') or {}).get('id') }}"
+          - type: AddedFieldDefinition
+            path: [field_type_id]
+            value: "{{ ((record.get('field') or {}).get('fieldType') or {}).get('id') }}"
+          - type: AddedFieldDefinition
+            path: [bundle_id]
+            value: "{{ (record.get('bundle') or {}).get('id') }}"
+          - type: AddedFieldDefinition
+            path: [bundle_json]
+            value: "{{ record.get('bundle') | tojson | tojson }}"
+          - type: AddedFieldDefinition
+            path: [values_json]
+            value: "{{ (record.get('bundle') or {}).get('values', []) | tojson | tojson }}"
+          - type: AddedFieldDefinition
+            path: [observed_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z' }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_partition.project_id }}-{{ record['id'] }}-{{ now_utc().strftime('%Y%m%dT%H%M%S%f') }}"
+      - type: RemoveFields
+        field_pointers:
+          - [field]
+          - [bundle]
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        properties:
+          id: {type: [string, "null"]}
+          $type: {type: [string, "null"]}
+          project_id: {type: [string, "null"]}
+          field_id: {type: [string, "null"]}
+          field_type_id: {type: [string, "null"]}
+          bundle_id: {type: [string, "null"]}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          unique_key: {type: string}
+          bundle_json: {type: [string, "null"]}
+          values_json: {type: [string, "null"]}
+          observed_at: {type: [string, "null"]}
+        required: [unique_key]
+        additionalProperties: true
+
+  - type: DeclarativeStream
+    name: youtrack_agiles
+    primary_key:
+      - unique_key
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        http_method: GET
+        authenticator:
+          type: BearerAuthenticator
+          api_token: "{{ config['youtrack_token'] }}"
+        request_headers:
+          Accept: application/json
+        request_parameters:
+          fields: id,name,owner(id,login,fullName,email),visibleFor(id,name),visibleForProjectBased,updateableBy(id,name),updateableByProjectBased,readSharingSettings(id,permittedGroups(id,name),permittedUsers(id,login,fullName,email)),updateSharingSettings(id,permittedGroups(id,name),permittedUsers(id,login,fullName,email)),orphansAtTheTop,hideOrphansSwimlane,estimationField(id,name,fieldType(id)),originalEstimationField(id,name,fieldType(id)),projects(id,name,shortName),sprints(id,name,start,finish,archived),currentSprint(id,name,start,finish,archived),columnSettings(id,field(id,name,fieldType(id)),columns(id,presentation)),swimlaneSettings(id,$type,enabled),sprintsSettings(id,isExplicit,cardOnSeveralSprints,defaultSprint(id,name),disableSprints,explicitQuery,sprintSyncField(id,name,fieldType(id)),hideSubtasksOfCards),colorCoding(id,$type),status(id,valid,hasJobs,errors,warnings)
+        url: "{{ config['youtrack_base_url'].rstrip('/') }}/api/agiles"
+      paginator:
+        type: DefaultPaginator
+        page_size_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: $top
+        page_token_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: $skip
+        pagination_strategy:
+          type: OffsetIncrement
+          page_size: "{{ config.get('youtrack_page_size', 100) }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
+          - type: AddedFieldDefinition
+            path: [agile_json]
+            value: "{{ record | tojson | tojson }}"
+          - type: AddedFieldDefinition
+            path: [observed_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z' }}"
+      - type: RemoveFields
+        field_pointers:
+          - [owner]
+          - [visibleFor]
+          - [updateableBy]
+          - [readSharingSettings]
+          - [updateSharingSettings]
+          - [estimationField]
+          - [originalEstimationField]
+          - [projects]
+          - [sprints]
+          - [currentSprint]
+          - [columnSettings]
+          - [swimlaneSettings]
+          - [sprintsSettings]
+          - [colorCoding]
+          - [status]
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        properties:
+          id: {type: [string, "null"]}
+          name: {type: [string, "null"]}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          unique_key: {type: string}
+          agile_json: {type: [string, "null"]}
+          observed_at: {type: [string, "null"]}
+        required: [unique_key]
+        additionalProperties: true
+
+  - type: DeclarativeStream
+    name: youtrack_sprints
+    primary_key:
+      - unique_key
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        http_method: GET
+        authenticator:
+          type: BearerAuthenticator
+          api_token: "{{ config['youtrack_token'] }}"
+        request_headers:
+          Accept: application/json
+        request_parameters:
+          fields: id,agile(id,name),name,goal,start,finish,archived,isDefault,issues(id,idReadable,summary,created,updated,resolved),unresolvedIssuesCount,previousSprint(id,name)
+        url: "{{ config['youtrack_base_url'].rstrip('/') }}/api/agiles/{{ stream_partition.agile_id }}/sprints"
+      paginator:
+        type: DefaultPaginator
+        page_size_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: $top
+        page_token_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: $skip
+        pagination_strategy:
+          type: OffsetIncrement
+          page_size: "{{ config.get('youtrack_page_size', 100) }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: id
+            partition_field: agile_id
+            stream:
+              type: DeclarativeStream
+              name: _youtrack_agiles_for_sprints
+              primary_key: [id]
+              retriever:
+                type: SimpleRetriever
+                requester:
+                  type: HttpRequester
+                  http_method: GET
+                  authenticator:
+                    type: BearerAuthenticator
+                    api_token: "{{ config['youtrack_token'] }}"
+                  request_parameters:
+                    fields: id
+                  url: "{{ config['youtrack_base_url'].rstrip('/') }}/api/agiles"
+                paginator:
+                  type: DefaultPaginator
+                  page_size_option:
+                    type: RequestOption
+                    inject_into: request_parameter
+                    field_name: $top
+                  page_token_option:
+                    type: RequestOption
+                    inject_into: request_parameter
+                    field_name: $skip
+                  pagination_strategy:
+                    type: OffsetIncrement
+                    page_size: "{{ config.get('youtrack_page_size', 100) }}"
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path: []
+              schema_loader:
+                type: InlineSchemaLoader
+                schema:
+                  $schema: http://json-schema.org/schema#
+                  type: object
+                  properties:
+                    id: {type: string}
+                  required: [id]
+                  additionalProperties: true
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [agile_id]
+            value: "{{ stream_partition.agile_id }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_partition.agile_id }}-{{ record['id'] }}"
+          - type: AddedFieldDefinition
+            path: [sprint_json]
+            value: "{{ record | tojson | tojson }}"
+          - type: AddedFieldDefinition
+            path: [observed_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z' }}"
+      - type: RemoveFields
+        field_pointers:
+          - [agile]
+          - [issues]
+          - [previousSprint]
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        properties:
+          id: {type: [string, "null"]}
+          name: {type: [string, "null"]}
+          start: {type: [number, "null"]}
+          finish: {type: [number, "null"]}
+          archived: {type: [boolean, "null"]}
+          agile_id: {type: [string, "null"]}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          unique_key: {type: string}
+          sprint_json: {type: [string, "null"]}
+          observed_at: {type: [string, "null"]}
+        required: [unique_key]
+        additionalProperties: true
+
+  - type: DeclarativeStream
+    name: youtrack_issue_keys
+    primary_key:
+      - unique_key
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        http_method: GET
+        authenticator:
+          type: BearerAuthenticator
+          api_token: "{{ config['youtrack_token'] }}"
+        request_headers:
+          Accept: application/json
+        request_parameters:
+          fields: id,idReadable,updated,project(id,shortName)
+          query: "updated: {{ stream_slice.start_time }} .. {{ stream_slice.end_time }} sort by: updated asc"
+        url: "{{ config['youtrack_base_url'].rstrip('/') }}/api/issues"
+      paginator:
+        type: DefaultPaginator
+        page_size_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: $top
+        page_token_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: $skip
+        pagination_strategy:
+          type: OffsetIncrement
+          page_size: "{{ config.get('youtrack_page_size', 100) }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: updated
+      cursor_datetime_formats:
+        - "%ms"
+        - "%Y-%m-%dT%H:%M:%S"
+      datetime_format: "%Y-%m-%dT%H:%M:%S"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config.get('youtrack_start_date', '2020-01-01') }}T00:00:00"
+        datetime_format: "%Y-%m-%dT%H:%M:%S"
+      end_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S') }}"
+        datetime_format: "%Y-%m-%dT%H:%M:%S"
+      cursor_granularity: PT1S
+      step: P30D
+      lookback_window: PT1H
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        properties:
+          id: {type: [string, "null"]}
+          idReadable: {type: [string, "null"]}
+          updated: {type: [number, string]}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          unique_key: {type: string}
+        required: [unique_key, updated]
+        additionalProperties: true
+
+  - type: DeclarativeStream
+    name: youtrack_issues
+    primary_key:
+      - unique_key
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        http_method: GET
+        authenticator:
+          type: BearerAuthenticator
+          api_token: "{{ config['youtrack_token'] }}"
+        request_headers:
+          Accept: application/json
+        request_parameters:
+          fields: id,attachments(id,name,author(id,login,fullName,email),created,updated,size,extension,charset,mimeType,metaData,draft,removed,url,visibility(id,$type,permittedUsers(id,login,fullName,email),permittedGroups(id,name)),thumbnailURL),comments(id,attachments(id,name,created,updated,size,extension,charset,mimeType,metaData,draft,removed,url,thumbnailURL),author(id,login,fullName,email),created,deleted,pinned,reactions(id,reaction,author(id,login,fullName,email)),text,textPreview,updated,visibility(id,$type,permittedUsers(id,login,fullName,email),permittedGroups(id,name))),commentsCount,created,customFields(id,name,$type,projectCustomField(id,$type,field(id,name,fieldType(id))),value(id,name,login,fullName,text,markdownText,minutes,presentation,description,archived,ordinal,isResolved,released,releaseDate,$type)),description,draftOwner(id,login,fullName,email),externalIssue(id,name,url,key),idReadable,isDraft,links(id,direction,linkType(id,name,localizedName,sourceToTarget,localizedSourceToTarget,targetToSource,localizedTargetToSource,directed,aggregation,readOnly),issues(id,idReadable,summary,created,updated,resolved),trimmedIssues(id,idReadable,summary,created,updated,resolved)),numberInProject,parent(id,direction,linkType(id,name),issues(id,idReadable,summary)),pinnedComments(id,text,textPreview,created,updated,deleted,pinned,author(id,login,fullName,email)),project(id,name,shortName),reporter(id,login,fullName,email),resolved,subtasks(id,direction,linkType(id,name),issues(id,idReadable,summary)),summary,tags(id,name,untagOnResolve,owner(id,login,fullName,email)),updated,updater(id,login,fullName,email),visibility(id,$type,permittedUsers(id,login,fullName,email),permittedGroups(id,name)),voters(id,hasVote,original(id,login,fullName,email),duplicate(id,issue(id,idReadable,summary),user(id,login,fullName,email))),votes,watchers(id,hasStar,issueWatchers(id,isStarred,user(id,login,fullName,email),issue(id,idReadable,summary)),duplicateWatchers(id,isStarred,user(id,login,fullName,email),issue(id,idReadable,summary))),wikifiedDescription
+          query: "updated: {{ stream_slice.start_time }} .. {{ stream_slice.end_time }} sort by: updated asc"
+        url: "{{ config['youtrack_base_url'].rstrip('/') }}/api/issues"
+      paginator:
+        type: DefaultPaginator
+        page_size_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: $top
+        page_token_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: $skip
+        pagination_strategy:
+          type: OffsetIncrement
+          page_size: "{{ config.get('youtrack_page_size', 100) }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: updated
+      cursor_datetime_formats:
+        - "%ms"
+        - "%Y-%m-%dT%H:%M:%S"
+      datetime_format: "%Y-%m-%dT%H:%M:%S"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config.get('youtrack_start_date', '2020-01-01') }}T00:00:00"
+        datetime_format: "%Y-%m-%dT%H:%M:%S"
+      end_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S') }}"
+        datetime_format: "%Y-%m-%dT%H:%M:%S"
+      cursor_granularity: PT1S
+      step: P30D
+      lookback_window: PT1H
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [project_id]
+            value: "{{ (record.get('project') or {}).get('id') }}"
+          - type: AddedFieldDefinition
+            path: [reporter_id]
+            value: "{{ (record.get('reporter') or {}).get('id') }}"
+          - type: AddedFieldDefinition
+            path: [updater_id]
+            value: "{{ (record.get('updater') or {}).get('id') }}"
+          - type: AddedFieldDefinition
+            path: [custom_fields_json]
+            value: "{{ record.get('customFields', []) | tojson | tojson }}"
+          - type: AddedFieldDefinition
+            path: [issue_json]
+            value: "{{ record | tojson | tojson }}"
+          - type: AddedFieldDefinition
+            path: [observed_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z' }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
+      - type: RemoveFields
+        field_pointers:
+          - [customFields]
+          - [attachments]
+          - [comments]
+          - [pinnedComments]
+          - [links]
+          - [parent]
+          - [subtasks]
+          - [tags]
+          - [watchers]
+          - [voters]
+          - [visibility]
+          - [project]
+          - [reporter]
+          - [updater]
+          - [draftOwner]
+          - [externalIssue]
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        properties:
+          id: {type: [string, "null"]}
+          $type: {type: [string, "null"]}
+          idReadable: {type: [string, "null"]}
+          summary: {type: [string, "null"]}
+          description: {type: [string, "null"]}
+          created: {type: [number, "null"]}
+          updated: {type: [number, string]}
+          resolved: {type: [number, "null"]}
+          numberInProject: {type: [number, "null"]}
+          isDraft: {type: [boolean, "null"]}
+          commentsCount: {type: [number, "null"]}
+          votes: {type: [number, "null"]}
+          wikifiedDescription: {type: [string, "null"]}
+          project_id: {type: [string, "null"]}
+          reporter_id: {type: [string, "null"]}
+          updater_id: {type: [string, "null"]}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          unique_key: {type: string}
+          custom_fields_json: {type: [string, "null"]}
+          issue_json: {type: [string, "null"]}
+          observed_at: {type: [string, "null"]}
+        required: [unique_key, updated]
+        additionalProperties: true
+
+  - type: DeclarativeStream
+    name: youtrack_activities
+    primary_key:
+      - unique_key
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        http_method: GET
+        authenticator:
+          type: BearerAuthenticator
+          api_token: "{{ config['youtrack_token'] }}"
+        request_headers:
+          Accept: application/json
+        request_parameters:
+          categories: ArticleCommentAttachmentsCategory,ArticleTagsCategory,AttachmentRecognizedTextCategory,AttachmentRenameCategory,AttachmentVisibilityCategory,AttachmentsCategory,CommentAttachmentsCategory,CommentTextCategory,CommentVisibilityCategory,CommentsCategory,CustomFieldCategory,DescriptionCategory,IssueCreatedCategory,IssueResolvedCategory,IssueVisibilityCategory,LinksCategory,ProjectCategory,PullRequestChangeCategory,SprintCategory,SummaryCategory,TagsCategory,TotalVotesCategory,VcsChangeCategory,VcsChangeStateCategory,VotersCategory
+          fields: afterCursor,hasAfter,activities(id,$type,timestamp,targetMember,category(id),author(id,login,fullName,email),field(id,name,presentation,$type),added(id,name,login,fullName,text,markdownText,minutes,presentation,description,archived,ordinal,isResolved,released,releaseDate,$type),removed(id,name,login,fullName,text,markdownText,minutes,presentation,description,archived,ordinal,isResolved,released,releaseDate,$type),target(id,idReadable,name,text,summary,$type))
+          $top: "{{ config.get('youtrack_activities_page_size', 200) }}"
+        url: "{{ config['youtrack_base_url'].rstrip('/') }}/api/activitiesPage"
+      paginator:
+        type: DefaultPaginator
+        page_token_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: cursor
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ response.get('afterCursor') }}"
+          stop_condition: "{{ not response.get('hasAfter') }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [activities]
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: timestamp
+      cursor_datetime_formats:
+        - "%ms"
+      datetime_format: "%ms"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config.get('youtrack_start_date', '2020-01-01') }}"
+        datetime_format: "%Y-%m-%d"
+      end_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+        datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      start_time_option:
+        type: RequestOption
+        inject_into: request_parameter
+        field_name: start
+      end_time_option:
+        type: RequestOption
+        inject_into: request_parameter
+        field_name: end
+      cursor_granularity: PT0.001S
+      step: P30D
+      lookback_window: PT1H
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [author_id]
+            value: "{{ (record.get('author') or {}).get('id') }}"
+          - type: AddedFieldDefinition
+            path: [category_json]
+            value: "{{ record.get('category') | tojson | tojson }}"
+          - type: AddedFieldDefinition
+            path: [field_json]
+            value: "{{ record.get('field') | tojson | tojson }}"
+          - type: AddedFieldDefinition
+            path: [added_json]
+            value: "{{ record.get('added') | tojson | tojson }}"
+          - type: AddedFieldDefinition
+            path: [removed_json]
+            value: "{{ record.get('removed') | tojson | tojson }}"
+          - type: AddedFieldDefinition
+            path: [target_json]
+            value: "{{ record.get('target') | tojson | tojson }}"
+          - type: AddedFieldDefinition
+            path: [activity_json]
+            value: "{{ record | tojson | tojson }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
+      - type: RemoveFields
+        field_pointers:
+          - [category]
+          - [field]
+          - [added]
+          - [removed]
+          - [target]
+          - [author]
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        properties:
+          id: {type: [string, "null"]}
+          $type: {type: [string, "null"]}
+          timestamp: {type: [number, string]}
+          targetMember: {type: [string, "null"]}
+          author_id: {type: [string, "null"]}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          unique_key: {type: string}
+          category_json: {type: [string, "null"]}
+          field_json: {type: [string, "null"]}
+          added_json: {type: [string, "null"]}
+          removed_json: {type: [string, "null"]}
+          target_json: {type: [string, "null"]}
+          activity_json: {type: [string, "null"]}
+        required: [unique_key, timestamp]
+        additionalProperties: true
+
+  - type: DeclarativeStream
+    name: youtrack_work_items
+    primary_key:
+      - unique_key
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        http_method: GET
+        authenticator:
+          type: BearerAuthenticator
+          api_token: "{{ config['youtrack_token'] }}"
+        request_headers:
+          Accept: application/json
+        request_parameters:
+          fields: id,date,duration(minutes,presentation),text,textPreview,created,updated,author(id,login,fullName,email),creator(id,login,fullName,email),type(id,name,autoAttached),issue(id,idReadable,summary,project(id,shortName)),attributes(id,name,value(id,name,$type))
+        url: "{{ config['youtrack_base_url'].rstrip('/') }}/api/workItems"
+      paginator:
+        type: DefaultPaginator
+        page_size_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: $top
+        page_token_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: $skip
+        pagination_strategy:
+          type: OffsetIncrement
+          page_size: "{{ config.get('youtrack_page_size', 100) }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: updated
+      cursor_datetime_formats:
+        - "%ms"
+      datetime_format: "%ms"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config.get('youtrack_start_date', '2020-01-01') }}"
+        datetime_format: "%Y-%m-%d"
+      end_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+        datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      start_time_option:
+        type: RequestOption
+        inject_into: request_parameter
+        field_name: updatedStart
+      end_time_option:
+        type: RequestOption
+        inject_into: request_parameter
+        field_name: updatedEnd
+      cursor_granularity: PT0.001S
+      step: P30D
+      lookback_window: PT1H
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [issue_id]
+            value: "{{ (record.get('issue') or {}).get('id') }}"
+          - type: AddedFieldDefinition
+            path: [author_id]
+            value: "{{ (record.get('author') or {}).get('id') }}"
+          - type: AddedFieldDefinition
+            path: [work_item_json]
+            value: "{{ record | tojson | tojson }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
+      - type: RemoveFields
+        field_pointers:
+          - [duration]
+          - [author]
+          - [creator]
+          - [type]
+          - [issue]
+          - [attributes]
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        properties:
+          id: {type: [string, "null"]}
+          date: {type: [number, "null"]}
+          created: {type: [number, "null"]}
+          updated: {type: [number, string]}
+          issue_id: {type: [string, "null"]}
+          author_id: {type: [string, "null"]}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          unique_key: {type: string}
+          work_item_json: {type: [string, "null"]}
+        required: [unique_key, updated]
+        additionalProperties: true
+
+  - type: DeclarativeStream
+    name: youtrack_comments
+    primary_key:
+      - unique_key
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        http_method: GET
+        authenticator:
+          type: BearerAuthenticator
+          api_token: "{{ config['youtrack_token'] }}"
+        request_headers:
+          Accept: application/json
+        request_parameters:
+          fields: id,attachments(id,name,author(id,login,fullName,email),created,updated,size,extension,charset,mimeType,metaData,draft,removed,url,visibility(id,$type,permittedUsers(id,login,fullName,email),permittedGroups(id,name)),thumbnailURL),author(id,login,fullName,email),created,deleted,issue(id,idReadable,summary),pinned,reactions(id,reaction,author(id,login,fullName,email)),text,textPreview,updated,visibility(id,$type,permittedUsers(id,login,fullName,email),permittedGroups(id,name))
+        url: "{{ config['youtrack_base_url'].rstrip('/') }}/api/issues/{{ stream_partition.issue_id }}/comments"
+      paginator:
+        type: DefaultPaginator
+        page_size_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: $top
+        page_token_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: $skip
+        pagination_strategy:
+          type: OffsetIncrement
+          page_size: "{{ config.get('youtrack_page_size', 100) }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: id
+            partition_field: issue_id
+            extra_fields:
+              - [idReadable]
+              - [updated]
+            incremental_dependency: true
+            stream:
+              type: DeclarativeStream
+              name: _youtrack_changed_issues_for_comments
+              primary_key: [id]
+              retriever:
+                type: SimpleRetriever
+                requester:
+                  type: HttpRequester
+                  http_method: GET
+                  authenticator:
+                    type: BearerAuthenticator
+                    api_token: "{{ config['youtrack_token'] }}"
+                  request_parameters:
+                    fields: id,idReadable,updated
+                    query: "updated: {{ stream_slice.start_time }} .. {{ stream_slice.end_time }} sort by: updated asc"
+                  url: "{{ config['youtrack_base_url'].rstrip('/') }}/api/issues"
+                paginator:
+                  type: DefaultPaginator
+                  page_size_option:
+                    type: RequestOption
+                    inject_into: request_parameter
+                    field_name: $top
+                  page_token_option:
+                    type: RequestOption
+                    inject_into: request_parameter
+                    field_name: $skip
+                  pagination_strategy:
+                    type: OffsetIncrement
+                    page_size: "{{ config.get('youtrack_page_size', 100) }}"
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path: []
+              incremental_sync:
+                type: DatetimeBasedCursor
+                cursor_field: updated
+                cursor_datetime_formats: ["%ms", "%Y-%m-%dT%H:%M:%S"]
+                datetime_format: "%Y-%m-%dT%H:%M:%S"
+                start_datetime:
+                  type: MinMaxDatetime
+                  datetime: "{{ config.get('youtrack_start_date', '2020-01-01') }}T00:00:00"
+                  datetime_format: "%Y-%m-%dT%H:%M:%S"
+                end_datetime:
+                  type: MinMaxDatetime
+                  datetime: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S') }}"
+                  datetime_format: "%Y-%m-%dT%H:%M:%S"
+                cursor_granularity: PT1S
+                step: PT6H
+                lookback_window: PT1H
+              schema_loader:
+                type: InlineSchemaLoader
+                schema:
+                  $schema: http://json-schema.org/schema#
+                  type: object
+                  properties:
+                    id: {type: string}
+                    idReadable: {type: [string, "null"]}
+                    updated: {type: [number, string]}
+                  required: [id, updated]
+                  additionalProperties: true
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: issue_updated
+      cursor_datetime_formats: ["%ms"]
+      datetime_format: "%ms"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config.get('youtrack_start_date', '2020-01-01') }}"
+        datetime_format: "%Y-%m-%d"
+      global_substream_cursor: true
+      lookback_window: PT1H
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [issue_id]
+            value: "{{ stream_partition.issue_id }}"
+          - type: AddedFieldDefinition
+            path: [issue_id_readable]
+            value: "{{ stream_slice.extra_fields['idReadable'] }}"
+          - type: AddedFieldDefinition
+            path: [issue_updated]
+            value: "{{ stream_slice.extra_fields['updated'] }}"
+          - type: AddedFieldDefinition
+            path: [author_id]
+            value: "{{ (record.get('author') or {}).get('id') }}"
+          - type: AddedFieldDefinition
+            path: [comment_json]
+            value: "{{ record | tojson | tojson }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
+      - type: RemoveFields
+        field_pointers:
+          - [attachments]
+          - [author]
+          - [issue]
+          - [reactions]
+          - [visibility]
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        properties:
+          id: {type: [string, "null"]}
+          text: {type: [string, "null"]}
+          created: {type: [number, "null"]}
+          updated: {type: [number, string]}
+          deleted: {type: [boolean, "null"]}
+          issue_id: {type: [string, "null"]}
+          issue_id_readable: {type: [string, "null"]}
+          issue_updated: {type: [number, string]}
+          author_id: {type: [string, "null"]}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          unique_key: {type: string}
+          comment_json: {type: [string, "null"]}
+        required: [unique_key, issue_updated]
+        additionalProperties: true
+
+  - type: DeclarativeStream
+    name: youtrack_issue_links
+    primary_key:
+      - unique_key
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        http_method: GET
+        authenticator:
+          type: BearerAuthenticator
+          api_token: "{{ config['youtrack_token'] }}"
+        request_headers:
+          Accept: application/json
+        request_parameters:
+          fields: id,direction,linkType(id,name,localizedName,sourceToTarget,localizedSourceToTarget,targetToSource,localizedTargetToSource,directed,aggregation,readOnly),issues(id,idReadable,summary,created,updated,resolved,project(id,shortName)),trimmedIssues(id,idReadable,summary,created,updated,resolved,project(id,shortName))
+        url: "{{ config['youtrack_base_url'].rstrip('/') }}/api/issues/{{ stream_partition.issue_id }}/links"
+      paginator:
+        type: DefaultPaginator
+        page_size_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: $top
+        page_token_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: $skip
+        pagination_strategy:
+          type: OffsetIncrement
+          page_size: "{{ config.get('youtrack_page_size', 100) }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: id
+            partition_field: issue_id
+            extra_fields:
+              - [idReadable]
+              - [updated]
+            incremental_dependency: true
+            stream:
+              type: DeclarativeStream
+              name: _youtrack_changed_issues_for_links
+              primary_key: [id]
+              retriever:
+                type: SimpleRetriever
+                requester:
+                  type: HttpRequester
+                  http_method: GET
+                  authenticator:
+                    type: BearerAuthenticator
+                    api_token: "{{ config['youtrack_token'] }}"
+                  request_parameters:
+                    fields: id,idReadable,updated
+                    query: "updated: {{ stream_slice.start_time }} .. {{ stream_slice.end_time }} sort by: updated asc"
+                  url: "{{ config['youtrack_base_url'].rstrip('/') }}/api/issues"
+                paginator:
+                  type: DefaultPaginator
+                  page_size_option:
+                    type: RequestOption
+                    inject_into: request_parameter
+                    field_name: $top
+                  page_token_option:
+                    type: RequestOption
+                    inject_into: request_parameter
+                    field_name: $skip
+                  pagination_strategy:
+                    type: OffsetIncrement
+                    page_size: "{{ config.get('youtrack_page_size', 100) }}"
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path: []
+              incremental_sync:
+                type: DatetimeBasedCursor
+                cursor_field: updated
+                cursor_datetime_formats: ["%ms", "%Y-%m-%dT%H:%M:%S"]
+                datetime_format: "%Y-%m-%dT%H:%M:%S"
+                start_datetime:
+                  type: MinMaxDatetime
+                  datetime: "{{ config.get('youtrack_start_date', '2020-01-01') }}T00:00:00"
+                  datetime_format: "%Y-%m-%dT%H:%M:%S"
+                end_datetime:
+                  type: MinMaxDatetime
+                  datetime: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S') }}"
+                  datetime_format: "%Y-%m-%dT%H:%M:%S"
+                cursor_granularity: PT1S
+                step: PT6H
+                lookback_window: PT1H
+              schema_loader:
+                type: InlineSchemaLoader
+                schema:
+                  $schema: http://json-schema.org/schema#
+                  type: object
+                  properties:
+                    id: {type: string}
+                    idReadable: {type: [string, "null"]}
+                    updated: {type: [number, string]}
+                  required: [id, updated]
+                  additionalProperties: true
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: issue_updated
+      cursor_datetime_formats: ["%ms"]
+      datetime_format: "%ms"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config.get('youtrack_start_date', '2020-01-01') }}"
+        datetime_format: "%Y-%m-%d"
+      global_substream_cursor: true
+      lookback_window: PT1H
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [issue_id]
+            value: "{{ stream_partition.issue_id }}"
+          - type: AddedFieldDefinition
+            path: [issue_id_readable]
+            value: "{{ stream_slice.extra_fields['idReadable'] }}"
+          - type: AddedFieldDefinition
+            path: [issue_updated]
+            value: "{{ stream_slice.extra_fields['updated'] }}"
+          - type: AddedFieldDefinition
+            path: [linked_issues_json]
+            value: "{{ record.get('issues', []) | tojson | tojson }}"
+          - type: AddedFieldDefinition
+            path: [link_json]
+            value: "{{ record | tojson | tojson }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_partition.issue_id }}-{{ record['id'] }}"
+      - type: RemoveFields
+        field_pointers:
+          - [linkType]
+          - [issues]
+          - [trimmedIssues]
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        properties:
+          id: {type: [string, "null"]}
+          direction: {type: [string, "null"]}
+          issue_id: {type: [string, "null"]}
+          issue_id_readable: {type: [string, "null"]}
+          issue_updated: {type: [number, string]}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          unique_key: {type: string}
+          linked_issues_json: {type: [string, "null"]}
+          link_json: {type: [string, "null"]}
+        required: [unique_key, issue_updated]
+        additionalProperties: true
+
+  - type: DeclarativeStream
+    name: youtrack_issue_sprints
+    primary_key:
+      - unique_key
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        http_method: GET
+        authenticator:
+          type: BearerAuthenticator
+          api_token: "{{ config['youtrack_token'] }}"
+        request_headers:
+          Accept: application/json
+        request_parameters:
+          fields: issues(id,idReadable,summary,created,updated,resolved,project(id,shortName))
+        url: "{{ config['youtrack_base_url'].rstrip('/') }}/api/agiles/{{ stream_slice.extra_fields['agile_id'] }}/sprints/{{ stream_partition.sprint_id }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [issues]
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: id
+            partition_field: sprint_id
+            extra_fields:
+              - [agile_id]
+              - [name]
+              - [goal]
+              - [start]
+              - [finish]
+              - [archived]
+              - [isDefault]
+              - [unresolvedIssuesCount]
+            stream:
+              type: DeclarativeStream
+              name: _youtrack_sprints_for_issues
+              primary_key: [id]
+              retriever:
+                type: SimpleRetriever
+                requester:
+                  type: HttpRequester
+                  http_method: GET
+                  authenticator:
+                    type: BearerAuthenticator
+                    api_token: "{{ config['youtrack_token'] }}"
+                  request_parameters:
+                    fields: id,name,goal,start,finish,archived,isDefault,unresolvedIssuesCount
+                  url: "{{ config['youtrack_base_url'].rstrip('/') }}/api/agiles/{{ stream_partition.agile_id }}/sprints"
+                paginator:
+                  type: DefaultPaginator
+                  page_size_option:
+                    type: RequestOption
+                    inject_into: request_parameter
+                    field_name: $top
+                  page_token_option:
+                    type: RequestOption
+                    inject_into: request_parameter
+                    field_name: $skip
+                  pagination_strategy:
+                    type: OffsetIncrement
+                    page_size: "{{ config.get('youtrack_page_size', 100) }}"
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path: []
+                partition_router:
+                  type: SubstreamPartitionRouter
+                  parent_stream_configs:
+                    - type: ParentStreamConfig
+                      parent_key: id
+                      partition_field: agile_id
+                      stream:
+                        type: DeclarativeStream
+                        name: _youtrack_agiles_for_issue_sprints
+                        primary_key: [id]
+                        retriever:
+                          type: SimpleRetriever
+                          requester:
+                            type: HttpRequester
+                            http_method: GET
+                            authenticator:
+                              type: BearerAuthenticator
+                              api_token: "{{ config['youtrack_token'] }}"
+                            request_parameters:
+                              fields: id
+                            url: "{{ config['youtrack_base_url'].rstrip('/') }}/api/agiles"
+                          paginator:
+                            type: DefaultPaginator
+                            page_size_option:
+                              type: RequestOption
+                              inject_into: request_parameter
+                              field_name: $top
+                            page_token_option:
+                              type: RequestOption
+                              inject_into: request_parameter
+                              field_name: $skip
+                            pagination_strategy:
+                              type: OffsetIncrement
+                              page_size: "{{ config.get('youtrack_page_size', 100) }}"
+                          record_selector:
+                            type: RecordSelector
+                            extractor:
+                              type: DpathExtractor
+                              field_path: []
+                        schema_loader:
+                          type: InlineSchemaLoader
+                          schema:
+                            $schema: http://json-schema.org/schema#
+                            type: object
+                            properties:
+                              id: {type: string}
+                            required: [id]
+                            additionalProperties: true
+              transformations:
+                - type: AddFields
+                  fields:
+                    - type: AddedFieldDefinition
+                      path: [agile_id]
+                      value: "{{ stream_partition.agile_id }}"
+              schema_loader:
+                type: InlineSchemaLoader
+                schema:
+                  $schema: http://json-schema.org/schema#
+                  type: object
+                  properties:
+                    id: {type: string}
+                    agile_id: {type: string}
+                    name: {type: [string, "null"]}
+                    goal: {type: [string, "null"]}
+                    start: {type: [number, "null"]}
+                    finish: {type: [number, "null"]}
+                    archived: {type: [boolean, "null"]}
+                    isDefault: {type: [boolean, "null"]}
+                    unresolvedIssuesCount: {type: [number, "null"]}
+                  required: [id, agile_id]
+                  additionalProperties: true
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [issue_id]
+            value: "{{ record.get('id') }}"
+          - type: AddedFieldDefinition
+            path: [issue_id_readable]
+            value: "{{ record.get('idReadable') }}"
+          - type: AddedFieldDefinition
+            path: [issue_updated]
+            value: "{{ record.get('updated') }}"
+          - type: AddedFieldDefinition
+            path: [sprint_id]
+            value: "{{ stream_partition.sprint_id }}"
+          - type: AddedFieldDefinition
+            path: [sprint_json]
+            value: "{{ stream_slice.extra_fields | tojson | tojson }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}-{{ stream_partition.sprint_id }}"
+      - type: RemoveFields
+        field_pointers:
+          - [project]
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        properties:
+          id: {type: [string, "null"]}
+          idReadable: {type: [string, "null"]}
+          summary: {type: [string, "null"]}
+          created: {type: [number, "null"]}
+          updated: {type: [number, "null"]}
+          resolved: {type: [number, "null"]}
+          sprint_id: {type: [string, "null"]}
+          issue_id: {type: [string, "null"]}
+          issue_id_readable: {type: [string, "null"]}
+          issue_updated: {type: [number, string]}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          unique_key: {type: string}
+          sprint_json: {type: [string, "null"]}
+        required: [unique_key]
+        additionalProperties: true
+
+  - type: DeclarativeStream
+    name: youtrack_issue_census
+    primary_key:
+      - unique_key
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        http_method: GET
+        authenticator:
+          type: BearerAuthenticator
+          api_token: "{{ config['youtrack_token'] }}"
+        request_headers:
+          Accept: application/json
+        request_parameters:
+          fields: id,idReadable,created,updated,resolved,project(id,shortName)
+        url: "{{ config['youtrack_base_url'].rstrip('/') }}/api/issues"
+      paginator:
+        type: DefaultPaginator
+        page_size_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: $top
+        page_token_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: $skip
+        pagination_strategy:
+          type: OffsetIncrement
+          page_size: "{{ config.get('youtrack_page_size', 100) }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [project_id]
+            value: "{{ (record.get('project') or {}).get('id') }}"
+          - type: AddedFieldDefinition
+            path: [observed_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z' }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}-{{ now_utc().strftime('%Y%m%dT%H%M%S%f') }}"
+      - type: RemoveFields
+        field_pointers:
+          - [project]
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        properties:
+          id: {type: [string, "null"]}
+          idReadable: {type: [string, "null"]}
+          created: {type: [number, "null"]}
+          updated: {type: [number, "null"]}
+          resolved: {type: [number, "null"]}
+          project_id: {type: [string, "null"]}
+          observed_at: {type: [string, "null"]}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          unique_key: {type: string}
+        required: [unique_key]
+        additionalProperties: true
+
+concurrency_level:
+  type: ConcurrencyLevel
+  default_concurrency: 4
+
+spec:
+  type: Spec
+  connection_specification:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    required:
+      - insight_tenant_id
+      - insight_source_id
+      - youtrack_base_url
+      - youtrack_token
+    properties:
+      insight_tenant_id:
+        type: string
+        title: Insight Tenant ID
+        order: 0
+      insight_source_id:
+        type: string
+        title: Insight Source ID
+        order: 1
+      youtrack_base_url:
+        type: string
+        title: YouTrack URL
+        description: Base service URL without the API path.
+        examples:
+          - https://example.youtrack.cloud
+        order: 2
+      youtrack_token:
+        type: string
+        title: YouTrack Permanent Token
+        airbyte_secret: true
+        order: 3
+      youtrack_start_date:
+        type: string
+        title: Start Date
+        description: Earliest UTC date included in incremental history reads.
+        pattern: ^[0-9]{4}-[0-9]{2}-[0-9]{2}$
+        default: "2020-01-01"
+        order: 4
+      youtrack_page_size:
+        type: string
+        title: Page Size
+        description: Maximum number of records requested from paginated resources.
+        pattern: ^([1-9]|[1-9][0-9]|[1-4][0-9]{2}|500)$
+        default: "100"
+        order: 5
+      youtrack_activities_page_size:
+        type: string
+        title: Activity Page Size
+        description: Maximum number of activity records requested per page.
+        pattern: ^([1-9]|[1-9][0-9]|[1-4][0-9]{2}|500)$
+        default: "200"
+        order: 6
+    additionalProperties: true
+
+metadata:
+  assist: {}
+  autoImportSchema:
+    youtrack_projects: true
+    youtrack_users: true
+    youtrack_custom_fields: true
+    youtrack_project_fields: true
+    youtrack_field_values: true
+    youtrack_agiles: true
+    youtrack_sprints: true
+    youtrack_issue_keys: true
+    youtrack_issues: true
+    youtrack_activities: true
+    youtrack_work_items: true
+    youtrack_comments: true
+    youtrack_issue_links: true
+    youtrack_issue_sprints: true
+    youtrack_issue_census: true

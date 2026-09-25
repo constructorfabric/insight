@@ -1,0 +1,11 @@
+name: youtrack
+version: "1.0.0"
+schedule: 0 2 * * *
+workflow: sync
+dbt_select: tag:youtrack+
+connection:
+  namespace: bronze_youtrack
+secret:
+  required_fields:
+    - youtrack_base_url
+    - youtrack_token

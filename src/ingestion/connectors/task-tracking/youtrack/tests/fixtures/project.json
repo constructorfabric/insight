@@ -1,0 +1,8 @@
+{
+  "id": "0-1",
+  "name": "Example Project",
+  "shortName": "EX",
+  "description": "Synthetic project",
+  "archived": false,
+  "$type": "Project"
+}
