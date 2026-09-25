@@ -50,13 +50,14 @@ concurrency:
 permissions:
   contents: read
 
-# The self-hosted routing below is the same expression in every workflow; the
-# rule and what it does not close are explained in ci.yml. Only ci.yml and
-# connectors-ddl.yml have been exercised on the pool so far.
+# Routing, stated once in .github/runners/insight-vhc/README.md: a pull request
+# from a branch of this repository takes the ephemeral ARC scale set, a fork's
+# takes a GitHub-hosted runner, everything else takes the persistent pool, and
+# INSIGHT_FORCE_GITHUB_HOSTED returns all of it to hosted.
 jobs:
   e2e:
     name: e2e (8 suites)
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -64,10 +65,11 @@ jobs:
           persist-credentials: false
 
       - name: Install protoc + librdkafka build deps
-        # protobuf-compiler: grpc-hub -> prost-build. cmake + libcurl headers:
+        # protobuf-compiler: grpc-hub -> prost-build; libprotobuf-dev carries the
+        # well-known .proto files prost-build imports. cmake + libcurl headers:
         # the authenticator vendors librdkafka (audit events) via rdkafka's
         # cmake-build; librdkafka's OAUTHBEARER path needs curl/curl.h.
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler cmake libcurl4-openssl-dev
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libprotobuf-dev cmake libcurl4-openssl-dev
 
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
@@ -116,7 +118,7 @@ jobs:
     name: Authenticator endpoint coverage gate
     needs: e2e
     if: ${{ !cancelled() && needs.e2e.result != 'skipped' }}
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
     timeout-minutes: 10
     steps:
       # Checkout only for the gate script + the committed OpenAPI spec (the
