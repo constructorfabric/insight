@@ -75,7 +75,12 @@ name: jira
 # ceiling landed early and objects changing faster than that offset were never
 # collected. PATCH: collection widens, nothing needs re-deriving — the missed
 # objects arrive on the next sync and their substreams carry no date filter.
-version: "7.0.1"
+# 8.0.0 (major): self-describing events of one instant are ordered by their
+# from→to chain before the changelog id, which an imported history does not
+# keep in transition order within one second. MAJOR because rows already
+# written change `_seq` and initial state, and only the full refresh a major
+# dispatches (ADR-0015) re-derives them.
+version: "8.0.0"
 schedule: "0 3 * * *"
 workflow: sync
 # Silver routing (class_task_*) is delivered by the task-tracking Silver layer
