@@ -113,6 +113,12 @@ The hook deletes nothing else: local branches, tags, `HEAD`, the object store,
 the index and the working tree all survive, and it never fetches. A job that
 needs a remote ref is the thing that must fetch it.
 
+It also cleans only a checkout that physically sits where the path says, with a
+real `.git` directory of its own. The previous job could leave a symlink or a
+`gitdir:` redirect behind, and following one would take the deletes into a
+repository outside the work tree, so any redirected or otherwise non-standard
+git directory is skipped rather than resolved.
+
 ## Notes on what it installs
 
 - **git from the git-core PPA.** Ubuntu 24.04 ships 2.43, whose partial-clone

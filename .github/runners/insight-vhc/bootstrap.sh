@@ -126,16 +126,28 @@ for repo in "$work"/*/*; do
   # The runner's own directories (_actions, _temp, _tool, _diag, ...) sit
   # beside the workspace checkouts and their git state is not the job's.
   case "${repo#"$work"/}" in _*) continue ;; esac
+  # SAFETY: the previous job owned this tree, so nothing in it is trusted to say
+  # which repository this is. Only a checkout that physically lives at the path
+  # is cleaned: a symlinked candidate, a symlinked .git, or a `gitdir:` file
+  # would all send the deletes into a repository outside the work tree, and
+  # core.hooksPath cannot help because the redirect happens before any hook.
+  # Linked worktrees and separate gitdirs are not a shape the runner produces
+  # here, so they are refused rather than mapped.
+  [ -L "$repo" ] && continue
   [ -d "$repo" ] || continue
-  gitdir=$(git -C "$repo" rev-parse --absolute-git-dir 2>/dev/null) || continue
-  stale=$(git -C "$repo" for-each-ref --format='delete %(refname)' refs/remotes 2>/dev/null) || continue
+  [ "$(realpath -- "$repo" 2>/dev/null)" = "$repo" ] || continue
+  gitdir="$repo/.git"
+  [ -L "$gitdir" ] && continue
+  [ -d "$gitdir" ] || continue
+  [ "$(realpath -- "$gitdir" 2>/dev/null)" = "$gitdir" ] || continue
+  stale=$(git --git-dir="$gitdir" for-each-ref --format='delete %(refname)' refs/remotes 2>/dev/null) || continue
   [ -n "$stale" ] || continue
   # --no-deref: origin/HEAD is symbolic, and without it the delete follows the
   # symlink — origin/main goes instead and origin/HEAD is left dangling.
   # core.hooksPath: update-ref fires reference-transaction, and a container job
   # runs as root over this tree, so it can plant one for this hook to execute.
   if printf '%s\n' "$stale" |
-      git -c core.hooksPath=/dev/null -C "$repo" update-ref --no-deref --stdin 2>/dev/null; then
+      git -c core.hooksPath=/dev/null --git-dir="$gitdir" update-ref --no-deref --stdin 2>/dev/null; then
     echo "job-started hook: dropped $(printf '%s\n' "$stale" | wc -l) remote-tracking ref(s) in $gitdir"
   else
     echo "job-started hook: could not drop remote-tracking refs in $gitdir"
