@@ -96,9 +96,18 @@ missing binary.
 - **helm and gh from release tarballs**, not the vendors' apt repositories:
   `baltocdn.com` rejects the TLS handshake from this network. The helm digest is
   pinned here because the checksum published beside the tarball shares its host.
-- **`ACTIONS_RUNNER_HOOK_JOB_STARTED`.** A container job runs as root over the
-  mounted work tree, so one killed before its cleanup leaves root-owned paths
-  that the next job's checkout cannot remove. The hook repairs ownership on the
-  host before every job.
+- **`ACTIONS_RUNNER_HOOK_JOB_STARTED`.** These machines keep their work tree
+  between jobs, and the hook undoes what one job leaves for the next. It repairs
+  ownership — a container job runs as root over the mounted tree, so one killed
+  before its cleanup leaves root-owned paths the next checkout cannot remove —
+  and it drops every remote-tracking ref. A checkout creates `origin/<branch>`
+  only when a step fetches it and never refreshes one it finds, so a ref left
+  behind turns anything comparing against `origin/main` into a comparison with a
+  base that has fallen behind. A runner starting from an empty tree has no such
+  ref; dropping them keeps these machines equivalent. Deleting a ref fires
+  `reference-transaction`, and a container job runs as root over this tree, so
+  the delete runs with `core.hooksPath=/dev/null` — otherwise a hook planted
+  from inside a container would execute here as the runner user. The hook must
+  exit zero — the runner fails the job otherwise — so it ends with `exit 0`.
 - **Docker's data root on `/srv/gha`**, the attached volume, so image layers do
   not fill the system disk.

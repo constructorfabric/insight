@@ -113,6 +113,28 @@ if sudo find "$work" -xdev ! -user "$(id -un)" -print -quit 2>/dev/null | grep -
 else
   echo "job-started hook: $work clean"
 fi
+# A reused work tree keeps whatever remote-tracking refs an earlier job fetched,
+# and a later checkout neither refreshes nor removes them, so anything reading
+# origin/<branch> compares against a base that has fallen behind. A runner that
+# starts from an empty tree has none; drop them so this one matches.
+find "$work" -maxdepth 4 -type d -name .git -print0 2>/dev/null |
+  while IFS= read -r -d '' gitdir; do
+    dropped=0
+    # --no-deref: origin/HEAD is symbolic, and without it the delete follows the
+    # symlink — origin/main goes instead and origin/HEAD is left dangling.
+    # core.hooksPath: update-ref fires reference-transaction, and a container job
+    # runs as root over this tree, so it can plant one for this hook to execute.
+    for ref in $(git --git-dir="$gitdir" for-each-ref --format='%(refname)' refs/remotes/ 2>/dev/null); do
+      git -c core.hooksPath=/dev/null --git-dir="$gitdir" update-ref -d --no-deref "$ref" 2>/dev/null &&
+        dropped=$((dropped + 1))
+    done
+    if [ "$dropped" -gt 0 ]; then
+      echo "job-started hook: dropped $dropped remote-tracking ref(s) in $gitdir"
+    fi
+  done
+# The runner fails the job when this hook exits non-zero, so nothing above may
+# decide the exit status.
+exit 0
 HOOK
 grep -q ACTIONS_RUNNER_HOOK_JOB_STARTED /opt/actions-runner/.env 2>/dev/null || \
   echo 'ACTIONS_RUNNER_HOOK_JOB_STARTED=/usr/local/sbin/gha-job-started.sh' >> /opt/actions-runner/.env
