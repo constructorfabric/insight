@@ -31,6 +31,7 @@ const SHOWN = 200;
  * URL becomes one.
  */
 function Cell({ value, unit }: { value: unknown; unit: string }) {
+  if (value === null || value === undefined) return <>{"\u2014"}</>;
   if (unit) return <>{groupedNumber(value, unit)}</>;
 
   const text = String(value);
@@ -73,7 +74,15 @@ function Sortable({
             ? `Order by ${column}`
             : `Order by ${column}, now ${chosen}`
         }
-        onClick={() => onOrder(nextOrder(order, index))}
+        // SAFETY: the card around a widget opens the drilldown on any click
+        // or Enter inside it. Ordering the rows is not that decision.
+        onClick={(event) => {
+          event.stopPropagation();
+          onOrder(nextOrder(order, index));
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") event.stopPropagation();
+        }}
       >
         {column}
         {/* The slot is there whether or not an arrow is in it: a column that
@@ -101,8 +110,11 @@ export function CustomTable({ result }: CustomTableProps) {
           rows
         </p>
       ) : null}
-      <Table>
-        <TableHeader>
+      {/* The wrapper stays out of the scrolling: whatever holds the table
+          scrolls it, and the header sticks to that, so the columns can be
+          re-ordered from anywhere in a long result. */}
+      <Table containerClassName="overflow-visible">
+        <TableHeader className="sticky top-0 z-10 bg-card shadow-[inset_0_-1px_0_0_var(--border)] [&_tr]:border-b-0">
           <TableRow>
             <TableHead className="w-0 text-muted-foreground">#</TableHead>
             {result.columns.map((column, index) => (

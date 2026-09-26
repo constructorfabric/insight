@@ -15,6 +15,8 @@ use crate::domain::query::undated::UndatedCount;
 
 const READ_ENGINE: &str = "SELECT engine FROM system.tables
 WHERE database = if(empty(?), currentDatabase(), ?) AND name = ?";
+const READ_UUID: &str = "SELECT toString(uuid) AS uuid FROM system.tables
+WHERE database = if(empty(?), currentDatabase(), ?) AND name = ?";
 const FETCH_TIMEOUT_SECS: u64 = 30;
 const MAX_RESULT_BYTES: usize = 5 * 1024 * 1024;
 
@@ -39,6 +41,11 @@ pub(crate) struct RunResult {
 #[derive(Debug, Deserialize, clickhouse::Row)]
 struct EngineRow {
     engine: String,
+}
+
+#[derive(Debug, Deserialize, clickhouse::Row)]
+struct UuidRow {
+    uuid: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -95,6 +102,42 @@ impl MetricRunner {
         Ok(found
             .first()
             .map_or(TableEngine::Other, |row| TableEngine::parse(&row.engine)))
+    }
+
+    /// The identity the warehouse holds a table under now. A rebuild leaves
+    /// a different one under the same name, which is what a reader paging
+    /// through the table needs to notice.
+    pub(crate) async fn table_uuid(
+        &self,
+        database: Option<&str>,
+        table: &str,
+    ) -> Result<Option<String>, MetricRunError> {
+        let database = database.unwrap_or_default();
+        let rows = self
+            .client
+            .query(READ_UUID)
+            .bind(database)
+            .bind(database)
+            .bind(table)
+            .fetch_all::<UuidRow>();
+        let found = tokio::time::timeout(self.fetch_timeout, rows)
+            .await
+            .map_err(|_| MetricRunError::Timeout)??;
+
+        Ok(found.into_iter().next().map(|row| row.uuid))
+    }
+
+    /// The rows of a query as the warehouse named them, for a reader that
+    /// shapes them itself.
+    pub(crate) async fn page(
+        &self,
+        sql: &str,
+        binds: &[FilterBind],
+    ) -> Result<Vec<serde_json::Map<String, serde_json::Value>>, MetricRunError> {
+        let bytes = self.fetch(sql, binds).await?;
+        let parsed: ClickHouseJsonResult = serde_json::from_slice(&bytes)?;
+
+        Ok(parsed.data)
     }
 
     pub(crate) async fn undated(

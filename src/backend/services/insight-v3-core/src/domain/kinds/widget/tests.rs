@@ -182,3 +182,134 @@ fn a_table_drawing_every_column_it_names_is_accepted() {
 
     assert!(widget.check_against(&metric(), CLOCKLESS).is_ok());
 }
+
+/// The facts behind the figure: the same dataset's rows, not grouped, with
+/// the column a bar stands for still in them.
+fn detail() -> MetricQuery {
+    serde_json::from_value(json!({
+        "dataset": "events",
+        "fields": [
+            { "field": "day", "type": "string", "as_name": "day" },
+            { "field": "lines", "type": "int", "as_name": "lines" }
+        ]
+    }))
+    .unwrap_or_else(|error| panic!("the fixture parses: {error}"))
+}
+
+#[test]
+fn a_detail_that_carries_the_column_a_bar_stands_for_is_accepted() {
+    let drawn = widget(json!({
+        "type": "bar", "metric": "lines_per_day", "detail": "line_events",
+        "x": "day", "y": "total_lines"
+    }));
+
+    assert!(
+        drawn
+            .check_detail_against(&metric(), &detail(), CLOCKLESS)
+            .is_ok()
+    );
+}
+
+/// A reader who clicks one bar is shown that bar's rows. A detail without
+/// the bar's column has no rows to narrow to, and an empty dialog is the
+/// worst way to find that out.
+#[test]
+fn a_detail_without_the_column_a_bar_stands_for_is_refused() {
+    let drawn = widget(json!({
+        "type": "bar", "metric": "lines_per_day", "detail": "line_events",
+        "x": "author", "y": "total_lines"
+    }));
+
+    assert!(matches!(
+        drawn.check_detail_against(&metric(), &detail(), CLOCKLESS),
+        Err(WidgetError::DetailLacksColumn { ref column, ref detail, .. })
+            if column == "author" && detail == "line_events"
+    ));
+}
+
+#[test]
+fn a_stat_stands_for_no_group_so_any_detail_narrows_it() {
+    let drawn = widget(json!({
+        "type": "stat", "metric": "lines_per_day", "detail": "line_events",
+        "value": "total_lines"
+    }));
+
+    assert!(
+        drawn
+            .check_detail_against(&metric(), &detail(), CLOCKLESS)
+            .is_ok()
+    );
+}
+
+#[test]
+fn a_chart_over_time_needs_a_detail_a_window_can_bucket() {
+    let drawn = widget(json!({
+        "type": "line", "metric": "events_over_time", "detail": "line_events",
+        "x": "bucket", "y": "total_lines"
+    }));
+
+    assert!(
+        drawn
+            .check_detail_against(&metric(), &detail(), CLOCKED)
+            .is_ok()
+    );
+    assert!(matches!(
+        drawn.check_detail_against(&metric(), &detail(), CLOCKLESS),
+        Err(WidgetError::DetailLacksColumn { .. })
+    ));
+}
+
+#[test]
+fn a_widget_names_its_detail_beside_its_metric_and_once_when_they_are_one() {
+    let two = json!({ "type": "bar", "metric": "m", "detail": "d", "x": "a", "y": "b" });
+    let one = json!({ "type": "bar", "metric": "m", "detail": "m", "x": "a", "y": "b" });
+
+    assert_eq!(
+        refers_to(&two),
+        vec![
+            Reference::new(DefinitionKind::Metric, "m"),
+            Reference::new(DefinitionKind::Metric, "d"),
+        ]
+    );
+    assert_eq!(
+        refers_to(&one),
+        vec![Reference::new(DefinitionKind::Metric, "m")]
+    );
+}
+
+#[test]
+fn renaming_a_metric_follows_it_into_the_detail() {
+    let before = json!({ "type": "bar", "metric": "m", "detail": "old", "x": "a", "y": "b" });
+
+    let after = rename_reference(before, "old", "new");
+
+    assert_eq!(after["detail"], "new");
+    assert_eq!(after["metric"], "m");
+}
+
+/// A table row stands for the group its metric made, so only the grouped
+/// columns it draws have to be in the detail - never the aggregates.
+#[test]
+fn a_table_narrows_its_detail_by_the_groups_it_draws_and_not_by_its_sums() {
+    let drawn = widget(json!({
+        "type": "table", "metric": "lines_per_day", "detail": "line_events",
+        "columns": ["day", "total_lines"]
+    }));
+
+    assert!(
+        drawn
+            .check_detail_against(&metric(), &detail(), CLOCKLESS)
+            .is_ok()
+    );
+
+    let elsewhere = widget(json!({
+        "type": "table", "metric": "lines_per_day", "detail": "line_events",
+        "columns": ["author", "total_lines"]
+    }));
+    // `author` is not a group of the drawn metric, so it narrows nothing.
+    assert!(
+        elsewhere
+            .check_detail_against(&metric(), &detail(), CLOCKLESS)
+            .is_ok()
+    );
+}

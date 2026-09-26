@@ -10,6 +10,7 @@ pub(crate) mod chat;
 pub(crate) mod datasets;
 pub(crate) mod definitions;
 mod errors;
+pub(crate) mod metric_drilldown;
 pub(crate) mod metric_run;
 pub(crate) mod raw_data;
 pub(crate) mod tables;
@@ -86,6 +87,8 @@ pub(crate) struct AppState {
     identity: IdentityClient,
     datasets: Datasets,
     catalog: Catalog,
+    /// How many drilldown pages may be read at once.
+    drilldown_slots: Arc<tokio::sync::Semaphore>,
 }
 
 /// Everything about datasets this service reaches: their rows, the tables
@@ -186,7 +189,14 @@ impl AppState {
             identity,
             datasets,
             catalog,
+            drilldown_slots: Arc::new(tokio::sync::Semaphore::new(
+                metric_drilldown::MAX_CONCURRENT_PAGES,
+            )),
         }
+    }
+
+    pub(crate) fn drilldown_slots(&self) -> &Arc<tokio::sync::Semaphore> {
+        &self.drilldown_slots
     }
 
     pub(crate) fn definitions(&self) -> &dyn Definitions {
@@ -254,6 +264,10 @@ impl AppState {
             self.datasets.rows.as_ref(),
             &self.datasets.database,
         )
+    }
+
+    pub(crate) fn drilldowns(&self) -> crate::domain::drilldown::Drilldowns<'_> {
+        crate::domain::drilldown::Drilldowns::new(self.metric_runs(), &self.metrics)
     }
 }
 
@@ -339,6 +353,7 @@ pub(crate) fn register_routes(
     let api = datasets::register_routes(api, openapi, &state);
     let api = tables::register_routes(api, openapi, &state);
     let api = metric_run::register_routes(api, openapi, state.clone());
+    let api = metric_drilldown::register_routes(api, openapi, state.clone());
     let api = chat::register_routes(api, openapi, state)
         .layer(insight_log_context::LogContextLayer::new());
 

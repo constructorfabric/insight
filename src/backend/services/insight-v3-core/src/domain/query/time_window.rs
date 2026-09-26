@@ -1,7 +1,8 @@
 use chrono::{DateTime, Datelike as _, Days, Months, NaiveDate, Utc};
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) enum Grain {
     Hour,
     Day,
@@ -9,7 +10,7 @@ pub(crate) enum Grain {
     Month,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) enum Bounds {
     Unbounded,
     Finite {
@@ -23,7 +24,7 @@ pub(crate) enum Bounds {
 /// A caller who named no range gets [`Window::Unwindowed`], which is not the
 /// same as an unbounded one they did name: `inf` buckets its rows and leaves
 /// out the undated, and a maximum range refuses it.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) enum Window {
     Unwindowed,
     Requested {
