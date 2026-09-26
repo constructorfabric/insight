@@ -245,13 +245,9 @@ events AS (
         ci.insight_source_id                              AS insight_source_id,
         ci.issue_id                                       AS issue_id,
         ci.changelog_id                                   AS changelog_id,
-        -- Jira's changelog id is monotonic, and it is what breaks a tie between
-        -- two events of the same millisecond. It must be compared as a NUMBER:
-        -- as text '101' sorts before '99', which inverts a pair of events every
-        -- time the id crosses a digit-count boundary — and for an element-wise
-        -- field an inverted add/remove pair changes the resulting set. The
-        -- string form stays the event id, where it is an identifier, not an
-        -- order.
+        -- INVARIANT: the changelog id orders two events of one instant only after
+        -- `same_instant_chain`, and only as a NUMBER — as text '101' sorts before
+        -- '99'. The string form stays the event id, an identifier, not an order.
         toUInt64OrZero(ci.changelog_id)                   AS event_ord,
         ci.created_at                                     AS event_at,
         ci.author_account_id                              AS author_id,
@@ -297,6 +293,153 @@ live_events AS (
     WHERE delta_action != 'none'
       AND (field_kind IN {{ jira_element_wise_kinds() }}
            OR NOT sides_unchanged)
+),
+
+-- ── the order of self-describing events that share an instant (§5) ─────────
+-- INVARIANT: the unique from→to chain orders them, not the changelog id; a
+-- non-unique chain gives every event 0 and leaves the order to the id.
+-- MEMORY (§13): only this narrow aggregation touches every event; arrays are
+-- gathered for the tied keys alone.
+same_instant_keys AS (
+    SELECT
+        insight_source_id,
+        issue_id,
+        field_id,
+        event_at
+    FROM live_events
+    WHERE field_kind NOT IN {{ jira_element_wise_kinds() }}
+    GROUP BY insight_source_id, issue_id, field_id, event_at
+    HAVING min(event_ord) != max(event_ord)
+),
+
+same_instant_groups AS (
+    SELECT
+        insight_source_id,
+        issue_id,
+        field_id,
+        arraySort(x -> x.1, groupUniqArray((event_ord, changelog_id, sides.1, sides.3))) AS evs,
+        uniqExact(changelog_id)                           AS distinct_changelog_ids
+    FROM live_events
+    WHERE field_kind NOT IN {{ jira_element_wise_kinds() }}
+      AND (insight_source_id, issue_id, field_id, event_at)
+          IN (SELECT insight_source_id, issue_id, field_id, event_at FROM same_instant_keys)
+    GROUP BY insight_source_id, issue_id, field_id, event_at
+),
+
+same_instant_shape AS (
+    SELECT
+        insight_source_id,
+        issue_id,
+        field_id,
+        evs,
+        length(evs)                                       AS n,
+        length(evs) > distinct_changelog_ids              AS ambiguous_changelog,
+        arrayMap(x -> x.3, evs)                           AS befores,
+        arrayMap(x -> x.4, evs)                           AS afters
+    FROM same_instant_groups
+),
+
+same_instant_links AS (
+    SELECT
+        insight_source_id,
+        issue_id,
+        field_id,
+        evs,
+        n,
+        ambiguous_changelog,
+        befores,
+        afters,
+        arrayMap(i -> indexOf(befores, afters[i]), range(1, n + 1)) AS nexts
+    FROM same_instant_shape
+),
+
+same_instant_heads AS (
+    SELECT
+        insight_source_id,
+        issue_id,
+        field_id,
+        evs,
+        n,
+        ambiguous_changelog,
+        befores,
+        afters,
+        nexts,
+        arrayFilter(i -> NOT has(nexts, i), range(1, n + 1)) AS heads
+    FROM same_instant_links
+),
+
+same_instant_walks AS (
+    SELECT
+        insight_source_id,
+        issue_id,
+        field_id,
+        evs,
+        n,
+        -- INVARIANT: a walk that leaves the chain yields index 0, which
+        -- `same_instant_chain` rejects.
+        if(NOT ambiguous_changelog
+             AND length(arrayDistinct(befores)) = n
+             AND length(arrayDistinct(afters)) = n
+             AND NOT arrayExists(i -> nexts[i] = i, range(1, n + 1))
+             AND length(heads) = 1,
+           arrayFold((acc, k) -> arrayPushBack(acc, nexts[acc[-1]]),
+                     range(1, n), [heads[1]]),
+           CAST([] AS Array(UInt64)))                     AS walk
+    FROM same_instant_heads
+),
+
+same_instant_chain AS (
+    SELECT
+        insight_source_id,
+        issue_id,
+        field_id,
+        position.1                                        AS changelog_id,
+        any(position.2)                                   AS chain_pos
+    FROM (
+        -- INVARIANT: the arrayJoin stays alone in its own SELECT list. Reading
+        -- its elements beside it re-evaluates it per reference.
+        SELECT
+            insight_source_id,
+            issue_id,
+            field_id,
+            arrayJoin(arrayMap(i -> ((evs[i]).2,
+                                     toUInt32(if(length(arrayDistinct(walk)) = n AND NOT has(walk, 0),
+                                                 indexOf(walk, i) - 1, 0))),
+                               range(1, n + 1)))          AS position
+        FROM same_instant_walks
+    )
+    -- INVARIANT: a changelog id repeated in a group makes it ambiguous, so its
+    -- rows all carry 0 and `any()` picks no winner.
+    GROUP BY insight_source_id, issue_id, field_id, changelog_id
+),
+
+-- INVARIANT: a scalar, not a CTE: evaluated once per query, while a CTE is
+-- recomputed at every reference of `ordered_events`.
+(SELECT groupArray((insight_source_id, issue_id, field_id, changelog_id, chain_pos)) FROM same_instant_chain) AS same_instant_positions,
+
+ordered_events AS (
+    SELECT
+        e.*,
+        COALESCE(p.chain_pos, toUInt32(0))                AS chain_pos
+    FROM live_events AS e
+    LEFT JOIN (
+        SELECT
+            position.1                                    AS insight_source_id,
+            position.2                                    AS issue_id,
+            position.3                                    AS field_id,
+            position.4                                    AS changelog_id,
+            position.5                                    AS chain_pos
+        FROM (
+            -- INVARIANT: the arrayJoin stays alone in its own SELECT list. Reading
+            -- its elements beside it re-evaluates it per reference.
+            SELECT arrayJoin(same_instant_positions) AS position
+        )
+    ) AS p
+        ON p.insight_source_id = e.insight_source_id
+       AND p.issue_id = e.issue_id
+       AND p.field_id = e.field_id
+       AND p.changelog_id = e.changelog_id
+    WHERE e.field_kind NOT IN {{ jira_element_wise_kinds() }}
 ),
 
 -- ── fields the catalogue does not contain ───────────────────────────────────
@@ -687,12 +830,11 @@ newest_from_events AS (
             e.insight_source_id                            AS src,
             e.issue_id                                     AS iss,
             e.field_id                                     AS fid,
-            (e.event_at, e.event_ord)                      AS ord,
+            (e.event_at, e.chain_pos, e.event_ord)         AS ord,
             length(e.sides.3) > 0                          AS holds,
             {{ jira_value_set_digest('e.sides.3') }}       AS ids_d,
             {{ jira_value_set_digest('e.sides.4') }}       AS displays_d
-        FROM live_events AS e
-        WHERE e.field_kind NOT IN {{ jira_element_wise_kinds() }}
+        FROM ordered_events AS e
 
         UNION ALL
 
@@ -700,7 +842,7 @@ newest_from_events AS (
             a.insight_source_id,
             a.issue_id,
             a.field_id,
-            (a.event_at, a.ops_seq),
+            (a.event_at, toUInt32(0), toUInt64(a.ops_seq)),
             length(a.state_pairs) > 0,
             {{ jira_value_set_digest("arrayMap(x -> splitByChar('\\x1f', x)[1], a.state_pairs)") }},
             {{ jira_value_set_digest("arrayMap(x -> splitByChar('\\x1f', x)[2], a.state_pairs)") }}
@@ -825,14 +967,13 @@ initial_state AS (
         -- fields with at least one event: the earliest event's `before` side
         SELECT
             e.insight_source_id                            AS insight_source_id,
-            e.issue_id                                  AS issue_id,
+            e.issue_id                                     AS issue_id,
             e.field_id                                     AS field_id,
-            argMin(e.field_name, (e.event_at, e.event_ord))  AS field_name,
-            argMin(e.field_kind, (e.event_at, e.event_ord))  AS field_kind,
-            argMin(e.sides.1, (e.event_at, e.event_ord))     AS value_ids,
-            argMin(e.sides.2, (e.event_at, e.event_ord))     AS value_displays
-        FROM live_events AS e
-        WHERE e.field_kind NOT IN {{ jira_element_wise_kinds() }}
+            argMin(e.field_name, (e.event_at, e.chain_pos, e.event_ord))  AS field_name,
+            argMin(e.field_kind, (e.event_at, e.chain_pos, e.event_ord))  AS field_kind,
+            argMin(e.sides.1, (e.event_at, e.chain_pos, e.event_ord))     AS value_ids,
+            argMin(e.sides.2, (e.event_at, e.chain_pos, e.event_ord))     AS value_displays
+        FROM ordered_events AS e
         GROUP BY e.insight_source_id, e.issue_id, e.field_id
 
         UNION ALL
@@ -924,7 +1065,7 @@ SELECT
     e.changelog_id                                        AS event_id,
     e.event_at,
     CAST('changelog' AS String)                           AS event_kind,
-    toUInt32(0)                                           AS _seq,
+    e.chain_pos                                           AS _seq,
     e.author_id,
     e.field_id,
     e.field_name,
@@ -936,11 +1077,10 @@ SELECT
     CAST({{ jira_distinct_arrays_by_id('e.sides.3', 'e.sides.4', 'displays') }} AS Array(String)) AS value_displays,
     {{ jira_field_id_type('e.field_kind') }}              AS value_id_type,
     now64(3)                                              AS collected_at
-FROM live_events AS e
+FROM ordered_events AS e
 LEFT JOIN issues AS i
     ON i.insight_source_id = e.insight_source_id
    AND i.issue_id = e.issue_id
-WHERE e.field_kind NOT IN {{ jira_element_wise_kinds() }}
 
 UNION ALL
 

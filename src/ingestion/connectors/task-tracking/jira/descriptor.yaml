@@ -82,7 +82,12 @@ name: jira
 # journal recomputes only issues with new input, and the class admits only rows
 # above its newest version, so only the full refresh a major dispatches
 # (ADR-0015) re-derives them.
-version: "8.0.0"
+# 9.0.0 (major): self-describing events of one instant are ordered by their
+# from→to chain before the changelog id, which an imported history does not
+# keep in transition order within one second. MAJOR because rows already
+# written change `_seq` and initial state, and only the full refresh a major
+# dispatches (ADR-0015) re-derives them.
+version: "9.0.0"
 schedule: "0 3 * * *"
 workflow: sync
 # Silver routing (class_task_*) is delivered by the task-tracking Silver layer
