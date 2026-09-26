@@ -96,22 +96,33 @@ kubectl apply -f src/ingestion/secrets/connectors/bitbucket-cloud.yaml
 | `commits` | proxy `/v1/commits` | incremental, per repository | `committed_date` |
 | `file_changes` | proxy `/v1/file-changes` | incremental, per repository | `committed_date` |
 | `branches` | proxy `/v1/branches` | full refresh, per repository | — |
-| `pull_requests` | Bitbucket `/pullrequests` (all states) | incremental | `updated_on` |
+| `pull_requests` | Bitbucket `/pullrequests` (all states) | incremental, per repository pushed to | `updated_on` |
 | `pull_request_comments` | `/pullrequests/{id}/comments` | windowed PR parent, full refresh per PR | — |
 | `pull_request_commits` | `/pullrequests/{id}/commits` | windowed PR parent, full refresh per PR | — |
 | `pull_request_diffstat` | `/pullrequests/{id}/diffstat` | windowed PR parent, full refresh per PR | — |
 | `pull_request_activity` | `/pullrequests/{id}/activity` | windowed PR parent, full refresh per PR | — |
 | `workspace_members` | `/workspaces/{w}/members` | full refresh | — |
-| `pipelines` | `/repositories/{r}/pipelines` | newest-first data feed | `created_on` |
-| `deployments` | `/repositories/{r}/deployments` | newest-first data feed | `created_on` |
+| `pipelines` | `/repositories/{r}/pipelines` | newest-first data feed, per repository pushed to | `created_on` |
+| `deployments` | `/repositories/{r}/deployments` | newest-first data feed, per repository pushed to | `created_on` |
 
 ### How the streams fit together
 
 `repositories` fans out over the configured workspaces (`ListPartitionRouter`)
-and is the incremental **parent**: the commit streams route through
-`SubstreamPartitionRouter` with `incremental_dependency: true`, so a sync visits
-only repositories whose `updated_on` advanced. The CDK persists parent state
-only when the child stream is incremental — `commits` and `file_changes` are.
+and is the incremental **parent**: every per-repository stream routes through
+`SubstreamPartitionRouter`, and every one but `branches` sets
+`incremental_dependency: true`, so a sync visits only repositories whose
+`updated_on` advanced since one lookback window before the last sync. The CDK
+persists parent state only when the child stream is incremental — `branches`
+is not, so its listing is bounded by the start date and every repository is
+re-read for heads each sync.
+
+The vendor moves a repository's `updated_on` on pushes only. For commits, file
+changes and commit authors that bound is exact. For pull requests, pipelines
+and deployments it is the accepted cost of not listing every repository every
+sync: a pull request reviewed, commented on or declined, or a pipeline started
+by a schedule or by hand, on a repository nobody pushed to since the last sync
+is collected at that repository's next push. Whatever the size of the
+workspace, a sync spends one listing request per repository pushed to.
 
 The proxy routes on a **flat** `clone_url` field, but Bitbucket nests clone
 links in an array (`links.clone[]`, one entry per protocol). Every repositories
@@ -122,26 +133,31 @@ transformation. The API link is used rather than a URL derived from
 The streams are otherwise independent: each carries its own cursor and asks the
 proxy for its own window. They join downstream by `sha`.
 
-`pull_requests` takes `repositories` as its parent by reference, and the four
-pull-request children take `pull_requests` the same way: one definition per
-listing, no copies. The CDK caches parent-stream responses per stream name and
-URL for the life of the sync, so `pull_requests` and its four children share one
-read of the repository listing (the top-level `repositories` stream reads its own
-incremental window) and each repository's pull requests are listed once for all
-five. One blocking stream group per level runs
-`repositories`, then `pull_requests`, then the children one at a time, so every
-read after the first is a cache hit rather than a race to the vendor. Each child
+Every stream that fans out over repositories takes `repositories` as its
+parent by reference, and the four pull-request children take `pull_requests`
+the same way: one definition per listing, no copies. The CDK caches
+parent-stream responses per stream name and URL for the life of the sync, so
+a stream that asks for a listing another stream already fetched reads it from
+the cache. One blocking stream group per level runs `repositories`, then
+`pull_requests`, then the four children one at a time, so on that chain every
+read after the first is a cache hit rather than a race to the vendor. The proxy
+walks, pipelines and deployments start together once `repositories` is done:
+their reads share the cache where they do not overlap and read the vendor
+where they do. `branches` is the exception to the shared read: full refresh,
+it persists no cursor, so its copy of the listing opens at the start date and
+reads the vendor on its own. Each child
 still keeps its own copy of the listing's cursor in its state; when two
 children's cursors for a repository differ (one of them lagged), their URLs
 differ, both read the vendor, and nothing is shared or lost. The listing request
 reads no clock for the same reason: its window opens at the cursor and has no
-upper bound, so the five streams, which start hours apart, build the same URL.
+upper bound, so `pull_requests` and its four children, which start hours apart,
+build the same URL.
 The cursor is per repository, so a walk is one repository's few pages and the
 one-day lookback covers a request updated while they are served. Past the CDK's
 10,000-partition ceiling the cursor collapses to one global value: a walk becomes
 the whole sync, the CDK widens the next window by the previous sync's runtime on
-top of the lookback, and since each stream measures its own runtime the five
-URLs stop matching. Sharing is a per-repository-cursor property.
+top of the lookback, and since each stream measures its own runtime their URLs
+stop matching. Sharing is a per-repository-cursor property.
 
 `branches` is full refresh — bronze keeps the latest state per branch, and
 head-movement history is derived by the `snapshot` / `fields_history` dbt
@@ -156,7 +172,7 @@ collapses to current state and a head move is a tracked-column change.
 - **`fields=`** trims the response to the used properties; the full repository
   object is large and most of it is unused here.
 - **The "updated after" bound is server-side**, expressed as
-  `q=updated_on >= start_date` (the `repos_since_start` anchor). It has to be:
+  `q=updated_on >= <bound>` (the `repos_since_cursor` anchor). It has to be:
   a cursor's `start_datetime` filters no records unless the stream also sets
   `is_client_side_incremental`, and none of these do. The listing is requested
   `sort=created_on` with a `created_on > <last seen>` bound in `q` instead of
@@ -187,7 +203,7 @@ forms so an omission is visible:
 
 | anchor | applies to | form |
 |---|---|---|
-| `repos_since_start` | `repositories` (also the parent of every pull-request stream) and the repository listings of the branch, pipeline and deployment walks | `q=updated_on >= start_date`, server-side |
+| `repos_since_cursor` | `repositories`, the parent of every stream that fans out over repositories | `q=updated_on >= <the reading stream's saved cursor, one lookback back; the start date where it saved none>`, server-side |
 | `prs_since_start` | `pull_requests`, the parent of the four per-PR children | `q=updated_on >= <the stream's own cursor>` |
 
 Filtering repositories server-side is what bounds the clone cost: an untouched

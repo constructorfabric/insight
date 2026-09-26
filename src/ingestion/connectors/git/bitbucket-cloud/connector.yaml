@@ -10,10 +10,10 @@ type: DeclarativeSource
 # `url_base` is a per-requester property, so mixing them needs no special
 # machinery.
 #
-# Shared pieces are YAML anchors. The pull-request children and pull_requests
-# take their parents by `$ref` to the top-level streams: one definition, and
-# one cached vendor read per listing for every stream that hangs off it. The
-# proxy walks still carry inlined repository parents, each bounded differently.
+# Shared pieces are YAML anchors. Every stream that fans out over repositories
+# takes `repositories` as its parent by `$ref`, and the pull-request children
+# take `pull_requests` the same way: one definition per listing, and one cached
+# vendor read per listing for every stream that hangs off it.
 #
 #   repositories     -> Bitbucket /2.0/repositories/{ws} incremental (updated_on)
 #   commits          -> proxy /v1/commits              incremental (committed_date), per repo
@@ -47,16 +47,11 @@ definitions:
   # created_on (see repository_keyset_paginator). Strict `>`: two repositories
   # created in the same microsecond that straddle a page boundary lose the
   # second; `>=` would loop on a page of ties. Accepted.
-  repos_since_start: &repos_since_start
-    pagelen: "100"
-    sort: created_on
-    q: >-
-      updated_on >= "{{ config['bitbucket_start_date'] }}"
-      AND created_on > "{{ next_page_token['next_page_token'] if next_page_token else '1970-01-01T00:00:00+00:00' }}"
-
-  # The same listing bounded by the stream's own cursor instead of the start
-  # date: a parent that carries state visits only the repositories touched
-  # since the last sync (one lookback window earlier, see the parent).
+  #
+  # Bounded by the reading stream's own cursor, one lookback window earlier
+  # (see the parent): a stream that carries state visits only the repositories
+  # touched since the last sync, and one that carries none opens at the start
+  # date.
   repos_since_cursor: &repos_since_cursor
     pagelen: "100"
     sort: created_on
@@ -381,13 +376,14 @@ streams:
             {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
         path: "/repositories/{{ stream_partition.workspace }}"
         http_method: GET
-        # INVARIANT: this stream is the parent of pull_requests and, through it,
-        # of the four pull-request children (`$ref`), so its response cache is
-        # what makes those listings one vendor read. The CDK enables the cache
-        # only on a direct parent; the nested copies need it stated here.
+        # INVARIANT: this stream is the parent of every per-repository stream
+        # (`$ref`) and, through pull_requests, of its four children, so its
+        # response cache is what makes those listings one vendor read where
+        # their cursors coincide. Every copy shares this name and so one cache
+        # file; the proxy walks start together and write it concurrently.
         use_cache: true
         request_parameters:
-          <<: *repos_since_start
+          <<: *repos_since_cursor
           # Trim the payload: the full repository object is large and only
           # these fields are used (identity, cursor, clone link).
           fields: >-
@@ -402,10 +398,15 @@ streams:
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: updated_on
-      datetime_format: "%Y-%m-%dT%H:%M:%S.%f%z"
+      # The form the bound reaches the vendor in; `%z` would render an offset
+      # without a colon, which is not the ISO 8601 form the vendor documents.
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
       cursor_datetime_formats:
         - "%Y-%m-%dT%H:%M:%S.%f%z"
         - "%Y-%m-%dT%H:%M:%S%z"
+      # A push lands on the vendor a little after the commit it carries, and
+      # the listing is bounded by the vendor's clock.
+      lookback_window: P1D
       start_datetime:
         type: MinMaxDatetime
         datetime: "{{ config['bitbucket_start_date'] }}"
@@ -671,78 +672,8 @@ streams:
             # touched since the last sync are visited. The CDK persists parent
             # state ONLY when the child is incremental — which this stream is.
             incremental_dependency: true
-            # Inlined: the Builder strict validator rejects a whole-object
-            # $ref for a substream parent.
             stream:
-              type: DeclarativeStream
-              name: repositories_for_commits
-              primary_key:
-                - uuid
-              schema_loader:
-                type: InlineSchemaLoader
-                schema:
-                  type: object
-                  $schema: http://json-schema.org/schema#
-                  properties:
-                    uuid: {type: [string, "null"]}
-                    clone_url: {type: [string, "null"]}
-                    size: {type: [integer, "null"]}
-                    updated_on: {type: [string, "null"]}
-                  additionalProperties: true
-              retriever:
-                type: SimpleRetriever
-                requester:
-                  type: HttpRequester
-                  url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
-                  authenticator:
-                    type: ApiKeyAuthenticator
-                    inject_into:
-                      type: RequestOption
-                      inject_into: header
-                      field_name: Authorization
-                    # Personal API tokens are Basic username:token; workspace, project
-                    # and repository access tokens are Bearer and leave it empty.
-                    api_token: >-
-                      {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
-                  path: "/repositories/{{ stream_partition.workspace }}"
-                  http_method: GET
-                  request_parameters:
-                    <<: *repos_since_cursor
-                    fields: >-
-                      next,values.uuid,values.slug,values.updated_on,values.links.clone,values.created_on
-                  error_handler: *discovery_error_handler
-                record_selector: *repos_selector
-                paginator: *repository_keyset_paginator
-                partition_router:
-                  # INSIDE `retriever`: at stream level the CDK silently
-                  # ignores it — one empty partition, an empty workspace in
-                  # the path, and a 410 from the deprecated global listing.
-                  type: ListPartitionRouter
-                  values: "{{ config['bitbucket_workspaces'] }}"
-                  cursor_field: workspace
-              incremental_sync:
-                type: DatetimeBasedCursor
-                cursor_field: updated_on
-                datetime_format: "%Y-%m-%dT%H:%M:%SZ"
-                cursor_datetime_formats:
-                  - "%Y-%m-%dT%H:%M:%S.%f%z"
-                  - "%Y-%m-%dT%H:%M:%S%z"
-                # A push lands on the vendor a little after the commit it
-                # carries, and the listing is bounded by the vendor's clock.
-                lookback_window: P1D
-                start_datetime:
-                  type: MinMaxDatetime
-                  datetime: "{{ config['bitbucket_start_date'] }}"
-                  datetime_format: "%Y-%m-%d"
-              transformations:
-                - type: AddFields
-                  fields:
-                    - type: AddedFieldDefinition
-                      path: [clone_url]
-                      value: >-
-                        {%- set href = record['links']['clone'] | selectattr('name', 'equalto', 'https') | map(attribute='href') | list | first -%}
-                        {%- set authority, path = href.split('//', 1)[1].split('/', 1) -%}
-                        {{ 'https://' ~ authority.split('@')[-1] ~ '/' ~ path }}
+              $ref: "#/streams/0"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: committed_date
@@ -871,75 +802,7 @@ streams:
               - [size]
             incremental_dependency: true
             stream:
-              type: DeclarativeStream
-              name: repositories_for_files
-              primary_key:
-                - uuid
-              schema_loader:
-                type: InlineSchemaLoader
-                schema:
-                  type: object
-                  $schema: http://json-schema.org/schema#
-                  properties:
-                    uuid: {type: [string, "null"]}
-                    clone_url: {type: [string, "null"]}
-                    size: {type: [integer, "null"]}
-                    updated_on: {type: [string, "null"]}
-                  additionalProperties: true
-              retriever:
-                type: SimpleRetriever
-                requester:
-                  type: HttpRequester
-                  url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
-                  authenticator:
-                    type: ApiKeyAuthenticator
-                    inject_into:
-                      type: RequestOption
-                      inject_into: header
-                      field_name: Authorization
-                    # Personal API tokens are Basic username:token; workspace, project
-                    # and repository access tokens are Bearer and leave it empty.
-                    api_token: >-
-                      {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
-                  path: "/repositories/{{ stream_partition.workspace }}"
-                  http_method: GET
-                  request_parameters:
-                    <<: *repos_since_cursor
-                    fields: >-
-                      next,values.uuid,values.slug,values.updated_on,values.links.clone,values.created_on
-                  error_handler: *discovery_error_handler
-                record_selector: *repos_selector
-                paginator: *repository_keyset_paginator
-                partition_router:
-                  # INSIDE `retriever`: at stream level the CDK silently
-                  # ignores it — one empty partition, an empty workspace in
-                  # the path, and a 410 from the deprecated global listing.
-                  type: ListPartitionRouter
-                  values: "{{ config['bitbucket_workspaces'] }}"
-                  cursor_field: workspace
-              incremental_sync:
-                type: DatetimeBasedCursor
-                cursor_field: updated_on
-                datetime_format: "%Y-%m-%dT%H:%M:%SZ"
-                cursor_datetime_formats:
-                  - "%Y-%m-%dT%H:%M:%S.%f%z"
-                  - "%Y-%m-%dT%H:%M:%S%z"
-                # A push lands on the vendor a little after the commit it
-                # carries, and the listing is bounded by the vendor's clock.
-                lookback_window: P1D
-                start_datetime:
-                  type: MinMaxDatetime
-                  datetime: "{{ config['bitbucket_start_date'] }}"
-                  datetime_format: "%Y-%m-%d"
-              transformations:
-                - type: AddFields
-                  fields:
-                    - type: AddedFieldDefinition
-                      path: [clone_url]
-                      value: >-
-                        {%- set href = record['links']['clone'] | selectattr('name', 'equalto', 'https') | map(attribute='href') | list | first -%}
-                        {%- set authority, path = href.split('//', 1)[1].split('/', 1) -%}
-                        {{ 'https://' ~ authority.split('@')[-1] ~ '/' ~ path }}
+              $ref: "#/streams/0"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: committed_date
@@ -1047,63 +910,11 @@ streams:
             extra_fields:
               - [size]
             # No `incremental_dependency` here: this stream is full refresh, so
-            # the CDK would not persist parent state anyway. Branch heads are
-            # cheap and must be re-read for every repository each sync.
+            # the CDK persists no parent state and the listing opens at the
+            # start date every sync. Branch heads are cheap and must be re-read
+            # for every repository each sync.
             stream:
-              type: DeclarativeStream
-              name: repositories_for_branches
-              primary_key:
-                - uuid
-              schema_loader:
-                type: InlineSchemaLoader
-                schema:
-                  type: object
-                  $schema: http://json-schema.org/schema#
-                  properties:
-                    uuid: {type: [string, "null"]}
-                    clone_url: {type: [string, "null"]}
-                    size: {type: [integer, "null"]}
-                  additionalProperties: true
-              retriever:
-                type: SimpleRetriever
-                requester:
-                  type: HttpRequester
-                  url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
-                  authenticator:
-                    type: ApiKeyAuthenticator
-                    inject_into:
-                      type: RequestOption
-                      inject_into: header
-                      field_name: Authorization
-                    # Personal API tokens are Basic username:token; workspace, project
-                    # and repository access tokens are Bearer and leave it empty.
-                    api_token: >-
-                      {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
-                  path: "/repositories/{{ stream_partition.workspace }}"
-                  http_method: GET
-                  request_parameters:
-                    <<: *repos_since_start
-                    fields: >-
-                      next,values.uuid,values.slug,values.links.clone,values.created_on
-                  error_handler: *discovery_error_handler
-                record_selector: *repos_selector
-                paginator: *repository_keyset_paginator
-                partition_router:
-                  # INSIDE `retriever`: at stream level the CDK silently
-                  # ignores it — one empty partition, an empty workspace in
-                  # the path, and a 410 from the deprecated global listing.
-                  type: ListPartitionRouter
-                  values: "{{ config['bitbucket_workspaces'] }}"
-                  cursor_field: workspace
-              transformations:
-                - type: AddFields
-                  fields:
-                    - type: AddedFieldDefinition
-                      path: [clone_url]
-                      value: >-
-                        {%- set href = record['links']['clone'] | selectattr('name', 'equalto', 'https') | map(attribute='href') | list | first -%}
-                        {%- set authority, path = href.split('//', 1)[1].split('/', 1) -%}
-                        {{ 'https://' ~ authority.split('@')[-1] ~ '/' ~ path }}
+              $ref: "#/streams/0"
     transformations:
       - type: AddFields
         fields:
@@ -1214,6 +1025,11 @@ streams:
           - type: ParentStreamConfig
             parent_key: full_name
             partition_field: repo_full_name
+            # The repository cursor persists in this stream's state, so a sync
+            # lists the requests of the repositories pushed to since the last
+            # one. A request touched without a push — a review, a comment, a
+            # decline — on a repository nobody pushed to waits for its next push.
+            incremental_dependency: true
             stream:
               $ref: "#/streams/0"
     incremental_sync:
@@ -2413,48 +2229,13 @@ streams:
           - type: ParentStreamConfig
             parent_key: full_name
             partition_field: repo_full_name
+            # The repository cursor persists in this stream's state, so a sync
+            # lists the repositories pushed to since the last one. A run started
+            # by a schedule or by hand on a repository nobody pushed to waits
+            # for its next push.
+            incremental_dependency: true
             stream:
-              type: DeclarativeStream
-              name: repositories_for_pipelines
-              primary_key:
-                - uuid
-              schema_loader:
-                type: InlineSchemaLoader
-                schema:
-                  type: object
-                  $schema: http://json-schema.org/schema#
-                  properties:
-                    uuid: {type: [string, "null"]}
-                    full_name: {type: [string, "null"]}
-                    updated_on: {type: [string, "null"]}
-                  additionalProperties: true
-              retriever:
-                type: SimpleRetriever
-                requester:
-                  type: HttpRequester
-                  url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
-                  authenticator:
-                    type: ApiKeyAuthenticator
-                    inject_into:
-                      type: RequestOption
-                      inject_into: header
-                      field_name: Authorization
-                    # Personal API tokens are Basic username:token; workspace, project
-                    # and repository access tokens are Bearer and leave it empty.
-                    api_token: >-
-                      {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
-                  path: "/repositories/{{ stream_partition.workspace }}"
-                  http_method: GET
-                  request_parameters:
-                    <<: *repos_since_start
-                    fields: next,values.uuid,values.slug,values.full_name,values.updated_on,values.created_on
-                  error_handler: *discovery_error_handler
-                record_selector: *repos_selector
-                paginator: *repository_keyset_paginator
-                partition_router:
-                  type: ListPartitionRouter
-                  values: "{{ config['bitbucket_workspaces'] }}"
-                  cursor_field: workspace
+              $ref: "#/streams/0"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: created_on
@@ -2654,48 +2435,13 @@ streams:
           - type: ParentStreamConfig
             parent_key: full_name
             partition_field: repo_full_name
+            # The repository cursor persists in this stream's state, so a sync
+            # lists the repositories pushed to since the last one. A run started
+            # by a schedule or by hand on a repository nobody pushed to waits
+            # for its next push.
+            incremental_dependency: true
             stream:
-              type: DeclarativeStream
-              name: repositories_for_deployments
-              primary_key:
-                - uuid
-              schema_loader:
-                type: InlineSchemaLoader
-                schema:
-                  type: object
-                  $schema: http://json-schema.org/schema#
-                  properties:
-                    uuid: {type: [string, "null"]}
-                    full_name: {type: [string, "null"]}
-                    updated_on: {type: [string, "null"]}
-                  additionalProperties: true
-              retriever:
-                type: SimpleRetriever
-                requester:
-                  type: HttpRequester
-                  url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
-                  authenticator:
-                    type: ApiKeyAuthenticator
-                    inject_into:
-                      type: RequestOption
-                      inject_into: header
-                      field_name: Authorization
-                    # Personal API tokens are Basic username:token; workspace, project
-                    # and repository access tokens are Bearer and leave it empty.
-                    api_token: >-
-                      {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
-                  path: "/repositories/{{ stream_partition.workspace }}"
-                  http_method: GET
-                  request_parameters:
-                    <<: *repos_since_start
-                    fields: next,values.uuid,values.slug,values.full_name,values.updated_on,values.created_on
-                  error_handler: *discovery_error_handler
-                record_selector: *repos_selector
-                paginator: *repository_keyset_paginator
-                partition_router:
-                  type: ListPartitionRouter
-                  values: "{{ config['bitbucket_workspaces'] }}"
-                  cursor_field: workspace
+              $ref: "#/streams/0"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: created_on
@@ -2929,74 +2675,7 @@ streams:
                         - [size]
                       incremental_dependency: true
                       stream:
-                        type: DeclarativeStream
-                        name: repositories_for_authors
-                        primary_key:
-                          - uuid
-                        schema_loader:
-                          type: InlineSchemaLoader
-                          schema:
-                            type: object
-                            $schema: http://json-schema.org/schema#
-                            properties:
-                              uuid: {type: [string, "null"]}
-                              clone_url: {type: [string, "null"]}
-                              size: {type: [integer, "null"]}
-                              full_name: {type: [string, "null"]}
-                              updated_on: {type: [string, "null"]}
-                            additionalProperties: true
-                        retriever:
-                          type: SimpleRetriever
-                          requester:
-                            type: HttpRequester
-                            url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
-                            authenticator:
-                              type: ApiKeyAuthenticator
-                              inject_into:
-                                type: RequestOption
-                                inject_into: header
-                                field_name: Authorization
-                              api_token: >-
-                                {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
-                            path: "/repositories/{{ stream_partition.workspace }}"
-                            http_method: GET
-                            request_parameters:
-                              <<: *repos_since_cursor
-                              fields: >-
-                                next,values.uuid,values.slug,values.full_name,values.updated_on,values.links.clone,values.created_on
-                            error_handler: *discovery_error_handler
-                          record_selector: *repos_selector
-                          paginator: *repository_keyset_paginator
-                          partition_router:
-                            # INSIDE `retriever`, as in the sibling repository
-                            # parents: at stream level the CDK ignores it.
-                            type: ListPartitionRouter
-                            values: "{{ config['bitbucket_workspaces'] }}"
-                            cursor_field: workspace
-                        incremental_sync:
-                          type: DatetimeBasedCursor
-                          cursor_field: updated_on
-                          datetime_format: "%Y-%m-%dT%H:%M:%SZ"
-                          cursor_datetime_formats:
-                            - "%Y-%m-%dT%H:%M:%S.%f%z"
-                            - "%Y-%m-%dT%H:%M:%S%z"
-                          # A push lands on the vendor a little after the commit
-                          # it carries, and the listing is bounded by the
-                          # vendor's clock.
-                          lookback_window: P1D
-                          start_datetime:
-                            type: MinMaxDatetime
-                            datetime: "{{ config['bitbucket_start_date'] }}"
-                            datetime_format: "%Y-%m-%d"
-                        transformations:
-                          - type: AddFields
-                            fields:
-                              - type: AddedFieldDefinition
-                                path: [clone_url]
-                                value: >-
-                                  {%- set href = record['links']['clone'] | selectattr('name', 'equalto', 'https') | map(attribute='href') | list | first -%}
-                                  {%- set authority, path = href.split('//', 1)[1].split('/', 1) -%}
-                                  {{ 'https://' ~ authority.split('@')[-1] ~ '/' ~ path }}
+                        $ref: "#/streams/0"
               incremental_sync:
                 type: DatetimeBasedCursor
                 cursor_field: last_committed_date
@@ -3008,12 +2687,13 @@ streams:
                 # stream: a `since` past now yields no slice on every later sync. Bounding
                 # records client-side drops such a row before the cursor observes it.
                 is_client_side_incremental: true
-                # An author's last commit can predate its push by days, and another
-                # author's push moves `since` past it in the meantime. Re-listing one
-                # window each sync recovers them; bronze dedups the re-read rows. Every
-                # author listed costs one vendor lookup per repository, so the window
-                # is as short as a late push allows.
-                lookback_window: "P7D"
+                # An author's last commit can predate its push, and another author's
+                # push moves `since` past it in the meantime. Re-listing one window
+                # each sync recovers them; bronze dedups the re-read rows. Every author
+                # listed costs one vendor lookup per repository, so the window is the
+                # commits stream's own: a commit pushed later than that never reaches
+                # bronze, and its author is nobody's claim to make.
+                lookback_window: "P1D"
                 # An author already resolved keeps their claim, so a later sync
                 # only needs the ones who have committed since — which is what
                 # keeps this O(active authors) rather than O(authors).
