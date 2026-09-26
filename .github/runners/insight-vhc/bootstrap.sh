@@ -113,6 +113,49 @@ if sudo find "$work" -xdev ! -user "$(id -un)" -print -quit 2>/dev/null | grep -
 else
   echo "job-started hook: $work clean"
 fi
+
+# The work tree survives the job that made it, and with it the remote-tracking
+# refs whatever ran last happened to fetch. A lane that reads origin/<branch>
+# would resolve one this job never asked for, so drop them all and leave the
+# rest of the repository alone: a job that needs a remote ref fetches it.
+# INVARIANT: this runs after the ownership repair above — git refuses a
+# repository it sees as owned by someone else, so a root-owned .git would be
+# skipped here and keep its stale refs.
+shopt -s nullglob
+for repo in "$work"/*/*; do
+  # The runner's own directories (_actions, _temp, _tool, _diag, ...) sit
+  # beside the workspace checkouts and their git state is not the job's.
+  case "${repo#"$work"/}" in _*) continue ;; esac
+  # SAFETY: the previous job owned this tree, so nothing in it is trusted to say
+  # which repository this is. Only a checkout that physically lives at the path
+  # is cleaned: a symlinked candidate, a symlinked .git, or a `gitdir:` file
+  # would all send the deletes into a repository outside the work tree, and
+  # core.hooksPath cannot help because the redirect happens before any hook.
+  # Linked worktrees and separate gitdirs are not a shape the runner produces
+  # here, so they are refused rather than mapped.
+  [ -L "$repo" ] && continue
+  [ -d "$repo" ] || continue
+  [ "$(realpath -- "$repo" 2>/dev/null)" = "$repo" ] || continue
+  gitdir="$repo/.git"
+  [ -L "$gitdir" ] && continue
+  [ -d "$gitdir" ] || continue
+  [ "$(realpath -- "$gitdir" 2>/dev/null)" = "$gitdir" ] || continue
+  stale=$(git --git-dir="$gitdir" for-each-ref --format='delete %(refname)' refs/remotes 2>/dev/null) || continue
+  [ -n "$stale" ] || continue
+  # --no-deref: origin/HEAD is symbolic, and without it the delete follows the
+  # symlink — origin/main goes instead and origin/HEAD is left dangling.
+  # core.hooksPath: update-ref fires reference-transaction, and a container job
+  # runs as root over this tree, so it can plant one for this hook to execute.
+  if printf '%s\n' "$stale" |
+      git -c core.hooksPath=/dev/null --git-dir="$gitdir" update-ref --no-deref --stdin 2>/dev/null; then
+    echo "job-started hook: dropped $(printf '%s\n' "$stale" | wc -l) remote-tracking ref(s) in $gitdir"
+  else
+    echo "job-started hook: could not drop remote-tracking refs in $gitdir"
+  fi
+done
+# The runner fails the job when this hook exits non-zero, so nothing above may
+# decide the exit status.
+exit 0
 HOOK
 grep -q ACTIONS_RUNNER_HOOK_JOB_STARTED /opt/actions-runner/.env 2>/dev/null || \
   echo 'ACTIONS_RUNNER_HOOK_JOB_STARTED=/usr/local/sbin/gha-job-started.sh' >> /opt/actions-runner/.env
