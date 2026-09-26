@@ -258,6 +258,19 @@ connectors:
         value: fake
       jira_instance_url:
         value: fake
+  youtrack:
+    path: task-tracking/youtrack
+    config:
+      insight_source_id:
+        value: 00000000-0000-0000-0000-000000000002
+      insight_tenant_id:
+        value: 00000000-0000-0000-0000-000000000001
+      youtrack_start_date:
+        value: "2020-01-01"
+      youtrack_token:
+        value: perm:synthetic-token
+      youtrack_base_url:
+        value: https://example.youtrack.cloud
   confluence:
     path: wiki/confluence
     config:

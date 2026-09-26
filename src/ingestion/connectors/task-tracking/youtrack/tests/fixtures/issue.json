@@ -1,0 +1,60 @@
+{
+  "id": "2-1",
+  "idReadable": "EX-1",
+  "summary": "Synthetic issue",
+  "description": "Synthetic issue description",
+  "created": 1782777600000,
+  "updated": 1782864000000,
+  "resolved": null,
+  "numberInProject": 1,
+  "project": {
+    "id": "0-1",
+    "name": "Example Project",
+    "shortName": "EX",
+    "$type": "Project"
+  },
+  "reporter": {
+    "id": "1-1",
+    "login": "example.user",
+    "fullName": "Example User",
+    "email": "user@example.com",
+    "$type": "User"
+  },
+  "updater": {
+    "id": "1-1",
+    "login": "example.user",
+    "fullName": "Example User",
+    "$type": "User"
+  },
+  "customFields": [
+    {
+      "id": "92-1",
+      "name": "Affected versions",
+      "$type": "MultiVersionIssueCustomField",
+      "value": [
+        {
+          "id": "133-1",
+          "name": "Example Version",
+          "$type": "VersionBundleElement"
+        }
+      ]
+    }
+  ],
+  "attachments": [],
+  "comments": [],
+  "links": [],
+  "tags": [],
+  "watchers": {
+    "id": "watchers-1",
+    "hasStar": false,
+    "issueWatchers": [],
+    "duplicateWatchers": []
+  },
+  "voters": {
+    "id": "voters-1",
+    "hasVote": false,
+    "original": [],
+    "duplicate": []
+  },
+  "$type": "Issue"
+}
