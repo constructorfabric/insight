@@ -103,6 +103,11 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
+      - name: Install defusedxml
+        # This job runs the whole scripts/ci/tests suite below, which imports
+        # coverage.py, which requires defusedxml outright. Pinned to the version
+        # the coverage gate installs.
+        run: python3 -m pip install --quiet "defusedxml==0.7.1"
       - name: Test component detection
         run: python3 -m unittest discover -s scripts/ci/tests -p 'test_*.py'
       - id: detect
@@ -144,9 +149,10 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install PyYAML, pytest and defusedxml
-        # defusedxml at the version the gate job pins: scripts/ci/coverage.py
-        # imports it unconditionally, so the suite that exercises it needs the
-        # package rather than whatever a runner image happens to carry.
+        # defusedxml is not needed by the pattern-limited discover this job runs
+        # today — it is here so that widening that pattern, or importing
+        # coverage.py from a guard, does not fail on a missing module. Same pin
+        # as the coverage gate and the detection job.
         run: python3 -m pip install --quiet pyyaml pytest "defusedxml==0.7.1"
 
       # The jsonwebtoken crypto-provider invariant: >1 backend active makes
