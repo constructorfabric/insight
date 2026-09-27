@@ -286,12 +286,20 @@ class DiffCoverTests(unittest.TestCase):
     def git(self, *args: str) -> None:
         subprocess.run(["git", *args], cwd=self.root, check=True, capture_output=True)
 
-    def diff_cover(self, report_path: Path) -> str:
+    def diff_cover(self, report_path: Path, compare_branch: str = "master") -> str:
+        """diff-cover's report, or a raised tool error.
+
+        `--fail-under 0` means diff-cover never exits non-zero over coverage, so
+        a non-zero exit here is diff-cover or git failing. Returning stdout
+        regardless would turn that into an assertion about the sanitation the
+        tests are actually checking, which is a long way from the cause.
+        """
         proc = subprocess.run(
-            ["diff-cover", str(report_path), "--compare-branch", "master", "--fail-under", "0"],
+            ["diff-cover", str(report_path), "--compare-branch", compare_branch, "--fail-under", "0"],
             cwd=self.root,
             capture_output=True,
             text=True,
+            check=True,
         )
         return proc.stdout
 
