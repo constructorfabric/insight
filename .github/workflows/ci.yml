@@ -148,12 +148,8 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - name: Install PyYAML, pytest and defusedxml
-        # defusedxml is not needed by the pattern-limited discover this job runs
-        # today — it is here so that widening that pattern, or importing
-        # coverage.py from a guard, does not fail on a missing module. Same pin
-        # as the coverage gate and the detection job.
-        run: python3 -m pip install --quiet pyyaml pytest "defusedxml==0.7.1"
+      - name: Install PyYAML and pytest
+        run: python3 -m pip install --quiet pyyaml pytest
 
       # The jsonwebtoken crypto-provider invariant: >1 backend active makes
       # verify() panic on every call (#1725, #1727). cargo tree only reads the
@@ -633,6 +629,13 @@ jobs:
         # which is internal API. (TODO: --json-report is deprecated in diff-cover
         # >= 10 in favor of `--format json:<path>`; migrate before unpinning.)
         run: pip install "diff-cover==10.3.0" "defusedxml==0.7.1"
+
+      - name: Test coverage report normalization
+        # Deliberately a second run of a module the detection job already
+        # covers. Only here is diff-cover installed, so only here does the case
+        # that drives it stop skipping — and this is the job that goes on to run
+        # coverage.py and diff-cover for real.
+        run: python3 -m unittest discover -s scripts/ci/tests -p 'test_coverage_reanchor.py'
 
       - name: Download all Cobertura reports
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
