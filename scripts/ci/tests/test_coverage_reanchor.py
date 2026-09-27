@@ -271,7 +271,9 @@ class DiffCoverTests(unittest.TestCase):
         target = self.root / PY_COMPONENT / PY_FILENAME
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("a = 1\nb = 2\n", encoding="utf-8")
-        self.git("init", "-q", ".")
+        # `-b master` so the compare branch below does not depend on whatever
+        # init.defaultBranch the host happens to set.
+        self.git("init", "-q", "-b", "master", ".")
         self.git("config", "user.email", "ci@example.com")
         self.git("config", "user.name", "ci")
         self.git("add", "-A")
