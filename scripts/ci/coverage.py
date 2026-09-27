@@ -23,14 +23,13 @@ from pathlib import Path, PurePosixPath
 from shutil import rmtree, which
 from xml.sax.saxutils import escape as xml_escape
 
-# Reports are PR-derived, so parse defensively against XML entity attacks.
-# defusedxml is installed in the CI gate job; local runs fall back to stdlib.
-try:
-    from defusedxml.ElementTree import parse as _xml_parse
-except ImportError:
-    from xml.etree.ElementTree import parse as _xml_parse
-
 from components import COMPARE_BRANCH, COMPONENTS, ROOT, component_for
+
+# Reports are PR-derived, so parse defensively against XML entity attacks. A
+# hard dependency on purpose: falling back to the stdlib parser would reopen
+# that hole exactly where defusedxml happens to be missing, and say nothing.
+# Every job that runs this installs it.
+from defusedxml.ElementTree import parse as _xml_parse
 
 COVERAGE_DIR = ROOT / "coverage"
 
