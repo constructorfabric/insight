@@ -15,11 +15,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
-from pathlib import Path
-from shutil import which
+from pathlib import Path, PurePosixPath
+from shutil import rmtree, which
+from xml.sax.saxutils import escape as xml_escape
 
 # Reports are PR-derived, so parse defensively against XML entity attacks.
 # defusedxml is installed in the CI gate job; local runs fall back to stdlib.
@@ -97,6 +99,102 @@ def load_all_reports(reports_dir: Path, root: Path) -> dict[str, dict[int, int]]
             for no, hits in lines.items():
                 dst[no] = max(dst.get(no, 0), hits)
     return merged
+
+
+# --------------------------------------------------------------------------- #
+# Cross-runner sanitation. pytest-cov and cargo-llvm-cov write the PRODUCER's
+# absolute workspace into <source>, with class filenames relative to it, so a
+# consumer whose checkout sits elsewhere can resolve neither. That is not
+# hypothetical: the shared self-hosted pool answers to one label set from two
+# kinds of runner, and their workspaces differ. diff-cover reads the same XML
+# itself, so repairing it only inside _normalize would leave the new-code gate
+# measuring nothing and saying so in a line nobody reads. Both gates are handed
+# re-anchored COPIES instead; the downloaded artifact stays as the producer
+# emitted it. A report already carrying a relative source (the JS lane rewrites
+# its own before upload) is passed through untouched.
+# --------------------------------------------------------------------------- #
+#: Enough class filenames to prove a mapping without walking a large report.
+_PROBE_FILENAMES = 32
+
+_SOURCE_RE = re.compile(r"(<source>)(.*?)(</source>)", re.DOTALL)
+
+
+def _inside(path: Path, root: Path) -> bool:
+    """True when `path` lands inside `root`, with `..` and symlinks resolved."""
+    try:
+        path.resolve().relative_to(root.resolve())
+    except (ValueError, OSError):
+        return False
+    return True
+
+
+def reanchor_source(source: str, filenames: list[str], root: Path) -> str | None:
+    """A repo-relative replacement for a foreign absolute <source>, or None.
+
+    Suffixes of the producer's path are tried longest first, and one is accepted
+    only when it puts a filename the report itself carries on a FILE that exists
+    inside `root`. An existing directory is not proof: this repository has both
+    `scripts/` and `src/ingestion/scripts/`, and the shorter suffix would bucket
+    the report into the wrong tree. Nothing is invented — a source with no such
+    match is left alone and stays unbucketed, as before.
+    """
+    if not source or not PurePosixPath(source).is_absolute():
+        return None
+    if _inside(Path(source), root):
+        return None
+
+    parts = PurePosixPath(source).parts[1:]  # drop the leading "/"
+    for start in range(len(parts)):
+        candidate = Path(*parts[start:])
+        for filename in filenames:
+            probe = root / candidate / filename
+            if _inside(probe, root) and probe.is_file():
+                return candidate.as_posix()
+    return None
+
+
+def sanitize_report(path: Path, root: Path) -> str | None:
+    """The report's text with foreign sources re-anchored, or None if unchanged."""
+    cov = _xml_parse(path).getroot()
+    filenames = [f for f in (c.get("filename", "") for c in cov.iterfind(".//class")) if f]
+    if not filenames:
+        return None
+
+    mapping: dict[str, str] = {}
+    for element in cov.findall("./sources/source"):
+        raw = (element.text or "").strip()
+        if raw and raw not in mapping:
+            anchored = reanchor_source(raw, filenames[:_PROBE_FILENAMES], root)
+            if anchored is not None:
+                mapping[raw] = anchored
+    if not mapping:
+        return None
+
+    def replace(match: re.Match[str]) -> str:
+        raw = match.group(2).strip()
+        if raw not in mapping:
+            return match.group(0)
+        return f"{match.group(1)}{xml_escape(mapping[raw])}{match.group(3)}"
+
+    return _SOURCE_RE.sub(replace, path.read_text(encoding="utf-8"))
+
+
+def sanitized_reports_dir(reports_dir: Path, root: Path, dest: Path) -> Path:
+    """Where the gates should read from: `reports_dir`, or copies under `dest`."""
+    repaired = {}
+    for report in sorted(reports_dir.glob("*.xml")):
+        text = sanitize_report(report, root)
+        if text is not None:
+            repaired[report] = text
+    if not repaired:
+        return reports_dir
+
+    for report in sorted(reports_dir.glob("*.xml")):
+        body = repaired.get(report) or report.read_text(encoding="utf-8")
+        (dest / report.name).write_text(body, encoding="utf-8")
+    names = ", ".join(sorted(r.name for r in repaired))
+    print(f"re-anchored onto this checkout (produced under another workspace): {names}")  # noqa: T201 — gate report goes to stdout by contract
+    return dest
 
 
 # --------------------------------------------------------------------------- #
@@ -331,6 +429,8 @@ def print_patch_table(per_component: dict, components: list[dict]) -> None:
 # --------------------------------------------------------------------------- #
 def cmd_gate(args) -> int:
     reports_dir = Path(args.reports_dir) if args.reports_dir else COVERAGE_DIR
+    sanitized = Path(tempfile.mkdtemp(prefix="coverage-gate-"))
+    reports_dir = sanitized_reports_dir(reports_dir, ROOT, sanitized)
     files = load_all_reports(reports_dir, ROOT)
     measured_all, unbucketed = measure(files, COMPONENTS)
     # Only judge components that actually ran (produced a report → total > 0).
@@ -364,6 +464,7 @@ def cmd_gate(args) -> int:
     if not args.no_patch and files:
         patch_pass, patch_per_comp, patch_output = run_patch_gate(reports_dir, COMPONENTS)
         print_patch_table(patch_per_comp, COMPONENTS)
+    rmtree(sanitized, ignore_errors=True)  # both gates have read their reports
 
     ok = comp_pass and patch_pass and not missing
     print(  # noqa: T201 — gate report goes to stdout by contract
