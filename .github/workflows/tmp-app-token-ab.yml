@@ -1,0 +1,80 @@
+name: TEMP diagnostic — App token A/B
+
+# TEMPORARY. Delete before this pull request is marked ready.
+#
+# `bump-descriptors` and `publish-chart` both failed to mint the automation
+# App's installation token on an ARC pod, 401 "A JSON web token could not be
+# decoded", while every observed success ran on a GitHub-hosted runner. The
+# inputs were byte-identical (same pinned action, app-id 3998352, same API URL),
+# the runner clock matched GitHub's response Date to the second, and the runner
+# version was 2.337.0 on both — so nothing in the environment should be able to
+# change the JWT. Two failures out of two on ARC is still a correlation nobody
+# has broken, and the credential may simply have stopped working meanwhile.
+#
+# This runs the mint, and only the mint, on one runner of each kind at the same
+# moment. It never prints the token, never hands it to a checkout, and makes no
+# API call with it: the token it asks for carries `contents: read` on this
+# repository alone, and the action revokes it in its own post step.
+on:
+  pull_request:
+    paths:
+      - .github/workflows/tmp-app-token-ab.yml
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# The mint needs no GITHUB_TOKEN scope of its own.
+permissions: {}
+
+jobs:
+  mint:
+    name: mint on ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: hosted
+            runs-on: ubuntu-latest
+          - label: arc
+            runs-on: insight-vhc-arc
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 10
+    steps:
+      - name: Environment facts
+        run: |
+          set -euo pipefail
+          echo "runner.name = ${{ runner.name }}"
+          echo "runner.os   = ${{ runner.os }}"
+          echo "runner.arch = ${{ runner.arch }}"
+          echo "date -u     = $(date -u)"
+          echo "node        = $(node --version 2>/dev/null || echo 'not on PATH')"
+          echo "openssl     = $(openssl version 2>/dev/null || echo 'not on PATH')"
+          # Names only. A proxy would be the one environment difference that
+          # could put something between the runner and api.github.com.
+          for name in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy; do
+            if [ -n "${!name:-}" ]; then echo "proxy env   = $name present"; fi
+          done
+          echo "proxy env   = scan complete"
+
+      - name: Mint the automation App token
+        id: mint
+        continue-on-error: true
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.AUTOMATION_APP_ID }}
+          private-key: ${{ secrets.AUTOMATION_APP_PRIVATE_KEY }}
+          # Narrowest useful grant: this diagnostic reads nothing, and the token
+          # is revoked by the action's post step.
+          permission-contents: read
+
+      - name: Report the outcome
+        run: |
+          set -euo pipefail
+          echo "app-id input was empty: ${{ vars.AUTOMATION_APP_ID == '' }}"
+          if [ "${{ steps.mint.outcome }}" = "success" ]; then
+            echo "token mint succeeded"
+          else
+            echo "token mint failed (${{ steps.mint.outcome }}) — see the step above"
+            exit 1
+          fi
