@@ -18,6 +18,17 @@ function peer(overrides: Partial<PeerEntityStats> = {}): PeerEntityStats {
 }
 
 describe("derivePeerStanding", () => {
+  it.each([false, true])("current overlap %s preserves numbers and gates peer judgment", (period_overlap) => {
+    const standing = derivePeerStanding("higher_is_better", {
+      value: 3,
+      peer: peer(),
+      absence: { person_id: "person-example", period_overlap, compare_to_overlap: true },
+    });
+    expect(standing.gapDelta).toBe(-7);
+    expect(standing.stats?.p50).toBe(10);
+    expect(standing.eligible).toBe(!period_overlap);
+    expect(standing.rank).toBe(period_overlap ? "neutral" : "bottom");
+  });
   it("ranks an eligible value against the quartiles", () => {
     const standing = derivePeerStanding("higher_is_better", {
       value: 14,

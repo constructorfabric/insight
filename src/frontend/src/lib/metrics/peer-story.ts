@@ -40,7 +40,7 @@ export type PeerStoryEntry = {
 function toStoryEntry(
   metric: NormalizedMetricResult,
   value: number,
-  data: Pick<EntityMetricData, "value" | "peer">,
+  data: Pick<EntityMetricData, "value" | "peer" | "absence">,
   entityId: string
 ): PeerStoryEntry {
   const standing = derivePeerStanding(metric.direction, data);
