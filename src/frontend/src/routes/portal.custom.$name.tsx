@@ -117,7 +117,7 @@ function CustomDashboardBody({
 
   return (
     <>
-      <header className="sticky -top-4 z-10 -mx-4 -mt-4 mb-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b bg-background px-4 pt-4 pb-3 pe-16 md:-top-6 md:-mx-6 md:-mt-6 md:px-6 md:pt-6 md:pe-18">
+      <header className="sticky -top-4 z-10 -mx-4 -mt-4 mb-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b bg-background px-4 pt-4 pb-3 md:-top-6 md:-mx-6 md:-mt-6 md:px-6 md:pt-6">
         <h1 className={cn(TEXT_TITLE, "shrink-0")}>{dashboard.title}</h1>
         <div className="flex flex-wrap items-center gap-2">
           {offered && offered.length > 0 && range ? (

@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { PanelRightClose, PanelRightOpen } from "lucide-react";
+import { PanelRightClose, Sparkles } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 
@@ -39,21 +39,22 @@ export function CustomPageShell({
   return (
     <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
       <div className="@container relative min-w-0 flex-1 overflow-y-auto p-4 md:p-6">
-        {/* Closed, the only way back is from the content's own edge. */}
-        {hidden ? (
+        {children}
+      </div>
+      {hidden ? (
+        <div className="flex shrink-0 justify-center border-t bg-sidebar p-2 lg:w-12 lg:border-t-0 lg:border-s">
           <Button
             variant="ghost"
             size="icon-sm"
-            aria-label="Show the assistant"
-            aria-pressed
-            className="absolute end-4 top-4 z-10 text-muted-foreground md:end-6 md:top-6"
+            aria-label="Open assistant"
+            aria-expanded={false}
+            className="text-muted-foreground"
             onClick={toggle}
           >
-            <PanelRightOpen />
+            <Sparkles />
           </Button>
-        ) : null}
-        {children}
-      </div>
+        </div>
+      ) : null}
       <div
         hidden={hidden}
         className="relative flex min-h-96 shrink-0 flex-col lg:min-h-0 lg:w-80"
@@ -62,8 +63,8 @@ export function CustomPageShell({
         <Button
           variant="ghost"
           size="icon-sm"
-          aria-label="Hide the assistant"
-          aria-pressed={false}
+          aria-label="Collapse assistant"
+          aria-expanded
           className="absolute end-2 top-2 z-10 text-muted-foreground"
           onClick={toggle}
         >
@@ -77,8 +78,8 @@ export function CustomPageShell({
 
 function remembered(): boolean {
   try {
-    return window.localStorage.getItem(HIDDEN_KEY) === "1";
+    return window.localStorage.getItem(HIDDEN_KEY) !== "0";
   } catch {
-    return false;
+    return true;
   }
 }
