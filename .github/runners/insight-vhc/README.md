@@ -101,7 +101,10 @@ runs:
 
 - **Ownership.** A container job runs as root over the mounted work tree, so one
   killed before its cleanup leaves root-owned paths the next job's checkout
-  cannot remove. The hook reclaims them.
+  cannot remove. The hook reclaims them, and so does an `ExecStartPre` on the
+  runner unit: the runner writes `_PipelineMapping` before it builds a step, so
+  a tree that is already under another owner fails the job ahead of any hook,
+  and only a pre-start repair can reach it.
 - **Remote-tracking refs.** `actions/checkout` puts the requested ref in the
   work tree, but it does not remove the `refs/remotes/*` an earlier job fetched.
   A lane that resolves a remote ref would get whichever one happened to be left
