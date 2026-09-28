@@ -14,11 +14,13 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
     fetchMetric: vi.fn(),
     runMetric: vi.fn(),
     sendChat: vi.fn(),
+    fetchPins: vi.fn(),
+    renameDefinition: vi.fn(),
   };
 });
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -88,6 +90,35 @@ describe("/portal/custom/$name", () => {
     expect(
       within(header).getByRole("button", { name: "More for engineering" })
     ).toBeInTheDocument();
+  });
+
+  it("lands on the new name after a rename, though the old one is gone", async () => {
+    vi.mocked(customClient.fetchPins).mockResolvedValue([]);
+    vi.mocked(customClient.fetchDashboardRead)
+      .mockResolvedValueOnce({
+        body: { title: "Engineering", widgets: [] },
+        tags: [],
+      })
+      .mockRejectedValue(new customClient.CustomApiError(404, null));
+    vi.mocked(customClient.renameDefinition).mockResolvedValue({
+      name: "platform",
+      rewritten: [],
+    });
+    portalRouter.go("/portal/custom/engineering");
+    const user = userEvent.setup();
+
+    render(<Component />, { wrapper });
+    await user.click(
+      await screen.findByRole("button", { name: "More for engineering" })
+    );
+    await user.click(await screen.findByRole("menuitem", { name: "Rename…" }));
+    const field = await screen.findByRole("textbox", { name: "Dashboard name" });
+    await user.clear(field);
+    await user.type(field, "platform{Enter}");
+
+    await waitFor(() =>
+      expect(portalRouter.pathname).toBe("/portal/custom/platform")
+    );
   });
 
   it("draws items in order, with headings and prose between the widgets", async () => {
