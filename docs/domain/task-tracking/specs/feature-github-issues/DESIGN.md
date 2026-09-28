@@ -238,7 +238,7 @@ all fields:
 
 ```text
 initial_value =
-    if the field has events  -> argMin(prev_value, event_at)
+    if the field has events  -> argMin(prev_value, (event_at, rank))
     otherwise                -> the snapshot value
 ```
 
@@ -249,11 +249,26 @@ because `state` is trivially `open` at creation.
 ### 3.4 Row Shape per Issue
 
 1. One creation marker: `field_id='created'`, `event_kind='synthetic_initial'`,
-   `_seq=0`, `event_at` set to the issue's creation time, author set to its
+   rank 0, `event_at` set to the issue's creation time, author set to its
    author. Gold reads this as `created_at`.
 2. One `synthetic_initial` row per role-bearing field present at creation,
-   `_seq` running 1..N in `field_id` order.
-3. One `changelog` row per timeline event, `_seq=0`, ordered by `event_at`.
+   ranked 1..N in `field_id` order.
+3. One `changelog` row per timeline event, ranked among the events of its
+   second.
+
+Every row carries `event_order`, the class's one ordering key
+(`task_event_order`): the millisecond, then the kind's band, then the rank. The
+initial rows order at the earlier of the creation and the issue's first
+timeline event, so the state at creation precedes an event dated before it.
+
+GitHub dates a timeline event to the second and records no position within
+it. Events of one issue sharing a second are ranked by the from→to chain of
+their field — one follows another when its previous value is the other's new
+value, the same rule the Jira journal uses (`task_instant_order`) — and then by
+the event id. That id is an opaque node id compared as text: the order it gives
+is reproducible, not chronological. The rank also breaks the tie when the value
+at creation is read from the earliest event's previous value. `_seq` carries
+the same rank and is read by nothing.
 
 `unique_key` follows the project convention
 `{insight_source_id}-{data_source}-{issue_id}-{field_id}-{event_id}`, with

@@ -928,6 +928,7 @@ CREATE TABLE IF NOT EXISTS silver.class_task_field_history
     `event_at` DateTime64(3),
     `event_kind` LowCardinality(String),
     `_seq` UInt32,
+    `event_order` Int64,
     `author_id` Nullable(String),
     `field_id` String,
     `field_name` String,

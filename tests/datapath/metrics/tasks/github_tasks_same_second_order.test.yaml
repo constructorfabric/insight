@@ -1,0 +1,59 @@
+spec_version: 1
+description: >
+  Task Delivery - two type changes of one GitHub issue in the same second,
+  ordered by their chain rather than by their event ids.
+
+  GitHub dates a timeline event to the second and records no position within
+  it. Carol's issue changes type twice at one instant: Defect to Task, then Task
+  to Bug. The event ids sort the other way round, so ordering by id applies the
+  second change first and ends the issue on Task. The from→to chain allows only
+  one order — each change starts where the previous one ended — and ends it on
+  Bug.
+
+  The kind gold classifies a closure by is the issue's newest type, so the
+  order decides whether the closure counts as a fixed bug or a closed task.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/alice
+    - $ref: ../templates/people.yaml#/templates/bob
+    - $ref: ../templates/people.yaml#/templates/carol
+
+  bronze_github.commit_authors:
+    - { $ref: ../templates/github_task.yaml#/templates/commit_author, unique_key: gh-author-1003, _airbyte_raw_id: gh-author-1003, author_id: 1003, author_login: carol, author_email: carol@example.com }
+
+  config.task_field_roles:
+    - $ref: ../templates/github_task.yaml#/templates/role_state
+    - $ref: ../templates/github_task.yaml#/templates/role_assignees
+    - $ref: ../templates/github_task.yaml#/templates/role_type
+
+  config.task_value_map:
+    - $ref: ../templates/github_task.yaml#/templates/value_open
+    - $ref: ../templates/github_task.yaml#/templates/value_closed_completed
+
+  config.field_value_map:
+    - $ref: ../templates/github_task.yaml#/templates/issue_type_kind_bug
+    - $ref: ../templates/github_task.yaml#/templates/issue_type_kind_task
+
+  config.field_value_defaults:
+    - $ref: ../templates/github_task.yaml#/templates/github_issue_type_default_unknown
+
+  bronze_github.issue_types:
+    - $ref: ../templates/github_task.yaml#/templates/issue_type_task
+    - $ref: ../templates/github_task.yaml#/templates/issue_type_bug
+    - $ref: ../templates/github_task.yaml#/templates/issue_type_defect
+
+  bronze_github.issue_fields: []
+
+  bronze_github.issues:
+    - { $ref: ../templates/github_task.yaml#/templates/issue, id: 1, number: 1, unique_key: gh-issue-1, assignee_logins: carol, assignee_ids: "1003", author_id: 1003, issue_type: Bug, issue_type_id: IT_bug }
+
+  bronze_github.issue_timeline_events:
+    # The later step carries the smaller id.
+    - { $ref: ../templates/github_task.yaml#/templates/closed_event, unique_key: gh-ev-type-a, _airbyte_raw_id: gh-ev-type-a, event_id: ITC_a, item_number: 1, actor_id: 1003,
+        event_type: IssueTypeChangedEvent, event_at: "2026-03-10T09:00:00Z", state_reason: "",
+        prev_value_id: IT_task, prev_value: Task, new_value_id: IT_bug, new_value: Bug }
+    - { $ref: ../templates/github_task.yaml#/templates/closed_event, unique_key: gh-ev-type-b, _airbyte_raw_id: gh-ev-type-b, event_id: ITC_b, item_number: 1, actor_id: 1003,
+        event_type: IssueTypeChangedEvent, event_at: "2026-03-10T09:00:00Z", state_reason: "",
+        prev_value_id: IT_defect, prev_value: Defect, new_value_id: IT_task, new_value: Task }
+    - { $ref: ../templates/github_task.yaml#/templates/closed_event, unique_key: gh-ev-close, _airbyte_raw_id: gh-ev-close, event_id: CE_1, item_number: 1, actor_id: 1003 }

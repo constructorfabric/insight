@@ -57,29 +57,11 @@ WITH latest_state AS (
         insight_source_id,
         issue_id,
         field_id,
-        -- Ordering key, and none of its three parts is optional.
-        --
-        -- `event_kind` first: a `synthetic_initial` row is the state at creation
-        -- and a changelog row a state after an event, so the initial row
-        -- precedes any event of the same instant. `_seq` cannot express that on
-        -- its own: a self-describing changelog row's `_seq` is its position in
-        -- the chain of events sharing its instant (0 otherwise), an
-        -- element-wise changelog row's is always 0, and the initial rows carry
-        -- 1..N — so an issue whose first event lands on its own creation
-        -- timestamp can still read as though the field were still empty.
-        -- `retired_field` sorts last: it is stamped when the absence was
-        -- observed, which is at or after every event.
-        --
-        -- `_seq` second: it orders the initial rows among themselves — they all
-        -- share the creation timestamp — and a self-describing changelog row's
-        -- own chain among its ties.
-        --
-        -- The event id last, numerically, breaking whatever `_seq` still leaves
-        -- tied: as text '101' sorts before '99'.
-        argMax(value_ids,      (event_at, {{ task_event_rank('event_kind') }},
-                                _seq, toUInt64OrZero(event_id))) AS value_ids,
-        argMax(value_displays, (event_at, {{ task_event_rank('event_kind') }},
-                                _seq, toUInt64OrZero(event_id))) AS value_displays,
+        -- The class's one ordering key (`task_event_order`): within an
+        -- instant the initial row precedes every event and a `retired_field`
+        -- row, stamped when the absence was observed, follows them.
+        argMax(value_ids,      event_order)      AS value_ids,
+        argMax(value_displays, event_order)      AS value_displays,
         max(event_at)                            AS latest_event_at
     FROM {{ ref('jira__field_history_derived') }} FINAL
     WHERE field_id != 'created'
