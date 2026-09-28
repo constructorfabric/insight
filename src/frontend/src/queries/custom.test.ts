@@ -5,7 +5,7 @@ import {
 } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/api/custom-client");
 
@@ -18,13 +18,16 @@ import {
   definitionPagesQuery,
   foldersQuery,
   metricResultQuery,
+  pinsQuery,
   tagsQuery,
   useCreateFolder,
   useDeleteFolder,
+  useDuplicateDashboard,
   useMoveDashboard,
   useRemoveDefinition,
   useRenameFolder,
   useSetDashboardTags,
+  useSetPinned,
   widgetQuery,
 } from "./custom";
 
@@ -413,5 +416,114 @@ describe("setting a dashboard's tags", () => {
     expect(invalidated).toHaveBeenCalledWith({
       queryKey: tagsQuery().queryKey,
     });
+  });
+});
+
+describe("pinsQuery", () => {
+  it("asks fetchPins", async () => {
+    vi.mocked(customClient.fetchPins).mockResolvedValue(["delivery"]);
+
+    await expect(pinsQuery().queryFn?.(undefined as never)).resolves.toEqual([
+      "delivery",
+    ]);
+  });
+});
+
+describe("pinning a dashboard", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("pins, then refreshes the pins", async () => {
+    const { result, invalidated } = rendered(() => useSetPinned());
+
+    await act(() =>
+      result.current.mutateAsync({ name: "delivery", pinned: true }),
+    );
+
+    expect(customClient.pinDashboard).toHaveBeenCalledWith("delivery");
+    expect(customClient.unpinDashboard).not.toHaveBeenCalled();
+    expect(invalidated).toHaveBeenCalledWith({ queryKey: pinsQuery().queryKey });
+  });
+
+  it("unpins, then refreshes the pins", async () => {
+    const { result, invalidated } = rendered(() => useSetPinned());
+
+    await act(() =>
+      result.current.mutateAsync({ name: "delivery", pinned: false }),
+    );
+
+    expect(customClient.unpinDashboard).toHaveBeenCalledWith("delivery");
+    expect(customClient.pinDashboard).not.toHaveBeenCalled();
+    expect(invalidated).toHaveBeenCalledWith({ queryKey: pinsQuery().queryKey });
+  });
+
+  it("refreshes the pins after a refused pin", async () => {
+    vi.mocked(customClient.pinDashboard).mockRejectedValueOnce(
+      new Error("too many"),
+    );
+    const { result, invalidated } = rendered(() => useSetPinned());
+
+    await act(() =>
+      result.current
+        .mutateAsync({ name: "delivery", pinned: true })
+        .catch(() => undefined),
+    );
+
+    expect(invalidated).toHaveBeenCalledWith({ queryKey: pinsQuery().queryKey });
+  });
+
+  it("refreshes the pins when a dashboard is removed", async () => {
+    const { result, invalidated } = rendered(() => useRemoveDefinition());
+
+    await act(() =>
+      result.current.mutateAsync({ kind: "dashboards", name: "delivery" }),
+    );
+
+    expect(invalidated).toHaveBeenCalledWith({ queryKey: pinsQuery().queryKey });
+  });
+});
+
+describe("duplicating a dashboard", () => {
+  function expectListsAndCountsRefreshed(
+    invalidated: ReturnType<typeof vi.spyOn>,
+  ) {
+    expect(invalidated).toHaveBeenCalledWith({ queryKey: ["custom", "names"] });
+    expect(invalidated).toHaveBeenCalledWith({
+      queryKey: foldersQuery().queryKey,
+    });
+    expect(invalidated).toHaveBeenCalledWith({ queryKey: tagsQuery().queryKey });
+  }
+
+  it("copies under the new name, then refreshes the lists and the counts", async () => {
+    vi.mocked(customClient.duplicateDashboard).mockResolvedValueOnce(
+      "delivery-copy",
+    );
+    const { result, invalidated } = rendered(() => useDuplicateDashboard());
+
+    await expect(
+      act(() => result.current.mutateAsync({ name: "delivery", to: "delivery-copy" })),
+    ).resolves.toBe("delivery-copy");
+
+    expect(customClient.duplicateDashboard).toHaveBeenCalledWith(
+      "delivery",
+      "delivery-copy",
+    );
+    expectListsAndCountsRefreshed(invalidated);
+  });
+
+  it("refreshes the lists and the counts after a taken name is refused", async () => {
+    vi.mocked(customClient.duplicateDashboard).mockRejectedValueOnce(
+      new Error("taken"),
+    );
+    const { result, invalidated } = rendered(() => useDuplicateDashboard());
+
+    await act(() =>
+      result.current
+        .mutateAsync({ name: "delivery", to: "hiring" })
+        .catch(() => undefined),
+    );
+
+    expectListsAndCountsRefreshed(invalidated);
   });
 });

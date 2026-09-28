@@ -21,6 +21,7 @@ import type {
   FolderFilter,
   FolderList,
   MetricDefinition,
+  PinList,
   TableList,
   TableSchema,
   TagList,
@@ -195,6 +196,44 @@ export async function setDashboardTags(
     method: "PUT",
     headers: JSON_HEADERS,
     body: JSON.stringify({ tags }),
+  });
+  await ensureOk(res);
+}
+
+export async function duplicateDashboard(
+  name: string,
+  to: string
+): Promise<string> {
+  const res = await fetchWithAuth(
+    `${BASE}/dashboards/${named(name)}/duplicate`,
+    {
+      method: "POST",
+      headers: JSON_HEADERS,
+      body: JSON.stringify({ name: to }),
+    }
+  );
+  const made = await readJson<{ name: string }>(res);
+
+  return made.name;
+}
+
+export async function fetchPins(): Promise<string[]> {
+  const res = await fetchWithAuth(`${BASE}/pins`);
+  const read = await readJson<PinList>(res);
+
+  return read.pins;
+}
+
+export async function pinDashboard(name: string): Promise<void> {
+  const res = await fetchWithAuth(`${BASE}/pins/${named(name)}`, {
+    method: "PUT",
+  });
+  await ensureOk(res);
+}
+
+export async function unpinDashboard(name: string): Promise<void> {
+  const res = await fetchWithAuth(`${BASE}/pins/${named(name)}`, {
+    method: "DELETE",
   });
   await ensureOk(res);
 }

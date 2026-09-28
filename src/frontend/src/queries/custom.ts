@@ -21,6 +21,7 @@ import {
   deleteDataset,
   deleteDefinition,
   deleteFolder,
+  duplicateDashboard,
   fetchDashboard,
   fetchDashboardFolder,
   fetchDashboardNames,
@@ -33,12 +34,14 @@ import {
   fetchFolders,
   fetchMetric,
   fetchMetricNames,
+  fetchPins,
   fetchTable,
   fetchTables,
   fetchTags,
   fetchWidget,
   fetchWidgetNames,
   moveDashboard,
+  pinDashboard,
   putDataset,
   putDefinition,
   renameDefinition,
@@ -46,6 +49,7 @@ import {
   runMetric,
   sendChat,
   setDashboardTags,
+  unpinDashboard,
 } from "@/api/custom-client";
 import type { RunOptions } from "@/api/custom-client";
 
@@ -53,6 +57,7 @@ const WIDGET_QUERY_PREFIX = ["custom", "widget"] as const;
 const NAME_PAGES_PREFIX = ["custom", "names"] as const;
 const FOLDERS_PREFIX = ["custom", "folders"] as const;
 const TAGS_PREFIX = ["custom", "tags"] as const;
+const PINS_PREFIX = ["custom", "pins"] as const;
 
 /** How many names a catalogue asks for at a time. */
 const PAGE_SIZE = 50;
@@ -168,6 +173,13 @@ export function tagsQuery() {
   return queryOptions({
     queryKey: TAGS_PREFIX,
     queryFn: fetchTags,
+  });
+}
+
+export function pinsQuery() {
+  return queryOptions({
+    queryKey: PINS_PREFIX,
+    queryFn: fetchPins,
   });
 }
 
@@ -411,6 +423,26 @@ export function useSetDashboardTags() {
   });
 }
 
+export function useDuplicateDashboard() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ name, to }: { name: string; to: string }) =>
+      duplicateDashboard(name, to),
+    onSettled: () => invalidateDashboardList(queryClient),
+  });
+}
+
+export function useSetPinned() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ name, pinned }: { name: string; pinned: boolean }) =>
+      pinned ? pinDashboard(name) : unpinDashboard(name),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: PINS_PREFIX }),
+  });
+}
+
 export function useSendChat() {
   return useMutation({
     mutationFn: ({
@@ -430,6 +462,7 @@ export function invalidateDashboardList(queryClient: QueryClient) {
     queryClient.invalidateQueries({ queryKey: NAME_PAGES_PREFIX }),
     queryClient.invalidateQueries({ queryKey: FOLDERS_PREFIX }),
     queryClient.invalidateQueries({ queryKey: TAGS_PREFIX }),
+    queryClient.invalidateQueries({ queryKey: PINS_PREFIX }),
   ]);
 }
 

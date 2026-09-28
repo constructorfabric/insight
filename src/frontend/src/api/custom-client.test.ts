@@ -10,6 +10,7 @@ import {
   deleteDataset,
   deleteDefinition,
   deleteFolder,
+  duplicateDashboard,
   fetchDashboard,
   fetchDashboardFolder,
   fetchDashboardNames,
@@ -20,16 +21,19 @@ import {
   fetchDependents,
   fetchFolders,
   fetchMetric,
+  fetchPins,
   fetchTable,
   fetchTags,
   fetchWidget,
   moveDashboard,
+  pinDashboard,
   putDataset,
   putDefinition,
   renameDefinition,
   renameFolder,
   runMetric,
   setDashboardTags,
+  unpinDashboard,
 } from "./custom-client";
 
 const mockFetch = fetchWithAuth as unknown as ReturnType<typeof vi.fn>;
@@ -475,5 +479,83 @@ describe("tags", () => {
     expect(mockFetch).toHaveBeenCalledWith(
       "/api/v3/v1/dashboards?q=cycle&limit=50&folder=f1&tag=Ops&tag=R%26D"
     );
+  });
+});
+
+describe("pins", () => {
+  it("lists the caller's pinned dashboards, oldest pin first", async () => {
+    mockFetch.mockResolvedValueOnce(response({ pins: ["delivery", "hiring"] }));
+
+    await expect(fetchPins()).resolves.toEqual(["delivery", "hiring"]);
+    expect(mockFetch).toHaveBeenCalledWith("/api/v3/v1/pins");
+  });
+
+  it("pins and unpins a dashboard by its name", async () => {
+    mockFetch.mockResolvedValue(response(null, { status: 204 }));
+
+    await pinDashboard("R&D board");
+    await unpinDashboard("R&D board");
+
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      1,
+      "/api/v3/v1/pins/R%26D%20board",
+      { method: "PUT" }
+    );
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      2,
+      "/api/v3/v1/pins/R%26D%20board",
+      { method: "DELETE" }
+    );
+  });
+
+  it("refuses a pin past the limit with what the service said", async () => {
+    mockFetch.mockResolvedValueOnce(
+      response({ detail: "at most 20 pins" }, { ok: false, status: 409 })
+    );
+
+    await expect(pinDashboard("delivery")).rejects.toMatchObject({
+      status: 409,
+      body: { detail: "at most 20 pins" },
+    });
+  });
+
+  it("refuses to unpin a dashboard that is not there", async () => {
+    mockFetch.mockResolvedValueOnce(
+      response({ detail: "no such dashboard" }, { ok: false, status: 404 })
+    );
+
+    await expect(unpinDashboard("gone")).rejects.toMatchObject({
+      status: 404,
+    });
+  });
+});
+
+describe("duplicateDashboard", () => {
+  it("copies a dashboard under a new name, and reads the name it took", async () => {
+    mockFetch.mockResolvedValueOnce(
+      response({ name: "delivery-copy" }, { status: 201 })
+    );
+
+    await expect(duplicateDashboard("R&D", "delivery-copy")).resolves.toBe(
+      "delivery-copy"
+    );
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/v3/v1/dashboards/R%26D/duplicate",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "delivery-copy" }),
+      }
+    );
+  });
+
+  it("refuses a taken name with what the service said", async () => {
+    mockFetch.mockResolvedValueOnce(
+      response({ detail: "taken" }, { ok: false, status: 409 })
+    );
+
+    await expect(
+      duplicateDashboard("delivery", "hiring")
+    ).rejects.toMatchObject({ status: 409, body: { detail: "taken" } });
   });
 });

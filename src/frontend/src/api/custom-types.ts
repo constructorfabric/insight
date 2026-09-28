@@ -137,6 +137,10 @@ export interface FolderList {
   unfiled: number;
 }
 
+export interface PinList {
+  pins: string[];
+}
+
 /** A folder id, or `"unfiled"` for the dashboards in none. */
 export type FolderFilter = string;
 
