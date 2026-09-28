@@ -1,6 +1,6 @@
 ---
 status: draft
-version: "0.2"
+version: "0.3"
 date: 2026-09-28
 ---
 
@@ -8,7 +8,7 @@ date: 2026-09-28
 
 **Status:** Scope approved; proposed behavior still needs approval. No implementation is authorized.
 
-**Revision 0.2:** Readability edits only; requirements and decisions unchanged.
+**Revision 0.3:** Removed unrelated exclusions; alert requirements unchanged.
 
 <!-- toc -->
 
@@ -118,7 +118,7 @@ Checks and delivery run without an active API client. [DESIGN](./DESIGN.md) reco
 
 ### 4.2 Out of Scope
 
-Excluded: web administration UI, legacy analytics alerts, separate alerts per result group, Telegram, Zulip, Temporal and a general workflow platform.
+Excluded: web administration UI, legacy analytics alerts and separate alerts per result group.
 
 Still undecided: reminder/recovery messages, cron schedules, replaying missed checks and additional Discord channel types.
 
