@@ -638,13 +638,24 @@ The round trip does not catch this — it compares ids, and the id set is correc
 either way. Only the initial row is wrong, which is why it took a test over
 controlled inputs to surface. Found that way, not by reading the code.
 
-**Two events of the same millisecond are ordered by the numeric changelog id.**
-Jira's changelog id is monotonic, so it is the right tie-break, but it reaches
-staging as a String — and as text `'101'` sorts before `'99'`, which inverts a
-pair of events every time the id crosses a digit-count boundary. For an
-element-wise field an inverted add/remove pair changes the resulting set, so the
-comparison is numeric wherever it orders and stays a string wherever it
-identifies (the event id and the unique key).
+**Two events of one instant are ordered by their chain, then by the numeric
+changelog id.** A history imported from another tracker can carry timestamps
+to the second and number a chain of transitions out of order within one
+second — `Open → In Progress` and `In Progress → Closed` stamped alike, the
+second with the smaller id. The id order then applies them backwards and the
+issue ends one step short. So for the self-describing kinds, events sharing
+`(issue, field, event_at)` are ordered first by the from→to chain: one event
+follows another when its `before` side is the other's `after` side
+(`same_instant_chain`). A chain that is not unique — a fork, a cycle, an event
+linked to none of the others — orders nothing, and the id decides as before.
+The position reaches the class as `_seq`, and `initial_state` and the newest
+state read the same order.
+
+The id reaches staging as a String, and as text `'101'` sorts before `'99'`,
+which inverts a pair of events every time the id crosses a digit-count
+boundary. For an element-wise field an inverted add/remove pair changes the
+resulting set, so the comparison is numeric wherever it orders and stays a
+string wherever it identifies (the event id and the unique key).
 
 Two properties of the changelog constrain the handlers, both found by measuring:
 
@@ -1001,13 +1012,15 @@ The output table is consumed by `silver.class_task_field_history` through
   it as `minIf(event_at, event_kind = 'synthetic_initial')`
 - `event_id`: `initial:{issue_id}` for synthetic rows, the changelog id for
   changelog rows
-- `_seq`: 0 for changelog rows; for `synthetic_initial` rows, the 0-based index
-  of the field in the `field_id`-ascending list. **`(event_at, _seq)` is not a
+- `_seq`: for a self-describing changelog row, its 0-based position in the
+  from→to chain of the events sharing its instant, 0 when it shares it with
+  none or the chain is not unique (§5); 0 for element-wise changelog rows; for
+  `synthetic_initial` rows, the 0-based index of the field in the
+  `field_id`-ascending list. **`(event_at, _seq)` is not a
   total order**, and the claim that it is was wrong in two ways:
 
-  - two changelog rows of one millisecond both carry 0. The tie-break is the
-    event id, compared numerically — it is the changelog id, and Jira's is
-    monotonic;
+  - two changelog rows of one instant can both carry 0. The tie-break after
+    `_seq` is the event id, compared numerically — it is the changelog id;
   - worse, `_seq` sorts an initial row *after* a changelog row of the same
     instant, because the initial rows carry 1..N and the changelog rows 0. Every
     initial row of an issue is stamped with the creation timestamp, so this

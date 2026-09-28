@@ -5,11 +5,14 @@ times and the same issue arrives in several versions. None of that may change
 the journal: `unique_key` is a pure function of content, so two runs over the
 same bronze produce byte-identical keys and ReplacingMergeTree collapses them.
 
-Order matters for one kind only — the element-wise one, where an inverted pair
-of events changes the resulting set — so that is where it is tested.
+Order within one instant is where the journal can go wrong without losing a
+row: an inverted element-wise pair changes the resulting set, and an inverted
+chain of self-describing transitions ends the field one step short.
 """
 
 from __future__ import annotations
+
+from typing import Any
 
 from conftest import Scenario, case
 from helpers import CREATED_AT, LATER_SYNC, event, field, issue, item
@@ -146,3 +149,143 @@ def test_an_event_on_the_creation_instant_still_wins(scenario: Scenario) -> None
     """
     assert scenario.states("customfield_11300") == [[], ["TST-9"]]
     assert scenario.round_trip_holds()
+
+
+STATUS = "status"
+STATUS_FIELD = field(STATUS, name="Status", schema_type="status")
+STATUS_NAMES = {"1": "Open", "3": "In Progress", "5": "Resolved", "6": "Closed", "7": "Reopened"}
+EARLIER = "2026-01-06T09:00:00"
+LATER = "2026-01-06T11:00:00"
+
+
+def _transition(changelog_id: int, at: str, frm: str, to: str) -> dict[str, Any]:
+    return event(
+        "TST-1", changelog_id, at, [item(STATUS, frm=frm, frm_str=STATUS_NAMES[frm], to=to, to_str=STATUS_NAMES[to])]
+    )
+
+
+def _status_now(status_id: str) -> dict[str, Any]:
+    return issue("TST-1", fields={STATUS: {"id": status_id, "name": STATUS_NAMES[status_id]}})
+
+
+def _changelog_seq(scenario: Scenario) -> dict[str, int]:
+    return {r["event_id"]: r["_seq"] for r in scenario.journal(field=STATUS) if r["event_kind"] == "changelog"}
+
+
+@case(
+    fields=[STATUS_FIELD],
+    issues=[_status_now("6")],
+    events=[
+        _transition(100, EARLIER, "1", "3"),
+        _transition(102, SAME_INSTANT, "3", "5"),
+        _transition(101, SAME_INSTANT, "5", "6"),
+    ],
+)
+def test_a_chain_sharing_an_instant_ends_on_its_last_step_whatever_the_ids(scenario: Scenario) -> None:
+    """An imported history can stamp two transitions with one second and give
+    the later step the smaller changelog id. The from→to chain decides."""
+    assert scenario.states(STATUS) == [["1"], ["3"], ["5"], ["6"]]
+    assert _changelog_seq(scenario) == {"100": 0, "102": 0, "101": 1}
+    assert scenario.round_trip_holds()
+
+
+@case(
+    fields=[STATUS_FIELD],
+    issues=[_status_now("6")],
+    events=[
+        _transition(202, SAME_INSTANT, "1", "3"),
+        _transition(201, SAME_INSTANT, "3", "5"),
+        _transition(203, LATER, "5", "6"),
+    ],
+)
+def test_the_initial_value_is_the_before_side_of_the_chain_head(scenario: Scenario) -> None:
+    """When the tie is at the first change, the value at creation is the
+    `before` side of the chain's head, not of the smaller changelog id."""
+    initial = [r["value_ids"] for r in scenario.journal(field=STATUS) if r["event_kind"] == "synthetic_initial"]
+    assert initial == [["1"]]
+    assert scenario.states(STATUS) == [["1"], ["3"], ["5"], ["6"]]
+    assert scenario.round_trip_holds()
+
+
+@case(
+    fields=[STATUS_FIELD],
+    issues=[_status_now("6")],
+    events=[_transition(101, SAME_INSTANT, "1", "3"), _transition(102, SAME_INSTANT, "3", "6")],
+)
+def test_a_chain_that_agrees_with_the_ids_keeps_their_order(scenario: Scenario) -> None:
+    assert scenario.states(STATUS) == [["1"], ["3"], ["6"]]
+    assert scenario.round_trip_holds()
+
+
+@case(
+    fields=[STATUS_FIELD],
+    issues=[_status_now("1")],
+    events=[_transition(101, SAME_INSTANT, "1", "3"), _transition(102, SAME_INSTANT, "3", "1")],
+)
+def test_a_cycle_within_one_instant_falls_back_to_the_changelog_id(scenario: Scenario) -> None:
+    """A→B and B→A in one second form no unique chain: either could come first,
+    so the changelog id decides, as it does for any event without a chain."""
+    assert scenario.states(STATUS) == [["1"], ["3"], ["1"]]
+    assert _changelog_seq(scenario) == {"101": 0, "102": 0}
+    assert scenario.round_trip_holds()
+
+
+@case(
+    fields=[STATUS_FIELD],
+    issues=[_status_now("6")],
+    events=[
+        _transition(104, SAME_INSTANT, "1", "3"),
+        _transition(103, SAME_INSTANT, "3", "5"),
+        _transition(102, SAME_INSTANT, "5", "7"),
+        _transition(101, SAME_INSTANT, "7", "6"),
+    ],
+)
+def test_a_four_step_chain_follows_its_links_however_the_ids_run(scenario: Scenario) -> None:
+    """The ids count DOWN from the chain's head to its tail. The from→to chain
+    still decides, walking a longer line than a single swap can exercise."""
+    assert scenario.states(STATUS) == [["1"], ["3"], ["5"], ["7"], ["6"]]
+    assert _changelog_seq(scenario) == {"104": 0, "103": 1, "102": 2, "101": 3}
+    assert scenario.round_trip_holds()
+
+
+@case(
+    fields=[STATUS_FIELD],
+    issues=[_status_now("5")],
+    events=[_transition(201, SAME_INSTANT, "1", "3"), _transition(202, SAME_INSTANT, "1", "5")],
+)
+def test_a_fork_within_one_instant_falls_back_to_the_changelog_id(scenario: Scenario) -> None:
+    """Two events leaving the SAME before form no unique chain either: nothing
+    says which one happened first, so the changelog id decides."""
+    assert scenario.states(STATUS) == [["1"], ["3"], ["5"]]
+    assert _changelog_seq(scenario) == {"201": 0, "202": 0}
+    assert scenario.round_trip_holds()
+
+
+def test_one_changelog_id_naming_two_items_makes_its_group_ambiguous(scenario: Scenario) -> None:
+    """A malformed entry can carry two items of the same field under one
+    changelog id (as a duplicate entry can carry the same item twice). That id
+    can no longer anchor a single position in any chain, so the fix is not to
+    let `max()` hand it one anyway: the whole instant falls back to the
+    changelog id, and the two items sharing id 100 collapse into the one
+    journal row `unique_key` gives them — this scenario deliberately leaves the
+    source's own events contradicting its current value, so it keeps its own
+    warehouse rather than sharing the module's build."""
+    scenario.seed(
+        fields=[STATUS_FIELD],
+        issues=[_status_now("6")],
+        events=[
+            event(
+                "TST-1",
+                100,
+                SAME_INSTANT,
+                [
+                    item(STATUS, frm="1", frm_str=STATUS_NAMES["1"], to="3", to_str=STATUS_NAMES["3"]),
+                    item(STATUS, frm="5", frm_str=STATUS_NAMES["5"], to="6", to_str=STATUS_NAMES["6"]),
+                ],
+            ),
+            _transition(200, SAME_INSTANT, "3", "5"),
+        ],
+    )
+    scenario.build()
+    assert _changelog_seq(scenario) == {"100": 0, "200": 0}
+    assert {r["event_id"] for r in scenario.journal(field=STATUS) if r["event_kind"] == "changelog"} == {"100", "200"}

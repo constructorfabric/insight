@@ -51,8 +51,10 @@
     initial row of an issue carries the creation timestamp, and an issue whose
     first event happened at creation has both kinds on the same instant.
 
-    `_seq` cannot serve here. It is 0 for every changelog row and 1..N for the
-    initial rows, which sorts an initial row AFTER an event of the same instant
-    — so the newest state of such a field reads as the empty state it had before
-    the event. The contract's claim that `(event_at, _seq)` is a total order
-    holds only when no two kinds share an instant. -#}
+    `_seq` cannot serve here. A self-describing changelog row's `_seq` is its
+    position in the chain of events sharing its instant (0 otherwise), an
+    element-wise changelog row's is always 0, and the initial rows carry 1..N —
+    so `_seq` alone can still sort an initial row AFTER an event of the same
+    instant, reading the newest state of such a field as the empty state it had
+    before the event. The contract's claim that `(event_at, _seq)` is a total
+    order holds only when no two kinds share an instant. -#}

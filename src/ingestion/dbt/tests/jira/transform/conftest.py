@@ -330,7 +330,8 @@ class Scenario:
             "   AND ({field:String} = '' OR field_id = {field:String})"
             # The reading order, matching the round-trip invariant: the kind
             # first (an initial row is the state at creation, so it precedes any
-            # event of the same instant), then `_seq` among the initial rows,
+            # event of the same instant), then `_seq` — a self-describing
+            # changelog row's position in its instant's chain, 0 otherwise —
             # then the event id numerically because '101' sorts before '99'.
             " ORDER BY field_id, event_at,"
             "          multiIf(event_kind = 'synthetic_initial', 0,"
