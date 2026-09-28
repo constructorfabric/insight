@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CustomPageShell } from "./custom-page-shell";
 
@@ -16,6 +16,10 @@ function shell() {
 
 beforeEach(() => {
   window.localStorage.clear();
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe("<CustomPageShell>", () => {
@@ -75,5 +79,16 @@ describe("<CustomPageShell>", () => {
 
     if (visible) expect(screen.getByText("assistant")).toBeVisible();
     else expect(screen.getByText("assistant")).not.toBeVisible();
+  });
+
+  it("starts collapsed when the saved choice cannot be read", () => {
+    window.localStorage.setItem(SAVED, "0");
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+
+    shell();
+
+    expect(screen.getByText("assistant")).not.toBeVisible();
   });
 });

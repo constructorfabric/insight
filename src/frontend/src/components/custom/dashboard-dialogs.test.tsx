@@ -179,6 +179,26 @@ describe("renaming from the card", () => {
     expect(field).toHaveValue("hiring");
     await expectListsReadAgain(before);
   });
+
+  it("forgets what was typed when the rename is cancelled", async () => {
+    const user = await openCardMenu();
+
+    let dialog = await choose(user, "Rename…");
+    await user.type(
+      within(dialog).getByRole("textbox", { name: "Dashboard name" }),
+      "-old"
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    await user.click(screen.getByRole("button", { name: "More for delivery" }));
+    dialog = await choose(user, "Rename…");
+
+    expect(
+      within(dialog).getByRole("textbox", { name: "Dashboard name" })
+    ).toHaveValue("delivery");
+    expect(customClient.renameDefinition).not.toHaveBeenCalled();
+  });
 });
 
 describe("duplicating from the card", () => {
@@ -270,5 +290,15 @@ describe("deleting from the card", () => {
       "no dashboard named delivery"
     );
     await expectListsReadAgain(before);
+  });
+
+  it("keeps the dashboard when the delete is cancelled", async () => {
+    const user = await openCardMenu();
+
+    const dialog = await choose(user, "Delete…");
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(customClient.deleteDefinition).not.toHaveBeenCalled();
   });
 });
