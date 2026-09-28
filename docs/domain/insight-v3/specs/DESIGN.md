@@ -119,6 +119,7 @@ TBD
 - Dashboard — a named, addressable page arranging widgets.
 - Folder — a named group of dashboards, one level deep; a dashboard is in at most one.
 - Tag — a label on dashboards; a dashboard carries several, and a tag exists while a dashboard carries it.
+- Pin — one person's shortcut to a dashboard, listed in their Dashboards pane.
 - Alert — a condition on a metric plus where to send it when it fires.
 
 ### 3.2 Component Model
@@ -219,6 +220,12 @@ A folder is a row of its own, so an empty folder exists. A dashboard names its f
 **ID**: `cpt-insightspec-v3-dbtable-tags`
 
 A tag is a row of its own with one spelling, unique by the same collation as folders; `dashboard_tags` links it to dashboards by name. Setting a dashboard's tags replaces the whole set in one transaction, reuses an existing tag's spelling, and deletes a tag no dashboard carries any more. Like the folder, the tags sit outside the body: a whole-body write leaves them alone, and a rename carries them to the new name. Implements `cpt-insightspec-v3-fr-dashboard-tags`.
+
+#### Table: dashboard_pins
+
+**ID**: `cpt-insightspec-v3-dbtable-dashboard-pins`
+
+A pin is a row of (person, dashboard name), so each person has their own list, in the order they pinned. Deleting a dashboard drops its pins, and a rename carries them to the new name, as it carries the folder and tags. Implements `cpt-insightspec-v3-fr-dashboard-pins`.
 
 ### 3.8 Deployment Topology
 

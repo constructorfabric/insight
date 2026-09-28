@@ -198,6 +198,14 @@ The system **MUST** let a dashboard carry several tags and let the dashboard lis
 
 **Actors**: `cpt-insightspec-v3-actor-dashboard-author`
 
+#### Pin and Duplicate Dashboards
+
+- [ ] `p2` - **ID**: `cpt-insightspec-v3-fr-dashboard-pins`
+
+The system **MUST** let each person pin dashboards to their own Pinned list and unpin them; pins are personal, so one person's pins never show for another. The system **MUST** let a dashboard be duplicated under a new name, keeping its content, folder and tags.
+
+**Actors**: `cpt-insightspec-v3-actor-dashboard-author`
+
 ### 5.5 AI
 
 #### Answer a Question
