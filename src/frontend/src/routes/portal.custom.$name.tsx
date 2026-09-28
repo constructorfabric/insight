@@ -12,6 +12,7 @@ import {
 } from "@/api/custom-client";
 import { RangePicker } from "@/components/custom/range-picker";
 import { selectedRange } from "@/lib/custom/board-range";
+import { dashboardNameFromPath } from "@/lib/custom/dashboard-path";
 import { drawsBucket } from "@/lib/custom/draws-bucket";
 import {
   useSetPortalSearch,
@@ -37,11 +38,6 @@ import { cn } from "@/lib/utils";
 export const Route = createFileRoute("/portal/custom/$name")({
   component: CustomDashboardPage,
 });
-
-function dashboardNameFromPath(pathname: string): string {
-  const match = pathname.match(/^\/portal\/custom\/([^/]+)/);
-  return match ? decodeURIComponent(match[1]) : "";
-}
 
 function CustomDashboardPage() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });

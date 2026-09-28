@@ -10,6 +10,7 @@ import { useInfiniteQuery } from "@tanstack/react-query";
 
 import { FoldersGroup } from "@/components/portal/folder-rows";
 import { CountBadge, UnbuiltRow } from "@/components/portal/pane-nav";
+import { PinnedGroup } from "@/components/portal/pinned-rows";
 import {
   SidebarGroup,
   SidebarGroupContent,
@@ -88,6 +89,7 @@ export function CustomNav() {
           </SidebarMenu>
         </SidebarGroupContent>
       </SidebarGroup>
+      <PinnedGroup />
     </>
   );
 }

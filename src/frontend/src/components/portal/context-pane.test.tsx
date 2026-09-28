@@ -7,7 +7,14 @@ vi.mock("@tanstack/react-router", async () => {
 import { portalRouter } from "@/test/portal-router";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, renderHook, screen } from "@testing-library/react";
+import {
+  act,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -29,6 +36,8 @@ const mocks = vi.hoisted(() => ({
   createFolder: vi.fn(),
   renameFolder: vi.fn(),
   deleteFolder: vi.fn(),
+  fetchPins: vi.fn(),
+  fetchDashboardRead: vi.fn(),
 }));
 
 vi.mock("@/lib/portal/use-active-zone", () => ({ useActiveZone: () => mocks.zone }));
@@ -68,6 +77,8 @@ vi.mock("@/api/custom-client", async (orig) => ({
   createFolder: (name: string) => mocks.createFolder(name),
   renameFolder: (id: string, name: string) => mocks.renameFolder(id, name),
   deleteFolder: (id: string) => mocks.deleteFolder(id),
+  fetchPins: () => mocks.fetchPins(),
+  fetchDashboardRead: (name: string) => mocks.fetchDashboardRead(name),
 }));
 
 import { CustomApiError } from "@/api/custom-client";
@@ -125,6 +136,8 @@ beforeEach(() => {
   mocks.createFolder.mockReset().mockResolvedValue({ id: "f3", name: "Hiring" });
   mocks.renameFolder.mockReset().mockResolvedValue({ id: "f1", name: "Core" });
   mocks.deleteFolder.mockReset().mockResolvedValue(undefined);
+  mocks.fetchPins.mockReset().mockResolvedValue([]);
+  mocks.fetchDashboardRead.mockReset().mockReturnValue(new Promise(() => {}));
   act(() => {
     portalRouter.reset();
     portalRouter.set({ dir: "dev" });
@@ -715,5 +728,92 @@ describe("Dashboards pane folders", () => {
     expect(mocks.deleteFolder).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Delete folder" }));
     expect(mocks.deleteFolder).toHaveBeenCalledWith("f1");
+  });
+});
+
+describe("Dashboards pane pins", () => {
+  const TITLES: Record<string, string> = {
+    hiring: "Hiring pipeline",
+    delivery: "Delivery",
+  };
+
+  function pinned(names: string[]) {
+    mocks.fetchPins.mockResolvedValue(names);
+    mocks.fetchDashboardRead.mockImplementation(async (name: string) => ({
+      body: { title: TITLES[name] ?? "", widgets: [] },
+      tags: [],
+    }));
+    inZone("custom");
+  }
+
+  const groupLabels = () =>
+    [...document.querySelectorAll('[data-slot="sidebar-group-label"]')].map(
+      (label) => label.textContent,
+    );
+
+  const pinnedRows = () =>
+    within(
+      screen
+        .getByText("Pinned")
+        .closest('[data-slot="sidebar-group"]') as HTMLElement,
+    ).getAllByRole("link");
+
+  it("lists the pinned dashboards after the catalogues, in pin order, by title", async () => {
+    pinned(["hiring", "delivery"]);
+    pane();
+
+    await screen.findByRole("link", { name: "Hiring pipeline" });
+    expect(groupLabels()).toEqual(["Browse", "Folders", "Catalogue", "Pinned"]);
+    const rows = pinnedRows();
+    expect(rows.map((row) => row.textContent)).toEqual([
+      "Hiring pipeline",
+      "Delivery",
+    ]);
+    expect(rows.map((row) => row.getAttribute("href"))).toEqual([
+      "/portal/custom/hiring",
+      "/portal/custom/delivery",
+    ]);
+  });
+
+  it("names a pinned dashboard by its name while its title loads or when it has none", async () => {
+    mocks.fetchPins.mockResolvedValue(["loading", "untitled"]);
+    mocks.fetchDashboardRead.mockImplementation((name: string) =>
+      name === "loading"
+        ? new Promise(() => {})
+        : Promise.resolve({ body: { title: "", widgets: [] }, tags: [] }),
+    );
+    inZone("custom");
+    pane();
+
+    await screen.findByRole("link", { name: "loading" });
+    await waitFor(() =>
+      expect(mocks.fetchDashboardRead).toHaveBeenCalledWith("untitled"),
+    );
+    expect(pinnedRows().map((row) => row.textContent)).toEqual([
+      "loading",
+      "untitled",
+    ]);
+  });
+
+  it("marks the pinned dashboard on screen", async () => {
+    pinned(["hiring", "delivery"]);
+    act(() => portalRouter.go("/portal/custom/delivery"));
+    pane();
+
+    expect(
+      await screen.findByRole("link", { name: "Delivery" }),
+    ).toHaveAttribute("data-active");
+    expect(
+      screen.getByRole("link", { name: "Hiring pipeline" }),
+    ).not.toHaveAttribute("data-active");
+  });
+
+  it("hides the group when nothing is pinned", async () => {
+    pinned([]);
+    pane();
+
+    await screen.findByText("14");
+    await waitFor(() => expect(mocks.fetchPins).toHaveBeenCalled());
+    expect(screen.queryByText("Pinned")).toBeNull();
   });
 });
