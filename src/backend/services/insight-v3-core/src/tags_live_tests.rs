@@ -8,7 +8,7 @@ use crate::domain::tags::{MAX_TAGS, TagError, TagFilter, TagSet, Tags};
 use crate::live_mariadb::{store_or_skip, unique};
 use crate::store::definitions::MariaDefinitions;
 
-static ONE_AT_A_TIME: Mutex<()> = Mutex::const_new(());
+pub(crate) static ONE_AT_A_TIME: Mutex<()> = Mutex::const_new(());
 
 fn dashboard(name: &str) -> DefinitionName {
     DefinitionName::parse(name).unwrap_or_else(|error| panic!("{error}"))

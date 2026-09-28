@@ -18,6 +18,7 @@ use crate::domain::query::metric_query::{MetricQuery, MetricQueryError, MetricRu
 use crate::domain::query::time_window::WindowError;
 use crate::domain::violation::Violation;
 
+mod duplicate;
 #[cfg(test)]
 mod tests;
 
