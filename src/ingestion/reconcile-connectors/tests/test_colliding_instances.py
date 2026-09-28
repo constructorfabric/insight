@@ -34,7 +34,7 @@ sweep_run()         { :; }
 reconcile_compute_tenant() { printf 'example-tenant'; }
 reconcile_gc_orphans()              { printf 'GC\\n' >> "$CALLS"; }
 reconcile_prune_removed_instances() { printf 'PRUNE\\n' >> "$CALLS"; }
-_reconcile_one_connector()          { printf 'RECONCILE %s %s\\n' "$1" "$9" >> "$CALLS"; }
+_reconcile_one_connector()          { printf 'RECONCILE %s %s\\n' "$1" "$8" >> "$CALLS"; }
 """
 
 
@@ -55,9 +55,7 @@ def run_tick(rows: list[str], tmp_path: Path) -> tuple[int, list[str], str]:
     disc_load_instances() {{ printf '%b\\n' '{plan}'; }}
     reconcile_run 0 1 0 "" ""
     """
-    result = subprocess.run(
-        ["bash", "-c", script], capture_output=True, text=True, check=False
-    )
+    result = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=False)
     recorded = calls.read_text(encoding="utf-8").splitlines() if calls.exists() else []
     return result.returncode, recorded, result.stderr
 
@@ -65,10 +63,7 @@ def run_tick(rows: list[str], tmp_path: Path) -> tuple[int, list[str], str]:
 class TestACollapsedPairIsRefusedBeforeAnythingIsApplied:
     def test_neither_instance_reaches_the_loop(self, tmp_path: Path) -> None:
         code, calls, stderr = run_tick(
-            [
-                plan_row("claude-team", "main", "secret-a"),
-                plan_row("claude-team", "claude-team-main", "secret-b"),
-            ],
+            [plan_row("claude-team", "main", "secret-a"), plan_row("claude-team", "claude-team-main", "secret-b")],
             tmp_path,
         )
 
@@ -113,14 +108,10 @@ class TestDistinctInstancesAreLeftAlone:
             "GC",
         ]
 
-    def test_a_descriptor_with_no_secret_is_not_a_collision(
-        self, tmp_path: Path
-    ) -> None:
+    def test_a_descriptor_with_no_secret_is_not_a_collision(self, tmp_path: Path) -> None:
         """Its three instance columns are empty, and two empty source ids are
         not two instances naming one schedule."""
-        code, calls, stderr = run_tick(
-            [plan_row("alpha"), plan_row("beta")], tmp_path
-        )
+        code, calls, stderr = run_tick([plan_row("alpha"), plan_row("beta")], tmp_path)
 
         assert code == 0, stderr
         assert calls == ["RECONCILE alpha ", "RECONCILE beta ", "PRUNE", "GC"]

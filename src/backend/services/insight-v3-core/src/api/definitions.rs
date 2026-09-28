@@ -63,6 +63,15 @@ impl ApiErrors for DefinitionApiError {
             .with_resource(name)
             .create()
     }
+    fn missing(resource: &str, detail: String) -> CanonicalError {
+        Self::not_found(detail).with_resource(resource).create()
+    }
+
+    fn oversized(field: &str, detail: &str) -> CanonicalError {
+        Self::invalid_argument()
+            .with_field_violation(field, detail, "TOO_LARGE")
+            .create()
+    }
 }
 
 // `.anonymous()`: these routes trust the gateway to authenticate the

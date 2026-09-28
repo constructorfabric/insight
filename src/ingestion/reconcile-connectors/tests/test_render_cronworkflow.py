@@ -100,15 +100,13 @@ class TestRenderer:
         assert result.returncode == 0, result.stderr
         assert _rendered_schedules(result.stdout) == ["0 4 * * *"]
         assert _rendered_name(result.stdout) == "example-connector-example-sync"
+        assert "jira_enrich_image" not in result.stdout
 
     def test_every_cron_line_renders_its_own_entry_in_order(self) -> None:
         result = _render("50 23 * * *\n0 9,15,21 28-31 * *")
 
         assert result.returncode == 0, result.stderr
-        assert _rendered_schedules(result.stdout) == [
-            "50 23 * * *",
-            "0 9,15,21 28-31 * *",
-        ]
+        assert _rendered_schedules(result.stdout) == ["50 23 * * *", "0 9,15,21 28-31 * *"]
 
     def test_a_schedule_carrying_no_cron_expression_is_rejected(self) -> None:
         result = _render("\n   \n")
@@ -157,11 +155,7 @@ printf 'ok\\n'
         )
 
     def _apply(
-        self,
-        connector: str,
-        tenant: str,
-        source_id: str = "example-source",
-        **env: str,
+        self, connector: str, tenant: str, source_id: str = "example-source", **env: str
     ) -> subprocess.CompletedProcess[str]:
         return self._run_argo(
             """source \"$ARGO_SCRIPT\"
@@ -176,24 +170,16 @@ argo_apply_cronworkflow \"$@\"
             tenant,
             source_id,
             "",
-            "",
             **env,
         )
 
     def _delete(
         self, connector: str, tenant: str, source_id: str = "example-source"
     ) -> subprocess.CompletedProcess[str]:
-        return self._run_argo(
-            'source "$ARGO_SCRIPT"\nargo_delete_cronworkflow "$@"',
-            connector,
-            tenant,
-            source_id,
-        )
+        return self._run_argo('source "$ARGO_SCRIPT"\nargo_delete_cronworkflow "$@"', connector, tenant, source_id)
 
     def _name(self, connector: str, tenant: str, source_id: str) -> subprocess.CompletedProcess[str]:
-        return self._run_argo(
-            'source "$ARGO_SCRIPT"\nargo_cron_workflow_name "$@"', connector, tenant, source_id
-        )
+        return self._run_argo('source "$ARGO_SCRIPT"\nargo_cron_workflow_name "$@"', connector, tenant, source_id)
 
     def _kubectl_calls(self) -> list[str]:
         if not self.kubectl_log.exists():
@@ -275,10 +261,10 @@ argo_apply_cronworkflow \"$@\"
 
         assert result.returncode == 0, result.stderr
         assert self._kubectl_calls() == [
-                "apply -f -",
-                f"-n insight delete cronworkflow.argoproj.io/example-connector-{tenant}-sync --ignore-not-found",
-                "-n insight delete cronworkflow.argoproj.io/example-connector-tenant-i-sync --ignore-not-found",
-            ]
+            "apply -f -",
+            f"-n insight delete cronworkflow.argoproj.io/example-connector-{tenant}-sync --ignore-not-found",
+            "-n insight delete cronworkflow.argoproj.io/example-connector-tenant-i-sync --ignore-not-found",
+        ]
 
     def test_apply_returns_2_when_legacy_cleanup_fails(self) -> None:
         tenant = "tenant-identifier"
@@ -295,9 +281,9 @@ argo_apply_cronworkflow \"$@\"
 
         assert result.returncode == 0, result.stderr
         assert self._kubectl_calls() == [
-                "apply -f -",
-                "-n insight delete cronworkflow.argoproj.io/example-connector-short-sync --ignore-not-found",
-            ]
+            "apply -f -",
+            "-n insight delete cronworkflow.argoproj.io/example-connector-short-sync --ignore-not-found",
+        ]
 
     def test_delete_removes_the_superseded_names_and_the_one_in_use(self) -> None:
         tenant = "tenant-identifier"
@@ -305,11 +291,11 @@ argo_apply_cronworkflow \"$@\"
 
         assert result.returncode == 0, result.stderr
         assert self._kubectl_calls() == [
-                f"-n insight delete cronworkflow.argoproj.io/example-connector-{tenant}-sync --ignore-not-found",
-                "-n insight delete cronworkflow.argoproj.io/example-connector-tenant-i-sync --ignore-not-found",
-                "-n insight delete cronworkflow.argoproj.io/"
-                "example-connector-example-source-tenant-i-sync --ignore-not-found",
-            ]
+            f"-n insight delete cronworkflow.argoproj.io/example-connector-{tenant}-sync --ignore-not-found",
+            "-n insight delete cronworkflow.argoproj.io/example-connector-tenant-i-sync --ignore-not-found",
+            "-n insight delete cronworkflow.argoproj.io/"
+            "example-connector-example-source-tenant-i-sync --ignore-not-found",
+        ]
 
 
 @pytest.mark.skipif(not HAS_PYYAML, reason="PyYAML unavailable")
@@ -337,24 +323,17 @@ class TestDescriptorSchedule:
         self, tmp_path: Path, label: str, body: str, expected: list[str]
     ) -> None:
         descriptor = tmp_path / "descriptor.yaml"
-        descriptor.write_text(
-            f'name: example-connector\nversion: "1.0.0"\n{body}', encoding="utf-8"
-        )
+        descriptor.write_text(f'name: example-connector\nversion: "1.0.0"\n{body}', encoding="utf-8")
 
         rendered = _render(self._schedule_of(descriptor))
 
         assert rendered.returncode == 0, rendered.stderr
-        assert _rendered_schedules(rendered.stdout) == expected, (
-            f"should render: {label}"
-        )
+        assert _rendered_schedules(rendered.stdout) == expected, f"should render: {label}"
 
     def test_claude_team_reads_more_than_once_a_day_at_month_end(self) -> None:
         rendered = _render(self._schedule_of(CLAUDE_TEAM_DESCRIPTOR))
 
         assert rendered.returncode == 0, rendered.stderr
-        assert _rendered_schedules(rendered.stdout) == [
-            "50 23 * * *",
-            "0 9,15,21 28-31 * *",
-        ], (
+        assert _rendered_schedules(rendered.stdout) == ["50 23 * * *", "0 9,15,21 28-31 * *"], (
             "claude-team must keep the extra month-end readings its billing month depends on"
         )

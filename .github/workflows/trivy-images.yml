@@ -21,10 +21,14 @@ concurrency:
 permissions:
   contents: read
 
+# Routing, stated once in .github/runners/insight-vhc/README.md: a pull request
+# from a branch of this repository takes the ephemeral ARC scale set, a fork's
+# takes a GitHub-hosted runner, everything else takes the shared self-hosted
+# pool, and INSIGHT_FORCE_GITHUB_HOSTED returns all of it to hosted.
 jobs:
   scan:
     name: ${{ matrix.image }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
     timeout-minutes: 20
     permissions:
       contents: read # checkout (.trivyignore waivers)
@@ -45,7 +49,6 @@ jobs:
           # Python tooling
           - insight-toolbox
           - insight-seed
-          - insight-jira-enrich
           # Python connectors
           - source-active-directory-insight
           # Keep the waiver on the entry line: the GitLab detector reads this image name as a token.

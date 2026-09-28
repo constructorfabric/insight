@@ -7,11 +7,38 @@ use super::definition::{DefinitionKind, DefinitionName, Lookup};
 use super::kinds::dataset::declaration::Declaration;
 use super::kinds::metric::answerable::{self, EffectiveClock};
 use super::query::metric_query::over::Over;
-use super::query::metric_query::{CompiledQuery, MetricQuery, MetricRunner, RunResult};
+use super::query::metric_query::{ColumnKind, CompiledQuery, MetricQuery, MetricRunner, RunResult};
 use super::query::time_window::{Window, WindowRequest};
 use super::query::undated::UndatedCount;
 use super::surfaces::CustomError;
 use crate::domain::query::metric_query::TableEngine;
+
+/// A metric compiled for a reader that orders and pages it: the query with
+/// nothing cut off it, what each column holds, and where the rows come from.
+#[derive(Debug)]
+pub(crate) struct Prepared {
+    pub(crate) compiled: CompiledQuery,
+    pub(crate) kinds: Vec<(String, ColumnKind)>,
+    /// The order the metric asks for itself, if it asks for one.
+    pub(crate) own_order: Option<(String, bool)>,
+    pub(crate) source: Source,
+    /// The body as stored, which is what a page has to be bound to.
+    pub(crate) body: serde_json::Value,
+}
+
+/// Where a metric's rows come from, as far as a reader paging through them
+/// needs to know.
+#[derive(Debug)]
+pub(crate) enum Source {
+    Table {
+        database: Option<String>,
+        table: String,
+    },
+    Dataset {
+        /// The table the records are in, named for the attempt that made it.
+        table: String,
+    },
+}
 
 /// Everything a metric needs to answer: the definition it is stored as, the
 /// dataset it reads, and the warehouse the records are kept in.
@@ -36,6 +63,23 @@ impl<'a> MetricRuns<'a> {
             metrics,
             datasets,
             datasets_database,
+        }
+    }
+
+    /// The window as of now: a named range means the period it is named
+    /// after whether or not the data reaches that far.
+    pub(crate) fn resolve(request: &WindowRequest) -> Result<Window, CustomError> {
+        request
+            .resolve(Utc::now())
+            .map_err(|error| CustomError::Compile(error.into()))
+    }
+
+    /// A dataset's records as a metric is compiled against them.
+    fn over_of<'d>(&'d self, declaration: &'d Declaration, table: &'d str) -> Over<'d> {
+        Over {
+            declaration,
+            database: self.datasets_database,
+            table,
         }
     }
 
@@ -70,6 +114,67 @@ impl<'a> MetricRuns<'a> {
         self.run_over_dataset(&metric, named, request).await
     }
 
+    /// Compiles a stored metric for a reader that orders and pages it, over
+    /// a window already resolved - the same one for every page of a walk.
+    /// Nothing is run.
+    pub(crate) async fn prepare(
+        &self,
+        name: &DefinitionName,
+        window: &Window,
+    ) -> Result<Prepared, CustomError> {
+        let body = self.body_of(name).await?;
+        let metric: MetricQuery =
+            serde_json::from_value(body.clone()).map_err(CustomError::Body)?;
+        let own_order = metric
+            .own_order()
+            .map(|(field, descending)| (field.to_owned(), descending));
+
+        let Some(named) = metric.dataset() else {
+            metric.check_table().map_err(CustomError::Compile)?;
+            let engine = self
+                .metrics
+                .engine_of(metric.database(), metric.table_name())
+                .await
+                .map_err(CustomError::Run)?;
+            let compiled = metric
+                .compile_paged(self.metrics.people(), window, engine, None)
+                .map_err(CustomError::Compile)?;
+            let bucketed = window.grain().is_some() && metric.has_clock().unwrap_or(false);
+
+            return Ok(Prepared {
+                kinds: metric.column_kinds(None, bucketed),
+                compiled,
+                own_order,
+                source: Source::Table {
+                    database: metric.database().map(str::to_owned),
+                    table: metric.table_name().to_owned(),
+                },
+                body,
+            });
+        };
+
+        let (declaration, table) = self.ready_dataset(named).await?;
+        let over = self.over_of(&declaration, &table);
+        let compiled = metric
+            .compile_paged(
+                self.metrics.people(),
+                window,
+                TableEngine::Other,
+                Some(over),
+            )
+            .map_err(CustomError::Compile)?;
+        let bucketed = window.grain().is_some()
+            && answerable::effective_clock(&metric, &declaration).is_some();
+
+        Ok(Prepared {
+            kinds: metric.column_kinds(Some(&declaration), bucketed),
+            compiled,
+            own_order,
+            source: Source::Dataset { table },
+            body,
+        })
+    }
+
     /// Runs a metric over the warehouse table it names, as the table is.
     async fn run_over_table(
         &self,
@@ -83,9 +188,7 @@ impl<'a> MetricRuns<'a> {
             .engine_of(metric.database(), metric.table_name())
             .await
             .map_err(CustomError::Run)?;
-        let window = request
-            .resolve(Utc::now())
-            .map_err(|error| CustomError::Compile(error.into()))?;
+        let window = Self::resolve(request)?;
         let compiled = metric
             .compile_window(self.metrics.people(), &window, engine, None)
             .map_err(CustomError::Compile)?;
@@ -131,15 +234,9 @@ impl<'a> MetricRuns<'a> {
         request: &WindowRequest,
     ) -> Result<RunResult, CustomError> {
         let (declaration, table) = self.ready_dataset(named).await?;
-        let over = Over {
-            declaration: &declaration,
-            database: self.datasets_database,
-            table: &table,
-        };
+        let over = self.over_of(&declaration, &table);
 
-        let window = request
-            .resolve(Utc::now())
-            .map_err(|error| CustomError::Compile(error.into()))?;
+        let window = Self::resolve(request)?;
         let compiled = metric
             .compile_over(self.metrics.people(), &window, over)
             .map_err(CustomError::Compile)?;
@@ -177,11 +274,7 @@ impl<'a> MetricRuns<'a> {
             return Err(CustomError::Unanswerable(violations));
         }
 
-        let over = Over {
-            declaration: &declaration,
-            database: self.datasets_database,
-            table: &table,
-        };
+        let over = self.over_of(&declaration, &table);
 
         let compiled = metric
             .compile_over(self.metrics.people(), &Window::legacy(), over)

@@ -38,11 +38,9 @@ PUBLISHED = [Definition(CONNECTOR, "def-team")]
 FAILS = "ab_list_definitions() { return 1; }"
 EMPTY = "ab_list_definitions() { printf '[]'; }"
 SILENT = "ab_list_definitions() { printf ''; }"
-READS = 'ab_list_definitions() { printf \'%s\' "$DEFINITIONS"; }'
+READS = "ab_list_definitions() { printf '%s' \"$DEFINITIONS\"; }"
 
-UNREADABLE = pytest.mark.parametrize(
-    "definitions", [FAILS, EMPTY, SILENT], ids=["failed", "empty", "no bytes"]
-)
+UNREADABLE = pytest.mark.parametrize("definitions", [FAILS, EMPTY, SILENT], ids=["failed", "empty", "no bytes"])
 
 STUBS = """
 log_line()          { printf '%s\\n' "$*" >&2; }
@@ -53,7 +51,7 @@ ab_workspace_id()     { printf 'workspace-1'; }
 ab_list_connections() { printf '[]'; }
 ab_delete_source()    { printf 'DELETE-SOURCE %s\\n' "$1" >> "$CALLS"; }
 disc_load_descriptors() {
-  printf '%s\\tdir\\t1\\tnocode\\t\\t\\t\\tbronze\\n' claude-team claude-team-invoices
+  printf '%s\\tdir\\t1\\tnocode\\t\\t\\tbronze\\n' claude-team claude-team-invoices
 }
 argo_delete_cronworkflow() {
   printf 'DELETE-CRONWORKFLOW %s %s\\n' "$1" "$3" >> "$CALLS"
@@ -83,9 +81,7 @@ def _run(call: str, definitions: str, tmp_path: Path) -> tuple[int, list[str], s
     ab_list_sources() {{ printf '%s' {json.dumps(listing([DOOMED]))}; }}
     {call}
     """
-    result = subprocess.run(
-        ["bash", "-c", script], capture_output=True, text=True, check=False
-    )
+    result = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=False)
     recorded = calls.read_text(encoding="utf-8").splitlines() if calls.exists() else []
     return result.returncode, recorded, result.stderr
 
@@ -96,9 +92,7 @@ def cascade(definitions: str, tmp_path: Path) -> tuple[int, list[str], str]:
 
 def prune(definitions: str, tmp_path: Path) -> tuple[int, list[str], str]:
     plan = plan_row(CONNECTOR, f"{CONNECTOR}-main", "secret-main")
-    return _run(
-        f'reconcile_prune_removed_instances "{plan}" "" ""', definitions, tmp_path
-    )
+    return _run(f'reconcile_prune_removed_instances "{plan}" "" ""', definitions, tmp_path)
 
 
 class TestTheCascade:
@@ -140,19 +134,13 @@ class TestThePruningPass:
 
 
 class TestTheRestOfTheTick:
-    def test_a_connector_whose_ownership_is_unreadable_does_not_stop_the_others(
-        self, tmp_path: Path
-    ) -> None:
+    def test_a_connector_whose_ownership_is_unreadable_does_not_stop_the_others(self, tmp_path: Path) -> None:
         """The refusal is one connector's. The instances that are configured are
         reconciled as usual — the failure must not spread, and must not turn
         into a removal anywhere else either."""
         calls = tmp_path / "calls"
         plan = "\\n".join(
-            row.replace("\t", "\\t")
-            for row in [
-                plan_row("claude-team"),
-                plan_row("gitlab", "gitlab-main", "secret-b"),
-            ]
+            row.replace("\t", "\\t") for row in [plan_row("claude-team"), plan_row("gitlab", "gitlab-main", "secret-b")]
         )
         script = f"""
         set -uo pipefail
@@ -174,10 +162,10 @@ class TestTheRestOfTheTick:
         reconcile_prune_removed_instances() {{ printf 'PRUNE\\n' >> "$CALLS"; }}
         ab_delete_source() {{ printf 'DELETE-SOURCE %s\\n' "$1" >> "$CALLS"; }}
         _reconcile_one_connector() {{
-          if [[ -z "${{10}}" ]]; then
+          if [[ -z "${{9}}" ]]; then
             reconcile_cascade_delete "$1"; return $?
           fi
-          printf 'RECONCILE %s %s\\n' "$1" "$9" >> "$CALLS"
+          printf 'RECONCILE %s %s\\n' "$1" "$8" >> "$CALLS"
         }}
         ab_workspace_id()     {{ printf 'workspace-1'; }}
         ab_list_connections() {{ printf '[]'; }}
@@ -186,9 +174,7 @@ class TestTheRestOfTheTick:
         disc_load_instances() {{ printf '%b\\n' '{plan}'; }}
         reconcile_run 0 1 0 "" ""
         """
-        result = subprocess.run(
-            ["bash", "-c", script], capture_output=True, text=True, check=False
-        )
+        result = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=False)
         recorded = calls.read_text(encoding="utf-8").splitlines() if calls.exists() else []
 
         assert "RECONCILE gitlab gitlab-main" in recorded, result.stderr

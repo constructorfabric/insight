@@ -27,7 +27,7 @@ function CustomDashboardIndex() {
 
   return (
     <>
-      <header className="mb-3 flex flex-wrap items-start gap-3">
+      <header className="mb-3 flex flex-wrap items-start gap-3 pe-12">
         <div className="min-w-0 grow">
           <h1 className={TEXT_TITLE}>Custom</h1>
           <p className={cn(TEXT_BODY, "text-muted-foreground")}>

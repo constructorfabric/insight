@@ -11,16 +11,10 @@
 #   ${CRON_NAME}            — object name, from lib/argo.sh:argo_cron_workflow_name
 #                              (Argo caps a CronWorkflow name at 52 characters)
 #   ${INSIGHT_SOURCE_ID}    — secret annotation insight.cyberfabric.com/source-id
-#   ${DATA_SOURCE}          — `jira` for the jira-enrich path, else the
-#                              connector slug (the pipeline branches on it)
+#   ${DATA_SOURCE}          — connector slug; jira selects its two-step dbt path
 #   ${DBT_SELECT}           — descriptor.dbt_select, e.g. `tag:ms-entra+`
 #   ${DBT_SELECT_STAGING}   — only set for jira (data_source==jira); empty
 #                              otherwise — the pipeline guards on data_source
-#   ${JIRA_ENRICH_IMAGE}    — descriptor.images.enrich.image for jira (per
-#                              ADR-0016); empty for connectors without an
-#                              enrich step
-#                              (the pipeline only invokes tt-enrich-jira-run
-#                              when data_source == "jira")
 #   ${INSIGHT_NAMESPACE}    — defaults to "insight" (resolved by env.sh / Helm)
 #   ${ARGO_INSTANCE_ID}     — required: must match the Argo controller's
 #                              `instanceID:` config, otherwise the controller
@@ -29,7 +23,7 @@
 #                              {release}-reconcile)
 #
 # We submit `ingestion-pipeline` (not bare `airbyte-sync`) so the chained
-# DAG fires sync → dbt-run (and tt-enrich-jira-run for jira). Otherwise
+# DAG fires sync → dbt-run. Otherwise
 # Bronze rows would land but Silver / class_* tables would never get
 # rebuilt, leaving downstream consumers on stale data.
 apiVersion: argoproj.io/v1alpha1
@@ -67,5 +61,3 @@ spec:
           value: "${DBT_SELECT}"
         - name: dbt_select_staging
           value: "${DBT_SELECT_STAGING}"
-        - name: jira_enrich_image
-          value: "${JIRA_ENRICH_IMAGE}"

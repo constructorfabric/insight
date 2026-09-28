@@ -35,11 +35,7 @@ class Definition(NamedTuple):
     definition_id: str
 
     def payload(self) -> dict[str, object]:
-        return {
-            "name": self.connector,
-            "sourceDefinitionId": self.definition_id,
-            "custom": True,
-        }
+        return {"name": self.connector, "sourceDefinitionId": self.definition_id, "custom": True}
 
 
 def listing(records: Iterable[Source] | Iterable[Definition]) -> str:
@@ -48,12 +44,10 @@ def listing(records: Iterable[Source] | Iterable[Definition]) -> str:
 
 
 def plan_row(connector: str, source_id: str = "", secret: str = "") -> str:
-    """One `disc_load_instances` row: eight descriptor columns, three instance.
+    """One `disc_load_instances` row: seven descriptor columns, three instance.
 
     The instance columns are empty for a descriptor no Secret names, which is
     what the removal passes read as "not installed here".
     """
     namespace = "bronze_" + connector.replace("-", "_")
-    return "\t".join(
-        [connector, "dir", "1", "nocode", "", "", "", namespace, source_id, secret, "hash"]
-    )
+    return "\t".join([connector, "dir", "1", "nocode", "", "", namespace, source_id, secret, "hash"])

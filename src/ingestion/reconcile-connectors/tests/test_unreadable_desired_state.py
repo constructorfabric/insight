@@ -49,9 +49,7 @@ def run_tick(loader: str, tmp_path: Path) -> tuple[int, list[str], str]:
     disc_load_instances() {{ {loader}; }}
     reconcile_run 0 1 0 "" ""
     """
-    result = subprocess.run(
-        ["bash", "-c", script], capture_output=True, text=True, check=False
-    )
+    result = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=False)
     recorded = calls.read_text(encoding="utf-8").splitlines() if calls.exists() else []
     return result.returncode, recorded, result.stderr
 
@@ -86,18 +84,12 @@ class TestAReadableDesiredStateIsActedOn:
         """The other half of the guard: a plan that read fine is not skipped."""
         plan = "\\n".join(
             [
-                "alpha\\tdir\\t1\\tnocode\\t\\t\\t\\tbronze_alpha\\tmain\\tsecret-a\\thash",
-                "alpha\\tdir\\t1\\tnocode\\t\\t\\t\\tbronze_alpha\\tsecond\\tsecret-b\\thash",
-                "beta\\tdir\\t1\\tnocode\\t\\t\\t\\tbronze_beta\\t\\t\\t",
+                "alpha\\tdir\\t1\\tnocode\\t\\t\\tbronze_alpha\\tmain\\tsecret-a\\thash",
+                "alpha\\tdir\\t1\\tnocode\\t\\t\\tbronze_alpha\\tsecond\\tsecret-b\\thash",
+                "beta\\tdir\\t1\\tnocode\\t\\t\\tbronze_beta\\t\\t\\t",
             ]
         )
         code, calls, stderr = run_tick(f"printf '%b\\\\n' '{plan}'", tmp_path)
 
         assert code == 0, stderr
-        assert calls == [
-            "RECONCILE alpha",
-            "RECONCILE alpha",
-            "RECONCILE beta",
-            "PRUNE",
-            "GC",
-        ]
+        assert calls == ["RECONCILE alpha", "RECONCILE alpha", "RECONCILE beta", "PRUNE", "GC"]

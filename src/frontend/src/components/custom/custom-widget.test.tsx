@@ -213,10 +213,10 @@ describe("<CustomWidget>", () => {
     );
 
     const cells = screen.getAllByRole("cell");
-    expect(cells).toHaveLength(3);
-    expect(cells[0]).toHaveTextContent("2026-09-01");
-    expect(cells[1]).toHaveTextContent("59");
-    expect(cells[2]).toHaveTextContent("");
+    expect(cells).toHaveLength(4);
+    expect(cells[1]).toHaveTextContent("2026-09-01");
+    expect(cells[2]).toHaveTextContent("59");
+    expect(cells[3]).toHaveTextContent("");
   });
 
   it("does not spill a long row past the declared columns", () => {
@@ -228,8 +228,8 @@ describe("<CustomWidget>", () => {
     );
 
     const cells = screen.getAllByRole("cell");
-    expect(cells).toHaveLength(1);
-    expect(cells[0]).toHaveTextContent("2026-09-01");
+    expect(cells).toHaveLength(2);
+    expect(cells[1]).toHaveTextContent("2026-09-01");
   });
 
   it.each([

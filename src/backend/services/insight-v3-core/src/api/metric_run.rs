@@ -12,9 +12,7 @@ use toolkit_canonical_errors::{CanonicalError, resource_error};
 use super::AppState;
 use super::errors::ApiErrors;
 use crate::domain::definition::DefinitionName;
-use crate::domain::query::metric_query::{MetricQueryError, MetricRunError};
-use crate::domain::query::time_window::{WindowError, WindowRequest};
-use crate::domain::surfaces::CustomError;
+use crate::domain::query::time_window::WindowRequest;
 
 #[resource_error("gts.cf.insight.insight_v3_core.metric_run.v1~")]
 struct MetricRunApiError;
@@ -33,6 +31,15 @@ impl ApiErrors for MetricRunApiError {
     fn name_taken(name: &str) -> CanonicalError {
         Self::already_exists(format!("`{name}` is already taken"))
             .with_resource(name)
+            .create()
+    }
+    fn missing(resource: &str, detail: String) -> CanonicalError {
+        Self::not_found(detail).with_resource(resource).create()
+    }
+
+    fn oversized(field: &str, detail: &str) -> CanonicalError {
+        Self::invalid_argument()
+            .with_field_violation(field, detail, "TOO_LARGE")
             .create()
     }
 }
@@ -103,13 +110,13 @@ async fn run_metric(
     };
 
     let requested = WindowRequest::parse(asked.range.as_deref(), asked.bucket)
-        .map_err(|error| window_error(&error))?;
+        .map_err(|error| MetricRunApiError::window_error(&error))?;
 
     let result = state
         .metric_runs()
         .run(&name, &requested)
         .await
-        .map_err(custom_error)?;
+        .map_err(MetricRunApiError::custom_error)?;
 
     Ok(Json(result).into_response())
 }
@@ -118,74 +125,6 @@ fn run_body_error(error: &serde_json::Error) -> CanonicalError {
     MetricRunApiError::invalid_argument()
         .with_field_violation("body", error.to_string(), "INVALID")
         .create()
-}
-
-fn window_error(error: &WindowError) -> CanonicalError {
-    MetricRunApiError::invalid_argument()
-        .with_field_violation(window_field(error), error.to_string(), "INVALID")
-        .create()
-}
-
-fn window_field(error: &WindowError) -> &'static str {
-    match error {
-        WindowError::Range(_) | WindowError::Maximum(_) | WindowError::Overflow => "range",
-    }
-}
-
-fn custom_error(error: CustomError) -> CanonicalError {
-    match error {
-        CustomError::NotFound { name, .. } => metric_not_found(&name),
-        CustomError::DatasetNotReady(named) => {
-            MetricRunApiError::not_found(format!("no dataset named `{named}` is ready to be read"))
-                .with_resource(&named)
-                .create()
-        }
-        CustomError::Body(source) => invalid_metric_body(&source),
-        CustomError::Compile(source) => compile_error(&source),
-        CustomError::Run(source) => run_error(source),
-        CustomError::Store(source) => MetricRunApiError::definition_store_error(source),
-        CustomError::Datasets(source) => MetricRunApiError::dataset_store_error(source),
-        CustomError::InUse { .. }
-        | CustomError::Widget(_)
-        | CustomError::Range(_)
-        | CustomError::Unanswerable(_) => {
-            tracing::error!(%error, "running a metric produced an unrelated failure");
-            CanonicalError::internal("metric query execution failed").create()
-        }
-    }
-}
-
-fn metric_not_found(name: &str) -> CanonicalError {
-    MetricRunApiError::not_found(format!("metric `{name}` was not found"))
-        .with_resource(name)
-        .create()
-}
-
-fn invalid_metric_body(error: &serde_json::Error) -> CanonicalError {
-    MetricRunApiError::invalid_field("body", error.to_string())
-}
-
-fn compile_error(error: &MetricQueryError) -> CanonicalError {
-    MetricRunApiError::invalid_field("body", error.to_string())
-}
-
-fn run_error(error: MetricRunError) -> CanonicalError {
-    match error {
-        MetricRunError::Timeout => {
-            MetricRunApiError::deadline_exceeded("metric query timed out").create()
-        }
-        MetricRunError::ResultTooLarge => MetricRunApiError::invalid_argument()
-            .with_field_violation("body", "metric result exceeded the size limit", "TOO_LARGE")
-            .create(),
-        MetricRunError::ClickHouse(source) => {
-            tracing::error!(error = ?source, "metric query execution failed");
-            CanonicalError::internal("metric query execution failed").create()
-        }
-        MetricRunError::InvalidResponse(source) => {
-            tracing::error!(error = ?source, "metric query result deserialization failed");
-            CanonicalError::internal("metric query execution failed").create()
-        }
-    }
 }
 
 #[cfg(test)]

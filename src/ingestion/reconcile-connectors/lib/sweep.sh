@@ -121,16 +121,16 @@ sweep__build_work() {
   fi
 
   local entries=() shipped=()
-  local name connector_dir version type cdk_image enrich_image dbt_select ns_format
+  local name connector_dir version type cdk_image dbt_select ns_format
   local source_id secret_name cfg_hash conn_name conn_id tenant
   local seen_descriptor=""
   # Re-delimited on US for the same reason reconcile_run does it: TAB is
   # IFS-whitespace, so the plan's empty fields would collapse and shift.
-  while IFS=$'\037' read -r name connector_dir version type cdk_image enrich_image dbt_select \
+  while IFS=$'\037' read -r name connector_dir version type cdk_image dbt_select \
         ns_format source_id secret_name cfg_hash; do
     [[ -n "${name}" ]] || continue
     # Read into deliberately; the snapshot needs the identity and nothing else.
-    : "${connector_dir}${version}${type}${cdk_image}${enrich_image}${dbt_select}${cfg_hash}"
+    : "${connector_dir}${version}${type}${cdk_image}${dbt_select}${cfg_hash}"
 
     # Every descriptor, installed or not: history outlives a Secret, and the
     # only place an uninstalled connector's own recorded identity survives is

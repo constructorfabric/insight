@@ -27,12 +27,10 @@ _DISC_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ---------------------------------------------------------------------------
 # disc_load_descriptors
 # Walks ${CONNECTORS_DIR}/*/*/descriptor.yaml and emits TSV per descriptor:
-#   name<TAB>connector_dir<TAB>version<TAB>type<TAB>cdk_image<TAB>enrich_image<TAB>dbt_select<TAB>namespace
+#   name<TAB>connector_dir<TAB>version<TAB>type<TAB>cdk_image<TAB>dbt_select<TAB>namespace
 #     (type = nocode|cdk; cdk_image is the full Docker reference sourced from
 #      `descriptor.images.cdk.image` per ADR-0016, empty for nocode or absent;
-#      enrich_image is sourced from `descriptor.images.enrich.image`, empty
-#      otherwise; dbt_select is the dbt selector passed to the
-#      ingestion-pipeline.)
+#      dbt_select is the dbt selector passed to the ingestion-pipeline.)
 # This is the single bash-side reader of descriptor.yaml — every other lib /
 # python helper consumes values via this TSV rather than re-reading the file.
 # Skips files missing `name` or `version`; logs a WARN to stderr per skip.
@@ -55,12 +53,10 @@ name = d.get("name")
 version = d.get("version")
 ctype = d.get("type", "nocode")
 # Image refs are sourced from the map-style images: block per ADR-0016;
-# legacy top-level cdk_image / enrich_image fields no longer exist.
+# legacy top-level cdk_image fields no longer exist.
 images = d.get("images") or {}
 cdk_entry = images.get("cdk") or {}
-enrich_entry = images.get("enrich") or {}
 cdk_image = (cdk_entry.get("image") or "") if isinstance(cdk_entry, dict) else ""
-enrich_image = (enrich_entry.get("image") or "") if isinstance(enrich_entry, dict) else ""
 dbt_select = d.get("dbt_select", "") or ""
 # The connector's ClickHouse namespace, read here because the file is already
 # open. No `bronze_<slug>` fallback: a hyphenated slug would name a database
@@ -70,7 +66,7 @@ if not name:
     sys.stderr.write(f"WARN: descriptor missing name, skip: {path}\n"); sys.exit(0)
 if version is None:
     sys.stderr.write(f"WARN: descriptor missing version, skip: {path}\n"); sys.exit(0)
-print(f"{name}\t{connector_dir}\t{version}\t{ctype}\t{cdk_image}\t{enrich_image}\t{dbt_select}\t{namespace}")
+print(f"{name}\t{connector_dir}\t{version}\t{ctype}\t{cdk_image}\t{dbt_select}\t{namespace}")
 PY
   done < <(find "${CONNECTORS_DIR}" -name 'descriptor.yaml' -print0 2>/dev/null)
   # @cpt-end:cpt-insightspec-algo-reconcile-discover-secrets-v2:p1:inst-ds-descriptor
@@ -104,7 +100,7 @@ disc_load_secrets() {
 # disc_load_instances [namespace]
 # The desired state as one relation: every descriptor this build ships, joined
 # with every instance of it this install configures. Emits TSV
-#   name  connector_dir  version  type  cdk_image  enrich_image  dbt_select \
+#   name  connector_dir  version  type  cdk_image  dbt_select  namespace \
 #   source_id  secret_name  cfg_hash
 # with the last three empty for a descriptor no Secret names.
 #

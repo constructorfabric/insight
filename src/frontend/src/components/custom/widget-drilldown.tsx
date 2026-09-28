@@ -1,10 +1,10 @@
-import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft } from "lucide-react";
+import { useMemo, useState } from "react";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { ArrowLeft, Maximize2, Minimize2 } from "lucide-react";
 
-import type { Widget } from "@/api/custom-client";
-import { CustomTable } from "@/components/custom/custom-table";
+import type { DrilldownSort, Widget } from "@/api/custom-client";
 import { refusal } from "@/components/custom/refusal";
+import { MetricEvidenceTable } from "@/components/metric-evidence-table";
 import {
   MetricSummary,
   WidgetSummary,
@@ -18,7 +18,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
-import { metricQuery, metricResultQuery } from "@/queries/custom";
+import { drawable, startsOver } from "@/lib/custom/drilldown";
+import { nextSort } from "@/lib/metrics/evidence-rows";
+import { drilldownPagesQuery, metricQuery } from "@/queries/custom";
 import type { RunOptions } from "@/api/custom-client";
 import { TEXT_BODY, TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
@@ -52,10 +54,15 @@ export function WidgetDrilldown({
   options?: RunOptions;
 }) {
   const [view, setView] = useState<View>({ kind: "rows" });
+  /** Whether the dialog has been asked to fill the window. */
+  const [filling, setFilling] = useState(false);
 
   /** Closing returns to the rows, so the next visit starts where it should. */
   function change(next: boolean) {
-    if (!next) setView({ kind: "rows" });
+    if (!next) {
+      setView({ kind: "rows" });
+      setFilling(false);
+    }
     onOpenChange(next);
   }
 
@@ -64,7 +71,13 @@ export function WidgetDrilldown({
 
   return (
     <Dialog open={open} onOpenChange={change}>
-      <DialogContent className="max-w-3xl">
+      <DialogContent
+        className={cn(
+          filling
+            ? "h-[96vh] w-[98vw] max-w-[98vw] content-start"
+            : "w-[min(96vw,80rem)] max-w-[min(96vw,80rem)]"
+        )}
+      >
         <DialogHeader>
           <DialogTitle className="flex min-w-0 items-center gap-2">
             {view.kind === "rows" ? null : (
@@ -85,6 +98,20 @@ export function WidgetDrilldown({
             >
               {heading}
             </span>
+            {/* Placed as the kit places its close button - over the corner,
+                not in this row - so the two sit on one line, one step apart. */}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="absolute top-4 right-14 z-[2] w-9"
+              aria-pressed={filling}
+              aria-label={
+                filling ? "Shrink the dialog back" : "Fill the window"
+              }
+              onClick={() => setFilling((was) => !was)}
+            >
+              {filling ? <Minimize2 /> : <Maximize2 />}
+            </Button>
           </DialogTitle>
           {view.kind === "rows" ? null : (
             <DialogDescription>
@@ -97,7 +124,11 @@ export function WidgetDrilldown({
 
         {open && view.kind === "rows" ? (
           <>
-            <Rows metric={widget.detail ?? widget.metric} options={options} />
+            <Rows
+              metric={widget.detail ?? widget.metric}
+              options={options}
+              filling={filling}
+            />
             <Definitions widget={widget} name={name} onOpen={setView} />
           </>
         ) : null}
@@ -188,17 +219,48 @@ function StoredMetric({ name }: { name: string }) {
   return <MetricSummary definition={definition.data.definition} />;
 }
 
-function Rows({ metric, options }: { metric: string; options?: RunOptions }) {
+/** Past this many pages the reader is asked to narrow rather than scroll. */
+const MAX_PAGES = 50;
+
+function Rows({
+  metric,
+  options,
+  filling,
+}: {
+  metric: string;
+  options?: RunOptions;
+  /** Filling the window, the dialog scrolls rather than the rows inside it. */
+  filling: boolean;
+}) {
   const definition = useQuery(metricQuery(metric));
+  const [sort, setSort] = useState<DrilldownSort | null>(null);
 
   // The rows have to be the rows behind the number on the card, so they take
   // the card's own window — and a metric nothing dates cannot be windowed at
   // all.
   const windowed = options && Boolean(definition.data?.clock);
-  const result = useQuery({
-    ...metricResultQuery(metric, windowed ? options : undefined),
+  const pages = useInfiniteQuery({
+    ...drilldownPagesQuery(metric, {
+      ...(windowed ? options : {}),
+      ...(sort ? { sort } : {}),
+    }),
     enabled: definition.isSuccess,
   });
+
+  const columns = useMemo(() => pages.data?.pages[0]?.columns ?? [], [pages.data]);
+  const rows = useMemo(
+    () =>
+      pages.data?.pages.flatMap((page) =>
+        page.rows.map((row) => drawable(row, columns))
+      ) ?? [],
+    [pages.data, columns]
+  );
+  // What the headers announce: the order of the rows ON SCREEN, read off the
+  // page that produced them - never the order just asked for, whose rows are
+  // still on their way.
+  const shownSort = pages.data?.pages[0]?.selection.sort ?? null;
+  const pageLimitReached =
+    (pages.data?.pages.length ?? 0) >= MAX_PAGES && pages.hasNextPage;
 
   if (definition.isError) {
     return (
@@ -207,24 +269,56 @@ function Rows({ metric, options }: { metric: string; options?: RunOptions }) {
       </p>
     );
   }
-  if (definition.isPending || result.isPending)
+  if (definition.isPending || pages.isPending)
     return <CenteredSpinner className="min-h-40" />;
-  if (result.isError) {
+  if (pages.isError && !pages.data) {
     return (
-      <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
-        {refusal(result.error, "The metric could not be run.")}
-      </p>
+      <div className="flex flex-col items-start gap-2">
+        <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
+          {refusal(pages.error, "The metric could not be run.")}
+        </p>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => void pages.refetch()}
+        >
+          Retry
+        </Button>
+      </div>
     );
   }
-  if (!result.data || result.data.rows.length === 0) {
+  if (rows.length === 0 && !pages.isFetching) {
     return <p className={TEXT_BODY}>No data.</p>;
   }
 
   return (
-    <div className="flex min-w-0 flex-col gap-2">
-      <div className="max-h-[60vh] min-w-0 overflow-auto">
-        <CustomTable result={result.data} />
-      </div>
+    <div
+      className={cn(
+        "relative flex min-w-0 flex-col",
+        filling ? "h-[calc(96vh-11rem)]" : "h-[60vh]"
+      )}
+    >
+      <MetricEvidenceTable
+        metricKey={null}
+        rows={rows}
+        columns={columns}
+        sort={shownSort}
+        // The next order is counted from the one ON SCREEN, so the first
+        // click on the column the service chose itself flips it rather than
+        // asking for what is already there.
+        onSortChange={(key) => setSort(nextSort(shownSort, key))}
+        // A table made again mid-walk invalidates every cursor: the walk
+        // starts over rather than retrying a page that cannot come.
+        fetchNextPage={() =>
+          startsOver(pages.error) ? pages.refetch() : pages.fetchNextPage()
+        }
+        hasNextPage={pages.hasNextPage && !pageLimitReached}
+        isFetchingNextPage={pages.isFetchingNextPage}
+        reordering={pages.isFetching && !pages.isFetchingNextPage}
+        nextPageError={pages.isFetchNextPageError}
+        pageLimitReached={pageLimitReached}
+      />
     </div>
   );
 }

@@ -397,6 +397,10 @@ heal_ai_assistant_staging chatgpt_team__ai_assistant_usage
 heal_ai_invoice_staging claude_team__ai_invoice
 
 echo "=== Healing task field-history staging arms ==="
+run_ch <<'SQL'
+DROP TABLE IF EXISTS staging.jira__task_field_history;
+SQL
+
 # The class contract changed twice and the three incremental Jira arms have to
 # follow: `author_display`, `delta_value_id`, `delta_value_display` and then
 # `title` left it, and the four discriminators became LowCardinality(String).
@@ -411,9 +415,6 @@ echo "=== Healing task field-history staging arms ==="
 # queries", and an arm still typed Enum8 fails the field-parity audit. The
 # GitHub arm and the derived Jira journal need no heal: both are `table`,
 # rebuilt every run.
-#
-# `staging.jira__task_field_history`, the retired producer's output, is left as
-# it is: no model reads it any more.
 heal_task_field_history_arm() {
   local table="$1"
   ch_table_exists staging "${table}" || return 0

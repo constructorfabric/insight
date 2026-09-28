@@ -16,10 +16,7 @@ set -euo pipefail
 #
 # Most "infrastructure" parameters of the WorkflowTemplate (toolbox_image,
 # airbyte_url, clickhouse_*) come from chart-rendered defaults; this script
-# only passes connection-specific inputs. The `jira_enrich_image` parameter
-# is REQUIRED with no chart-level default (per ADR-0016) — reconcile reads
-# it from `descriptor.images.enrich.image` and passes it via the rendered
-# ingestion-pipeline submission.
+# only passes connection-specific inputs.
 
 : "${KUBECONFIG:?must be set, e.g. export KUBECONFIG=~/.kube/insight.kubeconfig}"
 : "${INSIGHT_NAMESPACE:?must be set to the umbrella release namespace, e.g. export INSIGHT_NAMESPACE=insight}"

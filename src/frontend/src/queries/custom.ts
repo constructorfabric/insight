@@ -8,6 +8,8 @@ import {
 
 import type {
   ChatTurn,
+  DrilldownPage,
+  DrilldownRequest,
   RecordPage,
   DefinitionKind,
   EditableKind,
@@ -24,6 +26,7 @@ import {
   fetchDatasetNames,
   fetchDatasetRecords,
   fetchDependents,
+  fetchDrilldownPage,
   fetchMetric,
   fetchMetricNames,
   fetchTable,
@@ -230,6 +233,41 @@ export function metricResultQuery(name: string, options?: RunOptions) {
       options?.bucket ?? null,
     ],
     queryFn: () => runMetric(name, options),
+  });
+}
+
+/** How many rows one page of a drilldown asks for. */
+const DRILLDOWN_PAGE_ROWS = 100;
+
+/**
+ * A metric's rows behind a widget, one ordered page at a time.
+ *
+ * The window and the order are in the key: a re-order is its own answer,
+ * and the previous one is kept on screen until it arrives rather than
+ * replaced by a spinner under the header the reader just clicked.
+ */
+export function drilldownPagesQuery(
+  name: string,
+  view: Omit<DrilldownRequest, "cursor" | "limit">
+) {
+  return infiniteQueryOptions({
+    queryKey: [
+      "custom",
+      "drilldown",
+      name,
+      view.range ?? null,
+      view.bucket ?? null,
+      view.sort ?? null,
+    ],
+    queryFn: ({ pageParam, signal }) =>
+      fetchDrilldownPage(
+        name,
+        { ...view, limit: DRILLDOWN_PAGE_ROWS, cursor: pageParam },
+        signal
+      ),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last: DrilldownPage) => last.next_cursor ?? undefined,
+    placeholderData: (previous) => previous,
   });
 }
 

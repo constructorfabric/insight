@@ -20,11 +20,11 @@ ROOT = Path(__file__).resolve().parents[1]
 EXTRACT = ROOT / "python" / "extract_secret_loop.py"
 PLAN = ROOT / "python" / "plan_instances.py"
 
-DESCRIPTOR_COLUMNS = ("dir", "1", "nocode", "", "", "")
+DESCRIPTOR_COLUMNS = ("dir", "1", "nocode", "", "")
 
 
 def descriptor(name: str) -> str:
-    """The eight columns `disc_load_descriptors` emits, namespace last."""
+    """The seven columns `disc_load_descriptors` emits, namespace last."""
     namespace = "bronze_" + name.replace("-", "_")
     return "\t".join([name, *DESCRIPTOR_COLUMNS, namespace])
 
@@ -33,9 +33,7 @@ def secret_row(connector: str, source_id: str, name: str, cfg_hash: str = "hash"
     return "\t".join([connector, source_id, name, cfg_hash])
 
 
-def run_plan(
-    tmp_path: Path, descriptors: list[str], secrets: list[str]
-) -> subprocess.CompletedProcess[str]:
+def run_plan(tmp_path: Path, descriptors: list[str], secrets: list[str]) -> subprocess.CompletedProcess[str]:
     descriptors_file = tmp_path / "descriptors.tsv"
     secrets_file = tmp_path / "secrets.tsv"
     descriptors_file.write_text("\n".join(descriptors) + "\n", encoding="utf-8")
@@ -53,7 +51,7 @@ def instances(result: subprocess.CompletedProcess[str]) -> list[tuple[str, str, 
     rows = []
     for line in result.stdout.splitlines():
         fields = line.split("\t")
-        rows.append((fields[0], fields[8], fields[9]))
+        rows.append((fields[0], fields[7], fields[8]))
     return rows
 
 
@@ -86,24 +84,13 @@ class TestASecretIsReadIntoAnInstance:
         )
 
         assert result.returncode == 0, result.stderr
-        assert result.stdout.split("\t")[:3] == [
-            "claude-team",
-            "claude-team-second",
-            "insight-claude-team-second",
-        ]
+        assert result.stdout.split("\t")[:3] == ["claude-team", "claude-team-second", "insight-claude-team-second"]
 
     def test_a_secret_naming_no_source_id_is_the_main_instance(self) -> None:
         """Not skipped. A skipped Secret takes its connector out of the desired
         state, and a connector absent from the desired state is one the loop
         deletes the sources of."""
-        result = run_extract(
-            [
-                a_secret(
-                    "insight-claude-team",
-                    {"insight.cyberfabric.com/connector": "claude-team"},
-                )
-            ]
-        )
+        result = run_extract([a_secret("insight-claude-team", {"insight.cyberfabric.com/connector": "claude-team"})])
 
         assert result.returncode == 0, result.stderr
         assert result.stdout.split("\t")[1] == "main"
@@ -145,11 +132,7 @@ class TestTheJoin:
         assert instances(result) == [("jira", "", "")]
 
     def test_a_secret_for_a_connector_this_build_lacks_is_reported(self, tmp_path: Path) -> None:
-        result = run_plan(
-            tmp_path,
-            [descriptor("jira")],
-            [secret_row("from-the-future", "main", "secret-future")],
-        )
+        result = run_plan(tmp_path, [descriptor("jira")], [secret_row("from-the-future", "main", "secret-future")])
 
         assert result.returncode == 0, result.stderr
         assert instances(result) == [("jira", "", "")]
@@ -162,10 +145,7 @@ class TestTheJoin:
         result = run_plan(
             tmp_path,
             [descriptor("claude-team")],
-            [
-                secret_row("claude-team", "main", "secret-a"),
-                secret_row("claude-team", "main", "secret-b"),
-            ],
+            [secret_row("claude-team", "main", "secret-a"), secret_row("claude-team", "main", "secret-b")],
         )
 
         assert result.returncode == 3

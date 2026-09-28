@@ -8,12 +8,12 @@ Inputs are files, not stdin, because there are two of them and neither is
 small enough to want in argv.
 
   descriptors_tsv  `disc_load_descriptors` output:
-                   name, connector_dir, version, type, cdk_image, enrich_image,
-                   dbt_select, namespace
+                   name, connector_dir, version, type, cdk_image, dbt_select,
+                   namespace
   secrets_tsv      `disc_load_secrets` output:
                    connector, source_id, secret_name, cfg_hash
 
-Stdout: one TSV row per connector INSTANCE, the descriptor's eight columns
+Stdout: one TSV row per connector INSTANCE, the descriptor's seven columns
         followed by source_id, secret_name, cfg_hash.
 Exit:   0 success; 2 on bad arg count; 3 when two Secrets claim one instance.
 
@@ -37,7 +37,7 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-DESCRIPTOR_COLUMNS = 8
+DESCRIPTOR_COLUMNS = 7
 
 #: What an uninstalled descriptor carries where an instance would be.
 NOT_INSTALLED = ("", "", "")
@@ -74,8 +74,7 @@ def main() -> int:
     for connector, source_id, secret_name, cfg_hash in secrets:
         if connector not in known:
             sys.stderr.write(
-                f"WARN: secret {secret_name} names connector {connector}, "
-                "which this build does not ship; ignoring it\n"
+                f"WARN: secret {secret_name} names connector {connector}, which this build does not ship; ignoring it\n"
             )
             continue
         claimed = by_connector[connector].get(source_id)

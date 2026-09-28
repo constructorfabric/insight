@@ -3,11 +3,13 @@
   ordering key of `silver.class_task_field_history`.
 
   `event_at` alone is not a total order, and neither is `(event_at, _seq)`: a
-  changelog row carries `_seq` 0 while the `synthetic_initial` rows of an issue
-  carry 1..N, so ordering by `_seq` sorts the initial row AFTER an event of the
-  same instant — and the newest state of that field then reads as the state
-  before the event. Every issue whose first event landed on its own creation
-  timestamp hits this.
+  Jira changelog row's `_seq` is its position in the from→to chain of events
+  sharing its instant (0 when that chain is not unique), an element-wise
+  changelog row's `_seq` is always 0, and the `synthetic_initial` rows of an
+  issue carry 1..N — so ordering by `_seq` alone can still sort an initial row
+  AFTER an event of the same instant, reading the newest state of that field as
+  the state before the event. Every issue whose first event landed on its own
+  creation timestamp hits this.
 
   The kind decides instead: an initial row is by definition the state before any
   event; a `changelog` row is a state after one; `availability` and `lifecycle`
@@ -15,9 +17,9 @@
 
   The full key is `(event_at, task_event_rank(event_kind), _seq,
   toUInt64OrZero(event_id))` — `_seq` orders the initial rows among themselves
-  (they share the creation timestamp) and the event id breaks a tie between two
-  changelog rows of one instant, compared NUMERICALLY because as text '101'
-  sorts before '99'.
+  and a self-describing changelog row's own chain among its ties; the event id
+  breaks whatever `_seq` still leaves tied, compared NUMERICALLY because as
+  text '101' sorts before '99'.
 -#}
 {% macro task_event_rank(event_kind) %}
     multiIf({{ event_kind }} = 'synthetic_initial', 0,

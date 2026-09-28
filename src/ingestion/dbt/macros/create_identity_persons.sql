@@ -5,7 +5,7 @@
   `account_assignment` view reads it, `person_map` builds on that, and the
   analytics runtime joins `person_map` when it serves a person.
 
-  Called from `on-run-start` (same pattern as `create_task_field_history_staging`)
+  Called from `on-run-start`
   so a build on an environment where the sync has never run — fresh cluster,
   CI, local k3d — meets an EMPTY table instead of a missing one: the map comes
   out empty, every person resolves to nobody, and metrics report no data rather

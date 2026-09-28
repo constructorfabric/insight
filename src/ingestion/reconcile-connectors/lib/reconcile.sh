@@ -1267,7 +1267,7 @@ reconcile_dry_run() {
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # _reconcile_one_connector <name> <connector_dir> <version> <type> <cdk_image> \
-#                          <enrich_image> <dbt_select> <namespace> <source_id> \
+#                          <dbt_select> <namespace> <source_id> \
 #                          <secret_name> <cfg_hash> <opt_dry_run> \
 #                          <opt_no_sync_trigger> <opt_connector> <opt_source_id>
 # One INSTANCE of one connector — a descriptor and the Secret that configures
@@ -1280,9 +1280,9 @@ reconcile_dry_run() {
 # Returns 0 on success, non-zero on any per-layer failure.
 # ---------------------------------------------------------------------------
 _reconcile_one_connector() {
-  local name="$1" connector_dir="$2" version="$3" type="$4" cdk_image="$5" enrich_image="$6" dbt_select="$7"
-  local ns_format="$8" source_id_label="$9" secret_name="${10}" cfg_hash="${11}"
-  local opt_dry_run="${12}" opt_no_sync_trigger="${13}" opt_connector="${14}" opt_source_id="${15}"
+  local name="$1" connector_dir="$2" version="$3" type="$4" cdk_image="$5" dbt_select="$6"
+  local ns_format="$7" source_id_label="$8" secret_name="$9" cfg_hash="${10}"
+  local opt_dry_run="${11}" opt_no_sync_trigger="${12}" opt_connector="${13}" opt_source_id="${14}"
   set +e  # explicit per-call error handling below
 
   if [[ -n "${opt_connector}" && "${name}" != "${opt_connector}" ]]; then
@@ -1485,8 +1485,8 @@ _reconcile_one_connector() {
   else
     local apply_rc=0
     argo_apply_cronworkflow "${name}" "${conn_name}" "${schedule}" "${tenant}" \
-                            "${source_id_label}" "${dbt_select}" \
-                            "${enrich_image}" >/dev/null 2>&1 || apply_rc=$?
+                            "${source_id_label}" "${dbt_select}" >/dev/null 2>&1 \
+      || apply_rc=$?
     if [[ "${apply_rc}" -eq 2 ]]; then
       log_line ERROR "${name}: applied Argo CronWorkflow but failed to remove legacy CronWorkflow $(argo_cron_workflow_name_full_tenant "${name}" "${tenant}")"
       rc=1
@@ -1509,7 +1509,7 @@ _reconcile_one_connector() {
       fi
     elif argo_submit_sync_trigger "${name}" "${conn_name}" "${tenant}" \
                                    "${source_id_label}" "${dbt_select}" \
-                                   "${enrich_image}" "${def_bump_kind}" >/dev/null 2>&1; then
+                                   "${def_bump_kind}" >/dev/null 2>&1; then
       if [[ "${def_bump_kind}" == "major" ]]; then
         log_line INFO "${name}: triggered a one-shot sync with dbt --full-refresh (bump_kind=major)"
       else
@@ -1608,7 +1608,7 @@ _reconcile_mark_colliding_connectors() {
   while IFS=$'\t' read -r name source_id; do
     [[ -n "${name}" && -n "${source_id}" ]] || continue
     ids_of["${name}"]+="${source_id}"$'\n'
-  done < <(printf '%s\n' "${plan_tsv}" | awk -F'\t' '$10 != "" { print $1 "\t" $9 }')
+  done < <(printf '%s\n' "${plan_tsv}" | awk -F'\t' '$9 != "" { print $1 "\t" $8 }')
 
   local -a ids
   local why
@@ -1664,24 +1664,21 @@ reconcile_run() {
   # COALESCES runs of tabs into a single delimiter and trims leading/trailing ones
   # — i.e. empty fields silently disappear and every later column shifts left.
   # The plan has empty fields by design (cdk_image is empty for every nocode
-  # connector; enrich_image is empty for all but jira; the three instance
-  # columns are empty for a connector no Secret names), so a row like
-  #   jira\t<dir>\t<ver>\tnocode\t<EMPTY cdk>\t<enrich>\t<dbt_select>\t...
-  # would parse as cdk_image=<enrich>, enrich_image=<dbt_select>, dbt_select=''.
-  # That mis-feeds argo_apply_cronworkflow (enrich image := dbt selector) and
-  # bricks the jira enrich step. Re-delimit on US (\037, non-whitespace → no
+  # connector; the three instance columns are empty for a connector no Secret
+  # names), so TAB parsing would shift the dbt selector and namespace left.
+  # Re-delimit on US (\037, non-whitespace → no
   # coalescing) so empty fields are preserved. Process substitution (not a pipe)
   # keeps the loop in the current shell so _RECONCILE_* counters persist.
-  local name connector_dir version type cdk_image enrich_image dbt_select ns_format
+  local name connector_dir version type cdk_image dbt_select ns_format
   local source_id secret_name cfg_hash
-  while IFS=$'\037' read -r name connector_dir version type cdk_image enrich_image dbt_select \
+  while IFS=$'\037' read -r name connector_dir version type cdk_image dbt_select \
         ns_format source_id secret_name cfg_hash; do
     [[ -n "${name}" ]] || continue
     if [[ "${_RECONCILE_REFUSED}" == *"|${name}|"* ]]; then
       _RECONCILE_SKIPPED=$((_RECONCILE_SKIPPED + 1))
       continue
     fi
-    if ! _reconcile_one_connector "${name}" "${connector_dir}" "${version}" "${type}" "${cdk_image}" "${enrich_image}" "${dbt_select}" \
+    if ! _reconcile_one_connector "${name}" "${connector_dir}" "${version}" "${type}" "${cdk_image}" "${dbt_select}" \
          "${ns_format}" "${source_id}" "${secret_name}" "${cfg_hash}" \
          "${opt_dry_run}" "${opt_no_sync_trigger}" "${opt_connector}" "${opt_source_id}"; then
       log_line ERROR "${name}: reconcile failed (continuing with next)"

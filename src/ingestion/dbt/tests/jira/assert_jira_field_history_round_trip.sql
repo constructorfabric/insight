@@ -61,18 +61,21 @@ WITH latest_state AS (
         --
         -- `event_kind` first: a `synthetic_initial` row is the state at creation
         -- and a changelog row a state after an event, so the initial row
-        -- precedes any event of the same instant. `_seq` cannot express that —
-        -- it is 0 for every changelog row and 1..N for the initial rows, which
-        -- sorts them the WRONG way round. An issue whose first event lands on
-        -- its own creation timestamp then reads as though the field were still
-        -- empty. `retired_field` sorts last: it is stamped when the absence was
+        -- precedes any event of the same instant. `_seq` cannot express that on
+        -- its own: a self-describing changelog row's `_seq` is its position in
+        -- the chain of events sharing its instant (0 otherwise), an
+        -- element-wise changelog row's is always 0, and the initial rows carry
+        -- 1..N — so an issue whose first event lands on its own creation
+        -- timestamp can still read as though the field were still empty.
+        -- `retired_field` sorts last: it is stamped when the absence was
         -- observed, which is at or after every event.
         --
-        -- `_seq` second, to order the initial rows among themselves — they all
-        -- share the creation timestamp.
+        -- `_seq` second: it orders the initial rows among themselves — they all
+        -- share the creation timestamp — and a self-describing changelog row's
+        -- own chain among its ties.
         --
-        -- The event id last, numerically: two changelog rows of one millisecond
-        -- both carry `_seq` 0, and as text '101' sorts before '99'.
+        -- The event id last, numerically, breaking whatever `_seq` still leaves
+        -- tied: as text '101' sorts before '99'.
         argMax(value_ids,      (event_at, {{ task_event_rank('event_kind') }},
                                 _seq, toUInt64OrZero(event_id))) AS value_ids,
         argMax(value_displays, (event_at, {{ task_event_rank('event_kind') }},
