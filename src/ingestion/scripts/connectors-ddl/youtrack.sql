@@ -25,6 +25,7 @@ ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
 SETTINGS allow_nullable_key = 1, index_granularity = 8192
 ;
+
 CREATE TABLE IF NOT EXISTS bronze_youtrack.youtrack_agiles
 (
     `_airbyte_raw_id` String,
