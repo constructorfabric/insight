@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fmt;
 
 use secrecy::{ExposeSecret as _, SecretString};
@@ -58,6 +59,88 @@ impl Default for McpConfig {
     }
 }
 
+/// Where a notification may be sent: a name administrators refer to, and
+/// the provider behind it. Delivery credentials are not read here yet;
+/// a destination's provider is what a rule is checked against.
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct DestinationConfig {
+    pub(crate) provider: DestinationProvider,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum DestinationProvider {
+    Discord,
+    Telegram,
+    Zulip,
+}
+
+impl DestinationProvider {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Discord => "discord",
+            Self::Telegram => "telegram",
+            Self::Zulip => "zulip",
+        }
+    }
+}
+
+/// Metric alerts: off unless a deployment names the Redis their schedule
+/// lives in.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub(crate) struct AlertsConfig {
+    pub(crate) enabled: bool,
+    /// The Redis the check schedule and its workers coordinate through.
+    pub(crate) redis_url: String,
+    pub(crate) destinations: BTreeMap<String, DestinationConfig>,
+    pub(crate) min_interval_secs: u32,
+    pub(crate) max_interval_secs: u32,
+    pub(crate) max_rules: u64,
+    /// How many checks of different rules run at once.
+    pub(crate) evaluation_concurrency: usize,
+    /// How long one check may take before its lock lapses and another
+    /// worker may pick it up.
+    pub(crate) evaluation_timeout_secs: u64,
+    pub(crate) notifications_kept_per_rule: u64,
+}
+
+impl Default for AlertsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            redis_url: String::new(),
+            destinations: BTreeMap::new(),
+            min_interval_secs: crate::domain::alerts::rule::DEFAULT_MIN_INTERVAL_SECS,
+            max_interval_secs: crate::domain::alerts::rule::DEFAULT_MAX_INTERVAL_SECS,
+            max_rules: crate::domain::alerts::rule::DEFAULT_MAX_RULES,
+            evaluation_concurrency: crate::domain::alerts::rule::DEFAULT_EVALUATION_CONCURRENCY,
+            evaluation_timeout_secs: crate::domain::alerts::rule::DEFAULT_EVALUATION_TIMEOUT_SECS,
+            notifications_kept_per_rule:
+                crate::domain::alerts::rule::DEFAULT_NOTIFICATIONS_KEPT_PER_RULE,
+        }
+    }
+}
+
+impl AlertsConfig {
+    pub(crate) fn limits(&self) -> crate::domain::alerts::Limits {
+        crate::domain::alerts::Limits {
+            min_interval_secs: self.min_interval_secs,
+            max_interval_secs: self.max_interval_secs,
+            max_rules: self.max_rules,
+        }
+    }
+
+    pub(crate) fn destinations(&self) -> crate::domain::alerts::Destinations {
+        crate::domain::alerts::Destinations::new(
+            self.destinations
+                .iter()
+                .map(|(name, destination)| (name.clone(), destination.provider.as_str().to_owned()))
+                .collect(),
+        )
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(default)]
 pub(crate) struct GearConfig {
@@ -83,6 +166,7 @@ pub(crate) struct GearConfig {
     pub(crate) database_url: String,
     pub(crate) identity_url: String,
     pub(crate) mcp: McpConfig,
+    pub(crate) alerts: AlertsConfig,
 }
 
 impl Default for GearConfig {
@@ -104,6 +188,7 @@ impl Default for GearConfig {
             database_url: String::new(),
             identity_url: String::new(),
             mcp: McpConfig::default(),
+            alerts: AlertsConfig::default(),
         }
     }
 }
@@ -147,6 +232,7 @@ pub(crate) struct ValidatedConfig {
     database_url: String,
     identity_url: String,
     mcp: McpConfig,
+    alerts: AlertsConfig,
 }
 
 // SAFETY: `database_url` embeds the MariaDB password, so a `?config` in any
@@ -172,6 +258,29 @@ impl fmt::Debug for GearConfig {
             .field("database_url", &REDACTED)
             .field("identity_url", &self.identity_url)
             .field("mcp", &self.mcp)
+            .field("alerts", &RedactedAlerts(&self.alerts))
+            .finish()
+    }
+}
+
+/// The alerts section without its Redis URL, which may carry a password.
+struct RedactedAlerts<'a>(&'a AlertsConfig);
+
+impl fmt::Debug for RedactedAlerts<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AlertsConfig")
+            .field("enabled", &self.0.enabled)
+            .field("redis_url", &"<redacted>")
+            .field("destinations", &self.0.destinations)
+            .field("min_interval_secs", &self.0.min_interval_secs)
+            .field("max_interval_secs", &self.0.max_interval_secs)
+            .field("max_rules", &self.0.max_rules)
+            .field("evaluation_concurrency", &self.0.evaluation_concurrency)
+            .field("evaluation_timeout_secs", &self.0.evaluation_timeout_secs)
+            .field(
+                "notifications_kept_per_rule",
+                &self.0.notifications_kept_per_rule,
+            )
             .finish()
     }
 }
@@ -196,6 +305,7 @@ impl fmt::Debug for ValidatedConfig {
             .field("database_url", &REDACTED)
             .field("identity_url", &self.identity_url)
             .field("mcp", &self.mcp)
+            .field("alerts", &RedactedAlerts(&self.alerts))
             .finish()
     }
 }
@@ -270,6 +380,10 @@ impl ValidatedConfig {
 
     pub(crate) fn mcp(&self) -> &McpConfig {
         &self.mcp
+    }
+
+    pub(crate) fn alerts(&self) -> &AlertsConfig {
+        &self.alerts
     }
 
     pub(crate) fn identity_url(&self) -> &str {
@@ -379,6 +493,7 @@ impl GearConfig {
             return Err(ConfigError::IncompleteQueryCredentials);
         }
         validate_mcp(&self.mcp)?;
+        validate_alerts(&self.alerts)?;
 
         Ok(ValidatedConfig {
             clickhouse_url: self.clickhouse_url,
@@ -397,6 +512,7 @@ impl GearConfig {
             database_url: self.database_url,
             identity_url: self.identity_url,
             mcp: self.mcp,
+            alerts: self.alerts,
         })
     }
 }
@@ -465,6 +581,42 @@ fn validate_mcp(mcp: &McpConfig) -> Result<(), ConfigError> {
     Ok(())
 }
 
+fn validate_alerts(alerts: &AlertsConfig) -> Result<(), ConfigError> {
+    if !alerts.enabled {
+        return Ok(());
+    }
+
+    require_non_empty("alerts.redis_url", &alerts.redis_url)?;
+    if alerts.min_interval_secs == 0 || alerts.min_interval_secs > alerts.max_interval_secs {
+        return Err(ConfigError::AlertIntervals);
+    }
+    if alerts.max_rules == 0 || alerts.evaluation_concurrency == 0 {
+        return Err(ConfigError::AlertCapacity);
+    }
+    if alerts.evaluation_timeout_secs == 0 || alerts.notifications_kept_per_rule == 0 {
+        return Err(ConfigError::AlertCapacity);
+    }
+    if let Some(name) = alerts
+        .destinations
+        .keys()
+        .find(|name| !is_destination_name(name))
+    {
+        return Err(ConfigError::AlertDestinationName(name.clone()));
+    }
+
+    Ok(())
+}
+
+/// A destination is named in rules and in a queue key, so it is a plain
+/// identifier.
+fn is_destination_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.chars().count() <= 128
+        && name.chars().all(|character| {
+            character.is_ascii_alphanumeric() || character == '_' || character == '-'
+        })
+}
+
 fn validate_credentials(
     user: Option<&str>,
     password: Option<&SecretString>,
@@ -507,6 +659,12 @@ pub(crate) enum ConfigError {
     DatasetsDatabaseName,
     #[error("gears.insight-v3-core.config.datasets_database must not be the clickhouse_database")]
     DatasetsDatabaseIsTheWarehouse,
+    #[error("gears.insight-v3-core.config.alerts.min_interval_secs must be 1 to max_interval_secs")]
+    AlertIntervals,
+    #[error("gears.insight-v3-core.config.alerts capacity settings must be positive")]
+    AlertCapacity,
+    #[error("gears.insight-v3-core.config.alerts.destinations.{0} is not a plain name")]
+    AlertDestinationName(String),
 }
 
 #[derive(Debug, Error)]

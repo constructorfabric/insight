@@ -167,8 +167,12 @@ impl CustomSurfaces {
     pub(crate) fn new(state: Arc<AppState>) -> Self {
         Self {
             state,
-            tool_router: Self::tool_router(),
+            tool_router: Self::tool_router() + Self::alert_tool_router(),
         }
+    }
+
+    pub(super) fn state(&self) -> &AppState {
+        &self.state
     }
 
     fn surfaces(&self) -> Surfaces<'_> {
@@ -665,6 +669,83 @@ fn catalog_error(error: &CatalogError) -> CallToolResult {
     }
 }
 
+#[tool_router(router = alert_tool_router)]
+impl CustomSurfaces {
+    #[tool(
+        name = "list_alerts",
+        description = "Names the stored alerts, one page at a time, or the ones whose name or metric matches `query`. Answers `total`: when it exceeds the page, ask again with `offset`."
+    )]
+    async fn list_alerts(
+        &self,
+        Parameters(request): Parameters<super::alerts::ListAlertsRequest>,
+    ) -> CallToolResult {
+        self.alerts_list(request).await
+    }
+
+    #[tool(
+        name = "get_alert",
+        description = "Reads one alert: its rule, its revision, and what its latest check found. The revision is what put_alert and set_alert_enabled expect."
+    )]
+    async fn get_alert(
+        &self,
+        Parameters(request): Parameters<super::alerts::AlertNameRequest>,
+    ) -> CallToolResult {
+        self.alerts_get(request).await
+    }
+
+    #[tool(
+        name = "put_alert",
+        description = "Creates an alert, or replaces one at its expected revision. A rule names a stored metric, the result column holding the number (its `as_name`), an operator (`>`, `>=`, `<`, `<=`), a numeric threshold, how often to check in seconds, and a configured destination from list_alert_destinations; `range` runs the metric over a window as run_metric does. Every check reads exactly one row and one column: a metric answering more rows, or none, is recorded as unknown. A notification is owed on the first check that meets the condition and again only after a check has seen it clear. Replacing a rule resets what its checks found."
+    )]
+    async fn put_alert(
+        &self,
+        Parameters(request): Parameters<super::alerts::PutAlertRequest>,
+    ) -> CallToolResult {
+        self.alerts_put(request).await
+    }
+
+    #[tool(
+        name = "set_alert_enabled",
+        description = "Turns an alert's checks on or off at the revision it is at. Turning it off withdraws the notifications it has not sent; either resets what its checks found."
+    )]
+    async fn set_alert_enabled(
+        &self,
+        Parameters(request): Parameters<super::alerts::SetAlertEnabledRequest>,
+    ) -> CallToolResult {
+        self.alerts_set_enabled(request).await
+    }
+
+    #[tool(
+        name = "delete_alert",
+        description = "Removes an alert, its schedule and every notification recorded for it."
+    )]
+    async fn delete_alert(
+        &self,
+        Parameters(request): Parameters<super::alerts::AlertNameRequest>,
+    ) -> CallToolResult {
+        self.alerts_delete(request).await
+    }
+
+    #[tool(
+        name = "list_alert_notifications",
+        description = "The notifications an alert's checks have owed, newest first, each with the value and condition the check saw and whether it is still pending."
+    )]
+    async fn list_alert_notifications(
+        &self,
+        Parameters(request): Parameters<super::alerts::AlertNotificationsRequest>,
+    ) -> CallToolResult {
+        self.alerts_notifications(request).await
+    }
+
+    #[tool(
+        name = "list_alert_destinations",
+        description = "The destinations an alert may send to, by name, with the provider behind each. Call this before put_alert."
+    )]
+    async fn list_alert_destinations(&self) -> CallToolResult {
+        self.alerts_destinations()
+    }
+}
+
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for CustomSurfaces {
     fn get_info(&self) -> ServerConfig {
@@ -685,12 +766,14 @@ impl ServerHandler for CustomSurfaces {
                  metrics to read. Dashboards are filed in folders: list_folders shows \
                  them, create_folder makes one, and move_dashboard files a dashboard in one or \
                  takes it out. Dashboards also carry tags: list_tags shows them, and \
-                 set_dashboard_tags replaces a dashboard's set.",
+                 set_dashboard_tags replaces a dashboard's set. put_alert watches one number a metric \
+                 produces and owes a notification when it crosses a threshold; \
+                 list_alert_destinations names where one may go.",
             )
     }
 }
 
-fn parse_name(raw: &str) -> Result<DefinitionName, CallToolResult> {
+pub(super) fn parse_name(raw: &str) -> Result<DefinitionName, CallToolResult> {
     DefinitionName::parse(raw).map_err(|error| refuse(&error.to_string()))
 }
 
@@ -753,6 +836,6 @@ fn change_refusal(error: DatasetChangeError) -> CallToolResult {
     }
 }
 
-fn refuse(message: &str) -> CallToolResult {
+pub(super) fn refuse(message: &str) -> CallToolResult {
     CallToolResult::error(vec![ContentBlock::text(message.to_owned())])
 }
