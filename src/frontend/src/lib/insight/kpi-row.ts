@@ -22,12 +22,14 @@ import {
 } from "@/lib/metrics/delta";
 import type { FocusMode } from "@/lib/peers";
 import { applyFocusStatus, type Status } from "@/lib/status";
+import { absenceLabel } from "@/lib/metrics/absence";
 
 /**
  * Display-ready KPI tile input: selectors own all formatting and scoring, so
  * the tile renders a value without knowing how it was computed.
  */
 export interface KpiTileData {
+  absenceLabel?: string | null;
   key: string;
   label: string;
   value: string;
@@ -73,6 +75,7 @@ export function metricKpiTiles(
     if (!entityObserved(metric, entityId)) return [];
 
     const data = forEntity(metric, entityId);
+    const leaveLabel = absenceLabel(data.absence);
     const value = data.value;
     const median = data.peer?.median ?? null;
     // Eligibility (observed / suppressed / flat pool / neutral direction)
@@ -101,17 +104,17 @@ export function metricKpiTiles(
         ? {
             text: deltaText,
             status: applyFocusStatus(
-              deltaStatus(rawDelta, metric.direction),
+              leaveLabel ? "neutral" : deltaStatus(rawDelta, metric.direction),
               focusMode
             ),
             down: rawDelta.value < 0,
           }
         : null;
 
-    // Divergence magnitude vs the median — only for an eligible standing with
-    // a real gap (at the median there's nothing to scream about).
     const gapText =
-      standing.eligible && value != null && Math.abs(standing.gapDelta) > 1e-9
+      (standing.eligible || standing.reason === "time_off") &&
+      value != null &&
+      Math.abs(standing.gapDelta) > 1e-9
         ? formatGapMagnitude({
             value,
             median,
@@ -125,6 +128,7 @@ export function metricKpiTiles(
     return [
       {
         key: metric.metric_key,
+        absenceLabel: leaveLabel,
         // The full label, not `short_label`: "Msgs" and "AI lines +" save
         // width by making the reader decode them. The tile wraps to two lines
         // instead, which costs a row of pixels once and nothing after that.

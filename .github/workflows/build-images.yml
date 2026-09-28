@@ -66,16 +66,17 @@ permissions:
   id-token: write # keyless OIDC identity for attest-build-provenance
   attestations: write # store SLSA provenance in the repo attestation store
 
-# The self-hosted routing below is the same expression in every workflow; the
-# rule and what it does not close are explained in ci.yml. Only ci.yml and
-# connectors-ddl.yml have been exercised on the pool so far.
+# Routing, stated once in .github/runners/insight-vhc/README.md: a pull request
+# from a branch of this repository takes the ephemeral ARC scale set, a fork's
+# takes a GitHub-hosted runner, everything else takes the shared self-hosted
+# pool, and INSIGHT_FORCE_GITHUB_HOSTED returns all of it to hosted.
 jobs:
   # ─── Backend / chart change detection ──────────────────────────────────────
   # Per-service filters so a single-service code change only rebuilds that one
   # image. Connector image builds are NOT handled here — see discover-images,
   # which scans every descriptor.yaml's `images:` block (ADR-0016).
   changes:
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
     outputs:
       analytics: ${{ steps.filter.outputs.analytics }}
       authenticator: ${{ steps.filter.outputs.authenticator }}
@@ -304,7 +305,7 @@ jobs:
   # `outputs.any`, so they cascade-skip with it.
   discover-images:
     if: github.event_name != 'merge_group' && (github.event_name != 'workflow_dispatch' || !inputs.frontend_only)
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
     outputs:
       matrix: ${{ steps.scan.outputs.matrix }}
       any: ${{ steps.scan.outputs.any }}
@@ -394,7 +395,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]'))) }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -524,7 +525,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]'))) }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -649,7 +650,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]'))) }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -770,7 +771,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]'))) }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -899,7 +900,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]'))) }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1029,7 +1030,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]'))) }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1147,7 +1148,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]'))) }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1273,7 +1274,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]'))) }}
     timeout-minutes: 30
     # Narrower than the workflow-level set: this job builds PR-authored source.
     permissions:
@@ -1405,7 +1406,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]'))) }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1582,7 +1583,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]'))) }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1734,7 +1735,7 @@ jobs:
       matrix:
         entry: ${{ fromJson(needs.discover-images.outputs.matrix) }}
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]'))) }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

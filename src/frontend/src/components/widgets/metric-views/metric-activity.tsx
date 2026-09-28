@@ -126,6 +126,7 @@ export function MetricActivity({
                 ? `${against.change} since last ${periodNoun}`
                 : null,
               against.median ? `team ${against.median}` : null,
+              against.absenceLabel,
             ]
               .filter(Boolean)
               .join(" · ")}

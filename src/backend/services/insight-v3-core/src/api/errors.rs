@@ -9,6 +9,9 @@
 use toolkit_canonical_errors::CanonicalError;
 
 use crate::domain::definition::{DefinitionError, DefinitionStoreError};
+use crate::domain::query::metric_query::MetricRunError;
+use crate::domain::query::time_window::WindowError;
+use crate::domain::surfaces::CustomError;
 
 #[cfg(test)]
 mod tests;
@@ -23,6 +26,65 @@ pub(crate) trait ApiErrors {
 
     /// A name another definition already holds.
     fn name_taken(name: &str) -> CanonicalError;
+
+    /// A named thing that is not there.
+    fn missing(resource: &str, detail: String) -> CanonicalError;
+
+    /// A body or a result past a size limit, named by the field carrying it.
+    fn oversized(field: &str, detail: &str) -> CanonicalError;
+
+    /// A window the caller wrote that cannot be read as one.
+    fn window_error(error: &WindowError) -> CanonicalError {
+        let field = match error {
+            WindowError::Range(_) | WindowError::Maximum(_) | WindowError::Overflow => "range",
+        };
+
+        Self::invalid_field(field, error.to_string())
+    }
+
+    /// A metric read that did not answer: the wait and the size are the
+    /// caller's to see, what the warehouse said is ours.
+    fn run_error(error: MetricRunError) -> CanonicalError {
+        match error {
+            MetricRunError::Timeout => Self::timed_out("metric query timed out"),
+            MetricRunError::ResultTooLarge => {
+                Self::oversized("body", "metric result exceeded the size limit")
+            }
+            MetricRunError::ClickHouse(source) => {
+                tracing::error!(error = ?source, "metric query execution failed");
+                CanonicalError::internal("metric query execution failed").create()
+            }
+            MetricRunError::InvalidResponse(source) => {
+                tracing::error!(error = ?source, "metric query result deserialization failed");
+                CanonicalError::internal("metric query execution failed").create()
+            }
+        }
+    }
+
+    /// Whatever reading a stored metric can fail with, as the caller sees it.
+    fn custom_error(error: CustomError) -> CanonicalError {
+        match error {
+            CustomError::NotFound { kind, name } => {
+                Self::missing(&name, format!("{} `{name}` was not found", kind.singular()))
+            }
+            CustomError::DatasetNotReady(named) => Self::missing(
+                &named,
+                format!("no dataset named `{named}` is ready to be read"),
+            ),
+            CustomError::Body(source) => Self::invalid_field("body", source.to_string()),
+            CustomError::Compile(source) => Self::invalid_field("body", source.to_string()),
+            CustomError::Run(source) => Self::run_error(source),
+            CustomError::Store(source) => Self::definition_store_error(source),
+            CustomError::Datasets(source) => Self::dataset_store_error(source),
+            CustomError::InUse { .. }
+            | CustomError::Widget(_)
+            | CustomError::Range(_)
+            | CustomError::Unanswerable(_) => {
+                tracing::error!(%error, "reading a metric produced an unrelated failure");
+                CanonicalError::internal("metric query execution failed").create()
+            }
+        }
+    }
 
     /// A name the store cannot hold.
     fn definition_error(error: DefinitionError) -> CanonicalError {

@@ -18,6 +18,7 @@ fn the_document_covers_every_route_this_service_serves() {
         "/v1/metrics",
         "/v1/metrics/{name}",
         "/v1/metrics/{name}/run",
+        "/v1/metrics/{name}/drilldown",
         "/v1/metrics/{name}/rename",
         "/v1/widgets",
         "/v1/dashboards",

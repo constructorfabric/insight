@@ -153,6 +153,7 @@ export function KpiTile({
               ? `Team ${tile.medianLabel}${tile.gapText ? ` · ${tile.gapText}` : ""}`
               : "No comparison"}
           </span>
+          {tile.absenceLabel ? <span>{tile.absenceLabel}</span> : null}
         </CardFooter>
       </Card>
     </MetricHelpTooltip>

@@ -11,15 +11,17 @@ mod runner;
 
 use std::collections::HashMap;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::domain::kinds::dataset::declaration::BUCKET_COLUMN;
+use crate::domain::kinds::dataset::declaration::{
+    BUCKET_COLUMN, Declaration, FieldType as DeclaredType,
+};
 use crate::domain::query::time_window::MaximumRange;
 
 pub(crate) use engine::TableEngine;
 use field::FieldType;
-use filter::FilterBind;
+pub(crate) use filter::FilterBind;
 pub(crate) use people::People;
 pub(crate) use runner::{MetricRunError, MetricRunner, RunResult};
 
@@ -33,6 +35,16 @@ use crate::domain::query::time_window::WindowError;
 /// The alias the fact table is read under, so a column of the metric's own
 /// table is never mistaken for one a join brought in.
 const FACT_ALIAS: &str = "__f";
+
+/// The column a paged read of a plain metric over a dataset carries beside
+/// the metric's own: the record's id, which tells two records apart that
+/// the selected columns cannot. Never shown; a reader paging strips it.
+pub(crate) const RECORD_COLUMN: &str = "__drilldown_record";
+
+/// The column a paged read of a plain metric over a warehouse table numbers
+/// its twins under: rows the selected columns cannot tell apart, counted
+/// off so a page cut between two of them keeps the rest. Never shown.
+pub(crate) const TWIN_COLUMN: &str = "__drilldown_twin";
 
 /// One place a metric names a field of its dataset.
 #[derive(Debug)]
@@ -53,6 +65,17 @@ pub(crate) enum Used<'a> {
     Compared(&'a serde_json::Value),
     /// Read as the window's clock.
     Clock,
+}
+
+/// What a result column holds, as far as a reader ordering or narrowing by
+/// it needs to know. Coarser than the field's own type on purpose: a page
+/// is compared and shown, never computed with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum ColumnKind {
+    Text,
+    Number,
+    Date,
 }
 
 /// The aggregates that need a number under them, told from those that do not.
@@ -246,6 +269,62 @@ impl MetricQuery {
         }
     }
 
+    /// The columns this metric groups its rows by.
+    pub(crate) fn groups(&self) -> &[String] {
+        &self.group_by
+    }
+
+    /// The order this metric asks for, when it asks for one: the column and
+    /// whether it runs downward.
+    pub(crate) fn own_order(&self) -> Option<(&str, bool)> {
+        self.order_by.as_ref().map(|order| {
+            (
+                order.field.as_str(),
+                matches!(order.direction, field::Direction::Desc),
+            )
+        })
+    }
+
+    /// What each result column holds, in result order, for a reader that
+    /// orders or narrows by it. Over a dataset the declaration says what a
+    /// plain field is; over a table the metric's own `type` does.
+    pub(crate) fn column_kinds(
+        &self,
+        declaration: Option<&Declaration>,
+        clocked: bool,
+    ) -> Vec<(String, ColumnKind)> {
+        let mut kinds = Vec::with_capacity(self.fields.len() + usize::from(clocked));
+        if clocked {
+            kinds.push((BUCKET_COLUMN.to_owned(), ColumnKind::Date));
+        }
+
+        for field in &self.fields {
+            let counted = field.agg == Some(field::Agg::Count)
+                || field.agg.is_some_and(field::Agg::arithmetic)
+                || field.divide.is_some();
+            let kind = if counted {
+                ColumnKind::Number
+            } else {
+                let declared = declaration
+                    .zip(field.reads())
+                    .and_then(|(declaration, named)| declaration.field(named))
+                    .map(|declared| declared.r#type);
+                match declared {
+                    Some(DeclaredType::Int | DeclaredType::Float) => ColumnKind::Number,
+                    Some(DeclaredType::Datetime) => ColumnKind::Date,
+                    Some(DeclaredType::String | DeclaredType::Bool) => ColumnKind::Text,
+                    None => match field.r#type {
+                        FieldType::Int | FieldType::Float => ColumnKind::Number,
+                        FieldType::String => ColumnKind::Text,
+                    },
+                }
+            };
+            kinds.push((field.as_name.clone(), kind));
+        }
+
+        kinds
+    }
+
     /// The columns a result carries, in order — each field's `as_name`. What
     /// a widget must name to draw anything.
     /// `clocked` says whether a window over this metric has a date to bucket
@@ -306,6 +385,34 @@ pub(crate) struct CompiledQuery {
     column_types: HashMap<String, FieldType>,
     /// The columns whose numbers are percentages, so a reader can say so.
     percents: Vec<String>,
+    /// Columns the query carries for its own reasons, which no reader is
+    /// shown.
+    hidden: Vec<String>,
+    /// Whether twins - rows the columns cannot tell apart - have to be
+    /// numbered by whoever pages this, because nothing in the row can.
+    numbered: bool,
+}
+
+impl CompiledQuery {
+    pub(crate) fn sql(&self) -> &str {
+        &self.sql
+    }
+
+    pub(crate) fn binds(&self) -> &[FilterBind] {
+        &self.binds
+    }
+
+    pub(crate) fn percents(&self) -> &[String] {
+        &self.percents
+    }
+
+    pub(crate) fn hidden(&self) -> &[String] {
+        &self.hidden
+    }
+
+    pub(crate) fn numbered(&self) -> bool {
+        self.numbered
+    }
 }
 
 #[derive(Debug, Error)]

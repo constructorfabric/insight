@@ -81,13 +81,13 @@ jobs:
   # jobs run ONLY for changed components, so unchanged ones don't burn CI.
   changes:
     name: Detect changed components
-    # This lane stays on the pool for pull requests too, unlike the default rule
-    # in .github/runners/insight-vhc/README.md. Routing is not a security
-    # boundary: a pull request runs the workflow from its own merge commit, so a
-    # fork can rewrite this line, and the runner is picked before any step
-    # executes. What keeps untrusted code off the pool is the approval setting
-    # for fork pull requests.
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    # Routing is not a security boundary: a pull request runs the workflow from
+    # its own merge commit, so a fork can rewrite this line, and the runner is
+    # picked before any step executes. What keeps untrusted code off these
+    # machines is the approval setting for fork pull requests, and sending a
+    # pull request to an ephemeral pod rather than a persistent machine, so a
+    # job that does get through leaves nothing behind.
+    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
     outputs:
       rust: ${{ steps.detect.outputs.rust }}
       python: ${{ steps.detect.outputs.python }}
@@ -103,6 +103,11 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
+      - name: Install defusedxml
+        # This job runs the whole scripts/ci/tests suite below, which imports
+        # coverage.py, which requires defusedxml outright. Pinned to the version
+        # the coverage gate installs.
+        run: python3 -m pip install --quiet "defusedxml==0.7.1"
       - name: Test component detection
         run: python3 -m unittest discover -s scripts/ci/tests -p 'test_*.py'
       - id: detect
@@ -131,7 +136,7 @@ jobs:
     name: Guards
     # Inline rather than `needs: changes`: this job runs beside change detection
     # today, and a dependency would serialise it for no gain.
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -197,7 +202,7 @@ jobs:
     name: Rust — ${{ matrix.entry.name }}
     needs: changes
     if: ${{ needs.changes.outputs.rust != '[]' }}
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
     strategy:
       fail-fast: false
       matrix:
@@ -211,7 +216,7 @@ jobs:
       - name: Install protoc + curl headers
         # INVARIANT: grpc-hub's generated code requires protoc; the authenticator's
         # rdkafka OAUTHBEARER build requires curl/curl.h even with WITH_CURL=0.
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libcurl4-openssl-dev
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libprotobuf-dev libcurl4-openssl-dev
 
       - name: Install CMake for authenticator
         if: ${{ matrix.entry.name == 'authenticator' }}
@@ -407,7 +412,7 @@ jobs:
     name: Python coverage — ${{ matrix.entry.name }}
     needs: changes
     if: ${{ needs.changes.outputs.python != '[]' }}
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
     strategy:
       fail-fast: false
       matrix:
@@ -476,7 +481,7 @@ jobs:
     name: Frontend — ${{ matrix.entry.name }}
     needs: changes
     if: ${{ needs.changes.outputs.js != '[]' }}
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
     # Chromium for the browser `storybook` project comes baked in; downloading it
     # at CI time stalls the runner. The tag MUST track `playwright` in the
     # component's package.json so the pre-installed build matches.
@@ -592,7 +597,7 @@ jobs:
     name: Coverage gate
     needs: [changes, rust, python, js]
     if: ${{ !cancelled() }}
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
     timeout-minutes: 15
     steps:
       # If detection failed, or any CHANGED component's producer job failed
@@ -624,6 +629,13 @@ jobs:
         # which is internal API. (TODO: --json-report is deprecated in diff-cover
         # >= 10 in favor of `--format json:<path>`; migrate before unpinning.)
         run: pip install "diff-cover==10.3.0" "defusedxml==0.7.1"
+
+      - name: Test coverage report normalization
+        # Deliberately a second run of a module the detection job already
+        # covers. Only here is diff-cover installed, so only here does the case
+        # that drives it stop skipping — and this is the job that goes on to run
+        # coverage.py and diff-cover for real.
+        run: python3 -m unittest discover -s scripts/ci/tests -p 'test_coverage_reanchor.py'
 
       - name: Download all Cobertura reports
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1

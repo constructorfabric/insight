@@ -60,10 +60,9 @@ permissions:
 jobs:
   connectors-ddl:
     name: connectors-ddl snapshot + field parity
-    # Like ci.yml, this lane stays on the pool for pull requests too — see
-    # .github/runners/insight-vhc/README.md for the default rule and why these
-    # two are exempt from it.
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)) && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    # The routing rule is the same in every workflow; it lives in
+    # .github/runners/insight-vhc/README.md.
+    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
     timeout-minutes: 60
     env:
       BOOTSTRAP_DIR: src/ingestion/scripts/bootstrap-db
