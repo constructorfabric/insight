@@ -35,6 +35,10 @@ const CARRY_FOLDER: &str = "UPDATE dashboards AS moved
 JOIN dashboards AS source ON source.name = ?
 SET moved.folder_id = source.folder_id
 WHERE moved.name = ?";
+
+const CARRY_TAGS: &str = "INSERT INTO dashboard_tags (dashboard, tag_id)
+SELECT ?, tag_id FROM dashboard_tags WHERE dashboard = ?";
+
 const SELECT_BODY: &str = "SELECT body FROM {table} WHERE name = ?";
 const SELECT_NAMES: &str = "SELECT name FROM {table} ORDER BY name";
 
@@ -218,6 +222,11 @@ impl Definitions for MariaDefinitions {
                     DbBackend::MySql,
                     CARRY_FOLDER,
                     [from.as_str().into(), to.as_str().into()],
+                ),
+                Change::CarryTags { from, to } => Statement::from_sql_and_values(
+                    DbBackend::MySql,
+                    CARRY_TAGS,
+                    [to.as_str().into(), from.as_str().into()],
                 ),
             };
             transaction

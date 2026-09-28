@@ -16,6 +16,7 @@ use crate::domain::folders::{
     Folder, FolderError, FolderFilter, FolderId, FolderList, FolderName, FolderSummary, Folders,
     MAX_FOLDERS,
 };
+use crate::domain::tags::TagName;
 
 const DASHBOARDS: &str = "dashboards";
 
@@ -24,6 +25,7 @@ struct Stored {
     definitions: BTreeMap<(&'static str, String), serde_json::Value>,
     folders: BTreeMap<FolderId, FolderName>,
     filed: BTreeMap<String, FolderId>,
+    tagged: BTreeMap<String, Vec<TagName>>,
 }
 
 impl Stored {
@@ -35,6 +37,7 @@ impl Stored {
     fn remove(&mut self, kind: DefinitionKind, name: &DefinitionName) -> bool {
         if kind.table() == DASHBOARDS {
             self.filed.remove(name.as_str());
+            self.tagged.remove(name.as_str());
         }
         self.definitions
             .remove(&MemoryDefinitions::key(kind, name))
@@ -47,6 +50,13 @@ impl Stored {
         self.folders
             .iter()
             .any(|(id, held)| Some(*id) != except && held.as_str().to_lowercase() == wanted)
+    }
+
+    fn in_folder(&self, dashboard: &str, filter: FolderFilter) -> bool {
+        match filter {
+            FolderFilter::Unfiled => !self.filed.contains_key(dashboard),
+            FolderFilter::In(id) => self.filed.get(dashboard) == Some(&id),
+        }
     }
 
     fn folder(&self, id: FolderId) -> Option<Folder> {
@@ -115,14 +125,15 @@ impl MemoryDefinitions {
         DefinitionStoreError::Database(sea_orm::DbErr::Custom("store is down".to_owned()))
     }
 
-    fn writable(&self) -> Result<(), FolderError> {
+    fn writable(&self) -> Result<(), DefinitionStoreError> {
         if self.failing {
-            return Err(FolderError::Store(Self::refuse()));
+            return Err(Self::refuse());
         }
         Ok(())
     }
 }
 
+mod tags;
 #[cfg(test)]
 mod tests;
 
@@ -210,6 +221,11 @@ impl Definitions for MemoryDefinitions {
                 Change::CarryFolder { from, to } => {
                     if let Some(id) = applied.filed.get(from.as_str()).copied() {
                         applied.filed.insert(to.as_str().to_owned(), id);
+                    }
+                }
+                Change::CarryTags { from, to } => {
+                    if let Some(tags) = applied.tagged.get(from.as_str()).cloned() {
+                        applied.tagged.insert(to.as_str().to_owned(), tags);
                     }
                 }
             }
@@ -331,10 +347,7 @@ impl Folders for MemoryDefinitions {
         let matched = stored
             .matching(DefinitionKind::Dashboard, needle)
             .into_iter()
-            .filter(|name| match filter {
-                FolderFilter::Unfiled => !stored.filed.contains_key(name),
-                FolderFilter::In(id) => stored.filed.get(name) == Some(&id),
-            })
+            .filter(|name| stored.in_folder(name, filter))
             .collect();
 
         Ok(paged(matched, page))

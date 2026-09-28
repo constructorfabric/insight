@@ -154,6 +154,10 @@ pub(crate) enum Change {
         from: DefinitionName,
         to: DefinitionName,
     },
+    CarryTags {
+        from: DefinitionName,
+        to: DefinitionName,
+    },
 }
 
 /// A definition as it stands: what kind it is, what it is called, and what it

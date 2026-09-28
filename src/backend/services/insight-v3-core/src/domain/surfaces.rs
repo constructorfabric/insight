@@ -318,6 +318,10 @@ impl<'a> Surfaces<'a> {
                 from: from.clone(),
                 to: to.clone(),
             });
+            changes.push(Change::CarryTags {
+                from: from.clone(),
+                to: to.clone(),
+            });
         }
         changes.push(Change::Delete(kind, from.clone()));
         let mut rewritten = Vec::new();

@@ -913,6 +913,44 @@ async fn a_renamed_dashboard_stays_in_its_folder() -> R {
 }
 
 #[tokio::test]
+async fn a_renamed_dashboard_keeps_its_tags() -> R {
+    use crate::domain::tags::{TagSet, Tags};
+
+    let fixture = Fixture::new().await;
+    let surfaces = fixture.surfaces();
+    surfaces
+        .put(
+            DefinitionKind::Dashboard,
+            &name("board"),
+            &json!({"title": "Example board", "widgets": []}),
+        )
+        .await?;
+    fixture
+        .definitions
+        .set_tags(
+            &name("board"),
+            &TagSet::parse(&["Delivery".to_owned(), "Platform".to_owned()])?,
+        )
+        .await?;
+
+    surfaces
+        .rename(DefinitionKind::Dashboard, &name("board"), &name("renamed"))
+        .await?;
+
+    let carried: Vec<String> = fixture
+        .definitions
+        .tags_of(&name("renamed"))
+        .await?
+        .into_iter()
+        .map(|tag| tag.as_str().to_owned())
+        .collect();
+    assert_eq!(carried, ["Delivery", "Platform"]);
+    assert_eq!(fixture.definitions.list_tags().await?.len(), 2);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_rename_onto_a_name_someone_holds_is_refused_and_writes_nothing() -> R {
     let fixture = Fixture::new().await;
     let surfaces = fixture.surfaces();
