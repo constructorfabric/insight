@@ -1,19 +1,25 @@
 import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { LayoutDashboard } from "lucide-react";
+import { ChevronRight, LayoutDashboard } from "lucide-react";
 
 import { DashboardMenu } from "@/components/custom/dashboard-menu";
 import { DashboardTags } from "@/components/custom/dashboard-tags";
-import { EditLink } from "@/components/custom/editor/edit-link";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { dashboardQuery, dashboardTagsQuery } from "@/queries/custom";
+import { updatedLabel } from "@/lib/custom/updated-label";
+import {
+  dashboardQuery,
+  dashboardTagsQuery,
+  dashboardUpdatedQuery,
+} from "@/queries/custom";
 import { TEXT_LABEL, TEXT_NAME } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
 export function DashboardCard({ name }: { name: string }) {
   const { data } = useQuery(dashboardQuery(name));
   const tags = useQuery(dashboardTagsQuery(name));
+  const updated = useQuery(dashboardUpdatedQuery(name));
+
+  const age = updatedLabel(updated.data, updated.dataUpdatedAt);
 
   return (
     <Card size="sm">
@@ -40,21 +46,19 @@ export function DashboardCard({ name }: { name: string }) {
             </span>
           </Link>
           <span className="flex shrink-0 items-center gap-1">
-            <DashboardMenu name={name} />
-            <EditLink kind="dashboards" name={name} />
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-muted-foreground"
-              aria-label={`View ${name}`}
-              nativeButton={false}
-              render={<Link to="/portal/custom/$name" params={{ name }} />}
+            <Link
+              to="/portal/custom/$name"
+              params={{ name }}
+              aria-label={`Open ${name}`}
+              className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
             >
-              View
-            </Button>
+              <ChevronRight className="size-4" aria-hidden />
+            </Link>
+            <DashboardMenu name={name} />
           </span>
         </div>
         <DashboardTags tags={tags.data ?? []} className="ps-7" />
+        {age ? <p className={cn(TEXT_LABEL, "ps-7")}>{age}</p> : null}
       </CardContent>
     </Card>
   );
