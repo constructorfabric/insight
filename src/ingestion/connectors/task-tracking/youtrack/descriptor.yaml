@@ -9,3 +9,4 @@ secret:
   required_fields:
     - youtrack_base_url
     - youtrack_token
+    - youtrack_start_date

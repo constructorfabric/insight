@@ -52,7 +52,7 @@ def test_custom_field_snapshot_preserves_cardinality_and_json(http_mocker: HttpM
 
 
 @freezegun.freeze_time(_NOW)
-def test_field_value_snapshot_keeps_field_bundle_and_values_together(http_mocker: HttpMocker) -> None:
+def test_field_values_paginate_the_bundle_endpoint(http_mocker: HttpMocker) -> None:
     config = YouTrackConfigBuilder().build()
     project = load_fixture(__file__, "project.json")
     project_field = load_fixture(__file__, "project_field.json")
@@ -64,15 +64,88 @@ def test_field_value_snapshot_keeps_field_bundle_and_values_together(http_mocker
         HttpRequest(f"{API_URL}/admin/projects/0-1/customFields", query_params=ANY_QUERY_PARAMS),
         HttpResponse(body=json.dumps([project_field]), status_code=200),
     )
+    value = project_field["bundle"]["values"][0]
+    first_page = [{**value, "id": f"133-{index}"} for index in range(100)]
+    last_value = {**value, "id": "133-100"}
+    value_fields = (
+        "id,$type,name,description,archived,ordinal,color(id,background,foreground),"
+        "hasRunningJob,released,releaseDate,startDate"
+    )
+    http_mocker.get(
+        HttpRequest(
+            f"{API_URL}/admin/customFieldSettings/bundles/version/72-1/values",
+            query_params={"fields": value_fields, "$top": "100"},
+        ),
+        HttpResponse(body=json.dumps(first_page), status_code=200),
+    )
+    http_mocker.get(
+        HttpRequest(
+            f"{API_URL}/admin/customFieldSettings/bundles/version/72-1/values",
+            query_params={"fields": value_fields, "$top": "100", "$skip": "100"},
+        ),
+        HttpResponse(body=json.dumps([last_value]), status_code=200),
+    )
 
     output = read_stream(_CONNECTOR, "youtrack_field_values", config)
 
     assert not output.errors
-    record = output.records[0].record.data
+    assert len(output.records) == 101
+    record = output.records[-1].record.data
     assert record["field_id"] == "58-1"
     assert record["field_type_id"] == "version[*]"
     assert record["bundle_id"] == "72-1"
-    assert json.loads(record["values_json"])[0]["id"] == "133-1"
+    assert json.loads(record["bundle_json"])["id"] == "72-1"
+    value_payload = json.loads(record["values_json"])
+    assert value_payload["collection"] == "values"
+    assert value_payload["value"]["id"] == "133-100"
+    assert len({item.record.data["observed_at"] for item in output.records}) == 1
+    assert_records_conform(output.records, _CONNECTOR, "youtrack_field_values")
+
+
+@freezegun.freeze_time(_NOW)
+def test_user_bundle_values_read_all_distinct_resources(http_mocker: HttpMocker) -> None:
+    config = YouTrackConfigBuilder().build()
+    project = load_fixture(__file__, "project.json")
+    project_field = {
+        "id": "42-2",
+        "$type": "UserProjectCustomField",
+        "field": {"id": "58-2", "name": "Assignees", "fieldType": {"id": "user[*]"}},
+        "bundle": {"id": "72-2", "$type": "UserBundle", "name": "Example users"},
+    }
+    http_mocker.get(
+        HttpRequest(f"{API_URL}/admin/projects", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps([project]), status_code=200),
+    )
+    http_mocker.get(
+        HttpRequest(f"{API_URL}/admin/projects/0-1/customFields", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps([project_field]), status_code=200),
+    )
+    resources = {
+        "groups": {"id": "3-1", "$type": "UserGroup", "name": "Example Group"},
+        "individuals": {"id": "1-1", "$type": "User", "login": "example-user"},
+        "aggregatedUsers": {"id": "1-2", "$type": "User", "login": "group-user"},
+    }
+    for resource, value in resources.items():
+        fields = (
+            "id,name,ringId,$type"
+            if resource == "groups"
+            else "id,login,fullName,email,ringId,guest,online,banned,banBadge,banReason,isAnonymized,$type"
+        )
+        http_mocker.get(
+            HttpRequest(
+                f"{API_URL}/admin/customFieldSettings/bundles/user/72-2/{resource}",
+                query_params={"fields": fields, "$top": "100"},
+            ),
+            HttpResponse(body=json.dumps([value]), status_code=200),
+        )
+
+    output = read_stream(_CONNECTOR, "youtrack_field_values", config)
+
+    assert not output.errors
+    collections = {json.loads(item.record.data["values_json"])["collection"] for item in output.records}
+    assert collections == set(resources)
+    assert all(item.record.data["field_type_id"] == "user[*]" for item in output.records)
+    assert all(json.loads(item.record.data["bundle_json"])["id"] == "72-2" for item in output.records)
     assert_records_conform(output.records, _CONNECTOR, "youtrack_field_values")
 
 
@@ -116,31 +189,121 @@ def test_activity_cursor_paginates_and_preserves_polymorphic_values(http_mocker:
 
 
 @freezegun.freeze_time(_NOW)
-def test_issue_sprints_expand_issues_from_sprint_details(http_mocker: HttpMocker) -> None:
-    config = YouTrackConfigBuilder().build()
+def test_issue_sprints_paginate_the_issue_membership_endpoint(http_mocker: HttpMocker) -> None:
+    config = YouTrackConfigBuilder().with_field("youtrack_page_size", "1").build()
     issue = load_fixture(__file__, "issue.json")
     sprint = load_fixture(__file__, "sprint.json")
     http_mocker.get(
-        HttpRequest(f"{API_URL}/agiles", query_params=ANY_QUERY_PARAMS),
-        HttpResponse(body=json.dumps([sprint["agile"]]), status_code=200),
+        HttpRequest(f"{API_URL}/issues", query_params={"fields": "id,idReadable,updated", "$top": "1"}),
+        HttpResponse(body=json.dumps([issue]), status_code=200),
     )
     http_mocker.get(
-        HttpRequest(f"{API_URL}/agiles/108-1/sprints", query_params=ANY_QUERY_PARAMS),
+        HttpRequest(f"{API_URL}/issues", query_params={"fields": "id,idReadable,updated", "$top": "1", "$skip": "1"}),
+        HttpResponse(body=json.dumps([]), status_code=200),
+    )
+    next_sprint = {**sprint, "id": "120-2", "name": "Next Sprint"}
+    http_mocker.get(
+        HttpRequest(
+            f"{API_URL}/issues/2-1/sprints",
+            query_params={
+                "fields": "id,name,goal,start,finish,archived,isDefault,unresolvedIssuesCount,agile(id,name)",
+                "$top": "1",
+            },
+        ),
         HttpResponse(body=json.dumps([sprint]), status_code=200),
     )
-    sprint_issue_fields = {"id", "idReadable", "summary", "created", "updated", "resolved", "project"}
-    sprint_issue = {key: value for key, value in issue.items() if key in sprint_issue_fields}
-    sprint_detail = {"issues": [sprint_issue]}
     http_mocker.get(
-        HttpRequest(f"{API_URL}/agiles/108-1/sprints/120-1", query_params=ANY_QUERY_PARAMS),
-        HttpResponse(body=json.dumps(sprint_detail), status_code=200),
+        HttpRequest(
+            f"{API_URL}/issues/2-1/sprints",
+            query_params={
+                "fields": "id,name,goal,start,finish,archived,isDefault,unresolvedIssuesCount,agile(id,name)",
+                "$top": "1",
+                "$skip": "1",
+            },
+        ),
+        HttpResponse(body=json.dumps([next_sprint]), status_code=200),
+    )
+    http_mocker.get(
+        HttpRequest(
+            f"{API_URL}/issues/2-1/sprints",
+            query_params={
+                "fields": "id,name,goal,start,finish,archived,isDefault,unresolvedIssuesCount,agile(id,name)",
+                "$top": "1",
+                "$skip": "2",
+            },
+        ),
+        HttpResponse(body=json.dumps([]), status_code=200),
     )
 
     output = read_stream(_CONNECTOR, "youtrack_issue_sprints", config)
 
     assert not output.errors
-    record = output.records[0].record.data
-    assert record["issue_id"] == "2-1"
-    assert record["sprint_id"] == "120-1"
-    assert json.loads(record["sprint_json"])["goal"] == "Synthetic sprint goal"
+    assert [item.record.data["sprint_id"] for item in output.records] == ["120-1", "120-2"]
+    assert all(item.record.data["issue_id"] == "2-1" for item in output.records)
+    first_record = output.records[0].record.data
+    assert set(first_record) == {
+        "issue_id",
+        "issue_id_readable",
+        "issue_updated",
+        "source_id",
+        "sprint_id",
+        "sprint_json",
+        "tenant_id",
+        "unique_key",
+    }
+    assert json.loads(first_record["sprint_json"])["goal"] == "Synthetic sprint goal"
     assert_records_conform(output.records, _CONNECTOR, "youtrack_issue_sprints")
+
+
+def test_work_items_keep_never_updated_records(http_mocker: HttpMocker) -> None:
+    config = YouTrackConfigBuilder().build()
+    work_item = {
+        "id": "91-1",
+        "date": 1782777600000,
+        "created": 1782777600000,
+        "updated": None,
+        "issue": {"id": "2-1", "idReadable": "EX-1"},
+        "author": {"id": "1-1", "login": "example"},
+    }
+    http_mocker.get(
+        HttpRequest(f"{API_URL}/issues", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps([{"id": "2-1"}]), status_code=200),
+    )
+    http_mocker.get(
+        HttpRequest(f"{API_URL}/issues/2-1/timeTracking/workItems", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps([work_item]), status_code=200),
+    )
+
+    output = read_stream(_CONNECTOR, "youtrack_work_items", config)
+
+    assert not output.errors
+    assert json.loads(output.records[0].record.data["work_item_json"])["updated"] is None
+    assert_records_conform(output.records, _CONNECTOR, "youtrack_work_items")
+
+
+@freezegun.freeze_time(_NOW)
+def test_comments_allow_never_updated_records(http_mocker: HttpMocker) -> None:
+    config = YouTrackConfigBuilder().build()
+    issue = load_fixture(__file__, "issue.json")
+    comment = {
+        "id": "4-1",
+        "text": "Synthetic comment",
+        "created": 1782777600000,
+        "updated": None,
+        "deleted": False,
+        "author": {"id": "1-1", "login": "example"},
+    }
+    http_mocker.get(
+        HttpRequest(f"{API_URL}/issues", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps([issue]), status_code=200),
+    )
+    http_mocker.get(
+        HttpRequest(f"{API_URL}/issues/2-1/comments", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps([comment]), status_code=200),
+    )
+
+    output = read_stream(_CONNECTOR, "youtrack_comments", config)
+
+    assert not output.errors
+    assert json.loads(output.records[0].record.data["comment_json"])["updated"] is None
+    assert_records_conform(output.records, _CONNECTOR, "youtrack_comments")
