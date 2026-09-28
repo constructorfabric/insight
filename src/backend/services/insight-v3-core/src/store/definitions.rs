@@ -2,6 +2,7 @@
 
 mod folders;
 pub(crate) mod migration;
+mod tags;
 
 #[cfg(test)]
 pub(crate) mod memory;
@@ -193,14 +194,16 @@ impl Definitions for MariaDefinitions {
         kind: DefinitionKind,
         name: &DefinitionName,
     ) -> Result<bool, DefinitionStoreError> {
-        let result = self
-            .db
-            .execute_raw(Statement::from_sql_and_values(
-                DbBackend::MySql,
-                sql(DELETE_ONE, kind),
-                [name.as_str().into()],
-            ))
-            .await?;
+        let removal = Statement::from_sql_and_values(
+            DbBackend::MySql,
+            sql(DELETE_ONE, kind),
+            [name.as_str().into()],
+        );
+        if kind == DefinitionKind::Dashboard {
+            return self.delete_dashboard(removal).await;
+        }
+
+        let result = self.db.execute_raw(removal).await?;
 
         Ok(result.rows_affected() > 0)
     }

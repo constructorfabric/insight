@@ -32,7 +32,7 @@ const FOLDER_OF: &str = "SELECT folders.id, folders.name
 FROM dashboards JOIN folders ON folders.id = dashboards.folder_id
 WHERE dashboards.name = ?";
 
-const COUNT_DASHBOARD: &str = "SELECT COUNT(*) AS total FROM dashboards WHERE name = ?";
+pub(super) const COUNT_DASHBOARD: &str = "SELECT COUNT(*) AS total FROM dashboards WHERE name = ?";
 
 const FILE_DASHBOARD: &str = "UPDATE dashboards SET folder_id = ? WHERE name = ?";
 
@@ -64,36 +64,42 @@ fn folder(id: &str, name: &str) -> Result<Folder, FolderError> {
     })
 }
 
-fn statement(sql: &str, values: Vec<Value>) -> Statement {
+pub(super) fn statement(sql: &str, values: Vec<Value>) -> Statement {
     Statement::from_sql_and_values(DbBackend::MySql, sql, values)
 }
 
-fn filtered(template: &str, filter: FolderFilter) -> String {
-    let clause = match filter {
+pub(super) fn folder_clause(filter: FolderFilter) -> &'static str {
+    match filter {
         FolderFilter::Unfiled => "folder_id IS NULL",
         FolderFilter::In(_) => "folder_id = ?",
-    };
-    template.replace("{filter}", clause)
+    }
 }
 
-fn matched(needle: &str, filter: FolderFilter) -> Vec<Value> {
+fn filtered(template: &str, filter: FolderFilter) -> String {
+    template.replace("{filter}", folder_clause(filter))
+}
+
+pub(super) fn matched(needle: &str, filter: Option<FolderFilter>) -> Vec<Value> {
     let pattern = format!("%{}%", like_escaped(needle));
     let mut values: Vec<Value> = vec![pattern.clone().into(), pattern.into()];
-    if let FolderFilter::In(id) = filter {
+    if let Some(FolderFilter::In(id)) = filter {
         values.push(id.to_string().into());
     }
     values
 }
 
 pub(super) fn page_statement(needle: &str, page: Page, filter: FolderFilter) -> Statement {
-    let mut values = matched(needle, filter);
+    let mut values = matched(needle, Some(filter));
     values.push(page.limit().into());
     values.push(page.offset().into());
     statement(&filtered(PAGE_FILED, filter), values)
 }
 
 pub(super) fn count_statement(needle: &str, filter: FolderFilter) -> Statement {
-    statement(&filtered(COUNT_FILED, filter), matched(needle, filter))
+    statement(
+        &filtered(COUNT_FILED, filter),
+        matched(needle, Some(filter)),
+    )
 }
 
 pub(super) fn file_statement(dashboard: &DefinitionName, folder: Option<FolderId>) -> Statement {

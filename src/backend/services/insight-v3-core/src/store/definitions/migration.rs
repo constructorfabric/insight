@@ -34,6 +34,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260907_000001_definitions::Migration),
             Box::new(m20260916_000002_datasets::Migration),
             Box::new(m20260924_000003_folders::Migration),
+            Box::new(m20260928_000004_tags::Migration),
         ]
     }
 }
@@ -253,6 +254,31 @@ mod m20260924_000003_folders {
     }
 }
 
+mod m20260928_000004_tags {
+    use super::{DbErr, MigrationName, MigrationTrait, SchemaManager, apply_sql};
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &'static str {
+            "m20260928_000004_tags"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            apply_sql(manager, include_str!("sql/004_tags.sql")).await
+        }
+
+        async fn down(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
+            Err(DbErr::Custom(
+                "dropping the tags would untag every dashboard".to_owned(),
+            ))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -295,6 +321,7 @@ mod tests {
                 "m20260907_000001_definitions",
                 "m20260916_000002_datasets",
                 "m20260924_000003_folders",
+                "m20260928_000004_tags",
             ],
             "a migration's name is the ledger's key, so it is written down here"
         );
@@ -313,6 +340,7 @@ mod tests {
             ),
             ("002_datasets.sql", include_str!("sql/002_datasets.sql"), 1),
             ("003_folders.sql", include_str!("sql/003_folders.sql"), 2),
+            ("004_tags.sql", include_str!("sql/004_tags.sql"), 2),
         ];
 
         for (named, script, expected) in scripts {
@@ -375,6 +403,24 @@ mod tests {
             "ALTER TABLE dashboards",
             "ADD COLUMN IF NOT EXISTS folder_id CHAR(36) NULL",
             "REFERENCES folders (id) ON DELETE SET NULL",
+        ] {
+            assert!(script.contains(part), "{part} is missing from the script");
+        }
+    }
+
+    #[test]
+    fn a_tag_is_a_row_of_its_own_and_a_dashboard_links_it_by_name() {
+        let script = include_str!("sql/004_tags.sql");
+
+        for part in [
+            "CREATE TABLE IF NOT EXISTS tags",
+            "id CHAR(36) NOT NULL PRIMARY KEY",
+            "name VARCHAR(32) NOT NULL COLLATE utf8mb4_uca1400_as_ci",
+            "UNIQUE KEY tags_name (name)",
+            "CREATE TABLE IF NOT EXISTS dashboard_tags",
+            "PRIMARY KEY (dashboard, tag_id)",
+            "REFERENCES dashboards (name) ON DELETE CASCADE",
+            "REFERENCES tags (id) ON DELETE CASCADE",
         ] {
             assert!(script.contains(part), "{part} is missing from the script");
         }

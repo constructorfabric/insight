@@ -11,7 +11,13 @@ mod store;
 mod window_live_tests;
 
 #[cfg(test)]
+mod live_mariadb;
+
+#[cfg(test)]
 mod folders_live_tests;
+
+#[cfg(test)]
+mod tags_live_tests;
 
 use api_gateway as _;
 use authn_resolver as _;

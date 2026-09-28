@@ -111,6 +111,12 @@ pub(crate) enum TagError {
     Store(#[from] DefinitionStoreError),
 }
 
+impl From<sea_orm::DbErr> for TagError {
+    fn from(error: sea_orm::DbErr) -> Self {
+        Self::Store(DefinitionStoreError::Database(error))
+    }
+}
+
 #[async_trait]
 pub(crate) trait Tags: Send + Sync + fmt::Debug {
     async fn list_tags(&self) -> Result<Vec<TagSummary>, TagError>;
