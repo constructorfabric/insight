@@ -190,6 +190,14 @@ The system **MUST** let dashboards be kept in named folders, one level deep. A f
 
 **Actors**: `cpt-insightspec-v3-actor-dashboard-author`
 
+#### Tag Dashboards
+
+- [ ] `p2` - **ID**: `cpt-insightspec-v3-fr-dashboard-tags`
+
+The system **MUST** let a dashboard carry several tags and let the dashboard list be narrowed to those carrying any of the chosen tags, inside a folder or across all of them. A tag comes into being when it is first applied and goes away when no dashboard carries it. Everyone who can see dashboards sees the same tags, and the AI can list tags, filter by them and set a dashboard's tags.
+
+**Actors**: `cpt-insightspec-v3-actor-dashboard-author`
+
 ### 5.5 AI
 
 #### Answer a Question
