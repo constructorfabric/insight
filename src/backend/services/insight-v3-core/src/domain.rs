@@ -9,6 +9,7 @@ pub(crate) mod definition;
 pub(crate) mod folders;
 pub(crate) mod kinds;
 pub(crate) mod metric_run;
+pub(crate) mod pins;
 pub(crate) mod query;
 pub(crate) mod surfaces;
 pub(crate) mod tags;

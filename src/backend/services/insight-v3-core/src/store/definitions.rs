@@ -238,6 +238,7 @@ impl Definitions for MariaDefinitions {
                     CARRY_TAGS,
                     [to.as_str().into(), from.as_str().into()],
                 ),
+                Change::CarryPins { .. } => continue,
             };
             transaction
                 .execute_raw(statement)

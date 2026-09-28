@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
+use uuid::Uuid;
 
 use crate::domain::definition::{
     Change, DefinitionKind, DefinitionName, DefinitionStoreError, Definitions, Lookup, NamePage,
@@ -26,6 +27,7 @@ struct Stored {
     folders: BTreeMap<FolderId, FolderName>,
     filed: BTreeMap<String, FolderId>,
     tagged: BTreeMap<String, Vec<TagName>>,
+    pinned: BTreeMap<Uuid, Vec<String>>,
 }
 
 impl Stored {
@@ -38,6 +40,7 @@ impl Stored {
         if kind.table() == DASHBOARDS {
             self.filed.remove(name.as_str());
             self.tagged.remove(name.as_str());
+            self.drop_pins(name.as_str());
         }
         self.definitions
             .remove(&MemoryDefinitions::key(kind, name))
@@ -133,6 +136,7 @@ impl MemoryDefinitions {
     }
 }
 
+mod pins;
 mod tags;
 #[cfg(test)]
 mod tests;
@@ -228,6 +232,7 @@ impl Definitions for MemoryDefinitions {
                         applied.tagged.insert(to.as_str().to_owned(), tags);
                     }
                 }
+                Change::CarryPins { from, to } => applied.carry_pins(from, to),
             }
         }
 

@@ -951,6 +951,40 @@ async fn a_renamed_dashboard_keeps_its_tags() -> R {
 }
 
 #[tokio::test]
+async fn a_renamed_dashboard_keeps_its_place_on_every_pinned_list() -> R {
+    use crate::domain::pins::Pins;
+
+    let fixture = Fixture::new().await;
+    let surfaces = fixture.surfaces();
+    let people = [uuid::Uuid::from_u128(1), uuid::Uuid::from_u128(2)];
+    for board in ["alpha", "board", "gamma"] {
+        surfaces
+            .put(
+                DefinitionKind::Dashboard,
+                &name(board),
+                &json!({"title": "Example board", "widgets": []}),
+            )
+            .await?;
+        for person in people {
+            fixture.definitions.pin(person, &name(board)).await?;
+        }
+    }
+
+    surfaces
+        .rename(DefinitionKind::Dashboard, &name("board"), &name("renamed"))
+        .await?;
+
+    for person in people {
+        assert_eq!(
+            fixture.definitions.pins_of(person).await?,
+            ["alpha", "renamed", "gamma"]
+        );
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_rename_onto_a_name_someone_holds_is_refused_and_writes_nothing() -> R {
     let fixture = Fixture::new().await;
     let surfaces = fixture.surfaces();
