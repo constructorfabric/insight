@@ -14,3 +14,9 @@ CREATE TABLE IF NOT EXISTS dashboard_tags (
     CONSTRAINT dashboard_tags_tag FOREIGN KEY (tag_id)
         REFERENCES tags (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS tags_lock (
+    id TINYINT NOT NULL PRIMARY KEY
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+INSERT IGNORE INTO tags_lock (id) VALUES (1);

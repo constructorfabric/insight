@@ -11,7 +11,7 @@ use crate::domain::definition::{DefinitionName, DefinitionStoreError, NamePage, 
 use crate::domain::folders::FolderFilter;
 use crate::domain::tags::{MAX_TAGS, TagError, TagFilter, TagName, TagSet, TagSummary, Tags};
 
-const LOCK_TAGS: &str = "SELECT id FROM tags FOR UPDATE";
+const LOCK_TAGS: &str = "SELECT id FROM tags_lock WHERE id = 1 FOR UPDATE";
 
 const FIND_TAG: &str = "SELECT id FROM tags WHERE name = ?";
 
@@ -104,7 +104,7 @@ pub(super) fn count_statement(
     )
 }
 
-async fn lock_tags(transaction: &DatabaseTransaction) -> Result<(), DbErr> {
+pub(super) async fn lock_tags(transaction: &DatabaseTransaction) -> Result<(), DbErr> {
     transaction
         .query_all_raw(statement(LOCK_TAGS, Vec::new()))
         .await?;

@@ -340,7 +340,7 @@ mod tests {
             ),
             ("002_datasets.sql", include_str!("sql/002_datasets.sql"), 1),
             ("003_folders.sql", include_str!("sql/003_folders.sql"), 2),
-            ("004_tags.sql", include_str!("sql/004_tags.sql"), 2),
+            ("004_tags.sql", include_str!("sql/004_tags.sql"), 4),
         ];
 
         for (named, script, expected) in scripts {
@@ -354,6 +354,8 @@ mod tests {
             for statement in &statements {
                 let whole = if statement.starts_with("ALTER TABLE") {
                     statement.ends_with("ON DELETE SET NULL")
+                } else if statement.starts_with("INSERT IGNORE INTO") {
+                    statement.ends_with(')')
                 } else {
                     statement.starts_with("CREATE TABLE IF NOT EXISTS")
                         && (statement.ends_with(')')
@@ -421,6 +423,8 @@ mod tests {
             "PRIMARY KEY (dashboard, tag_id)",
             "REFERENCES dashboards (name) ON DELETE CASCADE",
             "REFERENCES tags (id) ON DELETE CASCADE",
+            "CREATE TABLE IF NOT EXISTS tags_lock",
+            "INSERT IGNORE INTO tags_lock (id) VALUES (1)",
         ] {
             assert!(script.contains(part), "{part} is missing from the script");
         }

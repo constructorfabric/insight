@@ -210,6 +210,13 @@ impl Definitions for MariaDefinitions {
 
     async fn apply(&self, changes: &[Change]) -> Result<(), DefinitionStoreError> {
         let transaction = self.db.begin().await?;
+        if changes
+            .iter()
+            .any(|change| matches!(change, Change::CarryTags { .. }))
+        {
+            tags::lock_tags(&transaction).await?;
+        }
+
         for change in changes {
             let statement = match change {
                 Change::Put(kind, name, body) => Self::upsert(*kind, name, body)?,

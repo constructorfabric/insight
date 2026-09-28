@@ -322,3 +322,77 @@ async fn tag_names_differing_by_accent_or_emoji_are_different_tags() {
     remove(&store, &name).await;
     assert_eq!(held.len(), 4, "{held:?}");
 }
+
+async fn tag_set_renamed_and_removed(
+    store: &MariaDefinitions,
+    from: &DefinitionName,
+    wanted: &TagSet,
+) -> Result<(), String> {
+    let to = dashboard(&unique("raced"));
+    let renamed = [
+        Change::Create(
+            DefinitionKind::Dashboard,
+            to.clone(),
+            json!({ "title": "Board", "items": [] }),
+        ),
+        Change::CarryFolder {
+            from: from.clone(),
+            to: to.clone(),
+        },
+        Change::CarryTags {
+            from: from.clone(),
+            to: to.clone(),
+        },
+        Change::Delete(DefinitionKind::Dashboard, from.clone()),
+    ];
+
+    store
+        .set_tags(from, wanted)
+        .await
+        .map_err(|error| format!("set: {error:?}"))?;
+    store
+        .apply(&renamed)
+        .await
+        .map_err(|error| format!("rename: {error:?}"))?;
+    Definitions::delete(store, DefinitionKind::Dashboard, &to)
+        .await
+        .map_err(|error| format!("delete: {error:?}"))?;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn tag_writers_running_at_once_all_land() {
+    let Some(store) = store_or_skip().await else {
+        return;
+    };
+    let _serial = ONE_AT_A_TIME.lock().await;
+    let store = std::sync::Arc::new(store);
+    let suffix = short();
+    let boards: Vec<DefinitionName> = (0..16)
+        .map(|index| dashboard(&unique(&format!("racing{index}"))))
+        .collect();
+    for name in &boards {
+        board(&store, name).await;
+    }
+
+    let writers: Vec<_> = boards
+        .iter()
+        .enumerate()
+        .map(|(index, name)| {
+            let store = std::sync::Arc::clone(&store);
+            let name = name.clone();
+            let wanted = tags(&[format!("race {index} {suffix}"), format!("shared {suffix}")]);
+            tokio::spawn(async move { tag_set_renamed_and_removed(&store, &name, &wanted).await })
+        })
+        .collect();
+    let mut failures = Vec::new();
+    for writer in writers {
+        if let Err(failure) = writer.await.unwrap_or_else(|error| panic!("{error}")) {
+            failures.push(failure);
+        }
+    }
+
+    assert!(failures.is_empty(), "{failures:#?}");
+    assert_eq!(count_of(&store, &format!("shared {suffix}")).await, None);
+}
