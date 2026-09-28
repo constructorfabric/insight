@@ -233,6 +233,8 @@ The system **MUST** report which questions are asked of the chat.
 
 ### 5.8 Alerts
 
+The first-release scope and proposed behavior are detailed in the [Metric Alerts PRD](./alerts/PRD.md) and [technical design](./alerts/DESIGN.md).
+
 #### Create Alerts in Realtime
 
 - [ ] `p2` - **ID**: `cpt-insightspec-v3-fr-create-alerts`
