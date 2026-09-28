@@ -26,6 +26,7 @@ export function memberMetricStanding(
   const standing = derivePeerStanding(metric.direction, {
     value: data.value,
     peer: data.peer,
+    absence: data.absence,
   });
   return standing.eligible ? standing.rank : null;
 }

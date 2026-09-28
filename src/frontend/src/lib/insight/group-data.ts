@@ -59,6 +59,7 @@ export function groupHeadlineKey(
     const standing = derivePeerStanding(metric.direction, {
       value: data.value,
       peer: metric.peer?.values.find((v) => v.entity_id === entityId) ?? null,
+      absence: data.absence,
     });
     if (standing.rank === "neutral") continue;
     const candidate = {

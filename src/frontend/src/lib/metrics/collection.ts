@@ -15,6 +15,7 @@ import type {
   MetricViewRequest,
   PeerView,
   PeriodView,
+  PersonAbsenceContext,
   RollupView,
   TimeseriesView,
 } from "@/api/metric-results-client";
@@ -134,6 +135,7 @@ export type MetricCollectionEntity =
   | { type: "tenant" };
 
 export type NormalizedMetricResult = {
+  absenceContext?: ReadonlyMap<string, PersonAbsenceContext>;
   metric_key: string;
   label: string;
   /** Compact label for dense surfaces (member grids); falls back to `label`. */
@@ -160,6 +162,7 @@ export type NormalizedMetricResult = {
 export type PeerEntityStats = PeerView["values"][number];
 
 export interface EntityMetricData {
+  absence?: PersonAbsenceContext;
   value: number | null;
   peer: PeerEntityStats | null;
   bucket: MetricBucket | null;
@@ -359,11 +362,16 @@ export function projectPrimary(
 }
 
 export function normalizeMetricResults(
-  metrics: MetricResult[] | undefined
+  metrics: MetricResult[] | undefined,
+  absenceContext?: readonly PersonAbsenceContext[],
 ): Map<string, NormalizedMetricResult> {
+  const absences = absenceContext?.length
+    ? new Map(absenceContext.map((context) => [context.person_id, context]))
+    : undefined;
   return new Map(
     (metrics ?? []).map((metric) => {
       const normalized = normalizeMetricResult(metric);
+      if (absences) normalized.absenceContext = absences;
       return [normalized.metric_key, normalized];
     })
   );
@@ -379,6 +387,9 @@ export function forEntity(
   entityId: string
 ): EntityMetricData {
   return {
+    ...(result.absenceContext?.has(entityId)
+      ? { absence: result.absenceContext.get(entityId) }
+      : {}),
     value:
       result.period?.values.find((v) => v.entity_id === entityId)?.value ??
       null,
@@ -473,6 +484,12 @@ export function mergeNormalizedResults(
           ...result.period,
           values: [...result.period.values],
         };
+      }
+      if (result.absenceContext) {
+        existing.absenceContext = new Map([
+          ...(existing.absenceContext ?? []),
+          ...result.absenceContext,
+        ]);
       }
       if (existing.peer && result.peer) {
         existing.peer.values.push(...result.peer.values);

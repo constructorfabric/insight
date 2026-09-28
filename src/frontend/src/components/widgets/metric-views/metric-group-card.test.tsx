@@ -75,6 +75,21 @@ function result(
 }
 
 describe("MetricGroupCard", () => {
+  it("explains neutral standing without removing the metric value", () => {
+    const metrics = [aiMetric("ai.active_days", 3)];
+    render(<MetricGroupCard
+      def={DEF}
+      data={result(metrics, { byKey: normalizeMetricResults(metrics, [{
+        person_id: "me@x.com", period_overlap: true, compare_to_overlap: false,
+      }]) })}
+      entityId="me@x.com"
+      onOpen={vi.fn()}
+    />);
+    expect(screen.getByText("Time off in this period")).toBeInTheDocument();
+    expect(screen.getByText("3 days")).toBeInTheDocument();
+    expect(screen.queryByText(/vs median/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Needs attention")).not.toBeInTheDocument();
+  });
   it("renders preview rows with response labels and values", () => {
     render(
       <MetricGroupCard
