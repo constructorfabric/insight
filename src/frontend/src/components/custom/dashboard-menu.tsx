@@ -1,4 +1,4 @@
-import { Ellipsis, Tags } from "lucide-react";
+import { Ellipsis, Pin, PinOff, Tags } from "lucide-react";
 import { useState } from "react";
 
 import { EditTags } from "@/components/custom/edit-tags";
@@ -14,11 +14,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { usePinToggle } from "@/hooks/use-pin-toggle";
 
 export function DashboardMenu({ name }: { name: string }) {
   const [open, setOpen] = useState(false);
   const [naming, setNaming] = useState(false);
   const [tagging, setTagging] = useState(false);
+  const pin = usePinToggle(name, open);
 
   return (
     <>
@@ -36,6 +38,11 @@ export function DashboardMenu({ name }: { name: string }) {
           }
         />
         <DropdownMenuContent align="end" className="w-56">
+          <DropdownMenuItem disabled={!pin.ready} onClick={pin.toggle}>
+            {pin.pinned ? <PinOff /> : <Pin />}
+            {pin.pinned ? "Unpin" : "Pin"}
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
           <MoveToFolderItems
             name={name}
             open={open}
