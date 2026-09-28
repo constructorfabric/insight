@@ -1,6 +1,7 @@
-import { Ellipsis } from "lucide-react";
+import { Ellipsis, Tags } from "lucide-react";
 import { useState } from "react";
 
+import { EditTags } from "@/components/custom/edit-tags";
 import {
   MoveToFolderItems,
   NewFolderAndMove,
@@ -9,12 +10,15 @@ import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
 export function DashboardMenu({ name }: { name: string }) {
   const [open, setOpen] = useState(false);
   const [naming, setNaming] = useState(false);
+  const [tagging, setTagging] = useState(false);
 
   return (
     <>
@@ -37,6 +41,11 @@ export function DashboardMenu({ name }: { name: string }) {
             open={open}
             onNewFolder={() => setNaming(true)}
           />
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={() => setTagging(true)}>
+            <Tags />
+            Edit tags…
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
       <NewFolderAndMove
@@ -44,6 +53,7 @@ export function DashboardMenu({ name }: { name: string }) {
         open={naming}
         onClose={() => setNaming(false)}
       />
+      <EditTags name={name} open={tagging} onClose={() => setTagging(false)} />
     </>
   );
 }

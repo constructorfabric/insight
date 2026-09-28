@@ -446,3 +446,73 @@ describe("/portal/custom cards with tags", () => {
     expect(screen.queryByRole("list", { name: "Tags" })).toBeNull();
   });
 });
+
+describe("/portal/custom after a card's tags are set", () => {
+  const DELIVERY = { title: "Delivery", widgets: [] };
+
+  beforeEach(() => {
+    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({
+      names: ["delivery"],
+      total: 1,
+    });
+    vi.mocked(customClient.fetchTags).mockResolvedValue({
+      tags: [{ name: "Ops", dashboards: 1 }],
+    });
+    vi.mocked(customClient.fetchDashboardRead)
+      .mockResolvedValueOnce({ body: DELIVERY, tags: ["Ops"] })
+      .mockResolvedValue({ body: DELIVERY, tags: ["Ops", "Hiring"] });
+  });
+
+  const calls = () => ({
+    tags: vi.mocked(customClient.fetchTags).mock.calls.length,
+    lists: vi.mocked(customClient.fetchDashboardNames).mock.calls.length,
+  });
+
+  async function addHiring() {
+    const user = userEvent.setup();
+    render(<Component />, { wrapper });
+    await user.click(
+      await screen.findByRole("button", { name: "More for delivery" })
+    );
+    await user.click(await screen.findByRole("menuitem", { name: /tags/ }));
+    await user.type(
+      await screen.findByRole("textbox", { name: "Add tag" }),
+      "Hiring"
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Done" })).toBeEnabled()
+    );
+
+    const before = calls();
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    return before;
+  }
+
+  it("shows the new tags on the card and reads the tags and the list again", async () => {
+    vi.mocked(customClient.setDashboardTags).mockResolvedValue(undefined);
+
+    const before = await addHiring();
+
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole("list", { name: "Tags" })).getByText("Hiring")
+      ).toBeInTheDocument()
+    );
+    expect(calls().tags).toBeGreaterThan(before.tags);
+    expect(calls().lists).toBeGreaterThan(before.lists);
+  });
+
+  it("reads the tags and the list again after a refused save", async () => {
+    vi.mocked(customClient.setDashboardTags).mockRejectedValue(
+      new Error("down")
+    );
+
+    const before = await addHiring();
+
+    expect(
+      await screen.findByText("The tags could not be saved.")
+    ).toBeInTheDocument();
+    await waitFor(() => expect(calls().tags).toBeGreaterThan(before.tags));
+    expect(calls().lists).toBeGreaterThan(before.lists);
+  });
+});
