@@ -2,6 +2,7 @@
 
 mod folders;
 pub(crate) mod migration;
+mod pins;
 mod tags;
 
 #[cfg(test)]
@@ -39,6 +40,9 @@ WHERE moved.name = ?";
 
 const CARRY_TAGS: &str = "INSERT INTO dashboard_tags (dashboard, tag_id)
 SELECT ?, tag_id FROM dashboard_tags WHERE dashboard = ?";
+
+const CARRY_PINS: &str = "INSERT INTO dashboard_pins (person, dashboard, pinned_at)
+SELECT person, ?, pinned_at FROM dashboard_pins WHERE dashboard = ?";
 
 const SELECT_BODY: &str = "SELECT body FROM {table} WHERE name = ?";
 const SELECT_NAMES: &str = "SELECT name FROM {table} ORDER BY name";
@@ -238,7 +242,11 @@ impl Definitions for MariaDefinitions {
                     CARRY_TAGS,
                     [to.as_str().into(), from.as_str().into()],
                 ),
-                Change::CarryPins { .. } => continue,
+                Change::CarryPins { from, to } => Statement::from_sql_and_values(
+                    DbBackend::MySql,
+                    CARRY_PINS,
+                    [to.as_str().into(), from.as_str().into()],
+                ),
             };
             transaction
                 .execute_raw(statement)

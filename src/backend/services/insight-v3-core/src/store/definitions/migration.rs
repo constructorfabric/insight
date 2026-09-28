@@ -35,6 +35,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260916_000002_datasets::Migration),
             Box::new(m20260924_000003_folders::Migration),
             Box::new(m20260928_000004_tags::Migration),
+            Box::new(m20260928_000005_pins::Migration),
         ]
     }
 }
@@ -279,6 +280,31 @@ mod m20260928_000004_tags {
     }
 }
 
+mod m20260928_000005_pins {
+    use super::{DbErr, MigrationName, MigrationTrait, SchemaManager, apply_sql};
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &'static str {
+            "m20260928_000005_pins"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            apply_sql(manager, include_str!("sql/005_pins.sql")).await
+        }
+
+        async fn down(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
+            Err(DbErr::Custom(
+                "dropping the pins would empty every pinned list".to_owned(),
+            ))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -322,6 +348,7 @@ mod tests {
                 "m20260916_000002_datasets",
                 "m20260924_000003_folders",
                 "m20260928_000004_tags",
+                "m20260928_000005_pins",
             ],
             "a migration's name is the ledger's key, so it is written down here"
         );
@@ -341,6 +368,7 @@ mod tests {
             ("002_datasets.sql", include_str!("sql/002_datasets.sql"), 1),
             ("003_folders.sql", include_str!("sql/003_folders.sql"), 2),
             ("004_tags.sql", include_str!("sql/004_tags.sql"), 4),
+            ("005_pins.sql", include_str!("sql/005_pins.sql"), 3),
         ];
 
         for (named, script, expected) in scripts {
@@ -425,6 +453,24 @@ mod tests {
             "REFERENCES tags (id) ON DELETE CASCADE",
             "CREATE TABLE IF NOT EXISTS tags_lock",
             "INSERT IGNORE INTO tags_lock (id) VALUES (1)",
+        ] {
+            assert!(script.contains(part), "{part} is missing from the script");
+        }
+    }
+
+    #[test]
+    fn a_pin_is_a_row_per_person_and_dashboard_that_goes_with_the_dashboard() {
+        let script = include_str!("sql/005_pins.sql");
+
+        for part in [
+            "CREATE TABLE IF NOT EXISTS dashboard_pins",
+            "person CHAR(36) NOT NULL",
+            "dashboard VARCHAR(128) NOT NULL",
+            "pinned_at DATETIME(6) NOT NULL",
+            "PRIMARY KEY (person, dashboard)",
+            "REFERENCES dashboards (name) ON DELETE CASCADE",
+            "CREATE TABLE IF NOT EXISTS pins_lock",
+            "INSERT IGNORE INTO pins_lock (id) VALUES (1)",
         ] {
             assert!(script.contains(part), "{part} is missing from the script");
         }
