@@ -617,6 +617,24 @@ describe("Dashboards pane folders", () => {
     expect(buttonFor("All dashboards")).not.toHaveAttribute("data-active");
   });
 
+  it("keeps the picked tags when switching folder", async () => {
+    inZone("custom");
+    act(() => {
+      portalRouter.go("/portal/custom");
+      portalRouter.set({ folder: "f1", tag: ["Ops"] });
+    });
+    pane();
+
+    const query = (label: RegExp) =>
+      new URLSearchParams(
+        screen.getByRole("link", { name: label }).getAttribute("href")!.split("?")[1],
+      );
+    await screen.findByRole("link", { name: /Product/ });
+    expect(Object.fromEntries(query(/Product/))).toEqual({ folder: "f2", tag: "Ops" });
+    expect(Object.fromEntries(query(/Unfiled/))).toEqual({ folder: "unfiled", tag: "Ops" });
+    expect(Object.fromEntries(query(/All dashboards/))).toEqual({ tag: "Ops" });
+  });
+
   it("marks nothing for a folder the URL names that is not there", async () => {
     onTheList("gone");
     pane();

@@ -39,7 +39,7 @@ export function CustomNav() {
   const showPlanned = usePortalShowPlanned();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const routeId = useRouterState({ select: (s) => s.matches.at(-1)?.routeId });
-  const { folder } = usePortalSearch();
+  const { folder, tag } = usePortalSearch();
   const { data } = useInfiniteQuery(definitionPagesQuery("dashboards"));
   const total = data?.pages[0]?.total;
 
@@ -54,7 +54,7 @@ export function CustomNav() {
                 isActive={
                   routeId != null && DASHBOARD_ROUTES.has(routeId) && !folder
                 }
-                render={<Link to="/portal/custom" />}
+                render={<Link to="/portal/custom" search={{ tag }} />}
               >
                 <LayoutGrid />
                 <span>All dashboards</span>

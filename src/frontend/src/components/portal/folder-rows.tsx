@@ -36,7 +36,7 @@ const NEW_FOLDER = "new";
 
 export function FoldersGroup() {
   const { data } = useQuery(foldersQuery());
-  const { folder: shown } = usePortalSearch();
+  const { folder: shown, tag } = usePortalSearch();
   const onList = useRouterState({
     select: (s) => LIST_PATH.test(s.location.pathname),
   });
@@ -67,7 +67,7 @@ export function FoldersGroup() {
                   isActive={isShown(folder.id)}
                   className="group-has-data-[sidebar=menu-action]/menu-item:pe-14"
                   render={
-                    <Link to="/portal/custom" search={{ folder: folder.id }} />
+                    <Link to="/portal/custom" search={{ folder: folder.id, tag }} />
                   }
                 >
                   <Folder />
@@ -90,7 +90,7 @@ export function FoldersGroup() {
               <SidebarMenuButton
                 isActive={isShown("unfiled")}
                 render={
-                  <Link to="/portal/custom" search={{ folder: "unfiled" }} />
+                  <Link to="/portal/custom" search={{ folder: "unfiled", tag }} />
                 }
               >
                 <Inbox />
