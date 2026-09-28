@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Extension, Path, Query};
+use axum::extract::{Extension, Path, Query, RawQuery};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
@@ -14,11 +14,13 @@ use utoipa::ToSchema;
 
 use super::AppState;
 use super::errors::ApiErrors;
+use super::tags::tags_in;
 use crate::domain::dataset_lifecycle::{Broken, DatasetChangeError, Removal};
 use crate::domain::dataset_records::PreviewError;
 use crate::domain::datasets::Refused;
 use crate::domain::definition::{DefinitionName, MAX_PAGE_LIMIT, Page};
 use crate::domain::kinds::dataset::state::DatasetState;
+use crate::domain::tags::TagError;
 use crate::domain::violation::Violation;
 use crate::store::dataset_tables::Record;
 
@@ -291,8 +293,16 @@ async fn list_datasets(
     Extension(state): Extension<Arc<AppState>>,
     headers: axum::http::HeaderMap,
     Query(search): Query<Search>,
+    RawQuery(query): RawQuery,
 ) -> Result<Response, CanonicalError> {
     admin_only(&state, &headers).await?;
+    if !tags_in(query.as_deref()).is_empty() {
+        return Err(DatasetApiError::invalid_field(
+            "tag",
+            TagError::NotTagged("datasets").to_string(),
+        ));
+    }
+
     let page = Page::parse(search.limit, search.offset)
         .map_err(|error| DatasetApiError::invalid_field("limit", error.to_string()))?;
 

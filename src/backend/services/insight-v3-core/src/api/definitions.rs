@@ -15,7 +15,7 @@ use utoipa::ToSchema;
 use super::AppState;
 use super::errors::ApiErrors;
 use super::folders::{folder_error, folder_field_error, folder_json};
-use super::tags::{names_json, tag_error, tag_field_error};
+use super::tags::{names_json, tag_error, tag_field_error, tags_in};
 use crate::domain::definition::{
     DefinitionKind, DefinitionName, MAX_PAGE_LIMIT, NamePage, Page, PageError,
 };
@@ -546,13 +546,6 @@ async fn get_definition(
         Err(CustomError::NotFound { .. }) => Ok(StatusCode::NOT_FOUND.into_response()),
         Err(other) => Err(custom_error(other)),
     }
-}
-
-fn tags_in(query: Option<&str>) -> Vec<String> {
-    url::form_urlencoded::parse(query.unwrap_or_default().as_bytes())
-        .filter(|(key, _)| key == "tag")
-        .map(|(_, value)| value.into_owned())
-        .collect()
 }
 
 async fn narrowed(

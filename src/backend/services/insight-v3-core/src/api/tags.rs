@@ -59,6 +59,13 @@ pub(crate) fn names_json(tags: &[TagName]) -> Value {
     json!(tags.iter().map(TagName::as_str).collect::<Vec<_>>())
 }
 
+pub(super) fn tags_in(query: Option<&str>) -> Vec<String> {
+    url::form_urlencoded::parse(query.unwrap_or_default().as_bytes())
+        .filter(|(key, _)| key == "tag")
+        .map(|(_, value)| value.into_owned())
+        .collect()
+}
+
 pub(super) fn tag_error(error: TagError) -> CanonicalError {
     let detail = error.to_string();
 
