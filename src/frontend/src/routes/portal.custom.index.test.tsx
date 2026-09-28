@@ -433,8 +433,19 @@ describe("/portal/custom cards with tags", () => {
 
     render(<Component />, { wrapper });
 
-    expect(await chips()).toEqual(["Hiring", "Ops", "Platform", "+2"]);
-    expect(screen.getByText("+2")).toHaveAttribute("title", "Quality, Release");
+    expect((await chips()).slice(0, 3)).toEqual(["Hiring", "Ops", "Platform"]);
+    expect(screen.getByText("+2").parentElement).toHaveAttribute(
+      "title",
+      "Quality, Release"
+    );
+  });
+
+  it("reads out the tags hidden behind the count", async () => {
+    carrying(["Hiring", "Ops", "Platform", "Quality", "Release"]);
+
+    render(<Component />, { wrapper });
+
+    expect(await screen.findByText("2 more: Quality, Release")).toBeInTheDocument();
   });
 
   it("shows no tag row on a card without tags", async () => {

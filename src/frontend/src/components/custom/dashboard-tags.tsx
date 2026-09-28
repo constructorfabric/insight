@@ -27,7 +27,10 @@ export function DashboardTags({
       {rest.length > 0 ? (
         <li>
           <Badge variant="outline" title={rest.join(", ")}>
-            +{rest.length}
+            <span aria-hidden="true">+{rest.length}</span>
+            <span className="sr-only">
+              {`${rest.length} more: ${rest.join(", ")}`}
+            </span>
           </Badge>
         </li>
       ) : null}
