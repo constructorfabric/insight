@@ -9,6 +9,7 @@ pub(crate) mod admission;
 pub(crate) mod chat;
 pub(crate) mod datasets;
 pub(crate) mod definitions;
+pub(crate) mod duplicate;
 mod errors;
 pub(crate) mod folders;
 pub(crate) mod metric_run;
@@ -354,6 +355,7 @@ pub(crate) fn register_routes(
     // their own context.
     let api = raw_data::register_routes(Router::new(), openapi, state.clone(), admission);
     let api = definitions::register_routes(api, openapi, &state);
+    let api = duplicate::register_routes(api, openapi, &state);
     let api = folders::register_routes(api, openapi, &state);
     let api = tags::register_routes(api, openapi, &state);
     let api = pins::register_routes(api, openapi, &state);
