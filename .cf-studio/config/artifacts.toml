@@ -20,6 +20,12 @@ name = "Insight v3 Metric Alerts Design"
 traceability = "DOCS-ONLY"
 
 [[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/insight-v3/specs/ADR/0009-bullmq-schedules-alert-checks.md"
+name = "ADR-0009: BullMQ Schedules the Alert Checks"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
 kind = "PRD"
 path = "docs/components/backend/authenticator/PRD.md"
 name = "Authenticator Service PRD"

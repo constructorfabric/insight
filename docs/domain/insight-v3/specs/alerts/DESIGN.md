@@ -1,18 +1,16 @@
 ---
 status: draft
-version: "0.3"
+version: "0.4"
 date: 2026-09-28
 ---
 
 # Technical Design — Insight v3 Metric Alerts
 
-**Approved:** Apalis, Insight v3 custom metrics, administrator API/MCP, one numeric result per alert, per-rule interval checks, one current check after downtime, first-breach notifications without reminders or recovery messages, and provider-neutral delivery.
+**Approved:** Insight v3 custom metrics, administrator API and MCP, one numeric result per alert, per-rule interval checks, one current check after downtime, first-breach notifications without reminders or recovery messages, provider-neutral delivery, and BullMQ on the deployment's Redis as the job library ([ADR-0009](../ADR/0009-bullmq-schedules-alert-checks.md)).
 
-**Proposed flow:** Save a due check → run the existing metric → record a qualifying breach → send its notification through a separate job. Save each step so interrupted work can resume.
+**Flow:** an enabled rule is one repeating job; each run loads the rule, runs the stored metric as an on-demand run would, reads one number, records the outcome on the rule and, on the first breach, writes the notification it owes. Delivering that notification is a later release.
 
-**Still open:** Which providers ship first, PRD decisions D3–D8, the Apalis release and MariaDB compatibility. This is a design proposal, not an implementation.
-
-**Version 0.3:** Apply approved alert behavior and make notification delivery provider-neutral.
+**Version 0.4:** Replace the Apalis proposal with BullMQ, collapse the state model to rules and notifications, and record the resolved decisions.
 
 <!-- toc -->
 
@@ -35,77 +33,69 @@ date: 2026-09-28
 - [4. Additional Context](#4-additional-context)
   - [Compatibility Findings](#compatibility-findings)
   - [Verification and Observability](#verification-and-observability)
-  - [Open Decisions and Resumption](#open-decisions-and-resumption)
+  - [Resolved Decisions](#resolved-decisions)
 - [5. Traceability](#5-traceability)
 
 <!-- /toc -->
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-design-core`
 
-
 ## 1. Architecture Overview
 
 ### 1.1 Architectural Vision
 
-Keep rules, evaluation state and delivery outcomes in `insight-v3-core`. Reuse its metric runner and administrator checks. Apalis executes jobs; alert records determine when a check is due and whether a notification already exists.
+Keep rules, what their checks found, and the notifications they owe in `insight-v3-core`'s MariaDB. Reuse its metric runner and administrator checks. BullMQ, on the Redis every deployment already runs, decides when a check runs, on which worker, and what happens when that worker dies. Redis holds nothing that cannot be rebuilt from the rules: at startup the schedule is made to say what the rules say.
 
-Save work before submitting it to Apalis. Jobs may run again after interruption, so workers use stable evaluation and notification IDs to avoid repeating state changes. Provider retries are bounded, may duplicate messages and do not guarantee delivery. No general workflow service or second metric evaluator is introduced.
+A check carries the revision of the rule it was scheduled for, and the store records it only at that revision. A rule that was edited, disabled or removed while a check was in flight discards that check's result.
 
 ### 1.2 Architecture Drivers
 
-The parent [separate-service ADR](../ADR/0001-separate-service.md) still applies. Apalis is approved for alert jobs; the parent Gears-first principle still governs other capabilities and service integration.
+The parent [separate-service ADR](../ADR/0001-separate-service.md) still applies. [ADR-0009](../ADR/0009-bullmq-schedules-alert-checks.md) records why BullMQ, and what was measured of the alternatives.
 
 #### Functional Drivers
 
 | Requirement | Design Response |
 |-------------|-----------------|
-| `cpt-insightspec-v3-alerts-fr-manage` | Shared rule application operations behind existing API and MCP authorization |
-| `cpt-insightspec-v3-alerts-fr-authorize` | Existing administrator guards, scoped worker credentials and non-secret destination references |
-| `cpt-insightspec-v3-alerts-fr-evaluate` | Existing metric compiler/runner with a typed scalar boundary |
-| `cpt-insightspec-v3-alerts-fr-schedule` | Durable due state and retryable job handoff |
-| `cpt-insightspec-v3-alerts-fr-episodes` | Serialized, revision-fenced episode transition |
-| `cpt-insightspec-v3-alerts-fr-deliver` | Persisted notification intent and independent delivery jobs |
-| `cpt-insightspec-v3-alerts-fr-inspect` | Separate evaluation and delivery histories with safe diagnostics |
+| `cpt-insightspec-v3-alerts-fr-manage` | One set of rule operations behind the existing API and MCP authorization; every write bumps a revision, and an update names the revision it replaces |
+| `cpt-insightspec-v3-alerts-fr-authorize` | Existing administrator guards; workers hold no user session and read only the rule |
+| `cpt-insightspec-v3-alerts-fr-evaluate` | The existing metric run, unbucketed, read through a typed scalar boundary that accepts exactly one row and one column |
+| `cpt-insightspec-v3-alerts-fr-schedule` | One BullMQ job scheduler per enabled rule, repeating every rule interval; a missed iteration is skipped, not queued |
+| `cpt-insightspec-v3-alerts-fr-episodes` | The last valid finding on the rule row; a breach owes a notification only when the last valid finding was not a breach |
+| `cpt-insightspec-v3-alerts-fr-deliver` | A notification row written in the same transaction as the check that owes it; delivery reads that row, in a later release |
+| `cpt-insightspec-v3-alerts-fr-inspect` | The latest check on the rule; notifications listed per rule with their status |
 
 #### NFR Allocation
 
 | NFR ID | Allocated To | Design Response | Verification Approach |
 |--------|--------------|-----------------|-----------------------|
-| `cpt-insightspec-v3-alerts-nfr-durability` | State store and workers | Transactional intents, unique business identities, fenced commits | Crash-boundary and concurrent-worker integration evidence |
-| `cpt-insightspec-v3-alerts-nfr-timeliness` | Scheduler and worker pools | Bounded work, separate scheduling/evaluation/delivery measurements | Synthetic approved workload; targets await D7 |
-| `cpt-insightspec-v3-alerts-nfr-confidentiality` | Administration and provider boundary | Secret references, redaction, minimal payloads | API/MCP and log contract checks |
-| `cpt-insightspec-v3-nfr-efficiency` | Entire addition | Bounded concurrency and retained history | Compare synthetic resource use against parent baseline |
-| `cpt-insightspec-v3-nfr-reliability` | Service lifecycle | Worker shutdown/recovery independent of request handling | Existing service availability evidence plus interruption checks |
-| `cpt-insightspec-v3-nfr-performance` | Metric execution pools | Alert admission does not starve interactive work | Parent dashboard latency measurements under alert load |
-| `cpt-insightspec-v3-nfr-security` | Dependencies and artifact pipeline | Existing scans include chosen Apalis backend | No critical findings in required scans |
-| `cpt-insightspec-v3-nfr-versatility` | Rule administration | Data-defined rules | Create another supported rule without code changes |
-
-Engineering verifies these requirements, including the parent targets. Alert capacity and delivery-time targets remain unapproved; parent targets are unchanged.
+| `cpt-insightspec-v3-alerts-nfr-durability` | Store and schedule | Check and notification in one transaction, revision fence, startup reconcile, BullMQ locks and stalled recovery | Live tests against MariaDB and Redis in CI |
+| `cpt-insightspec-v3-alerts-nfr-timeliness` | Worker | Bounded concurrency and a per-check lock; scheduling and check duration logged with the rule | Log fields per check; targets await synthetic load |
+| `cpt-insightspec-v3-alerts-nfr-confidentiality` | Configuration and API | Destinations named in configuration, rules reference a name, reads answer name and provider only; the Redis URL is redacted from debug output | Handler and configuration tests |
+| `cpt-insightspec-v3-nfr-efficiency` | Worker | Bounded concurrency; notifications kept per rule capped | Compare synthetic resource use against the parent baseline |
+| `cpt-insightspec-v3-nfr-reliability` | Service lifecycle | Worker stops on the gear's cancellation token; unfinished checks are recovered by the next worker | Existing service availability evidence plus the live tests |
+| `cpt-insightspec-v3-nfr-performance` | Metric execution | Checks share the metric runner's timeouts and result bounds | Parent dashboard latency measurements under alert load |
+| `cpt-insightspec-v3-nfr-security` | Dependencies | The vendored BullMQ copy is scanned like any dependency | No critical findings in required scans |
+| `cpt-insightspec-v3-nfr-versatility` | Rule administration | Data-defined rules | Create another rule without code changes |
 
 ### 1.3 Architecture Layers
 
-- [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-tech-stack`
+- [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-layers`
 
 ```mermaid
 flowchart LR
-    API[Administrator API and MCP] --> Domain[Alert application operations]
-    Domain --> State[(MariaDB alert state and intents)]
-    Scheduler[Due-rule scheduler] --> State
-    Handoff[Intent handoff] --> State
-    Handoff --> Jobs[Apalis durable jobs]
-    Jobs --> Evaluation[Evaluation worker]
-    Evaluation --> Metric[Existing custom-metric runner]
-    Evaluation --> State
-    Jobs --> Delivery[Delivery worker]
-    Delivery --> State
-    Delivery --> Provider[Configured notification provider]
+    API[Administrator API and MCP] --> Rules[Alert rule operations]
+    Rules --> Store[(MariaDB rules and notifications)]
+    Rules --> Schedule[(Redis: BullMQ job scheduler per rule)]
+    Schedule --> Worker[Alert worker]
+    Worker --> Metric[Existing custom-metric runner]
+    Worker --> Store
 ```
 
 | Layer | Responsibility | Technology |
 |-------|----------------|------------|
 | Interface | Administrator operations and safe result presentation | Existing Rust REST and MCP integration |
-| Application/domain | Rule lifecycle, scalar comparison, episode transitions, delivery identity | Typed Rust operations in Insight v3 |
-| Infrastructure | Durable state, queue, metric execution, outbound messages | MariaDB, Apalis, existing ClickHouse client and HTTP client |
+| Application/domain | Rule lifecycle, scalar comparison, breach transition | Typed Rust operations in Insight v3 |
+| Infrastructure | Durable state, schedule, metric execution | MariaDB, BullMQ on Redis, existing ClickHouse client |
 
 ## 2. Principles & Constraints
 
@@ -115,96 +105,108 @@ flowchart LR
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-principle-metric-parity`
 
-Alerts use the same saved-definition compiler and runner as on-demand metrics. Check frequency does not change metric filters or its data window.
+Alerts use the same stored-definition compiler and runner as on-demand metrics, over the window the rule names and never bucketed. Check frequency does not change the metric's filters or its data window.
 
-#### Separate Facts from Transport
+#### Facts Before Transport
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-principle-durable-intent`
 
-Record the evaluation result and required notification separately from queue submission and provider acceptance. Retrying delivery must not rerun the metric or create another episode.
+What a check found and the notification it owes are written to MariaDB together. Redis carries only when the next check runs. Anything in Redis can be rebuilt from the rules; nothing in MariaDB depends on Redis.
 
 ### 2.2 Constraints
 
 #### Approved Job Library
 
-- [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-constraint-apalis`
+- [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-constraint-bullmq`
 
-Use Apalis. Its release and MariaDB configuration remain open: MySQL support alone does not prove MariaDB compatibility. Section 4 lists the blockers. This proposal adds no PostgreSQL instance or Temporal service.
+BullMQ through its official Rust port, on the deployment's Redis. Redis must persist: the schedule lives there, and a Redis that loses its data stops every check until the next startup reconciles the schedule from the rules. The published crate is carried as a vendored copy with relaxed version requirements ([ADR-0009](../ADR/0009-bullmq-schedules-alert-checks.md)).
 
 #### Scope and Credentials
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-constraint-boundary`
 
-Only Insight v3 custom metrics are evaluated. Notification rules do not depend on a specific provider. API/MCP operations retain their current administrator authorization. Destination secrets never become metric definitions, job payloads, ordinary read responses or tool output.
+Only Insight v3 custom metrics are checked. Rules do not depend on a specific provider. API and MCP keep their current administrator authorization. Destinations are provisioned by the operator in configuration; a rule references one by name, and a read answers the name and the provider, never a credential.
 
 ## 3. Technical Architecture
 
 ### 3.1 Domain Model
 
-Proposed Rust types belong in the service's alert logic. Alert schemas do not exist yet; define and approve their contracts before implementation.
+| Entity | Identity | Invariant |
+|--------|----------|-----------|
+| Rule | Stable id and a unique name; a revision bumped by every configuration write | One metric, one result column, one condition, one interval, one destination; the latest check's finding lives on the row |
+| Check | Rule id plus revision, carried by the job | Recorded only while the rule is enabled at that revision |
+| Notification | Its own id; references the rule and the revision that owed it | Carries the value, condition and time the check saw; a later edit to the rule rewrites nothing it says |
+| Destination | A name in configuration | Names a provider; credentials are not part of the domain |
 
-| Entity | Identity and purpose | Invariant |
-|--------|----------------------|-----------|
-| Rule | Stable rule identity plus configuration revision | One metric, scalar selection, condition, schedule and destination |
-| Evaluation | Rule revision plus logical schedule occurrence | One accepted result per occurrence; records evaluated metric identity |
-| Episode | Rule revision plus episode identity | Notification qualification is independent of delivery outcome |
-| Notification | Episode plus destination identity | One logical intent for the same qualifying event and destination |
-| Destination | Stable non-secret reference and provider kind | Credential access restricted to delivery infrastructure |
-| Handoff intent | Work kind plus evaluation or notification identity | Repeated publication has the same business identity |
+A valid check is exactly one row and one named column holding a finite number comparable with the threshold. Anything else is unknown, with a reason: no rows, many rows, column missing, null, non-numeric, incomparable, metric missing, compile failed, run failed, timeout. An unknown check records itself on the rule and leaves the last valid finding as it was.
 
-Keep rule/evaluation and episode/notification references valid throughout retention. An unknown result must not clear the last valid episode state or imply recovery. Numeric types, operators, edit resets and deletion behavior remain open in PRD D4–D8.
+A notification is owed when a valid check finds the condition met and the last valid finding was not a breach. It is owed again only after a valid check has seen the condition clear.
 
 ### 3.2 Component Model
 
-Three terms describe recovery:
+#### Alert Rules
 
-- **Handoff:** submit saved work to Apalis, then mark it submitted.
-- **Lease:** time-limited ownership of work; another worker can recover it after expiry.
-- **Fence:** a version or ownership check that rejects writes from an outdated worker.
-
-#### Alert Application
-
-- [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-component-application`
+- [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-component-rules`
 
 ##### Why this component exists
 
-API and MCP need identical rule behavior.
+API and MCP need identical rule behaviour.
 
 ##### Responsibility scope
 
-Typed validation, lifecycle operations, optimistic concurrency and redacted reads.
+Typed validation against the installation's bounds and destinations; create, replace at an expected revision, enable, disable, delete; list rules and their notifications. Every write lands in the store first and on the schedule second.
 
 ##### Responsibility boundaries
 
-No ClickHouse query or provider request inside configuration transactions; transport authentication remains in provider adapters.
+No metric query inside a write. The store decides revisions; the schedule is told the result.
 
 ##### Related components (by ID)
 
-`cpt-insightspec-v3-alerts-component-state` stores configuration and outcomes.
+`cpt-insightspec-v3-alerts-component-store`, `cpt-insightspec-v3-alerts-component-schedule`.
 
-#### Durable State and Handoff
+#### Store
 
-- [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-component-state`
+- [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-component-store`
 
 ##### Why this component exists
 
-Saving alert state and submitting a queue job may succeed or fail separately.
+Rules and notifications must survive anything Redis does not.
 
 ##### Responsibility scope
 
-Use short MariaDB transactions to claim due work and save it for queue submission. Advance the next due time in the same transaction. Save each evaluation result, episode change and required notification together. Enforce unique work IDs and worker ownership.
+Rules with their latest check; notifications with their status. A configuration write bumps the revision and forgets the checks made under the old one. Recording a check is one transaction: the rule's latest finding, and the notification it owes if any, land together or not at all. Disabling withdraws pending notifications; deleting removes the rule and everything recorded for it.
 
 ##### Responsibility boundaries
 
-Release database locks before metric queries or HTTP requests. Queue submission may repeat after a crash; workers recognize the same work ID. Apalis remains the job queue.
+A check is recorded only for the revision it names and only while the rule is enabled; any other check is stale and discarded. A create inserts without reading first, so two creates of different names never wait on each other.
 
 ##### Related components (by ID)
 
-Supplies work to `cpt-insightspec-v3-alerts-component-evaluation` and `cpt-insightspec-v3-alerts-component-delivery` through Apalis.
+`cpt-insightspec-v3-alerts-component-rules`, `cpt-insightspec-v3-alerts-component-worker`.
 
-#### Evaluation Worker
+#### Schedule
 
-- [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-component-evaluation`
+- [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-component-schedule`
+
+##### Why this component exists
+
+Checks run when nobody is asking.
+
+##### Responsibility scope
+
+One BullMQ job scheduler per enabled rule, keyed by the rule id, repeating every rule interval, carrying the rule id and revision. Upsert replaces; remove withdraws. At startup, every enabled rule is upserted at its revision and every scheduler with no enabled rule is removed.
+
+##### Responsibility boundaries
+
+BullMQ owns locks, lock renewal, stalled-job recovery and iteration spacing: the next iteration is scheduled when the current one finishes, so a slow check never overlaps itself and a restart does not replay the iterations it missed.
+
+##### Related components (by ID)
+
+`cpt-insightspec-v3-alerts-component-worker`.
+
+#### Worker
+
+- [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-component-worker`
 
 ##### Why this component exists
 
@@ -212,203 +214,147 @@ Metric execution must not occupy administration requests.
 
 ##### Responsibility scope
 
-Load the intended rule and metric snapshot, run the shared compiler/runner, and check the numeric result. Save it only if worker ownership and the configuration revision still match.
+Takes a check off the queue; loads the rule; stops if it is gone, disabled or at another revision; runs the metric; classifies the number; records the outcome through the store.
 
 ##### Responsibility boundaries
 
-Does not send messages. Expired or replaced workers cannot save stale results. Keep existing metric execution limits; D6 decides when an episode resets.
+A metric that does not answer is a finding about the rule, recorded as unknown, not a failed job. Only a store that does not answer fails the job. Concurrency and the per-check lock come from configuration.
 
 ##### Related components (by ID)
 
-Commits through `cpt-insightspec-v3-alerts-component-state`; notification intent becomes delivery work.
-
-#### Delivery Worker
-
-- [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-component-delivery`
-
-##### Why this component exists
-
-Provider failures must not cause metric re-evaluation.
-
-##### Responsibility scope
-
-Claim a saved notification, load its destination secret, build a size-limited summary and send it through the selected provider adapter. Save the outcome and whether it can be retried.
-
-##### Responsibility boundaries
-
-Never rerun the metric or retry indefinitely. Distinguish rate limits and uncertain outcomes from permanent rejection. Exactly-once delivery is not guaranteed. Retry duration and administrator replay need approval.
-
-##### Related components (by ID)
-
-Reads and updates `cpt-insightspec-v3-alerts-component-state`.
+`cpt-insightspec-v3-alerts-component-store`.
 
 ### 3.3 API Contracts
 
-Administration follows `cpt-insightspec-v3-alerts-interface-administration`; delivery follows `cpt-insightspec-v3-alerts-contract-delivery`. Use existing REST/OpenAPI and MCP conventions. Routes, tool names and error formats need approval before the API schema is written.
+- [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-interface-rest`
 
-| Operations | Request information | Response information | Permission |
-|------------|---------------------|----------------------|------------|
-| Create/update rule | Metric, scalar selection, condition, schedule, destination; expected revision for update | Rule identity, revision and validation result | Administrator |
-| Enable/disable rule | Rule identity and expected revision | Configuration state | Administrator |
-| List/get rules and outcomes | Rule identity or bounded pagination | Redacted configuration; evaluation and delivery outcomes separately | Administrator |
-| List permitted destinations | Bounded pagination | Identity and safe display metadata | Administrator |
+Administration follows `cpt-insightspec-v3-alerts-interface-administration`. The REST contract is the service's OpenAPI document; the MCP tools mirror it.
 
-D6 and D8 decide whether the API includes credential provisioning, test sends, replay or rule removal. Errors distinguish invalid configuration, missing references, conflicting edits and execution failures. Keep existing identity/session handling; add no login, SSO or MFA mechanism.
+| Operation | Request | Response | Permission |
+|-----------|---------|----------|------------|
+| `PUT /v1/alerts/{name}` | Metric, column, operator, threshold, optional range, interval, destination, enabled; `expected_revision` to replace | The rule with its revision and state | Administrator |
+| `GET /v1/alerts/{name}` | — | The rule with its revision and latest check | Administrator |
+| `GET /v1/alerts` | Optional search and page | One page of names and a total | Administrator |
+| `DELETE /v1/alerts/{name}` | — | No content | Administrator |
+| `POST /v1/alerts/{name}/enable`, `/disable` | `expected_revision` | The rule | Administrator |
+| `GET /v1/alerts/{name}/notifications` | Page | Notifications, newest first, with status | Administrator |
+| `GET /v1/alert-destinations` | — | Names and providers | Administrator |
+
+Refusals distinguish an invalid rule, a missing metric or alert, a name already taken, a revision conflict, the rule limit, and an installation with alerts off. No login, SSO or MFA mechanism is added.
 
 ### 3.4 Internal Dependencies
 
 | Dependency | Interface Used | Purpose |
 |------------|----------------|---------|
-| [Custom surfaces](../../../../../src/backend/services/insight-v3-core/src/custom.rs) | Saved metric loading and `run_metric` execution flow | Semantic parity; share a snapshot-based execution seam if needed |
-| [Metric query](../../../../../src/backend/services/insight-v3-core/src/metric_query.rs) | Compiler and runner | Existing 30-second fetch timeout, 5 MiB result bound and maximum 10,000 result rows |
+| [Metric runs](../../../../../src/backend/services/insight-v3-core/src/domain/metric_run.rs) | The stored-metric run over a window request | The same execution an on-demand run has |
+| [Metric query](../../../../../src/backend/services/insight-v3-core/src/domain/query/metric_query.rs) | Compiler and runner | Existing fetch timeout and result bound |
 | [API authorization](../../../../../src/backend/services/insight-v3-core/src/api/mod.rs) | Administrator identity check | REST authority |
-| [MCP authorization](../../../../../src/backend/services/insight-v3-core/src/mcp/auth.rs) | Validated token and administrator role check | MCP authority |
-| [Definition storage](../../../../../src/backend/services/insight-v3-core/src/definitions/sql/001_definitions.sql) | Saved metric body by name | Existing definitions contain update time, not an immutable revision |
+| [MCP authorization](../../../../../src/backend/services/insight-v3-core/src/mcp/auth.rs) | Validated token and administrator role | MCP authority |
+| [Definition storage](../../../../../src/backend/services/insight-v3-core/src/store/definitions/sql/001_definitions.sql) | Stored metric body by name | A rule names a metric that exists; a check runs the metric as stored at check time |
 
-Execute the exact metric definition recorded for the evaluation. Checking timestamps before and after a query is insufficient. D6 must choose a metric revision or immutable snapshot/fingerprint and define how edits update it atomically. Share the compiler/runner operation in-process; no service HTTP call or legacy analytics dependency is needed.
+A metric edit takes effect at the next check without resetting the rule; only a rule edit resets what its checks found. Definitions carry no revision, and versioning them is a feature of its own.
 
 ### 3.5 External Dependencies
 
-| Dependency | Proposed integration | Boundary |
-|------------|----------------------|----------|
-| Apalis | Durable evaluation and delivery queues | Version/backend adoption gates in section 4 |
-| MariaDB | Domain transactions and chosen queue backend | Exact server/backend combination must pass migrations and contention checks |
-| ClickHouse | Existing custom-metric runner | Existing read-only query restrictions and result limits retained |
-| Selected notification providers | One delivery adapter per supported provider | External acceptance is not transactional with MariaDB; first provider set is pending D3 |
-
-Discord, Telegram and Zulip are candidate adapters. The first release may include one, several or all three; D3 remains open. Provider selection changes only the delivery adapter. Alert evaluation, episode state, retries and delivery outcomes remain shared.
-
-For a Discord adapter, [Execute Webhook](https://docs.discord.com/developers/resources/webhook) with `wait=true` returns a message receipt. Disable automatic mentions and follow [rate-limit responses](https://docs.discord.com/developers/topics/rate-limits). Each selected adapter must define safe destination addresses, bounded requests and retries, provider-specific limits, and which responses confirm acceptance. An uncertain response can lead to a duplicate on retry. Direct provider integrations versus a shared delivery dependency remains an implementation choice.
-
-Credential provisioning is unresolved in D8. Proposed secret references keep credentials outside domain data and expose them only to delivery infrastructure. Any alternative encrypted storage needs key ownership, rotation and deletion approval. Metric summaries may contain sensitive information: administrator authority does not establish permission to export arbitrary rows or approve channel membership.
+| Dependency | Integration | Boundary |
+|------------|-------------|----------|
+| BullMQ | Vendored `bullmq-official` crate; one queue, one scheduler per rule | Redis 6.2 or later; persistence required |
+| MariaDB | Two tables in the service's existing database and migration ledger | Existing SeaORM connection |
+| ClickHouse | Existing custom-metric runner | Existing read-only restrictions and result limits |
+| Notification providers | Not integrated in this release | Destinations are named and typed in configuration; delivery arrives with the providers |
 
 ### 3.6 Interactions & Sequences
 
-#### Scheduled Evaluation and Delivery
+#### Scheduled Check
 
-**ID**: `cpt-insightspec-v3-alerts-seq-evaluate-deliver`
+**ID**: `cpt-insightspec-v3-alerts-seq-check`
 
 **Use cases**: `cpt-insightspec-v3-alerts-usecase-monitor`
-**Actors**: `cpt-insightspec-v3-alerts-actor-admin`, `cpt-insightspec-v3-alerts-actor-provider`
+**Actors**: `cpt-insightspec-v3-alerts-actor-admin`
 
 ```mermaid
 sequenceDiagram
-    participant S as Scheduler
-    participant DB as Domain state
-    participant H as Handoff
-    participant Q as Apalis
-    participant E as Evaluation worker
+    participant A as Administrator
+    participant R as Alert rules
+    participant DB as MariaDB
+    participant Q as BullMQ (Redis)
+    participant W as Worker
     participant M as Metric runner
-    participant D as Delivery worker
-    participant X as Provider
-    S->>DB: Claim due rule; persist evaluation intent
-    H->>DB: Read unpublished intents
-    H->>Q: Publish business identity
-    Q->>E: Execute evaluation
-    E->>M: Run captured definition
-    M-->>E: Bounded result or failure
-    E->>DB: Fenced result and notification-intent commit
-    H->>Q: Publish notification identity
-    Q->>D: Execute delivery
-    D->>DB: Claim current notification
-    D->>X: Send bounded summary
-    X-->>D: Acceptance, rejection or uncertain outcome
-    D->>DB: Record outcome and retry eligibility
+    A->>R: Put rule
+    R->>DB: Insert or replace at expected revision
+    R->>Q: Upsert scheduler rule:{id} every interval, data {id, revision}
+    Q->>W: Check {id, revision}
+    W->>DB: Load rule
+    W->>M: Run metric, unbucketed
+    M-->>W: Rows or failure
+    W->>DB: Record outcome at revision; insert notification if owed
+    Q->>Q: Schedule the next iteration
 ```
 
-Proposed recovery rules:
+Recovery rules:
 
-- Mark handoff complete only after queue submission. A crash may repeat submission, so workers check saved work before acting.
-- Allow another worker to recover an expired lease; reject writes from the original worker.
-- Allow at most one active logical evaluation per rule across scheduled checks. Also reject results older than the latest accepted check, so late completion cannot overwrite it or its episode.
-- Accept only one episode change from repeated attempts of the same check.
-
-After downtime, schedule one current check instead of replaying missed intervals. D6 decides whether edits cancel pending notifications.
-
-A provider may accept a message before the worker can save its receipt. A delivery lease prevents normal concurrent sends, but cannot cancel a request already completing after ownership expires. Retries may therefore duplicate messages. Permanent rejection and exhausted retries remain visible as final outcomes; replay permissions and expiry rules need approval.
+- A worker that dies mid-check leaves a job BullMQ marks stalled; another worker takes it after the lock lapses. The store accepts a repeated check for the same revision, and a breach already recorded owes nothing more.
+- A check for a replaced or disabled revision is discarded.
+- After downtime, the scheduler runs the next iteration once; the iterations missed are skipped.
+- At startup, the schedule is reconciled from the rules: enabled rules are upserted at their revision, schedulers without a rule are removed.
 
 ### 3.7 Database Schemas & Tables
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-db-state`
 
-These are proposed records, not final table names or migrations. Apalis owns its queue schema; Insight owns alert state. Do not retain full metric result sets.
+Both tables live in the service's existing MariaDB database and migration ledger. Column lists are in the migration script.
 
-| Relation | Key and relationships | Stored information and access pattern |
-|----------|-----------------------|---------------------------------------|
-| Rules | Rule identity; reference to metric and destination | Revision, enabled status, condition, schedule, next due; index enabled due work |
-| Evaluations | Unique rule revision and schedule occurrence | Definition identity, ownership fence, timestamps, scalar/result classification; index rule history |
-| Episodes | Rule revision and episode identity | Last accepted valid condition and qualifying event identity |
-| Notifications | Unique episode and destination | Immutable minimal message facts, outcome, attempts, provider receipt, next attempt; index due delivery |
-| Handoff intents | Unique work kind and business identity | Publication state and retry eligibility; index pending publication |
-| Destinations | Stable destination identity | Non-secret metadata and approved secret reference |
+#### Table: alert rules
 
-Save the evaluation, episode change and notification together; queue submission is separate.
+Rule id, unique name, metric, column, operator, threshold as text so an integer stays exact, optional range, interval, destination, enabled, revision, and the latest check: when, outcome, reason, value, the last valid finding, when the current breach began.
 
-- Keep references and duplicate-detection records valid for the approved retry/replay lifetime.
-- Proposed migrations add compatible structures and keep queue payloads version-compatible. Do not remove data while older workers can still consume retained work.
-- Back up and restore alert state and queues consistently. Restore may replay messages already accepted by a provider.
+#### Table: alert notifications
 
-D7 sets retention and recovery objectives.
+Notification id, rule id and revision, the rule name, metric, column, condition and value the check saw, when it was evaluated, the destination, status (`pending` or `cancelled` in this release), attempts, last error and provider receipt for delivery. Indexed by rule and time; the newest N per rule are kept.
+
+BullMQ owns its keys in Redis under its own prefix.
 
 ### 3.8 Deployment Topology
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-topology-workers`
 
-Proposed: run the scheduler and bounded workers inside Insight v3, using its database and lifecycle. Separate worker processes need approval if measurements show isolation is necessary. Replicas coordinate through database claims and ownership checks. An in-memory timer only wakes the scheduler; due work stays in the database.
+The worker runs inside every `insight-v3-core` replica, started after the state is built and stopped on the gear's cancellation token. Replicas coordinate through BullMQ's locks; a check runs on one of them. Alerts are off unless the configuration names a Redis; with them off, the routes answer that the installation has none.
 
-Proposed lifecycle:
-
-- **Startup:** check database readiness and backend compatibility before accepting work.
-- **Shutdown:** stop accepting work and allow bounded time to finish; keep unfinished work recoverable.
-- **Rollout:** start with workers disabled, apply compatible migrations, then validate synthetic rules before enabling scheduling.
-- **Rollback:** stop scheduling and delivery without deleting pending state. Older binaries must not consume unsupported payload versions.
-
-Enablement settings and limits still need approval.
-
-Size work from rule count, check intervals, query duration and notifications plus retries. Before release, use synthetic measurements to set concurrency, queue/pool limits, scan batch size, retry duration and history storage. No infrastructure sizing or spare capacity is assumed.
+Configuration: `alerts.enabled`, `alerts.redis_url`, `alerts.destinations.<name>.provider`, and the bounds `min_interval_secs`, `max_interval_secs`, `max_rules`, `evaluation_concurrency`, `evaluation_timeout_secs`, `notifications_kept_per_rule`.
 
 ## 4. Additional Context
 
 ### Compatibility Findings
 
-The [Apalis](https://crates.io/crates/apalis) and [Apalis SQL](https://crates.io/crates/apalis-sql) stable line inspected is 0.7.4; standalone MySQL backend releases are prerelease. This is evidence, not a version selection.
-
-In [the 0.7.4 MySQL source](https://github.com/geofmureithi/apalis/blob/v0.7.4/packages/apalis-sql/src/mysql.rs), enqueue executes against its own pool, so sharing a SeaORM transaction is not established. Job selection includes failed jobs while the claim update targets pending jobs; concurrent failed-job retry requires a regression check before adoption. The application handoff proposal addresses transaction separation, not backend claim defects.
-
-The [backend migration](https://github.com/geofmureithi/apalis/blob/v0.7.4/packages/apalis-sql/migrations/mysql/20220530084123_jobs_workers.sql) uses `utf8mb4_0900_ai_ci`, whose compatibility support was added in [MariaDB 11.4.5](https://mariadb.com/docs/release-notes/community-server/11.4/11.4.5). SKIP LOCKED support alone therefore does not establish migration compatibility. Test the exact intended MariaDB release, collation and storage engine. Selecting another Apalis release, adapting a migration or changing the database version each requires approval.
+The alternatives were run, not read, against a local MariaDB and Redis before BullMQ was chosen; [ADR-0009](../ADR/0009-bullmq-schedules-alert-checks.md) records what each did. Two facts shaped the outcome: a MySQL-backed job library needs a second SQL driver beside SeaORM's, and no Apalis release recovers correctly from a worker dying mid-job.
 
 ### Verification and Observability
 
-Proposed verification:
+- Pure tests for number comparison, scalar classification, the breach transition and draft validation.
+- Live MariaDB tests for revisions, conflicts, one notification per breach, stale checks, withdrawal on disable and the kept count.
+- Live Redis tests for one scheduler per rule and for a worker taking a scheduled check through the metric runner to a recorded notification.
+- Handler tests for every route's authorization, validation and revision handling; an MCP tool-list test.
 
-- Pure tests for numeric comparisons and episode transitions.
-- Real MariaDB tests for migrations, work claims, crashes and stale-worker rejection.
-- Metric parity checks through the existing runner.
-- API/MCP permission and redaction checks.
-- Controlled acceptance, rate-limit and uncertain-outcome tests for each selected provider.
-- Synthetic load comparisons against parent quality targets.
+Every check logs the rule, revision, outcome, reason, whether a notification was owed, and its duration. Redis persistence and worker health are operator signals.
 
-This draft does not authorize broad builds or test runs.
+### Resolved Decisions
 
-Expose scheduling delay, execution duration/failure, pending handoff age, delivery attempts/age, terminal failures and worker health through the existing telemetry integration. Correlate rule, evaluation and notification IDs without logging secrets, SQL results or message bodies. Missing worker progress and exhausted delivery are operator signals; their thresholds follow D7. Audit records identify actor, operation, configuration revision and outcome; retention and privileged diagnostic access follow D8.
-
-API documentation explains scalar selection, cadence versus metric time scope, unknown outcomes and retry uncertainty. An operator runbook covers stopping workers, inspecting stuck work, credential rotation and controlled replay. Existing authentication and release mechanisms remain in force.
-
-### Open Decisions and Resumption
-
-| Decision | Recommended proposal | Alternative awaiting approval |
-|----------|----------------------|-------------------------------|
-| D3: first provider set | Choose from Discord, Telegram, Zulip or another needed provider; support one or more through the same delivery contract | Exact launch set and direct integrations versus a shared delivery dependency remain open |
-| D8: credential storage | Operator-provisioned secret references resolved only by delivery infrastructure | Administrator-managed encrypted credentials, with explicit key ownership and rotation |
-
-**INCOMPLETE:** Approve PRD D3–D8, prove Apalis/MariaDB compatibility, and review API and storage contracts before implementation. The product owner selects the first provider set and remaining behavior; engineering verifies compatibility and capacity; security reviews credentials and external data sharing.
-
-Use the current [PRD decision register](./PRD.md#11-assumptions) and update this proposal after approval. Backend workarounds, worker placement and schema/versioning choices also need approval before implementation. No extra transport abstraction, general scheduler or workflow engine is authorized.
+| Decision | Outcome |
+|----------|---------|
+| Job library | BullMQ on Redis ([ADR-0009](../ADR/0009-bullmq-schedules-alert-checks.md)) |
+| D3 first providers | None in this release: the notification is owed and visible; delivery and providers follow |
+| D4 numbers | Exactly one row and one column; `>`, `>=`, `<`, `<=`; integers exact, floats as `f64`, mixed only where exact |
+| D5 unknown | Keeps the last valid finding; records time and reason; no freshness condition |
+| D6 edits | Revision per write, `expected_revision` on update; edit or enable resets the finding; disable withdraws pending notifications; delete removes everything |
+| D7 limits | Interval 60 s to 7 d, 200 rules, concurrency 4, check lock 60 s, 200 notifications kept per rule; all configurable |
+| D8 destinations | Operator-provisioned names with a provider in configuration; per-administrator destinations later behind the same interface |
+| Evaluation history | Latest check on the rule only; history is the notifications |
+| Metric snapshot | None; a metric edit applies at the next check |
 
 ## 5. Traceability
 
 - **Local PRD**: [Metric Alerts](./PRD.md).
 - **Parent PRD**: [Insight v3](../PRD.md), specifically `cpt-insightspec-v3-fr-create-alerts` and the inherited quality requirements.
 - **Parent DESIGN**: [Insight v3](../DESIGN.md).
-- **Applicable ADR**: [Separate service](../ADR/0001-separate-service.md).
-- **Feature contracts and implementation**: Not authored; dependent on the open decisions above.
+- **Applicable ADRs**: [Separate service](../ADR/0001-separate-service.md), [BullMQ schedules the alert checks](../ADR/0009-bullmq-schedules-alert-checks.md).
+- **Implementation**: `src/backend/services/insight-v3-core/src/domain/alerts`, `store/alerts.rs`, `store/alert_schedule.rs`, `api/alerts.rs`, `mcp/alerts.rs`.
