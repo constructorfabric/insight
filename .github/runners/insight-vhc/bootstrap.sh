@@ -100,19 +100,33 @@ chown -R runner:runner /opt/actions-runner
 
 # A container job runs as root over the mounted work tree, so one killed before
 # its cleanup leaves root-owned paths that the next host job's checkout cannot
-# remove. The runner reads this hook from .env at startup and runs it on the
-# host before every job, container jobs included.
+# remove. Two callers run this repair: the job-started hook below, and
+# ExecStartPre on the runner service.
+install -m 0755 /dev/stdin /usr/local/sbin/gha-reclaim-work.sh <<'RECLAIM'
+#!/usr/bin/env bash
+set -uo pipefail
+work="/srv/gha/work"
+[ -d "$work" ] || exit 0
+# INVARIANT: the owner is named, never taken from the caller. Run from any
+# shell but the runner's own, an id-derived owner hands the tree to that user,
+# and the service then fails every job before a hook could take it back.
+if find "$work" -xdev ! -user runner -print -quit 2>/dev/null | grep -q .; then
+  echo "reclaim: taking $work back for runner"
+  chown -R runner:runner "$work" || true
+else
+  echo "reclaim: $work clean"
+fi
+exit 0
+RECLAIM
+
+# The runner reads this hook from .env at startup and runs it on the host before
+# every job, container jobs included.
 install -m 0755 /dev/stdin /usr/local/sbin/gha-job-started.sh <<'HOOK'
 #!/usr/bin/env bash
 set -uo pipefail
 work="/srv/gha/work"
 [ -d "$work" ] || exit 0
-if sudo find "$work" -xdev ! -user "$(id -un)" -print -quit 2>/dev/null | grep -q .; then
-  echo "job-started hook: reclaiming $work"
-  sudo chown -R "$(id -u):$(id -g)" "$work" || true
-else
-  echo "job-started hook: $work clean"
-fi
+sudo /usr/local/sbin/gha-reclaim-work.sh
 
 # The work tree survives the job that made it, and with it the remote-tracking
 # refs whatever ran last happened to fetch. A lane that reads origin/<branch>
@@ -174,5 +188,16 @@ rm -f /etc/gha-runner/register.env
 set -x
 
 ./svc.sh install runner
+
+# The runner writes _PipelineMapping before it builds a single step, so the
+# job-started hook never reaches a tree that is already under another owner:
+# the job fails first, and the machine cannot repair itself. '+' runs the
+# repair as root although the unit drops to the runner account.
+svc_unit=$(cat /opt/actions-runner/.service)
+install -d "/etc/systemd/system/${svc_unit}.d"
+printf '[Service]\nExecStartPre=+/usr/local/sbin/gha-reclaim-work.sh\n' \
+  > "/etc/systemd/system/${svc_unit}.d/10-reclaim-work.conf"
+systemctl daemon-reload
+
 ./svc.sh start
 echo "gha-bootstrap: runner $RUNNER_NAME registered at $GITHUB_URL"
