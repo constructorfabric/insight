@@ -251,7 +251,8 @@ describe("the tags dialog", () => {
   });
 
   it("keeps the dashboard's own tags when a name is typed before they load", async () => {
-    let arrive: (read: { body: unknown; tags: string[] }) => void = () => {};
+    type Read = Awaited<ReturnType<typeof customClient.fetchDashboardRead>>;
+    let arrive: (read: Read) => void = () => {};
     vi.mocked(customClient.fetchDashboardRead).mockReturnValue(
       new Promise((resolve) => {
         arrive = resolve;
