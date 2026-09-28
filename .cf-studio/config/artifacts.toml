@@ -79,6 +79,21 @@ path = "docs/domain/insight-v3/specs/ADR/0004-schema-driven-widgets.md"
 name = "ADR-0004: Widgets Are Described by a Schema, Not Written as Code"
 
 [[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/insight-v3/specs/ADR/0006-a-table-per-ingest-stream.md"
+name = "ADR-0006: One Physical Table per Ingest Stream (superseded by ADR-0009)"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/insight-v3/specs/ADR/0009-a-dataset-is-the-unit-of-ingest-and-query.md"
+name = "ADR-0009: A Dataset Is the Unit of Ingest and Query"
+
+[[systems.artifacts]]
+kind = "FEATURE"
+path = "docs/domain/insight-v3/specs/feature-datasets/FEATURE.md"
+name = "Feature: Datasets as the Unit of Ingest and Query"
+
+[[systems.artifacts]]
 kind = "DESIGN"
 path = "docs/components/backend/gateway/DESIGN.md"
 name = "Gateway (nginx edge) Design"

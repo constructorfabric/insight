@@ -17,14 +17,15 @@ date: 2026-09-07
   - [2.6 AI - HIGH](#26-ai---high)
   - [2.7 Data Access - HIGH](#27-data-access---high)
   - [2.8 Authoring over MCP - HIGH](#28-authoring-over-mcp---high)
+  - [2.9 Datasets - HIGH](#29-datasets---high)
 - [3. Feature Dependencies](#3-feature-dependencies)
 
 <!-- /toc -->
 
 ## 1. Overview
 
-Eight features: data in, data out, metrics over it, widgets, dashboards, alerts, a chat over all of
-it, and an agent authoring the same things over MCP.
+Nine features: data in, the datasets it lands in, data out, metrics over them, widgets, dashboards,
+alerts, a chat over all of it, and an agent authoring the same things over MCP.
 
 The platform-usage requirements in [PRD §5.7](./PRD.md#57-platform-usage) are not decomposed yet.
 
@@ -58,7 +59,7 @@ The platform-usage requirements in [PRD §5.7](./PRD.md#57-platform-usage) are n
 
 - **Purpose**: Create metrics based on ingested data, and edit, find and delete them.
 
-- **Depends On**: 2.1
+- **Depends On**: 2.1, 2.9
 
 - **Requirements Covered**:
 
@@ -130,7 +131,7 @@ The platform-usage requirements in [PRD §5.7](./PRD.md#57-platform-usage) are n
 
 - **Purpose**: Get data out, to whoever their role says may read it.
 
-- **Depends On**: 2.1, 2.2
+- **Depends On**: 2.1, 2.9
 
 - **Requirements Covered**:
 
@@ -147,17 +148,54 @@ The platform-usage requirements in [PRD §5.7](./PRD.md#57-platform-usage) are n
 
 - **Requirements Covered**: TBD — the PRD describes the chat, not an agent-facing surface.
 
+### 2.9 Datasets - HIGH
+
+- [ ] `p1` - **ID**: `cpt-insightspec-v3-feature-datasets`
+
+- **Purpose**: Make the dataset the unit data is ingested into, described by, shown as and read through — the only source a custom metric names — and give every definition a hand editor in the portal.
+
+- **Depends On**: 2.1
+
+- **Requirements Covered**:
+
+  - [ ] `p1` - `cpt-insightspec-v3-fr-create-dataset`
+  - [ ] `p1` - `cpt-insightspec-v3-fr-remove-dataset`
+  - [ ] `p1` - `cpt-insightspec-v3-fr-view-dataset`
+  - [ ] `p1` - `cpt-insightspec-v3-fr-ingest-into-dataset`
+  - [ ] `p1` - `cpt-insightspec-v3-fr-metrics-over-datasets`
+  - [ ] `p1` - `cpt-insightspec-v3-fr-assistant-reads-datasets`
+  - [ ] `p1` - `cpt-insightspec-v3-fr-accept-data`
+  - [ ] `p1` - `cpt-insightspec-v3-fr-author-by-hand`
+  - [ ] `p1` - `cpt-insightspec-v3-nfr-reliability`
+  - [ ] `p1` - `cpt-insightspec-v3-nfr-security`
+  - [ ] `p1` - `cpt-insightspec-v3-nfr-efficiency`
+  - [ ] `p1` - `cpt-insightspec-v3-nfr-versatility`
+
+- **Data**:
+
+  - `cpt-insightspec-v3-dbtable-datasets`
+  - `cpt-insightspec-v3-dbtable-raw-data`
+  - `cpt-insightspec-v3-db-datasets-database`
+
+- **Spec**: [feature-datasets/FEATURE.md](feature-datasets/FEATURE.md)
+
+- **Out of scope**:
+  - Datasets bound to warehouse tables, typed columns, declaration history and access policies — later iterations
+  - Carrying over what a stand already holds: no stream is adopted and no stored metric is rewritten
+
 ## 3. Feature Dependencies
 
 ```text
 2.1 Data Ingestion
  |
- +-- 2.7 Data Access
- +-- 2.2 Semantic Layer
+ +-- 2.9 Datasets
       |
-      +-- 2.5 Alerts
-      +-- 2.3 Widgets --- 2.4 Dashboards
-                           |
-                           +-- 2.6 AI (over 2.2-2.5)
-                           +-- 2.8 Authoring over MCP (over 2.2-2.4, 2.7)
+      +-- 2.7 Data Access
+      +-- 2.2 Semantic Layer
+           |
+           +-- 2.5 Alerts
+           +-- 2.3 Widgets --- 2.4 Dashboards
+                                |
+                                +-- 2.6 AI (over 2.2-2.5, 2.9)
+                                +-- 2.8 Authoring over MCP (over 2.2-2.4, 2.7, 2.9)
 ```
