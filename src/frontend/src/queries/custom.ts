@@ -8,6 +8,7 @@ import {
 
 import type {
   ChatTurn,
+  DashboardRead,
   RecordPage,
   DefinitionKind,
   EditableKind,
@@ -23,6 +24,7 @@ import {
   fetchDashboard,
   fetchDashboardFolder,
   fetchDashboardNames,
+  fetchDashboardRead,
   fetchDataset,
   fetchDatasetDependents,
   fetchDatasetNames,
@@ -33,6 +35,7 @@ import {
   fetchMetricNames,
   fetchTable,
   fetchTables,
+  fetchTags,
   fetchWidget,
   fetchWidgetNames,
   moveDashboard,
@@ -42,12 +45,14 @@ import {
   renameFolder,
   runMetric,
   sendChat,
+  setDashboardTags,
 } from "@/api/custom-client";
 import type { RunOptions } from "@/api/custom-client";
 
 const WIDGET_QUERY_PREFIX = ["custom", "widget"] as const;
 const NAME_PAGES_PREFIX = ["custom", "names"] as const;
 const FOLDERS_PREFIX = ["custom", "folders"] as const;
+const TAGS_PREFIX = ["custom", "tags"] as const;
 
 /** How many names a catalogue asks for at a time. */
 const PAGE_SIZE = 50;
@@ -76,18 +81,20 @@ const FETCH_NAMES: Record<
 export function definitionPagesQuery(
   kind: EditableKind,
   search = "",
-  folder?: FolderFilter
+  folder?: FolderFilter,
+  tags: string[] = []
 ) {
   return infiniteQueryOptions({
     // The needle is part of the key, so a search is its own cached answer
     // rather than overwriting the list everyone else is reading.
-    queryKey: [...NAME_PAGES_PREFIX, kind, search, folder ?? null],
+    queryKey: [...NAME_PAGES_PREFIX, kind, search, folder ?? null, tags],
     queryFn: ({ pageParam }) =>
       FETCH_NAMES[kind]({
         search,
         limit: PAGE_SIZE,
         offset: pageParam,
         ...(folder ? { folder } : {}),
+        ...(tags.length > 0 ? { tags } : {}),
       }),
     initialPageParam: 0,
     getNextPageParam: (last: NamePage, pages: NamePage[]) => {
@@ -136,10 +143,31 @@ export function catalogueNamesQuery(kind: EditableKind) {
   });
 }
 
-export function dashboardQuery(name: string) {
+function dashboardReadQuery(name: string) {
   return queryOptions({
     queryKey: ["custom", "dashboard", name],
-    queryFn: () => fetchDashboard(name),
+    queryFn: () => fetchDashboardRead(name),
+  });
+}
+
+export function dashboardQuery(name: string) {
+  return queryOptions({
+    ...dashboardReadQuery(name),
+    select: (read: DashboardRead) => read.body,
+  });
+}
+
+export function dashboardTagsQuery(name: string) {
+  return queryOptions({
+    ...dashboardReadQuery(name),
+    select: (read: DashboardRead) => read.tags,
+  });
+}
+
+export function tagsQuery() {
+  return queryOptions({
+    queryKey: TAGS_PREFIX,
+    queryFn: fetchTags,
   });
 }
 
@@ -367,6 +395,22 @@ export function useMoveDashboard() {
   });
 }
 
+export function useSetDashboardTags() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ name, tags }: { name: string; tags: string[] }) =>
+      setDashboardTags(name, tags),
+    onSettled: (_done, _error, { name }) =>
+      Promise.all([
+        invalidateDashboardList(queryClient),
+        queryClient.invalidateQueries({
+          queryKey: dashboardQuery(name).queryKey,
+        }),
+      ]),
+  });
+}
+
 export function useSendChat() {
   return useMutation({
     mutationFn: ({
@@ -385,6 +429,7 @@ export function invalidateDashboardList(queryClient: QueryClient) {
   return Promise.all([
     queryClient.invalidateQueries({ queryKey: NAME_PAGES_PREFIX }),
     queryClient.invalidateQueries({ queryKey: FOLDERS_PREFIX }),
+    queryClient.invalidateQueries({ queryKey: TAGS_PREFIX }),
   ]);
 }
 

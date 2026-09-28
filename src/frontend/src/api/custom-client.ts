@@ -15,6 +15,7 @@ import type {
   Widget,
   ChatReply,
   ChatTurn,
+  DashboardRead,
   DefinitionResponse,
   Folder,
   FolderFilter,
@@ -22,6 +23,7 @@ import type {
   MetricDefinition,
   TableList,
   TableSchema,
+  TagList,
 } from "@/api/custom-types";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
@@ -126,6 +128,7 @@ export interface PageRequest {
   limit?: number;
   offset?: number;
   folder?: FolderFilter;
+  tags?: string[];
 }
 
 function pageQuery({
@@ -133,12 +136,14 @@ function pageQuery({
   limit,
   offset,
   folder,
+  tags = [],
 }: PageRequest): string {
   const query = new URLSearchParams();
   if (search) query.set("q", search);
   if (limit !== undefined) query.set("limit", String(limit));
   if (offset) query.set("offset", String(offset));
   if (folder) query.set("folder", folder);
+  for (const tag of tags) query.append("tag", tag);
   const asked = query.toString();
 
   return asked ? `?${asked}` : "";
@@ -165,6 +170,33 @@ export async function fetchDashboardFolder(
   const read = await readJson<DefinitionResponse<Dashboard>>(res);
 
   return read.folder ?? null;
+}
+
+export async function fetchDashboardRead(name: string): Promise<DashboardRead> {
+  const res = await fetchWithAuth(`${BASE}/dashboards/${named(name)}`);
+  const read = await readJson<DefinitionResponse<Dashboard>>(res);
+
+  return { body: read.body, tags: read.tags ?? [] };
+}
+
+export const TAG_NAME_MAX = 32;
+export const DASHBOARD_TAGS_MAX = 10;
+
+export async function fetchTags(): Promise<TagList> {
+  const res = await fetchWithAuth(`${BASE}/tags`);
+  return readJson<TagList>(res);
+}
+
+export async function setDashboardTags(
+  name: string,
+  tags: string[]
+): Promise<void> {
+  const res = await fetchWithAuth(`${BASE}/dashboards/${named(name)}/tags`, {
+    method: "PUT",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ tags }),
+  });
+  await ensureOk(res);
 }
 
 export const FOLDER_NAME_MAX = 64;

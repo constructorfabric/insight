@@ -39,7 +39,7 @@ describe("/portal/custom", () => {
       "engineering",
       "delivery",
     ], total: 2 });
-    vi.mocked(customClient.fetchDashboard).mockRejectedValue(
+    vi.mocked(customClient.fetchDashboardRead).mockRejectedValue(
       new Error("no title today")
     );
 
@@ -59,9 +59,9 @@ describe("/portal/custom", () => {
     vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: [
       "lines_of_code_dashboard",
     ], total: 1 });
-    vi.mocked(customClient.fetchDashboard).mockResolvedValue({
-      title: "Lines of Code",
-      widgets: [],
+    vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+      body: { title: "Lines of Code", widgets: [] },
+      tags: [],
     });
 
     render(<Component />, { wrapper });
@@ -114,7 +114,7 @@ describe("/portal/custom in a folder", () => {
       folders: [PLATFORM],
       unfiled: 2,
     });
-    vi.mocked(customClient.fetchDashboard).mockRejectedValue(new Error("untitled"));
+    vi.mocked(customClient.fetchDashboardRead).mockRejectedValue(new Error("untitled"));
   });
 
   const askedFor = () =>

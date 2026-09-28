@@ -1,5 +1,9 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, renderHook } from "@testing-library/react";
+import {
+  QueryClient,
+  QueryClientProvider,
+  useQuery,
+} from "@tanstack/react-query";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -10,14 +14,17 @@ import * as customClient from "@/api/custom-client";
 import {
   dashboardFolderQuery,
   dashboardQuery,
+  dashboardTagsQuery,
   definitionPagesQuery,
   foldersQuery,
   metricResultQuery,
+  tagsQuery,
   useCreateFolder,
   useDeleteFolder,
   useMoveDashboard,
   useRemoveDefinition,
   useRenameFolder,
+  useSetDashboardTags,
   widgetQuery,
 } from "./custom";
 
@@ -62,19 +69,35 @@ describe("definitionPagesQuery", () => {
 });
 
 describe("dashboardQuery", () => {
-  it("keys on the dashboard name and asks fetchDashboard", async () => {
-    const dashboard = { title: "Engineering", widgets: ["commits_table"] };
-    vi.mocked(customClient.fetchDashboard).mockResolvedValue(dashboard);
-
-    const options = dashboardQuery("engineering");
-
-    await expect(options.queryFn?.(undefined as never)).resolves.toEqual(
-      dashboard,
-    );
-    expect(customClient.fetchDashboard).toHaveBeenCalledWith("engineering");
+  it("keys on the dashboard name", () => {
     expect(dashboardQuery("engineering").queryKey).not.toEqual(
       dashboardQuery("delivery").queryKey,
     );
+  });
+
+  it("reads the body and the tags out of one request", async () => {
+    const dashboard = { title: "Engineering", widgets: ["commits_table"] };
+    vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+      body: dashboard,
+      tags: ["Ops"],
+    });
+    const queryClient = new QueryClient();
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children);
+
+    const { result } = renderHook(
+      () => ({
+        body: useQuery(dashboardQuery("engineering")).data,
+        tags: useQuery(dashboardTagsQuery("engineering")).data,
+      }),
+      { wrapper },
+    );
+
+    await waitFor(() =>
+      expect(result.current).toEqual({ body: dashboard, tags: ["Ops"] }),
+    );
+    expect(customClient.fetchDashboardRead).toHaveBeenCalledTimes(1);
+    expect(customClient.fetchDashboardRead).toHaveBeenCalledWith("engineering");
   });
 });
 
@@ -188,18 +211,18 @@ describe("dashboardFolderQuery", () => {
   });
 });
 
+function rendered<T>(hook: () => T) {
+  const queryClient = new QueryClient({
+    defaultOptions: { mutations: { retry: false } },
+  });
+  const invalidated = vi.spyOn(queryClient, "invalidateQueries");
+  const wrapper = ({ children }: { children: ReactNode }) =>
+    createElement(QueryClientProvider, { client: queryClient }, children);
+
+  return { result: renderHook(hook, { wrapper }).result, invalidated };
+}
+
 describe("the folder mutations", () => {
-  function rendered<T>(hook: () => T) {
-    const queryClient = new QueryClient({
-      defaultOptions: { mutations: { retry: false } },
-    });
-    const invalidated = vi.spyOn(queryClient, "invalidateQueries");
-    const wrapper = ({ children }: { children: ReactNode }) =>
-      createElement(QueryClientProvider, { client: queryClient }, children);
-
-    return { result: renderHook(hook, { wrapper }).result, invalidated };
-  }
-
   function expectCountsAndListsRefreshed(
     invalidated: ReturnType<typeof vi.spyOn>,
   ) {
@@ -279,5 +302,116 @@ describe("the folder mutations", () => {
     );
 
     expectCountsAndListsRefreshed(invalidated);
+  });
+});
+
+describe("definitionPagesQuery with tags", () => {
+  it("asks for the dashboards carrying any of the tags and keeps them apart in the cache", async () => {
+    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({
+      names: [],
+      total: 0,
+    });
+
+    const options = definitionPagesQuery("dashboards", "", "f1", ["Ops"]);
+    await options.queryFn?.({ pageParam: 0 } as never);
+
+    expect(customClient.fetchDashboardNames).toHaveBeenCalledWith({
+      search: "",
+      limit: 50,
+      offset: 0,
+      folder: "f1",
+      tags: ["Ops"],
+    });
+    const keys = [
+      definitionPagesQuery("dashboards", "", "f1"),
+      definitionPagesQuery("dashboards", "", "f1", ["Ops"]),
+      definitionPagesQuery("dashboards", "", "f1", ["Ops", "Platform"]),
+      definitionPagesQuery("dashboards", "", undefined, ["Ops"]),
+    ].map((query) => JSON.stringify(query.queryKey));
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it("asks without a tag filter when no tag is picked", async () => {
+    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({
+      names: [],
+      total: 0,
+    });
+
+    await definitionPagesQuery("dashboards", "", undefined, []).queryFn?.({
+      pageParam: 0,
+    } as never);
+
+    expect(customClient.fetchDashboardNames).toHaveBeenCalledWith({
+      search: "",
+      limit: 50,
+      offset: 0,
+    });
+  });
+});
+
+describe("tagsQuery", () => {
+  it("asks fetchTags", async () => {
+    const list = { tags: [{ name: "Ops", dashboards: 1 }] };
+    vi.mocked(customClient.fetchTags).mockResolvedValue(list);
+
+    await expect(tagsQuery().queryFn?.(undefined as never)).resolves.toEqual(
+      list,
+    );
+  });
+});
+
+describe("setting a dashboard's tags", () => {
+  function expectTagsListsAndCardRefreshed(
+    invalidated: ReturnType<typeof vi.spyOn>,
+  ) {
+    expect(invalidated).toHaveBeenCalledWith({
+      queryKey: tagsQuery().queryKey,
+    });
+    expect(invalidated).toHaveBeenCalledWith({
+      queryKey: ["custom", "names"],
+    });
+    expect(invalidated).toHaveBeenCalledWith({
+      queryKey: dashboardQuery("delivery").queryKey,
+    });
+  }
+
+  it("sends the whole set, then refreshes the tags, the lists and the dashboard", async () => {
+    const { result, invalidated } = rendered(() => useSetDashboardTags());
+
+    await act(() =>
+      result.current.mutateAsync({ name: "delivery", tags: ["Ops"] }),
+    );
+
+    expect(customClient.setDashboardTags).toHaveBeenCalledWith("delivery", [
+      "Ops",
+    ]);
+    expectTagsListsAndCardRefreshed(invalidated);
+  });
+
+  it("refreshes the tags, the lists and the dashboard after a refused set", async () => {
+    vi.mocked(customClient.setDashboardTags).mockRejectedValueOnce(
+      new Error("too many"),
+    );
+    const { result, invalidated } = rendered(() => useSetDashboardTags());
+
+    await act(() =>
+      result.current
+        .mutateAsync({ name: "delivery", tags: ["Ops"] })
+        .catch(() => undefined),
+    );
+
+    expectTagsListsAndCardRefreshed(invalidated);
+  });
+
+  it("refreshes the tags when a dashboard is removed", async () => {
+    const { result, invalidated } = rendered(() => useRemoveDefinition());
+
+    await act(() =>
+      result.current.mutateAsync({ kind: "dashboards", name: "delivery" }),
+    );
+
+    expect(invalidated).toHaveBeenCalledWith({
+      queryKey: tagsQuery().queryKey,
+    });
   });
 });

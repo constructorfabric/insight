@@ -13,6 +13,7 @@ import {
   fetchDashboard,
   fetchDashboardFolder,
   fetchDashboardNames,
+  fetchDashboardRead,
   fetchDataset,
   fetchDatasetDependents,
   fetchDatasetRecords,
@@ -20,6 +21,7 @@ import {
   fetchFolders,
   fetchMetric,
   fetchTable,
+  fetchTags,
   fetchWidget,
   moveDashboard,
   putDataset,
@@ -27,6 +29,7 @@ import {
   renameDefinition,
   renameFolder,
   runMetric,
+  setDashboardTags,
 } from "./custom-client";
 
 const mockFetch = fetchWithAuth as unknown as ReturnType<typeof vi.fn>;
@@ -259,6 +262,8 @@ describe("a name that reached the client empty", () => {
     ["fetchWidget", () => fetchWidget("")],
     ["fetchDashboard", () => fetchDashboard("")],
     ["fetchDashboardFolder", () => fetchDashboardFolder("")],
+    ["fetchDashboardRead", () => fetchDashboardRead("")],
+    ["setDashboardTags", () => setDashboardTags("", [])],
     ["moveDashboard", () => moveDashboard("", null)],
     ["renameFolder", () => renameFolder("", "Product")],
     ["deleteFolder", () => deleteFolder("")],
@@ -390,6 +395,85 @@ describe("folders", () => {
 
     expect(mockFetch).toHaveBeenCalledWith(
       "/api/v3/v1/dashboards?limit=50&folder=unfiled"
+    );
+  });
+});
+
+describe("tags", () => {
+  it("lists every tag with how many dashboards carry it", async () => {
+    const list = { tags: [{ name: "Ops", dashboards: 2 }] };
+    mockFetch.mockResolvedValueOnce(response(list));
+
+    await expect(fetchTags()).resolves.toEqual(list);
+    expect(mockFetch).toHaveBeenCalledWith("/api/v3/v1/tags");
+  });
+
+  it("sets a dashboard's whole tag set, and clears it", async () => {
+    mockFetch.mockResolvedValue(response(null, { status: 204 }));
+
+    await setDashboardTags("delivery", ["Ops", "Platform"]);
+    await setDashboardTags("delivery", []);
+
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      1,
+      "/api/v3/v1/dashboards/delivery/tags",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tags: ["Ops", "Platform"] }),
+      }
+    );
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      2,
+      "/api/v3/v1/dashboards/delivery/tags",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tags: [] }),
+      }
+    );
+  });
+
+  it("refuses a set past the bounds with what the service said", async () => {
+    mockFetch.mockResolvedValueOnce(
+      response({ detail: "too many" }, { ok: false, status: 409 })
+    );
+
+    await expect(setDashboardTags("delivery", ["Ops"])).rejects.toMatchObject({
+      status: 409,
+      body: { detail: "too many" },
+    });
+  });
+
+  it("reads a dashboard with the tags it carries, or none", async () => {
+    const body = { title: "Delivery", widgets: [] };
+    mockFetch
+      .mockResolvedValueOnce(response({ body, folder: null, tags: ["Ops"] }))
+      .mockResolvedValueOnce(response({ body, folder: null }));
+
+    await expect(fetchDashboardRead("delivery")).resolves.toEqual({
+      body,
+      tags: ["Ops"],
+    });
+    await expect(fetchDashboardRead("delivery")).resolves.toEqual({
+      body,
+      tags: [],
+    });
+    expect(mockFetch).toHaveBeenCalledWith("/api/v3/v1/dashboards/delivery");
+  });
+
+  it("asks for the dashboards carrying any of the tags, inside a folder", async () => {
+    mockFetch.mockResolvedValue(response({ names: [], total: 0 }));
+
+    await fetchDashboardNames({
+      search: "cycle",
+      folder: "f1",
+      tags: ["Ops", "R&D"],
+      limit: 50,
+    });
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/v3/v1/dashboards?q=cycle&limit=50&folder=f1&tag=Ops&tag=R%26D"
     );
   });
 });

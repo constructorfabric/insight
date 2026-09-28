@@ -106,6 +106,21 @@ export interface DefinitionResponse<T> {
   /** Only a metric has one, and only when a window has a date to select by. */
   clock?: EffectiveClock;
   folder?: Folder | null;
+  tags?: string[];
+}
+
+export interface DashboardRead {
+  body: Dashboard;
+  tags: string[];
+}
+
+export interface TagSummary {
+  name: string;
+  dashboards: number;
+}
+
+export interface TagList {
+  tags: TagSummary[];
 }
 
 export interface Folder {

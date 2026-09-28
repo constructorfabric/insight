@@ -115,9 +115,9 @@ describe("the /portal/custom routes, through the real router", () => {
     vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: [
       "engineering",
     ], total: 1 });
-    vi.mocked(customClient.fetchDashboard).mockResolvedValue({
-      title: "Engineering",
-      widgets: [],
+    vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+      body: { title: "Engineering", widgets: [] },
+      tags: [],
     });
 
     renderAt("/portal/custom/engineering");
@@ -134,9 +134,9 @@ describe("the /portal/custom routes, through the real router", () => {
     vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: [
       "engineering",
     ], total: 1 });
-    vi.mocked(customClient.fetchDashboard).mockResolvedValue({
-      title: "Delivery",
-      widgets: [],
+    vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+      body: { title: "Delivery", widgets: [] },
+      tags: [],
     });
     vi.mocked(customClient.sendChat).mockResolvedValue({
       reply: "Built it",
@@ -170,9 +170,15 @@ describe("the /portal/custom routes, through the real router", () => {
     vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: [
       "engineering",
     ], total: 1 });
-    vi.mocked(customClient.fetchDashboard)
-      .mockResolvedValueOnce({ title: "Engineering", widgets: [] })
-      .mockResolvedValue({ title: "Engineering", widgets: ["revenue_table"] });
+    vi.mocked(customClient.fetchDashboardRead)
+      .mockResolvedValueOnce({
+        body: { title: "Engineering", widgets: [] },
+        tags: [],
+      })
+      .mockResolvedValue({
+        body: { title: "Engineering", widgets: ["revenue_table"] },
+        tags: [],
+      });
     vi.mocked(customClient.fetchWidget).mockResolvedValue({
       type: "table",
       metric: "revenue_per_day",
