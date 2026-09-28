@@ -22,7 +22,6 @@
       "DuplicateRequest": {
         "properties": {
           "name": {
-            "description": "The copy's name, held by no dashboard yet.",
             "type": "string"
           }
         },

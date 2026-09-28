@@ -17,7 +17,6 @@ use crate::domain::definition::DefinitionName;
 
 #[derive(Debug, Deserialize, ToSchema)]
 struct DuplicateRequest {
-    /// The copy's name, held by no dashboard yet.
     name: String,
 }
 
