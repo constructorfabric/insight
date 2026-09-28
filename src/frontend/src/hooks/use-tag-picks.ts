@@ -1,13 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 
 import type { TagSummary } from "@/api/custom-client";
+import { sameTagName } from "@/lib/custom/tag-names";
 import {
   usePortalSearch,
   useSetPortalSearch,
 } from "@/lib/portal/portal-search";
 import { tagsQuery } from "@/queries/custom";
-
-const SAME_TAG = new Intl.Collator(undefined, { sensitivity: "accent" });
 
 export interface TagPicks {
   tags: TagSummary[] | undefined;
@@ -31,7 +30,7 @@ export function useTagPicks(): TagPicks {
 
   const picked = tags
     .map((tag) => tag.name)
-    .filter((name) => asked.some((one) => SAME_TAG.compare(one, name) === 0));
+    .filter((name) => asked.some((one) => sameTagName(one, name)));
 
   return { tags, picked, pending: false, pick };
 }
