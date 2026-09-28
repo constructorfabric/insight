@@ -105,6 +105,21 @@
         ],
         "type": "object"
       },
+      "TagsRequest": {
+        "properties": {
+          "tags": {
+            "description": "Every tag the dashboard carries from now on, each trimmed to 1 to 32\ncharacters, at most 10; `[]` clears them.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "tags"
+        ],
+        "type": "object"
+      },
       "Turn": {
         "description": "One turn of the conversation so far. The reader's panel keeps the thread\nand sends it back, because the service stores no session.",
         "properties": {
@@ -248,6 +263,20 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "description": "Only the dashboards carrying any of these tags; repeat the key for each",
+            "explode": true,
+            "in": "query",
+            "name": "tag",
+            "required": false,
+            "schema": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "style": "form"
           }
         ],
         "responses": {
@@ -801,6 +830,100 @@
           }
         },
         "summary": "Rename a definition, and everything that points at it",
+        "x-toolkit-visibility": "exposed"
+      }
+    },
+    "/v1/dashboards/{name}/tags": {
+      "put": {
+        "operationId": "insight_v3_core.dashboards.tags",
+        "parameters": [
+          {
+            "description": "Dashboard name",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagsRequest"
+              }
+            }
+          },
+          "description": "The dashboard's whole set of tags",
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Tags set"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "504": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Gateway Timeout"
+          }
+        },
+        "summary": "Replace the tags a dashboard carries",
         "x-toolkit-visibility": "exposed"
       }
     },
@@ -2469,6 +2592,55 @@
           }
         },
         "summary": "Read one warehouse table's columns and engine",
+        "x-toolkit-visibility": "exposed"
+      }
+    },
+    "/v1/tags": {
+      "get": {
+        "operationId": "insight_v3_core.tags.list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Every tag, sorted by name"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "504": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Gateway Timeout"
+          }
+        },
+        "summary": "List the dashboard tags, each with how many dashboards carry it",
         "x-toolkit-visibility": "exposed"
       }
     },

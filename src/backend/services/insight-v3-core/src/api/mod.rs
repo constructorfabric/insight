@@ -14,6 +14,7 @@ pub(crate) mod folders;
 pub(crate) mod metric_run;
 pub(crate) mod raw_data;
 pub(crate) mod tables;
+pub(crate) mod tags;
 
 use admission::IngestAdmission;
 
@@ -21,6 +22,7 @@ use crate::chat::ChatClient;
 use crate::domain::definition::Definitions;
 use crate::domain::folders::{DefinitionStore, Folders};
 use crate::domain::query::metric_query::MetricRunner;
+use crate::domain::tags::Tags;
 use crate::store::catalog::Catalog;
 use crate::store::dataset_tables::DatasetTables;
 use crate::store::identity::IdentityClient;
@@ -199,6 +201,10 @@ impl AppState {
         self.definitions.as_ref()
     }
 
+    pub(crate) fn tags(&self) -> &dyn Tags {
+        self.definitions.as_ref()
+    }
+
     pub(crate) fn metrics(&self) -> &MetricRunner {
         &self.metrics
     }
@@ -343,6 +349,7 @@ pub(crate) fn register_routes(
     let api = raw_data::register_routes(Router::new(), openapi, state.clone(), admission);
     let api = definitions::register_routes(api, openapi, &state);
     let api = folders::register_routes(api, openapi, &state);
+    let api = tags::register_routes(api, openapi, &state);
     let api = datasets::register_routes(api, openapi, &state);
     let api = tables::register_routes(api, openapi, &state);
     let api = metric_run::register_routes(api, openapi, state.clone());

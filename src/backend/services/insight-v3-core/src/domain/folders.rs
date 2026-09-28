@@ -7,6 +7,7 @@ use uuid::Uuid;
 use crate::domain::definition::{
     DefinitionKind, DefinitionName, DefinitionStoreError, Definitions, NamePage, Page,
 };
+use crate::domain::tags::Tags;
 
 const MAX_NAME_CHARS: usize = 64;
 
@@ -147,11 +148,11 @@ pub(crate) trait Folders: Send + Sync + fmt::Debug {
     ) -> Result<NamePage, FolderError>;
 }
 
-/// INVARIANT: one store holds both, because a dashboard rename carries its
-/// folder inside the definitions' own transaction.
-pub(crate) trait DefinitionStore: Definitions + Folders {}
+/// INVARIANT: one store holds all three, because a dashboard rename carries
+/// its folder and its tags inside the definitions' own transaction.
+pub(crate) trait DefinitionStore: Definitions + Folders + Tags {}
 
-impl<T: Definitions + Folders> DefinitionStore for T {}
+impl<T: Definitions + Folders + Tags> DefinitionStore for T {}
 
 #[cfg(test)]
 mod tests;
