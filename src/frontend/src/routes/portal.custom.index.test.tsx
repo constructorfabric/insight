@@ -8,7 +8,7 @@ vi.mock("@tanstack/react-router", async () => {
 vi.mock("@/api/custom-client");
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -397,5 +397,52 @@ describe("/portal/custom filtered by tag", () => {
     await user.click(screen.getByRole("button", { name: "Clear filters" }));
 
     expect(portalRouter.search.tag).toBeUndefined();
+  });
+});
+
+describe("/portal/custom cards with tags", () => {
+  function carrying(tags: string[]) {
+    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({
+      names: ["delivery"],
+      total: 1,
+    });
+    vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+      body: { title: "Delivery", widgets: [] },
+      tags,
+    });
+  }
+
+  const chips = async () =>
+    within(await screen.findByRole("list", { name: "Tags" }))
+      .getAllByRole("listitem")
+      .map((chip) => chip.textContent);
+
+  it("shows a card's tags under its name, outside its link", async () => {
+    carrying(["Ops", "Platform"]);
+
+    render(<Component />, { wrapper });
+
+    expect(await chips()).toEqual(["Ops", "Platform"]);
+    expect(
+      screen.getByRole("link", { name: /Delivery/ })
+    ).not.toHaveTextContent("Ops");
+  });
+
+  it("shows three tags and counts the rest", async () => {
+    carrying(["Hiring", "Ops", "Platform", "Quality", "Release"]);
+
+    render(<Component />, { wrapper });
+
+    expect(await chips()).toEqual(["Hiring", "Ops", "Platform", "+2"]);
+    expect(screen.getByText("+2")).toHaveAttribute("title", "Quality, Release");
+  });
+
+  it("shows no tag row on a card without tags", async () => {
+    carrying([]);
+
+    render(<Component />, { wrapper });
+
+    await screen.findByText("Delivery");
+    expect(screen.queryByRole("list", { name: "Tags" })).toBeNull();
   });
 });
