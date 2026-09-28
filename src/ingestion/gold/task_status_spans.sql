@@ -31,7 +31,10 @@ status_events AS (
     SELECT
         fh.insight_source_id                                      AS insight_source_id,
         fh.issue_id                                               AS issue_id,
-        arraySort(x -> x.1, groupArray((fh.event_at, fh.value_ids[1]))) AS evs
+        arrayMap(x -> (x.1.1, x.2),
+                 arraySort(x -> x.1, groupArray(((fh.event_at, {{ task_event_rank('fh.event_kind') }},
+                                                  fh._seq, toUInt64OrZero(fh.event_id)),
+                                                 fh.value_ids[1])))) AS evs
     FROM {{ ref('class_task_field_history') }} AS fh FINAL
     INNER JOIN {{ ref('task_field_roles_current') }} AS r
         ON r.insight_source_id = fh.insight_source_id
