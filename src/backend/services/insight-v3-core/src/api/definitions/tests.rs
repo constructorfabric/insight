@@ -917,3 +917,40 @@ async fn a_store_that_is_down_is_ours_to_fix_and_says_nothing_about_itself() {
     let said = String::from_utf8_lossy(&failed.body);
     assert!(!said.contains("store is down"), "{said}");
 }
+
+async fn last_written(harness: &TestHarness, path: &str) -> chrono::DateTime<chrono::Utc> {
+    let read = harness.get_json(path).await;
+    assert_eq!(read.status(), StatusCode::OK);
+    let body = read.json().await;
+    let stamp = body["updated_at"].as_str().unwrap_or_default().to_owned();
+
+    assert!(stamp.ends_with('Z'), "a UTC stamp: {body}");
+    chrono::DateTime::parse_from_rfc3339(&stamp)
+        .unwrap_or_else(|error| panic!("`{stamp}` must be RFC 3339: {error}"))
+        .with_timezone(&chrono::Utc)
+}
+
+#[tokio::test]
+async fn a_dashboard_read_says_when_it_was_last_written_and_a_write_moves_it() {
+    let harness = TestHarness::new().await;
+    let before = chrono::Utc::now();
+    harness
+        .put_json(
+            "/v1/dashboards/board",
+            json!({ "title": "Board", "widgets": [] }),
+        )
+        .await;
+
+    let first = last_written(&harness, "/v1/dashboards/board").await;
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    harness
+        .put_json(
+            "/v1/dashboards/board",
+            json!({ "title": "Board, again", "widgets": [] }),
+        )
+        .await;
+    let second = last_written(&harness, "/v1/dashboards/board").await;
+
+    assert!(first >= before, "{first} should not precede {before}");
+    assert!(second > first, "{second} should follow {first}");
+}

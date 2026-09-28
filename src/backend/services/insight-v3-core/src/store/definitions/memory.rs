@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use crate::domain::definition::{
@@ -24,6 +25,7 @@ const DASHBOARDS: &str = "dashboards";
 #[derive(Debug, Default, Clone)]
 struct Stored {
     definitions: BTreeMap<(&'static str, String), serde_json::Value>,
+    written: BTreeMap<(&'static str, String), DateTime<Utc>>,
     folders: BTreeMap<FolderId, FolderName>,
     filed: BTreeMap<String, FolderId>,
     tagged: BTreeMap<String, Vec<TagName>>,
@@ -36,15 +38,20 @@ impl Stored {
             .contains_key(&(DASHBOARDS, name.as_str().to_owned()))
     }
 
+    fn write(&mut self, key: (&'static str, String), body: serde_json::Value) {
+        self.written.insert(key.clone(), Utc::now());
+        self.definitions.insert(key, body);
+    }
+
     fn remove(&mut self, kind: DefinitionKind, name: &DefinitionName) -> bool {
         if kind.table() == DASHBOARDS {
             self.filed.remove(name.as_str());
             self.tagged.remove(name.as_str());
             self.drop_pins(name.as_str());
         }
-        self.definitions
-            .remove(&MemoryDefinitions::key(kind, name))
-            .is_some()
+        let key = MemoryDefinitions::key(kind, name);
+        self.written.remove(&key);
+        self.definitions.remove(&key).is_some()
     }
 
     fn name_taken(&self, name: &FolderName, except: Option<FolderId>) -> bool {
@@ -163,9 +170,7 @@ impl Definitions for MemoryDefinitions {
         if self.failing {
             return Err(Self::refuse());
         }
-        self.lock()
-            .definitions
-            .insert(Self::key(kind, name), body.clone());
+        self.lock().write(Self::key(kind, name), body.clone());
 
         Ok(())
     }
@@ -189,6 +194,14 @@ impl Definitions for MemoryDefinitions {
         Ok(paged(self.lock().matching(kind, needle), page))
     }
 
+    async fn updated_at(
+        &self,
+        kind: DefinitionKind,
+        name: &DefinitionName,
+    ) -> Result<Option<DateTime<Utc>>, DefinitionStoreError> {
+        Ok(self.lock().written.get(&Self::key(kind, name)).copied())
+    }
+
     async fn delete(
         &self,
         kind: DefinitionKind,
@@ -208,16 +221,14 @@ impl Definitions for MemoryDefinitions {
         for change in changes {
             match change {
                 Change::Put(kind, name, body) => {
-                    applied
-                        .definitions
-                        .insert(Self::key(*kind, name), body.clone());
+                    applied.write(Self::key(*kind, name), body.clone());
                 }
                 Change::Create(kind, name, body) => {
                     let key = Self::key(*kind, name);
                     if applied.definitions.contains_key(&key) {
                         return Err(DefinitionStoreError::NameTaken(name.as_str().to_owned()));
                     }
-                    applied.definitions.insert(key, body.clone());
+                    applied.write(key, body.clone());
                 }
                 Change::Delete(kind, name) => {
                     applied.remove(*kind, name);

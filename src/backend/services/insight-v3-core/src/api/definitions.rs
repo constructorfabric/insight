@@ -7,6 +7,7 @@ use axum::extract::{Extension, Path, Query, RawQuery};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
+use chrono::SecondsFormat;
 use serde::{Deserialize, Serialize};
 use toolkit::api::{OpenApiRegistry, OperationBuilder, ParamLocation, ParamSpec};
 use toolkit_canonical_errors::{CanonicalError, Http, resource_error};
@@ -265,26 +266,36 @@ struct DefinitionResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     clock: Option<EffectiveClock>,
     #[serde(flatten)]
-    filed: Option<Filed>,
+    meta: Option<DashboardMeta>,
 }
 
 #[derive(Debug, Serialize)]
-struct Filed {
+struct DashboardMeta {
     folder: Option<serde_json::Value>,
     tags: serde_json::Value,
+    updated_at: String,
 }
 
-async fn filed(state: &AppState, name: &DefinitionName) -> Result<Filed, CanonicalError> {
+async fn dashboard_meta(
+    state: &AppState,
+    name: &DefinitionName,
+) -> Result<DashboardMeta, CanonicalError> {
     let folder = state
         .folders()
         .folder_of(name)
         .await
         .map_err(folder_error)?;
     let tags = state.tags().tags_of(name).await.map_err(tag_error)?;
+    let updated_at = state
+        .surfaces()
+        .updated_at(DefinitionKind::Dashboard, name)
+        .await
+        .map_err(custom_error)?;
 
-    Ok(Filed {
+    Ok(DashboardMeta {
         folder: folder.as_ref().map(folder_json),
         tags: names_json(&tags),
+        updated_at: updated_at.to_rfc3339_opts(SecondsFormat::Micros, true),
     })
 }
 
@@ -535,13 +546,13 @@ async fn get_definition(
     match surfaces.get(kind, &name).await {
         Ok(body) => {
             let clock = surfaces.clock_of(kind, &body).await;
-            let filed = if kind == DefinitionKind::Dashboard {
-                Some(filed(&state, &name).await?)
+            let meta = if kind == DefinitionKind::Dashboard {
+                Some(dashboard_meta(&state, &name).await?)
             } else {
                 None
             };
 
-            Ok(Json(DefinitionResponse { body, clock, filed }).into_response())
+            Ok(Json(DefinitionResponse { body, clock, meta }).into_response())
         }
         Err(CustomError::NotFound { .. }) => Ok(StatusCode::NOT_FOUND.into_response()),
         Err(other) => Err(custom_error(other)),

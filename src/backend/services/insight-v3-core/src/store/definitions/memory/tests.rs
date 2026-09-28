@@ -326,3 +326,62 @@ async fn a_folder_past_the_cap_is_refused() -> R {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn a_write_is_stamped_when_it_lands_and_a_later_write_moves_the_stamp() -> R {
+    let store = MemoryDefinitions::new();
+    let before = chrono::Utc::now();
+
+    store
+        .put(
+            DefinitionKind::Dashboard,
+            &name("board"),
+            &json!({ "title": "A" }),
+        )
+        .await?;
+    let first = store
+        .updated_at(DefinitionKind::Dashboard, &name("board"))
+        .await?;
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    store
+        .apply(&[Change::Put(
+            DefinitionKind::Dashboard,
+            name("board"),
+            json!({ "title": "B" }),
+        )])
+        .await?;
+    let second = store
+        .updated_at(DefinitionKind::Dashboard, &name("board"))
+        .await?;
+
+    assert!(first.is_some_and(|stamp| stamp >= before), "{first:?}");
+    assert!(second > first, "{first:?} then {second:?}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_created_definition_is_stamped_and_a_removed_one_is_not() -> R {
+    let store = MemoryDefinitions::new();
+
+    store
+        .apply(&[Change::Create(
+            DefinitionKind::Metric,
+            name("created"),
+            json!({ "table": "events" }),
+        )])
+        .await?;
+    let created = store
+        .updated_at(DefinitionKind::Metric, &name("created"))
+        .await?;
+    Definitions::delete(&store, DefinitionKind::Metric, &name("created")).await?;
+    let removed = store
+        .updated_at(DefinitionKind::Metric, &name("created"))
+        .await?;
+    let never = store
+        .updated_at(DefinitionKind::Metric, &name("never"))
+        .await?;
+
+    assert!(created.is_some());
+    assert_eq!((removed, never), (None, None));
+    Ok(())
+}

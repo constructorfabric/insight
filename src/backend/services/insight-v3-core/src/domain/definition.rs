@@ -13,6 +13,7 @@ pub(crate) mod arriving;
 use std::fmt;
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use thiserror::Error;
@@ -223,6 +224,12 @@ pub(crate) trait Definitions: Lookup {
         needle: &str,
         page: Page,
     ) -> Result<NamePage, DefinitionStoreError>;
+
+    async fn updated_at(
+        &self,
+        kind: DefinitionKind,
+        name: &DefinitionName,
+    ) -> Result<Option<DateTime<Utc>>, DefinitionStoreError>;
 
     /// Removes the definition, reporting whether there was one.
     async fn delete(

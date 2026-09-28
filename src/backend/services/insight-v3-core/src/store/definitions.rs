@@ -11,6 +11,7 @@ pub(crate) mod memory;
 use std::fmt;
 
 use async_trait::async_trait;
+use chrono::{DateTime, NaiveDateTime, Utc};
 use sea_orm::{
     ConnectionTrait as _, DatabaseConnection, DbBackend, FromQueryResult, Statement,
     TransactionTrait as _,
@@ -45,6 +46,7 @@ const CARRY_PINS: &str = "INSERT INTO dashboard_pins (person, dashboard, pinned_
 SELECT person, ?, pinned_at FROM dashboard_pins WHERE dashboard = ?";
 
 const SELECT_BODY: &str = "SELECT body FROM {table} WHERE name = ?";
+const SELECT_UPDATED_AT: &str = "SELECT updated_at FROM {table} WHERE name = ?";
 const SELECT_NAMES: &str = "SELECT name FROM {table} ORDER BY name";
 
 /// No ESCAPE clause: backslash is already the default LIKE escape here, and
@@ -71,6 +73,11 @@ fn sql(template: &str, kind: DefinitionKind) -> String {
 #[derive(Debug, FromQueryResult)]
 struct BodyRow {
     body: String,
+}
+
+#[derive(Debug, FromQueryResult)]
+struct UpdatedAtRow {
+    updated_at: NaiveDateTime,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -191,6 +198,22 @@ impl Definitions for MariaDefinitions {
             names: rows.into_iter().map(|row| row.name).collect(),
             total: counted.map_or(0, |row| u64::try_from(row.total).unwrap_or(0)),
         })
+    }
+
+    async fn updated_at(
+        &self,
+        kind: DefinitionKind,
+        name: &DefinitionName,
+    ) -> Result<Option<DateTime<Utc>>, DefinitionStoreError> {
+        let row = UpdatedAtRow::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::MySql,
+            sql(SELECT_UPDATED_AT, kind),
+            [name.as_str().into()],
+        ))
+        .one(&self.db)
+        .await?;
+
+        Ok(row.map(|row| row.updated_at.and_utc()))
     }
 
     async fn delete(

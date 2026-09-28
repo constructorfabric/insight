@@ -1,5 +1,6 @@
 //! Storing, reading and renaming definitions, whatever kind they are.
 
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 use thiserror::Error;
 
@@ -135,6 +136,21 @@ impl<'a> Surfaces<'a> {
     ) -> Result<Value, CustomError> {
         self.definitions
             .get(kind, name)
+            .await
+            .map_err(CustomError::Store)?
+            .ok_or_else(|| CustomError::NotFound {
+                kind,
+                name: name.as_str().to_owned(),
+            })
+    }
+
+    pub(crate) async fn updated_at(
+        &self,
+        kind: DefinitionKind,
+        name: &DefinitionName,
+    ) -> Result<DateTime<Utc>, CustomError> {
+        self.definitions
+            .updated_at(kind, name)
             .await
             .map_err(CustomError::Store)?
             .ok_or_else(|| CustomError::NotFound {
