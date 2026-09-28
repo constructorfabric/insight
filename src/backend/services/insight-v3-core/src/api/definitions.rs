@@ -295,7 +295,7 @@ async fn dashboard_meta(
     Ok(DashboardMeta {
         folder: folder.as_ref().map(folder_json),
         tags: names_json(&tags),
-        updated_at: updated_at.to_rfc3339_opts(SecondsFormat::Micros, true),
+        updated_at: updated_at.to_rfc3339_opts(SecondsFormat::Millis, true),
     })
 }
 

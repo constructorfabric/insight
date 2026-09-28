@@ -933,7 +933,7 @@ async fn last_written(harness: &TestHarness, path: &str) -> chrono::DateTime<chr
 #[tokio::test]
 async fn a_dashboard_read_says_when_it_was_last_written_and_a_write_moves_it() {
     let harness = TestHarness::new().await;
-    let before = chrono::Utc::now();
+    let before = chrono::SubsecRound::trunc_subsecs(chrono::Utc::now(), 3);
     harness
         .put_json(
             "/v1/dashboards/board",
@@ -953,4 +953,24 @@ async fn a_dashboard_read_says_when_it_was_last_written_and_a_write_moves_it() {
 
     assert!(first >= before, "{first} should not precede {before}");
     assert!(second > first, "{second} should follow {first}");
+}
+
+#[tokio::test]
+async fn a_dashboard_stamp_is_utc_to_the_millisecond() {
+    let harness = TestHarness::new().await;
+    harness
+        .put_json(
+            "/v1/dashboards/board",
+            json!({ "title": "Board", "widgets": [] }),
+        )
+        .await;
+
+    let read = harness.get_json("/v1/dashboards/board").await.json().await;
+    let stamp = read["updated_at"].as_str().unwrap_or_default();
+
+    let shape = chrono::NaiveDateTime::parse_from_str(stamp, "%Y-%m-%dT%H:%M:%S%.3fZ");
+    assert!(
+        shape.is_ok() && stamp.len() == "2026-01-01T00:00:00.000Z".len(),
+        "`{stamp}` should read YYYY-MM-DDTHH:mm:ss.sssZ"
+    );
 }
