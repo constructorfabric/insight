@@ -44,10 +44,10 @@ beforeEach(() => {
   carrying(["Ops"]);
 });
 
-async function openTagsDialog() {
+async function openTagsDialog(staleTime = 0) {
   const user = userEvent.setup();
   const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
+    defaultOptions: { queries: { retry: false, staleTime } },
   });
   render(
     <QueryClientProvider client={queryClient}>
@@ -248,6 +248,46 @@ describe("the tags dialog", () => {
     await openTagsDialog();
 
     expect(screen.getByRole("button", { name: "Done" })).toBeDisabled();
+  });
+
+  it("keeps the dashboard's own tags when a name is typed before they load", async () => {
+    let arrive: (read: { body: unknown; tags: string[] }) => void = () => {};
+    vi.mocked(customClient.fetchDashboardRead).mockReturnValue(
+      new Promise((resolve) => {
+        arrive = resolve;
+      })
+    );
+
+    const { user } = await openTagsDialog();
+    await user.type(screen.getByRole("textbox", { name: "Add tag" }), "Qa{Enter}");
+    arrive({ body: { title: "Delivery", widgets: [] }, tags: ["Ops"] });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Done" })).toBeEnabled()
+    );
+    await user.click(screen.getByRole("button", { name: "Done" }));
+
+    expect(customClient.setDashboardTags).toHaveBeenCalledWith(
+      "delivery",
+      expect.arrayContaining(["Ops"])
+    );
+  });
+
+  it("reads the dashboard's tags afresh each time it opens", async () => {
+    const { user } = await openTagsDialog(60 * 60 * 1000);
+    await waitFor(() => expect(box("Ops")).toBeChecked());
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    carrying(["Ops", "Platform"]);
+    await user.click(screen.getByRole("button", { name: "More for delivery" }));
+    await user.click(await screen.findByRole("menuitem", { name: /Edit tags/ }));
+    await waitFor(() => expect(box("Platform")).toBeChecked());
+    await user.click(screen.getByRole("button", { name: "Done" }));
+
+    expect(customClient.setDashboardTags).toHaveBeenCalledWith("delivery", [
+      "Ops",
+      "Platform",
+    ]);
   });
 
   it("says when the dashboard's own tags cannot be read, and cannot save", async () => {

@@ -27,7 +27,12 @@ export function EditTags({
   onClose: () => void;
 }) {
   const every = useQuery({ ...tagsQuery(), enabled: open });
-  const carried = useQuery({ ...dashboardTagsQuery(name), enabled: open });
+  const carried = useQuery({
+    ...dashboardTagsQuery(name),
+    enabled: open,
+    staleTime: 0,
+  });
+  const ready = carried.data !== undefined && !carried.isFetching;
   const save = useSetDashboardTags();
   const [ticked, setTicked] = useState<string[] | null>(null);
   const [added, setAdded] = useState<string[]>([]);
@@ -115,7 +120,7 @@ export function EditTags({
       description={`Tick the tags ${name} carries, up to ${DASHBOARD_TAGS_MAX}.`}
       confirmLabel="Done"
       isPending={save.isPending}
-      confirmDisabled={carried.data === undefined}
+      confirmDisabled={!ready}
       error={error}
       onConfirm={done}
     >
@@ -123,7 +128,7 @@ export function EditTags({
         <p className="text-sm text-muted-foreground">
           The dashboard's tags could not be read.
         </p>
-      ) : carried.data === undefined ? (
+      ) : !ready ? (
         <Spinner className="mx-auto size-4" />
       ) : (
         <div className="flex max-h-64 flex-col gap-0.5 overflow-y-auto">
@@ -140,7 +145,7 @@ export function EditTags({
       <Input
         aria-label="Add tag"
         placeholder="Add tag…"
-        readOnly={save.isPending}
+        readOnly={save.isPending || !ready}
         value={draft}
         onChange={(event) => {
           setDraft(event.target.value);
