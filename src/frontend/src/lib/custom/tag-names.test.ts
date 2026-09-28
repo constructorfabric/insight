@@ -1,8 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { sameTagName } from "./tag-names";
 
 describe("sameTagName", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
   it.each([
     ["Ops", "ops"],
     ["Ops", "OPS"],
@@ -16,5 +21,22 @@ describe("sameTagName", () => {
     ["Ops", "Opsx"],
   ])("keeps %s and %s apart", (a, b) => {
     expect(sameTagName(a, b)).toBe(false);
+  });
+
+  it("matches as the service does whatever the reader's locale", async () => {
+    const RealCollator = Intl.Collator;
+    const turkish = Object.create(Intl) as typeof Intl;
+    turkish.Collator = function (
+      locales?: string | string[],
+      options?: Intl.CollatorOptions
+    ) {
+      return new RealCollator(locales ?? "tr", options);
+    } as unknown as typeof Intl.Collator;
+    vi.stubGlobal("Intl", turkish);
+    vi.resetModules();
+
+    const { sameTagName: underTurkish } = await import("./tag-names");
+
+    expect(underTurkish("hiring", "HIRING")).toBe(true);
   });
 });
