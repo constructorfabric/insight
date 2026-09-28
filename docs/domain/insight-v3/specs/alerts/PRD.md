@@ -1,14 +1,14 @@
 ---
 status: draft
-version: "0.3"
+version: "0.4"
 date: 2026-09-28
 ---
 
 # PRD — Insight v3 Metric Alerts
 
-**Status:** Scope approved; proposed behavior still needs approval. No implementation is authorized.
+**Status:** Alert behavior and scheduling are approved. Other decisions in section 11 remain open.
 
-**Revision 0.3:** Removed unrelated exclusions; alert requirements unchanged.
+**Revision 0.4:** Make notification requirements destination-neutral and record approved behavior.
 
 <!-- toc -->
 
@@ -47,7 +47,7 @@ date: 2026-09-28
 
 ### 1.1 Purpose
 
-Send a Discord message when an Insight v3 custom metric meets a threshold condition. Administrators configure alerts through the API or Model Context Protocol (MCP). Alerts run without a dashboard open.
+Send a notification when an Insight v3 custom metric meets a threshold condition. Administrators configure alerts through the API or Model Context Protocol (MCP). Alerts run without a dashboard open.
 
 This expands [the parent alert requirement](../PRD.md#58-alerts), `cpt-insightspec-v3-fr-create-alerts`. Rules take effect without a service release. Checks run on a schedule, so detection is not instantaneous.
 
@@ -86,21 +86,21 @@ Verify these goals with synthetic metrics before release. Capacity and timing ta
 
 **Needs**: Clear validation, understandable results and delivery errors, with credentials hidden.
 
-#### Discord Recipient
+#### Notification Recipient
 
 **ID**: `cpt-insightspec-v3-alerts-actor-recipient`
 
-**Role**: Reads messages in a Discord destination configured by an administrator. Channel membership is managed outside Insight.
+**Role**: Reads notifications at a destination configured by an administrator. Destination membership is managed outside Insight.
 
 **Needs**: Metric identity, observed value, condition and evaluation time, without unrelated result rows.
 
 ### 2.2 System Actors
 
-#### Discord
+#### Notification Provider
 
-**ID**: `cpt-insightspec-v3-alerts-actor-discord`
+**ID**: `cpt-insightspec-v3-alerts-actor-provider`
 
-**Role**: Receives outbound notification requests and reports acceptance or failure. Its availability is outside Insight's control.
+**Role**: Receives notification requests and reports acceptance or failure. Its availability is outside Insight's control.
 
 ## 3. Operational Concept & Environment
 
@@ -112,19 +112,19 @@ Checks and delivery run without an active API client. [DESIGN](./DESIGN.md) reco
 
 ### 4.1 In Scope
 
-**Approved:** Insight v3 custom metrics; administrator API and MCP; one numeric result per alert; threshold checks; Discord only.
+**Approved:** Insight v3 custom metrics; administrator API and MCP; one numeric result per alert; threshold checks; notifications to a configured destination; first-breach and interval behavior below.
 
-**Proposed:** per-rule intervals; notify on the first valid breach, once per episode; retry delivery separately; show check and delivery history. See section 11 for open decisions.
+**Proposed:** retry delivery separately and show check and delivery history. See section 11 for open decisions.
 
 ### 4.2 Out of Scope
 
 Excluded: web administration UI, legacy analytics alerts and separate alerts per result group.
 
-Still undecided: reminder/recovery messages, cron schedules, replaying missed checks and additional Discord channel types.
+First release excludes reminder and recovery messages, cron schedules, and replaying missed checks. The initial set of notification providers is open in D3.
 
 ## 5. Functional Requirements
 
-These requirements describe the **proposed behavior**. Only scope is approved.
+The approved firing and scheduling rules appear below. Other requirements remain proposed until their open decisions are resolved.
 
 ### 5.1 Rule Administration
 
@@ -162,7 +162,7 @@ Empty, null, nonnumeric, nonfinite, ambiguous and failed results are not valid n
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-fr-schedule`
 
-The system **MUST** check enabled rules automatically and resume pending work after restart. D2 proposes one interval per rule and one current check after missed intervals. The interval changes neither the metric's data window nor how fresh its source data is.
+The system **MUST** check enabled rules at a configured per-rule interval. After downtime, it checks the current value once rather than replaying missed checks. The interval changes neither the metric's data window nor how fresh its source data is.
 
 **Actors**: `cpt-insightspec-v3-alerts-actor-admin`
 
@@ -170,26 +170,28 @@ The system **MUST** check enabled rules automatically and resume pending work af
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-fr-episodes`
 
-Under proposed D1, the system **MUST**:
+The system **MUST**:
 
 - Notify on the first valid breached result.
 - Suppress further notifications until a valid result no longer breaches.
 - Allow a new notification when the condition is met again.
 - Never treat an unknown result as recovery.
 
+The first release sends neither repeated reminders during a breach nor recovery messages.
+
 D6 covers edits and disabling/re-enabling a rule.
 
 **Actors**: `cpt-insightspec-v3-alerts-actor-recipient`
 
-#### Deliver to Discord
+#### Deliver Notifications
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-fr-deliver`
 
-The system **MUST** send the rule, metric, value, condition and check time to the configured Discord destination.
+The system **MUST** send the rule, metric, value, condition and check time to the configured destination.
 
-Retry delivery without rerunning the metric or creating another episode. Show permanent failures and exhausted retries. Never report an uncertain outcome as confirmed delivery; retries may duplicate Discord messages.
+Retry delivery without rerunning the metric or creating another episode. Show permanent failures and exhausted retries. Never report an uncertain outcome as confirmed delivery; retries may produce duplicate messages.
 
-**Actors**: `cpt-insightspec-v3-alerts-actor-discord`, `cpt-insightspec-v3-alerts-actor-recipient`
+**Actors**: `cpt-insightspec-v3-alerts-actor-provider`, `cpt-insightspec-v3-alerts-actor-recipient`
 
 #### Inspect Outcomes
 
@@ -219,7 +221,7 @@ The system **MUST** show rule status, latest check time and outcome, latest vali
 
 The system **MUST** preserve committed notification intent and prevent duplicate logical episodes under restart, retry and concurrent workers.
 
-**Threshold**: process interruption loses no saved notifications. Discord messages may still duplicate. Database recovery targets and how long to retry remain open in D7.
+**Threshold**: process interruption loses no saved notifications. Provider messages may still duplicate. Database recovery targets and how long to retry remain open in D7.
 
 **Rationale**: Restarting a worker must not lose an alert.
 
@@ -239,7 +241,7 @@ The system **MUST** report scheduling and delivery delay separately and enforce 
 
 The system **MUST** keep destination credentials out of normal API/MCP reads, notifications, queued payloads and diagnostics. Notifications must contain only the approved minimal metric summary, not complete query results.
 
-**Threshold**: zero credential disclosure in those surfaces; destination provisioning and allowed notification content require D3 and D8.
+**Threshold**: zero credential disclosure in those surfaces; destination provisioning and allowed notification content require D8.
 
 **Rationale**: Alerts cross an external data boundary.
 
@@ -259,7 +261,7 @@ Dashboard targets still apply while alerts run; they are not delivery deadlines.
 
 ### 6.3 NFR Exclusions
 
-No parent NFR is excluded. A new visual UI and its browser accessibility measurements are not applicable because no UI is included; API/MCP documentation and readable Discord content still apply. External sharing and retention responsibilities require D8.
+No parent NFR is excluded. A new visual UI and its browser accessibility measurements are not applicable because no UI is included; API/MCP documentation and readable notification content still apply. External sharing and retention responsibilities require D8.
 
 ## 7. Public Library Interfaces
 
@@ -277,13 +279,13 @@ No parent NFR is excluded. A new visual UI and its browser accessibility measure
 
 ### 7.2 External Integration Contracts
 
-- [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-contract-discord`
+- [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-contract-delivery`
 
 **Direction**: Outbound notification with acceptance/failure response.
 
-**Protocol/Format**: Discord-supported HTTP integration and message payload.
+**Protocol/Format**: Provider-supported message delivery.
 
-**Compatibility**: Provider rate limits and payload constraints apply; delivery transport is pending D3. Insight does not control channel membership or Discord retention.
+**Compatibility**: Provider rate limits and payload constraints apply. The first provider set is pending D3; Insight does not control destination membership or provider retention.
 
 ## 8. Use Cases
 
@@ -299,11 +301,11 @@ No parent NFR is excluded. A new visual UI and its browser accessibility measure
 
 1. Create and enable a rule.
 2. Inspect its check result.
-3. Receive a Discord message when the approved breach policy calls for one.
+3. Receive a notification when the breach policy calls for one.
 
 **Postconditions**: The evaluation and delivery outcome can be inspected independently.
 
-**Alternative Flows**: Invalid scalar output is reported as unknown; Discord failure leaves a visible delivery outcome; disabling or editing follows D6.
+**Alternative Flows**: Invalid scalar output is reported as unknown; provider failure leaves a visible delivery outcome; disabling or editing follows D6.
 
 ## 9. Acceptance Criteria
 
@@ -311,10 +313,11 @@ All evidence is pending. Engineering verifies these against synthetic inputs aft
 
 - [ ] API and MCP both support the approved rule lifecycle and reject non-administrators.
 - [ ] Alert evaluation agrees with on-demand execution of the same metric definition and rejects ambiguous scalar output.
-- [ ] Approved first-run, repeated-breach, recovery, invalid-result and edit behavior is demonstrated.
+- [ ] First-breach notification, suppression during a breach, return below threshold, invalid-result and approved edit behavior are demonstrated.
+- [ ] Per-rule interval checks resume with one current check after downtime, without replaying missed intervals.
 - [ ] Restart and concurrent execution neither lose committed intents nor create duplicate logical episodes.
 - [ ] Delivery failures are visible without metric re-execution; uncertain external results retain their uncertainty.
-- [ ] Discord receives the approved summary and no credentials or unrelated metric rows appear in any public surface.
+- [ ] Every selected delivery provider receives the approved summary; no credentials or unrelated metric rows appear in any public surface.
 - [ ] Approved capacity targets and unchanged parent quality gates have evidence before release, including parent coverage and non-degradation requirements.
 
 ## 10. Dependencies
@@ -324,18 +327,16 @@ All evidence is pending. Engineering verifies these against synthetic inputs aft
 | Insight v3 custom metrics | Saved definitions and consistent on-demand evaluation | p1 |
 | Insight administrator identity | Authority for API and MCP management | p1 |
 | Durable jobs and state | Unattended evaluation and delivery recovery; see DESIGN | p1 |
-| Discord | External notification acceptance and channel access | p1 |
+| Selected notification providers | External delivery and acceptance | p1 |
 
 ## 11. Assumptions
 
-The product owner must approve these choices before dependent implementation starts, with engineering and security input where needed. Recommendations are not defaults.
+The product owner must approve these remaining choices before dependent implementation starts, with engineering and security input where needed. Recommendations are not defaults.
 
-- **D1 — When to notify.** Recommend the first valid breach, then once per episode; no reminders or recovery messages. Alternatives: add those messages, or use the first result only as a baseline.
-- **D2 — Schedule.** Recommend per-rule intervals and one current check after missed intervals. Alternatives: cron schedules or replaying historical checks.
-- **D3 — Discord integration.** Discord-only is approved. The transport choice remains open in [DESIGN](./DESIGN.md#open-decisions-and-resumption).
+- **D3 — First delivery providers.** Decide which providers ship in the first release. Alert rules and outcomes remain provider-neutral; provider integration details belong in [DESIGN](./DESIGN.md#open-decisions-and-resumption).
 - **D4 — Numeric values.** Recommend one selected numeric column in exactly one row, exact conversion for supported numeric types, and `>`, `>=`, `<`, `<=`. Alternatives: restrict values to floating point or add comparison types. Precision and boundary behavior still need agreement.
 - **D5 — Unknown or stale data.** Recommend keeping the last valid episode state when a check is unknown. Show check time without claiming the source data is fresh. Alternative: dedicated missing/stale-data conditions, with a definition of freshness.
-- **D6 — Edits, disabling and deletion.** Recommend rejecting obsolete results. Edits and re-enabling reset state to unknown and apply D1. Disabling suppresses unsent messages; deletion keeps history for a limited period. Alternatives: preserve episodes across edits, finish pending deliveries, or erase history immediately. Sends already in progress cannot be recalled.
+- **D6 — Edits, disabling and deletion.** Recommend rejecting obsolete results. Edits and re-enabling reset state to unknown and apply the approved first-breach rule. Disabling suppresses unsent messages; deletion keeps history for a limited period. Alternatives: preserve episodes across edits, finish pending deliveries, or erase history immediately. Sends already in progress cannot be recalled.
 - **D7 — Limits and recovery.** Agree capacity, interval bounds, how long to retry, history retention and recovery targets using a synthetic workload. Other workload or service-level commitments remain options; no numbers are approved.
 - **D8 — Destinations and content.** Recommend operator-provisioned destinations that admins select, with a short summary and explicit time/number formats. Alternatives: admins provision destinations themselves, or richer messages. Sharing and retention responsibilities still need approval.
 
@@ -344,7 +345,7 @@ The product owner must approve these choices before dependent implementation sta
 | Risk | Impact | Mitigation |
 |------|--------|------------|
 | Invalid or stale source data | Misleading alerts | Distinguish unknown, observation time and source freshness; approve D5 |
-| Ambiguous Discord acceptance | Duplicate messages on retry | Record uncertainty and stable notification identity; no exactly-once claim |
+| Ambiguous provider acceptance | Duplicate messages on retry | Record uncertainty and stable notification identity; no exactly-once claim |
 | Metric edits race evaluations | Notification describes obsolete logic | Approve revision and lifecycle behavior before implementation |
 | Unsupported job-backend behavior | Lost, stuck or concurrently retried work | Compatibility evidence required by DESIGN |
 | External sharing or excessive history | Data exposure and retention conflicts | Minimal content, restricted destinations and D8 review |

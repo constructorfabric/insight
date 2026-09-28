@@ -1,18 +1,18 @@
 ---
 status: draft
-version: "0.2"
+version: "0.3"
 date: 2026-09-28
 ---
 
 # Technical Design — Insight v3 Metric Alerts
 
-**Approved:** Apalis, Insight v3 custom metrics, administrator API/MCP, one numeric result per alert, and Discord only.
+**Approved:** Apalis, Insight v3 custom metrics, administrator API/MCP, one numeric result per alert, per-rule interval checks, one current check after downtime, first-breach notifications without reminders or recovery messages, and provider-neutral delivery.
 
 **Proposed flow:** Save a due check → run the existing metric → record a qualifying breach → send its notification through a separate job. Save each step so interrupted work can resume.
 
-**Still open:** PRD decisions D1–D8, the Apalis release and MariaDB compatibility. This is a design proposal, not an implementation.
+**Still open:** Which providers ship first, PRD decisions D3–D8, the Apalis release and MariaDB compatibility. This is a design proposal, not an implementation.
 
-**Version 0.2:** Plain-language editing; no design changes.
+**Version 0.3:** Apply approved alert behavior and make notification delivery provider-neutral.
 
 <!-- toc -->
 
@@ -49,7 +49,7 @@ date: 2026-09-28
 
 Keep rules, evaluation state and delivery outcomes in `insight-v3-core`. Reuse its metric runner and administrator checks. Apalis executes jobs; alert records determine when a check is due and whether a notification already exists.
 
-Save work before submitting it to Apalis. Jobs may run again after interruption, so workers use stable evaluation and notification IDs to avoid repeating state changes. Discord retries are bounded, may duplicate messages and do not guarantee delivery. No general workflow service or second metric evaluator is introduced.
+Save work before submitting it to Apalis. Jobs may run again after interruption, so workers use stable evaluation and notification IDs to avoid repeating state changes. Provider retries are bounded, may duplicate messages and do not guarantee delivery. No general workflow service or second metric evaluator is introduced.
 
 ### 1.2 Architecture Drivers
 
@@ -73,7 +73,7 @@ The parent [separate-service ADR](../ADR/0001-separate-service.md) still applies
 |--------|--------------|-----------------|-----------------------|
 | `cpt-insightspec-v3-alerts-nfr-durability` | State store and workers | Transactional intents, unique business identities, fenced commits | Crash-boundary and concurrent-worker integration evidence |
 | `cpt-insightspec-v3-alerts-nfr-timeliness` | Scheduler and worker pools | Bounded work, separate scheduling/evaluation/delivery measurements | Synthetic approved workload; targets await D7 |
-| `cpt-insightspec-v3-alerts-nfr-confidentiality` | Administration and Discord boundary | Secret references, redaction, minimal payloads | API/MCP and log contract checks |
+| `cpt-insightspec-v3-alerts-nfr-confidentiality` | Administration and provider boundary | Secret references, redaction, minimal payloads | API/MCP and log contract checks |
 | `cpt-insightspec-v3-nfr-efficiency` | Entire addition | Bounded concurrency and retained history | Compare synthetic resource use against parent baseline |
 | `cpt-insightspec-v3-nfr-reliability` | Service lifecycle | Worker shutdown/recovery independent of request handling | Existing service availability evidence plus interruption checks |
 | `cpt-insightspec-v3-nfr-performance` | Metric execution pools | Alert admission does not starve interactive work | Parent dashboard latency measurements under alert load |
@@ -98,7 +98,7 @@ flowchart LR
     Evaluation --> State
     Jobs --> Delivery[Delivery worker]
     Delivery --> State
-    Delivery --> Discord[Discord]
+    Delivery --> Provider[Configured notification provider]
 ```
 
 | Layer | Responsibility | Technology |
@@ -121,7 +121,7 @@ Alerts use the same saved-definition compiler and runner as on-demand metrics. C
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-principle-durable-intent`
 
-Record the evaluation result and required notification separately from queue submission and Discord acceptance. Retrying delivery must not rerun the metric or create another episode.
+Record the evaluation result and required notification separately from queue submission and provider acceptance. Retrying delivery must not rerun the metric or create another episode.
 
 ### 2.2 Constraints
 
@@ -135,7 +135,7 @@ Use Apalis. Its release and MariaDB configuration remain open: MySQL support alo
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-constraint-boundary`
 
-Only Insight v3 custom metrics and Discord are in scope. API/MCP operations retain their current administrator authorization. Destination secrets never become metric definitions, job payloads, ordinary read responses or tool output.
+Only Insight v3 custom metrics are evaluated. Notification rules do not depend on a specific provider. API/MCP operations retain their current administrator authorization. Destination secrets never become metric definitions, job payloads, ordinary read responses or tool output.
 
 ## 3. Technical Architecture
 
@@ -149,7 +149,7 @@ Proposed Rust types belong in the service's alert logic. Alert schemas do not ex
 | Evaluation | Rule revision plus logical schedule occurrence | One accepted result per occurrence; records evaluated metric identity |
 | Episode | Rule revision plus episode identity | Notification qualification is independent of delivery outcome |
 | Notification | Episode plus destination identity | One logical intent for the same qualifying event and destination |
-| Destination | Stable non-secret reference | Credential access restricted to delivery infrastructure |
+| Destination | Stable non-secret reference and provider kind | Credential access restricted to delivery infrastructure |
 | Handoff intent | Work kind plus evaluation or notification identity | Repeated publication has the same business identity |
 
 Keep rule/evaluation and episode/notification references valid throughout retention. An unknown result must not clear the last valid episode state or imply recovery. Numeric types, operators, edit resets and deletion behavior remain open in PRD D4–D8.
@@ -176,7 +176,7 @@ Typed validation, lifecycle operations, optimistic concurrency and redacted read
 
 ##### Responsibility boundaries
 
-No ClickHouse query or Discord request inside configuration transactions; transport authentication remains in existing adapters.
+No ClickHouse query or provider request inside configuration transactions; transport authentication remains in provider adapters.
 
 ##### Related components (by ID)
 
@@ -232,7 +232,7 @@ Provider failures must not cause metric re-evaluation.
 
 ##### Responsibility scope
 
-Claim a saved notification, load its destination secret, build a size-limited summary and send it. Save the outcome and whether it can be retried.
+Claim a saved notification, load its destination secret, build a size-limited summary and send it through the selected provider adapter. Save the outcome and whether it can be retried.
 
 ##### Responsibility boundaries
 
@@ -244,7 +244,7 @@ Reads and updates `cpt-insightspec-v3-alerts-component-state`.
 
 ### 3.3 API Contracts
 
-Administration follows `cpt-insightspec-v3-alerts-interface-administration`; delivery follows `cpt-insightspec-v3-alerts-contract-discord`. Use existing REST/OpenAPI and MCP conventions. Routes, tool names and error formats need approval before the API schema is written.
+Administration follows `cpt-insightspec-v3-alerts-interface-administration`; delivery follows `cpt-insightspec-v3-alerts-contract-delivery`. Use existing REST/OpenAPI and MCP conventions. Routes, tool names and error formats need approval before the API schema is written.
 
 | Operations | Request information | Response information | Permission |
 |------------|---------------------|----------------------|------------|
@@ -274,15 +274,11 @@ Execute the exact metric definition recorded for the evaluation. Checking timest
 | Apalis | Durable evaluation and delivery queues | Version/backend adoption gates in section 4 |
 | MariaDB | Domain transactions and chosen queue backend | Exact server/backend combination must pass migrations and contention checks |
 | ClickHouse | Existing custom-metric runner | Existing read-only query restrictions and result limits retained |
-| Discord | Direct webhook through existing HTTP client, pending D3 | External acceptance is not transactional with MariaDB |
+| Selected notification providers | One delivery adapter per supported provider | External acceptance is not transactional with MariaDB; first provider set is pending D3 |
 
-For the proposed direct webhook:
+Discord, Telegram and Zulip are candidate adapters. The first release may include one, several or all three; D3 remains open. Provider selection changes only the delivery adapter. Alert evaluation, episode state, retries and delivery outcomes remain shared.
 
-- Use [Execute Webhook](https://docs.discord.com/developers/resources/webhook) with `wait=true`, save its message ID and disable automatic mentions.
-- Restrict hosts and webhook paths, require HTTPS and reject redirects. Do not accept arbitrary URLs.
-- Approve forum/thread support separately; Discord requires extra thread information.
-- Follow [rate-limit responses](https://docs.discord.com/developers/topics/rate-limits), including `retry_after`. Bound retries and request duration.
-- Treat a timeout after possible acceptance as uncertain; retrying may duplicate the message.
+For a Discord adapter, [Execute Webhook](https://docs.discord.com/developers/resources/webhook) with `wait=true` returns a message receipt. Disable automatic mentions and follow [rate-limit responses](https://docs.discord.com/developers/topics/rate-limits). Each selected adapter must define safe destination addresses, bounded requests and retries, provider-specific limits, and which responses confirm acceptance. An uncertain response can lead to a duplicate on retry. Direct provider integrations versus a shared delivery dependency remains an implementation choice.
 
 Credential provisioning is unresolved in D8. Proposed secret references keep credentials outside domain data and expose them only to delivery infrastructure. Any alternative encrypted storage needs key ownership, rotation and deletion approval. Metric summaries may contain sensitive information: administrator authority does not establish permission to export arbitrary rows or approve channel membership.
 
@@ -293,7 +289,7 @@ Credential provisioning is unresolved in D8. Proposed secret references keep cre
 **ID**: `cpt-insightspec-v3-alerts-seq-evaluate-deliver`
 
 **Use cases**: `cpt-insightspec-v3-alerts-usecase-monitor`
-**Actors**: `cpt-insightspec-v3-alerts-actor-admin`, `cpt-insightspec-v3-alerts-actor-discord`
+**Actors**: `cpt-insightspec-v3-alerts-actor-admin`, `cpt-insightspec-v3-alerts-actor-provider`
 
 ```mermaid
 sequenceDiagram
@@ -304,7 +300,7 @@ sequenceDiagram
     participant E as Evaluation worker
     participant M as Metric runner
     participant D as Delivery worker
-    participant X as Discord
+    participant X as Provider
     S->>DB: Claim due rule; persist evaluation intent
     H->>DB: Read unpublished intents
     H->>Q: Publish business identity
@@ -327,9 +323,9 @@ Proposed recovery rules:
 - Allow at most one active logical evaluation per rule across scheduled checks. Also reject results older than the latest accepted check, so late completion cannot overwrite it or its episode.
 - Accept only one episode change from repeated attempts of the same check.
 
-D2 decides how missed checks combine; D6 decides whether edits cancel pending notifications.
+After downtime, schedule one current check instead of replaying missed intervals. D6 decides whether edits cancel pending notifications.
 
-Discord may accept a message before the worker can save its receipt. A delivery lease prevents normal concurrent sends, but cannot cancel an HTTP request already completing after ownership expires. Retries may therefore duplicate messages. Permanent rejection and exhausted retries remain visible as final outcomes; replay permissions and expiry rules need approval.
+A provider may accept a message before the worker can save its receipt. A delivery lease prevents normal concurrent sends, but cannot cancel a request already completing after ownership expires. Retries may therefore duplicate messages. Permanent rejection and exhausted retries remain visible as final outcomes; replay permissions and expiry rules need approval.
 
 ### 3.7 Database Schemas & Tables
 
@@ -350,7 +346,7 @@ Save the evaluation, episode change and notification together; queue submission 
 
 - Keep references and duplicate-detection records valid for the approved retry/replay lifetime.
 - Proposed migrations add compatible structures and keep queue payloads version-compatible. Do not remove data while older workers can still consume retained work.
-- Back up and restore alert state and queues consistently. Restore may replay messages already accepted by Discord.
+- Back up and restore alert state and queues consistently. Restore may replay messages already accepted by a provider.
 
 D7 sets retention and recovery objectives.
 
@@ -389,7 +385,7 @@ Proposed verification:
 - Real MariaDB tests for migrations, work claims, crashes and stale-worker rejection.
 - Metric parity checks through the existing runner.
 - API/MCP permission and redaction checks.
-- Controlled Discord acceptance, rate-limit and uncertain-outcome tests.
+- Controlled acceptance, rate-limit and uncertain-outcome tests for each selected provider.
 - Synthetic load comparisons against parent quality targets.
 
 This draft does not authorize broad builds or test runs.
@@ -402,10 +398,10 @@ API documentation explains scalar selection, cadence versus metric time scope, u
 
 | Decision | Recommended proposal | Alternative awaiting approval |
 |----------|----------------------|-------------------------------|
-| D3: delivery integration | Direct Discord webhooks through the existing HTTP client | Apprise-managed delivery |
+| D3: first provider set | Choose from Discord, Telegram, Zulip or another needed provider; support one or more through the same delivery contract | Exact launch set and direct integrations versus a shared delivery dependency remain open |
 | D8: credential storage | Operator-provisioned secret references resolved only by delivery infrastructure | Administrator-managed encrypted credentials, with explicit key ownership and rotation |
 
-**INCOMPLETE:** Approve PRD D1–D8, prove Apalis/MariaDB compatibility, and review API and storage contracts before implementation. The product owner approves behavior; engineering verifies compatibility and capacity; security reviews credentials and external data sharing.
+**INCOMPLETE:** Approve PRD D3–D8, prove Apalis/MariaDB compatibility, and review API and storage contracts before implementation. The product owner selects the first provider set and remaining behavior; engineering verifies compatibility and capacity; security reviews credentials and external data sharing.
 
 Use the current [PRD decision register](./PRD.md#11-assumptions) and update this proposal after approval. Backend workarounds, worker placement and schema/versioning choices also need approval before implementation. No extra transport abstraction, general scheduler or workflow engine is authorized.
 
