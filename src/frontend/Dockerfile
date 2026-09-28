@@ -28,7 +28,7 @@ FROM nginxinc/nginx-unprivileged:1.31-alpine@sha256:19c132c9ab02d3b783f478743daf
 # before the runtime stage.
 USER root
 
-RUN apk upgrade --no-cache libcrypto3 libssl3
+RUN apk upgrade --no-cache
 
 COPY --from=builder /app/dist /usr/share/nginx/html
 COPY docker-entrypoint.sh /docker-entrypoint.sh
