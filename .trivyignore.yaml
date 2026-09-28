@@ -16,3 +16,23 @@ misconfigurations:
       base image declares none either, so the instruction would report on a
       process that has already finished. Revisit if this connector is ever run as
       a service rather than as a command.
+
+vulnerabilities:
+  - id: CVE-2026-59890
+    paths:
+      - "src/ingestion/tests/connectors/uv.lock"
+      - "src/ingestion/connectors/ai/claude-team-invoices/uv.lock"
+      - "src/ingestion/connectors/crm/hubspot/uv.lock"
+      - "src/ingestion/connectors/hr-directory/active-directory/uv.lock"
+      - "src/ingestion/connectors/hr-directory/bamboohr/uv.lock"
+    statement: >-
+      Not reachable. The flaw is in setuptools' FileList applying MANIFEST.in
+      exclusions while building an sdist on macOS APFS/HFS+, where NFD-normalised
+      filenames escape the exclude patterns. These projects resolve setuptools only
+      as a build/runtime dependency of airbyte-cdk inside Linux containers and never
+      build an sdist, so the affected code path is never entered.
+
+      Not fixable in place either: airbyte-cdk declares setuptools<81.0.0 and the fix
+      landed in 83.0.0, so clearing it means overriding the CDK's own upper bound by
+      four majors — more breakage risk than the CVE carries. Revisit when airbyte-cdk
+      relaxes the cap, and drop this waiver then.
