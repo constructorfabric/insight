@@ -10,6 +10,7 @@ import {
   type Dashboard,
   type RunOptions,
 } from "@/api/custom-client";
+import { DashboardPageActions } from "@/components/custom/dashboard-page-actions";
 import { RangePicker } from "@/components/custom/range-picker";
 import { selectedRange } from "@/lib/custom/board-range";
 import { dashboardNameFromPath } from "@/lib/custom/dashboard-path";
@@ -118,13 +119,16 @@ function CustomDashboardBody({
     <>
       <header className="sticky -top-4 z-10 -mx-4 -mt-4 mb-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b bg-background px-4 pt-4 pb-3 pe-16 md:-top-6 md:-mx-6 md:-mt-6 md:px-6 md:pt-6 md:pe-18">
         <h1 className={cn(TEXT_TITLE, "shrink-0")}>{dashboard.title}</h1>
-        {offered && offered.length > 0 && range ? (
-          <RangePicker
-            offered={offered}
-            selected={range}
-            onSelect={onSelectRange}
-          />
-        ) : null}
+        <div className="flex flex-wrap items-center gap-2">
+          {offered && offered.length > 0 && range ? (
+            <RangePicker
+              offered={offered}
+              selected={range}
+              onSelect={onSelectRange}
+            />
+          ) : null}
+          <DashboardPageActions name={name} title={dashboard.title} />
+        </div>
       </header>
       {items.length === 0 ? (
         <ComingSoon

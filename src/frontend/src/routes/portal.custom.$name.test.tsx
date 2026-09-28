@@ -18,7 +18,7 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
 });
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -67,6 +67,27 @@ describe("/portal/custom/$name", () => {
       await screen.findByRole("cell", { name: "2026-09-01" })
     ).toBeInTheDocument();
     expect(await screen.findByRole("cell", { name: "59" })).toBeInTheDocument();
+  });
+
+  it("offers Edit and the ··· menu in the header", async () => {
+    vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+      body: { title: "Engineering", widgets: [] },
+      tags: [],
+    });
+    portalRouter.go("/portal/custom/engineering");
+
+    render(<Component />, { wrapper });
+
+    const header = (await screen.findByRole("heading", {
+      level: 1,
+      name: "Engineering",
+    })).closest("header") as HTMLElement;
+    expect(
+      within(header).getByRole("button", { name: "Edit engineering" })
+    ).toHaveAttribute("href", "/portal/custom/edit/dashboards/engineering");
+    expect(
+      within(header).getByRole("button", { name: "More for engineering" })
+    ).toBeInTheDocument();
   });
 
   it("draws items in order, with headings and prose between the widgets", async () => {
