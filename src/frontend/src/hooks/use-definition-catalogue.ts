@@ -17,12 +17,16 @@ const SEARCH_DEBOUNCE_MS = 400;
  */
 export function useDefinitionCatalogue(
   kind: EditableKind,
-  { folder, enabled = true }: { folder?: FolderFilter; enabled?: boolean } = {}
+  {
+    folder,
+    tags,
+    enabled = true,
+  }: { folder?: FolderFilter; tags?: string[]; enabled?: boolean } = {}
 ) {
   const [needle, setNeedle] = useState("");
   const searching = useDebouncedValue(needle, SEARCH_DEBOUNCE_MS).trim();
   const catalogue = useInfiniteQuery({
-    ...definitionPagesQuery(kind, searching, folder),
+    ...definitionPagesQuery(kind, searching, folder, tags),
     enabled,
   });
   const pages = catalogue.data?.pages;

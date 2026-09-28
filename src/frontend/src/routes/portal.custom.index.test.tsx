@@ -226,3 +226,176 @@ describe("/portal/custom in a folder", () => {
     );
   });
 });
+
+describe("/portal/custom filtered by tag", () => {
+  const TAGS = [
+    { name: "Ops", dashboards: 2 },
+    { name: "Platform", dashboards: 1 },
+  ];
+
+  beforeEach(() => {
+    vi.mocked(customClient.fetchTags).mockResolvedValue({ tags: TAGS });
+    vi.mocked(customClient.fetchDashboardRead).mockRejectedValue(
+      new Error("untitled")
+    );
+    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({
+      names: ["delivery"],
+      total: 1,
+    });
+  });
+
+  const askedFor = () =>
+    vi
+      .mocked(customClient.fetchDashboardNames)
+      .mock.calls.map(([page]) => ({ folder: page?.folder, tags: page?.tags }));
+
+  async function openFilter(name = "Tags") {
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name }));
+    await screen.findByRole("menu");
+    return user;
+  }
+
+  it("offers every tag beside the search, none of them picked", async () => {
+    render(<Component />, { wrapper });
+    await openFilter();
+
+    expect(
+      screen.getByRole("menuitemcheckbox", { name: "Ops" })
+    ).toHaveAttribute("aria-checked", "false");
+    expect(
+      screen.getByRole("menuitemcheckbox", { name: "Platform" })
+    ).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByText("Filter by tag")).toBeInTheDocument();
+  });
+
+  it("picks a tag into the URL and narrows the list to it", async () => {
+    render(<Component />, { wrapper });
+    const user = await openFilter();
+
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "Ops" }));
+
+    expect(portalRouter.search.tag).toEqual(["Ops"]);
+    expect(
+      await screen.findByRole("button", { name: "Tags · 1" })
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(askedFor()).toContainEqual({ folder: undefined, tags: ["Ops"] })
+    );
+  });
+
+  it("unpicks a tag and keeps the others", async () => {
+    portalRouter.set({ tag: ["Ops", "Platform"] });
+
+    render(<Component />, { wrapper });
+    const user = await openFilter("Tags · 2");
+    expect(
+      screen.getByRole("menuitemcheckbox", { name: "Ops" })
+    ).toHaveAttribute("aria-checked", "true");
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "Ops" }));
+
+    expect(portalRouter.search.tag).toEqual(["Platform"]);
+    expect(
+      await screen.findByRole("button", { name: "Tags · 1" })
+    ).toBeInTheDocument();
+  });
+
+  it("clears every pick, and offers no clearing while none is picked", async () => {
+    render(<Component />, { wrapper });
+    await openFilter();
+    expect(
+      screen.getByRole("menuitem", { name: "Clear filters" })
+    ).toHaveAttribute("aria-disabled", "true");
+    await userEvent.keyboard("{Escape}");
+
+    portalRouter.set({ tag: ["Ops"] });
+    const user = await openFilter("Tags · 1");
+    await user.click(screen.getByRole("menuitem", { name: "Clear filters" }));
+
+    expect(portalRouter.search.tag).toBeUndefined();
+    expect(
+      await screen.findByRole("button", { name: "Tags" })
+    ).toBeInTheDocument();
+  });
+
+  it("combines the picked tags with the folder", async () => {
+    vi.mocked(customClient.fetchFolders).mockResolvedValue({
+      folders: [{ id: "f1", name: "Platform", dashboards: 1 }],
+      unfiled: 0,
+    });
+    portalRouter.set({ folder: "f1", tag: ["Ops", "Platform"] });
+
+    render(<Component />, { wrapper });
+
+    await screen.findByRole("link", { name: "delivery" });
+    expect(askedFor()).toEqual([
+      { folder: "f1", tags: ["Ops", "Platform"] },
+    ]);
+  });
+
+  it("drops a tag that no longer exists from the request", async () => {
+    portalRouter.set({ tag: ["Ops", "Gone"] });
+
+    render(<Component />, { wrapper });
+
+    await screen.findByRole("link", { name: "delivery" });
+    expect(askedFor()).toEqual([{ folder: undefined, tags: ["Ops"] }]);
+    expect(screen.getByRole("button", { name: "Tags · 1" })).toBeInTheDocument();
+  });
+
+  it("asks for every dashboard when no named tag exists any more", async () => {
+    portalRouter.set({ tag: ["Gone"] });
+
+    render(<Component />, { wrapper });
+
+    await screen.findByRole("link", { name: "delivery" });
+    expect(askedFor()).toEqual([{ folder: undefined, tags: undefined }]);
+  });
+
+  it("asks for a tag under its stored spelling", async () => {
+    portalRouter.set({ tag: ["ops"] });
+
+    render(<Component />, { wrapper });
+
+    await screen.findByRole("link", { name: "delivery" });
+    expect(askedFor()).toEqual([{ folder: undefined, tags: ["Ops"] }]);
+  });
+
+  it("asks with the tags the link names when the tag list cannot be read", async () => {
+    vi.mocked(customClient.fetchTags).mockRejectedValue(new Error("down"));
+    portalRouter.set({ tag: ["Ops"] });
+
+    render(<Component />, { wrapper });
+
+    await screen.findByRole("link", { name: "delivery" });
+    expect(askedFor()).toEqual([{ folder: undefined, tags: ["Ops"] }]);
+  });
+
+  it("says when no dashboard has a tag yet", async () => {
+    vi.mocked(customClient.fetchTags).mockResolvedValue({ tags: [] });
+
+    render(<Component />, { wrapper });
+    await openFilter();
+
+    expect(
+      screen.getByRole("menuitem", { name: "No tags yet" })
+    ).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("says no dashboard carries the picked tags, and clears them", async () => {
+    vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({
+      names: [],
+      total: 0,
+    });
+    portalRouter.set({ tag: ["Ops"] });
+    const user = userEvent.setup();
+
+    render(<Component />, { wrapper });
+    expect(
+      await screen.findByText("No dashboard carries these tags.")
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Clear filters" }));
+
+    expect(portalRouter.search.tag).toBeUndefined();
+  });
+});

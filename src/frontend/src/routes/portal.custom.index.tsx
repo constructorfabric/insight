@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { LayoutDashboard } from "lucide-react";
+import type { ReactNode } from "react";
 
 import {
   DefinitionCount,
@@ -10,11 +11,16 @@ import {
 import { DefinitionSearch } from "@/components/custom/definition-search";
 import { EditLink, NewLink } from "@/components/custom/editor/edit-link";
 import { MoveToFolder } from "@/components/custom/move-to-folder";
+import {
+  NoTaggedDashboards,
+  TagFilter,
+} from "@/components/custom/tag-filter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { useDefinitionCatalogue } from "@/hooks/use-definition-catalogue";
+import { useTagPicks } from "@/hooks/use-tag-picks";
 import { usePortalSearch } from "@/lib/portal/portal-search";
 import { dashboardQuery, foldersQuery } from "@/queries/custom";
 import { TEXT_BODY, TEXT_LABEL, TEXT_NAME, TEXT_TITLE } from "@/lib/type-scale";
@@ -61,9 +67,11 @@ function useShownFolder(): Shown {
 
 function CustomDashboardIndex() {
   const shown = useShownFolder();
+  const tags = useTagPicks();
   const catalogue = useDefinitionCatalogue("dashboards", {
     folder: shown.folder,
-    enabled: !shown.pending,
+    tags: tags.picked,
+    enabled: !shown.pending && !tags.pending,
   });
 
   return (
@@ -92,6 +100,7 @@ function CustomDashboardIndex() {
           value={catalogue.search.value}
           onChange={catalogue.search.onChange}
         />
+        <TagFilter tags={tags.tags} picked={tags.picked} onPick={tags.pick} />
         <DefinitionCount
           total={catalogue.paging.total}
           noun="dashboards"
@@ -104,7 +113,17 @@ function CustomDashboardIndex() {
         isError={catalogue.isError}
         onRetry={catalogue.refetch}
         paging={catalogue.paging}
-        emptyLabel={emptyLabel(shown.folder)}
+        empty={
+          tags.picked.length > 0 ? (
+            <NoTaggedDashboards onClear={() => tags.pick([])} />
+          ) : (
+            <ComingSoon
+              variant="card"
+              state="empty"
+              label={emptyLabel(shown.folder)}
+            />
+          )
+        }
       />
     </>
   );
@@ -162,14 +181,14 @@ function CustomDashboardList({
   isError,
   onRetry,
   paging,
-  emptyLabel,
+  empty,
 }: {
   names: string[] | undefined;
   isLoading: boolean;
   isError: boolean;
   onRetry: () => void;
   paging: Paging;
-  emptyLabel: string;
+  empty: ReactNode;
 }) {
   if (isLoading) return <CenteredSpinner className="min-h-40" />;
   if (isError) {
@@ -185,9 +204,7 @@ function CustomDashboardList({
 
   if (!names) return null;
 
-  if (names.length === 0) {
-    return <ComingSoon variant="card" state="empty" label={emptyLabel} />;
-  }
+  if (names.length === 0) return empty;
 
   return (
     <>
