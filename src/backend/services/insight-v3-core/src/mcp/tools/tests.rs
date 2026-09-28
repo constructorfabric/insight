@@ -126,6 +126,7 @@ fn listing(kind: DefinitionKind) -> Parameters<KindRequest> {
         limit: None,
         offset: None,
         folder: None,
+        tags: None,
     })
 }
 
@@ -177,7 +178,7 @@ fn assert_accepted(result: &CallToolResult) -> Value {
 }
 
 #[test]
-fn the_server_announces_exactly_the_fifteen_custom_surface_tools() {
+fn the_server_announces_exactly_the_seventeen_custom_surface_tools() {
     let tools = CustomSurfaces::tool_router().list_all();
 
     let mut names: Vec<&str> = tools.iter().map(|tool| tool.name.as_ref()).collect();
@@ -195,12 +196,14 @@ fn the_server_announces_exactly_the_fifteen_custom_surface_tools() {
             "list_definitions",
             "list_folders",
             "list_tables",
+            "list_tags",
             "move_dashboard",
             "put_dashboard",
             "put_metric",
             "put_widget",
             "run_metric",
             "search_definitions",
+            "set_dashboard_tags",
         ]
     );
 }
@@ -530,6 +533,7 @@ async fn a_page_answers_its_own_slice_and_the_whole_count() {
                 limit: Some(2),
                 offset: None,
                 folder: None,
+                tags: None,
             }))
             .await,
     );
@@ -543,6 +547,7 @@ async fn a_page_answers_its_own_slice_and_the_whole_count() {
                 limit: Some(2),
                 offset: Some(2),
                 folder: None,
+                tags: None,
             }))
             .await,
     );
@@ -583,6 +588,7 @@ async fn a_page_beyond_the_cap_is_refused_rather_than_served() {
                 limit: Some(5_000),
                 offset: None,
                 folder: None,
+                tags: None,
             }))
             .await,
         "limit must be between 1 and 200",
@@ -816,6 +822,7 @@ fn listing_in(kind: DefinitionKind, folder: &str) -> Parameters<KindRequest> {
         limit: None,
         offset: None,
         folder: Some(folder.to_owned()),
+        tags: None,
     })
 }
 
@@ -1025,4 +1032,265 @@ fn a_move_without_its_folder_is_not_read() {
     let read = serde_json::from_value::<MoveRequest>(json!({ "dashboard": "delivery" }));
 
     assert!(read.is_err(), "{read:?}");
+}
+
+fn tagging(name: &str, tags: &[&str]) -> Parameters<TagsRequest> {
+    Parameters(TagsRequest {
+        name: name.to_owned(),
+        tags: tags.iter().map(|tag| (*tag).to_owned()).collect(),
+    })
+}
+
+fn listing_tagged(
+    kind: DefinitionKind,
+    folder: Option<&str>,
+    tags: &[&str],
+) -> Parameters<KindRequest> {
+    Parameters(KindRequest {
+        kind,
+        limit: None,
+        offset: None,
+        folder: folder.map(str::to_owned),
+        tags: Some(tags.iter().map(|tag| (*tag).to_owned()).collect()),
+    })
+}
+
+async fn tags_of(surfaces: &CustomSurfaces, dashboard: &str) -> Value {
+    let read = assert_accepted(
+        &surfaces
+            .get_definition(named(DefinitionKind::Dashboard, dashboard))
+            .await,
+    );
+
+    read["tags"].clone()
+}
+
+#[test]
+fn the_instructions_name_the_tag_tools() {
+    let info = rmcp::ServerHandler::get_info(&surfaces());
+
+    let Some(instructions) = info.instructions else {
+        panic!("the server carries instructions");
+    };
+    for tool in ["list_tags", "set_dashboard_tags"] {
+        assert!(instructions.contains(tool), "{tool}: {instructions}");
+    }
+}
+
+#[tokio::test]
+async fn a_dashboard_s_tags_are_set_and_listed_with_their_counts() {
+    let surfaces = surfaces();
+    board(&surfaces, "delivery").await;
+    board(&surfaces, "support").await;
+
+    let set = assert_accepted(
+        &surfaces
+            .set_dashboard_tags(tagging("delivery", &["Platform", "Delivery"]))
+            .await,
+    );
+    assert_accepted(
+        &surfaces
+            .set_dashboard_tags(tagging("support", &["platform"]))
+            .await,
+    );
+    let listed = assert_accepted(&surfaces.list_tags().await);
+
+    assert_eq!(
+        set,
+        json!({ "dashboard": "delivery", "tags": ["Delivery", "Platform"] })
+    );
+    assert_eq!(
+        listed,
+        json!({
+            "tags": [
+                { "name": "Delivery", "dashboards": 1 },
+                { "name": "Platform", "dashboards": 2 }
+            ]
+        })
+    );
+}
+
+#[tokio::test]
+async fn a_set_answers_the_stored_spelling_of_a_tag_that_exists() {
+    let surfaces = surfaces();
+    board(&surfaces, "delivery").await;
+    board(&surfaces, "support").await;
+    assert_accepted(
+        &surfaces
+            .set_dashboard_tags(tagging("delivery", &["Delivery"]))
+            .await,
+    );
+
+    let set = assert_accepted(
+        &surfaces
+            .set_dashboard_tags(tagging("support", &["DELIVERY"]))
+            .await,
+    );
+
+    assert_eq!(set["tags"], json!(["Delivery"]));
+}
+
+#[tokio::test]
+async fn a_dashboard_read_answers_its_body_folder_and_tags() {
+    let surfaces = surfaces();
+    board(&surfaces, "delivery").await;
+    assert_accepted(
+        &surfaces
+            .set_dashboard_tags(tagging("delivery", &["beta", "Alpha"]))
+            .await,
+    );
+
+    let read = assert_accepted(
+        &surfaces
+            .get_definition(named(DefinitionKind::Dashboard, "delivery"))
+            .await,
+    );
+
+    assert_eq!(
+        read,
+        json!({
+            "body": { "title": "delivery", "widgets": [] },
+            "folder": null,
+            "tags": ["Alpha", "beta"]
+        })
+    );
+}
+
+#[tokio::test]
+async fn rewriting_a_tagged_dashboard_keeps_its_tags() {
+    let surfaces = surfaces();
+    board(&surfaces, "delivery").await;
+    assert_accepted(
+        &surfaces
+            .set_dashboard_tags(tagging("delivery", &["Delivery"]))
+            .await,
+    );
+
+    board(&surfaces, "delivery").await;
+
+    assert_eq!(tags_of(&surfaces, "delivery").await, json!(["Delivery"]));
+}
+
+#[tokio::test]
+async fn an_empty_set_clears_and_the_tag_goes() {
+    let surfaces = surfaces();
+    board(&surfaces, "delivery").await;
+    assert_accepted(
+        &surfaces
+            .set_dashboard_tags(tagging("delivery", &["Delivery"]))
+            .await,
+    );
+
+    assert_accepted(&surfaces.set_dashboard_tags(tagging("delivery", &[])).await);
+
+    assert_eq!(tags_of(&surfaces, "delivery").await, json!([]));
+    assert_eq!(
+        assert_accepted(&surfaces.list_tags().await),
+        json!({ "tags": [] })
+    );
+}
+
+#[tokio::test]
+async fn a_set_the_rules_refuse_says_why() {
+    let surfaces = surfaces();
+    board(&surfaces, "delivery").await;
+    let eleven: Vec<String> = (0..11).map(|index| format!("t{index}")).collect();
+    let eleven: Vec<&str> = eleven.iter().map(String::as_str).collect();
+
+    let blank = surfaces
+        .set_dashboard_tags(tagging("delivery", &["  "]))
+        .await;
+    let crowded = surfaces
+        .set_dashboard_tags(tagging("delivery", &eleven))
+        .await;
+    let nowhere = surfaces
+        .set_dashboard_tags(tagging("nowhere", &["Delivery"]))
+        .await;
+
+    assert_refused(&blank, "1 to 32 characters");
+    assert_refused(&crowded, "at most 10 tags");
+    assert_refused(&nowhere, "no dashboard is named `nowhere`");
+}
+
+#[tokio::test]
+async fn a_set_past_the_cap_is_refused_and_says_why() {
+    let surfaces = surfaces();
+    for index in 0..crate::domain::tags::MAX_TAGS / 10 {
+        let name = format!("b{index}");
+        board(&surfaces, &name).await;
+        let full: Vec<String> = (0..10).map(|tag| format!("t{index}_{tag}")).collect();
+        let full: Vec<&str> = full.iter().map(String::as_str).collect();
+        assert_accepted(&surfaces.set_dashboard_tags(tagging(&name, &full)).await);
+    }
+    board(&surfaces, "last").await;
+
+    let refused = surfaces
+        .set_dashboard_tags(tagging("last", &["one more"]))
+        .await;
+
+    assert_refused(&refused, "200 tags");
+}
+
+#[tokio::test]
+async fn a_dashboard_listing_narrows_to_any_of_the_tags_inside_a_folder() {
+    let surfaces = surfaces();
+    let id = made_folder(&surfaces, "Platform").await;
+    for (name, tags) in [
+        ("delivery", &["Alpha"][..]),
+        ("delivery_ai", &["Alpha", "Beta"][..]),
+        ("hiring", &["Beta"][..]),
+        ("support", &["Gamma"][..]),
+    ] {
+        board(&surfaces, name).await;
+        assert_accepted(&surfaces.set_dashboard_tags(tagging(name, tags)).await);
+    }
+    assert_accepted(&surfaces.move_dashboard(moving("delivery", Some(&id))).await);
+
+    let everywhere = assert_accepted(
+        &surfaces
+            .list_definitions(listing_tagged(
+                DefinitionKind::Dashboard,
+                None,
+                &["alpha", "BETA"],
+            ))
+            .await,
+    );
+    let filed = assert_accepted(
+        &surfaces
+            .list_definitions(listing_tagged(
+                DefinitionKind::Dashboard,
+                Some(&id),
+                &["alpha", "beta"],
+            ))
+            .await,
+    );
+
+    assert_eq!(
+        everywhere["names"],
+        json!(["delivery", "delivery_ai", "hiring"])
+    );
+    assert_eq!(everywhere["total"], 3);
+    assert_eq!(filed["names"], json!(["delivery"]));
+}
+
+#[tokio::test]
+async fn only_dashboards_are_listed_by_tag() {
+    let listed = surfaces()
+        .list_definitions(listing_tagged(DefinitionKind::Metric, None, &["Alpha"]))
+        .await;
+
+    assert_refused(&listed, "metrics are not tagged");
+}
+
+#[test]
+fn a_set_names_its_dashboard_and_its_tags() {
+    let tools = CustomSurfaces::tool_router().list_all();
+    let Some(tool) = tools.iter().find(|tool| tool.name == "set_dashboard_tags") else {
+        panic!("set_dashboard_tags is announced");
+    };
+
+    let schema = Value::Object((*tool.input_schema).clone());
+
+    assert_eq!(schema["required"], json!(["name", "tags"]), "{schema}");
+    assert!(schema["properties"]["tags"]["description"].is_string());
 }

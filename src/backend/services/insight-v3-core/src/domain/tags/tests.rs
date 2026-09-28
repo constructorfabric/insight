@@ -138,3 +138,23 @@ fn a_filter_names_no_more_tags_than_can_exist() {
         Err(TagError::FilterTooWide)
     ));
 }
+
+#[test]
+fn only_a_store_failure_is_not_the_caller_s_to_act_on() {
+    let refusals = [
+        TagError::Name,
+        TagError::TooManyOnDashboard,
+        TagError::FilterTooWide,
+        TagError::NotTagged("metrics"),
+        TagError::DashboardNotFound("delivery".to_owned()),
+        TagError::TooMany,
+    ];
+    let down = TagError::Store(DefinitionStoreError::Database(sea_orm::DbErr::Custom(
+        "down".to_owned(),
+    )));
+
+    for refusal in &refusals {
+        assert!(refusal.is_about_the_caller(), "{refusal}");
+    }
+    assert!(!down.is_about_the_caller());
+}

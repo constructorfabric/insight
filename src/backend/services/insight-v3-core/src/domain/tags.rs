@@ -111,6 +111,12 @@ pub(crate) enum TagError {
     Store(#[from] DefinitionStoreError),
 }
 
+impl TagError {
+    pub(crate) fn is_about_the_caller(&self) -> bool {
+        !matches!(self, Self::Store(_))
+    }
+}
+
 impl From<sea_orm::DbErr> for TagError {
     fn from(error: sea_orm::DbErr) -> Self {
         Self::Store(DefinitionStoreError::Database(error))
