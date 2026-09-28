@@ -1,6 +1,19 @@
-import { Ellipsis, Pin, PinOff, Tags } from "lucide-react";
+import {
+  Copy,
+  Ellipsis,
+  Pin,
+  PinOff,
+  Tags,
+  TextCursorInput,
+  Trash2,
+} from "lucide-react";
 import { useState } from "react";
 
+import {
+  DeleteDashboard,
+  DuplicateDashboard,
+  RenameDashboard,
+} from "@/components/custom/dashboard-dialogs";
 import { EditTags } from "@/components/custom/edit-tags";
 import {
   MoveToFolderItems,
@@ -16,11 +29,28 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { usePinToggle } from "@/hooks/use-pin-toggle";
 
-export function DashboardMenu({ name }: { name: string }) {
+type Asked = "rename" | "duplicate" | "delete" | "folder" | "tags";
+
+export function DashboardMenu({
+  name,
+  title,
+  filing = true,
+  onRenamed,
+  onDuplicated,
+  onDeleted,
+}: {
+  name: string;
+  title?: string;
+  filing?: boolean;
+  onRenamed?: (to: string) => void;
+  onDuplicated?: (to: string) => void;
+  onDeleted?: () => void;
+}) {
   const [open, setOpen] = useState(false);
-  const [naming, setNaming] = useState(false);
-  const [tagging, setTagging] = useState(false);
+  const [asked, setAsked] = useState<Asked | null>(null);
   const pin = usePinToggle(name, open);
+
+  const done = () => setAsked(null);
 
   return (
     <>
@@ -42,25 +72,68 @@ export function DashboardMenu({ name }: { name: string }) {
             {pin.pinned ? <PinOff /> : <Pin />}
             {pin.pinned ? "Unpin" : "Pin"}
           </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => setAsked("rename")}>
+            <TextCursorInput />
+            Rename…
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => setAsked("duplicate")}>
+            <Copy />
+            Duplicate…
+          </DropdownMenuItem>
           <DropdownMenuSeparator />
-          <MoveToFolderItems
-            name={name}
-            open={open}
-            onNewFolder={() => setNaming(true)}
-          />
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={() => setTagging(true)}>
-            <Tags />
-            Edit tags…
+          {filing ? (
+            <>
+              <MoveToFolderItems
+                name={name}
+                open={open}
+                onNewFolder={() => setAsked("folder")}
+              />
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => setAsked("tags")}>
+                <Tags />
+                Edit tags…
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+            </>
+          ) : null}
+          <DropdownMenuItem
+            variant="destructive"
+            onClick={() => setAsked("delete")}
+          >
+            <Trash2 />
+            Delete…
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-      <NewFolderAndMove
+      <RenameDashboard
         name={name}
-        open={naming}
-        onClose={() => setNaming(false)}
+        open={asked === "rename"}
+        onClose={done}
+        onRenamed={onRenamed}
       />
-      <EditTags name={name} open={tagging} onClose={() => setTagging(false)} />
+      <DuplicateDashboard
+        name={name}
+        open={asked === "duplicate"}
+        onClose={done}
+        onDuplicated={onDuplicated}
+      />
+      <DeleteDashboard
+        name={name}
+        title={title || name}
+        open={asked === "delete"}
+        onClose={done}
+        onDeleted={onDeleted}
+      />
+      {filing ? (
+        <>
+          <NewFolderAndMove
+            name={name}
+            open={asked === "folder"}
+            onClose={done}
+          />
+          <EditTags name={name} open={asked === "tags"} onClose={done} />
+        </>
+      ) : null}
     </>
   );
 }

@@ -54,7 +54,7 @@ export function DashboardCard({ name }: { name: string }) {
             >
               <ChevronRight className="size-4" aria-hidden />
             </Link>
-            <DashboardMenu name={name} />
+            <DashboardMenu name={name} title={data?.title} />
           </span>
         </div>
         <DashboardTags tags={tags.data ?? []} className="ps-7" />
