@@ -1,21 +1,17 @@
 import { useQuery } from "@tanstack/react-query";
-import { Ellipsis, FolderPlus } from "lucide-react";
+import { FolderPlus } from "lucide-react";
 import { useState } from "react";
 
 import { FOLDER_NAME_MAX, type Folder } from "@/api/custom-client";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { refusal } from "@/components/custom/refusal";
-import { Button } from "@/components/ui/button";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
-  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { toast } from "@/components/ui/sonner";
@@ -28,9 +24,15 @@ import {
 
 const UNFILED = "unfiled";
 
-export function MoveToFolder({ name }: { name: string }) {
-  const [open, setOpen] = useState(false);
-  const [naming, setNaming] = useState(false);
+export function MoveToFolderItems({
+  name,
+  open,
+  onNewFolder,
+}: {
+  name: string;
+  open: boolean;
+  onNewFolder: () => void;
+}) {
   const folders = useQuery({ ...foldersQuery(), enabled: open });
   const current = useQuery({ ...dashboardFolderQuery(name), enabled: open });
   const move = useMoveDashboard();
@@ -39,67 +41,46 @@ export function MoveToFolder({ name }: { name: string }) {
 
   return (
     <>
-      <DropdownMenu open={open} onOpenChange={setOpen}>
-        <DropdownMenuTrigger
-          render={
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              className="text-muted-foreground"
-              aria-label={`More for ${name}`}
-              icon={<Ellipsis />}
-            />
-          }
-        />
-        <DropdownMenuContent align="end" className="w-56">
-          <DropdownMenuGroup>
-            <DropdownMenuLabel>Move to folder</DropdownMenuLabel>
-            <DropdownMenuRadioGroup
-              value={filed}
-              onValueChange={(value: string) =>
-                move.mutate(
-                  { name, folder: value === UNFILED ? null : value },
-                  {
-                    onError: (error) =>
-                      toast.error(
-                        refusal(error, "The dashboard could not be moved.")
-                      ),
-                  }
-                )
+      <DropdownMenuGroup>
+        <DropdownMenuLabel>Move to folder</DropdownMenuLabel>
+        <DropdownMenuRadioGroup
+          value={filed}
+          onValueChange={(value: string) =>
+            move.mutate(
+              { name, folder: value === UNFILED ? null : value },
+              {
+                onError: (error) =>
+                  toast.error(
+                    refusal(error, "The dashboard could not be moved.")
+                  ),
               }
+            )
+          }
+        >
+          {folders.data?.folders.map((folder) => (
+            <DropdownMenuRadioItem
+              key={folder.id}
+              value={folder.id}
+              closeOnClick
             >
-              {folders.data?.folders.map((folder) => (
-                <DropdownMenuRadioItem
-                  key={folder.id}
-                  value={folder.id}
-                  closeOnClick
-                >
-                  {folder.name}
-                </DropdownMenuRadioItem>
-              ))}
-              <DropdownMenuRadioItem value={UNFILED} closeOnClick>
-                Unfiled
-              </DropdownMenuRadioItem>
-            </DropdownMenuRadioGroup>
-          </DropdownMenuGroup>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={() => setNaming(true)}>
-            <FolderPlus />
-            New folder…
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-      <NewFolderAndMove
-        name={name}
-        open={naming}
-        onClose={() => setNaming(false)}
-      />
+              {folder.name}
+            </DropdownMenuRadioItem>
+          ))}
+          <DropdownMenuRadioItem value={UNFILED} closeOnClick>
+            Unfiled
+          </DropdownMenuRadioItem>
+        </DropdownMenuRadioGroup>
+      </DropdownMenuGroup>
+      <DropdownMenuSeparator />
+      <DropdownMenuItem onClick={onNewFolder}>
+        <FolderPlus />
+        New folder…
+      </DropdownMenuItem>
     </>
   );
 }
 
-function NewFolderAndMove({
+export function NewFolderAndMove({
   name,
   open,
   onClose,

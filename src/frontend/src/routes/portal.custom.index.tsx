@@ -8,10 +8,10 @@ import {
   MoreDefinitions,
   type Paging,
 } from "@/components/custom/definition-paging";
+import { DashboardMenu } from "@/components/custom/dashboard-menu";
 import { DashboardTags } from "@/components/custom/dashboard-tags";
 import { DefinitionSearch } from "@/components/custom/definition-search";
 import { EditLink, NewLink } from "@/components/custom/editor/edit-link";
-import { MoveToFolder } from "@/components/custom/move-to-folder";
 import { NoTaggedDashboards, TagFilter } from "@/components/custom/tag-filter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -161,7 +161,7 @@ function DashboardCard({ name }: { name: string }) {
             </span>
           </Link>
           <span className="flex shrink-0 items-center gap-1">
-            <MoveToFolder name={name} />
+            <DashboardMenu name={name} />
             <EditLink kind="dashboards" name={name} />
             <Button
               variant="ghost"
