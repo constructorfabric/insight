@@ -70,6 +70,7 @@ export interface PortalSearch {
    */
   range?: string;
   folder?: string;
+  tag?: string[];
   /** Period preset. A custom range rides in `from`/`to` beside it. */
   period?: PeriodValue;
   from?: string;
@@ -84,6 +85,18 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 function str(v: unknown): string | undefined {
   return typeof v === "string" && v !== "" ? v : undefined;
+}
+
+function scalar(v: unknown): string | undefined {
+  return typeof v === "number" || typeof v === "boolean" ? String(v) : str(v);
+}
+
+function strs(v: unknown): string[] | undefined {
+  const values = (Array.isArray(v) ? v : [v])
+    .map(scalar)
+    .filter((value) => value !== undefined);
+
+  return values.length > 0 ? values : undefined;
 }
 
 /**
@@ -135,6 +148,7 @@ export function validatePortalSearch(raw: Record<string, unknown>): PortalSearch
     // degrades to the board's default.
     range: isRangeToken(str(raw.range) ?? "") ? str(raw.range) : undefined,
     folder: str(raw.folder),
+    tag: strs(raw.tag),
     period: period && PERIODS.has(period) ? (period as PeriodValue) : undefined,
     ...(custom ? { from, to } : {}),
   };
