@@ -1,11 +1,14 @@
 ---
 status: draft
-version: "0.1"
+version: "0.2"
 date: 2026-09-28
 ---
 
 # PRD — Insight v3 Metric Alerts
 
+**Status:** Scope approved; proposed behavior still needs approval. No implementation is authorized.
+
+**Revision 0.2:** Readability edits only; requirements and decisions unchanged.
 
 <!-- toc -->
 
@@ -40,37 +43,36 @@ date: 2026-09-28
 
 <!-- /toc -->
 
-**Approval status:** Scope is confirmed; behavior marked **proposed** awaits product-owner approval. This draft is not implementation authorization. Version 0.1 introduces the alert requirements.
 ## 1. Overview
 
 ### 1.1 Purpose
 
-Notify a configured Discord destination when an Insight v3 custom metric breaches an administrator-defined threshold. Administrators manage alerts through the API and Model Context Protocol (MCP), without needing a dashboard open.
+Send a Discord message when an Insight v3 custom metric meets a threshold condition. Administrators configure alerts through the API or Model Context Protocol (MCP). Alerts run without a dashboard open.
 
-This refines [the parent alert capability](../PRD.md#58-alerts), `cpt-insightspec-v3-fr-create-alerts`. Creating a rule takes effect without a service release; scheduled evaluation is not a promise of streaming or instantaneous detection.
+This expands [the parent alert requirement](../PRD.md#58-alerts), `cpt-insightspec-v3-fr-create-alerts`. Rules take effect without a service release. Checks run on a schedule, so detection is not instantaneous.
 
 ### 1.2 Background / Problem Statement
 
-Custom metrics can be run on demand, but threshold monitoring needs unattended evaluation and visible delivery outcomes. A successful metric check and a successful notification are different outcomes; administrators need to distinguish them.
+On-demand metrics need someone to run them. Alerts check metrics automatically and show whether each check and message delivery succeeded.
 
 ### 1.3 Goals (Business Outcomes)
 
-- Configure and inspect an alert entirely through either approved administration surface.
-- Detect a qualifying breach without an interactive request and explain which value caused it.
-- Preserve pending work across process restart and expose failures without claiming delivery that was not confirmed.
+- Configure and inspect alerts through either API or MCP.
+- Detect breaches automatically and show the value that triggered them.
+- Keep pending work through restarts and show failures. Report delivery only when confirmed.
 
-These outcomes are evaluated before release using synthetic metrics. Quantitative capacity and timeliness targets remain an explicit approval item in section 11; no measured baseline is claimed.
+Verify these goals with synthetic metrics before release. Capacity and timing targets remain open in D7.
 
 ### 1.4 Glossary
 
 | Term | Definition |
 |------|------------|
-| Rule | A metric reference, scalar selection, threshold condition, evaluation schedule and destination |
-| Evaluation | One execution of a rule against its referenced custom metric |
+| Rule | A metric, selected numeric value, threshold condition, schedule and destination |
+| Evaluation | One metric check for a rule |
 | Breach | A valid numeric result satisfying the configured condition |
 | Episode | Consecutive valid breached results, ending when a valid result no longer breaches |
-| Notification | A recorded intent to tell Discord about an episode; delivery has its own outcome |
-| Unknown | Evaluation could not establish a valid breached or non-breached result |
+| Notification | A saved request to send a message; delivery is tracked separately |
+| Unknown | A check could not determine whether the condition was met |
 
 ## 2. Actors
 
@@ -80,14 +82,16 @@ These outcomes are evaluated before release using synthetic metrics. Quantitativ
 
 **ID**: `cpt-insightspec-v3-alerts-actor-admin`
 
-**Role**: An authenticated Insight v3 administrator creates, changes, enables, disables and inspects alert rules and destination metadata through API or MCP.
-**Needs**: Clear validation, an explainable latest result, and delivery diagnostics without exposing credentials.
+**Role**: Manages rules and inspects destination details through API or MCP. Must be an authenticated Insight v3 administrator.
+
+**Needs**: Clear validation, understandable results and delivery errors, with credentials hidden.
 
 #### Discord Recipient
 
 **ID**: `cpt-insightspec-v3-alerts-actor-recipient`
 
 **Role**: Reads messages in a Discord destination configured by an administrator. Channel membership is managed outside Insight.
+
 **Needs**: Metric identity, observed value, condition and evaluation time, without unrelated result rows.
 
 ### 2.2 System Actors
@@ -102,23 +106,25 @@ These outcomes are evaluated before release using synthetic metrics. Quantitativ
 
 ### 3.1 Module-Specific Environment Constraints
 
-The feature is limited to the Insight v3 service and its custom metrics. Scheduling and delivery must operate without an active API client. The approved job-library constraint is recorded in [DESIGN](./DESIGN.md); backend compatibility is not yet verified.
+Checks and delivery run without an active API client. [DESIGN](./DESIGN.md) records the approved job library and pending database compatibility checks.
 
 ## 4. Scope
 
 ### 4.1 In Scope
 
-**Confirmed:** administrator API and MCP, one numeric result per alert, threshold monitoring, and Discord as the only initial destination provider.
+**Approved:** Insight v3 custom metrics; administrator API and MCP; one numeric result per alert; threshold checks; Discord only.
 
-**Proposed:** per-rule intervals, first-valid-breach notification, one notification per episode, independent delivery retries, and inspectable evaluation/delivery history. Section 11 distinguishes these proposals from confirmed scope.
+**Proposed:** per-rule intervals; notify on the first valid breach, once per episode; retry delivery separately; show check and delivery history. See section 11 for open decisions.
 
 ### 4.2 Out of Scope
 
-A web administration UI, legacy analytics alerts, per-group fan-out, Telegram and Zulip adapters, and Temporal are excluded from this release. This feature does not define a general workflow platform. Reminder and recovery messages, cron schedules, historical catch-up, and additional Discord channel types remain scope decisions rather than implicit commitments.
+Excluded: web administration UI, legacy analytics alerts, separate alerts per result group, Telegram, Zulip, Temporal and a general workflow platform.
+
+Still undecided: reminder/recovery messages, cron schedules, replaying missed checks and additional Discord channel types.
 
 ## 5. Functional Requirements
 
-Except for confirmed scope, the following requirements specify the **proposed baseline** for review.
+These requirements describe the **proposed behavior**. Only scope is approved.
 
 ### 5.1 Rule Administration
 
@@ -126,7 +132,9 @@ Except for confirmed scope, the following requirements specify the **proposed ba
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-fr-manage`
 
-The system **MUST** let administrators create, read, list, update, enable and disable rules through API and MCP with equivalent validation. A rule identifies one existing custom metric, one numeric result selection, a threshold condition, a schedule and one destination. Conflicting changes must be reported rather than silently overwriting another change. Removal and associated history retention are unresolved in decision D6.
+The system **MUST** let administrators create, read, list, update, enable and disable rules through API and MCP, using the same validation.
+
+Each rule selects one existing custom metric, one numeric value, a threshold condition, a schedule and one destination. Report conflicting edits instead of overwriting them. Deletion and history retention remain open in D6.
 
 **Actors**: `cpt-insightspec-v3-alerts-actor-admin`
 
@@ -134,7 +142,7 @@ The system **MUST** let administrators create, read, list, update, enable and di
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-fr-authorize`
 
-Only authenticated administrators **MUST** be permitted to manage rules and destinations or inspect their results and delivery history. Non-administrators and unauthenticated callers must be denied those operations on both API and MCP. A background worker's authority must not depend on retaining a user's login session.
+The system **MUST** restrict rule and destination management, results and delivery history to authenticated administrators on both API and MCP. Workers must not depend on a user's login session.
 
 **Actors**: `cpt-insightspec-v3-alerts-actor-admin`
 
@@ -144,7 +152,9 @@ Only authenticated administrators **MUST** be permitted to manage rules and dest
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-fr-evaluate`
 
-The system **MUST** evaluate the same saved custom-metric definition used by on-demand execution and compare one unambiguous numeric result with the configured threshold. It must not silently pick a row or aggregate grouped results. Empty, null, nonnumeric, nonfinite, ambiguous and failed results must be distinguishable from a valid non-breach. Numeric representation, operators and freshness policy await D4 and D5.
+The system **MUST** run the same saved metric definition as an on-demand check and compare one numeric result with the threshold. It must not silently choose a row or combine grouped results.
+
+Empty, null, nonnumeric, nonfinite, ambiguous and failed results are not valid non-breaches. Numeric precision, comparison operators and data freshness remain open in D4–D5.
 
 **Actors**: `cpt-insightspec-v3-alerts-actor-admin`
 
@@ -152,7 +162,7 @@ The system **MUST** evaluate the same saved custom-metric definition used by on-
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-fr-schedule`
 
-The system **MUST** evaluate enabled rules without an interactive client and resume eligible work after restart. Proposed D2: run on a per-rule interval and coalesce missed checks into one current evaluation. Evaluation cadence does not change the metric's own data window or establish source-data freshness.
+The system **MUST** check enabled rules automatically and resume pending work after restart. D2 proposes one interval per rule and one current check after missed intervals. The interval changes neither the metric's data window nor how fresh its source data is.
 
 **Actors**: `cpt-insightspec-v3-alerts-actor-admin`
 
@@ -160,7 +170,14 @@ The system **MUST** evaluate enabled rules without an interactive client and res
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-fr-episodes`
 
-Under proposed D1, the system **MUST** create one notification when the first valid result breaches, suppress further notifications while that episode remains breached, and allow another notification after a valid non-breach. Unknown results must not be represented as recovery. Rule or metric edits and disable/re-enable behavior require D6 before implementation.
+Under proposed D1, the system **MUST**:
+
+- Notify on the first valid breached result.
+- Suppress further notifications until a valid result no longer breaches.
+- Allow a new notification when the condition is met again.
+- Never treat an unknown result as recovery.
+
+D6 covers edits and disabling/re-enabling a rule.
 
 **Actors**: `cpt-insightspec-v3-alerts-actor-recipient`
 
@@ -168,7 +185,9 @@ Under proposed D1, the system **MUST** create one notification when the first va
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-fr-deliver`
 
-The system **MUST** send a qualifying notification to its configured Discord destination, including rule and metric identity, value, condition and evaluation time. Temporary delivery failures must not rerun the metric or create a new episode. Exhausted or permanent failures must remain inspectable. An uncertain external outcome must not be represented as confirmed delivery; retries may produce duplicate Discord messages.
+The system **MUST** send the rule, metric, value, condition and check time to the configured Discord destination.
+
+Retry delivery without rerunning the metric or creating another episode. Show permanent failures and exhausted retries. Never report an uncertain outcome as confirmed delivery; retries may duplicate Discord messages.
 
 **Actors**: `cpt-insightspec-v3-alerts-actor-discord`, `cpt-insightspec-v3-alerts-actor-recipient`
 
@@ -176,7 +195,7 @@ The system **MUST** send a qualifying notification to its configured Discord des
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-fr-inspect`
 
-The system **MUST** expose configuration status, latest evaluation time and outcome, latest valid value, and notification delivery status separately. Administrators must be able to distinguish an invalid metric, delayed work and failed delivery. Audit records must identify configuration changes and the configuration used for a notification without exposing destination secrets.
+The system **MUST** show rule status, latest check time and outcome, latest valid value, and delivery status separately. Distinguish invalid metrics, delayed work and failed delivery. Audit records must identify configuration changes and the configuration behind each notification, without exposing secrets.
 
 **Actors**: `cpt-insightspec-v3-alerts-actor-admin`
 
@@ -199,30 +218,44 @@ The system **MUST** expose configuration status, latest evaluation time and outc
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-nfr-durability`
 
 The system **MUST** preserve committed notification intent and prevent duplicate logical episodes under restart, retry and concurrent workers.
-**Threshold**: zero lost committed intents from process interruption; no external exactly-once guarantee. Database-loss recovery objectives and delivery retry horizon await D7.
-**Rationale**: Reliability must cover interrupted work, not just successful requests.
+
+**Threshold**: process interruption loses no saved notifications. Discord messages may still duplicate. Database recovery targets and how long to retry remain open in D7.
+
+**Rationale**: Restarting a worker must not lose an alert.
 
 #### Timeliness and Capacity
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-nfr-timeliness`
 
 The system **MUST** report scheduling and delivery delay separately and enforce explicit capacity limits.
+
 **Threshold**: minimum interval, maximum rule count, concurrency, backlog, history retention, and p95 due-to-evaluation/delivery targets require product-owner and engineering approval in D7. No new numerical SLA is approved.
-**Rationale**: An overloaded monitor must remain diagnosable and must not starve interactive metric use.
+
+**Rationale**: Show overload and protect on-demand metric checks.
 
 #### Confidentiality
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-nfr-confidentiality`
 
 The system **MUST** keep destination credentials out of normal API/MCP reads, notifications, queued payloads and diagnostics. Notifications must contain only the approved minimal metric summary, not complete query results.
+
 **Threshold**: zero credential disclosure in those surfaces; destination provisioning and allowed notification content require D3 and D8.
+
 **Rationale**: Alerts cross an external data boundary.
 
 #### Parent Obligations
 
 **Inherits**: `cpt-insightspec-v3-nfr-efficiency`, `cpt-insightspec-v3-nfr-reliability`, `cpt-insightspec-v3-nfr-performance`, `cpt-insightspec-v3-nfr-security`, `cpt-insightspec-v3-nfr-versatility`.
 
-The parent targets remain unchanged: no increase to its recommended footprint; service uptime at least 99.9%; dashboard p95 below 2 seconds and LCP p95 at most 2,500 milliseconds; zero critical scan findings; creating an alert without code changes. Dashboard targets are coexistence obligations, not alert-delivery SLAs. Engineering owns synthetic before/after measurements and security evidence; none has been collected for this feature.
+Parent targets remain unchanged:
+
+- No increase to the recommended resource footprint.
+- Service uptime at least 99.9%.
+- Dashboard p95 below 2 seconds; LCP p95 at most 2,500 milliseconds.
+- Zero critical scan findings.
+- New alerts require no code changes.
+
+Dashboard targets still apply while alerts run; they are not delivery deadlines. Engineering must collect synthetic before/after measurements and security evidence. That evidence is pending.
 
 ### 6.3 NFR Exclusions
 
@@ -235,8 +268,11 @@ No parent NFR is excluded. A new visual UI and its browser accessibility measure
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-interface-administration`
 
 **Type**: Administrator API and MCP tools.
+
 **Stability**: Proposed, unreleased.
-**Description**: Rule lifecycle, destination metadata and outcome inspection; both surfaces must expose equivalent authority and domain behavior.
+
+**Description**: Manage rules and inspect destinations and outcomes. API and MCP use the same permissions and behavior.
+
 **Breaking Change Policy**: Contract versioning follows the service policy; exact routes and tool names require design approval before publication.
 
 ### 7.2 External Integration Contracts
@@ -244,7 +280,9 @@ No parent NFR is excluded. A new visual UI and its browser accessibility measure
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-contract-discord`
 
 **Direction**: Outbound notification with acceptance/failure response.
+
 **Protocol/Format**: Discord-supported HTTP integration and message payload.
+
 **Compatibility**: Provider rate limits and payload constraints apply; delivery transport is pending D3. Insight does not control channel membership or Discord retention.
 
 ## 8. Use Cases
@@ -254,9 +292,17 @@ No parent NFR is excluded. A new visual UI and its browser accessibility measure
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-usecase-monitor`
 
 **Actor**: `cpt-insightspec-v3-alerts-actor-admin`
+
 **Preconditions**: A custom metric and permitted destination exist.
-**Main Flow**: The administrator creates and enables a rule, inspects its evaluation outcome, and receives a Discord notification when the approved breach policy qualifies.
+
+**Main Flow**:
+
+1. Create and enable a rule.
+2. Inspect its check result.
+3. Receive a Discord message when the approved breach policy calls for one.
+
 **Postconditions**: The evaluation and delivery outcome can be inspected independently.
+
 **Alternative Flows**: Invalid scalar output is reported as unknown; Discord failure leaves a visible delivery outcome; disabling or editing follows D6.
 
 ## 9. Acceptance Criteria
@@ -282,18 +328,16 @@ All evidence is pending. Engineering verifies these against synthetic inputs aft
 
 ## 11. Assumptions
 
-Confirmed scope does not resolve the choices below. The product owner owns approval, with engineering and security input where indicated; all are required before the dependent implementation. Recommendations are drafts, not defaults.
+The product owner must approve these choices before dependent implementation starts, with engineering and security input where needed. Recommendations are not defaults.
 
-| Decision | Recommended proposal | Alternative requiring a choice |
-|----------|----------------------|-------------------------------|
-| D1: firing | First valid breach fires; once per episode; no reminders or recovery messages | Recovery messages, reminders, or baseline-only first observation |
-| D2: schedule | Per-rule intervals; one current check after missed intervals | Cron schedules or historical catch-up |
-| D3: Discord delivery | Discord is the only initial provider; the technical integration proposal is recorded in DESIGN | Implementation approach requires design approval |
-| D4: numeric contract | One selected numeric column in exactly one row; comparisons `>`, `>=`, `<`, `<=`; exact supported numeric conversion | Restricted floating-point domain or additional comparison types; engineering must settle precision and boundary semantics |
-| D5: unknown and freshness | Unknown preserves last valid episode state; display observation time without claiming data freshness | Dedicated missing/stale-data conditions, requiring a freshness contract |
-| D6: lifecycle | Obsolete work cannot change current outcomes; edits/re-enable reset to unknown and apply D1 initial policy; disable suppresses unsent notifications; removal retains bounded audit history | Preserve episode across edits, drain existing deliveries, or immediate erasure; in-flight external sends cannot be recalled |
-| D7: limits and recovery | Agree capacity, interval bounds, retry horizons, retention and recovery objectives from a synthetic workload before release | Different workload/SLA commitments; no numerical defaults approved |
-| D8: destinations and content | Operators provision permitted destinations; admins select them; minimal plain-language summary with explicit time/number formats | Administrators provision destinations themselves, or richer messages; approve sharing and retention responsibilities |
+- **D1 — When to notify.** Recommend the first valid breach, then once per episode; no reminders or recovery messages. Alternatives: add those messages, or use the first result only as a baseline.
+- **D2 — Schedule.** Recommend per-rule intervals and one current check after missed intervals. Alternatives: cron schedules or replaying historical checks.
+- **D3 — Discord integration.** Discord-only is approved. The transport choice remains open in [DESIGN](./DESIGN.md#open-decisions-and-resumption).
+- **D4 — Numeric values.** Recommend one selected numeric column in exactly one row, exact conversion for supported numeric types, and `>`, `>=`, `<`, `<=`. Alternatives: restrict values to floating point or add comparison types. Precision and boundary behavior still need agreement.
+- **D5 — Unknown or stale data.** Recommend keeping the last valid episode state when a check is unknown. Show check time without claiming the source data is fresh. Alternative: dedicated missing/stale-data conditions, with a definition of freshness.
+- **D6 — Edits, disabling and deletion.** Recommend rejecting obsolete results. Edits and re-enabling reset state to unknown and apply D1. Disabling suppresses unsent messages; deletion keeps history for a limited period. Alternatives: preserve episodes across edits, finish pending deliveries, or erase history immediately. Sends already in progress cannot be recalled.
+- **D7 — Limits and recovery.** Agree capacity, interval bounds, how long to retry, history retention and recovery targets using a synthetic workload. Other workload or service-level commitments remain options; no numbers are approved.
+- **D8 — Destinations and content.** Recommend operator-provisioned destinations that admins select, with a short summary and explicit time/number formats. Alternatives: admins provision destinations themselves, or richer messages. Sharing and retention responsibilities still need approval.
 
 ## 12. Risks
 
