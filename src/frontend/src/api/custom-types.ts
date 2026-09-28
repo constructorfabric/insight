@@ -107,11 +107,13 @@ export interface DefinitionResponse<T> {
   clock?: EffectiveClock;
   folder?: Folder | null;
   tags?: string[];
+  updated_at?: string;
 }
 
 export interface DashboardRead {
   body: Dashboard;
   tags: string[];
+  updatedAt?: string;
 }
 
 export interface TagSummary {

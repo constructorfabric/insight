@@ -559,3 +559,21 @@ describe("duplicateDashboard", () => {
     ).rejects.toMatchObject({ status: 409, body: { detail: "taken" } });
   });
 });
+
+describe("a dashboard's age", () => {
+  it("reads when the dashboard was last changed, when the service says", async () => {
+    const body = { title: "Delivery", widgets: [] };
+    mockFetch
+      .mockResolvedValueOnce(
+        response({ body, tags: [], updated_at: "2026-09-25T10:00:00Z" })
+      )
+      .mockResolvedValueOnce(response({ body, tags: [] }));
+
+    await expect(fetchDashboardRead("delivery")).resolves.toMatchObject({
+      updatedAt: "2026-09-25T10:00:00Z",
+    });
+    await expect(fetchDashboardRead("delivery")).resolves.not.toHaveProperty(
+      "updatedAt"
+    );
+  });
+});

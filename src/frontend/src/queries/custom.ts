@@ -169,6 +169,13 @@ export function dashboardTagsQuery(name: string) {
   });
 }
 
+export function dashboardUpdatedQuery(name: string) {
+  return queryOptions({
+    ...dashboardReadQuery(name),
+    select: (read: DashboardRead) => read.updatedAt,
+  });
+}
+
 export function tagsQuery() {
   return queryOptions({
     queryKey: TAGS_PREFIX,

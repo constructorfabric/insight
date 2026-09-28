@@ -15,6 +15,7 @@ import {
   dashboardFolderQuery,
   dashboardQuery,
   dashboardTagsQuery,
+  dashboardUpdatedQuery,
   definitionPagesQuery,
   foldersQuery,
   metricResultQuery,
@@ -78,11 +79,12 @@ describe("dashboardQuery", () => {
     );
   });
 
-  it("reads the body and the tags out of one request", async () => {
+  it("reads the body, the tags and the age out of one request", async () => {
     const dashboard = { title: "Engineering", widgets: ["commits_table"] };
     vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
       body: dashboard,
       tags: ["Ops"],
+      updatedAt: "2026-09-25T10:00:00Z",
     });
     const queryClient = new QueryClient();
     const wrapper = ({ children }: { children: ReactNode }) =>
@@ -92,12 +94,17 @@ describe("dashboardQuery", () => {
       () => ({
         body: useQuery(dashboardQuery("engineering")).data,
         tags: useQuery(dashboardTagsQuery("engineering")).data,
+        updatedAt: useQuery(dashboardUpdatedQuery("engineering")).data,
       }),
       { wrapper },
     );
 
     await waitFor(() =>
-      expect(result.current).toEqual({ body: dashboard, tags: ["Ops"] }),
+      expect(result.current).toEqual({
+        body: dashboard,
+        tags: ["Ops"],
+        updatedAt: "2026-09-25T10:00:00Z",
+      }),
     );
     expect(customClient.fetchDashboardRead).toHaveBeenCalledTimes(1);
     expect(customClient.fetchDashboardRead).toHaveBeenCalledWith("engineering");

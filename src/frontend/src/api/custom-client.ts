@@ -176,8 +176,11 @@ export async function fetchDashboardFolder(
 export async function fetchDashboardRead(name: string): Promise<DashboardRead> {
   const res = await fetchWithAuth(`${BASE}/dashboards/${named(name)}`);
   const read = await readJson<DefinitionResponse<Dashboard>>(res);
+  const tags = read.tags ?? [];
 
-  return { body: read.body, tags: read.tags ?? [] };
+  return read.updated_at
+    ? { body: read.body, tags, updatedAt: read.updated_at }
+    : { body: read.body, tags };
 }
 
 export const TAG_NAME_MAX = 32;
