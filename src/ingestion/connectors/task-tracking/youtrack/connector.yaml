@@ -813,7 +813,7 @@ streams:
         request_headers:
           Accept: application/json
         request_parameters:
-          fields: id,agile(id,name),name,goal,start,finish,archived,isDefault,issues(id,idReadable,summary,created,updated,resolved),unresolvedIssuesCount,previousSprint(id,name)
+          fields: id,agile(id,name),name,goal,start,finish,archived,isDefault,unresolvedIssuesCount,previousSprint(id,name)
         url: "{{ config['youtrack_base_url'].rstrip('/') }}/api/agiles/{{ stream_partition.agile_id }}/sprints"
       paginator:
         type: DefaultPaginator
@@ -904,7 +904,6 @@ streams:
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z' }}"
       - type: RemoveFields
         field_pointers:
-          - [issues]
           - [agile]
           - [previousSprint]
     schema_loader:
@@ -1280,7 +1279,7 @@ streams:
           Accept: application/json
         request_parameters:
           fields: id,date,duration(minutes,presentation),text,textPreview,created,updated,author(id,login,fullName,email),creator(id,login,fullName,email),type(id,name,autoAttached),issue(id,idReadable,summary,project(id,shortName)),attributes(id,name,value(id,name,$type))
-        url: "{{ config['youtrack_base_url'].rstrip('/') }}/api/issues/{{ stream_partition.issue_id }}/timeTracking/workItems"
+        url: "{{ config['youtrack_base_url'].rstrip('/') }}/api/workItems"
       paginator:
         type: DefaultPaginator
         page_size_option:
@@ -1299,54 +1298,6 @@ streams:
         extractor:
           type: DpathExtractor
           field_path: []
-      partition_router:
-        type: SubstreamPartitionRouter
-        parent_stream_configs:
-          - type: ParentStreamConfig
-            parent_key: id
-            partition_field: issue_id
-            stream:
-              type: DeclarativeStream
-              name: _youtrack_issues_for_work_items
-              primary_key: [id]
-              retriever:
-                type: SimpleRetriever
-                requester:
-                  type: HttpRequester
-                  http_method: GET
-                  authenticator:
-                    type: BearerAuthenticator
-                    api_token: "{{ config['youtrack_token'] }}"
-                  request_parameters:
-                    fields: id
-                  url: "{{ config['youtrack_base_url'].rstrip('/') }}/api/issues"
-                paginator:
-                  type: DefaultPaginator
-                  page_size_option:
-                    type: RequestOption
-                    inject_into: request_parameter
-                    field_name: $top
-                  page_token_option:
-                    type: RequestOption
-                    inject_into: request_parameter
-                    field_name: $skip
-                  pagination_strategy:
-                    type: OffsetIncrement
-                    page_size: "{{ config.get('youtrack_page_size', 100) }}"
-                record_selector:
-                  type: RecordSelector
-                  extractor:
-                    type: DpathExtractor
-                    field_path: []
-              schema_loader:
-                type: InlineSchemaLoader
-                schema:
-                  $schema: http://json-schema.org/schema#
-                  type: object
-                  properties:
-                    id: {type: string}
-                  required: [id]
-                  additionalProperties: true
     transformations:
       - type: AddFields
         fields:
@@ -1358,7 +1309,7 @@ streams:
             value: "{{ config['insight_source_id'] }}"
           - type: AddedFieldDefinition
             path: [issue_id]
-            value: "{{ stream_partition.issue_id }}"
+            value: "{{ record['issue']['id'] }}"
           - type: AddedFieldDefinition
             path: [author_id]
             value: "{{ (record.get('author') or {}).get('id') }}"

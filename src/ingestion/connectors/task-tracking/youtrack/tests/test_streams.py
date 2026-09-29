@@ -13,6 +13,7 @@ from connector_tests import (
     load_fixture,
     read_stream,
 )
+from connector_tests.source import load_manifest
 
 _CONNECTOR = "task-tracking/youtrack"
 _NOW = "2026-07-01T00:00:00Z"
@@ -266,17 +267,14 @@ def test_work_items_keep_never_updated_records(http_mocker: HttpMocker) -> None:
         "author": {"id": "1-1", "login": "example"},
     }
     http_mocker.get(
-        HttpRequest(f"{API_URL}/issues", query_params=ANY_QUERY_PARAMS),
-        HttpResponse(body=json.dumps([{"id": "2-1"}]), status_code=200),
-    )
-    http_mocker.get(
-        HttpRequest(f"{API_URL}/issues/2-1/timeTracking/workItems", query_params=ANY_QUERY_PARAMS),
+        HttpRequest(f"{API_URL}/workItems", query_params=ANY_QUERY_PARAMS),
         HttpResponse(body=json.dumps([work_item]), status_code=200),
     )
 
     output = read_stream(_CONNECTOR, "youtrack_work_items", config)
 
     assert not output.errors
+    assert output.records[0].record.data["issue_id"] == "2-1"
     assert json.loads(output.records[0].record.data["work_item_json"])["updated"] is None
     assert_records_conform(output.records, _CONNECTOR, "youtrack_work_items")
 
@@ -307,3 +305,27 @@ def test_comments_allow_never_updated_records(http_mocker: HttpMocker) -> None:
     assert not output.errors
     assert json.loads(output.records[0].record.data["comment_json"])["updated"] is None
     assert_records_conform(output.records, _CONNECTOR, "youtrack_comments")
+
+
+def test_work_items_paginate_without_per_issue_requests(http_mocker: HttpMocker) -> None:
+    config = YouTrackConfigBuilder().build()
+    config["youtrack_page_size"] = "2"
+    manifest = load_manifest(_CONNECTOR)
+    stream = next(stream for stream in manifest["streams"] if stream["name"] == "youtrack_work_items")
+    fields = stream["retriever"]["requester"]["request_parameters"]["fields"]
+    records = [{"id": f"91-{index}", "updated": None, "issue": {"id": f"2-{index}"}} for index in range(3)]
+    for offset, page in [(0, records[:2]), (2, records[2:])]:
+        params = {"fields": fields, "$top": "2"}
+        if offset:
+            params["$skip"] = str(offset)
+        http_mocker.get(
+            HttpRequest(f"{API_URL}/workItems", query_params=params),
+            HttpResponse(body=json.dumps(page), status_code=200),
+        )
+
+    output = read_stream(_CONNECTOR, "youtrack_work_items", config)
+
+    assert not output.errors
+    assert {record.record.data["issue_id"] for record in output.records} == {"2-0", "2-1", "2-2"}
+    assert len(http_mocker._mocker.request_history) == 2
+    assert_records_conform(output.records, _CONNECTOR, "youtrack_work_items")
