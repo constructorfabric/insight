@@ -76,6 +76,23 @@ struct EnabledRequest {
 
 impl toolkit::api::api_dto::RequestApiDto for EnabledRequest {}
 
+impl toolkit::api::api_dto::ResponseApiDto for RuleResponse {}
+impl toolkit::api::api_dto::ResponseApiDto for NotificationsPage {}
+impl toolkit::api::api_dto::ResponseApiDto for DestinationsResponse {}
+
+/// One page of a rule's notifications, newest first.
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct NotificationsPage {
+    notifications: Vec<NotificationResponse>,
+    limit: u64,
+    offset: u64,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct DestinationsResponse {
+    destinations: Vec<DestinationResponse>,
+}
+
 /// A rule as a reader is shown it.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct RuleResponse {
@@ -255,8 +272,8 @@ fn put_route(openapi: &dyn OpenApiRegistry) -> Router {
         .anonymous()
         .exposed()
         .param(name_param())
-        .json_request::<serde_json::Value>(openapi, "The rule")
-        .json_response(StatusCode::OK, "The rule as stored")
+        .json_request::<RuleDraft>(openapi, "The rule")
+        .json_response_with_schema::<RuleResponse>(openapi, StatusCode::OK, "The rule as stored")
         .error_400(openapi)
         .error_403(openapi)
         .error_404(openapi)
@@ -274,7 +291,11 @@ fn get_route(openapi: &dyn OpenApiRegistry) -> Router {
         .anonymous()
         .exposed()
         .param(name_param())
-        .json_response(StatusCode::OK, "The rule and its state")
+        .json_response_with_schema::<RuleResponse>(
+            openapi,
+            StatusCode::OK,
+            "The rule and its state",
+        )
         .error_400(openapi)
         .error_403(openapi)
         .error_404(openapi)
@@ -309,7 +330,7 @@ fn enable_route(openapi: &dyn OpenApiRegistry) -> Router {
         .exposed()
         .param(name_param())
         .json_request::<EnabledRequest>(openapi, "The revision this expects to change")
-        .json_response(StatusCode::OK, "The rule as stored")
+        .json_response_with_schema::<RuleResponse>(openapi, StatusCode::OK, "The rule as stored")
         .error_400(openapi)
         .error_403(openapi)
         .error_404(openapi)
@@ -328,7 +349,7 @@ fn disable_route(openapi: &dyn OpenApiRegistry) -> Router {
         .exposed()
         .param(name_param())
         .json_request::<EnabledRequest>(openapi, "The revision this expects to change")
-        .json_response(StatusCode::OK, "The rule as stored")
+        .json_response_with_schema::<RuleResponse>(openapi, StatusCode::OK, "The rule as stored")
         .error_400(openapi)
         .error_403(openapi)
         .error_404(openapi)
@@ -350,7 +371,11 @@ fn notifications_route(openapi: &dyn OpenApiRegistry) -> Router {
         .param(name_param())
         .param(limit)
         .param(offset)
-        .json_response(StatusCode::OK, "One page of notifications")
+        .json_response_with_schema::<NotificationsPage>(
+            openapi,
+            StatusCode::OK,
+            "One page of notifications",
+        )
         .error_400(openapi)
         .error_403(openapi)
         .error_404(openapi)
@@ -366,7 +391,11 @@ fn destinations_route(openapi: &dyn OpenApiRegistry) -> Router {
         .summary("The destinations an alert may send to")
         .anonymous()
         .exposed()
-        .json_response(StatusCode::OK, "Every configured destination, by name")
+        .json_response_with_schema::<DestinationsResponse>(
+            openapi,
+            StatusCode::OK,
+            "Every configured destination, by name",
+        )
         .error_403(openapi)
         .error_500(openapi)
         .handler(list_destinations)
@@ -592,11 +621,11 @@ async fn list_notifications(
     let notifications: Vec<NotificationResponse> =
         listed.iter().map(notification_response).collect();
 
-    Ok(Json(serde_json::json!({
-        "notifications": notifications,
-        "limit": page.limit(),
-        "offset": page.offset(),
-    }))
+    Ok(Json(NotificationsPage {
+        notifications,
+        limit: page.limit(),
+        offset: page.offset(),
+    })
     .into_response())
 }
 
@@ -617,7 +646,7 @@ async fn list_destinations(
         })
         .collect();
 
-    Ok(Json(serde_json::json!({ "destinations": destinations })).into_response())
+    Ok(Json(DestinationsResponse { destinations }).into_response())
 }
 
 #[cfg(test)]

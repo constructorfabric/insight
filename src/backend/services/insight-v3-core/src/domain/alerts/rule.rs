@@ -25,7 +25,9 @@ pub(crate) const DEFAULT_NOTIFICATIONS_KEPT_PER_RULE: u64 = 200;
 const MAX_COLUMN_CHARS: usize = 128;
 
 /// How the observed value is compared with the threshold.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, utoipa::ToSchema,
+)]
 pub(crate) enum Operator {
     #[serde(rename = ">")]
     Gt,
@@ -128,7 +130,7 @@ impl Destinations {
 }
 
 /// A rule as an administrator writes it.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, JsonSchema, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RuleDraft {
     /// The stored metric to check.
@@ -160,6 +162,8 @@ pub(crate) struct RuleDraft {
 fn enabled_by_default() -> bool {
     true
 }
+
+impl toolkit::api::api_dto::RequestApiDto for RuleDraft {}
 
 /// What a rule watches, checked against the installation's bounds.
 #[derive(Debug, Clone, PartialEq)]
