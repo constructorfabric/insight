@@ -121,28 +121,28 @@ clap = { version = "4.5", features = ["derive"] }
 # gears-rust toolkit (crates.io, `cf-gears-toolkit-*` family)
 # Versions tracked to gears-rust HEAD (the authoritative source); the whole
 # family moves together with the opentelemetry major (see INVARIANT below).
-toolkit = { package = "cf-gears-toolkit", version = "=0.7.2" }
-toolkit-auth = { package = "cf-gears-toolkit-auth", version = "=0.7.6" }
-toolkit-security = { package = "cf-gears-toolkit-security", version = "=0.8.1" }
-toolkit-canonical-errors = { package = "cf-gears-toolkit-canonical-errors", version = "=0.9.2", features = ["axum", "sea-orm"] }
+toolkit = { package = "cf-gears-toolkit", version = "=0.10.0" }
+toolkit-auth = { package = "cf-gears-toolkit-auth", version = "=0.7.11" }
+toolkit-security = { package = "cf-gears-toolkit-security", version = "=0.11.0" }
+toolkit-canonical-errors = { package = "cf-gears-toolkit-canonical-errors", version = "=0.9.5", features = ["axum", "sea-orm"] }
 
 # gears-rust SDKs (crates.io)
-authn-resolver-sdk = { package = "cf-gears-authn-resolver-sdk", version = "0.3.29" }
-types-registry-sdk = { package = "cf-gears-types-registry-sdk", version = "0.3.6" }
+authn-resolver-sdk = { package = "cf-gears-authn-resolver-sdk", version = "0.3.37" }
+types-registry-sdk = { package = "cf-gears-types-registry-sdk", version = "0.3.9" }
 
 # gears-rust system gears (crates.io)
-api_gateway = { package = "cf-gears-api-gateway", version = "0.4.9" }
-authn-resolver = { package = "cf-gears-authn-resolver", version = "0.2.29" }
-authz-resolver = { package = "cf-gears-authz-resolver", version = "0.1.37" }
+api_gateway = { package = "cf-gears-api-gateway", version = "0.5.2" }
+authn-resolver = { package = "cf-gears-authn-resolver", version = "0.2.37" }
+authz-resolver = { package = "cf-gears-authz-resolver", version = "0.2.5" }
 # Downstream gateway-JWT verification (JWKS + configurable claim mapping). Was a
 # local fork under plugins/; now the upstream published crate.
-oidc-authn-plugin = { package = "cf-gears-oidc-authn-plugin", version = "0.2.7" }
-tenant-resolver = { package = "cf-gears-tenant-resolver", version = "0.1.33" }
-static-authz-plugin = { package = "cf-gears-static-authz-plugin", version = "0.1.32" }
-single-tenant-tr-plugin = { package = "cf-gears-single-tenant-tr-plugin", version = "0.1.34" }
-grpc_hub = { package = "cf-gears-grpc-hub", version = "0.2.19" }
-gear_orchestrator = { package = "cf-gears-gear-orchestrator", version = "0.1.38" }
-types_registry = { package = "cf-gears-types-registry", version = "0.1.35" }
+oidc-authn-plugin = { package = "cf-gears-oidc-authn-plugin", version = "0.2.13" }
+tenant-resolver = { package = "cf-gears-tenant-resolver", version = "0.1.41" }
+static-authz-plugin = { package = "cf-gears-static-authz-plugin", version = "0.1.38" }
+single-tenant-tr-plugin = { package = "cf-gears-single-tenant-tr-plugin", version = "0.1.40" }
+grpc_hub = { package = "cf-gears-grpc-hub", version = "0.3.2" }
+gear_orchestrator = { package = "cf-gears-gear-orchestrator", version = "0.2.3" }
+types_registry = { package = "cf-gears-types-registry", version = "0.4.0" }
 
 # Anchored validation patterns (previews image-tag shapes). The lite build:
 # no Unicode tables, ASCII-only patterns here.

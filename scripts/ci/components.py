@@ -272,6 +272,7 @@ COMPONENTS = [
         # their own components instead.
         "paths": [
             "src/ingestion/connectors/task-tracking/jira",
+            "src/ingestion/connectors/task-tracking/youtrack",
             "src/ingestion/connectors/git/github",
             "src/ingestion/connectors/git/bitbucket-cloud",
             "src/ingestion/connectors/git/gitlab",

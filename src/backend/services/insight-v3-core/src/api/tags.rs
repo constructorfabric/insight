@@ -7,7 +7,7 @@ use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use toolkit::api::{OpenApiRegistry, OperationBuilder, ParamLocation, ParamSpec};
+use toolkit::api::{OpenApiRegistry, OperationBuilder, ParamSpec};
 use toolkit_canonical_errors::{CanonicalError, Http, resource_error};
 use utoipa::ToSchema;
 
@@ -128,14 +128,7 @@ pub(crate) fn register_routes(
         .summary("Replace the tags a dashboard carries")
         .anonymous()
         .exposed()
-        .param(ParamSpec {
-            name: "name".to_owned(),
-            location: ParamLocation::Path,
-            required: true,
-            description: Some("Dashboard name".to_owned()),
-            param_type: "string".to_owned(),
-            array: false,
-        })
+        .param(ParamSpec::path("name").description("Dashboard name"))
         .json_request::<TagsRequest>(openapi, "The dashboard's whole set of tags")
         .no_content_response(StatusCode::NO_CONTENT, "Tags set")
         .error_400(openapi)

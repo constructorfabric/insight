@@ -6,7 +6,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
-use toolkit::api::{OpenApiRegistry, OperationBuilder, ParamLocation, ParamSpec};
+use toolkit::api::{OpenApiRegistry, OperationBuilder, ParamSpec};
 use toolkit_canonical_errors::CanonicalError;
 use utoipa::ToSchema;
 
@@ -43,14 +43,7 @@ pub(crate) fn register_routes(
         .summary("Copy a dashboard, its folder and its tags under a new name")
         .anonymous()
         .exposed()
-        .param(ParamSpec {
-            name: "name".to_owned(),
-            location: ParamLocation::Path,
-            required: true,
-            description: Some("The dashboard to copy".to_owned()),
-            param_type: "string".to_owned(),
-            array: false,
-        })
+        .param(ParamSpec::path("name").description("The dashboard to copy"))
         .json_request::<DuplicateRequest>(openapi, "The copy's name")
         .json_response(StatusCode::CREATED, "The copy's name")
         .error_400(openapi)
