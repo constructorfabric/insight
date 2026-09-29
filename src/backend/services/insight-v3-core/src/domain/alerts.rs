@@ -7,6 +7,7 @@
 //! notification is owed on the first breach and again only after a valid
 //! check has seen the condition clear; an unknown result changes nothing.
 
+pub(crate) mod delivery;
 pub(crate) mod evaluation;
 pub(crate) mod rule;
 pub(crate) mod rules;

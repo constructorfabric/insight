@@ -327,6 +327,10 @@ pub(crate) enum NotificationStatus {
     Pending,
     /// Withdrawn before it was sent: the rule was disabled.
     Cancelled,
+    /// The provider confirmed it.
+    Sent,
+    /// The provider rejected it, or every attempt went unconfirmed.
+    Failed,
 }
 
 impl NotificationStatus {
@@ -334,11 +338,13 @@ impl NotificationStatus {
         match self {
             Self::Pending => "pending",
             Self::Cancelled => "cancelled",
+            Self::Sent => "sent",
+            Self::Failed => "failed",
         }
     }
 
     pub(crate) fn parse(value: &str) -> Option<Self> {
-        [Self::Pending, Self::Cancelled]
+        [Self::Pending, Self::Cancelled, Self::Sent, Self::Failed]
             .into_iter()
             .find(|status| status.as_str() == value)
     }
@@ -359,6 +365,13 @@ pub(crate) struct Notification {
     pub(crate) evaluated_at: DateTime<Utc>,
     pub(crate) destination: String,
     pub(crate) status: NotificationStatus,
+    /// How many sends have been tried.
+    pub(crate) attempts: u32,
+    /// What the last unconfirmed or rejected send said, in the provider's
+    /// words, never a credential.
+    pub(crate) last_error: Option<String>,
+    /// The identity the provider gave the message, once it confirmed it.
+    pub(crate) provider_receipt: Option<String>,
     pub(crate) created_at: DateTime<Utc>,
 }
 
@@ -455,6 +468,20 @@ pub(crate) trait AlertStore: Send + Sync + fmt::Debug {
         rule_id: Uuid,
         page: Page,
     ) -> Result<Vec<Notification>, AlertStoreError>;
+
+    async fn notification(&self, id: Uuid) -> Result<Option<Notification>, AlertStoreError>;
+
+    /// Every notification still owed, oldest first, for the schedule to
+    /// pick up again after a restart.
+    async fn pending_notifications(&self) -> Result<Vec<Notification>, AlertStoreError>;
+
+    /// Records one send on a pending notification. Anything not pending is
+    /// left as it is and answered as none.
+    async fn record_attempt(
+        &self,
+        id: Uuid,
+        attempted: &super::delivery::Attempted,
+    ) -> Result<Option<Notification>, AlertStoreError>;
 }
 
 #[derive(Debug, Error)]

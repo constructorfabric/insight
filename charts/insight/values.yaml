@@ -664,13 +664,16 @@ insightV3Core:
     allowInsecurePrivateNetwork: false
   # Metric alerts. Checks are scheduled through the release's Redis, so
   # Redis must persist (the umbrella-managed one does: AOF on a PVC).
-  # Destinations are named here and referenced by rules; each names the
-  # provider behind it. Delivery credentials arrive with the providers.
+  # Destinations are named here and referenced by rules. Each names its
+  # provider and carries what that provider needs; every field lands in
+  # the config Secret. Discord: webhook_url. Telegram: bot_token, chat_id.
+  # Zulip: site_url, bot_email, api_key, stream, topic.
   alerts:
     enabled: false
     destinations: {}
     #  ops:
     #    provider: discord
+    #    webhook_url: https://discord.com/api/webhooks/...
 # ─── Identity Resolution (Rust identity service, epic #1602) ─────────────
 # The persons-store API. Reads from MariaDB `persons`, written by the seed
 # CronJob (the service's own `seed` subcommand) fed off ClickHouse

@@ -15,7 +15,7 @@ use crate::chat::ChatClient;
 use crate::domain::alerts::{Destinations, Limits};
 use crate::domain::definition::DefinitionKind;
 use crate::domain::folders::DefinitionStore;
-use crate::store::alert_schedule::memory::MemorySchedule;
+use crate::store::alert_schedule::memory::{MemoryDeliveries, MemorySchedule};
 use crate::store::alerts::memory::MemoryAlerts;
 use crate::store::definitions::memory::MemoryDefinitions;
 
@@ -25,6 +25,7 @@ struct TestHarness {
     _clickhouse: Mock,
     router: Router,
     schedule: Arc<MemorySchedule>,
+    store: Arc<MemoryAlerts>,
 }
 
 impl TestHarness {
@@ -66,6 +67,7 @@ impl TestHarness {
                 .unwrap_or_else(|error| panic!("the metric is stored: {error}"));
         });
         let schedule = Arc::new(schedule);
+        let store = Arc::new(alerts);
         let mut state = AppState::new(
             crate::domain::query::metric_query::MetricRunner::new(
                 client,
@@ -79,8 +81,10 @@ impl TestHarness {
         );
         if alerts_on {
             state = state.with_alerts(crate::api::Alerts {
-                store: Arc::new(alerts),
+                store: store.clone(),
                 schedule: schedule.clone(),
+                deliveries: Arc::new(MemoryDeliveries::new()),
+                providers: BTreeMap::new(),
                 limits: Limits {
                     max_rules: 2,
                     ..Limits::default()
@@ -97,6 +101,7 @@ impl TestHarness {
             _clickhouse: mock,
             router,
             schedule,
+            store,
         }
     }
 
@@ -541,6 +546,55 @@ async fn an_installation_without_alerts_says_so() -> R {
         answered.body
     );
     assert!(String::from_utf8_lossy(&answered.body).contains("not enabled"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_notification_shows_its_delivery_state() -> R {
+    use crate::domain::alerts::delivery::{Attempted, Receipt};
+    use crate::domain::alerts::rule::{AlertStore as _, Recorded, Recording};
+
+    let store = MemoryAlerts::new();
+    let harness = TestHarness::build_with(true, true, store, MemorySchedule::new());
+    let id = harness.create(rule(|_| {})).await;
+    let store = harness.store.clone();
+    let stored = store
+        .get(uuid::Uuid::parse_str(&id)?)
+        .await?
+        .unwrap_or_else(|| panic!("the rule is stored"));
+    let Recorded::Accepted(accepted) = store
+        .record(Recording {
+            rule_id: stored.id,
+            revision: stored.revision,
+            outcome: crate::domain::alerts::Outcome::Valid {
+                value: crate::domain::alerts::Number::Int(12),
+                breached: true,
+            },
+            evaluated_at: chrono::Utc::now(),
+        })
+        .await?
+    else {
+        panic!("the breach is recorded");
+    };
+    let owed = accepted
+        .notification
+        .unwrap_or_else(|| panic!("the breach owes a notification"));
+    store
+        .record_attempt(owed.id, &Attempted::Retry("answered 502".to_owned()))
+        .await?;
+    store
+        .record_attempt(owed.id, &Attempted::Sent(Receipt("m-9".to_owned())))
+        .await?;
+
+    let listed = harness
+        .send("GET", &format!("/v1/alerts/{id}/notifications"), None)
+        .await;
+    let shown = &listed.json()["notifications"][0];
+    assert_eq!(shown["status"], json!("sent"));
+    assert_eq!(shown["attempts"], json!(2));
+    assert_eq!(shown["provider_receipt"], json!("m-9"));
+    assert_eq!(shown["value"], json!(12));
 
     Ok(())
 }

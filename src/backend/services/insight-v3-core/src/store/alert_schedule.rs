@@ -20,7 +20,10 @@ use bullmq::worker::CancellationToken as JobCancellation;
 use bullmq::{Job, Queue, QueueOptions, Worker, WorkerOptions};
 use uuid::Uuid;
 
+use bullmq::types::BackoffStrategy;
+
 use crate::domain::alerts::UnknownReason;
+use crate::domain::alerts::delivery::{Attempted, Delivered, Deliverer, Deliveries, DeliveryJob};
 use crate::domain::alerts::evaluation::{Evaluated, EvaluationJob, Evaluator};
 use crate::domain::alerts::rule::Recorded;
 use crate::domain::alerts::schedule::{AlertSchedule, ScheduleError, Scheduled};
@@ -29,6 +32,10 @@ use crate::domain::alerts::schedule::{AlertSchedule, ScheduleError, Scheduled};
 /// apart by their scheduler key.
 const QUEUE: &str = "insight-v3-alerts-evaluate";
 const JOB: &str = "evaluate";
+/// The queue owed notifications go through, one job per notification,
+/// keyed by it so a second enqueue is the same job.
+const DELIVERY_QUEUE: &str = "insight-v3-alerts-deliver";
+const DELIVERY_JOB: &str = "deliver";
 const SCHEDULER_PREFIX: &str = "rule:";
 /// How many schedulers one listing reads. Bounded by the rule limit, which
 /// an installation sets far below this.
@@ -135,6 +142,163 @@ impl fmt::Debug for RedisSchedule {
 /// What a running check needs, given to the worker once.
 pub(crate) trait Checks: Send + Sync + 'static {
     fn evaluator(&self) -> Evaluator<'_>;
+
+    /// Where a notification the check owes is queued to be sent.
+    fn deliveries(&self) -> &dyn Deliveries;
+}
+
+/// What a running send needs, given to the worker once.
+pub(crate) trait Sends: Send + Sync + 'static {
+    fn deliverer(&self) -> Deliverer<'_>;
+}
+
+/// The queue side of delivery: what a recorded notification reaches.
+pub(crate) struct RedisDeliveries {
+    queue: Queue,
+    attempts: u32,
+    backoff: Duration,
+}
+
+impl RedisDeliveries {
+    pub(crate) async fn connect(
+        redis_url: &str,
+        attempts: u32,
+        backoff: Duration,
+    ) -> Result<Self, ScheduleError> {
+        let queue = Queue::with_options(
+            DELIVERY_QUEUE,
+            QueueOptions {
+                connection: connection(redis_url),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(unreachable)?;
+
+        Ok(Self {
+            queue,
+            attempts,
+            backoff,
+        })
+    }
+}
+
+#[async_trait]
+impl Deliveries for RedisDeliveries {
+    async fn enqueue(&self, notification_id: Uuid) -> Result<(), ScheduleError> {
+        let job = DeliveryJob { notification_id };
+        let data = serde_json::to_value(job).map_err(unreachable)?;
+        let backoff_ms = u64::try_from(self.backoff.as_millis()).unwrap_or(u64::MAX);
+        self.queue
+            .add(DELIVERY_JOB, data)
+            .job_id(notification_id.simple().to_string())
+            .attempts(self.attempts)
+            .backoff(BackoffStrategy::Exponential(backoff_ms))
+            .await
+            .map_err(unreachable)?;
+
+        Ok(())
+    }
+}
+
+impl fmt::Debug for RedisDeliveries {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RedisDeliveries")
+            .field("queue", &DELIVERY_QUEUE)
+            .field("attempts", &self.attempts)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The worker side of delivery: takes sends off the queue and runs them.
+pub(crate) struct DeliveryWorker {
+    worker: Worker,
+}
+
+impl DeliveryWorker {
+    pub(crate) async fn start(
+        redis_url: &str,
+        sends: Arc<dyn Sends>,
+        concurrency: usize,
+        timeout: Duration,
+        max_attempts: u32,
+    ) -> Result<Self, ScheduleError> {
+        let options = WorkerOptions {
+            connection: connection(redis_url),
+            concurrency,
+            lock_duration: u64::try_from(timeout.as_millis().saturating_mul(2)).unwrap_or(u64::MAX),
+            stalled_interval: STALLED_INTERVAL_MS,
+            ..Default::default()
+        };
+        let worker = Worker::with_options(
+            DELIVERY_QUEUE,
+            move |job: Job, _: JobCancellation| {
+                let sends = Arc::clone(&sends);
+                async move { send(&*sends, &job, max_attempts).await }
+            },
+            options,
+        )
+        .await
+        .map_err(unreachable)?;
+
+        Ok(Self { worker })
+    }
+
+    pub(crate) async fn stop(&self) {
+        if let Err(error) = self.worker.close(CLOSE_TIMEOUT_MS).await {
+            tracing::warn!(%error, "the delivery worker did not close cleanly");
+        }
+    }
+}
+
+impl fmt::Debug for DeliveryWorker {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DeliveryWorker")
+            .field("worker", &self.worker.id())
+            .finish()
+    }
+}
+
+/// One send, as the queue hands it over. An unconfirmed send that has
+/// attempts left fails the job so `BullMQ` retries it after its backoff;
+/// everything else is final and the job completes.
+async fn send(
+    sends: &dyn Sends,
+    job: &Job,
+    max_attempts: u32,
+) -> Result<serde_json::Value, bullmq::Error> {
+    let parsed: DeliveryJob = serde_json::from_value(job.data().clone())?;
+    let attempt = job.attempts_made().saturating_add(1);
+
+    let delivered = sends
+        .deliverer()
+        .deliver(parsed, attempt, max_attempts)
+        .await
+        .map_err(|error| {
+            tracing::error!(notification_id = %parsed.notification_id, error = ?error, "a notification send could not be recorded");
+            bullmq::Error::Unrecoverable("the alert store did not answer".to_owned())
+        })?;
+
+    match delivered {
+        Delivered::Skipped => {
+            tracing::info!(notification_id = %parsed.notification_id, attempt, "notification send skipped");
+            Ok(serde_json::json!({ "skipped": true }))
+        }
+        Delivered::Attempted(Attempted::Sent(receipt)) => {
+            tracing::info!(notification_id = %parsed.notification_id, attempt, receipt = receipt.0, "notification sent");
+            Ok(serde_json::json!({ "sent": receipt.0 }))
+        }
+        Delivered::Attempted(Attempted::Retry(reason)) => {
+            tracing::warn!(notification_id = %parsed.notification_id, attempt, max_attempts, reason, "notification send unconfirmed; will retry");
+            Err(bullmq::Error::InvalidConfig(reason))
+        }
+        Delivered::Attempted(Attempted::Failed(reason)) => {
+            tracing::warn!(notification_id = %parsed.notification_id, attempt, reason, "notification send failed");
+            Ok(serde_json::json!({ "failed": reason }))
+        }
+    }
 }
 
 /// The worker side: takes checks off the queue and runs them until told to
@@ -217,6 +381,12 @@ async fn run(checks: &dyn Checks, job: &Job) -> Result<serde_json::Value, bullmq
         Evaluated::Recorded(Recorded::Accepted(accepted)) => {
             let rule = &accepted.rule;
             let notification = &accepted.notification;
+            if let Some(owed) = notification {
+                checks.deliveries().enqueue(owed.id).await.map_err(|error| {
+                    tracing::error!(rule_id = %parsed.rule_id, notification_id = %owed.id, error = ?error, "an owed notification could not be queued");
+                    bullmq::Error::Unrecoverable("the delivery queue did not answer".to_owned())
+                })?;
+            }
             let outcome = rule
                 .state
                 .last_outcome

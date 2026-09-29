@@ -30,8 +30,10 @@ fn alerts_on() -> AlertsConfig {
         redis_url: "redis://redis.example.test:6379".to_owned(),
         destinations: std::collections::BTreeMap::from([(
             "ops".to_owned(),
-            DestinationConfig {
-                provider: DestinationProvider::Discord,
+            DestinationConfig::Discord {
+                webhook_url: SecretString::from(
+                    "https://discord.example.test/api/webhooks/1/alert-webhook-secret",
+                ),
             },
         )]),
         ..AlertsConfig::default()
@@ -92,8 +94,39 @@ fn enabled_alerts_need_a_redis_and_sane_bounds() {
             AlertsConfig {
                 destinations: std::collections::BTreeMap::from([(
                     "ops team".to_owned(),
-                    DestinationConfig {
-                        provider: DestinationProvider::Zulip,
+                    DestinationConfig::Telegram {
+                        bot_token: SecretString::from("token"),
+                        chat_id: "1".to_owned(),
+                    },
+                )]),
+                ..alerts_on()
+            },
+        ),
+        (
+            "webhook over plain http",
+            AlertsConfig {
+                destinations: std::collections::BTreeMap::from([(
+                    "ops".to_owned(),
+                    DestinationConfig::Discord {
+                        webhook_url: SecretString::from(
+                            "http://discord.example.test/api/webhooks/1/x",
+                        ),
+                    },
+                )]),
+                ..alerts_on()
+            },
+        ),
+        (
+            "zulip without a topic",
+            AlertsConfig {
+                destinations: std::collections::BTreeMap::from([(
+                    "ops".to_owned(),
+                    DestinationConfig::Zulip {
+                        site_url: "https://zulip.example.test".to_owned(),
+                        bot_email: "bot@example.test".to_owned(),
+                        api_key: SecretString::from("key"),
+                        stream: "alerts".to_owned(),
+                        topic: " ".to_owned(),
                     },
                 )]),
                 ..alerts_on()
@@ -128,6 +161,7 @@ fn the_redis_url_is_redacted_from_debug_output() {
 
     let shown = format!("{config:?}");
     assert!(!shown.contains("alert-redis-secret"), "{shown}");
+    assert!(!shown.contains("alert-webhook-secret"), "{shown}");
     assert!(shown.contains("Discord"), "{shown}");
 }
 

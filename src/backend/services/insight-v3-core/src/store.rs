@@ -7,6 +7,7 @@ pub(crate) mod dataset_tables;
 pub(crate) mod datasets;
 pub(crate) mod definitions;
 pub(crate) mod identity;
+pub(crate) mod providers;
 
 /// A search needle as a `LIKE` pattern reads it, so a name holding `%` or `_`
 /// matches itself rather than everything.

@@ -321,3 +321,63 @@ async fn only_enabled_rules_are_listed_for_scheduling_and_a_listing_finds_by_nam
 
     Ok(())
 }
+
+#[tokio::test]
+#[ignore = "needs INTEGRATION_TESTS_MARIADB_URL"]
+async fn a_send_is_recorded_only_on_a_notification_still_owed() -> R {
+    use crate::domain::alerts::delivery::{Attempted, Receipt};
+
+    let Some(store) = store().await else {
+        return Ok(());
+    };
+    let rule = store.create(write(10)).await?;
+    let Recorded::Accepted(first) = store.record(recording(&rule, breach(12))).await? else {
+        panic!("the breach is recorded");
+    };
+    let owed = first
+        .notification
+        .unwrap_or_else(|| panic!("the breach owes a notification"));
+    assert!(
+        store
+            .pending_notifications()
+            .await?
+            .iter()
+            .any(|pending| pending.id == owed.id)
+    );
+
+    let retried = store
+        .record_attempt(owed.id, &Attempted::Retry("answered 502".to_owned()))
+        .await?
+        .unwrap_or_else(|| panic!("a pending notification takes an attempt"));
+    assert_eq!(retried.status, NotificationStatus::Pending);
+    assert_eq!(retried.attempts, 1);
+    assert_eq!(retried.last_error.as_deref(), Some("answered 502"));
+
+    let sent = store
+        .record_attempt(owed.id, &Attempted::Sent(Receipt("m-1".to_owned())))
+        .await?
+        .unwrap_or_else(|| panic!("a pending notification takes an attempt"));
+    assert_eq!(sent.status, NotificationStatus::Sent);
+    assert_eq!(sent.attempts, 2);
+    assert_eq!(sent.provider_receipt.as_deref(), Some("m-1"));
+    assert!(
+        store
+            .pending_notifications()
+            .await?
+            .iter()
+            .all(|pending| pending.id != owed.id)
+    );
+
+    let again = store
+        .record_attempt(owed.id, &Attempted::Failed("late".to_owned()))
+        .await?;
+    assert_eq!(again, None, "a sent notification takes no more attempts");
+    assert_eq!(
+        store.notification(owed.id).await?.map(|kept| kept.status),
+        Some(NotificationStatus::Sent)
+    );
+
+    store.delete(rule.id).await?;
+
+    Ok(())
+}
