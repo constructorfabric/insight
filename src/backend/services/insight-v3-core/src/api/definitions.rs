@@ -8,7 +8,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
-use toolkit::api::{OpenApiRegistry, OperationBuilder, ParamLocation, ParamSpec};
+use toolkit::api::{OpenApiRegistry, OperationBuilder, ParamSpec};
 use toolkit_canonical_errors::{CanonicalError, Http, resource_error};
 use utoipa::ToSchema;
 
@@ -90,14 +90,9 @@ pub(crate) fn register_routes(
 }
 
 fn query_param(name: &str, param_type: &str, description: &str) -> ParamSpec {
-    ParamSpec {
-        name: name.to_owned(),
-        location: ParamLocation::Query,
-        required: false,
-        description: Some(description.to_owned()),
-        param_type: param_type.to_owned(),
-        array: false,
-    }
+    ParamSpec::query(name)
+        .description(description)
+        .param_type(param_type)
 }
 
 fn register_list(
@@ -141,14 +136,7 @@ fn register_kind(
 ) -> Router {
     let segment = kind.plural();
 
-    let name_param = ParamSpec {
-        name: "name".to_owned(),
-        location: ParamLocation::Path,
-        required: true,
-        description: Some("Definition name".to_owned()),
-        param_type: "string".to_owned(),
-        array: false,
-    };
+    let name_param = ParamSpec::path("name").description("Definition name");
 
     let delete_param = name_param.clone();
     let rename_param = name_param.clone();

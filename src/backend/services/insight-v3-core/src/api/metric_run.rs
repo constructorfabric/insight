@@ -6,7 +6,7 @@ use axum::extract::{Extension, Path};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
-use toolkit::api::{OpenApiRegistry, OperationBuilder, ParamLocation, ParamSpec};
+use toolkit::api::{OpenApiRegistry, OperationBuilder, ParamSpec};
 use toolkit_canonical_errors::{CanonicalError, resource_error};
 
 use super::AppState;
@@ -49,14 +49,7 @@ pub(crate) fn register_routes(
     openapi: &dyn OpenApiRegistry,
     state: Arc<AppState>,
 ) -> Router {
-    let name_param = ParamSpec {
-        name: "name".to_owned(),
-        location: ParamLocation::Path,
-        required: true,
-        description: Some("Metric name".to_owned()),
-        param_type: "string".to_owned(),
-        array: false,
-    };
+    let name_param = ParamSpec::path("name").description("Metric name");
 
     let run = OperationBuilder::post("/v1/metrics/{name}/run")
         .operation_id("insight_v3_core.metrics.run")

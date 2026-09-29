@@ -10,7 +10,7 @@ use axum::response::{IntoResponse, Response};
 use secrecy::{ExposeSecret as _, SecretString};
 use sha2::{Digest as _, Sha256};
 use subtle::ConstantTimeEq as _;
-use toolkit::api::{ParamLocation, ParamSpec};
+use toolkit::api::ParamSpec;
 use toolkit_canonical_errors::{CanonicalError, resource_error};
 
 use crate::config::{MAX_INGEST_TOKEN_BYTES, MIN_INGEST_TOKEN_BYTES};
@@ -74,17 +74,8 @@ impl fmt::Debug for TokenVerifier {
 }
 
 pub(crate) fn instance_token_parameter() -> ParamSpec {
-    ParamSpec {
-        name: "X-Insight-Token".to_owned(),
-        location: ParamLocation::Header,
-        required: true,
-        description: Some(
-            "Static per-instance token configured on this service; it is not obtained from an authentication endpoint"
-                .to_owned(),
-        ),
-        param_type: "string".to_owned(),
-        array: false,
-    }
+    ParamSpec::header("X-Insight-Token").required(true).description("Static per-instance token configured on this service; it is not obtained from an authentication endpoint"
+                .to_owned(),)
 }
 
 pub(crate) fn protect(router: Router, admission: IngestAdmission) -> Router {

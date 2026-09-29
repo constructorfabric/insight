@@ -9,7 +9,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
-use toolkit::api::{OpenApiRegistry, OperationBuilder, ParamLocation, ParamSpec};
+use toolkit::api::{OpenApiRegistry, OperationBuilder, ParamSpec};
 use toolkit_canonical_errors::{CanonicalError, resource_error};
 use utoipa::ToSchema;
 
@@ -70,14 +70,7 @@ pub(crate) fn register_routes(
         .summary("Read a metric's rows one ordered page at a time")
         .anonymous()
         .exposed()
-        .param(ParamSpec {
-            name: "name".to_owned(),
-            location: ParamLocation::Path,
-            required: true,
-            description: Some("Metric name".to_owned()),
-            param_type: "string".to_owned(),
-            array: false,
-        })
+        .param(ParamSpec::path("name").description("Metric name"))
         .json_request::<DrilldownBody>(openapi, "How the page is ordered, cut and continued")
         .json_response(
             StatusCode::OK,
