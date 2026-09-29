@@ -1,4 +1,3 @@
--- depends_on: {{ ref('chatgpt_team__bronze_promoted') }}
 -- Diagnostic: where the two Codex readings of a person-day disagree.
 --
 -- The vendor publishes Codex usage twice — the usage leaderboard and the

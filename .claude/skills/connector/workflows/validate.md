@@ -92,7 +92,7 @@ Read connector package files and verify each item:
 - [ ] No `AddFields` re-projects a field the payload already carries (snake_case aliases of `emailAddress`, `displayName`, ...). Injected fields are limited to extraction-time values: config, `unique_key`, `stream_partition.*`, cursor hoists. Renames live in dbt.
 - [ ] Schema includes `tenant_id`, `source_id`, `unique_key` as string fields
 - [ ] Nullable types used only where API actually returns null (not all fields)
-- [ ] EVERY top-level stream — including lightweight substream parents added for cache hygiene — carries the full identity stamp and a `promote_bronze_to_rmt` line. Reconcile (ADR-0015) auto-selects every discovered stream, so "helper" top-level streams land as real bronze tables; without the stamp + RMT promotion they accumulate unbounded duplicates. Parent streams that must NOT become tables go inline inside `partition_router.parent_stream_configs[].stream` instead (invisible to discover).
+- [ ] EVERY top-level stream — including lightweight substream parents added for cache hygiene — carries the full identity stamp (`tenant_id`, `source_id`, `unique_key`). Reconcile (ADR-0015) auto-selects every discovered stream, so "helper" top-level streams land as real bronze tables; the destination keys them on `unique_key` (append_dedup), so a stream without the stamp accumulates unbounded duplicates. Parent streams that must NOT become tables go inline inside `partition_router.parent_stream_configs[].stream` instead (invisible to discover).
 
 ### CDK (Python)
 - [ ] `parse_response()` injects `tenant_id`, `source_id`, `unique_key`
@@ -227,42 +227,12 @@ python3 scripts/ci/connector_wiring.py
 - [ ] Model has `source_id` with not_null test
 - [ ] Model has `unique_key` with not_null and unique tests
 
-### Bronze Promotion (`promote_bronze_to_rmt`)
+### Bronze Table Shape
 
-Airbyte writes bronze tables as plain `MergeTree`, so full-refresh streams accumulate duplicates across syncs. Every connector with a `dbt/` directory MUST migrate its bronze tables to `ReplacingMergeTree` via the `promote_bronze_to_rmt` macro (see `dbt/macros/promote_bronze_to_rmt.sql`). The bootstrap view MUST run BEFORE all other transformations.
+The Airbyte destination creates every bronze table as `ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key` (append_dedup with primary key `unique_key` — configured by reconcile's `normalize_catalog.py` and mirrored by `bootstrap-db/create-connector-tables.sh`). No promotion step exists (#2877); nothing to add on the dbt side.
 
-- [ ] `dbt/<connector_snake>__bronze_promoted.sql` exists (where `<connector_snake>` is the connector name with hyphens converted to underscores, e.g. `bitbucket_cloud`, `ms_entra`, `claude_enterprise`)
-- [ ] The bootstrap model is `materialized='view'`, uses `schema='staging'`, and tags the connector name (`tags=['<name>']`)
-- [ ] For every Airbyte stream the connector emits, there is a `{% do promote_bronze_to_rmt(table='bronze_<name_snake>.<stream>', order_by='unique_key') %}` line
-- [ ] No spurious `promote_bronze_to_rmt` calls reference streams that don't exist in the manifest / source
-- [ ] Every other dbt model in `dbt/` that reads from `source('bronze_<name_snake>', '...')` declares the bronze_promoted dependency as the FIRST non-blank line above the `config` block:
-  ```jinja
-  -- depends_on: {{ ref('<connector_snake>__bronze_promoted') }}
-  ```
-  This makes dbt's DAG materialise the bootstrap view before any model that reads bronze.
-
-Run the deterministic checker:
-
-```bash
-./airbyte-toolkit/validate-bronze-promoted.py <category>/<connector>
-# or for a CI-friendly summary across the whole repo:
-./airbyte-toolkit/validate-bronze-promoted.py --all --json
-```
-
-Exit 0 = PASS for the targeted connector(s); exit 2 = at least one FAIL. Rule IDs:
-
-| Rule | What it checks |
-|------|----------------|
-| `BP-1` | `<name>__bronze_promoted.sql` file exists |
-| `BP-2` | bootstrap is `materialized='view'` |
-| `BP-3` | bootstrap uses `schema='staging'` |
-| `BP-4` | bootstrap tags include connector name |
-| `BP-5` | every stream has a `promote_bronze_to_rmt(table='bronze_<name>.<stream>')` call |
-| `BP-6` | no `promote_bronze_to_rmt` call references an unknown stream (WARN) |
-| `BP-7` | `promote_bronze_to_rmt` calls target the connector's own bronze namespace |
-| `BP-8` | every `promote_bronze_to_rmt` call passes `order_by` |
-| `BP-9` | every other model that reads bronze depends on `<name>__bronze_promoted` |
-
+- [ ] Every stream's inline schema declares `unique_key` and the `AddFields` formula can never yield null/empty (the destination makes the column NOT NULL)
+- [ ] No `promote_bronze_to_rmt` calls or `__bronze_promoted` models are introduced
 ### Dashboard metric surfacing (only if the connector should appear in the UI)
 
 A connector whose silver class feeds a dashboard metric does NOT surface in the

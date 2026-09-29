@@ -16,7 +16,7 @@ description: >
   ai.extra_usage_cost assertion here would fail.
 
   ONE snapshot per seat, because that is all bronze can hold: the connector's
-  unique_key carries no month, and the promoted table is
+  unique_key carries no month, and bronze is
   ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key, so a merge keeps the
   newest row per seat. Monthly history accrues in silver instead, one month at a time;
   test_ai_seat_extra_usage_history.py drives the pipeline twice to cover that.

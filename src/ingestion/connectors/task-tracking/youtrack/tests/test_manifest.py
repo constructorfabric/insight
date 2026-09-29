@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 from connector_tests.source import load_manifest
 from jsonschema import ValidationError, validate
@@ -26,15 +24,14 @@ _EXPECTED = {
 }
 
 
-def test_stream_contract_and_promotions_match() -> None:
+def test_the_manifest_declares_exactly_the_contracted_streams() -> None:
+    """Bronze tables are created by the destination from this stream set, so the
+    manifest and the contract cannot drift apart unnoticed."""
     manifest = load_manifest(_CONNECTOR)
     names = {stream["name"] for stream in manifest["streams"]}
-    promotion = Path(__file__).parents[1] / "dbt" / "youtrack__bronze_promoted.sql"
-    sql = promotion.read_text()
 
     assert names == _EXPECTED
     assert set(manifest["metadata"]["autoImportSchema"]) == _EXPECTED
-    assert all(f"bronze_youtrack.{name}" in sql for name in _EXPECTED)
 
 
 def test_every_stream_has_stable_bronze_stamps() -> None:

@@ -81,8 +81,7 @@ class InvoiceLines(Stream, CheckpointMixin):
     # What survives between syncs is not a field of a record but the set of
     # invoices already chained, so the cursor is source-defined. Declaring one at
     # all is what makes the platform give this connection `syncMode: incremental`
-    # and therefore keep that set (reconcile-connectors' catalogue normaliser);
-    # `destinationSyncMode` stays `append`, so bronze is written as before.
+    # and therefore keep that set (reconcile-connectors' catalogue normaliser).
     cursor_field = "collected_at"
 
     def __init__(self, config: Mapping[str, Any]) -> None:

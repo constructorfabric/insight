@@ -35,8 +35,6 @@ sources:
       - name: commit_authors
 
 models:
-  - name: github__bronze_promoted
-    description: "Promotes every GitHub bronze table to ReplacingMergeTree keyed on unique_key"
 
   - name: github__item_events
     description: "GitHub issue and pull-request lifecycle events -> staging, feeds class_git_item_events"

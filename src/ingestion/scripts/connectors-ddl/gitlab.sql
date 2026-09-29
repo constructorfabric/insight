@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS bronze_gitlab.branches
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS bronze_gitlab.branches
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_gitlab.commit_authors
@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS bronze_gitlab.commit_authors
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS bronze_gitlab.commit_authors
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_gitlab.commits
@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS bronze_gitlab.commits
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -84,7 +84,7 @@ CREATE TABLE IF NOT EXISTS bronze_gitlab.commits
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_gitlab.deployments
@@ -93,7 +93,7 @@ CREATE TABLE IF NOT EXISTS bronze_gitlab.deployments
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -119,7 +119,7 @@ CREATE TABLE IF NOT EXISTS bronze_gitlab.deployments
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_gitlab.environments
@@ -128,7 +128,7 @@ CREATE TABLE IF NOT EXISTS bronze_gitlab.environments
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -146,7 +146,7 @@ CREATE TABLE IF NOT EXISTS bronze_gitlab.environments
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_gitlab.file_changes
@@ -155,7 +155,7 @@ CREATE TABLE IF NOT EXISTS bronze_gitlab.file_changes
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -179,7 +179,7 @@ CREATE TABLE IF NOT EXISTS bronze_gitlab.file_changes
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_gitlab.group_members
@@ -188,7 +188,7 @@ CREATE TABLE IF NOT EXISTS bronze_gitlab.group_members
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -207,7 +207,7 @@ CREATE TABLE IF NOT EXISTS bronze_gitlab.group_members
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_gitlab.pipelines
@@ -216,7 +216,7 @@ CREATE TABLE IF NOT EXISTS bronze_gitlab.pipelines
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -243,7 +243,7 @@ CREATE TABLE IF NOT EXISTS bronze_gitlab.pipelines
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_gitlab.pull_request_commits
@@ -252,7 +252,7 @@ CREATE TABLE IF NOT EXISTS bronze_gitlab.pull_request_commits
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -275,7 +275,7 @@ CREATE TABLE IF NOT EXISTS bronze_gitlab.pull_request_commits
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_gitlab.pull_request_diff_stats
@@ -284,7 +284,7 @@ CREATE TABLE IF NOT EXISTS bronze_gitlab.pull_request_diff_stats
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -299,7 +299,7 @@ CREATE TABLE IF NOT EXISTS bronze_gitlab.pull_request_diff_stats
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_gitlab.pull_request_label_events
@@ -308,7 +308,7 @@ CREATE TABLE IF NOT EXISTS bronze_gitlab.pull_request_label_events
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -326,7 +326,7 @@ CREATE TABLE IF NOT EXISTS bronze_gitlab.pull_request_label_events
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_gitlab.pull_request_notes
@@ -335,7 +335,7 @@ CREATE TABLE IF NOT EXISTS bronze_gitlab.pull_request_notes
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -363,7 +363,7 @@ CREATE TABLE IF NOT EXISTS bronze_gitlab.pull_request_notes
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_gitlab.pull_request_state_events
@@ -372,7 +372,7 @@ CREATE TABLE IF NOT EXISTS bronze_gitlab.pull_request_state_events
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -388,7 +388,7 @@ CREATE TABLE IF NOT EXISTS bronze_gitlab.pull_request_state_events
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_gitlab.pull_requests
@@ -397,7 +397,7 @@ CREATE TABLE IF NOT EXISTS bronze_gitlab.pull_requests
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -443,7 +443,7 @@ CREATE TABLE IF NOT EXISTS bronze_gitlab.pull_requests
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_gitlab.repositories
@@ -452,7 +452,7 @@ CREATE TABLE IF NOT EXISTS bronze_gitlab.repositories
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -486,7 +486,7 @@ CREATE TABLE IF NOT EXISTS bronze_gitlab.repositories
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_gitlab.users
@@ -495,7 +495,7 @@ CREATE TABLE IF NOT EXISTS bronze_gitlab.users
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -515,6 +515,6 @@ CREATE TABLE IF NOT EXISTS bronze_gitlab.users
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 

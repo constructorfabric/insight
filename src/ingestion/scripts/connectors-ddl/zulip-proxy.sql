@@ -12,11 +12,11 @@ CREATE TABLE IF NOT EXISTS bronze_zulip_proxy.messages
     `created_at` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String)
+    `unique_key` String
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_zulip_proxy.users
@@ -34,10 +34,10 @@ CREATE TABLE IF NOT EXISTS bronze_zulip_proxy.users
     `recipient_id` Nullable(Decimal(38, 9)),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String)
+    `unique_key` String
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 

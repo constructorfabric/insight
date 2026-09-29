@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS bronze_youtrack.youtrack_activities
     `author_id` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `category_json` Nullable(String),
     `field_json` Nullable(String),
     `added_json` Nullable(String),
@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS bronze_youtrack.youtrack_activities
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_youtrack.youtrack_agiles
@@ -36,13 +36,13 @@ CREATE TABLE IF NOT EXISTS bronze_youtrack.youtrack_agiles
     `name` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `agile_json` Nullable(String),
     `observed_at` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_youtrack.youtrack_comments
@@ -62,12 +62,12 @@ CREATE TABLE IF NOT EXISTS bronze_youtrack.youtrack_comments
     `author_id` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `comment_json` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_youtrack.youtrack_custom_fields
@@ -81,13 +81,13 @@ CREATE TABLE IF NOT EXISTS bronze_youtrack.youtrack_custom_fields
     `field_type_id` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `metadata_json` Nullable(String),
     `observed_at` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_youtrack.youtrack_field_values
@@ -102,14 +102,14 @@ CREATE TABLE IF NOT EXISTS bronze_youtrack.youtrack_field_values
     `bundle_id` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `bundle_json` Nullable(String),
     `values_json` Nullable(String),
     `observed_at` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_youtrack.youtrack_issue_census
@@ -127,11 +127,11 @@ CREATE TABLE IF NOT EXISTS bronze_youtrack.youtrack_issue_census
     `observed_at` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String)
+    `unique_key` String
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_youtrack.youtrack_issue_keys
@@ -145,11 +145,11 @@ CREATE TABLE IF NOT EXISTS bronze_youtrack.youtrack_issue_keys
     `updated` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String)
+    `unique_key` String
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_youtrack.youtrack_issue_links
@@ -165,13 +165,13 @@ CREATE TABLE IF NOT EXISTS bronze_youtrack.youtrack_issue_links
     `issue_updated` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `linked_issues_json` Nullable(String),
     `link_json` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_youtrack.youtrack_issue_sprints
@@ -186,12 +186,12 @@ CREATE TABLE IF NOT EXISTS bronze_youtrack.youtrack_issue_sprints
     `issue_updated` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `sprint_json` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_youtrack.youtrack_issues
@@ -218,14 +218,14 @@ CREATE TABLE IF NOT EXISTS bronze_youtrack.youtrack_issues
     `updater_id` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `custom_fields_json` Nullable(String),
     `issue_json` Nullable(String),
     `observed_at` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_youtrack.youtrack_project_fields
@@ -240,13 +240,13 @@ CREATE TABLE IF NOT EXISTS bronze_youtrack.youtrack_project_fields
     `field_type_id` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `metadata_json` Nullable(String),
     `observed_at` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_youtrack.youtrack_projects
@@ -263,13 +263,13 @@ CREATE TABLE IF NOT EXISTS bronze_youtrack.youtrack_projects
     `archived` Nullable(Bool),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `project_json` Nullable(String),
     `observed_at` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_youtrack.youtrack_sprints
@@ -286,13 +286,13 @@ CREATE TABLE IF NOT EXISTS bronze_youtrack.youtrack_sprints
     `agile_id` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `sprint_json` Nullable(String),
     `observed_at` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_youtrack.youtrack_users
@@ -309,13 +309,13 @@ CREATE TABLE IF NOT EXISTS bronze_youtrack.youtrack_users
     `isAnonymized` Nullable(Bool),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `user_json` Nullable(String),
     `observed_at` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_youtrack.youtrack_work_items
@@ -332,11 +332,11 @@ CREATE TABLE IF NOT EXISTS bronze_youtrack.youtrack_work_items
     `author_id` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `work_item_json` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
