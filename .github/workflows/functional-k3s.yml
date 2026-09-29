@@ -52,9 +52,10 @@ env:
   MARIADB_ROOT_PASSWORD: insightroot123
   REDIS_PASSWORD: insightpass123
 
-# The self-hosted routing below is the same expression in every workflow; the
-# rule and what it does not close are explained in ci.yml. Only ci.yml and
-# connectors-ddl.yml have been exercised on the pool so far.
+# Routing, stated once in .github/runners/insight-vhc/README.md: a pull request
+# from a branch of this repository takes the ephemeral ARC scale set, a fork's
+# takes a GitHub-hosted runner, everything else takes the shared self-hosted
+# pool, and INSIGHT_FORCE_GITHUB_HOSTED returns all of it to hosted.
 jobs:
   cluster-smoke:
     name: K3s GitOps Deploy
@@ -75,7 +76,7 @@ jobs:
       # The keycloak-realm Makefile target generates the roster realm with the
       # seed package's insight-seed-realm entry point, which runs under uv.
       - name: Install uv
-        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
 
       - name: Install gitops CLI tools
         run: |

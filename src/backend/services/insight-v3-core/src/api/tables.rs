@@ -38,6 +38,15 @@ impl ApiErrors for TableApiError {
             .with_resource(name)
             .create()
     }
+    fn missing(resource: &str, detail: String) -> CanonicalError {
+        Self::not_found(detail).with_resource(resource).create()
+    }
+
+    fn oversized(field: &str, detail: &str) -> CanonicalError {
+        Self::invalid_argument()
+            .with_field_violation(field, detail, "TOO_LARGE")
+            .create()
+    }
 }
 
 /// One table as the catalogue lists it: enough to name it in a metric.

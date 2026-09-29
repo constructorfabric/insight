@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/tooltip";
 import { useSettings } from "@/hooks/use-settings";
 import { formatMetricValue } from "@/lib/format";
+import { absenceLabel } from "@/lib/metrics/absence";
 import {
   forEntity,
   type NormalizedMetricResult,
@@ -275,6 +276,7 @@ export function MembersGrid({
         const standing = derivePeerStanding(metric.direction, {
           value: data.value,
           peer: data.peer,
+          absence: data.absence,
         });
         const prevMetric = previousByKey?.get(col.key);
         const previous = prevMetric
@@ -591,6 +593,7 @@ function GridCell({
   const evidenceContext = useMetricEvidenceOptional();
   const scope = useEvidenceScope();
   const { col, value, previous, delta, median, observed } = cell;
+  const leaveLabel = absenceLabel(col.metric.absenceContext?.get(entityId));
   const evidence = col.metric.drilldown
     ? evidenceSelection(
         col.metric.selection,
@@ -607,7 +610,7 @@ function GridCell({
   const showTrend = deltaText != null;
   const trendUp = delta != null && delta.value > 0;
   const TrendIcon = trendUp ? ArrowUp : ArrowDown;
-  const trendTint = delta
+  const trendTint = delta && !leaveLabel
     ? STATUS_TEXT_CLASS[
         applyFocusStatus(deltaStatus(delta, col.direction), focusMode)
       ]
@@ -658,7 +661,7 @@ function GridCell({
             }}
             aria-label={
               observed
-                ? `${memberName} — ${col.label}: ${displayWithUnit} — ${PEER_LABEL[focused]}`
+                ? `${memberName} — ${col.label}: ${displayWithUnit} — ${PEER_LABEL[focused]}${leaveLabel ? ` — ${leaveLabel}` : ""}`
                 : `${memberName} — ${col.label}: not recorded`
             }
             className={cn(
@@ -722,6 +725,9 @@ function GridCell({
             <p className={cn("mt-1 text-xs font-medium", PEER_TEXT[focused])}>
               {PEER_LABEL[focused]}
             </p>
+          ) : null}
+          {leaveLabel ? (
+            <p className="mt-1 text-xs text-muted-foreground">{leaveLabel}</p>
           ) : null}
         </div>
       </PreviewCardContent>

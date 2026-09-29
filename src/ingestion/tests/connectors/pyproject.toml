@@ -39,6 +39,12 @@ override-dependencies = [
     # intercepts every call before the transport -- but the CDK's connector-builder
     # secret handling imports it, so the version still ships.
     "cryptography>=48.0.1",
+    # airbyte-cdk's nltk floor resolves 3.9.x, which carries a remote code
+    # execution, an unsafe pickle load and a JVM argument injection
+    # (CVE-2026-79657, CVE-2026-78683, CVE-2026-79675). The harness never calls
+    # into nltk, but it resolves the same graph the shipped connectors do and
+    # each of those already carries this override.
+    "nltk>=3.10.3",
 ]
 
 [tool.pytest.ini_options]

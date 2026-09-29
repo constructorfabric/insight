@@ -133,6 +133,8 @@ export function computeAttentionFlags({
     }
 
     for (const { id, v, c } of points) {
+      const absence = forEntity(r, id).absence;
+      if (absence?.period_overlap) continue;
       const st = stats.get(c);
       const name = nameOf(id);
       const personId = personIdOf(id);
@@ -176,7 +178,7 @@ export function computeAttentionFlags({
         }
         continue;
       }
-      if (prev) {
+      if (prev && !absence?.compare_to_overlap) {
         const pv = forEntity(prev, id).value;
         if (pv != null && Number.isFinite(pv) && Math.abs(pv) > 1e-9) {
           const change = (v - pv) / Math.abs(pv);

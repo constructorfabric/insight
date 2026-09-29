@@ -66,16 +66,17 @@ permissions:
   id-token: write # keyless OIDC identity for attest-build-provenance
   attestations: write # store SLSA provenance in the repo attestation store
 
-# The self-hosted routing below is the same expression in every workflow; the
-# rule and what it does not close are explained in ci.yml. Only ci.yml and
-# connectors-ddl.yml have been exercised on the pool so far.
+# Routing, stated once in .github/runners/insight-vhc/README.md: a pull request
+# from a branch of this repository takes the ephemeral ARC scale set, a fork's
+# takes a GitHub-hosted runner, everything else takes the shared self-hosted
+# pool, and INSIGHT_FORCE_GITHUB_HOSTED returns all of it to hosted.
 jobs:
   # ─── Backend / chart change detection ──────────────────────────────────────
   # Per-service filters so a single-service code change only rebuilds that one
   # image. Connector image builds are NOT handled here — see discover-images,
   # which scans every descriptor.yaml's `images:` block (ADR-0016).
   changes:
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
     outputs:
       analytics: ${{ steps.filter.outputs.analytics }}
       authenticator: ${{ steps.filter.outputs.authenticator }}
@@ -304,7 +305,7 @@ jobs:
   # `outputs.any`, so they cascade-skip with it.
   discover-images:
     if: github.event_name != 'merge_group' && (github.event_name != 'workflow_dispatch' || !inputs.frontend_only)
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
     outputs:
       matrix: ${{ steps.scan.outputs.matrix }}
       any: ${{ steps.scan.outputs.any }}
@@ -314,6 +315,11 @@ jobs:
         with:
           # Need parent commit for the changed-paths diff.
           fetch-depth: 0
+      # The interpreter comes from the action, not the machine: a distro python
+      # is marked externally managed (PEP 668) and refuses `pip install`.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
       - name: Install PyYAML
         run: python3 -m pip install --quiet pyyaml
       - name: Scan descriptors and filter by changed paths
@@ -389,17 +395,17 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]'))) }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         id: build
         with:
           context: src/backend
@@ -464,7 +470,7 @@ jobs:
           path: ${{ runner.temp }}/digests
           pattern: digests-analytics-*
           merge-multiple: true
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
@@ -519,17 +525,17 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]'))) }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         id: build
         with:
           context: src/backend
@@ -589,7 +595,7 @@ jobs:
           path: ${{ runner.temp }}/digests
           pattern: digests-authenticator-*
           merge-multiple: true
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
@@ -644,17 +650,17 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]'))) }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         id: build
         with:
           context: src/backend
@@ -709,7 +715,7 @@ jobs:
           path: ${{ runner.temp }}/digests
           pattern: digests-gateway-*
           merge-multiple: true
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
@@ -765,19 +771,19 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]'))) }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false # don't leave the token in .git/config
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         id: build
         with:
           context: src/backend
@@ -838,7 +844,7 @@ jobs:
           path: ${{ runner.temp }}/digests
           pattern: digests-git-cli-proxy-*
           merge-multiple: true
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
@@ -894,19 +900,19 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]'))) }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false # don't leave the token in .git/config
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         id: build
         with:
           context: src/backend
@@ -967,7 +973,7 @@ jobs:
           path: ${{ runner.temp }}/digests
           pattern: digests-identity-resolution-*
           merge-multiple: true
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
@@ -1024,19 +1030,19 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]'))) }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false # don't leave the token in .git/config
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         id: build
         with:
           context: src/backend
@@ -1086,7 +1092,7 @@ jobs:
           path: ${{ runner.temp }}/digests
           pattern: digests-insight-v3-core-*
           merge-multiple: true
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
@@ -1142,19 +1148,19 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]'))) }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false # don't leave the token in .git/config
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         id: build
         with:
           context: src/backend
@@ -1204,7 +1210,7 @@ jobs:
           path: ${{ runner.temp }}/digests
           pattern: digests-previews-*
           merge-multiple: true
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
@@ -1268,7 +1274,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]'))) }}
     timeout-minutes: 30
     # Narrower than the workflow-level set: this job builds PR-authored source.
     permissions:
@@ -1278,14 +1284,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false # don't leave the token in .git/config
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       # No `file:` — the Dockerfile is at the context root.
-      - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         id: build
         with:
           context: src/frontend
@@ -1339,7 +1345,7 @@ jobs:
           path: ${{ runner.temp }}/digests
           pattern: digests-frontend-*
           merge-multiple: true
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
@@ -1400,12 +1406,12 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]'))) }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
@@ -1425,7 +1431,7 @@ jobs:
       # so the orphan never gets tagged; GHCR retention reclaims it.
       - name: Build toolbox image (load locally, amd64 only)
         if: matrix.arch == 'amd64'
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: src/ingestion
           file: src/ingestion/tools/toolbox/Dockerfile
@@ -1468,7 +1474,7 @@ jobs:
 
       - name: Build and push toolbox image (by digest)
         id: build
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: src/ingestion
           file: src/ingestion/tools/toolbox/Dockerfile
@@ -1513,7 +1519,7 @@ jobs:
           path: ${{ runner.temp }}/digests
           pattern: digests-toolbox-*
           merge-multiple: true
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
@@ -1577,12 +1583,12 @@ jobs:
       fail-fast: false
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]'))) }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
@@ -1595,7 +1601,7 @@ jobs:
       # and the push-build reuses the buildx cache.
       - name: Build seed image (load locally, amd64 only)
         if: matrix.arch == 'amd64'
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: src/ingestion
           file: src/ingestion/tools/seed/Dockerfile
@@ -1633,7 +1639,7 @@ jobs:
 
       - name: Build and push seed image (by digest)
         id: build
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: src/ingestion
           file: src/ingestion/tools/seed/Dockerfile
@@ -1678,7 +1684,7 @@ jobs:
           path: ${{ runner.temp }}/digests
           pattern: digests-seed-*
           merge-multiple: true
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
@@ -1729,17 +1735,17 @@ jobs:
       matrix:
         entry: ${{ fromJson(needs.discover-images.outputs.matrix) }}
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]'))) }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         id: build
         with:
           context: ${{ matrix.entry.connector_dir }}/${{ matrix.entry.context }}
@@ -1794,7 +1800,7 @@ jobs:
           path: ${{ runner.temp }}/digests
           pattern: digests-${{ matrix.entry.name }}-*
           merge-multiple: true
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY }}

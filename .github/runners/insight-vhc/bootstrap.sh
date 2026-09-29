@@ -100,19 +100,89 @@ chown -R runner:runner /opt/actions-runner
 
 # A container job runs as root over the mounted work tree, so one killed before
 # its cleanup leaves root-owned paths that the next host job's checkout cannot
-# remove. The runner reads this hook from .env at startup and runs it on the
-# host before every job, container jobs included.
+# remove. Two callers run this repair: the job-started hook below, and
+# ExecStartPre on the runner service.
+install -m 0755 /dev/stdin /usr/local/sbin/gha-reclaim-work.sh <<'RECLAIM'
+#!/usr/bin/env bash
+set -uo pipefail
+work="/srv/gha/work"
+[ -d "$work" ] || exit 0
+# INVARIANT: the owner is named, never taken from the caller. Run from any
+# shell but the runner's own, an id-derived owner hands the tree to that user,
+# and the service then fails every job before a hook could take it back.
+if ! unowned=$(find "$work" -xdev ! -user runner -print -quit); then
+  echo "reclaim: ownership check failed for $work" >&2
+  exit 1
+fi
+if [ -n "$unowned" ]; then
+  echo "reclaim: taking $work back for runner"
+  # The repair takes the check's own -xdev, so neither can reach a filesystem
+  # the other cannot see; chown has no such option. -h keeps a symlink's target
+  # out of it, which is what chown -R does for links it walks onto.
+  if ! find "$work" -xdev ! -user runner -exec chown -h runner:runner {} +; then
+    echo "reclaim: failed to change ownership of $work" >&2
+    exit 1
+  fi
+else
+  echo "reclaim: $work clean"
+fi
+exit 0
+RECLAIM
+
+# The runner reads this hook from .env at startup and runs it on the host before
+# every job, container jobs included.
 install -m 0755 /dev/stdin /usr/local/sbin/gha-job-started.sh <<'HOOK'
 #!/usr/bin/env bash
 set -uo pipefail
 work="/srv/gha/work"
 [ -d "$work" ] || exit 0
-if sudo find "$work" -xdev ! -user "$(id -un)" -print -quit 2>/dev/null | grep -q .; then
-  echo "job-started hook: reclaiming $work"
-  sudo chown -R "$(id -u):$(id -g)" "$work" || true
-else
-  echo "job-started hook: $work clean"
+if ! sudo /usr/local/sbin/gha-reclaim-work.sh; then
+  echo "job-started hook: work-tree reclaim failed" >&2
+  exit 1
 fi
+
+# The work tree survives the job that made it, and with it the remote-tracking
+# refs whatever ran last happened to fetch. A lane that reads origin/<branch>
+# would resolve one this job never asked for, so drop them all and leave the
+# rest of the repository alone: a job that needs a remote ref fetches it.
+# INVARIANT: this runs after the ownership repair above — git refuses a
+# repository it sees as owned by someone else, so a root-owned .git would be
+# skipped here and keep its stale refs.
+shopt -s nullglob
+for repo in "$work"/*/*; do
+  # The runner's own directories (_actions, _temp, _tool, _diag, ...) sit
+  # beside the workspace checkouts and their git state is not the job's.
+  case "${repo#"$work"/}" in _*) continue ;; esac
+  # SAFETY: the previous job owned this tree, so nothing in it is trusted to say
+  # which repository this is. Only a checkout that physically lives at the path
+  # is cleaned: a symlinked candidate, a symlinked .git, or a `gitdir:` file
+  # would all send the deletes into a repository outside the work tree, and
+  # core.hooksPath cannot help because the redirect happens before any hook.
+  # Linked worktrees and separate gitdirs are not a shape the runner produces
+  # here, so they are refused rather than mapped.
+  [ -L "$repo" ] && continue
+  [ -d "$repo" ] || continue
+  [ "$(realpath -- "$repo" 2>/dev/null)" = "$repo" ] || continue
+  gitdir="$repo/.git"
+  [ -L "$gitdir" ] && continue
+  [ -d "$gitdir" ] || continue
+  [ "$(realpath -- "$gitdir" 2>/dev/null)" = "$gitdir" ] || continue
+  stale=$(git --git-dir="$gitdir" for-each-ref --format='delete %(refname)' refs/remotes 2>/dev/null) || continue
+  [ -n "$stale" ] || continue
+  # --no-deref: origin/HEAD is symbolic, and without it the delete follows the
+  # symlink — origin/main goes instead and origin/HEAD is left dangling.
+  # core.hooksPath: update-ref fires reference-transaction, and a container job
+  # runs as root over this tree, so it can plant one for this hook to execute.
+  if printf '%s\n' "$stale" |
+      git -c core.hooksPath=/dev/null --git-dir="$gitdir" update-ref --no-deref --stdin 2>/dev/null; then
+    echo "job-started hook: dropped $(printf '%s\n' "$stale" | wc -l) remote-tracking ref(s) in $gitdir"
+  else
+    echo "job-started hook: could not drop remote-tracking refs in $gitdir"
+  fi
+done
+# The runner fails the job when this hook exits non-zero. A failed reclaim is
+# meant to do exactly that; the ref cleanup above is best-effort and may not.
+exit 0
 HOOK
 grep -q ACTIONS_RUNNER_HOOK_JOB_STARTED /opt/actions-runner/.env 2>/dev/null || \
   echo 'ACTIONS_RUNNER_HOOK_JOB_STARTED=/usr/local/sbin/gha-job-started.sh' >> /opt/actions-runner/.env
@@ -131,5 +201,16 @@ rm -f /etc/gha-runner/register.env
 set -x
 
 ./svc.sh install runner
+
+# The runner writes _PipelineMapping before it builds a single step, so the
+# job-started hook never reaches a tree that is already under another owner:
+# the job fails first, and the machine cannot repair itself. '+' runs the
+# repair as root although the unit drops to the runner account.
+svc_unit=$(cat /opt/actions-runner/.service)
+install -d "/etc/systemd/system/${svc_unit}.d"
+printf '[Service]\nExecStartPre=+/usr/local/sbin/gha-reclaim-work.sh\n' \
+  > "/etc/systemd/system/${svc_unit}.d/10-reclaim-work.conf"
+systemctl daemon-reload
+
 ./svc.sh start
 echo "gha-bootstrap: runner $RUNNER_NAME registered at $GITHUB_URL"

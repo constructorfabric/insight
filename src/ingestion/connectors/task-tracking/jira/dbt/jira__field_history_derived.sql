@@ -49,8 +49,9 @@
 --   3. one `changelog` row per event, holding the state after that event;
 --   4. one `retired_field` row per (issue, field) the issue stopped carrying;
 --   5. one `unclassified_field` row per (issue, field) the catalogue lacks;
---   6. one `snapshot_diff` per (issue, field) the issue cleared without an
---      event — the state as OBSERVED, which is not the same claim as an event.
+--   6. one `snapshot_diff` per (issue, field) whose events end on a value the
+--      issue does not hold — the state as OBSERVED, which is not the same
+--      claim as an event.
 --
 -- Only the element-wise kinds accumulate state across events; every other
 -- kind's item carries both sides in full, so its rows are computed from the
@@ -189,7 +190,10 @@ issue_json AS (
         COALESCE(i.source_id, '')                         AS insight_source_id,
         COALESCE(toString(i.jira_id), '')                 AS issue_id,
         COALESCE(i.custom_fields_json, '{}')              AS custom_fields_json,
-        toDateTime64(i._airbyte_extracted_at, 3)          AS observed_at
+        toDateTime64(i._airbyte_extracted_at, 3)          AS observed_at,
+        parseDateTime64BestEffortOrNull(
+            JSONExtractString(COALESCE(i.custom_fields_json, '{}'), 'resolutiondate'), 3)
+                                                          AS resolved_at
     FROM {{ source('bronze_jira', 'jira_issue') }} AS i
     INNER JOIN issue_winner AS w ON i._airbyte_raw_id = w.raw_id
     {% if touched_only -%}
@@ -241,13 +245,9 @@ events AS (
         ci.insight_source_id                              AS insight_source_id,
         ci.issue_id                                       AS issue_id,
         ci.changelog_id                                   AS changelog_id,
-        -- Jira's changelog id is monotonic, and it is what breaks a tie between
-        -- two events of the same millisecond. It must be compared as a NUMBER:
-        -- as text '101' sorts before '99', which inverts a pair of events every
-        -- time the id crosses a digit-count boundary — and for an element-wise
-        -- field an inverted add/remove pair changes the resulting set. The
-        -- string form stays the event id, where it is an identifier, not an
-        -- order.
+        -- INVARIANT: the changelog id orders two events of one instant only after
+        -- `same_instant_chain`, and only as a NUMBER — as text '101' sorts before
+        -- '99'. The string form stays the event id, an identifier, not an order.
         toUInt64OrZero(ci.changelog_id)                   AS event_ord,
         ci.created_at                                     AS event_at,
         ci.author_account_id                              AS author_id,
@@ -293,6 +293,153 @@ live_events AS (
     WHERE delta_action != 'none'
       AND (field_kind IN {{ jira_element_wise_kinds() }}
            OR NOT sides_unchanged)
+),
+
+-- ── the order of self-describing events that share an instant (§5) ─────────
+-- INVARIANT: the unique from→to chain orders them, not the changelog id; a
+-- non-unique chain gives every event 0 and leaves the order to the id.
+-- MEMORY (§13): only this narrow aggregation touches every event; arrays are
+-- gathered for the tied keys alone.
+same_instant_keys AS (
+    SELECT
+        insight_source_id,
+        issue_id,
+        field_id,
+        event_at
+    FROM live_events
+    WHERE field_kind NOT IN {{ jira_element_wise_kinds() }}
+    GROUP BY insight_source_id, issue_id, field_id, event_at
+    HAVING min(event_ord) != max(event_ord)
+),
+
+same_instant_groups AS (
+    SELECT
+        insight_source_id,
+        issue_id,
+        field_id,
+        arraySort(x -> x.1, groupUniqArray((event_ord, changelog_id, sides.1, sides.3))) AS evs,
+        uniqExact(changelog_id)                           AS distinct_changelog_ids
+    FROM live_events
+    WHERE field_kind NOT IN {{ jira_element_wise_kinds() }}
+      AND (insight_source_id, issue_id, field_id, event_at)
+          IN (SELECT insight_source_id, issue_id, field_id, event_at FROM same_instant_keys)
+    GROUP BY insight_source_id, issue_id, field_id, event_at
+),
+
+same_instant_shape AS (
+    SELECT
+        insight_source_id,
+        issue_id,
+        field_id,
+        evs,
+        length(evs)                                       AS n,
+        length(evs) > distinct_changelog_ids              AS ambiguous_changelog,
+        arrayMap(x -> x.3, evs)                           AS befores,
+        arrayMap(x -> x.4, evs)                           AS afters
+    FROM same_instant_groups
+),
+
+same_instant_links AS (
+    SELECT
+        insight_source_id,
+        issue_id,
+        field_id,
+        evs,
+        n,
+        ambiguous_changelog,
+        befores,
+        afters,
+        arrayMap(i -> indexOf(befores, afters[i]), range(1, n + 1)) AS nexts
+    FROM same_instant_shape
+),
+
+same_instant_heads AS (
+    SELECT
+        insight_source_id,
+        issue_id,
+        field_id,
+        evs,
+        n,
+        ambiguous_changelog,
+        befores,
+        afters,
+        nexts,
+        arrayFilter(i -> NOT has(nexts, i), range(1, n + 1)) AS heads
+    FROM same_instant_links
+),
+
+same_instant_walks AS (
+    SELECT
+        insight_source_id,
+        issue_id,
+        field_id,
+        evs,
+        n,
+        -- INVARIANT: a walk that leaves the chain yields index 0, which
+        -- `same_instant_chain` rejects.
+        if(NOT ambiguous_changelog
+             AND length(arrayDistinct(befores)) = n
+             AND length(arrayDistinct(afters)) = n
+             AND NOT arrayExists(i -> nexts[i] = i, range(1, n + 1))
+             AND length(heads) = 1,
+           arrayFold((acc, k) -> arrayPushBack(acc, nexts[acc[-1]]),
+                     range(1, n), [heads[1]]),
+           CAST([] AS Array(UInt64)))                     AS walk
+    FROM same_instant_heads
+),
+
+same_instant_chain AS (
+    SELECT
+        insight_source_id,
+        issue_id,
+        field_id,
+        position.1                                        AS changelog_id,
+        any(position.2)                                   AS chain_pos
+    FROM (
+        -- INVARIANT: the arrayJoin stays alone in its own SELECT list. Reading
+        -- its elements beside it re-evaluates it per reference.
+        SELECT
+            insight_source_id,
+            issue_id,
+            field_id,
+            arrayJoin(arrayMap(i -> ((evs[i]).2,
+                                     toUInt32(if(length(arrayDistinct(walk)) = n AND NOT has(walk, 0),
+                                                 indexOf(walk, i) - 1, 0))),
+                               range(1, n + 1)))          AS position
+        FROM same_instant_walks
+    )
+    -- INVARIANT: a changelog id repeated in a group makes it ambiguous, so its
+    -- rows all carry 0 and `any()` picks no winner.
+    GROUP BY insight_source_id, issue_id, field_id, changelog_id
+),
+
+-- INVARIANT: a scalar, not a CTE: evaluated once per query, while a CTE is
+-- recomputed at every reference of `ordered_events`.
+(SELECT groupArray((insight_source_id, issue_id, field_id, changelog_id, chain_pos)) FROM same_instant_chain) AS same_instant_positions,
+
+ordered_events AS (
+    SELECT
+        e.*,
+        COALESCE(p.chain_pos, toUInt32(0))                AS chain_pos
+    FROM live_events AS e
+    LEFT JOIN (
+        SELECT
+            position.1                                    AS insight_source_id,
+            position.2                                    AS issue_id,
+            position.3                                    AS field_id,
+            position.4                                    AS changelog_id,
+            position.5                                    AS chain_pos
+        FROM (
+            -- INVARIANT: the arrayJoin stays alone in its own SELECT list. Reading
+            -- its elements beside it re-evaluates it per reference.
+            SELECT arrayJoin(same_instant_positions) AS position
+        )
+    ) AS p
+        ON p.insight_source_id = e.insight_source_id
+       AND p.issue_id = e.issue_id
+       AND p.field_id = e.field_id
+       AND p.changelog_id = e.changelog_id
+    WHERE e.field_kind NOT IN {{ jira_element_wise_kinds() }}
 ),
 
 -- ── fields the catalogue does not contain ───────────────────────────────────
@@ -662,24 +809,32 @@ element_wise_state AS (
 ),
 
 -- ── the state the journal's own events arrive at ────────────────────────────
--- Needed to tell a field the issue silently cleared from one it never held.
--- Both families contribute: a self-describing item carries the state after it,
--- and an element-wise field's state after its last operation is the span set.
+-- Needed to tell a field the issue changed without recording it from one whose
+-- events reach its value. Both families contribute: a self-describing item
+-- carries the state after it, and an element-wise field's state after its last
+-- operation is the span set. Digests, not arrays: this is the build side of the
+-- join below, and a hash table holding every pair's arrays is the shape §13
+-- exists to avoid. The digests are taken per row, inside the union, so the
+-- aggregation state below holds three scalars per (issue, field), never arrays.
 newest_from_events AS (
     SELECT
-        src                                               AS insight_source_id,
-        iss                                               AS issue_id,
-        fid                                               AS field_id,
-        argMax(ids, ord)                                  AS value_ids
+        src                                                AS insight_source_id,
+        iss                                                AS issue_id,
+        fid                                                AS field_id,
+        argMax((holds, ids_d, displays_d), ord).1          AS holds_value,
+        argMax((holds, ids_d, displays_d), ord).2          AS ids_digest,
+        argMax((holds, ids_d, displays_d), ord).3          AS displays_digest,
+        max(ord).1                                         AS last_event_at
     FROM (
         SELECT
-            e.insight_source_id                           AS src,
-            e.issue_id                                 AS iss,
-            e.field_id                                    AS fid,
-            (e.event_at, e.event_ord)                     AS ord,
-            e.sides.3                                     AS ids
-        FROM live_events AS e
-        WHERE e.field_kind NOT IN {{ jira_element_wise_kinds() }}
+            e.insight_source_id                            AS src,
+            e.issue_id                                     AS iss,
+            e.field_id                                     AS fid,
+            (e.event_at, e.chain_pos, e.event_ord)         AS ord,
+            length(e.sides.3) > 0                          AS holds,
+            {{ jira_value_set_digest('e.sides.3') }}       AS ids_d,
+            {{ jira_value_set_digest('e.sides.4') }}       AS displays_d
+        FROM ordered_events AS e
 
         UNION ALL
 
@@ -687,37 +842,60 @@ newest_from_events AS (
             a.insight_source_id,
             a.issue_id,
             a.field_id,
-            (a.event_at, a.ops_seq),
-            arrayMap(x -> splitByChar('\x1f', x)[1], a.state_pairs)
+            (a.event_at, toUInt32(0), toUInt64(a.ops_seq)),
+            length(a.state_pairs) > 0,
+            {{ jira_value_set_digest("arrayMap(x -> splitByChar('\\x1f', x)[1], a.state_pairs)") }},
+            {{ jira_value_set_digest("arrayMap(x -> splitByChar('\\x1f', x)[2], a.state_pairs)") }}
         FROM element_wise_state AS a
     )
     GROUP BY src, iss, fid
 ),
 
--- ── fields the issue cleared without recording it ───────────────────────────
--- The key is STILL in the issue JSON — the field applies and is simply unset —
--- but the journal's own events end on a value. Jira does that when a value goes
--- away without an entry: a link removed from the other side of the pair, an
--- automation writing a read-only field, a list emptied by a bulk operation. §6
--- calls the missing entry what it is, and this row does not pretend otherwise:
--- it records the state observed, not an event that happened.
+-- ── values the issue holds that its events never reach ──────────────────────
+-- Jira changes a value without an entry more often than it should: a link
+-- removed from the other side of the pair, an automation writing a read-only
+-- field, a list emptied by a bulk operation, history imported from another
+-- tracker with entries missing. §6 calls the missing entry what it is, and the
+-- row this feeds does not pretend otherwise: it records the state observed,
+-- not an event that happened.
 --
--- An ABSENT key is a different thing and belongs to `retired_pairs` — the field
--- left the issue's context, rather than the issue dropping its value.
--- Pairs whose events end on a value the snapshot does not hold. Resolved
--- BEFORE the issue JSON is consulted, so the JSON is probed for these pairs
--- only.
-missing_from_snapshot AS (
+-- Two disagreements qualify. `cleared`: the snapshot holds nothing, so the key
+-- must still be present in the issue JSON — an ABSENT key belongs to
+-- `retired_pairs`, the field having left the issue's context. `differs`: the
+-- snapshot holds another value, and ids AND displays both disagree. Ids alone
+-- are a migrated instance whose options were recreated under new ids (§3.4),
+-- displays alone a rename; neither is a change of value.
+--
+-- The snapshot streams on the left, carrying the arrays a `differs` row needs;
+-- only the per-pair digests are hashed.
+snapshot_disagreements AS (
     SELECT
         n.insight_source_id                               AS insight_source_id,
         n.issue_id                                        AS issue_id,
-        n.field_id                                        AS field_id
-    FROM newest_from_events AS n
-    LEFT ANTI JOIN snapshot AS s
+        n.field_id                                        AS field_id,
+        if(ifNull(s.in_snapshot, 0) = 1, 'differs', 'cleared')  AS disagreement,
+        n.last_event_at                                   AS last_event_at,
+        s.value_ids                                       AS snapshot_ids,
+        s.value_displays                                  AS snapshot_displays
+    FROM (
+        SELECT
+            insight_source_id,
+            issue_id,
+            field_id,
+            value_ids,
+            value_displays,
+            toUInt8(1)                                    AS in_snapshot
+        FROM snapshot
+    ) AS s
+    RIGHT JOIN newest_from_events AS n
         ON s.insight_source_id = n.insight_source_id
        AND s.issue_id = n.issue_id
        AND s.field_id = n.field_id
-    WHERE length(n.value_ids) > 0
+    WHERE (ifNull(s.in_snapshot, 0) = 0 AND n.holds_value)
+       OR (ifNull(s.in_snapshot, 0) = 1
+           AND length(s.value_ids) > 0
+           AND {{ jira_value_set_digest('s.value_ids') }} != n.ids_digest
+           AND {{ jira_value_set_digest('s.value_displays') }} != n.displays_digest)
 ),
 
 -- Every key the issue JSON carries, one row each, streamed out of the JSON
@@ -731,22 +909,49 @@ present_keys AS (
         j.insight_source_id                               AS insight_source_id,
         j.issue_id                                        AS issue_id,
         k                                                 AS field_id,
-        j.observed_at                                     AS observed_at
+        j.observed_at                                     AS observed_at,
+        j.resolved_at                                     AS resolved_at
     FROM issue_json AS j
     ARRAY JOIN JSONExtractKeys(j.custom_fields_json) AS k
 ),
 
-cleared_pairs AS (
+-- A `differs` pair whose events are newer than the issue row is excluded: the
+-- issue stream and its changelog substream are read at different moments of one
+-- sync, and a snapshot that has not caught up is not a disagreement (§7).
+--
+-- The date of a `differs` row must be stable across syncs, or a closure it
+-- records slides forward every time the issue is recomputed. A status the issue
+-- now holds as done is dated by the resolution, when Jira resolved it after
+-- the last recorded event; anything else sorts one millisecond after that
+-- event, the earliest moment the missing change can have happened. A `cleared`
+-- row keeps the observation stamp.
+snapshot_diff_pairs AS (
     SELECT
         m.insight_source_id                               AS insight_source_id,
         m.issue_id                                        AS issue_id,
         m.field_id                                        AS field_id,
-        p.observed_at                                     AS event_at
+        m.snapshot_ids                                    AS snapshot_ids,
+        m.snapshot_displays                               AS snapshot_displays,
+        multiIf(
+            m.disagreement = 'cleared',
+                p.observed_at,
+            m.field_id = 'status'
+                AND (m.insight_source_id, m.snapshot_ids[1]) IN (
+                        SELECT insight_source_id, status_id
+                        FROM {{ ref('jira__task_statuses') }}
+                        WHERE status_category = 'done'
+                    )
+                AND ifNull(p.resolved_at > m.last_event_at, 0),
+                assumeNotNull(p.resolved_at),
+            m.last_event_at + toIntervalMillisecond(1)
+        )                                                 AS event_at
     FROM present_keys AS p
-    INNER JOIN missing_from_snapshot AS m
+    INNER JOIN snapshot_disagreements AS m
         ON m.insight_source_id = p.insight_source_id
        AND m.issue_id = p.issue_id
        AND m.field_id = p.field_id
+    WHERE m.disagreement = 'cleared'
+       OR m.last_event_at <= p.observed_at
 ),
 
 -- ── the value of every modelled field at issue creation ─────────────────────
@@ -762,14 +967,13 @@ initial_state AS (
         -- fields with at least one event: the earliest event's `before` side
         SELECT
             e.insight_source_id                            AS insight_source_id,
-            e.issue_id                                  AS issue_id,
+            e.issue_id                                     AS issue_id,
             e.field_id                                     AS field_id,
-            argMin(e.field_name, (e.event_at, e.event_ord))  AS field_name,
-            argMin(e.field_kind, (e.event_at, e.event_ord))  AS field_kind,
-            argMin(e.sides.1, (e.event_at, e.event_ord))     AS value_ids,
-            argMin(e.sides.2, (e.event_at, e.event_ord))     AS value_displays
-        FROM live_events AS e
-        WHERE e.field_kind NOT IN {{ jira_element_wise_kinds() }}
+            argMin(e.field_name, (e.event_at, e.chain_pos, e.event_ord))  AS field_name,
+            argMin(e.field_kind, (e.event_at, e.chain_pos, e.event_ord))  AS field_kind,
+            argMin(e.sides.1, (e.event_at, e.chain_pos, e.event_ord))     AS value_ids,
+            argMin(e.sides.2, (e.event_at, e.chain_pos, e.event_ord))     AS value_displays
+        FROM ordered_events AS e
         GROUP BY e.insight_source_id, e.issue_id, e.field_id
 
         UNION ALL
@@ -861,7 +1065,7 @@ SELECT
     e.changelog_id                                        AS event_id,
     e.event_at,
     CAST('changelog' AS String)                           AS event_kind,
-    toUInt32(0)                                           AS _seq,
+    e.chain_pos                                           AS _seq,
     e.author_id,
     e.field_id,
     e.field_name,
@@ -873,11 +1077,10 @@ SELECT
     CAST({{ jira_distinct_arrays_by_id('e.sides.3', 'e.sides.4', 'displays') }} AS Array(String)) AS value_displays,
     {{ jira_field_id_type('e.field_kind') }}              AS value_id_type,
     now64(3)                                              AS collected_at
-FROM live_events AS e
+FROM ordered_events AS e
 LEFT JOIN issues AS i
     ON i.insight_source_id = e.insight_source_id
    AND i.issue_id = e.issue_id
-WHERE e.field_kind NOT IN {{ jira_element_wise_kinds() }}
 
 UNION ALL
 
@@ -992,11 +1195,10 @@ LEFT JOIN issues AS i
 
 UNION ALL
 
--- ── the value the issue no longer holds, with no event to explain it ────────
--- Dated by the observation, like the withdrawal row above: the moment the
--- clearing happened is not knowable, only the moment it was seen. `event_id` is
--- constant per (issue, field) so re-observing restamps the one row rather than
--- growing a new one each sync — the journal must not accumulate a row per read.
+-- ── the value the issue holds, with no event to explain it ──────────────────
+-- `event_id` is constant per (issue, field) so re-observing replaces the one row
+-- rather than growing a new one each sync — the journal must not accumulate a
+-- row per read.
 --
 -- `snapshot_diff` is its own kind on purpose: a consumer counting real history
 -- can exclude it, and the share of state recovered by observation rather than
@@ -1017,19 +1219,26 @@ SELECT
     c.field_id,
     k.field_name,
     {{ jira_field_cardinality('k.field_kind') }}          AS field_cardinality,
-    CAST(if({{ jira_field_cardinality('k.field_kind') }} = 'multi',
+    -- Clearing a multi field removes its elements; any other disagreement
+    -- replaces the state, which the contract calls `set`.
+    CAST(if(length(c.snapshot_ids) = 0
+                AND {{ jira_field_cardinality('k.field_kind') }} = 'multi',
             'remove', 'set') AS String)                   AS delta_action,
-    CAST([] AS Array(String))                             AS value_ids,
-    CAST([] AS Array(String))                             AS value_displays,
+    CAST({{ jira_distinct_arrays_by_id('c.snapshot_ids', 'c.snapshot_displays', 'ids') }} AS Array(String))      AS value_ids,
+    CAST({{ jira_distinct_arrays_by_id('c.snapshot_ids', 'c.snapshot_displays', 'displays') }} AS Array(String)) AS value_displays,
     {{ jira_field_id_type('k.field_kind') }}              AS value_id_type,
     now64(3)                                              AS collected_at
-FROM cleared_pairs AS c
+FROM snapshot_diff_pairs AS c
 INNER JOIN kinds AS k
     ON k.insight_source_id = c.insight_source_id
    AND k.field_id = c.field_id
 LEFT JOIN issues AS i
     ON i.insight_source_id = c.insight_source_id
    AND i.issue_id = c.issue_id
+-- The issue JSON holds an ADF document and the changelog Jira's rendering of it,
+-- so the two content addresses of a `long_text` value never agree (§8).
+WHERE length(c.snapshot_ids) = 0
+   OR k.field_kind != 'long_text'
 
 UNION ALL
 

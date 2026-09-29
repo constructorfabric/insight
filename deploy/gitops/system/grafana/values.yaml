@@ -20,31 +20,26 @@
 ## Then Explore → Loki, or the provisioned dashboards in the Insight folder.
 ##
 
-# No persistence: this Grafana is fully as-code — the Loki datasource and
-# the dashboards below are provisioned from this values file, so an
-# ephemeral grafana.db is the source-of-truth-friendly choice. It also
-# avoids two problems a PVC caused on the reference cluster:
-#   1. RWO PVC + RollingUpdate deadlock — a new pod can't mount the volume
-#      the old one holds, so every dashboard change wedged the rollout.
-#   2. "Datasource provisioning error: data source not found" — a persisted
-#      datasource (provisioned before it had a uid) collides with the
-#      uid-bearing provisioning on restart and crash-loops grafana.
-# Anything worth keeping lives in git, not in grafana.db. The admin
-# password is re-applied from the Secret on each start, so it stays stable.
-# An env where people also author dashboards in the UI can keep them by
-# enabling a PVC in its overlay — paired with Recreate, or problem 1 above
-# returns (problem 2 cannot: every provisioned datasource now has a uid):
-#   deploymentStrategy: { type: Recreate, rollingUpdate: null }
-#   persistence: { enabled: true, size: 10Gi }
-# (rollingUpdate: null is required on an existing install — server-side
-# apply keeps the old rollingUpdate block otherwise, and the API forbids
-# it alongside Recreate.)
-persistence:
-  enabled: false
+# Alert `for:` timers live in grafana.db; nothing else here needs a volume.
+# Recreate + explicit rollingUpdate: null: RWO cannot mount twice, and the API
+# rejects rollingUpdate beside type: Recreate while server-side apply keeps it.
+# A driver with fsGroupPolicy: ReadWriteOnceWithFSType applies fsGroup only to a
+# PV carrying an fsType, set by the class parameter csi.storage.k8s.io/fstype;
+# without it the volume stays root-owned and grafana (uid 472) will not boot.
+# No class is named here on purpose: if your cluster's default does not qualify,
+# name one that declares an fstype in your overlay or set initChownData.enabled.
+deploymentStrategy:
+  type: Recreate
+  rollingUpdate: null
 
-# init-chown-data is moot without a PVC, but keep it off: some clusters'
-# runtimes strip CAP_CHOWN from uid-0 containers, so the chart's chown init
-# fails with EPERM and would wedge the rollout if ever re-enabled.
+persistence:
+  enabled: true
+  # grafana.db only: alert state plus annotations. An env whose people also
+  # author dashboards in the UI raises this in its overlay.
+  size: 2Gi
+
+# Turning this on adds an init container running as uid 0 with CHOWN and
+# DAC_OVERRIDE; your namespace has to permit that. Off, fsGroup covers it.
 initChownData:
   enabled: false
 
@@ -53,21 +48,15 @@ initChownData:
 plugins:
   - grafana-clickhouse-datasource@4.21.1
 
-# Password for the SELECT-only `grafana` ClickHouse user (#2888), provisioned
-# by the app deploy hook (apply-ch-migrations -> provision-grafana-access.sh)
-# from the insight-db-creds key `clickhouse-grafana-password`. Seal the SAME
-# value here as `grafana-clickhouse-creds` (key CLICKHOUSE_GRAFANA_PASSWORD,
-# ns insight-infra) — `make system-grafana` applies any
-# environments/<env>/sealed-secrets/insight-infra/grafana*-sealedsecret.yaml.
-# Optional: without it Grafana still runs, only the ClickHouse datasource
-# fails to authenticate.
+# Seal `grafana-clickhouse-creds` (CLICKHOUSE_GRAFANA_PASSWORD) with the SAME
+# value as insight-db-creds `clickhouse-grafana-password`, set by the app deploy
+# hook (#2888). Absent, only the ClickHouse datasource fails to connect.
 envFromSecrets:
   - name: grafana-clickhouse-creds
     optional: true
-  # Zulip incoming-webhook URL for alert routing (#2895); key
-  # ZULIP_ALERT_WEBHOOK_URL. Ordering is load-bearing: envFrom precedence is
-  # last-source-wins, so the placeholder default below loses to a sealed
-  # grafana-zulip-creds — and an empty URL fails alerting provisioning at boot.
+  # ZULIP_ALERT_WEBHOOK_URL for alert routing (#2895). Ordering is load-bearing:
+  # envFrom is last-source-wins, so the placeholder below loses to a sealed
+  # grafana-zulip-creds; an empty URL fails alerting provisioning.
   - name: grafana-alerting-defaults
   - name: grafana-zulip-creds
     optional: true
@@ -82,18 +71,9 @@ extraObjects:
     stringData:
       ZULIP_ALERT_WEBHOOK_URL: "http://zulip-webhook-not-configured.invalid"
 
-# Loki wired as the default datasource so Explore works out of the box,
-# VictoriaMetrics as the PromQL datasource for metrics, Tempo as the trace
-# store, ClickHouse as the direct-SQL datasource. Fixed uids so provisioned
-# dashboards can reference them on any environment. Loki's `derivedFields`
-# turn a `trace_id` in a JSON log line into a Tempo link (log → trace
-# correlation).
-# INVARIANT: helm REPLACES lists — a per-env overlay that touches
-# `datasources` must restate every entry below, and the uids (`loki`, `vm`,
-# `tempo`, `clickhouse`) must stay what they are or every provisioned
-# dashboard panel goes dark. Overlays go through the same ${NS_*}
-# substitution as this file, so restated entries keep the placeholders
-# instead of hardcoding a namespace.
+# INVARIANT: helm REPLACES lists — an overlay touching `datasources` must
+# restate every entry below, keep the ${NS_*} placeholders, and keep the uids
+# (`loki`, `vm`, `tempo`, `clickhouse`) or every dashboard panel goes dark.
 datasources:
   datasources.yaml:
     apiVersion: 1
@@ -150,15 +130,8 @@ datasources:
           password: $CLICKHOUSE_GRAFANA_PASSWORD
 
 # ─── Dashboards as code ─────────────────────────────────────────────────
-# Provisioned into the "Insight" folder. Sources: LogQL over the gateway
-# access_log and pod logs, PromQL over VictoriaMetrics (cAdvisor +
-# kube-state-metrics, the services' http.server.request.duration histogram,
-# and the gateway's nginx exporter — #2893), and read-only SQL over the
-# ClickHouse sync ledger (ingestion_history.sync_events — #2894).
-# Deploy markers: every umbrella deploy runs the insight-post-upgrade hook
-# pod; its log lines drive the dashboard annotations. The "deploy output"
-# panel shows what scripts/push-deploy-log.sh ships ({job="deploy-insight"}).
-# UI-authored dashboards are exports: edit a copy in the UI, re-export, replace the JSON here.
+# UI-authored dashboards are exports: edit a copy in the UI, re-export, replace
+# the JSON here. Deploy annotations come from the insight-post-upgrade hook pod.
 dashboardProviders:
   dashboardproviders.yaml:
     apiVersion: 1
@@ -11718,12 +11691,8 @@ dashboards:
         }
 
 # ─── Alerting as code (#2895) ──────────────────────────────────────────
-# Rule groups over the same fixed-uid datasources as the dashboards, routed
-# to the Zulip incoming webhook. The alert set and thresholds are the
-# decision recorded on #2895.
-# The webhook URL rides $ZULIP_ALERT_WEBHOOK_URL from the optional
-# grafana-zulip-creds Secret (ns insight-infra) — absent, alerts evaluate
-# but notify a dead placeholder receiver.
+# $ZULIP_ALERT_WEBHOOK_URL rides the optional grafana-zulip-creds Secret; absent,
+# alerts evaluate but notify a dead placeholder receiver.
 alerting:
   rules.yaml:
     apiVersion: 1
@@ -12620,11 +12589,9 @@ alerting:
       group_interval: 5m
       repeat_interval: 4h
 
-# Admin credentials. For anything past a throwaway PoC, seal a Secret named
-# `grafana-creds` (keys: admin-user, admin-password) — `make system-grafana`
-# applies any environments/<env>/sealed-secrets/insight-infra/grafana*-sealedsecret.yaml
-# via the optional-secrets helper. Until then the chart generates a random
-# admin password into the `grafana` Secret:
+# Seal a `grafana-creds` Secret (keys: admin-user, admin-password); `make system-grafana`
+# applies any environments/<env>/sealed-secrets/insight-infra/grafana*-sealedsecret.yaml.
+# Until then the chart generates a random password into the `grafana` Secret:
 #   kubectl -n insight-infra get secret grafana -o jsonpath='{.data.admin-password}' | base64 -d
 # admin:
 #   existingSecret: grafana-creds

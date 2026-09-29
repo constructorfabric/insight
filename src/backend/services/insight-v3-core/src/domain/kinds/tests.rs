@@ -151,3 +151,38 @@ async fn a_dashboard_is_checked_through_the_kind_it_was_stored_under() {
         "got {refusal:?}"
     );
 }
+
+/// A widget stored under a detail nobody can read would open on an empty
+/// dialog; the write is where that is caught.
+#[tokio::test]
+async fn a_widget_naming_a_detail_that_is_not_there_is_refused() {
+    let store = crate::store::definitions::memory::MemoryDefinitions::new();
+    let metric = crate::domain::definition::DefinitionName::parse("lines_per_day")
+        .unwrap_or_else(|error| panic!("the name parses: {error}"));
+    crate::domain::definition::Definitions::put(
+        &store,
+        DefinitionKind::Metric,
+        &metric,
+        &json!({
+            "table": "events",
+            "fields": [{ "column": "lines", "type": "int", "agg": "sum", "as_name": "total" }]
+        }),
+    )
+    .await
+    .unwrap_or_else(|error| panic!("the store accepts it: {error}"));
+    let body = json!({
+        "type": "stat", "metric": "lines_per_day", "detail": "nowhere", "value": "total"
+    });
+
+    let people = nowhere();
+    let over = metric::CompileAgainst {
+        database: "insight_datasets",
+        people: &people,
+    };
+    let refusal = check(DefinitionKind::Widget, &body, &store, &datasets(), over).await;
+
+    assert!(
+        matches!(refusal, Err(KindError::Widget(widget::WidgetError::NoMetric(ref named))) if named == "nowhere"),
+        "got {refusal:?}"
+    );
+}

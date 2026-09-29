@@ -10,6 +10,7 @@ use thiserror::Error;
 use super::{KindError, Reference};
 use crate::domain::datasets::Datasets;
 use crate::domain::definition::{DefinitionKind, DefinitionName, Lookup};
+use crate::domain::kinds::dataset::declaration::BUCKET_COLUMN;
 use crate::domain::kinds::metric::answerable::effective_clock;
 use crate::domain::query::metric_query::MetricQuery;
 
@@ -20,28 +21,43 @@ enum Widget {
         metric: String,
         #[serde(default)]
         columns: Vec<String>,
+        #[serde(default)]
+        detail: Option<String>,
     },
     Line {
         metric: String,
         x: String,
         y: String,
+        #[serde(default)]
+        detail: Option<String>,
     },
     Bar {
         metric: String,
         x: String,
         y: String,
+        #[serde(default)]
+        detail: Option<String>,
     },
     Area {
         metric: String,
         x: String,
         y: String,
+        #[serde(default)]
+        detail: Option<String>,
     },
     /// One number, which is what most questions actually answer with.
-    Stat { metric: String, value: String },
+    Stat {
+        metric: String,
+        value: String,
+        #[serde(default)]
+        detail: Option<String>,
+    },
     Pie {
         metric: String,
         label: String,
         value: String,
+        #[serde(default)]
+        detail: Option<String>,
     },
 }
 
@@ -55,6 +71,37 @@ impl Widget {
             | Self::Area { metric, .. }
             | Self::Stat { metric, .. }
             | Self::Pie { metric, .. } => metric,
+        }
+    }
+
+    /// The metric a reader drills into, when the author named one: the facts
+    /// that went into the figure rather than the figure itself.
+    fn detail(&self) -> Option<&str> {
+        match self {
+            Self::Table { detail, .. }
+            | Self::Line { detail, .. }
+            | Self::Bar { detail, .. }
+            | Self::Area { detail, .. }
+            | Self::Stat { detail, .. }
+            | Self::Pie { detail, .. } => detail.as_deref(),
+        }
+    }
+
+    /// The columns a reader narrows the detail by: the group a bar, a slice
+    /// or a row stands for. A table row stands for the groups its metric
+    /// makes, where the table draws them; a stat stands for no group.
+    fn narrowing_columns<'w>(&'w self, drawn: &'w MetricQuery) -> Vec<&'w str> {
+        match self {
+            Self::Line { x, .. } | Self::Bar { x, .. } | Self::Area { x, .. } => vec![x.as_str()],
+            Self::Pie { label, .. } => vec![label.as_str()],
+            Self::Table { columns, .. } => columns
+                .iter()
+                .map(String::as_str)
+                .filter(|column| {
+                    *column == BUCKET_COLUMN || drawn.groups().contains(&(*column).to_owned())
+                })
+                .collect(),
+            Self::Stat { .. } => Vec::new(),
         }
     }
 
@@ -90,6 +137,30 @@ impl Widget {
 
         Ok(())
     }
+
+    /// Refuses a detail metric that cannot be narrowed to what the widget
+    /// draws: a reader who clicks one bar is shown that bar's rows, which
+    /// takes the bar's column in the detail as well.
+    fn check_detail_against(
+        &self,
+        drawn: &MetricQuery,
+        detail: &MetricQuery,
+        clocked: bool,
+    ) -> Result<(), WidgetError> {
+        let available = detail.column_names(clocked);
+
+        for column in self.narrowing_columns(drawn) {
+            if !available.iter().any(|name| name == column) {
+                return Err(WidgetError::DetailLacksColumn {
+                    column: column.to_owned(),
+                    detail: self.detail().unwrap_or_default().to_owned(),
+                    available: available.join(", "),
+                });
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Error)]
@@ -110,6 +181,15 @@ pub(crate) enum WidgetError {
     },
     #[error("there is no metric named `{0}`")]
     NoMetric(String),
+    #[error(
+        "`{column}` is not a column of the detail metric `{detail}`, so its rows could not be \
+         narrowed to what this widget draws; the detail's columns are: {available}"
+    )]
+    DetailLacksColumn {
+        column: String,
+        detail: String,
+        available: String,
+    },
 }
 
 /// Checks a widget against the metric it draws.
@@ -135,11 +215,35 @@ pub(crate) async fn check(
 
     let metric: MetricQuery =
         serde_json::from_value(stored).map_err(|error| KindError::Widget(error.into()))?;
-    let clocked = clocked(&metric, datasets).await;
+    let dated = clocked(&metric, datasets).await;
 
     widget
-        .check_against(&metric, clocked)
+        .check_against(&metric, dated)
+        .map_err(KindError::Widget)?;
+
+    let Some(named) = widget.detail() else {
+        return Ok(());
+    };
+    let detail = stored_metric(named, definitions).await?;
+    let dated = clocked(&detail, datasets).await;
+
+    widget
+        .check_detail_against(&metric, &detail, dated)
         .map_err(KindError::Widget)
+}
+
+/// A stored metric, read as one, or the refusal that there is none.
+async fn stored_metric(named: &str, definitions: &dyn Lookup) -> Result<MetricQuery, KindError> {
+    let name = DefinitionName::parse(named)
+        .map_err(|_| KindError::Widget(WidgetError::NoMetric(named.to_owned())))?;
+
+    let stored = definitions
+        .get(DefinitionKind::Metric, &name)
+        .await
+        .map_err(KindError::Store)?
+        .ok_or_else(|| KindError::Widget(WidgetError::NoMetric(named.to_owned())))?;
+
+    serde_json::from_value(stored).map_err(|error| KindError::Widget(error.into()))
 }
 
 /// Whether a windowed run of this metric has a date to bucket by, and so
@@ -159,18 +263,32 @@ async fn clocked(metric: &MetricQuery, datasets: &dyn Datasets) -> bool {
     effective_clock(metric, &ready.declaration).is_some()
 }
 
-/// The metric a widget draws, when its body names one readably.
+const METRIC_KEYS: [&str; 2] = ["metric", "detail"];
+
+/// The metrics a widget draws and drills into, when its body names them
+/// readably. One metric named twice is one reference.
 pub(crate) fn refers_to(body: &Value) -> Vec<Reference> {
-    body.get("metric")
-        .and_then(Value::as_str)
-        .map(|metric| vec![Reference::new(DefinitionKind::Metric, metric)])
-        .unwrap_or_default()
+    let mut named = Vec::new();
+
+    for key in METRIC_KEYS {
+        let Some(metric) = body.get(key).and_then(Value::as_str) else {
+            continue;
+        };
+        let reference = Reference::new(DefinitionKind::Metric, metric);
+        if !named.contains(&reference) {
+            named.push(reference);
+        }
+    }
+
+    named
 }
 
-/// The same widget, drawing `to` where it drew `from`.
+/// The same widget, drawing and drilling into `to` where it named `from`.
 pub(crate) fn rename_reference(mut body: Value, from: &str, to: &str) -> Value {
-    if body.get("metric").and_then(Value::as_str) == Some(from) {
-        body["metric"] = Value::String(to.to_owned());
+    for key in METRIC_KEYS {
+        if body.get(key).and_then(Value::as_str) == Some(from) {
+            body[key] = Value::String(to.to_owned());
+        }
     }
 
     body
