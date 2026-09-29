@@ -1,6 +1,39 @@
 {
   "components": {
     "schemas": {
+      "AlertsPage": {
+        "description": "One page of alerts, by name, and how many match in all.",
+        "properties": {
+          "alerts": {
+            "items": {
+              "$ref": "#/components/schemas/SummaryResponse"
+            },
+            "type": "array"
+          },
+          "limit": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "offset": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "alerts",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "type": "object"
+      },
       "ChatRequest": {
         "properties": {
           "history": {
@@ -313,7 +346,7 @@
             "type": "boolean"
           },
           "expected_revision": {
-            "description": "The revision this write expects to replace. Required to change a rule\nthat exists; refused when creating one.",
+            "description": "The revision this write expects to replace. Required to change an\nalert that exists; not sent when creating one.",
             "format": "int32",
             "minimum": 0,
             "type": [
@@ -329,6 +362,10 @@
           },
           "metric": {
             "description": "The stored metric to check.",
+            "type": "string"
+          },
+          "name": {
+            "description": "What the alert is called, as people read it: up to 200 characters.",
             "type": "string"
           },
           "operator": {
@@ -347,6 +384,7 @@
           }
         },
         "required": [
+          "name",
           "metric",
           "column",
           "operator",
@@ -370,6 +408,10 @@
           },
           "enabled": {
             "type": "boolean"
+          },
+          "id": {
+            "description": "The handle every other operation takes.",
+            "type": "string"
           },
           "interval_secs": {
             "format": "int32",
@@ -405,6 +447,7 @@
           }
         },
         "required": [
+          "id",
           "name",
           "metric",
           "column",
@@ -471,6 +514,30 @@
           },
           "last_value": {}
         },
+        "type": "object"
+      },
+      "SummaryResponse": {
+        "description": "One alert as a listing shows it.",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "metric": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "metric",
+          "enabled"
+        ],
         "type": "object"
       },
       "TagsRequest": {
@@ -584,7 +651,7 @@
             }
           },
           {
-            "description": "Names to skip",
+            "description": "Alerts to skip",
             "in": "query",
             "name": "offset",
             "required": false,
@@ -598,11 +665,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/AlertsPage"
                 }
               }
             },
-            "description": "One page of names, and how many match"
+            "description": "One page of alerts, and how many match"
           },
           "400": {
             "content": {
@@ -645,18 +712,96 @@
             "description": "Gateway Timeout"
           }
         },
-        "summary": "List alert names, or the ones matching ?q=",
+        "summary": "List alerts, or the ones matching ?q=",
+        "x-toolkit-visibility": "exposed"
+      },
+      "post": {
+        "operationId": "insight_v3_core.alerts.create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RuleDraft"
+              }
+            }
+          },
+          "description": "The rule",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuleResponse"
+                }
+              }
+            },
+            "description": "The rule as stored, with its id"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "504": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Gateway Timeout"
+          }
+        },
+        "summary": "Create an alert",
         "x-toolkit-visibility": "exposed"
       }
     },
-    "/v1/alerts/{name}": {
+    "/v1/alerts/{id}": {
       "delete": {
         "operationId": "insight_v3_core.alerts.delete",
         "parameters": [
           {
-            "description": "Alert name",
+            "description": "Alert id, as create answered it",
             "in": "path",
-            "name": "name",
+            "name": "id",
             "required": true,
             "schema": {
               "type": "string"
@@ -725,9 +870,9 @@
         "operationId": "insight_v3_core.alerts.get",
         "parameters": [
           {
-            "description": "Alert name",
+            "description": "Alert id, as create answered it",
             "in": "path",
-            "name": "name",
+            "name": "id",
             "required": true,
             "schema": {
               "type": "string"
@@ -800,12 +945,12 @@
         "x-toolkit-visibility": "exposed"
       },
       "put": {
-        "operationId": "insight_v3_core.alerts.put",
+        "operationId": "insight_v3_core.alerts.replace",
         "parameters": [
           {
-            "description": "Alert name",
+            "description": "Alert id, as create answered it",
             "in": "path",
-            "name": "name",
+            "name": "id",
             "required": true,
             "schema": {
               "type": "string"
@@ -895,18 +1040,18 @@
             "description": "Gateway Timeout"
           }
         },
-        "summary": "Create an alert, or replace one at its expected revision",
+        "summary": "Replace an alert at its expected revision",
         "x-toolkit-visibility": "exposed"
       }
     },
-    "/v1/alerts/{name}/disable": {
+    "/v1/alerts/{id}/disable": {
       "post": {
         "operationId": "insight_v3_core.alerts.disable",
         "parameters": [
           {
-            "description": "Alert name",
+            "description": "Alert id, as create answered it",
             "in": "path",
-            "name": "name",
+            "name": "id",
             "required": true,
             "schema": {
               "type": "string"
@@ -1000,14 +1145,14 @@
         "x-toolkit-visibility": "exposed"
       }
     },
-    "/v1/alerts/{name}/enable": {
+    "/v1/alerts/{id}/enable": {
       "post": {
         "operationId": "insight_v3_core.alerts.enable",
         "parameters": [
           {
-            "description": "Alert name",
+            "description": "Alert id, as create answered it",
             "in": "path",
-            "name": "name",
+            "name": "id",
             "required": true,
             "schema": {
               "type": "string"
@@ -1101,14 +1246,14 @@
         "x-toolkit-visibility": "exposed"
       }
     },
-    "/v1/alerts/{name}/notifications": {
+    "/v1/alerts/{id}/notifications": {
       "get": {
         "operationId": "insight_v3_core.alerts.notifications",
         "parameters": [
           {
-            "description": "Alert name",
+            "description": "Alert id, as create answered it",
             "in": "path",
-            "name": "name",
+            "name": "id",
             "required": true,
             "schema": {
               "type": "string"

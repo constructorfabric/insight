@@ -134,6 +134,7 @@ impl TestResponse {
 
 fn rule(edit: impl FnOnce(&mut Value)) -> Value {
     let mut body = json!({
+        "name": "Too many open PRs",
         "metric": "prs-open",
         "column": "total",
         "operator": ">",
@@ -146,31 +147,63 @@ fn rule(edit: impl FnOnce(&mut Value)) -> Value {
     body
 }
 
+impl TestHarness {
+    /// Creates a rule and answers its id.
+    async fn create(&self, body: Value) -> String {
+        let created = self.send("POST", "/v1/alerts", Some(body)).await;
+        assert_eq!(created.status, StatusCode::CREATED, "{:?}", created.body);
+
+        created.json()["id"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a created alert has an id"))
+            .to_owned()
+    }
+}
+
 #[tokio::test]
 async fn a_created_rule_reads_back_at_revision_one_and_is_scheduled() -> R {
     let harness = TestHarness::new();
 
-    let created = harness
-        .send("PUT", "/v1/alerts/too-many-prs", Some(rule(|_| {})))
-        .await;
-    assert_eq!(created.status, StatusCode::OK, "{:?}", created.body);
+    let created = harness.send("POST", "/v1/alerts", Some(rule(|_| {}))).await;
+    assert_eq!(created.status, StatusCode::CREATED, "{:?}", created.body);
     let shown = created.json();
+    let id = shown["id"].as_str().unwrap_or_default().to_owned();
+    assert_eq!(id.len(), 32, "the id is shown as 32 hex characters: {id}");
+    assert_eq!(shown["name"], json!("Too many open PRs"));
     assert_eq!(shown["revision"], json!(1));
     assert_eq!(shown["enabled"], json!(true));
     assert_eq!(shown["threshold"], json!(10));
     assert_eq!(shown["state"], json!({}));
 
-    let read = harness.send("GET", "/v1/alerts/too-many-prs", None).await;
+    let read = harness.send("GET", &format!("/v1/alerts/{id}"), None).await;
     assert_eq!(read.status, StatusCode::OK);
-    assert_eq!(read.json()["name"], json!("too-many-prs"));
+    assert_eq!(read.json()["id"], json!(id));
 
     let scheduled = harness.schedule.entries();
     assert_eq!(scheduled.len(), 1);
     assert_eq!(scheduled[0].every_secs, 300);
     assert_eq!(scheduled[0].job.revision, 1);
 
-    let listed = harness.send("GET", "/v1/alerts?q=prs", None).await;
-    assert_eq!(listed.json()["names"], json!(["too-many-prs"]));
+    let listed = harness.send("GET", "/v1/alerts?q=open", None).await;
+    assert_eq!(
+        listed.json()["alerts"],
+        json!([{"id": id, "name": "Too many open PRs", "metric": "prs-open", "enabled": true}])
+    );
+    assert_eq!(listed.json()["total"], json!(1));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn two_alerts_may_share_a_name_and_are_told_apart_by_id() -> R {
+    let harness = TestHarness::new();
+
+    let first = harness.create(rule(|_| {})).await;
+    let second = harness.create(rule(|_| {})).await;
+    assert_ne!(first, second);
+
+    let listed = harness.send("GET", "/v1/alerts", None).await;
+    assert_eq!(listed.json()["total"], json!(2));
 
     Ok(())
 }
@@ -178,23 +211,27 @@ async fn a_created_rule_reads_back_at_revision_one_and_is_scheduled() -> R {
 #[tokio::test]
 async fn replacing_needs_the_revision_it_replaces() -> R {
     let harness = TestHarness::new();
-    harness
-        .send("PUT", "/v1/alerts/a", Some(rule(|_| {})))
-        .await;
+    let id = harness.create(rule(|_| {})).await;
+    let path = format!("/v1/alerts/{id}");
 
     let without = harness
         .send(
             "PUT",
-            "/v1/alerts/a",
+            &path,
             Some(rule(|body| body["threshold"] = json!(20))),
         )
         .await;
-    assert_eq!(without.status, StatusCode::CONFLICT, "{:?}", without.body);
+    assert_eq!(
+        without.status,
+        StatusCode::BAD_REQUEST,
+        "{:?}",
+        without.body
+    );
 
     let stale = harness
         .send(
             "PUT",
-            "/v1/alerts/a",
+            &path,
             Some(rule(|body| {
                 body["threshold"] = json!(20);
                 body["expected_revision"] = json!(7);
@@ -206,8 +243,9 @@ async fn replacing_needs_the_revision_it_replaces() -> R {
     let replaced = harness
         .send(
             "PUT",
-            "/v1/alerts/a",
+            &path,
             Some(rule(|body| {
+                body["name"] = json!("Far too many open PRs");
                 body["threshold"] = json!(20);
                 body["interval_secs"] = json!(600);
                 body["expected_revision"] = json!(1);
@@ -216,6 +254,7 @@ async fn replacing_needs_the_revision_it_replaces() -> R {
         .await;
     assert_eq!(replaced.status, StatusCode::OK, "{:?}", replaced.body);
     assert_eq!(replaced.json()["revision"], json!(2));
+    assert_eq!(replaced.json()["name"], json!("Far too many open PRs"));
     let scheduled = harness.schedule.entries();
     assert_eq!(
         (scheduled[0].job.revision, scheduled[0].every_secs),
@@ -225,11 +264,25 @@ async fn replacing_needs_the_revision_it_replaces() -> R {
     let absent = harness
         .send(
             "PUT",
-            "/v1/alerts/b",
+            &format!("/v1/alerts/{}", uuid::Uuid::now_v7().simple()),
             Some(rule(|body| body["expected_revision"] = json!(1))),
         )
         .await;
     assert_eq!(absent.status, StatusCode::NOT_FOUND, "{:?}", absent.body);
+
+    let malformed = harness
+        .send(
+            "PUT",
+            "/v1/alerts/not-an-id",
+            Some(rule(|body| body["expected_revision"] = json!(1))),
+        )
+        .await;
+    assert_eq!(
+        malformed.status,
+        StatusCode::NOT_FOUND,
+        "{:?}",
+        malformed.body
+    );
 
     Ok(())
 }
@@ -238,6 +291,7 @@ async fn replacing_needs_the_revision_it_replaces() -> R {
 async fn a_rule_is_refused_for_what_it_gets_wrong() -> R {
     let harness = TestHarness::new();
     let cases: Vec<(&str, Value, &str)> = vec![
+        ("blank name", rule(|body| body["name"] = json!(" ")), "name"),
         (
             "absent metric",
             rule(|body| body["metric"] = json!("nothing-here")),
@@ -266,7 +320,7 @@ async fn a_rule_is_refused_for_what_it_gets_wrong() -> R {
     ];
 
     for (case, body, field) in cases {
-        let refused = harness.send("PUT", "/v1/alerts/x", Some(body)).await;
+        let refused = harness.send("POST", "/v1/alerts", Some(body)).await;
         assert_eq!(
             refused.status,
             StatusCode::BAD_REQUEST,
@@ -286,16 +340,10 @@ async fn a_rule_is_refused_for_what_it_gets_wrong() -> R {
 #[tokio::test]
 async fn the_rule_count_is_bounded() -> R {
     let harness = TestHarness::new();
-    for name in ["a", "b"] {
-        let created = harness
-            .send("PUT", &format!("/v1/alerts/{name}"), Some(rule(|_| {})))
-            .await;
-        assert_eq!(created.status, StatusCode::OK);
-    }
+    harness.create(rule(|_| {})).await;
+    harness.create(rule(|_| {})).await;
 
-    let third = harness
-        .send("PUT", "/v1/alerts/c", Some(rule(|_| {})))
-        .await;
+    let third = harness.send("POST", "/v1/alerts", Some(rule(|_| {}))).await;
     assert_eq!(third.status, StatusCode::CONFLICT, "{:?}", third.body);
 
     Ok(())
@@ -304,14 +352,12 @@ async fn the_rule_count_is_bounded() -> R {
 #[tokio::test]
 async fn disabling_takes_the_rule_off_the_schedule_and_enabling_puts_it_back() -> R {
     let harness = TestHarness::new();
-    harness
-        .send("PUT", "/v1/alerts/a", Some(rule(|_| {})))
-        .await;
+    let id = harness.create(rule(|_| {})).await;
 
     let off = harness
         .send(
             "POST",
-            "/v1/alerts/a/disable",
+            &format!("/v1/alerts/{id}/disable"),
             Some(json!({"expected_revision": 1})),
         )
         .await;
@@ -323,7 +369,7 @@ async fn disabling_takes_the_rule_off_the_schedule_and_enabling_puts_it_back() -
     let stale = harness
         .send(
             "POST",
-            "/v1/alerts/a/enable",
+            &format!("/v1/alerts/{id}/enable"),
             Some(json!({"expected_revision": 1})),
         )
         .await;
@@ -332,7 +378,7 @@ async fn disabling_takes_the_rule_off_the_schedule_and_enabling_puts_it_back() -
     let on = harness
         .send(
             "POST",
-            "/v1/alerts/a/enable",
+            &format!("/v1/alerts/{id}/enable"),
             Some(json!({"expected_revision": 2})),
         )
         .await;
@@ -345,19 +391,18 @@ async fn disabling_takes_the_rule_off_the_schedule_and_enabling_puts_it_back() -
 #[tokio::test]
 async fn deleting_removes_the_rule_and_its_schedule() -> R {
     let harness = TestHarness::new();
-    harness
-        .send("PUT", "/v1/alerts/a", Some(rule(|_| {})))
-        .await;
+    let id = harness.create(rule(|_| {})).await;
+    let path = format!("/v1/alerts/{id}");
 
-    let deleted = harness.send("DELETE", "/v1/alerts/a", None).await;
+    let deleted = harness.send("DELETE", &path, None).await;
     assert_eq!(deleted.status, StatusCode::NO_CONTENT);
     assert!(harness.schedule.entries().is_empty());
     assert_eq!(
-        harness.send("GET", "/v1/alerts/a", None).await.status,
+        harness.send("GET", &path, None).await.status,
         StatusCode::NOT_FOUND
     );
     assert_eq!(
-        harness.send("DELETE", "/v1/alerts/a", None).await.status,
+        harness.send("DELETE", &path, None).await.status,
         StatusCode::NOT_FOUND
     );
 
@@ -367,18 +412,20 @@ async fn deleting_removes_the_rule_and_its_schedule() -> R {
 #[tokio::test]
 async fn notifications_and_destinations_are_listed() -> R {
     let harness = TestHarness::new();
-    harness
-        .send("PUT", "/v1/alerts/a", Some(rule(|_| {})))
-        .await;
+    let id = harness.create(rule(|_| {})).await;
 
     let none = harness
-        .send("GET", "/v1/alerts/a/notifications", None)
+        .send("GET", &format!("/v1/alerts/{id}/notifications"), None)
         .await;
     assert_eq!(none.status, StatusCode::OK);
     assert_eq!(none.json()["notifications"], json!([]));
     assert_eq!(
         harness
-            .send("GET", "/v1/alerts/b/notifications", None)
+            .send(
+                "GET",
+                &format!("/v1/alerts/{}/notifications", uuid::Uuid::now_v7().simple()),
+                None
+            )
             .await
             .status,
         StatusCode::NOT_FOUND
@@ -396,27 +443,29 @@ async fn notifications_and_destinations_are_listed() -> R {
 #[tokio::test]
 async fn every_route_refuses_a_caller_without_the_admin_role() -> R {
     let harness = TestHarness::build(false, true);
+    let id = uuid::Uuid::now_v7().simple().to_string();
     let calls = [
-        ("GET", "/v1/alerts", None),
-        ("PUT", "/v1/alerts/a", Some(rule(|_| {}))),
-        ("GET", "/v1/alerts/a", None),
-        ("DELETE", "/v1/alerts/a", None),
+        ("GET", "/v1/alerts".to_owned(), None),
+        ("POST", "/v1/alerts".to_owned(), Some(rule(|_| {}))),
+        ("PUT", format!("/v1/alerts/{id}"), Some(rule(|_| {}))),
+        ("GET", format!("/v1/alerts/{id}"), None),
+        ("DELETE", format!("/v1/alerts/{id}"), None),
         (
             "POST",
-            "/v1/alerts/a/enable",
+            format!("/v1/alerts/{id}/enable"),
             Some(json!({"expected_revision": 1})),
         ),
         (
             "POST",
-            "/v1/alerts/a/disable",
+            format!("/v1/alerts/{id}/disable"),
             Some(json!({"expected_revision": 1})),
         ),
-        ("GET", "/v1/alerts/a/notifications", None),
-        ("GET", "/v1/alert-destinations", None),
+        ("GET", format!("/v1/alerts/{id}/notifications"), None),
+        ("GET", "/v1/alert-destinations".to_owned(), None),
     ];
 
     for (method, uri, body) in calls {
-        let refused = harness.send(method, uri, body).await;
+        let refused = harness.send(method, &uri, body).await;
         assert_eq!(
             refused.status,
             StatusCode::FORBIDDEN,
@@ -431,7 +480,7 @@ async fn every_route_refuses_a_caller_without_the_admin_role() -> R {
 async fn a_store_that_is_down_is_a_server_error_not_a_refusal() -> R {
     let harness = TestHarness::build_with(true, true, MemoryAlerts::refusing());
 
-    let answered = harness.send("GET", "/v1/alerts/a", None).await;
+    let answered = harness.send("GET", "/v1/alerts", None).await;
     assert_eq!(
         answered.status,
         StatusCode::INTERNAL_SERVER_ERROR,

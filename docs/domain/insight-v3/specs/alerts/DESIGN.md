@@ -133,7 +133,7 @@ Only Insight v3 custom metrics are checked. Rules do not depend on a specific pr
 
 | Entity | Identity | Invariant |
 |--------|----------|-----------|
-| Rule | Stable id and a unique name; a revision bumped by every configuration write | One metric, one result column, one condition, one interval, one destination; the latest check's finding lives on the row |
+| Rule | A generated id, the handle every operation takes; a name people read, not unique; a revision bumped by every configuration write | One metric, one result column, one condition, one interval, one destination; the latest check's finding lives on the row |
 | Check | Rule id plus revision, carried by the job | Recorded only while the rule is enabled at that revision |
 | Notification | Its own id; references the rule and the revision that owed it | Carries the value, condition and time the check saw; a later edit to the rule rewrites nothing it says |
 | Destination | A name in configuration | Names a provider; credentials are not part of the domain |
@@ -232,15 +232,16 @@ Administration follows `cpt-insightspec-v3-alerts-interface-administration`. The
 
 | Operation | Request | Response | Permission |
 |-----------|---------|----------|------------|
-| `PUT /v1/alerts/{name}` | Metric, column, operator, threshold, optional range, interval, destination, enabled; `expected_revision` to replace | The rule with its revision and state | Administrator |
-| `GET /v1/alerts/{name}` | — | The rule with its revision and latest check | Administrator |
-| `GET /v1/alerts` | Optional search and page | One page of names and a total | Administrator |
-| `DELETE /v1/alerts/{name}` | — | No content | Administrator |
-| `POST /v1/alerts/{name}/enable`, `/disable` | `expected_revision` | The rule | Administrator |
-| `GET /v1/alerts/{name}/notifications` | Page | Notifications, newest first, with status | Administrator |
+| `POST /v1/alerts` | Name, metric, column, operator, threshold, optional range, interval, destination, enabled | The rule with its id, revision and state | Administrator |
+| `PUT /v1/alerts/{id}` | The whole rule again, with `expected_revision` | The rule at its next revision | Administrator |
+| `GET /v1/alerts/{id}` | — | The rule with its revision and latest check | Administrator |
+| `GET /v1/alerts` | Optional search over name and metric, and page | One page of id, name, metric and enabled, and a total | Administrator |
+| `DELETE /v1/alerts/{id}` | — | No content | Administrator |
+| `POST /v1/alerts/{id}/enable`, `/disable` | `expected_revision` | The rule | Administrator |
+| `GET /v1/alerts/{id}/notifications` | Page | Notifications, newest first, with status | Administrator |
 | `GET /v1/alert-destinations` | — | Names and providers | Administrator |
 
-Refusals distinguish an invalid rule, a missing metric or alert, a name already taken, a revision conflict, the rule limit, and an installation with alerts off. No login, SSO or MFA mechanism is added.
+Refusals distinguish an invalid rule, a missing metric or alert, a revision conflict, the rule limit, and an installation with alerts off. An id that is malformed names no alert and answers the same as one that is absent. No login, SSO or MFA mechanism is added.
 
 ### 3.4 Internal Dependencies
 
@@ -306,7 +307,7 @@ Both tables live in the service's existing MariaDB database and migration ledger
 
 #### Table: alert rules
 
-Rule id, unique name, metric, column, operator, threshold as text so an integer stays exact, optional range, interval, destination, enabled, revision, and the latest check: when, outcome, reason, value, the last valid finding, when the current breach began.
+Rule id, name, metric, column, operator, threshold as text so an integer stays exact, optional range, interval, destination, enabled, revision, and the latest check: when, outcome, reason, value, the last valid finding, when the current breach began.
 
 #### Table: alert notifications
 

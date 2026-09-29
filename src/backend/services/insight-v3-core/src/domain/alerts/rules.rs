@@ -5,11 +5,11 @@
 use uuid::Uuid;
 
 use super::rule::{
-    AlertRule, AlertStore, AlertStoreError, Destinations, Limits, Notification, RuleDraft,
-    RuleError, RuleSpec, Write,
+    AlertPage, AlertRule, AlertStore, AlertStoreError, Destinations, Limits, Notification,
+    RuleDraft, RuleError, RuleSpec, Write,
 };
 use super::schedule::{AlertSchedule, ScheduleError, Scheduled};
-use crate::domain::definition::{DefinitionKind, DefinitionName, Lookup, NamePage, Page};
+use crate::domain::definition::{DefinitionKind, Lookup, Page};
 
 #[derive(Debug)]
 pub(crate) struct AlertRules<'a> {
@@ -41,13 +41,64 @@ impl<'a> AlertRules<'a> {
         self.destinations
     }
 
-    /// Creates or replaces a rule, and schedules its checks.
-    pub(crate) async fn put(
+    /// Creates a rule, and schedules its checks.
+    pub(crate) async fn create(
         &self,
-        name: &DefinitionName,
         draft: &RuleDraft,
         actor: Option<Uuid>,
     ) -> Result<AlertRule, AlertsError> {
+        let spec = self.checked(draft).await?;
+        if self.store.count().await? >= self.limits.max_rules {
+            return Err(AlertsError::TooMany(self.limits.max_rules));
+        }
+
+        let rule = self
+            .store
+            .create(Write {
+                spec,
+                enabled: draft.enabled,
+                actor,
+            })
+            .await?;
+
+        self.reschedule(&rule).await?;
+
+        Ok(rule)
+    }
+
+    /// Replaces a rule at the revision the draft expects, and reschedules
+    /// its checks.
+    pub(crate) async fn replace(
+        &self,
+        id: Uuid,
+        draft: &RuleDraft,
+        actor: Option<Uuid>,
+    ) -> Result<AlertRule, AlertsError> {
+        let expected = draft
+            .expected_revision
+            .ok_or(AlertsError::RevisionRequired)?;
+        let spec = self.checked(draft).await?;
+
+        let rule = self
+            .store
+            .replace(
+                id,
+                expected,
+                Write {
+                    spec,
+                    enabled: draft.enabled,
+                    actor,
+                },
+            )
+            .await?;
+
+        self.reschedule(&rule).await?;
+
+        Ok(rule)
+    }
+
+    /// The draft as a rule, once its metric is known to exist.
+    async fn checked(&self, draft: &RuleDraft) -> Result<RuleSpec, AlertsError> {
         let spec = RuleSpec::parse(draft, self.limits, self.destinations)?;
         if self
             .definitions
@@ -58,46 +109,27 @@ impl<'a> AlertRules<'a> {
         {
             return Err(AlertsError::MetricMissing(spec.metric.as_str().to_owned()));
         }
-        if draft.expected_revision.is_none() && self.store.count().await? >= self.limits.max_rules {
-            return Err(AlertsError::TooMany(self.limits.max_rules));
-        }
 
-        let rule = self
-            .store
-            .put(Write {
-                name: name.clone(),
-                spec,
-                enabled: draft.enabled,
-                expected_revision: draft.expected_revision,
-                actor,
-            })
-            .await?;
-
-        self.reschedule(&rule).await?;
-
-        Ok(rule)
+        Ok(spec)
     }
 
-    pub(crate) async fn get(&self, name: &DefinitionName) -> Result<AlertRule, AlertsError> {
-        self.store
-            .get(name)
-            .await?
-            .ok_or_else(|| AlertsError::NotFound(name.as_str().to_owned()))
+    pub(crate) async fn get(&self, id: Uuid) -> Result<AlertRule, AlertsError> {
+        self.store.get(id).await?.ok_or(AlertsError::NotFound(id))
     }
 
-    pub(crate) async fn page(&self, needle: &str, page: Page) -> Result<NamePage, AlertsError> {
+    pub(crate) async fn page(&self, needle: &str, page: Page) -> Result<AlertPage, AlertsError> {
         Ok(self.store.page(needle.trim(), page).await?)
     }
 
     pub(crate) async fn set_enabled(
         &self,
-        name: &DefinitionName,
+        id: Uuid,
         expected_revision: u32,
         enabled: bool,
     ) -> Result<AlertRule, AlertsError> {
         let rule = self
             .store
-            .set_enabled(name, expected_revision, enabled)
+            .set_enabled(id, expected_revision, enabled)
             .await?;
 
         self.reschedule(&rule).await?;
@@ -106,9 +138,9 @@ impl<'a> AlertRules<'a> {
     }
 
     /// Removes the rule, its checks and everything recorded for it.
-    pub(crate) async fn delete(&self, name: &DefinitionName) -> Result<(), AlertsError> {
-        let Some(rule) = self.store.delete(name).await? else {
-            return Err(AlertsError::NotFound(name.as_str().to_owned()));
+    pub(crate) async fn delete(&self, id: Uuid) -> Result<(), AlertsError> {
+        let Some(rule) = self.store.delete(id).await? else {
+            return Err(AlertsError::NotFound(id));
         };
 
         self.schedule.remove(rule.id).await?;
@@ -118,10 +150,10 @@ impl<'a> AlertRules<'a> {
 
     pub(crate) async fn notifications(
         &self,
-        name: &DefinitionName,
+        id: Uuid,
         page: Page,
     ) -> Result<Vec<Notification>, AlertsError> {
-        let rule = self.get(name).await?;
+        let rule = self.get(id).await?;
 
         Ok(self.store.notifications(rule.id, page).await?)
     }
@@ -141,13 +173,13 @@ pub(crate) enum AlertsError {
     Invalid(#[from] RuleError),
     #[error("metric `{0}` was not found")]
     MetricMissing(String),
-    #[error("alert `{0}` was not found")]
-    NotFound(String),
-    #[error("alert `{0}` already exists; send expected_revision to replace it")]
-    NameTaken(String),
-    #[error("alert `{name}` is at revision {current}, not {expected}")]
+    #[error("alert {0} was not found")]
+    NotFound(Uuid),
+    #[error("expected_revision is required to replace an alert")]
+    RevisionRequired,
+    #[error("alert {id} is at revision {current}, not {expected}")]
     Conflict {
-        name: String,
+        id: Uuid,
         current: u32,
         expected: u32,
     },
@@ -164,14 +196,13 @@ pub(crate) enum AlertsError {
 impl From<AlertStoreError> for AlertsError {
     fn from(error: AlertStoreError) -> Self {
         match error {
-            AlertStoreError::NotFound(name) => Self::NotFound(name),
-            AlertStoreError::NameTaken(name) => Self::NameTaken(name),
+            AlertStoreError::NotFound(id) => Self::NotFound(id),
             AlertStoreError::Conflict {
-                name,
+                id,
                 current,
                 expected,
             } => Self::Conflict {
-                name,
+                id,
                 current,
                 expected,
             },
@@ -188,7 +219,7 @@ impl AlertsError {
             Self::Invalid(_)
             | Self::MetricMissing(_)
             | Self::NotFound(_)
-            | Self::NameTaken(_)
+            | Self::RevisionRequired
             | Self::Conflict { .. }
             | Self::TooMany(_) => true,
             Self::Store(_) | Self::Definitions(_) | Self::Schedule(_) => false,

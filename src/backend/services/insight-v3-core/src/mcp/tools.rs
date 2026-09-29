@@ -673,7 +673,7 @@ fn catalog_error(error: &CatalogError) -> CallToolResult {
 impl CustomSurfaces {
     #[tool(
         name = "list_alerts",
-        description = "Names the stored alerts, one page at a time, or the ones whose name or metric matches `query`. Answers `total`: when it exceeds the page, ask again with `offset`."
+        description = "Lists the stored alerts by id and name, one page at a time, or the ones whose name or metric matches `query`. Answers `total`: when it exceeds the page, ask again with `offset`."
     )]
     async fn list_alerts(
         &self,
@@ -684,24 +684,35 @@ impl CustomSurfaces {
 
     #[tool(
         name = "get_alert",
-        description = "Reads one alert: its rule, its revision, and what its latest check found. The revision is what put_alert and set_alert_enabled expect."
+        description = "Reads one alert by id: its rule, its revision, and what its latest check found. The revision is what update_alert and set_alert_enabled expect."
     )]
     async fn get_alert(
         &self,
-        Parameters(request): Parameters<super::alerts::AlertNameRequest>,
+        Parameters(request): Parameters<super::alerts::AlertIdRequest>,
     ) -> CallToolResult {
         self.alerts_get(request).await
     }
 
     #[tool(
-        name = "put_alert",
-        description = "Creates an alert, or replaces one at its expected revision. A rule names a stored metric, the result column holding the number (its `as_name`), an operator (`>`, `>=`, `<`, `<=`), a numeric threshold, how often to check in seconds, and a configured destination from list_alert_destinations; `range` runs the metric over a window as run_metric does. Every check reads exactly one row and one column: a metric answering more rows, or none, is recorded as unknown. A notification is owed on the first check that meets the condition and again only after a check has seen it clear. Replacing a rule resets what its checks found."
+        name = "create_alert",
+        description = "Creates an alert and answers its id. A rule has a name people read, a stored metric, the result column holding the number (its `as_name`), an operator (`>`, `>=`, `<`, `<=`), a numeric threshold, how often to check in seconds, and a configured destination from list_alert_destinations; `range` runs the metric over a window as run_metric does. Every check reads exactly one row and one column: a metric answering more rows, or none, is recorded as unknown. A notification is owed on the first check that meets the condition and again only after a check has seen it clear."
     )]
-    async fn put_alert(
+    async fn create_alert(
         &self,
-        Parameters(request): Parameters<super::alerts::PutAlertRequest>,
+        Parameters(request): Parameters<super::alerts::CreateAlertRequest>,
     ) -> CallToolResult {
-        self.alerts_put(request).await
+        self.alerts_create(request).await
+    }
+
+    #[tool(
+        name = "update_alert",
+        description = "Replaces an alert's whole rule at the revision get_alert answered; a rule that has moved on is refused. Replacing resets what its checks found, so the next breach is notified again."
+    )]
+    async fn update_alert(
+        &self,
+        Parameters(request): Parameters<super::alerts::UpdateAlertRequest>,
+    ) -> CallToolResult {
+        self.alerts_update(request).await
     }
 
     #[tool(
@@ -717,11 +728,11 @@ impl CustomSurfaces {
 
     #[tool(
         name = "delete_alert",
-        description = "Removes an alert, its schedule and every notification recorded for it."
+        description = "Removes an alert by id, with its schedule and every notification recorded for it."
     )]
     async fn delete_alert(
         &self,
-        Parameters(request): Parameters<super::alerts::AlertNameRequest>,
+        Parameters(request): Parameters<super::alerts::AlertIdRequest>,
     ) -> CallToolResult {
         self.alerts_delete(request).await
     }
@@ -739,7 +750,7 @@ impl CustomSurfaces {
 
     #[tool(
         name = "list_alert_destinations",
-        description = "The destinations an alert may send to, by name, with the provider behind each. Call this before put_alert."
+        description = "The destinations an alert may send to, by name, with the provider behind each. Call this before create_alert."
     )]
     async fn list_alert_destinations(&self) -> CallToolResult {
         self.alerts_destinations()
@@ -766,7 +777,7 @@ impl ServerHandler for CustomSurfaces {
                  metrics to read. Dashboards are filed in folders: list_folders shows \
                  them, create_folder makes one, and move_dashboard files a dashboard in one or \
                  takes it out. Dashboards also carry tags: list_tags shows them, and \
-                 set_dashboard_tags replaces a dashboard's set. put_alert watches one number a metric \
+                 set_dashboard_tags replaces a dashboard's set. create_alert watches one number a metric \
                  produces and owes a notification when it crosses a threshold; \
                  list_alert_destinations names where one may go.",
             )

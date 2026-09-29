@@ -59,7 +59,7 @@ impl<'a> Evaluator<'a> {
     /// Only a store failure is an error: a metric that does not answer is a
     /// finding about the rule, recorded as unknown, not a failed job.
     pub(crate) async fn evaluate(&self, job: EvaluationJob) -> Result<Evaluated, AlertStoreError> {
-        let Some(rule) = self.store.get_by_id(job.rule_id).await? else {
+        let Some(rule) = self.store.get(job.rule_id).await? else {
             return Ok(Evaluated::Skipped(Skipped::RuleMissing));
         };
         if !rule.enabled {
@@ -87,24 +87,21 @@ impl<'a> Evaluator<'a> {
         let window = match rule.spec.window() {
             Ok(window) => window,
             Err(error) => {
-                tracing::warn!(rule = %rule.name.as_str(), %error, "an alert's range no longer parses");
+                tracing::warn!(rule = %rule.spec.name.as_str(), %error, "an alert's range no longer parses");
                 return Outcome::Unknown(UnknownReason::CompileFailed);
             }
         };
 
         match self.runs.run(&rule.spec.metric, &window).await {
             Ok(result) => classify(&result, &rule.spec.column, &rule.spec.condition),
-            Err(error) => Outcome::Unknown(unknown_because(&rule.name, &error)),
+            Err(error) => Outcome::Unknown(unknown_because(&rule.spec.name, &error)),
         }
     }
 }
 
 /// Which unknown a failed run is. What the warehouse said is logged here,
 /// where the rule is known, and never stored.
-fn unknown_because(
-    rule: &crate::domain::definition::DefinitionName,
-    error: &CustomError,
-) -> UnknownReason {
+fn unknown_because(rule: &super::rule::AlertName, error: &CustomError) -> UnknownReason {
     match error {
         CustomError::NotFound { .. } => UnknownReason::MetricMissing,
         CustomError::Run(MetricRunError::Timeout) => UnknownReason::Timeout,

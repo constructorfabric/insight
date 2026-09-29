@@ -224,7 +224,7 @@ async fn run(checks: &dyn Checks, job: &Job) -> Result<serde_json::Value, bullmq
                 .map_or("none", |outcome| outcome.as_str());
             tracing::info!(
                 rule_id = %parsed.rule_id,
-                rule = rule.name.as_str(),
+                rule = rule.spec.name.as_str(),
                 revision = parsed.revision,
                 outcome,
                 reason = rule.state.last_reason().map(UnknownReason::as_str),

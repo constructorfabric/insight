@@ -6,8 +6,8 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
 
-use super::tools::{CustomSurfaces, parse_name, refuse};
-use crate::api::alerts::{notification_response, rule_response};
+use super::tools::{CustomSurfaces, refuse};
+use crate::api::alerts::{notification_response, rule_response, summary_response};
 use crate::domain::alerts::RuleDraft;
 use crate::domain::alerts::rules::{AlertRules, AlertsError};
 use crate::domain::definition::Page;
@@ -25,22 +25,30 @@ pub(crate) struct ListAlertsRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct AlertNameRequest {
-    /// Letters, digits, underscore and dash, up to 128 characters.
-    pub(crate) name: String,
+pub(crate) struct AlertIdRequest {
+    /// The alert's id, as `create_alert` and `list_alerts` answer it.
+    pub(crate) id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct PutAlertRequest {
-    /// The name to store under.
-    pub(crate) name: String,
-    /// The rule. Send `expected_revision` to replace an alert that exists.
+pub(crate) struct CreateAlertRequest {
+    /// The rule.
+    pub(crate) rule: RuleDraft,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct UpdateAlertRequest {
+    /// The alert's id.
+    pub(crate) id: String,
+    /// The whole rule as it should be, with `expected_revision` set to the
+    /// revision `get_alert` answered.
     pub(crate) rule: RuleDraft,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct SetAlertEnabledRequest {
-    pub(crate) name: String,
+    /// The alert's id.
+    pub(crate) id: String,
     /// Whether checks should run.
     pub(crate) enabled: bool,
     /// The revision this expects to change, from `get_alert`.
@@ -49,7 +57,8 @@ pub(crate) struct SetAlertEnabledRequest {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct AlertNotificationsRequest {
-    pub(crate) name: String,
+    /// The alert's id.
+    pub(crate) id: String,
     /// How many to answer with: 1 to 200, 50 by default.
     pub(crate) limit: Option<u64>,
     /// How many to skip, newest first.
@@ -75,42 +84,66 @@ impl CustomSurfaces {
         };
 
         match alerts.page(&request.query, page).await {
-            Ok(found) => CallToolResult::structured(json!({
-                "names": found.names,
-                "total": found.total,
-                "limit": page.limit(),
-                "offset": page.offset(),
-            })),
+            Ok(found) => {
+                let listed: Vec<serde_json::Value> = found
+                    .alerts
+                    .iter()
+                    .map(|summary| {
+                        serde_json::to_value(summary_response(summary))
+                            .unwrap_or(serde_json::Value::Null)
+                    })
+                    .collect();
+
+                CallToolResult::structured(json!({
+                    "alerts": listed,
+                    "total": found.total,
+                    "limit": page.limit(),
+                    "offset": page.offset(),
+                }))
+            }
             Err(error) => alerts_error(&error),
         }
     }
 
-    pub(crate) async fn alerts_get(&self, request: AlertNameRequest) -> CallToolResult {
+    pub(crate) async fn alerts_get(&self, request: AlertIdRequest) -> CallToolResult {
         let alerts = match self.alerts() {
             Ok(alerts) => alerts,
             Err(refusal) => return refusal,
         };
-        let name = match parse_name(&request.name) {
-            Ok(name) => name,
+        let id = match parse_id(&request.id) {
+            Ok(id) => id,
             Err(refusal) => return refusal,
         };
 
-        match alerts.get(&name).await {
+        match alerts.get(id).await {
             Ok(rule) => structured(&rule_response(&rule)),
             Err(error) => alerts_error(&error),
         }
     }
 
-    pub(crate) async fn alerts_put(&self, request: PutAlertRequest) -> CallToolResult {
+    pub(crate) async fn alerts_create(&self, request: CreateAlertRequest) -> CallToolResult {
         let alerts = match self.alerts() {
             Ok(alerts) => alerts,
             Err(refusal) => return refusal,
         };
-        let name = match parse_name(&request.name) {
-            Ok(name) => name,
+
+        match alerts.create(&request.rule, None).await {
+            Ok(rule) => structured(&rule_response(&rule)),
+            Err(error) => alerts_error(&error),
+        }
+    }
+
+    pub(crate) async fn alerts_update(&self, request: UpdateAlertRequest) -> CallToolResult {
+        let alerts = match self.alerts() {
+            Ok(alerts) => alerts,
             Err(refusal) => return refusal,
         };
-        match alerts.put(&name, &request.rule, None).await {
+        let id = match parse_id(&request.id) {
+            Ok(id) => id,
+            Err(refusal) => return refusal,
+        };
+
+        match alerts.replace(id, &request.rule, None).await {
             Ok(rule) => structured(&rule_response(&rule)),
             Err(error) => alerts_error(&error),
         }
@@ -124,13 +157,13 @@ impl CustomSurfaces {
             Ok(alerts) => alerts,
             Err(refusal) => return refusal,
         };
-        let name = match parse_name(&request.name) {
-            Ok(name) => name,
+        let id = match parse_id(&request.id) {
+            Ok(id) => id,
             Err(refusal) => return refusal,
         };
 
         match alerts
-            .set_enabled(&name, request.expected_revision, request.enabled)
+            .set_enabled(id, request.expected_revision, request.enabled)
             .await
         {
             Ok(rule) => structured(&rule_response(&rule)),
@@ -138,18 +171,18 @@ impl CustomSurfaces {
         }
     }
 
-    pub(crate) async fn alerts_delete(&self, request: AlertNameRequest) -> CallToolResult {
+    pub(crate) async fn alerts_delete(&self, request: AlertIdRequest) -> CallToolResult {
         let alerts = match self.alerts() {
             Ok(alerts) => alerts,
             Err(refusal) => return refusal,
         };
-        let name = match parse_name(&request.name) {
-            Ok(name) => name,
+        let id = match parse_id(&request.id) {
+            Ok(id) => id,
             Err(refusal) => return refusal,
         };
 
-        match alerts.delete(&name).await {
-            Ok(()) => CallToolResult::structured(json!({"deleted": request.name})),
+        match alerts.delete(id).await {
+            Ok(()) => CallToolResult::structured(json!({"deleted": request.id})),
             Err(error) => alerts_error(&error),
         }
     }
@@ -162,8 +195,8 @@ impl CustomSurfaces {
             Ok(alerts) => alerts,
             Err(refusal) => return refusal,
         };
-        let name = match parse_name(&request.name) {
-            Ok(name) => name,
+        let id = match parse_id(&request.id) {
+            Ok(id) => id,
             Err(refusal) => return refusal,
         };
         let page = match Page::parse(request.limit, request.offset) {
@@ -171,7 +204,7 @@ impl CustomSurfaces {
             Err(error) => return refuse(&error.to_string()),
         };
 
-        match alerts.notifications(&name, page).await {
+        match alerts.notifications(id, page).await {
             Ok(listed) => {
                 let notifications: Vec<serde_json::Value> = listed
                     .iter()
@@ -205,6 +238,11 @@ impl CustomSurfaces {
 
         CallToolResult::structured(json!({ "destinations": destinations }))
     }
+}
+
+/// An id as a tool takes it. Anything else names no alert.
+fn parse_id(raw: &str) -> Result<uuid::Uuid, CallToolResult> {
+    uuid::Uuid::parse_str(raw.trim()).map_err(|_| refuse(&format!("no alert has the id `{raw}`")))
 }
 
 fn structured<T: serde::Serialize>(value: &T) -> CallToolResult {

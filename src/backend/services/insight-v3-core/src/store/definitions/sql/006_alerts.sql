@@ -6,7 +6,8 @@
 
 CREATE TABLE IF NOT EXISTS alert_rules (
     id CHAR(32) NOT NULL PRIMARY KEY,
-    name VARCHAR(128) NOT NULL UNIQUE,
+    -- What an administrator calls it. Free text; the id is the handle.
+    name VARCHAR(200) NOT NULL,
     metric VARCHAR(128) NOT NULL,
     column_name VARCHAR(128) NOT NULL,
     operator VARCHAR(2) NOT NULL,
@@ -37,7 +38,7 @@ CREATE TABLE IF NOT EXISTS alert_notifications (
     id CHAR(32) NOT NULL PRIMARY KEY,
     rule_id CHAR(32) NOT NULL,
     rule_revision INT UNSIGNED NOT NULL,
-    rule_name VARCHAR(128) NOT NULL,
+    rule_name VARCHAR(200) NOT NULL,
     metric VARCHAR(128) NOT NULL,
     column_name VARCHAR(128) NOT NULL,
     operator VARCHAR(2) NOT NULL,

@@ -15,10 +15,10 @@ use utoipa::ToSchema;
 
 use super::AppState;
 use super::errors::ApiErrors;
-use crate::domain::alerts::rule::{AlertRule, Notification};
+use crate::domain::alerts::rule::{AlertRule, AlertSummary, Notification};
 use crate::domain::alerts::rules::AlertsError;
 use crate::domain::alerts::{Number, Outcome, RuleDraft, RuleError, UnknownReason};
-use crate::domain::definition::{DefinitionName, MAX_PAGE_LIMIT, Page};
+use crate::domain::definition::{MAX_PAGE_LIMIT, Page};
 
 #[resource_error("gts.cf.insight.insight_v3_core.alerts.v1~")]
 struct AlertApiError;
@@ -77,8 +77,27 @@ struct EnabledRequest {
 impl toolkit::api::api_dto::RequestApiDto for EnabledRequest {}
 
 impl toolkit::api::api_dto::ResponseApiDto for RuleResponse {}
+impl toolkit::api::api_dto::ResponseApiDto for AlertsPage {}
 impl toolkit::api::api_dto::ResponseApiDto for NotificationsPage {}
 impl toolkit::api::api_dto::ResponseApiDto for DestinationsResponse {}
+
+/// One page of alerts, by name, and how many match in all.
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct AlertsPage {
+    alerts: Vec<SummaryResponse>,
+    total: u64,
+    limit: u64,
+    offset: u64,
+}
+
+/// One alert as a listing shows it.
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct SummaryResponse {
+    id: String,
+    name: String,
+    metric: String,
+    enabled: bool,
+}
 
 /// One page of a rule's notifications, newest first.
 #[derive(Debug, Serialize, ToSchema)]
@@ -96,6 +115,8 @@ pub(crate) struct DestinationsResponse {
 /// A rule as a reader is shown it.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct RuleResponse {
+    /// The handle every other operation takes.
+    id: String,
     name: String,
     metric: String,
     column: String,
@@ -155,7 +176,8 @@ struct DestinationResponse {
 
 pub(crate) fn rule_response(rule: &AlertRule) -> RuleResponse {
     RuleResponse {
-        name: rule.name.as_str().to_owned(),
+        id: shown(rule.id),
+        name: rule.spec.name.as_str().to_owned(),
         metric: rule.spec.metric.as_str().to_owned(),
         column: rule.spec.column.clone(),
         operator: rule.spec.condition.operator.as_str().to_owned(),
@@ -183,9 +205,23 @@ pub(crate) fn rule_response(rule: &AlertRule) -> RuleResponse {
     }
 }
 
+pub(crate) fn summary_response(summary: &AlertSummary) -> SummaryResponse {
+    SummaryResponse {
+        id: shown(summary.id),
+        name: summary.name.as_str().to_owned(),
+        metric: summary.metric.as_str().to_owned(),
+        enabled: summary.enabled,
+    }
+}
+
+/// An id as every surface shows it and every path takes it.
+pub(crate) fn shown(id: uuid::Uuid) -> String {
+    id.simple().to_string()
+}
+
 pub(crate) fn notification_response(notification: &Notification) -> NotificationResponse {
     NotificationResponse {
-        id: notification.id.simple().to_string(),
+        id: shown(notification.id),
         rule_revision: notification.rule_revision,
         metric: notification.metric.as_str().to_owned(),
         column: notification.column.clone(),
@@ -199,8 +235,8 @@ pub(crate) fn notification_response(notification: &Notification) -> Notification
     }
 }
 
-fn name_param() -> ParamSpec {
-    ParamSpec::path("name").description("Alert name")
+fn id_param() -> ParamSpec {
+    ParamSpec::path("id").description("Alert id, as create answered it")
 }
 
 fn query_param(name: &str, param_type: &str, description: &str) -> ParamSpec {
@@ -216,6 +252,7 @@ pub(crate) fn register_routes(
 ) -> Router {
     let registered = [
         list_route(openapi),
+        create_route(openapi),
         put_route(openapi),
         get_route(openapi),
         delete_route(openapi),
@@ -242,11 +279,11 @@ fn page_params(skipped: &str) -> [ParamSpec; 2] {
 }
 
 fn list_route(openapi: &dyn OpenApiRegistry) -> Router {
-    let [limit, offset] = page_params("Names to skip");
+    let [limit, offset] = page_params("Alerts to skip");
 
     OperationBuilder::get("/v1/alerts")
         .operation_id("insight_v3_core.alerts.list")
-        .summary("List alert names, or the ones matching ?q=")
+        .summary("List alerts, or the ones matching ?q=")
         .anonymous()
         .exposed()
         .param(query_param(
@@ -256,7 +293,11 @@ fn list_route(openapi: &dyn OpenApiRegistry) -> Router {
         ))
         .param(limit)
         .param(offset)
-        .json_response(StatusCode::OK, "One page of names, and how many match")
+        .json_response_with_schema::<AlertsPage>(
+            openapi,
+            StatusCode::OK,
+            "One page of alerts, and how many match",
+        )
         .error_400(openapi)
         .error_403(openapi)
         .error_500(openapi)
@@ -265,13 +306,34 @@ fn list_route(openapi: &dyn OpenApiRegistry) -> Router {
         .register(Router::new(), openapi)
 }
 
-fn put_route(openapi: &dyn OpenApiRegistry) -> Router {
-    OperationBuilder::put("/v1/alerts/{name}")
-        .operation_id("insight_v3_core.alerts.put")
-        .summary("Create an alert, or replace one at its expected revision")
+fn create_route(openapi: &dyn OpenApiRegistry) -> Router {
+    OperationBuilder::post("/v1/alerts")
+        .operation_id("insight_v3_core.alerts.create")
+        .summary("Create an alert")
         .anonymous()
         .exposed()
-        .param(name_param())
+        .json_request::<RuleDraft>(openapi, "The rule")
+        .json_response_with_schema::<RuleResponse>(
+            openapi,
+            StatusCode::CREATED,
+            "The rule as stored, with its id",
+        )
+        .error_400(openapi)
+        .error_403(openapi)
+        .error_409(openapi)
+        .error_500(openapi)
+        .error_504(openapi)
+        .handler(create_alert)
+        .register(Router::new(), openapi)
+}
+
+fn put_route(openapi: &dyn OpenApiRegistry) -> Router {
+    OperationBuilder::put("/v1/alerts/{id}")
+        .operation_id("insight_v3_core.alerts.replace")
+        .summary("Replace an alert at its expected revision")
+        .anonymous()
+        .exposed()
+        .param(id_param())
         .json_request::<RuleDraft>(openapi, "The rule")
         .json_response_with_schema::<RuleResponse>(openapi, StatusCode::OK, "The rule as stored")
         .error_400(openapi)
@@ -285,12 +347,12 @@ fn put_route(openapi: &dyn OpenApiRegistry) -> Router {
 }
 
 fn get_route(openapi: &dyn OpenApiRegistry) -> Router {
-    OperationBuilder::get("/v1/alerts/{name}")
+    OperationBuilder::get("/v1/alerts/{id}")
         .operation_id("insight_v3_core.alerts.get")
         .summary("Read an alert and what its latest check found")
         .anonymous()
         .exposed()
-        .param(name_param())
+        .param(id_param())
         .json_response_with_schema::<RuleResponse>(
             openapi,
             StatusCode::OK,
@@ -306,12 +368,12 @@ fn get_route(openapi: &dyn OpenApiRegistry) -> Router {
 }
 
 fn delete_route(openapi: &dyn OpenApiRegistry) -> Router {
-    OperationBuilder::delete("/v1/alerts/{name}")
+    OperationBuilder::delete("/v1/alerts/{id}")
         .operation_id("insight_v3_core.alerts.delete")
         .summary("Remove an alert, its schedule and its notifications")
         .anonymous()
         .exposed()
-        .param(name_param())
+        .param(id_param())
         .no_content_response(StatusCode::NO_CONTENT, "Alert removed")
         .error_400(openapi)
         .error_403(openapi)
@@ -323,12 +385,12 @@ fn delete_route(openapi: &dyn OpenApiRegistry) -> Router {
 }
 
 fn enable_route(openapi: &dyn OpenApiRegistry) -> Router {
-    OperationBuilder::post("/v1/alerts/{name}/enable")
+    OperationBuilder::post("/v1/alerts/{id}/enable")
         .operation_id("insight_v3_core.alerts.enable")
         .summary("Turn an alert's checks on")
         .anonymous()
         .exposed()
-        .param(name_param())
+        .param(id_param())
         .json_request::<EnabledRequest>(openapi, "The revision this expects to change")
         .json_response_with_schema::<RuleResponse>(openapi, StatusCode::OK, "The rule as stored")
         .error_400(openapi)
@@ -342,12 +404,12 @@ fn enable_route(openapi: &dyn OpenApiRegistry) -> Router {
 }
 
 fn disable_route(openapi: &dyn OpenApiRegistry) -> Router {
-    OperationBuilder::post("/v1/alerts/{name}/disable")
+    OperationBuilder::post("/v1/alerts/{id}/disable")
         .operation_id("insight_v3_core.alerts.disable")
         .summary("Turn an alert's checks off and withdraw what it has not sent")
         .anonymous()
         .exposed()
-        .param(name_param())
+        .param(id_param())
         .json_request::<EnabledRequest>(openapi, "The revision this expects to change")
         .json_response_with_schema::<RuleResponse>(openapi, StatusCode::OK, "The rule as stored")
         .error_400(openapi)
@@ -363,12 +425,12 @@ fn disable_route(openapi: &dyn OpenApiRegistry) -> Router {
 fn notifications_route(openapi: &dyn OpenApiRegistry) -> Router {
     let [limit, offset] = page_params("Notifications to skip");
 
-    OperationBuilder::get("/v1/alerts/{name}/notifications")
+    OperationBuilder::get("/v1/alerts/{id}/notifications")
         .operation_id("insight_v3_core.alerts.notifications")
         .summary("The notifications an alert's checks have owed, newest first")
         .anonymous()
         .exposed()
-        .param(name_param())
+        .param(id_param())
         .param(limit)
         .param(offset)
         .json_response_with_schema::<NotificationsPage>(
@@ -429,22 +491,25 @@ pub(crate) fn alerts_error(error: AlertsError) -> CanonicalError {
         AlertsError::MetricMissing(name) => {
             AlertApiError::invalid_field("metric", format!("metric `{name}` was not found"))
         }
-        AlertsError::NotFound(name) => {
-            AlertApiError::missing(&name, format!("alert `{name}` was not found"))
+        AlertsError::NotFound(id) => {
+            let id = shown(id);
+            AlertApiError::missing(&id, format!("alert {id} was not found"))
         }
-        AlertsError::NameTaken(name) => AlertApiError::already_exists(format!(
-            "alert `{name}` already exists; send expected_revision to replace it"
-        ))
-        .with_resource(&name)
-        .create(),
+        AlertsError::RevisionRequired => AlertApiError::invalid_field(
+            "expected_revision",
+            "expected_revision is required to replace an alert".to_owned(),
+        ),
         AlertsError::Conflict {
-            name,
+            id,
             current,
             expected,
         } => AlertApiError::failed_precondition()
             .with_precondition_violation(
                 "expected_revision",
-                format!("alert `{name}` is at revision {current}, not {expected}"),
+                format!(
+                    "alert {} is at revision {current}, not {expected}",
+                    shown(id)
+                ),
                 "revision",
             )
             .with_override(Http::status_code(StatusCode::CONFLICT.as_u16()))
@@ -471,6 +536,7 @@ pub(crate) fn alerts_error(error: AlertsError) -> CanonicalError {
 
 fn rule_error(error: &RuleError) -> CanonicalError {
     let field = match error {
+        RuleError::Name => "name",
         RuleError::Metric => "metric",
         RuleError::Column => "column",
         RuleError::Threshold => "threshold",
@@ -486,6 +552,12 @@ fn page_error(error: crate::domain::definition::PageError) -> CanonicalError {
     AlertApiError::invalid_field("limit", error.to_string())
 }
 
+/// An id as a path carries it. Anything else is a missing alert, not a
+/// malformed request: the caller named something that does not exist.
+fn parse_id(raw: &str) -> Option<uuid::Uuid> {
+    uuid::Uuid::parse_str(raw).ok()
+}
+
 async fn list_alerts(
     Extension(state): Extension<Arc<AppState>>,
     headers: axum::http::HeaderMap,
@@ -497,18 +569,17 @@ async fn list_alerts(
     let page = Page::parse(search.limit, search.offset).map_err(page_error)?;
     let found = alerts.page(&search.q, page).await.map_err(alerts_error)?;
 
-    Ok(Json(serde_json::json!({
-        "names": found.names,
-        "total": found.total,
-        "limit": page.limit(),
-        "offset": page.offset(),
-    }))
+    Ok(Json(AlertsPage {
+        alerts: found.alerts.iter().map(summary_response).collect(),
+        total: found.total,
+        limit: page.limit(),
+        offset: page.offset(),
+    })
     .into_response())
 }
 
-async fn put_alert(
+async fn create_alert(
     Extension(state): Extension<Arc<AppState>>,
-    Path(name): Path<String>,
     headers: axum::http::HeaderMap,
     body: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Response, CanonicalError> {
@@ -516,29 +587,53 @@ async fn put_alert(
     let alerts = alerts(&state)?;
     let Json(body) = body.map_err(|error| AlertApiError::unreadable_body(&error))?;
 
-    let name = DefinitionName::parse(&name).map_err(AlertApiError::definition_error)?;
     let draft: RuleDraft = serde_json::from_value(body)
         .map_err(|error| AlertApiError::invalid_field("body", error.to_string()))?;
 
     let rule = alerts
-        .put(&name, &draft, Some(actor))
+        .create(&draft, Some(actor))
         .await
         .map_err(alerts_error)?;
 
-    Ok(Json(rule_response(&rule)).into_response())
+    Ok((StatusCode::CREATED, Json(rule_response(&rule))).into_response())
+}
+
+async fn put_alert(
+    Extension(state): Extension<Arc<AppState>>,
+    Path(id): Path<String>,
+    headers: axum::http::HeaderMap,
+    body: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Response, CanonicalError> {
+    let actor = crate::api::require_admin(&state, &headers, denied).await?;
+    let alerts = alerts(&state)?;
+    let Json(body) = body.map_err(|error| AlertApiError::unreadable_body(&error))?;
+
+    let Some(id) = parse_id(&id) else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    };
+    let draft: RuleDraft = serde_json::from_value(body)
+        .map_err(|error| AlertApiError::invalid_field("body", error.to_string()))?;
+
+    match alerts.replace(id, &draft, Some(actor)).await {
+        Ok(rule) => Ok(Json(rule_response(&rule)).into_response()),
+        Err(AlertsError::NotFound(_)) => Ok(StatusCode::NOT_FOUND.into_response()),
+        Err(other) => Err(alerts_error(other)),
+    }
 }
 
 async fn get_alert(
     Extension(state): Extension<Arc<AppState>>,
-    Path(name): Path<String>,
+    Path(id): Path<String>,
     headers: axum::http::HeaderMap,
 ) -> Result<Response, CanonicalError> {
     crate::api::require_admin(&state, &headers, denied).await?;
     let alerts = alerts(&state)?;
 
-    let name = DefinitionName::parse(&name).map_err(AlertApiError::definition_error)?;
+    let Some(id) = parse_id(&id) else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    };
 
-    match alerts.get(&name).await {
+    match alerts.get(id).await {
         Ok(rule) => Ok(Json(rule_response(&rule)).into_response()),
         Err(AlertsError::NotFound(_)) => Ok(StatusCode::NOT_FOUND.into_response()),
         Err(other) => Err(alerts_error(other)),
@@ -547,15 +642,17 @@ async fn get_alert(
 
 async fn delete_alert(
     Extension(state): Extension<Arc<AppState>>,
-    Path(name): Path<String>,
+    Path(id): Path<String>,
     headers: axum::http::HeaderMap,
 ) -> Result<Response, CanonicalError> {
     crate::api::require_admin(&state, &headers, denied).await?;
     let alerts = alerts(&state)?;
 
-    let name = DefinitionName::parse(&name).map_err(AlertApiError::definition_error)?;
+    let Some(id) = parse_id(&id) else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    };
 
-    match alerts.delete(&name).await {
+    match alerts.delete(id).await {
         Ok(()) => Ok(StatusCode::NO_CONTENT.into_response()),
         Err(AlertsError::NotFound(_)) => Ok(StatusCode::NOT_FOUND.into_response()),
         Err(other) => Err(alerts_error(other)),
@@ -564,25 +661,25 @@ async fn delete_alert(
 
 async fn enable_alert(
     Extension(state): Extension<Arc<AppState>>,
-    Path(name): Path<String>,
+    Path(id): Path<String>,
     headers: axum::http::HeaderMap,
     body: Result<Json<EnabledRequest>, JsonRejection>,
 ) -> Result<Response, CanonicalError> {
-    set_enabled(&state, &name, &headers, body, true).await
+    set_enabled(&state, &id, &headers, body, true).await
 }
 
 async fn disable_alert(
     Extension(state): Extension<Arc<AppState>>,
-    Path(name): Path<String>,
+    Path(id): Path<String>,
     headers: axum::http::HeaderMap,
     body: Result<Json<EnabledRequest>, JsonRejection>,
 ) -> Result<Response, CanonicalError> {
-    set_enabled(&state, &name, &headers, body, false).await
+    set_enabled(&state, &id, &headers, body, false).await
 }
 
 async fn set_enabled(
     state: &AppState,
-    name: &str,
+    id: &str,
     headers: &axum::http::HeaderMap,
     body: Result<Json<EnabledRequest>, JsonRejection>,
     enabled: bool,
@@ -591,29 +688,35 @@ async fn set_enabled(
     let alerts = alerts(state)?;
     let Json(request) = body.map_err(|error| AlertApiError::unreadable_body(&error))?;
 
-    let name = DefinitionName::parse(name).map_err(AlertApiError::definition_error)?;
+    let Some(id) = parse_id(id) else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    };
 
-    let rule = alerts
-        .set_enabled(&name, request.expected_revision, enabled)
+    match alerts
+        .set_enabled(id, request.expected_revision, enabled)
         .await
-        .map_err(alerts_error)?;
-
-    Ok(Json(rule_response(&rule)).into_response())
+    {
+        Ok(rule) => Ok(Json(rule_response(&rule)).into_response()),
+        Err(AlertsError::NotFound(_)) => Ok(StatusCode::NOT_FOUND.into_response()),
+        Err(other) => Err(alerts_error(other)),
+    }
 }
 
 async fn list_notifications(
     Extension(state): Extension<Arc<AppState>>,
-    Path(name): Path<String>,
+    Path(id): Path<String>,
     headers: axum::http::HeaderMap,
     Query(paged): Query<Paged>,
 ) -> Result<Response, CanonicalError> {
     crate::api::require_admin(&state, &headers, denied).await?;
     let alerts = alerts(&state)?;
 
-    let name = DefinitionName::parse(&name).map_err(AlertApiError::definition_error)?;
     let page = Page::parse(paged.limit, paged.offset).map_err(page_error)?;
+    let Some(id) = parse_id(&id) else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    };
 
-    let listed = match alerts.notifications(&name, page).await {
+    let listed = match alerts.notifications(id, page).await {
         Ok(listed) => listed,
         Err(AlertsError::NotFound(_)) => return Ok(StatusCode::NOT_FOUND.into_response()),
         Err(other) => return Err(alerts_error(other)),

@@ -11,7 +11,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use super::scalar::{Number, Outcome, UnknownReason};
-use crate::domain::definition::{DefinitionName, NamePage, Page};
+use crate::domain::definition::{DefinitionName, Page};
 use crate::domain::query::time_window::{WindowError, WindowRequest};
 
 /// The bounds every installation gets unless it sets its own.
@@ -23,6 +23,33 @@ pub(crate) const DEFAULT_EVALUATION_LOCK_SECS: u64 = 60;
 pub(crate) const DEFAULT_NOTIFICATIONS_KEPT_PER_RULE: u64 = 200;
 
 const MAX_COLUMN_CHARS: usize = 128;
+/// The longest an alert's name may be. It is shown, never used as a key.
+const MAX_NAME_CHARS: usize = 200;
+
+/// What an administrator calls an alert: free text, shown in every message
+/// and listing. The id is the handle, so two alerts may share a name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AlertName(String);
+
+impl AlertName {
+    pub(crate) fn parse(value: &str) -> Result<Self, RuleError> {
+        let trimmed = value.trim();
+        if trimmed.is_empty() || trimmed.chars().count() > MAX_NAME_CHARS {
+            return Err(RuleError::Name);
+        }
+
+        Ok(Self(trimmed.to_owned()))
+    }
+
+    /// A name as a row recorded it.
+    pub(crate) fn from_row(value: String) -> Self {
+        Self(value)
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
 
 /// How the observed value is compared with the threshold.
 #[derive(
@@ -133,6 +160,8 @@ impl Destinations {
 #[derive(Debug, Deserialize, JsonSchema, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RuleDraft {
+    /// What the alert is called, as people read it: up to 200 characters.
+    pub(crate) name: String,
     /// The stored metric to check.
     pub(crate) metric: String,
     /// The result column holding the number, by the `as_name` the metric
@@ -153,8 +182,8 @@ pub(crate) struct RuleDraft {
     /// Whether checks run. `true` by default.
     #[serde(default = "enabled_by_default")]
     pub(crate) enabled: bool,
-    /// The revision this write expects to replace. Required to change a rule
-    /// that exists; refused when creating one.
+    /// The revision this write expects to replace. Required to change an
+    /// alert that exists; not sent when creating one.
     #[serde(default)]
     pub(crate) expected_revision: Option<u32>,
 }
@@ -168,6 +197,7 @@ impl toolkit::api::api_dto::RequestApiDto for RuleDraft {}
 /// What a rule watches, checked against the installation's bounds.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct RuleSpec {
+    pub(crate) name: AlertName,
     pub(crate) metric: DefinitionName,
     pub(crate) column: String,
     pub(crate) condition: Condition,
@@ -183,6 +213,7 @@ impl RuleSpec {
         limits: Limits,
         destinations: &Destinations,
     ) -> Result<Self, RuleError> {
+        let name = AlertName::parse(&draft.name)?;
         let metric = DefinitionName::parse(&draft.metric).map_err(|_| RuleError::Metric)?;
 
         let column = draft.column.trim();
@@ -215,6 +246,7 @@ impl RuleSpec {
         }
 
         Ok(Self {
+            name,
             metric,
             column: column.to_owned(),
             condition: Condition {
@@ -236,6 +268,8 @@ impl RuleSpec {
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub(crate) enum RuleError {
+    #[error("name must be 1 to {MAX_NAME_CHARS} characters")]
+    Name,
     #[error("metric must be a definition name")]
     Metric,
     #[error("column must be a result column name: letters, digits or underscore")]
@@ -272,7 +306,6 @@ impl EvaluationState {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct AlertRule {
     pub(crate) id: Uuid,
-    pub(crate) name: DefinitionName,
     pub(crate) spec: RuleSpec,
     pub(crate) enabled: bool,
     /// Bumped by every configuration write. A check carries the revision it
@@ -318,7 +351,7 @@ pub(crate) struct Notification {
     pub(crate) id: Uuid,
     pub(crate) rule_id: Uuid,
     pub(crate) rule_revision: u32,
-    pub(crate) rule_name: DefinitionName,
+    pub(crate) rule_name: AlertName,
     pub(crate) metric: DefinitionName,
     pub(crate) column: String,
     pub(crate) condition: Condition,
@@ -353,27 +386,48 @@ pub(crate) struct Accepted {
     pub(crate) notification: Option<Notification>,
 }
 
-/// A write that names the revision it expects to replace.
+/// What a write puts on a rule.
 #[derive(Debug, Clone)]
 pub(crate) struct Write {
-    pub(crate) name: DefinitionName,
     pub(crate) spec: RuleSpec,
     pub(crate) enabled: bool,
-    pub(crate) expected_revision: Option<u32>,
     pub(crate) actor: Option<Uuid>,
+}
+
+/// One rule as a listing shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AlertSummary {
+    pub(crate) id: Uuid,
+    pub(crate) name: AlertName,
+    pub(crate) metric: DefinitionName,
+    pub(crate) enabled: bool,
+}
+
+/// One page of a listing, and how many there are in all.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AlertPage {
+    pub(crate) alerts: Vec<AlertSummary>,
+    pub(crate) total: u64,
 }
 
 #[async_trait]
 pub(crate) trait AlertStore: Send + Sync + fmt::Debug {
-    /// Creates the rule when `expected_revision` is absent, replaces it at
-    /// that revision otherwise. Every success bumps the revision.
-    async fn put(&self, write: Write) -> Result<AlertRule, AlertStoreError>;
+    /// Creates a rule at revision 1 under a fresh id.
+    async fn create(&self, write: Write) -> Result<AlertRule, AlertStoreError>;
 
-    async fn get(&self, name: &DefinitionName) -> Result<Option<AlertRule>, AlertStoreError>;
+    /// Replaces the rule at the revision it is expected to be at, bumping it
+    /// and forgetting what its checks found.
+    async fn replace(
+        &self,
+        id: Uuid,
+        expected_revision: u32,
+        write: Write,
+    ) -> Result<AlertRule, AlertStoreError>;
 
-    async fn get_by_id(&self, id: Uuid) -> Result<Option<AlertRule>, AlertStoreError>;
+    async fn get(&self, id: Uuid) -> Result<Option<AlertRule>, AlertStoreError>;
 
-    async fn page(&self, needle: &str, page: Page) -> Result<NamePage, AlertStoreError>;
+    /// Rules whose name or metric holds `needle`, by name.
+    async fn page(&self, needle: &str, page: Page) -> Result<AlertPage, AlertStoreError>;
 
     async fn count(&self) -> Result<u64, AlertStoreError>;
 
@@ -384,13 +438,13 @@ pub(crate) trait AlertStore: Send + Sync + fmt::Debug {
     /// revision; turning off withdraws every pending notification.
     async fn set_enabled(
         &self,
-        name: &DefinitionName,
+        id: Uuid,
         expected_revision: u32,
         enabled: bool,
     ) -> Result<AlertRule, AlertStoreError>;
 
     /// Removes the rule and everything recorded for it.
-    async fn delete(&self, name: &DefinitionName) -> Result<Option<AlertRule>, AlertStoreError>;
+    async fn delete(&self, id: Uuid) -> Result<Option<AlertRule>, AlertStoreError>;
 
     /// Records one check on the rule it was scheduled for, and the
     /// notification it owes, together.
@@ -405,13 +459,11 @@ pub(crate) trait AlertStore: Send + Sync + fmt::Debug {
 
 #[derive(Debug, Error)]
 pub(crate) enum AlertStoreError {
-    #[error("alert `{0}` was not found")]
-    NotFound(String),
-    #[error("alert `{0}` already exists")]
-    NameTaken(String),
-    #[error("alert `{name}` is at revision {current}, not {expected}")]
+    #[error("alert {0} was not found")]
+    NotFound(Uuid),
+    #[error("alert {id} is at revision {current}, not {expected}")]
     Conflict {
-        name: String,
+        id: Uuid,
         current: u32,
         expected: u32,
     },

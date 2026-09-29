@@ -9,15 +9,15 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use crate::domain::alerts::rule::{
-    Accepted, AlertRule, AlertStore, AlertStoreError, EvaluationState, Notification,
-    NotificationStatus, Recorded, Recording, Write,
+    Accepted, AlertPage, AlertRule, AlertStore, AlertStoreError, AlertSummary, EvaluationState,
+    Notification, NotificationStatus, Recorded, Recording, Write,
 };
 use crate::domain::alerts::{Transition, last_valid_breached, transition};
-use crate::domain::definition::{DefinitionName, NamePage, Page};
+use crate::domain::definition::Page;
 
 #[derive(Debug, Default)]
 pub(crate) struct MemoryAlerts {
-    rules: Mutex<BTreeMap<String, AlertRule>>,
+    rules: Mutex<BTreeMap<Uuid, AlertRule>>,
     notifications: Mutex<Vec<Notification>>,
     failing: bool,
 }
@@ -35,7 +35,7 @@ impl MemoryAlerts {
         }
     }
 
-    fn rules(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, AlertRule>> {
+    fn rules(&self) -> std::sync::MutexGuard<'_, BTreeMap<Uuid, AlertRule>> {
         self.rules
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -69,83 +69,91 @@ impl MemoryAlerts {
 
 #[async_trait]
 impl AlertStore for MemoryAlerts {
-    async fn put(&self, write: Write) -> Result<AlertRule, AlertStoreError> {
+    async fn create(&self, write: Write) -> Result<AlertRule, AlertStoreError> {
         self.check()?;
         let now = Utc::now();
-        let mut rules = self.rules();
-        let name = write.name.as_str().to_owned();
-
-        let rule = match (rules.get(&name), write.expected_revision) {
-            (None, None) => AlertRule {
-                id: Uuid::now_v7(),
-                name: write.name.clone(),
-                spec: write.spec,
-                enabled: write.enabled,
-                revision: 1,
-                state: EvaluationState::default(),
-                created_by: write.actor,
-                created_at: now,
-                updated_at: now,
-            },
-            (None, Some(_)) => return Err(AlertStoreError::NotFound(name)),
-            (Some(_), None) => return Err(AlertStoreError::NameTaken(name)),
-            (Some(current), Some(expected)) => {
-                if current.revision != expected {
-                    return Err(AlertStoreError::Conflict {
-                        name,
-                        current: current.revision,
-                        expected,
-                    });
-                }
-                if !write.enabled {
-                    self.cancel_pending(current.id);
-                }
-
-                AlertRule {
-                    spec: write.spec,
-                    enabled: write.enabled,
-                    revision: current.revision + 1,
-                    state: EvaluationState::default(),
-                    updated_at: now,
-                    ..current.clone()
-                }
-            }
+        let rule = AlertRule {
+            id: Uuid::now_v7(),
+            spec: write.spec,
+            enabled: write.enabled,
+            revision: 1,
+            state: EvaluationState::default(),
+            created_by: write.actor,
+            created_at: now,
+            updated_at: now,
         };
-        rules.insert(name, rule.clone());
+        self.rules().insert(rule.id, rule.clone());
 
         Ok(rule)
     }
 
-    async fn get(&self, name: &DefinitionName) -> Result<Option<AlertRule>, AlertStoreError> {
+    async fn replace(
+        &self,
+        id: Uuid,
+        expected_revision: u32,
+        write: Write,
+    ) -> Result<AlertRule, AlertStoreError> {
         self.check()?;
+        let mut rules = self.rules();
+        let current = rules.get_mut(&id).ok_or(AlertStoreError::NotFound(id))?;
+        if current.revision != expected_revision {
+            return Err(AlertStoreError::Conflict {
+                id,
+                current: current.revision,
+                expected: expected_revision,
+            });
+        }
 
-        Ok(self.rules().get(name.as_str()).cloned())
+        current.spec = write.spec;
+        current.enabled = write.enabled;
+        current.revision += 1;
+        current.state = EvaluationState::default();
+        current.updated_at = Utc::now();
+        let rule = current.clone();
+        drop(rules);
+        if !rule.enabled {
+            self.cancel_pending(rule.id);
+        }
+
+        Ok(rule)
     }
 
-    async fn get_by_id(&self, id: Uuid) -> Result<Option<AlertRule>, AlertStoreError> {
+    async fn get(&self, id: Uuid) -> Result<Option<AlertRule>, AlertStoreError> {
         self.check()?;
 
-        Ok(self.rules().values().find(|rule| rule.id == id).cloned())
+        Ok(self.rules().get(&id).cloned())
     }
 
-    async fn page(&self, needle: &str, page: Page) -> Result<NamePage, AlertStoreError> {
+    async fn page(&self, needle: &str, page: Page) -> Result<AlertPage, AlertStoreError> {
         self.check()?;
-        let matching: Vec<String> = self
+        let mut matching: Vec<AlertSummary> = self
             .rules()
             .values()
             .filter(|rule| {
-                rule.name.as_str().contains(needle) || rule.spec.metric.as_str().contains(needle)
+                rule.spec.name.as_str().contains(needle)
+                    || rule.spec.metric.as_str().contains(needle)
             })
-            .map(|rule| rule.name.as_str().to_owned())
+            .map(|rule| AlertSummary {
+                id: rule.id,
+                name: rule.spec.name.clone(),
+                metric: rule.spec.metric.clone(),
+                enabled: rule.enabled,
+            })
             .collect();
+        matching.sort_by(|left, right| {
+            left.name
+                .as_str()
+                .cmp(right.name.as_str())
+                .then(left.id.cmp(&right.id))
+        });
         let total = matching.len() as u64;
-        let names = matching
+        let alerts = matching
             .into_iter()
             .skip(usize::try_from(page.offset()).unwrap_or(usize::MAX))
             .take(usize::try_from(page.limit()).unwrap_or(usize::MAX))
             .collect();
 
-        Ok(NamePage { names, total })
+        Ok(AlertPage { alerts, total })
     }
 
     async fn count(&self) -> Result<u64, AlertStoreError> {
@@ -167,18 +175,16 @@ impl AlertStore for MemoryAlerts {
 
     async fn set_enabled(
         &self,
-        name: &DefinitionName,
+        id: Uuid,
         expected_revision: u32,
         enabled: bool,
     ) -> Result<AlertRule, AlertStoreError> {
         self.check()?;
         let mut rules = self.rules();
-        let current = rules
-            .get_mut(name.as_str())
-            .ok_or_else(|| AlertStoreError::NotFound(name.as_str().to_owned()))?;
+        let current = rules.get_mut(&id).ok_or(AlertStoreError::NotFound(id))?;
         if current.revision != expected_revision {
             return Err(AlertStoreError::Conflict {
-                name: name.as_str().to_owned(),
+                id,
                 current: current.revision,
                 expected: expected_revision,
             });
@@ -197,9 +203,9 @@ impl AlertStore for MemoryAlerts {
         Ok(rule)
     }
 
-    async fn delete(&self, name: &DefinitionName) -> Result<Option<AlertRule>, AlertStoreError> {
+    async fn delete(&self, id: Uuid) -> Result<Option<AlertRule>, AlertStoreError> {
         self.check()?;
-        let removed = self.rules().remove(name.as_str());
+        let removed = self.rules().remove(&id);
         if let Some(rule) = &removed {
             self.held()
                 .retain(|notification| notification.rule_id != rule.id);
@@ -212,7 +218,7 @@ impl AlertStore for MemoryAlerts {
         self.check()?;
         let now = Utc::now();
         let mut rules = self.rules();
-        let Some(current) = rules.values_mut().find(|rule| rule.id == recording.rule_id) else {
+        let Some(current) = rules.get_mut(&recording.rule_id) else {
             return Ok(Recorded::Stale);
         };
         if current.revision != recording.revision || !current.enabled {
@@ -237,7 +243,7 @@ impl AlertStore for MemoryAlerts {
                 id: Uuid::now_v7(),
                 rule_id: current.id,
                 rule_revision: current.revision,
-                rule_name: current.name.clone(),
+                rule_name: current.spec.name.clone(),
                 metric: current.spec.metric.clone(),
                 column: current.spec.column.clone(),
                 condition: current.spec.condition,

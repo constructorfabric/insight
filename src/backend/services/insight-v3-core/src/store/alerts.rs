@@ -14,22 +14,22 @@ use sea_orm::{
 use uuid::Uuid;
 
 use crate::domain::alerts::rule::{
-    Accepted, AlertRule, AlertStore, AlertStoreError, Condition, EvaluationState, Notification,
-    NotificationStatus, Operator, Recorded, Recording, RuleSpec, Write,
+    Accepted, AlertName, AlertPage, AlertRule, AlertStore, AlertStoreError, AlertSummary,
+    Condition, EvaluationState, Notification, NotificationStatus, Operator, Recorded, Recording,
+    RuleSpec, Write,
 };
 use crate::domain::alerts::{Number, Outcome, UnknownReason, last_valid_breached, transition};
-use crate::domain::definition::{DefinitionName, NamePage, Page};
+use crate::domain::definition::{DefinitionName, Page};
 use crate::store::like_escaped;
 
 const RULE_COLUMNS: &str = "id, name, metric, column_name, operator, threshold, range_code, interval_secs, destination, enabled, revision, last_evaluated_at, last_outcome, last_reason, last_value, last_valid_breached, breached_since, created_by, created_at, updated_at";
 
-const SELECT_BY_NAME: &str = "SELECT {columns} FROM alert_rules WHERE name = ?";
-/// The same read, holding the row, so two writers of one rule take turns.
-const SELECT_BY_NAME_HELD: &str = "SELECT {columns} FROM alert_rules WHERE name = ? FOR UPDATE";
 const SELECT_BY_ID: &str = "SELECT {columns} FROM alert_rules WHERE id = ?";
+/// The same read, holding the row, so two writers of one rule take turns.
 const SELECT_BY_ID_HELD: &str = "SELECT {columns} FROM alert_rules WHERE id = ? FOR UPDATE";
-const SELECT_ENABLED: &str = "SELECT {columns} FROM alert_rules WHERE enabled = 1 ORDER BY name";
-const PAGE_NAMES: &str = "SELECT name FROM alert_rules WHERE name LIKE ? OR metric LIKE ? ORDER BY name LIMIT ? OFFSET ?";
+const SELECT_ENABLED: &str =
+    "SELECT {columns} FROM alert_rules WHERE enabled = 1 ORDER BY name, id";
+const PAGE_RULES: &str = "SELECT id, name, metric, enabled FROM alert_rules WHERE name LIKE ? OR metric LIKE ? ORDER BY name, id LIMIT ? OFFSET ?";
 const COUNT_MATCHES: &str =
     "SELECT COUNT(*) AS total FROM alert_rules WHERE name LIKE ? OR metric LIKE ?";
 const COUNT_ALL: &str = "SELECT COUNT(*) AS total FROM alert_rules";
@@ -38,7 +38,7 @@ const NOW: &str = "SELECT UTC_TIMESTAMP(6) AS now";
 const INSERT_RULE: &str = "INSERT INTO alert_rules (id, name, metric, column_name, operator, threshold, range_code, interval_secs, destination, enabled, revision, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)";
 /// A configuration write replaces the spec, bumps the revision and forgets
 /// every check made under the old one.
-const REPLACE_RULE: &str = "UPDATE alert_rules SET metric = ?, column_name = ?, operator = ?, threshold = ?, range_code = ?, interval_secs = ?, destination = ?, enabled = ?, revision = revision + 1, last_evaluated_at = NULL, last_outcome = NULL, last_reason = NULL, last_value = NULL, last_valid_breached = NULL, breached_since = NULL, updated_at = ? WHERE id = ? AND revision = ?";
+const REPLACE_RULE: &str = "UPDATE alert_rules SET name = ?, metric = ?, column_name = ?, operator = ?, threshold = ?, range_code = ?, interval_secs = ?, destination = ?, enabled = ?, revision = revision + 1, last_evaluated_at = NULL, last_outcome = NULL, last_reason = NULL, last_value = NULL, last_valid_breached = NULL, breached_since = NULL, updated_at = ? WHERE id = ? AND revision = ?";
 const SET_ENABLED: &str = "UPDATE alert_rules SET enabled = ?, revision = revision + 1, last_evaluated_at = NULL, last_outcome = NULL, last_reason = NULL, last_value = NULL, last_valid_breached = NULL, breached_since = NULL, updated_at = ? WHERE id = ? AND revision = ?";
 const DELETE_RULE: &str = "DELETE FROM alert_rules WHERE id = ?";
 const DELETE_NOTIFICATIONS: &str = "DELETE FROM alert_notifications WHERE rule_id = ?";
@@ -110,20 +110,19 @@ impl MariaAlerts {
             .transpose()
     }
 
-    async fn create(
-        &self,
+    async fn insert(
         transaction: &sea_orm::DatabaseTransaction,
         write: &Write,
         now: DateTime<Utc>,
     ) -> Result<AlertRule, AlertStoreError> {
         let id = Uuid::now_v7();
         let spec = &write.spec;
-        let inserted = transaction
+        transaction
             .execute_raw(statement(
                 INSERT_RULE.to_owned(),
                 [
                     id_column(id),
-                    write.name.as_str().into(),
+                    spec.name.as_str().into(),
                     spec.metric.as_str().into(),
                     spec.column.as_str().into(),
                     spec.condition.operator.as_str().into(),
@@ -137,23 +136,14 @@ impl MariaAlerts {
                     stamp(now),
                 ],
             ))
-            .await;
-        if let Err(error) = inserted {
-            return Err(match error.sql_err() {
-                Some(sea_orm::SqlErr::UniqueConstraintViolation(_)) => {
-                    AlertStoreError::NameTaken(write.name.as_str().to_owned())
-                }
-                _ => AlertStoreError::Database(error),
-            });
-        }
+            .await?;
 
         Self::one(transaction, SELECT_BY_ID, id_column(id))
             .await?
-            .ok_or_else(|| AlertStoreError::NotFound(write.name.as_str().to_owned()))
+            .ok_or(AlertStoreError::NotFound(id))
     }
 
-    async fn replace(
-        &self,
+    async fn rewrite(
         transaction: &sea_orm::DatabaseTransaction,
         current: &AlertRule,
         write: &Write,
@@ -162,7 +152,7 @@ impl MariaAlerts {
     ) -> Result<AlertRule, AlertStoreError> {
         if current.revision != expected {
             return Err(AlertStoreError::Conflict {
-                name: write.name.as_str().to_owned(),
+                id: current.id,
                 current: current.revision,
                 expected,
             });
@@ -173,6 +163,7 @@ impl MariaAlerts {
             .execute_raw(statement(
                 REPLACE_RULE.to_owned(),
                 [
+                    spec.name.as_str().into(),
                     spec.metric.as_str().into(),
                     spec.column.as_str().into(),
                     spec.condition.operator.as_str().into(),
@@ -193,7 +184,7 @@ impl MariaAlerts {
 
         Self::one(transaction, SELECT_BY_ID, id_column(current.id))
             .await?
-            .ok_or_else(|| AlertStoreError::NotFound(write.name.as_str().to_owned()))
+            .ok_or(AlertStoreError::NotFound(current.id))
     }
 
     /// Writes the notification a check owes, and drops the oldest past the
@@ -210,7 +201,7 @@ impl MariaAlerts {
             id: Uuid::now_v7(),
             rule_id: current.id,
             rule_revision: current.revision,
-            rule_name: current.name.clone(),
+            rule_name: current.spec.name.clone(),
             metric: current.spec.metric.clone(),
             column: current.spec.column.clone(),
             condition: current.spec.condition,
@@ -278,45 +269,42 @@ impl MariaAlerts {
 
 #[async_trait]
 impl AlertStore for MariaAlerts {
-    async fn put(&self, write: Write) -> Result<AlertRule, AlertStoreError> {
+    async fn create(&self, write: Write) -> Result<AlertRule, AlertStoreError> {
         let transaction = self.db.begin().await?;
         let now = Self::now(&transaction).await?;
 
-        // SAFETY: a create inserts without a held read: locking an absent name
-        // takes a gap lock, and two creates then deadlock on each other's insert.
-        let rule = match write.expected_revision {
-            None => self.create(&transaction, &write, now).await?,
-            Some(expected) => {
-                let current = Self::one(
-                    &transaction,
-                    SELECT_BY_NAME_HELD,
-                    write.name.as_str().into(),
-                )
-                .await?
-                .ok_or_else(|| AlertStoreError::NotFound(write.name.as_str().to_owned()))?;
-
-                self.replace(&transaction, &current, &write, expected, now)
-                    .await?
-            }
-        };
-
+        let rule = Self::insert(&transaction, &write, now).await?;
         transaction.commit().await?;
 
         Ok(rule)
     }
 
-    async fn get(&self, name: &DefinitionName) -> Result<Option<AlertRule>, AlertStoreError> {
-        Self::one(&self.db, SELECT_BY_NAME, name.as_str().into()).await
+    async fn replace(
+        &self,
+        id: Uuid,
+        expected_revision: u32,
+        write: Write,
+    ) -> Result<AlertRule, AlertStoreError> {
+        let transaction = self.db.begin().await?;
+        let now = Self::now(&transaction).await?;
+
+        let current = Self::one(&transaction, SELECT_BY_ID_HELD, id_column(id))
+            .await?
+            .ok_or(AlertStoreError::NotFound(id))?;
+        let rule = Self::rewrite(&transaction, &current, &write, expected_revision, now).await?;
+        transaction.commit().await?;
+
+        Ok(rule)
     }
 
-    async fn get_by_id(&self, id: Uuid) -> Result<Option<AlertRule>, AlertStoreError> {
+    async fn get(&self, id: Uuid) -> Result<Option<AlertRule>, AlertStoreError> {
         Self::one(&self.db, SELECT_BY_ID, id_column(id)).await
     }
 
-    async fn page(&self, needle: &str, page: Page) -> Result<NamePage, AlertStoreError> {
+    async fn page(&self, needle: &str, page: Page) -> Result<AlertPage, AlertStoreError> {
         let pattern = format!("%{}%", like_escaped(needle));
-        let rows = NameRow::find_by_statement(statement(
-            PAGE_NAMES.to_owned(),
+        let rows = SummaryRow::find_by_statement(statement(
+            PAGE_RULES.to_owned(),
             [
                 pattern.clone().into(),
                 pattern.clone().into(),
@@ -334,8 +322,11 @@ impl AlertStore for MariaAlerts {
         .one(&self.db)
         .await?;
 
-        Ok(NamePage {
-            names: rows.into_iter().map(|row| row.name).collect(),
+        Ok(AlertPage {
+            alerts: rows
+                .into_iter()
+                .map(SummaryRow::into_summary)
+                .collect::<Result<_, _>>()?,
             total: counted.map_or(0, |row| u64::try_from(row.total).unwrap_or(0)),
         })
     }
@@ -363,19 +354,19 @@ impl AlertStore for MariaAlerts {
 
     async fn set_enabled(
         &self,
-        name: &DefinitionName,
+        id: Uuid,
         expected_revision: u32,
         enabled: bool,
     ) -> Result<AlertRule, AlertStoreError> {
         let transaction = self.db.begin().await?;
         let now = Self::now(&transaction).await?;
 
-        let current = Self::one(&transaction, SELECT_BY_NAME_HELD, name.as_str().into())
+        let current = Self::one(&transaction, SELECT_BY_ID_HELD, id_column(id))
             .await?
-            .ok_or_else(|| AlertStoreError::NotFound(name.as_str().to_owned()))?;
+            .ok_or(AlertStoreError::NotFound(id))?;
         if current.revision != expected_revision {
             return Err(AlertStoreError::Conflict {
-                name: name.as_str().to_owned(),
+                id,
                 current: current.revision,
                 expected: expected_revision,
             });
@@ -398,18 +389,16 @@ impl AlertStore for MariaAlerts {
 
         let rule = Self::one(&transaction, SELECT_BY_ID, id_column(current.id))
             .await?
-            .ok_or_else(|| AlertStoreError::NotFound(name.as_str().to_owned()))?;
+            .ok_or(AlertStoreError::NotFound(id))?;
         transaction.commit().await?;
 
         Ok(rule)
     }
 
-    async fn delete(&self, name: &DefinitionName) -> Result<Option<AlertRule>, AlertStoreError> {
+    async fn delete(&self, id: Uuid) -> Result<Option<AlertRule>, AlertStoreError> {
         let transaction = self.db.begin().await?;
 
-        let Some(current) =
-            Self::one(&transaction, SELECT_BY_NAME_HELD, name.as_str().into()).await?
-        else {
+        let Some(current) = Self::one(&transaction, SELECT_BY_ID_HELD, id_column(id)).await? else {
             transaction.rollback().await?;
             return Ok(None);
         };
@@ -485,7 +474,7 @@ impl AlertStore for MariaAlerts {
 
         let rule = Self::one(&transaction, SELECT_BY_ID, id_column(current.id))
             .await?
-            .ok_or_else(|| AlertStoreError::NotFound(current.name.as_str().to_owned()))?;
+            .ok_or(AlertStoreError::NotFound(current.id))?;
         transaction.commit().await?;
 
         Ok(Recorded::Accepted(Box::new(Accepted {
@@ -586,8 +575,8 @@ impl RuleRow {
 
         Ok(AlertRule {
             id: parse_id(&self.id)?,
-            name: DefinitionName::parse(&self.name).map_err(|_| unreadable(&self.name))?,
             spec: RuleSpec {
+                name: AlertName::from_row(self.name),
                 metric: DefinitionName::parse(&self.metric)
                     .map_err(|_| unreadable(&self.metric))?,
                 column: self.column_name,
@@ -634,8 +623,7 @@ impl NotificationRow {
             id: parse_id(&self.id)?,
             rule_id: parse_id(&self.rule_id)?,
             rule_revision: self.rule_revision,
-            rule_name: DefinitionName::parse(&self.rule_name)
-                .map_err(|_| unreadable(&self.rule_name))?,
+            rule_name: AlertName::from_row(self.rule_name),
             metric: DefinitionName::parse(&self.metric).map_err(|_| unreadable(&self.metric))?,
             column: self.column_name,
             condition: parse_condition(&self.operator, &self.threshold)?,
@@ -650,8 +638,22 @@ impl NotificationRow {
 }
 
 #[derive(Debug, FromQueryResult)]
-struct NameRow {
+struct SummaryRow {
+    id: String,
     name: String,
+    metric: String,
+    enabled: bool,
+}
+
+impl SummaryRow {
+    fn into_summary(self) -> Result<AlertSummary, AlertStoreError> {
+        Ok(AlertSummary {
+            id: parse_id(&self.id)?,
+            name: AlertName::from_row(self.name),
+            metric: DefinitionName::parse(&self.metric).map_err(|_| unreadable(&self.metric))?,
+            enabled: self.enabled,
+        })
+    }
 }
 
 #[derive(Debug, FromQueryResult)]

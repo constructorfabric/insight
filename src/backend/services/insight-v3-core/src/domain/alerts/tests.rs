@@ -220,6 +220,7 @@ fn destinations() -> Destinations {
 
 fn draft(edit: impl FnOnce(&mut serde_json::Value)) -> RuleDraft {
     let mut body = json!({
+        "name": "Too many open PRs",
         "metric": "prs-open",
         "column": "total",
         "operator": ">",
@@ -236,6 +237,16 @@ fn draft(edit: impl FnOnce(&mut serde_json::Value)) -> RuleDraft {
 fn a_draft_is_checked_against_the_bounds_before_it_is_a_rule() {
     let limits = Limits::default();
     let cases: Vec<(&str, RuleDraft, RuleError)> = vec![
+        (
+            "blank name",
+            draft(|body| body["name"] = json!("   ")),
+            RuleError::Name,
+        ),
+        (
+            "name too long",
+            draft(|body| body["name"] = json!("x".repeat(201))),
+            RuleError::Name,
+        ),
         (
             "metric name",
             draft(|body| body["metric"] = json!("not a name!")),
@@ -300,7 +311,7 @@ fn a_range_is_read_as_a_run_would_read_it() {
 #[test]
 fn a_draft_names_only_the_fields_a_rule_has() {
     let extra = json!({
-        "metric": "m", "column": "c", "operator": ">", "threshold": 1,
+        "name": "n", "metric": "m", "column": "c", "operator": ">", "threshold": 1,
         "interval_secs": 60, "destination": "ops", "colour": "red"
     });
 

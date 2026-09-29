@@ -72,14 +72,14 @@ mod worker {
     use axum::routing::post;
     use axum::{Json, Router};
     use serde_json::json;
-    use uuid::Uuid;
 
     use super::super::{AlertWorker, Checks, RedisSchedule};
     use crate::api::{Alerts, AppState};
     use crate::chat::ChatClient;
     use crate::domain::alerts::evaluation::Evaluator;
-    use crate::domain::alerts::rule::{AlertStore, Write};
-    use crate::domain::alerts::rule::{Condition, Operator, RuleSpec};
+    use crate::domain::alerts::rule::{
+        AlertName, AlertStore, Condition, Operator, RuleSpec, Write,
+    };
     use crate::domain::alerts::schedule::{AlertSchedule as _, Scheduled};
     use crate::domain::alerts::{Destinations, Limits, Number};
     use crate::domain::definition::{DefinitionKind, DefinitionName, Definitions as _, Page};
@@ -187,11 +187,10 @@ mod worker {
         let store = Arc::new(MemoryAlerts::new());
         let state = state(&warehouse().await, schedule.clone(), store.clone()).await;
 
-        let name = DefinitionName::parse(&format!("worker-{}", Uuid::now_v7().simple()))?;
         let rule = store
-            .put(Write {
-                name: name.clone(),
+            .create(Write {
                 spec: RuleSpec {
+                    name: AlertName::parse("Worker probe")?,
                     metric: DefinitionName::parse("prs-open")?,
                     column: "total".to_owned(),
                     condition: Condition {
@@ -203,7 +202,6 @@ mod worker {
                     destination: "ops".to_owned(),
                 },
                 enabled: true,
-                expected_revision: None,
                 actor: None,
             })
             .await?;
@@ -233,7 +231,7 @@ mod worker {
         assert_eq!(owed.len(), 1, "one check, one notification: {owed:?}");
         assert_eq!(owed[0].value, Number::Int(42));
         let checked = store
-            .get(&name)
+            .get(rule.id)
             .await?
             .unwrap_or_else(|| panic!("the rule stays"));
         assert_eq!(checked.state.last_valid_breached, Some(true));

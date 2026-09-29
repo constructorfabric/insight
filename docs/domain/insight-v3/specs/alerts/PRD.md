@@ -136,7 +136,7 @@ Each requirement says whether it is approved for this release or deferred.
 
 The system **MUST** let administrators create, read, list, update, enable, disable and delete rules through API and MCP, using the same validation.
 
-Each rule selects one existing custom metric, one result column, a threshold condition, an interval and one destination. Every write bumps the rule's revision; an update names the revision it replaces and is refused when the rule has moved on. Deleting a rule removes it and everything recorded for it.
+Each rule has a name administrators read and a generated identity every operation takes; names need not be unique. A rule selects one existing custom metric, one result column, a threshold condition, an interval and one destination. Every write bumps the rule's revision; an update names the revision it replaces and is refused when the rule has moved on. Deleting a rule removes it and everything recorded for it.
 
 **Actors**: `cpt-insightspec-v3-alerts-actor-admin`
 
