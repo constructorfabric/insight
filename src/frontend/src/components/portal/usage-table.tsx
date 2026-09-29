@@ -38,7 +38,7 @@ function SortIcon({
   direction: SortDirection | null;
   muted: boolean;
 }) {
-  const className = cn("size-3.5 shrink-0", muted && "opacity-40");
+  const className = cn("size-3.5 shrink-0", muted && "text-muted-foreground");
   if (direction === "asc") return <ArrowUp className={className} />;
   if (direction === "desc") return <ArrowDown className={className} />;
   return (
