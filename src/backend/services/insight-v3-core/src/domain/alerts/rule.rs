@@ -19,7 +19,7 @@ pub(crate) const DEFAULT_MIN_INTERVAL_SECS: u32 = 60;
 pub(crate) const DEFAULT_MAX_INTERVAL_SECS: u32 = 7 * 24 * 3600;
 pub(crate) const DEFAULT_MAX_RULES: u64 = 200;
 pub(crate) const DEFAULT_EVALUATION_CONCURRENCY: usize = 4;
-pub(crate) const DEFAULT_EVALUATION_TIMEOUT_SECS: u64 = 60;
+pub(crate) const DEFAULT_EVALUATION_LOCK_SECS: u64 = 60;
 pub(crate) const DEFAULT_NOTIFICATIONS_KEPT_PER_RULE: u64 = 200;
 
 const MAX_COLUMN_CHARS: usize = 128;
@@ -288,7 +288,7 @@ pub(crate) struct AlertRule {
 pub(crate) enum NotificationStatus {
     /// Owed, and not yet sent.
     Pending,
-    /// Withdrawn before it was sent: the rule was disabled or replaced.
+    /// Withdrawn before it was sent: the rule was disabled.
     Cancelled,
 }
 

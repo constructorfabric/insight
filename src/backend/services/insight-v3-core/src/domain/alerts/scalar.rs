@@ -11,7 +11,7 @@ use crate::domain::query::metric_query::RunResult;
 
 /// Integers this large and larger are no longer exact as `f64`, so comparing
 /// one with a float would be comparing a rounded value.
-const EXACT_FLOAT_BOUND: i128 = 1 << 53;
+const EXACT_FLOAT_BOUND: u128 = 1 << 53;
 
 /// A number a metric produced or a threshold names, kept as what it is: an
 /// integer is never rounded through a float on its way to a comparison.
@@ -87,7 +87,7 @@ impl Number {
 }
 
 fn as_exact_float(int: i128) -> Option<f64> {
-    if int.abs() >= EXACT_FLOAT_BOUND {
+    if int.unsigned_abs() >= EXACT_FLOAT_BOUND {
         return None;
     }
 

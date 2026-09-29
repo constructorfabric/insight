@@ -99,9 +99,10 @@ pub(crate) struct AlertsConfig {
     pub(crate) max_rules: u64,
     /// How many checks of different rules run at once.
     pub(crate) evaluation_concurrency: usize,
-    /// How long one check may take before its lock lapses and another
-    /// worker may pick it up.
-    pub(crate) evaluation_timeout_secs: u64,
+    /// How long a worker may hold a check before a worker that has died is
+    /// taken to be gone and another picks the check up. A live worker keeps
+    /// its hold for as long as the check runs.
+    pub(crate) evaluation_lock_secs: u64,
     pub(crate) notifications_kept_per_rule: u64,
 }
 
@@ -115,7 +116,7 @@ impl Default for AlertsConfig {
             max_interval_secs: crate::domain::alerts::rule::DEFAULT_MAX_INTERVAL_SECS,
             max_rules: crate::domain::alerts::rule::DEFAULT_MAX_RULES,
             evaluation_concurrency: crate::domain::alerts::rule::DEFAULT_EVALUATION_CONCURRENCY,
-            evaluation_timeout_secs: crate::domain::alerts::rule::DEFAULT_EVALUATION_TIMEOUT_SECS,
+            evaluation_lock_secs: crate::domain::alerts::rule::DEFAULT_EVALUATION_LOCK_SECS,
             notifications_kept_per_rule:
                 crate::domain::alerts::rule::DEFAULT_NOTIFICATIONS_KEPT_PER_RULE,
         }
@@ -276,7 +277,7 @@ impl fmt::Debug for RedactedAlerts<'_> {
             .field("max_interval_secs", &self.0.max_interval_secs)
             .field("max_rules", &self.0.max_rules)
             .field("evaluation_concurrency", &self.0.evaluation_concurrency)
-            .field("evaluation_timeout_secs", &self.0.evaluation_timeout_secs)
+            .field("evaluation_lock_secs", &self.0.evaluation_lock_secs)
             .field(
                 "notifications_kept_per_rule",
                 &self.0.notifications_kept_per_rule,
@@ -593,7 +594,7 @@ fn validate_alerts(alerts: &AlertsConfig) -> Result<(), ConfigError> {
     if alerts.max_rules == 0 || alerts.evaluation_concurrency == 0 {
         return Err(ConfigError::AlertCapacity);
     }
-    if alerts.evaluation_timeout_secs == 0 || alerts.notifications_kept_per_rule == 0 {
+    if alerts.evaluation_lock_secs == 0 || alerts.notifications_kept_per_rule == 0 {
         return Err(ConfigError::AlertCapacity);
     }
     if let Some(name) = alerts

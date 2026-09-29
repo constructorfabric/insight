@@ -230,7 +230,6 @@ impl AlertStore for MemoryAlerts {
         current.state.last_valid_breached = next;
         current.state.last_evaluated_at = Some(recording.evaluated_at);
         current.state.last_outcome = Some(recording.outcome);
-        current.updated_at = now;
 
         let owed = transition(previous, &recording.outcome) == Transition::Notify;
         let notification = match (owed, recording.outcome.value()) {

@@ -43,6 +43,34 @@ impl crate::store::alert_schedule::Checks for AlertChecks {
     }
 }
 
+/// How often the schedule is made to say what the store says again. A rule
+/// write that reached the store but not the schedule is put right here.
+const RECONCILE_EVERY: std::time::Duration = std::time::Duration::from_mins(5);
+
+/// The schedule as the store says it should be, logged when it was not.
+async fn repair_schedule(app: &crate::api::AppState) {
+    let (Some(store), Some(schedule)) = (app.alert_store(), app.alert_schedule()) else {
+        return;
+    };
+    let enabled = match store.enabled().await {
+        Ok(enabled) => enabled,
+        Err(error) => {
+            tracing::error!(error = ?error, "the alert rules could not be read to reconcile");
+            return;
+        }
+    };
+    match crate::domain::alerts::schedule::reconcile(schedule, &enabled).await {
+        Ok(reconciled) if reconciled.removed > 0 => {
+            tracing::warn!(
+                removed = reconciled.removed,
+                "alert schedule held checks for rules that are gone"
+            );
+        }
+        Ok(_) => {}
+        Err(error) => tracing::error!(error = ?error, "the alert schedule could not be reconciled"),
+    }
+}
+
 /// Brings the alert schedule and worker up, after the rest of the state:
 /// the schedule is made to say what the store says, then checks start.
 async fn start_alerts(
@@ -66,13 +94,26 @@ async fn start_alerts(
         &config.redis_url,
         Arc::new(AlertChecks(Arc::clone(app))),
         config.evaluation_concurrency,
-        std::time::Duration::from_secs(config.evaluation_timeout_secs),
+        std::time::Duration::from_secs(config.evaluation_lock_secs),
     )
     .await?;
     tracing::info!(
         concurrency = config.evaluation_concurrency,
         "alert worker started"
     );
+
+    let repairing = Arc::clone(app);
+    let stop = cancellation.clone();
+    tokio::spawn(async move {
+        let mut every = tokio::time::interval(RECONCILE_EVERY);
+        every.tick().await;
+        loop {
+            tokio::select! {
+                () = stop.cancelled() => break,
+                _ = every.tick() => repair_schedule(&repairing).await,
+            }
+        }
+    });
 
     tokio::spawn(async move {
         cancellation.cancelled().await;

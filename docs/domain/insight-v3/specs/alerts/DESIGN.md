@@ -69,7 +69,7 @@ The parent [separate-service ADR](../ADR/0001-separate-service.md) still applies
 | NFR ID | Allocated To | Design Response | Verification Approach |
 |--------|--------------|-----------------|-----------------------|
 | `cpt-insightspec-v3-alerts-nfr-durability` | Store and schedule | Check and notification in one transaction, revision fence, startup reconcile, BullMQ locks and stalled recovery | Live tests against MariaDB and Redis in CI |
-| `cpt-insightspec-v3-alerts-nfr-timeliness` | Worker | Bounded concurrency and a per-check lock; scheduling and check duration logged with the rule | Log fields per check; targets await synthetic load |
+| `cpt-insightspec-v3-alerts-nfr-timeliness` | Worker | Bounded concurrency; a check that outlives its lock on a dead worker is taken over; scheduling and check duration logged with the rule | Log fields per check; targets await synthetic load |
 | `cpt-insightspec-v3-alerts-nfr-confidentiality` | Configuration and API | Destinations named in configuration, rules reference a name, reads answer name and provider only; the Redis URL is redacted from debug output | Handler and configuration tests |
 | `cpt-insightspec-v3-nfr-efficiency` | Worker | Bounded concurrency; notifications kept per rule capped | Compare synthetic resource use against the parent baseline |
 | `cpt-insightspec-v3-nfr-reliability` | Service lifecycle | Worker stops on the gear's cancellation token; unfinished checks are recovered by the next worker | Existing service availability evidence plus the live tests |
@@ -194,7 +194,7 @@ Checks run when nobody is asking.
 
 ##### Responsibility scope
 
-One BullMQ job scheduler per enabled rule, keyed by the rule id, repeating every rule interval, carrying the rule id and revision. Upsert replaces; remove withdraws. At startup, every enabled rule is upserted at its revision and every scheduler with no enabled rule is removed.
+One BullMQ job scheduler per enabled rule, keyed by the rule id, repeating every rule interval, carrying the rule id and revision. Upsert replaces; remove withdraws. At startup, and every five minutes after, every enabled rule is upserted at its revision and every scheduler with no enabled rule is removed, so a rule write that reached the store but not the schedule is put right without a restart.
 
 ##### Responsibility boundaries
 
@@ -320,7 +320,7 @@ BullMQ owns its keys in Redis under its own prefix.
 
 The worker runs inside every `insight-v3-core` replica, started after the state is built and stopped on the gear's cancellation token. Replicas coordinate through BullMQ's locks; a check runs on one of them. Alerts are off unless the configuration names a Redis; with them off, the routes answer that the installation has none.
 
-Configuration: `alerts.enabled`, `alerts.redis_url`, `alerts.destinations.<name>.provider`, and the bounds `min_interval_secs`, `max_interval_secs`, `max_rules`, `evaluation_concurrency`, `evaluation_timeout_secs`, `notifications_kept_per_rule`.
+Configuration: `alerts.enabled`, `alerts.redis_url`, `alerts.destinations.<name>.provider`, and the bounds `min_interval_secs`, `max_interval_secs`, `max_rules`, `evaluation_concurrency`, `evaluation_lock_secs`, `notifications_kept_per_rule`.
 
 ## 4. Additional Context
 

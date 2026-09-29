@@ -148,12 +148,12 @@ impl AlertWorker {
         redis_url: &str,
         checks: Arc<dyn Checks>,
         concurrency: usize,
-        evaluation_timeout: Duration,
+        lock: Duration,
     ) -> Result<Self, ScheduleError> {
         let options = WorkerOptions {
             connection: connection(redis_url),
             concurrency,
-            lock_duration: u64::try_from(evaluation_timeout.as_millis()).unwrap_or(u64::MAX),
+            lock_duration: u64::try_from(lock.as_millis()).unwrap_or(u64::MAX),
             stalled_interval: STALLED_INTERVAL_MS,
             ..Default::default()
         };
@@ -189,8 +189,8 @@ impl fmt::Debug for AlertWorker {
 }
 
 /// One check, as the queue hands it over. Only a store that did not answer
-/// fails the job, which `BullMQ` then retries; everything else is a finding
-/// recorded on the rule.
+/// fails the job; the iteration is then dropped and the next one runs at its
+/// time. Everything else is a finding recorded on the rule.
 async fn run(checks: &dyn Checks, job: &Job) -> Result<serde_json::Value, bullmq::Error> {
     let parsed: EvaluationJob = serde_json::from_value(job.data().clone())?;
     let started = std::time::Instant::now();

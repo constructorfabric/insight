@@ -46,7 +46,7 @@ const CANCEL_PENDING: &str =
     "UPDATE alert_notifications SET status = ?, updated_at = ? WHERE rule_id = ? AND status = ?";
 
 /// A check lands only on the revision it was scheduled for.
-const RECORD_CHECK: &str = "UPDATE alert_rules SET last_evaluated_at = ?, last_outcome = ?, last_reason = ?, last_value = ?, last_valid_breached = ?, breached_since = ?, updated_at = ? WHERE id = ? AND revision = ? AND enabled = 1";
+const RECORD_CHECK: &str = "UPDATE alert_rules SET last_evaluated_at = ?, last_outcome = ?, last_reason = ?, last_value = ?, last_valid_breached = ?, breached_since = ? WHERE id = ? AND revision = ? AND enabled = 1";
 const INSERT_NOTIFICATION: &str = "INSERT INTO alert_notifications (id, rule_id, rule_revision, rule_name, metric, column_name, operator, threshold, value, evaluated_at, destination, status, attempts, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)";
 /// Notifications past the kept count go, oldest first.
 const TRIM_NOTIFICATIONS: &str = "DELETE FROM alert_notifications WHERE rule_id = ? AND id NOT IN (SELECT id FROM (SELECT id FROM alert_notifications WHERE rule_id = ? ORDER BY created_at DESC, id DESC LIMIT ?) AS kept)";
@@ -469,7 +469,6 @@ impl AlertStore for MariaAlerts {
                     outcome.value().map(Number::to_stored).into(),
                     next.into(),
                     breached_since.map(|since| since.naive_utc()).into(),
-                    stamp(now),
                     id_column(current.id),
                     recording.revision.into(),
                 ],

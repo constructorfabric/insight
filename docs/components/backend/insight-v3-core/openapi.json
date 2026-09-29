@@ -80,6 +80,7 @@
         "type": "object"
       },
       "EnabledRequest": {
+        "additionalProperties": false,
         "description": "Turning a rule on or off names the revision it expects to change.",
         "properties": {
           "expected_revision": {

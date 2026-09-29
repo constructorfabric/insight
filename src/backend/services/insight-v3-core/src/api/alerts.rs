@@ -69,6 +69,7 @@ struct Paged {
 
 /// Turning a rule on or off names the revision it expects to change.
 #[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 struct EnabledRequest {
     expected_revision: u32,
 }
@@ -191,8 +192,6 @@ fn query_param(name: &str, param_type: &str, description: &str) -> ParamSpec {
         .param_type(param_type)
 }
 
-// `.anonymous()`: these routes trust the gateway to authenticate the
-// session cookie before forwarding; the admin role is checked here.
 pub(crate) fn register_routes(
     router: Router,
     openapi: &dyn OpenApiRegistry,
