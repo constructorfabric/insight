@@ -1,4 +1,5 @@
 use secrecy::SecretString;
+use serde_json::json;
 
 use super::*;
 
@@ -458,4 +459,28 @@ fn a_config_whose_mcp_section_is_invalid_is_refused_as_a_whole() {
         matches!(error, ConfigError::Empty("mcp.public_url")),
         "{error:?}"
     );
+}
+
+#[test]
+fn a_telegram_chat_id_is_read_whether_the_environment_gave_digits_or_text() {
+    let cases = [
+        (json!(754_770_951), "754770951"),
+        (json!(-1_001_234_567_890_i64), "-1001234567890"),
+        (json!("754770951"), "754770951"),
+        (json!("@insight_alerts"), "@insight_alerts"),
+    ];
+
+    for (written, expected) in cases {
+        let parsed: DestinationConfig = serde_json::from_value(json!({
+            "provider": "telegram",
+            "bot_token": "token",
+            "chat_id": written,
+        }))
+        .unwrap_or_else(|error| panic!("should read chat id {written}: {error}"));
+
+        let DestinationConfig::Telegram { chat_id, .. } = parsed else {
+            panic!("should be a Telegram destination: {written}");
+        };
+        assert_eq!(chat_id, expected, "should read chat id: {written}");
+    }
 }

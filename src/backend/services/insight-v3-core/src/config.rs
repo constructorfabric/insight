@@ -73,6 +73,7 @@ pub(crate) enum DestinationConfig {
     /// A Telegram chat, through a bot.
     Telegram {
         bot_token: SecretString,
+        #[serde(deserialize_with = "text_or_number")]
         chat_id: String,
     },
     /// A Zulip stream topic, through a bot.
@@ -141,6 +142,23 @@ impl DestinationConfig {
 
         Ok(())
     }
+}
+
+/// A value written as text that an environment variable delivers as a
+/// number when it is all digits: a Telegram chat id is a number or
+/// `@channel`.
+fn text_or_number<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Written {
+        Text(String),
+        Number(i64),
+    }
+
+    Ok(match Written::deserialize(deserializer)? {
+        Written::Text(text) => text,
+        Written::Number(number) => number.to_string(),
+    })
 }
 
 /// A credential travels in the address, so the address is not sent in the
