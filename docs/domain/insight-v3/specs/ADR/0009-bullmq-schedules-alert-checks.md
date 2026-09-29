@@ -81,10 +81,9 @@ notifications they owe live in MariaDB; Redis holds nothing that cannot be
 rebuilt from them, and at startup the schedule is made to say what the
 rules say.
 
-The published crate pins every dependency exactly, and one of those pins
-cannot coexist with the toolkit's; the workspace carries the published
-source with the same versions as caret requirements under
-`[patch.crates-io]`, and drops the copy the day upstream relaxes the pins.
+The published crate pins every dependency exactly, so the workspace inherits
+those versions for `serde`, `tokio`, `uuid`, `chrono` and the rest until
+upstream relaxes them.
 
 ### Consequences
 
@@ -97,8 +96,8 @@ source with the same versions as caret requirements under
   reconciles the schedule from the rules.
 * Bad: the Rust port is months old. The Lua underneath is not, but a defect
   in the wrapper is ours to report and work around until it is fixed.
-* Bad: the vendored copy has to be refreshed by hand until upstream stops
-  pinning.
+* Bad: the crate's exact pins hold several common dependencies at the
+  versions it chose, so a bump of any of them waits on an upstream release.
 
 ### Confirmation
 

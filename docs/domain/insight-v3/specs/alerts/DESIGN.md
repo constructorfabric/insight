@@ -74,7 +74,7 @@ The parent [separate-service ADR](../ADR/0001-separate-service.md) still applies
 | `cpt-insightspec-v3-nfr-efficiency` | Worker | Bounded concurrency; notifications kept per rule capped | Compare synthetic resource use against the parent baseline |
 | `cpt-insightspec-v3-nfr-reliability` | Service lifecycle | Worker stops on the gear's cancellation token; unfinished checks are recovered by the next worker | Existing service availability evidence plus the live tests |
 | `cpt-insightspec-v3-nfr-performance` | Metric execution | Checks share the metric runner's timeouts and result bounds | Parent dashboard latency measurements under alert load |
-| `cpt-insightspec-v3-nfr-security` | Dependencies | The vendored BullMQ copy is scanned like any dependency | No critical findings in required scans |
+| `cpt-insightspec-v3-nfr-security` | Dependencies | BullMQ is scanned like any dependency | No critical findings in required scans |
 | `cpt-insightspec-v3-nfr-versatility` | Rule administration | Data-defined rules | Create another rule without code changes |
 
 ### 1.3 Architecture Layers
@@ -119,7 +119,7 @@ What a check found and the notification it owes are written to MariaDB together.
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-constraint-bullmq`
 
-BullMQ through its official Rust port, on the deployment's Redis. Redis must persist: the schedule lives there, and a Redis that loses its data stops every check until the next startup reconciles the schedule from the rules. The published crate is carried as a vendored copy with relaxed version requirements ([ADR-0009](../ADR/0009-bullmq-schedules-alert-checks.md)).
+BullMQ through its official Rust port, on the deployment's Redis. Redis must persist: the schedule lives there, and a Redis that loses its data stops every check until the next startup reconciles the schedule from the rules. The crate pins its own dependencies exactly, so the workspace inherits those versions ([ADR-0009](../ADR/0009-bullmq-schedules-alert-checks.md)).
 
 #### Scope and Credentials
 
@@ -258,7 +258,7 @@ A metric edit takes effect at the next check without resetting the rule; only a 
 
 | Dependency | Integration | Boundary |
 |------------|-------------|----------|
-| BullMQ | Vendored `bullmq-official` crate; one queue, one scheduler per rule | Redis 6.2 or later; persistence required |
+| BullMQ | The `bullmq-official` crate; one queue, one scheduler per rule | Redis 6.2 or later; persistence required |
 | MariaDB | Two tables in the service's existing database and migration ledger | Existing SeaORM connection |
 | ClickHouse | Existing custom-metric runner | Existing read-only restrictions and result limits |
 | Notification providers | Not integrated in this release | Destinations are named and typed in configuration; delivery arrives with the providers |
