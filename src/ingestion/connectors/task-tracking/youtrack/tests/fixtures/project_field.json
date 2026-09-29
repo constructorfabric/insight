@@ -1,0 +1,25 @@
+{
+  "id": "42-1",
+  "$type": "VersionProjectCustomField",
+  "field": {
+    "id": "58-1",
+    "name": "Affected versions",
+    "fieldType": {
+      "id": "version[*]"
+    }
+  },
+  "bundle": {
+    "id": "72-1",
+    "$type": "VersionBundle",
+    "name": "Example versions",
+    "values": [
+      {
+        "id": "133-1",
+        "$type": "VersionBundleElement",
+        "name": "Example Version",
+        "archived": false,
+        "released": false
+      }
+    ]
+  }
+}
