@@ -106,7 +106,7 @@ Verify these goals with synthetic metrics before release. Capacity and timing ta
 
 ### 3.1 Module-Specific Environment Constraints
 
-Checks and delivery run without an active API client. [DESIGN](./DESIGN.md) records the approved job library and pending database compatibility checks.
+Checks and delivery run without an active API client. [DESIGN](./DESIGN.md) records the approved job library and the completed database compatibility findings.
 
 ## 4. Scope
 
@@ -233,7 +233,7 @@ The system **MUST** preserve committed notification intent and prevent duplicate
 
 The system **MUST** report check duration per rule and enforce explicit capacity limits.
 
-**Threshold**: interval 60 seconds to 7 days, at most 200 rules, 4 concurrent checks, a 60-second check lock, and the newest 200 notifications kept per rule, each configurable per installation. No latency target is approved; p95 due-to-check targets await synthetic load.
+**Threshold**: interval 60 seconds to 7 days, at most 200 rules, 4 concurrent checks, a 60-second check lock, and the newest 200 notifications kept per rule, never dropping one still owed, each configurable per installation. No latency target is approved; p95 due-to-check targets await synthetic load.
 
 **Rationale**: Show overload and protect on-demand metric checks.
 
@@ -333,7 +333,7 @@ All evidence is pending. Engineering verifies these against synthetic inputs aft
 
 ## 11. Assumptions
 
-The product owner must approve these remaining choices before dependent implementation starts, with engineering and security input where needed. Recommendations are not defaults.
+D4–D8 are resolved. Only D3 remains open, for product owner approval before delivery work starts, with engineering and security input where needed. Recommendations are not defaults.
 
 - **D3 — First delivery providers.** Open. No provider ships in this release; the notification is recorded and visible. Discord, Telegram and Zulip remain the candidates, and rules stay provider-neutral.
 - **D4 — Numeric values.** Resolved: exactly one row and one selected column; `>`, `>=`, `<`, `<=`; integers exact, floats as double precision, an integer compared with a float only where the conversion is exact, otherwise unknown.
@@ -350,5 +350,5 @@ The product owner must approve these remaining choices before dependent implemen
 | Ambiguous provider acceptance | Duplicate messages on retry | Record uncertainty and stable notification identity; no exactly-once claim |
 | Rule edits race checks | Notification describes obsolete logic | A check is recorded only at the revision it was scheduled for |
 | Job library defect | Lost, stuck or concurrently retried work | Library chosen on measured behaviour ([ADR-0009](../ADR/0009-bullmq-schedules-alert-checks.md)); schedule reconciled from the rules at startup |
-| Schedule store loses its data | Checks stop until restart | Operator requirement that Redis persists; startup reconcile |
+| Schedule store loses its data | Checks stop until the schedule is reconciled | Operator requirement that Redis persists; reconcile at startup and every five minutes |
 | External sharing or excessive history | Data exposure and retention conflicts | Minimal content, restricted destinations and D8 review |

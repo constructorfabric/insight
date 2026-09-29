@@ -48,8 +48,8 @@ const CANCEL_PENDING: &str =
 /// A check lands only on the revision it was scheduled for.
 const RECORD_CHECK: &str = "UPDATE alert_rules SET last_evaluated_at = ?, last_outcome = ?, last_reason = ?, last_value = ?, last_valid_breached = ?, breached_since = ? WHERE id = ? AND revision = ? AND enabled = 1";
 const INSERT_NOTIFICATION: &str = "INSERT INTO alert_notifications (id, rule_id, rule_revision, rule_name, metric, column_name, operator, threshold, value, evaluated_at, destination, status, attempts, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)";
-/// Notifications past the kept count go, oldest first.
-const TRIM_NOTIFICATIONS: &str = "DELETE FROM alert_notifications WHERE rule_id = ? AND id NOT IN (SELECT id FROM (SELECT id FROM alert_notifications WHERE rule_id = ? ORDER BY created_at DESC, id DESC LIMIT ?) AS kept)";
+/// Notifications past the kept count go, oldest first; one still owed stays.
+const TRIM_NOTIFICATIONS: &str = "DELETE FROM alert_notifications WHERE rule_id = ? AND status <> ? AND id NOT IN (SELECT id FROM (SELECT id FROM alert_notifications WHERE rule_id = ? ORDER BY created_at DESC, id DESC LIMIT ?) AS kept)";
 
 const NOTIFICATION_COLUMNS: &str = "id, rule_id, rule_revision, rule_name, metric, column_name, operator, threshold, value, evaluated_at, destination, status, created_at";
 const SELECT_NOTIFICATIONS: &str = "SELECT {columns} FROM alert_notifications WHERE rule_id = ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?";
@@ -237,6 +237,7 @@ impl MariaAlerts {
                 TRIM_NOTIFICATIONS.to_owned(),
                 [
                     id_column(current.id),
+                    NotificationStatus::Pending.as_str().into(),
                     id_column(current.id),
                     self.notifications_kept_per_rule.into(),
                 ],

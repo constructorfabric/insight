@@ -237,7 +237,7 @@ async fn a_check_from_a_replaced_or_disabled_revision_is_not_recorded() -> R {
 
 #[tokio::test]
 #[ignore = "needs INTEGRATION_TESTS_MARIADB_URL"]
-async fn disabling_withdraws_what_is_pending_and_the_kept_count_bounds_history() -> R {
+async fn disabling_withdraws_what_is_pending_and_the_kept_count_bounds_only_settled_history() -> R {
     let Some(store) = store().await else {
         return Ok(());
     };
@@ -247,11 +247,11 @@ async fn disabling_withdraws_what_is_pending_and_the_kept_count_bounds_history()
         store.record(recording(&rule, breach(11 + round))).await?;
         store.record(recording(&rule, clear(1))).await?;
     }
-    let kept = store
+    let owed = store
         .notifications(rule.id, Page::parse(None, None)?)
         .await?;
-    assert_eq!(kept.len(), 3, "the store keeps the newest three");
-    assert_eq!(kept[0].value, Number::Int(15));
+    assert_eq!(owed.len(), 5, "a notification still owed is never trimmed");
+    assert_eq!(owed[0].value, Number::Int(15));
 
     rule = store.set_enabled(rule.id, rule.revision, false).await?;
     let withdrawn = store
@@ -263,6 +263,15 @@ async fn disabling_withdraws_what_is_pending_and_the_kept_count_bounds_history()
             .all(|notification| notification.status == NotificationStatus::Cancelled),
         "{withdrawn:?}"
     );
+
+    rule = store.set_enabled(rule.id, rule.revision, true).await?;
+    store.record(recording(&rule, breach(20))).await?;
+    let kept = store
+        .notifications(rule.id, Page::parse(None, None)?)
+        .await?;
+    assert_eq!(kept.len(), 3, "the store keeps the newest three: {kept:?}");
+    assert_eq!(kept[0].value, Number::Int(20));
+    assert_eq!(kept[0].status, NotificationStatus::Pending);
 
     store.delete(rule.id).await?;
     assert!(

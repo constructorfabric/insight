@@ -33,10 +33,20 @@ impl TestHarness {
     }
 
     fn build(is_admin: bool, alerts_on: bool) -> Self {
-        Self::build_with(is_admin, alerts_on, MemoryAlerts::new())
+        Self::build_with(
+            is_admin,
+            alerts_on,
+            MemoryAlerts::new(),
+            MemorySchedule::new(),
+        )
     }
 
-    fn build_with(is_admin: bool, alerts_on: bool, alerts: MemoryAlerts) -> Self {
+    fn build_with(
+        is_admin: bool,
+        alerts_on: bool,
+        alerts: MemoryAlerts,
+        schedule: MemorySchedule,
+    ) -> Self {
         let mut mock = Mock::new();
         mock.non_exhaustive();
         let openapi = OpenApiRegistryImpl::new();
@@ -55,7 +65,7 @@ impl TestHarness {
                 .await
                 .unwrap_or_else(|error| panic!("the metric is stored: {error}"));
         });
-        let schedule = Arc::new(MemorySchedule::new());
+        let schedule = Arc::new(schedule);
         let mut state = AppState::new(
             crate::domain::query::metric_query::MetricRunner::new(
                 client,
@@ -478,7 +488,8 @@ async fn every_route_refuses_a_caller_without_the_admin_role() -> R {
 
 #[tokio::test]
 async fn a_store_that_is_down_is_a_server_error_not_a_refusal() -> R {
-    let harness = TestHarness::build_with(true, true, MemoryAlerts::refusing());
+    let harness =
+        TestHarness::build_with(true, true, MemoryAlerts::refusing(), MemorySchedule::new());
 
     let answered = harness.send("GET", "/v1/alerts", None).await;
     assert_eq!(
@@ -488,6 +499,32 @@ async fn a_store_that_is_down_is_a_server_error_not_a_refusal() -> R {
         answered.body
     );
     assert!(!String::from_utf8_lossy(&answered.body).contains("store is down"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_write_the_store_took_is_answered_even_when_the_schedule_is_down() -> R {
+    let harness =
+        TestHarness::build_with(true, true, MemoryAlerts::new(), MemorySchedule::refusing());
+
+    let created = harness.send("POST", "/v1/alerts", Some(rule(|_| {}))).await;
+    assert_eq!(created.status, StatusCode::CREATED, "{:?}", created.body);
+    let id = created.json()["id"].as_str().unwrap_or_default().to_owned();
+    let path = format!("/v1/alerts/{id}");
+
+    let disabled = harness
+        .send(
+            "POST",
+            &format!("{path}/disable"),
+            Some(json!({"expected_revision": 1})),
+        )
+        .await;
+    assert_eq!(disabled.status, StatusCode::OK, "{:?}", disabled.body);
+    assert_eq!(disabled.json()["enabled"], json!(false));
+
+    let deleted = harness.send("DELETE", &path, None).await;
+    assert_eq!(deleted.status, StatusCode::NO_CONTENT, "{:?}", deleted.body);
 
     Ok(())
 }

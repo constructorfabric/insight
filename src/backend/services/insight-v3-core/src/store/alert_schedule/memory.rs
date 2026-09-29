@@ -12,11 +12,31 @@ use crate::domain::alerts::schedule::{AlertSchedule, ScheduleError, Scheduled};
 #[derive(Debug, Default)]
 pub(crate) struct MemorySchedule {
     held: Mutex<BTreeMap<Uuid, Scheduled>>,
+    failing: bool,
 }
 
 impl MemorySchedule {
     pub(crate) fn new() -> Self {
         Self::default()
+    }
+
+    /// A schedule that refuses every write, for the cases about one that is
+    /// down.
+    pub(crate) fn refusing() -> Self {
+        Self {
+            failing: true,
+            ..Self::default()
+        }
+    }
+
+    fn check(&self) -> Result<(), ScheduleError> {
+        if self.failing {
+            return Err(ScheduleError(Box::new(std::io::Error::other(
+                "schedule is down",
+            ))));
+        }
+
+        Ok(())
     }
 
     pub(crate) fn entries(&self) -> Vec<Scheduled> {
@@ -33,12 +53,14 @@ impl MemorySchedule {
 #[async_trait]
 impl AlertSchedule for MemorySchedule {
     async fn upsert(&self, scheduled: Scheduled) -> Result<(), ScheduleError> {
+        self.check()?;
         self.lock().insert(scheduled.job.rule_id, scheduled);
 
         Ok(())
     }
 
     async fn remove(&self, rule_id: Uuid) -> Result<(), ScheduleError> {
+        self.check()?;
         self.lock().remove(&rule_id);
 
         Ok(())

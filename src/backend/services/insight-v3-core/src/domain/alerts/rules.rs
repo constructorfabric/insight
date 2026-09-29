@@ -1,6 +1,7 @@
 //! The operations an administrator has on rules, the same through API and
-//! MCP: every write lands in the store first and on the schedule second, so
-//! a schedule that misses the second half is repaired by reconciling.
+//! MCP: every write lands in the store first and on the schedule second. The
+//! store is the answer; a schedule write that fails is logged and repaired by
+//! reconciling.
 
 use uuid::Uuid;
 
@@ -8,7 +9,7 @@ use super::rule::{
     AlertPage, AlertRule, AlertStore, AlertStoreError, Destinations, Limits, Notification,
     RuleDraft, RuleError, RuleSpec, Write,
 };
-use super::schedule::{AlertSchedule, ScheduleError, Scheduled};
+use super::schedule::{AlertSchedule, Scheduled};
 use crate::domain::definition::{DefinitionKind, Lookup, Page};
 
 #[derive(Debug)]
@@ -61,7 +62,7 @@ impl<'a> AlertRules<'a> {
             })
             .await?;
 
-        self.reschedule(&rule).await?;
+        self.reschedule(&rule).await;
 
         Ok(rule)
     }
@@ -92,7 +93,7 @@ impl<'a> AlertRules<'a> {
             )
             .await?;
 
-        self.reschedule(&rule).await?;
+        self.reschedule(&rule).await;
 
         Ok(rule)
     }
@@ -132,7 +133,7 @@ impl<'a> AlertRules<'a> {
             .set_enabled(id, expected_revision, enabled)
             .await?;
 
-        self.reschedule(&rule).await?;
+        self.reschedule(&rule).await;
 
         Ok(rule)
     }
@@ -143,7 +144,9 @@ impl<'a> AlertRules<'a> {
             return Err(AlertsError::NotFound(id));
         };
 
-        self.schedule.remove(rule.id).await?;
+        if let Err(error) = self.schedule.remove(rule.id).await {
+            tracing::error!(rule_id = %rule.id, error = ?error, "a deleted alert's checks could not be unscheduled");
+        }
 
         Ok(())
     }
@@ -158,12 +161,16 @@ impl<'a> AlertRules<'a> {
         Ok(self.store.notifications(rule.id, page).await?)
     }
 
-    async fn reschedule(&self, rule: &AlertRule) -> Result<(), ScheduleError> {
-        if rule.enabled {
-            return self.schedule.upsert(Scheduled::of(rule)).await;
-        }
+    async fn reschedule(&self, rule: &AlertRule) {
+        let written = if rule.enabled {
+            self.schedule.upsert(Scheduled::of(rule)).await
+        } else {
+            self.schedule.remove(rule.id).await
+        };
 
-        self.schedule.remove(rule.id).await
+        if let Err(error) = written {
+            tracing::error!(rule_id = %rule.id, revision = rule.revision, error = ?error, "an alert's checks could not be rescheduled");
+        }
     }
 }
 
@@ -189,8 +196,6 @@ pub(crate) enum AlertsError {
     Store(AlertStoreError),
     #[error(transparent)]
     Definitions(crate::domain::definition::DefinitionStoreError),
-    #[error(transparent)]
-    Schedule(#[from] ScheduleError),
 }
 
 impl From<AlertStoreError> for AlertsError {
@@ -222,7 +227,7 @@ impl AlertsError {
             | Self::RevisionRequired
             | Self::Conflict { .. }
             | Self::TooMany(_) => true,
-            Self::Store(_) | Self::Definitions(_) | Self::Schedule(_) => false,
+            Self::Store(_) | Self::Definitions(_) => false,
         }
     }
 }

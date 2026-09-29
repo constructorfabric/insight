@@ -72,23 +72,18 @@ async fn repair_schedule(app: &crate::api::AppState) {
 }
 
 /// Brings the alert schedule and worker up, after the rest of the state:
-/// the schedule is made to say what the store says, then checks start.
+/// the schedule is made to say what the store says, then checks start. A
+/// schedule that cannot be reconciled yet is left to the periodic repair.
 async fn start_alerts(
     config: &crate::config::AlertsConfig,
     app: &Arc<crate::api::AppState>,
     cancellation: tokio_util::sync::CancellationToken,
 ) -> anyhow::Result<()> {
-    let (Some(store), Some(schedule)) = (app.alert_store(), app.alert_schedule()) else {
+    if app.alert_store().is_none() || app.alert_schedule().is_none() {
         return Ok(());
-    };
+    }
 
-    let enabled = store.enabled().await?;
-    let reconciled = crate::domain::alerts::schedule::reconcile(schedule, &enabled).await?;
-    tracing::info!(
-        scheduled = reconciled.scheduled,
-        removed = reconciled.removed,
-        "alert schedule reconciled with the stored rules"
-    );
+    repair_schedule(app).await;
 
     let worker = crate::store::alert_schedule::AlertWorker::start(
         &config.redis_url,

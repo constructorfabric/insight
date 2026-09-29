@@ -527,10 +527,6 @@ pub(crate) fn alerts_error(error: AlertsError) -> CanonicalError {
             CanonicalError::internal("alert store operation failed").create()
         }
         AlertsError::Definitions(source) => AlertApiError::definition_store_error(source),
-        AlertsError::Schedule(source) => {
-            tracing::error!(error = ?source, "the alert schedule could not be written");
-            CanonicalError::internal("the alert schedule could not be written").create()
-        }
     }
 }
 

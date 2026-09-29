@@ -119,7 +119,7 @@ What a check found and the notification it owes are written to MariaDB together.
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-constraint-bullmq`
 
-BullMQ through its official Rust port, on the deployment's Redis. Redis must persist: the schedule lives there, and a Redis that loses its data stops every check until the next startup reconciles the schedule from the rules. The crate pins its own dependencies exactly, so the workspace inherits those versions ([ADR-0009](../ADR/0009-bullmq-schedules-alert-checks.md)).
+BullMQ through its official Rust port, on the deployment's Redis. Redis must persist: the schedule lives there, and a Redis that loses its data stops every check until the next reconcile rebuilds the schedule from the rules. The crate pins its own dependencies exactly, so the workspace inherits those versions ([ADR-0009](../ADR/0009-bullmq-schedules-alert-checks.md)).
 
 #### Scope and Credentials
 
@@ -154,7 +154,7 @@ API and MCP need identical rule behaviour.
 
 ##### Responsibility scope
 
-Typed validation against the installation's bounds and destinations; create, replace at an expected revision, enable, disable, delete; list rules and their notifications. Every write lands in the store first and on the schedule second.
+Typed validation against the installation's bounds and destinations; create, replace at an expected revision, enable, disable, delete; list rules and their notifications. Every write lands in the store first and on the schedule second; the store's answer is the write's answer, and a schedule write that fails is logged and left to reconciling.
 
 ##### Responsibility boundaries
 
@@ -294,10 +294,10 @@ sequenceDiagram
 
 Recovery rules:
 
-- A worker that dies mid-check leaves a job BullMQ marks stalled; another worker takes it after the lock lapses. The store accepts a repeated check for the same revision, and a breach already recorded owes nothing more.
+- A worker that dies mid-check leaves a job BullMQ marks stalled; another worker takes it after the lock lapses. The check and the notification it owes commit in one transaction: if the first attempt committed, the retry finds the breach recorded and owes nothing more; if it did not, the retry is the first check.
 - A check for a replaced or disabled revision is discarded.
 - After downtime, the scheduler runs the next iteration once; the iterations missed are skipped.
-- At startup, the schedule is reconciled from the rules: enabled rules are upserted at their revision, schedulers without a rule are removed.
+- At startup and every five minutes, the schedule is reconciled from the rules: enabled rules are upserted at their revision, schedulers without a rule are removed. A reconcile that fails is logged; the service starts and the next one tries again.
 
 ### 3.7 Database Schemas & Tables
 
@@ -311,7 +311,7 @@ Rule id, name, metric, column, operator, threshold as text so an integer stays e
 
 #### Table: alert notifications
 
-Notification id, rule id and revision, the rule name, metric, column, condition and value the check saw, when it was evaluated, the destination, status (`pending` or `cancelled` in this release), attempts, last error and provider receipt for delivery. Indexed by rule and time; the newest N per rule are kept.
+Notification id, rule id and revision, the rule name, metric, column, condition and value the check saw, when it was evaluated, the destination, status (`pending` or `cancelled` in this release), attempts, last error and provider receipt for delivery. Indexed by rule and time; the newest N per rule are kept, and a pending notification is never dropped.
 
 BullMQ owns its keys in Redis under its own prefix.
 
