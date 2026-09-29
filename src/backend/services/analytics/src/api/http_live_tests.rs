@@ -1250,8 +1250,7 @@ async fn every_usage_list_admits_an_admin_and_reaches_the_store() -> TestResult 
     for path in USAGE_LISTS {
         let app = app_with_identity(db.clone(), Uuid::now_v7(), identity.clone());
 
-        // ClickHouse is unreachable, so a 500 rather than a 403 shows the gate
-        // let them through.
+        // ClickHouse is unreachable in this harness, so admission surfaces as a 500.
         let resp = app.oneshot(get(&format!("{path}?direction=asc"))?).await?;
         assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR, "{path}");
     }

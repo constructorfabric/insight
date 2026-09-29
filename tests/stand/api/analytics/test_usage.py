@@ -55,7 +55,6 @@ PEOPLE = analytics_path("/v1/usage/people")
 PAGES = analytics_path("/v1/usage/pages")
 ACTIONS = analytics_path("/v1/usage/actions")
 
-#: Every admin-gated read in the group.
 ADMIN_READS = (SUMMARY, PEOPLE, PAGES, ACTIONS)
 
 LISTS: dict[str, type[UsagePeopleResponse | UsagePagesResponse | UsageActionsResponse]] = {
@@ -377,12 +376,7 @@ def test_a_list_comes_back_in_the_order_it_was_asked_for(
     sort: str,
     direction: str,
 ) -> None:
-    """The server orders the rows, so the cap keeps what that order puts first.
-
-    Read over the run's own day, where the beacon keeps the people and pages
-    lists from being empty. `last_seen` is fixed-width text, so its string order
-    is its time order.
-    """
+    """`last_seen` is fixed-width text, so its string order is its time order."""
     body = _read(
         admin_operator_session.client, path, day_of_a_beacon, sort=sort, direction=direction
     )
@@ -407,11 +401,6 @@ def test_a_list_comes_back_in_the_order_it_was_asked_for(
 def test_an_order_a_list_cannot_take_is_refused_rather_than_queried(
     admin_operator_session: PersonaSession, path: str, params: dict[str, str], field: str
 ) -> None:
-    """The column a list is ordered by comes from a fixed set, never from the caller.
-
-    A value outside it is refused with the parameter named, before any statement
-    is built.
-    """
     response = admin_operator_session.client.get(path, params=params)
     assert response.status_code == 400, (
         f"{path} {params} answered {response.status_code}: {response.text[:300]}"

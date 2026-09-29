@@ -178,10 +178,7 @@ def test_the_listing_comes_back_in_the_order_it_was_asked_for(
     admin_operator_session: PersonaSession,
     direction: str,
 ) -> None:
-    """Newest first by default, oldest first on request — the page sorts on the server.
-
-    `ts` is fixed-width text, so its string order is its time order.
-    """
+    """`ts` is fixed-width text, so its string order is its time order."""
     _, listing = listing_after_a_submission
     ordered = _listing(admin_operator_session.client, listing.since, direction=direction)
     stamps = [entry.ts for entry in ordered.items]
