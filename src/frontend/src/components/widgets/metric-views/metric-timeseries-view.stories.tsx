@@ -689,6 +689,11 @@ export const TestNarrowTableKeepsItsScrollControlsOffTheCells: Story = {
     const scrollport = table.parentElement!;
     const controlsNow = () =>
       canvas.getAllByRole("button", { name: /^Show (earlier|later) / });
+    await canvas.findAllByRole(
+      "button",
+      { name: /^Show (earlier|later) / },
+      { timeout: 5000 }
+    );
 
     await expect(
       controlsNow().length,
