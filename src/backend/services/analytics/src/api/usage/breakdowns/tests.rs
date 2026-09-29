@@ -1,3 +1,4 @@
+use super::super::search::PersonSearch;
 use super::super::sort::{ActionsSort, Order, PagesSort, PeopleSort};
 use super::*;
 
@@ -23,7 +24,7 @@ fn every_caller_value_in_a_read_is_a_placeholder() -> R {
         );
     }
     assert_eq!(
-        people_sql(Order::parse(Some("last_seen"), Some("asc"))?)
+        people_sql(Order::parse(Some("last_seen"), Some("asc"))?, None)
             .matches('?')
             .count(),
         4,
@@ -34,14 +35,14 @@ fn every_caller_value_in_a_read_is_a_placeholder() -> R {
 
 #[test]
 fn a_visitor_is_named_from_the_mirrored_identity_rows() {
-    let sql = people_sql(Order::default());
+    let sql = people_sql(Order::default(), None);
     assert!(sql.contains("identity.identity_persons"), "{sql}");
     assert!(sql.contains("display_name"), "{sql}");
 }
 
 #[test]
 fn a_visitor_without_a_name_is_still_named_by_its_account_handle() {
-    let sql = people_sql(Order::default());
+    let sql = people_sql(Order::default(), None);
 
     assert!(sql.contains("'username'"), "{sql}");
     assert!(sql.contains("AS username"), "{sql}");
@@ -49,7 +50,10 @@ fn a_visitor_without_a_name_is_still_named_by_its_account_handle() {
 
 #[test]
 fn the_cap_keeps_the_rows_the_chosen_order_puts_first() -> R {
-    let people = people_sql(Order::<PeopleSort>::parse(Some("last_seen"), Some("desc"))?);
+    let people = people_sql(
+        Order::<PeopleSort>::parse(Some("last_seen"), Some("desc"))?,
+        None,
+    );
     let pages = by_page_sql(
         "V",
         Order::<PagesSort>::parse(Some("visitors"), Some("asc"))?,
@@ -76,7 +80,10 @@ fn the_cap_keeps_the_rows_the_chosen_order_puts_first() -> R {
 
 #[test]
 fn the_identity_join_keeps_the_order_the_cap_chose() -> R {
-    let sql = people_sql(Order::<PeopleSort>::parse(Some("page_views"), Some("asc"))?);
+    let sql = people_sql(
+        Order::<PeopleSort>::parse(Some("page_views"), Some("asc"))?,
+        None,
+    );
 
     assert!(
         sql.contains("ORDER BY page_views ASC, visits ASC, person LIMIT 200"),
@@ -91,8 +98,58 @@ fn the_identity_join_keeps_the_order_the_cap_chose() -> R {
 
 #[test]
 fn last_seen_orders_by_the_instant_and_renders_it_as_text() {
-    let sql = people_sql(Order::default());
+    let sql = people_sql(Order::default(), None);
 
     assert!(sql.contains("max(ts) AS last_ts"), "{sql}");
     assert!(sql.contains("toString(last_ts) AS last_seen"), "{sql}");
+}
+
+fn searching(raw: &str) -> Result<PersonSearch, Box<dyn std::error::Error>> {
+    PersonSearch::parse(Some(raw))?.ok_or_else(|| "a real search".into())
+}
+
+#[test]
+fn a_search_matches_a_visitor_by_name_or_by_handle() -> R {
+    let sql = people_sql(Order::default(), Some(&searching("ada")?));
+
+    assert!(
+        sql.contains("positionCaseInsensitiveUTF8(display_name, ?) > 0"),
+        "{sql}"
+    );
+    assert!(
+        sql.contains("positionCaseInsensitiveUTF8(username, ?) > 0"),
+        "{sql}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_search_narrows_the_visitors_before_the_cap_keeps_its_200() -> R {
+    let sql = people_sql(Order::default(), Some(&searching("ada")?));
+
+    let filter = sql.find("positionCaseInsensitiveUTF8").ok_or("no filter")?;
+    let cap = sql.find("LIMIT 200").ok_or("no cap")?;
+    assert!(filter < cap, "{sql}");
+    Ok(())
+}
+
+#[test]
+fn a_search_is_bound_never_spliced_in() -> R {
+    let needle = "ada'); DROP TABLE x; --";
+    let sql = people_sql(Order::default(), Some(&searching(needle)?));
+
+    assert!(!sql.contains(needle), "{sql}");
+    assert_eq!(
+        sql.matches('?').count(),
+        7,
+        "window, the name lookup's tenant, the needle twice, the join's tenant"
+    );
+    Ok(())
+}
+
+#[test]
+fn no_search_leaves_the_visitors_unfiltered() {
+    let sql = people_sql(Order::default(), None);
+
+    assert!(!sql.contains("positionCaseInsensitiveUTF8"), "{sql}");
 }

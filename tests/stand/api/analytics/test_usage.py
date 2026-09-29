@@ -124,8 +124,8 @@ def _pages(client: ApiClient, since: str) -> list[UsagePage]:
     return UsagePagesResponse.model_validate_json(_read(client, PAGES, since)).items
 
 
-def _people(client: ApiClient, since: str) -> list[UsagePerson]:
-    return UsagePeopleResponse.model_validate_json(_read(client, PEOPLE, since)).items
+def _people(client: ApiClient, since: str, **params: str) -> list[UsagePerson]:
+    return UsagePeopleResponse.model_validate_json(_read(client, PEOPLE, since, **params)).items
 
 
 def _paths(client: ApiClient, since: str) -> set[str]:
@@ -409,3 +409,32 @@ def test_an_order_a_list_cannot_take_is_refused_rather_than_queried(
     assert isinstance(violations, list) and violations, response.text[:300]
     first = violations[0]
     assert isinstance(first, dict) and first.get("field") == field, response.text[:300]
+
+
+@pytest.mark.requires_seed("dev_lead", "admin_operator")
+@pytest.mark.reliability
+def test_a_search_narrows_the_visitors_to_the_person_it_names(
+    day_of_a_beacon: str, lead_session: PersonaSession, admin_operator_session: PersonaSession
+) -> None:
+    admin = admin_operator_session.client
+    sender = next(
+        (
+            person
+            for person in _people(admin, day_of_a_beacon)
+            if person.person_id == lead_session.person.uuid
+        ),
+        None,
+    )
+    assert sender is not None, "the beacon's sender is missing from the visitors"
+    needle = sender.username or sender.display_name
+    if not needle:
+        pytest.skip(
+            "the sender is not mirrored into the identity rows, so there is no name to search"
+        )
+
+    found = _people(admin, day_of_a_beacon, search=needle.upper())
+
+    assert sender.person_id in {person.person_id for person in found}
+    assert all(
+        needle.lower() in f"{person.display_name} {person.username}".lower() for person in found
+    ), [person.display_name for person in found]

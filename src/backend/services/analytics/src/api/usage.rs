@@ -8,6 +8,7 @@ use crate::domain::date_window::{self, Window, WindowError};
 
 mod breakdowns;
 mod ingest;
+mod search;
 mod sort;
 mod summary;
 

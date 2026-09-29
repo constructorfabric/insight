@@ -10,6 +10,7 @@ use toolkit_security::SecurityContext;
 
 use super::super::person_names::named_persons;
 use super::super::{AppState, require_admin};
+use super::search::PersonSearch;
 use super::sort::{ActionsSort, Order, PagesSort, PeopleSort, SortKey};
 use super::{
     NIL_UUID, PAGE_VIEW, SESSION_START, TABLE, VISITS, WINDOW, WindowBinds, admin_only,
@@ -29,24 +30,38 @@ fn by_page_sql(visitors: &str, order: Order<PagesSort>) -> String {
 }
 
 /// The one read whose binds do not match the shared window: the identity join
-/// scopes by tenant again, so the fourth value is bound here beside the `?`
-/// that needs it rather than by the caller.
+/// scopes by tenant again, and a search names the tenant and the needle for its
+/// own lookup, so those values are bound here beside the `?`s that need them.
 fn people_query(
     ch: &insight_clickhouse::Client,
     binds: &WindowBinds,
     order: Order<PeopleSort>,
+    search: Option<&PersonSearch>,
 ) -> clickhouse::query::Query {
-    binds
-        .query(ch, &people_sql(order))
-        .bind(binds.tenant.as_str())
+    let mut query = binds.query(ch, &people_sql(order, search));
+    if let Some(search) = search {
+        query = query
+            .bind(binds.tenant.as_str())
+            .bind(search.as_str())
+            .bind(search.as_str());
+    }
+
+    query.bind(binds.tenant.as_str())
 }
 
 /// Names come from the mirrored identity rows; a per-caller profile lookup
 /// answers only for the caller's visible set, and this surface is org-wide.
-fn people_sql(order: Order<PeopleSort>) -> String {
+fn people_sql(order: Order<PeopleSort>, search: Option<&PersonSearch>) -> String {
     let named = named_persons();
     let capped = order.clause("");
     let joined = order.clause("u.");
+    let matching = search.map_or_else(String::new, |_| {
+        format!(
+            " AND person_id IN (SELECT person_id FROM {named} \
+             WHERE positionCaseInsensitiveUTF8(display_name, ?) > 0 \
+             OR positionCaseInsensitiveUTF8(username, ?) > 0)"
+        )
+    });
     format!(
         "SELECT toString(u.person) AS person_id, \
          coalesce(p.display_name, '') AS display_name, \
@@ -56,7 +71,7 @@ fn people_sql(order: Order<PeopleSort>) -> String {
            SELECT person_id AS person, {VISITS} AS visits, \
            countIf(event_name = '{PAGE_VIEW}') AS page_views, \
            max(ts) AS last_ts, toString(last_ts) AS last_seen \
-           FROM {TABLE} WHERE {WINDOW} AND person_id != toUUID('{NIL_UUID}') \
+           FROM {TABLE} WHERE {WINDOW} AND person_id != toUUID('{NIL_UUID}'){matching} \
            GROUP BY person ORDER BY {capped} \
            LIMIT {BREAKDOWN_LIMIT}) AS u \
          LEFT JOIN {named} AS p ON p.person_id = u.person \
@@ -119,6 +134,25 @@ impl UsageListQuery {
     }
 }
 
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct UsagePeopleQuery {
+    pub since: Option<String>,
+    pub until: Option<String>,
+    pub sort: Option<String>,
+    pub direction: Option<String>,
+    pub search: Option<String>,
+}
+
+impl UsagePeopleQuery {
+    fn plan(&self) -> Result<(Window, Order<PeopleSort>, Option<PersonSearch>), CanonicalError> {
+        let window = parse_range(self.since.as_deref(), self.until.as_deref())?;
+        let order = Order::parse(self.sort.as_deref(), self.direction.as_deref())?;
+        let search = PersonSearch::parse(self.search.as_deref())?;
+
+        Ok((window, order, search))
+    }
+}
+
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct UsagePeopleResponse {
     pub since: String,
@@ -147,14 +181,14 @@ pub async fn get_usage_people(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
     headers: HeaderMap,
-    Query(query): Query<UsageListQuery>,
+    Query(query): Query<UsagePeopleQuery>,
 ) -> Result<impl IntoResponse, CanonicalError> {
     require_admin(&state, &headers, admin_only).await?;
 
-    let (window, order) = query.plan::<PeopleSort>()?;
+    let (window, order, search) = query.plan()?;
     let binds = WindowBinds::new(&ctx, &window);
 
-    let items = people_query(&state.ch, &binds, order)
+    let items = people_query(&state.ch, &binds, order, search.as_ref())
         .fetch_all::<UsagePerson>()
         .await
         .map_err(read_error)?;

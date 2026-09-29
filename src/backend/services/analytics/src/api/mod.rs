@@ -239,6 +239,12 @@ pub(crate) fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) ->
             "string",
         )
         .query_param_typed("direction", false, "desc (default) or asc", "string")
+        .query_param_typed(
+            "search",
+            false,
+            "Part of a visitor's name or handle, any case",
+            "string",
+        )
         .json_response_with_schema::<usage::UsagePeopleResponse>(
             openapi,
             StatusCode::OK,

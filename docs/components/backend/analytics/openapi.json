@@ -7317,6 +7317,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "description": "Part of a visitor's name or handle, any case",
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
