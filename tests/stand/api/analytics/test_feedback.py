@@ -2,8 +2,8 @@
 
     POST /v1/feedback   204 · any signed-in caller · 400 empty or over-long
                         message
-    GET  /v1/feedback   200 for the admin operator · 400 malformed day ·
-                        403 for everybody else
+    GET  /v1/feedback   200 for the admin operator · 400 malformed day or
+                        direction · 403 for everybody else
 
 One url, two audiences. Sending is open because the dialog is in the sidebar of
 every screen; reading is admin-only, and the gate is inside the handler rather
@@ -52,10 +52,10 @@ def _today() -> str:
     return datetime.now(UTC).date().isoformat()
 
 
-def _listing(client: ApiClient, since: str) -> FeedbackListResponse:
+def _listing(client: ApiClient, since: str, **order: str) -> FeedbackListResponse:
     # `since` is captured before the write and `until` read now, so a run that
     # straddles UTC midnight still spans the day its own submission landed on.
-    response = client.get(FEEDBACK, params={"since": since, "until": _today()})
+    response = client.get(FEEDBACK, params={"since": since, "until": _today(), **order})
     assert response.status_code == 200, f"listing: {response.status_code} {response.text[:300]}"
     return response.parse(FeedbackListResponse)
 
@@ -168,3 +168,38 @@ def test_a_malformed_day_is_refused_rather_than_queried(
         f"a malformed `since` answered {response.status_code}: {response.text[:300]}"
     )
     assert response.parse(ProblemDocument).status == 400
+
+
+@pytest.mark.requires_seed("admin_operator")
+@pytest.mark.reliability
+@pytest.mark.parametrize("direction", ["asc", "desc"])
+def test_the_listing_comes_back_in_the_order_it_was_asked_for(
+    listing_after_a_submission: tuple[str, FeedbackListResponse],
+    admin_operator_session: PersonaSession,
+    direction: str,
+) -> None:
+    """Newest first by default, oldest first on request — the page sorts on the server.
+
+    `ts` is fixed-width text, so its string order is its time order.
+    """
+    _, listing = listing_after_a_submission
+    ordered = _listing(admin_operator_session.client, listing.since, direction=direction)
+    stamps = [entry.ts for entry in ordered.items]
+
+    assert stamps, "the run's own submission keeps this listing from being empty"
+    assert stamps == sorted(stamps, reverse=direction == "desc"), stamps[:20]
+
+
+@pytest.mark.requires_seed("admin_operator")
+@pytest.mark.reliability
+def test_a_direction_the_listing_cannot_take_is_refused(
+    admin_operator_session: PersonaSession,
+) -> None:
+    response = admin_operator_session.client.get(FEEDBACK, params={"direction": "sideways"})
+    assert response.status_code == 400, (
+        f"`direction=sideways` answered {response.status_code}: {response.text[:300]}"
+    )
+    violations = response.parse(ProblemDocument).context.get("field_violations")
+    assert isinstance(violations, list) and violations, response.text[:300]
+    first = violations[0]
+    assert isinstance(first, dict) and first.get("field") == "direction", response.text[:300]
