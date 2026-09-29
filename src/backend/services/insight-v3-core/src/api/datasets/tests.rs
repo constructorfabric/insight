@@ -60,7 +60,7 @@ impl TestHarness {
                 insight_clickhouse::Client::new(insight_clickhouse::Config::new(url, "insight")),
                 crate::domain::query::metric_query::People::new("identity"),
             ),
-            Arc::clone(&definitions) as Arc<dyn crate::domain::definition::Definitions>,
+            definitions.clone(),
             ChatClient::keyless(),
             crate::store::identity::IdentityClient::fixed(is_admin),
             datasets,
@@ -216,6 +216,20 @@ async fn every_dataset_is_listed_by_name_with_how_many_there_are() {
     assert_eq!(listed, StatusCode::OK);
     assert_eq!(read(&body)["names"], json!(["commits"]));
     assert_eq!(read(&body)["total"], json!(1));
+}
+
+#[tokio::test]
+async fn datasets_are_not_listed_by_tag() {
+    let harness = TestHarness::new();
+
+    let (refused, body) = harness.get("/v1/datasets?tag=Alpha").await;
+
+    assert_eq!(refused, StatusCode::BAD_REQUEST);
+    assert!(
+        read(&body).to_string().contains("datasets are not tagged"),
+        "{}",
+        read(&body)
+    );
 }
 
 /// "Which dataset holds this field" is the question a catalogue is asked,

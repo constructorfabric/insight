@@ -40,8 +40,7 @@ impl Gear for InsightV3CoreGear {
         // The definitions are rows read by name and edited in place, so they
         // live in MariaDB rather than beside the data they describe.
         let db = sea_orm::Database::connect(config.database_url()).await?;
-        let definitions: Arc<dyn crate::domain::definition::Definitions> =
-            Arc::new(crate::store::definitions::MariaDefinitions::new(db.clone()));
+        let definitions = Arc::new(crate::store::definitions::MariaDefinitions::new(db.clone()));
         let datasets = crate::api::Datasets::new(
             Arc::new(crate::store::datasets::MariaDatasets::new(
                 db,

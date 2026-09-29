@@ -111,7 +111,46 @@ export interface DefinitionResponse<T> {
   body: T;
   /** Only a metric has one, and only when a window has a date to select by. */
   clock?: EffectiveClock;
+  folder?: Folder | null;
+  tags?: string[];
+  updated_at?: string;
 }
+
+export interface DashboardRead {
+  body: Dashboard;
+  tags: string[];
+  updatedAt?: string;
+}
+
+export interface TagSummary {
+  name: string;
+  dashboards: number;
+}
+
+export interface TagList {
+  tags: TagSummary[];
+}
+
+export interface Folder {
+  id: string;
+  name: string;
+}
+
+export interface FolderSummary extends Folder {
+  dashboards: number;
+}
+
+export interface FolderList {
+  folders: FolderSummary[];
+  unfiled: number;
+}
+
+export interface PinList {
+  pins: string[];
+}
+
+/** A folder id, or `"unfiled"` for the dashboards in none. */
+export type FolderFilter = string;
 
 /** A metric as it is stored, with the clock a window over it would use. */
 export interface StoredMetric {

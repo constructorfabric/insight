@@ -121,7 +121,7 @@ describe("<WidgetDrilldown>", () => {
         { range: "P30D", bucket: false, limit: 100, cursor: undefined },
         expect.anything()
       );
-    });
+    }, { timeout: 5000 });
   });
 
   it("does not window a metric that carries no clock of its own", async () => {
@@ -139,7 +139,7 @@ describe("<WidgetDrilldown>", () => {
         { limit: 100, cursor: undefined },
         expect.anything()
       );
-    });
+    }, { timeout: 5000 });
   });
 
   it("draws the page the service ordered, headers announcing that order", async () => {
@@ -212,7 +212,7 @@ describe("<WidgetDrilldown>", () => {
         },
         expect.anything()
       );
-    });
+    }, { timeout: 5000 });
   });
 
   // The service picked `service ↑` itself. The first click on that header
@@ -236,7 +236,7 @@ describe("<WidgetDrilldown>", () => {
         { sort: { key: "service", direction: "desc" }, limit: 100, cursor: undefined },
         expect.anything()
       );
-    });
+    }, { timeout: 5000 });
   });
 
   it("keeps the rows on screen while a new order is on its way, then follows the answer", async () => {

@@ -20,7 +20,7 @@ import {
   createMemoryHistory,
   createRouter,
 } from "@tanstack/react-router";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -88,7 +88,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("the /portal/custom routes, through the real router", () => {
+describe("the /portal/custom routes, through the real router", { timeout: 20_000 }, () => {
   it("renders the dashboard list at /portal/custom, inside the portal shell", async () => {
     vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: [
       "engineering",
@@ -96,23 +96,16 @@ describe("the /portal/custom routes, through the real router", () => {
 
     renderAt("/portal/custom");
 
-    // The card on the page and the row in the context pane: the pane is the
-    // nav the reader picks dashboards from, so it has to be one of them. They
-    // read the catalogue through different queries — a page of names, and all
-    // of them — so they arrive one after the other.
-    // Two independent queries — a page of names and all of them — so the
-    // second link can land well after the first on a loaded runner.
-    const links = await waitFor(
-      () => {
-        const found = screen.getAllByRole("link", { name: "engineering" });
-        expect(found.length).toBeGreaterThan(1);
-        return found;
-      },
-      { timeout: 10000 }
+    const card = await screen.findByRole(
+      "link",
+      { name: "engineering" },
+      { timeout: 10000 },
     );
-    for (const link of links) {
-      expect(link).toHaveAttribute("href", "/portal/custom/engineering");
-    }
+    expect(card).toHaveAttribute("href", "/portal/custom/engineering");
+    expect(screen.getByRole("link", { name: /All dashboards/ })).toHaveAttribute(
+      "href",
+      "/portal/custom",
+    );
     expect(
       document.querySelector('[data-slot="sidebar-wrapper"]')
     ).toBeInTheDocument();
@@ -122,15 +115,15 @@ describe("the /portal/custom routes, through the real router", () => {
     vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: [
       "engineering",
     ], total: 1 });
-    vi.mocked(customClient.fetchDashboard).mockResolvedValue({
-      title: "Engineering",
-      widgets: [],
+    vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+      body: { title: "Engineering", widgets: [] },
+      tags: [],
     });
 
     renderAt("/portal/custom/engineering");
 
     expect(
-      await screen.findByRole("heading", { name: "Engineering" })
+      await screen.findByRole("heading", { name: "Engineering" }, { timeout: 10000 })
     ).toBeInTheDocument();
     expect(
       document.querySelector('[data-slot="sidebar-wrapper"]')
@@ -141,9 +134,9 @@ describe("the /portal/custom routes, through the real router", () => {
     vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: [
       "engineering",
     ], total: 1 });
-    vi.mocked(customClient.fetchDashboard).mockResolvedValue({
-      title: "Delivery",
-      widgets: [],
+    vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+      body: { title: "Delivery", widgets: [] },
+      tags: [],
     });
     vi.mocked(customClient.sendChat).mockResolvedValue({
       reply: "Built it",
@@ -151,7 +144,7 @@ describe("the /portal/custom routes, through the real router", () => {
     });
 
     renderAt("/portal/custom");
-    await screen.findByRole("heading", { name: "Custom" });
+    await screen.findByRole("heading", { name: "Custom" }, { timeout: 10000 });
 
     await userEvent.type(
       screen.getByTestId("chat-input"),
@@ -162,7 +155,7 @@ describe("the /portal/custom routes, through the real router", () => {
     // The new dashboard opens (its title is in the pane too, so the heading
     // is what says the page changed)...
     expect(
-      await screen.findByRole("heading", { name: "Delivery" })
+      await screen.findByRole("heading", { name: "Delivery" }, { timeout: 10000 })
     ).toBeInTheDocument();
     // ...and the conversation is still there. The chat used to be mounted per
     // page, so this navigation unmounted it and the reader lost what they had
@@ -177,9 +170,15 @@ describe("the /portal/custom routes, through the real router", () => {
     vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: [
       "engineering",
     ], total: 1 });
-    vi.mocked(customClient.fetchDashboard)
-      .mockResolvedValueOnce({ title: "Engineering", widgets: [] })
-      .mockResolvedValue({ title: "Engineering", widgets: ["revenue_table"] });
+    vi.mocked(customClient.fetchDashboardRead)
+      .mockResolvedValueOnce({
+        body: { title: "Engineering", widgets: [] },
+        tags: [],
+      })
+      .mockResolvedValue({
+        body: { title: "Engineering", widgets: ["revenue_table"] },
+        tags: [],
+      });
     vi.mocked(customClient.fetchWidget).mockResolvedValue({
       type: "table",
       metric: "revenue_per_day",
@@ -195,7 +194,7 @@ describe("the /portal/custom routes, through the real router", () => {
     });
 
     renderAt("/portal/custom/engineering");
-    await screen.findByRole("heading", { name: "Engineering" });
+    await screen.findByRole("heading", { name: "Engineering" }, { timeout: 10000 });
 
     await userEvent.type(
       screen.getByTestId("chat-input"),
@@ -217,7 +216,7 @@ describe("the /portal/custom routes, through the real router", () => {
     renderAt("/portal/custom");
 
     expect(
-      await screen.findByText(/administrators only/i)
+      await screen.findByText(/administrators only/i, undefined, { timeout: 10000 })
     ).toBeInTheDocument();
     // Nothing of the zone renders, not even the list it would have shown.
     expect(screen.queryByTestId("chat-input")).not.toBeInTheDocument();

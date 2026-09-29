@@ -13,7 +13,7 @@ import { parseNavPolicy, visiblePersonSections } from "./nav-policy";
 import {
   DIRECTIONS,
   lensSlug,
-  manageItemsFor,
+  manageGroupsFor,
   partitionByReadiness,
   peopleItemsFor,
   resolveZoneItem,
@@ -27,6 +27,12 @@ function hide(paths: string[]) {
 
 function planned(paths: string[]) {
   return parseNavPolicy({ planned: paths });
+}
+
+function adminManageItems(policy: ReturnType<typeof parseNavPolicy>) {
+  return manageGroupsFor({ isAdmin: true, canManagePreviews: true }, policy).flatMap(
+    (group) => group.items,
+  );
 }
 
 const dev = DIRECTIONS.find((d) => d.id === "dev")!;
@@ -129,25 +135,21 @@ describe("pane lists under the install policy", () => {
   });
 
   it("hides a Manage item even for an admin", () => {
-    const policy = hide(["zone:manage/item:metric-catalog"]);
+    const policy = hide(["zone:manage/item:config"]);
 
-    expect(manageItemsFor({ isAdmin: true, canManagePreviews: true }, policy).map((i) => i.id)).not.toContain(
-      "metric-catalog"
-    );
+    expect(adminManageItems(policy).map((i) => i.id)).not.toContain("config");
   });
 
   it("demotes a planned People or Manage item instead of dropping it", () => {
     const policy = planned([
       "zone:people/item:employees",
-      "zone:manage/item:metric-catalog",
+      "zone:manage/item:config",
     ]);
 
     const people = peopleItemsFor(false, policy).find(
       (i) => i.id === "employees"
     );
-    const manage = manageItemsFor({ isAdmin: true, canManagePreviews: true }, policy).find(
-      (i) => i.id === "metric-catalog"
-    );
+    const manage = adminManageItems(policy).find((i) => i.id === "config");
 
     expect(people?.readiness).toBe("planned");
     expect(manage?.readiness).toBe("planned");

@@ -1,35 +1,78 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { LayoutDashboard } from "lucide-react";
+import type { ReactNode } from "react";
 
 import {
   DefinitionCount,
   MoreDefinitions,
   type Paging,
 } from "@/components/custom/definition-paging";
+import { DashboardCard } from "@/components/custom/dashboard-card";
 import { DefinitionSearch } from "@/components/custom/definition-search";
-import { EditLink, NewLink } from "@/components/custom/editor/edit-link";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { NewLink } from "@/components/custom/editor/edit-link";
+import { NoTaggedDashboards, TagFilter } from "@/components/custom/tag-filter";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { useDefinitionCatalogue } from "@/hooks/use-definition-catalogue";
-import { dashboardQuery } from "@/queries/custom";
-import { TEXT_BODY, TEXT_LABEL, TEXT_NAME, TEXT_TITLE } from "@/lib/type-scale";
+import { useTagPicks } from "@/hooks/use-tag-picks";
+import { usePortalSearch } from "@/lib/portal/portal-search";
+import { foldersQuery } from "@/queries/custom";
+import { TEXT_BODY, TEXT_TITLE } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/portal/custom/")({
   component: CustomDashboardIndex,
 });
 
+const UNFILED = "unfiled";
+
+function emptyLabel(folder: string | undefined): string {
+  if (folder === UNFILED) return "Every dashboard is in a folder.";
+  if (folder) {
+    return "No dashboards in this folder yet. Move one here from its ··· menu.";
+  }
+  return "No dashboards yet. Describe one to the assistant and it will build it.";
+}
+
+interface Shown {
+  folder?: string;
+  heading: string;
+  pending?: boolean;
+  lost?: boolean;
+}
+
+function useShownFolder(): Shown {
+  const { folder: asked } = usePortalSearch();
+  const folders = useQuery({
+    ...foldersQuery(),
+    enabled: asked != null && asked !== UNFILED,
+  });
+
+  if (!asked) return { heading: "Custom" };
+  if (asked === UNFILED) return { folder: UNFILED, heading: "Unfiled" };
+  if (folders.isError) return { folder: asked, heading: "Custom" };
+  if (!folders.data) return { heading: "Custom", pending: true };
+
+  const found = folders.data.folders.find((folder) => folder.id === asked);
+  return found
+    ? { folder: found.id, heading: found.name }
+    : { heading: "Custom", lost: true };
+}
+
 function CustomDashboardIndex() {
-  const catalogue = useDefinitionCatalogue("dashboards");
+  const shown = useShownFolder();
+  const tags = useTagPicks();
+  const catalogue = useDefinitionCatalogue("dashboards", {
+    folder: shown.folder,
+    tags: tags.picked,
+    enabled: !shown.pending && !tags.pending,
+  });
 
   return (
     <>
-      <header className="mb-3 flex flex-wrap items-start gap-3 pe-12">
+      <header className="mb-3 flex flex-wrap items-start gap-3">
         <div className="min-w-0 grow">
-          <h1 className={TEXT_TITLE}>Custom</h1>
+          <h1 className={TEXT_TITLE}>{shown.heading}</h1>
           <p className={cn(TEXT_BODY, "text-muted-foreground")}>
             Dashboards built from your own data. Ask the assistant for a new
             one, or write one by hand.
@@ -37,12 +80,21 @@ function CustomDashboardIndex() {
         </div>
         <NewLink kind="dashboards" noun="dashboard" />
       </header>
+      {shown.lost ? (
+        <p
+          role="status"
+          className={cn(TEXT_BODY, "mb-3 text-muted-foreground")}
+        >
+          That folder no longer exists, so every dashboard is shown.
+        </p>
+      ) : null}
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <DefinitionSearch
           label="Search dashboards"
           value={catalogue.search.value}
           onChange={catalogue.search.onChange}
         />
+        <TagFilter tags={tags.tags} picked={tags.picked} onPick={tags.pick} />
         <DefinitionCount
           total={catalogue.paging.total}
           noun="dashboards"
@@ -55,53 +107,19 @@ function CustomDashboardIndex() {
         isError={catalogue.isError}
         onRetry={catalogue.refetch}
         paging={catalogue.paging}
+        empty={
+          tags.picked.length > 0 ? (
+            <NoTaggedDashboards onClear={() => tags.pick([])} />
+          ) : (
+            <ComingSoon
+              variant="card"
+              state="empty"
+              label={emptyLabel(shown.folder)}
+            />
+          )
+        }
       />
     </>
-  );
-}
-
-/** Titled by the dashboard, with the identifier it is stored under beneath. */
-function DashboardCard({ name }: { name: string }) {
-  const { data } = useQuery(dashboardQuery(name));
-
-  return (
-    <Card size="sm">
-      <CardContent className="flex items-center gap-3">
-        <Link
-          to="/portal/custom/$name"
-          params={{ name }}
-          className="flex min-w-0 flex-1 items-center gap-3 transition-opacity hover:opacity-80"
-        >
-          <LayoutDashboard
-            className="size-4 shrink-0 text-muted-foreground"
-            aria-hidden
-          />
-          <span className="flex min-w-0 flex-col">
-            <span className={cn(TEXT_NAME, "truncate")}>
-              {data?.title ?? name}
-            </span>
-            {data?.title ? (
-              <span className={cn(TEXT_LABEL, "truncate font-mono")}>
-                {name}
-              </span>
-            ) : null}
-          </span>
-        </Link>
-        <span className="flex shrink-0 items-center gap-1">
-          <EditLink kind="dashboards" name={name} />
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-muted-foreground"
-            aria-label={`View ${name}`}
-            nativeButton={false}
-            render={<Link to="/portal/custom/$name" params={{ name }} />}
-          >
-            View
-          </Button>
-        </span>
-      </CardContent>
-    </Card>
   );
 }
 
@@ -111,12 +129,14 @@ function CustomDashboardList({
   isError,
   onRetry,
   paging,
+  empty,
 }: {
   names: string[] | undefined;
   isLoading: boolean;
   isError: boolean;
   onRetry: () => void;
   paging: Paging;
+  empty: ReactNode;
 }) {
   if (isLoading) return <CenteredSpinner className="min-h-40" />;
   if (isError) {
@@ -132,15 +152,7 @@ function CustomDashboardList({
 
   if (!names) return null;
 
-  if (names.length === 0) {
-    return (
-      <ComingSoon
-        variant="card"
-        state="empty"
-        label="No dashboards yet. Describe one to the assistant and it will build it."
-      />
-    );
-  }
+  if (names.length === 0) return empty;
 
   return (
     <>

@@ -5,6 +5,7 @@ import { OverviewView } from "@/components/portal/overview-view";
 import { ManageView } from "@/components/portal/manage-view";
 import { PeopleView } from "@/components/portal/people-view";
 import { PersonView } from "@/components/portal/person-view";
+import { ReportBuilderView } from "@/components/portal/report-builder-view";
 import { resolveZoneItem, zoneById } from "@/lib/portal/nav-model";
 import {
   usePortalDir,
@@ -12,12 +13,11 @@ import {
   usePortalLens,
 } from "@/lib/portal/portal-nav";
 import { useActiveZone } from "@/lib/portal/use-active-zone";
-import { ReportBuilderView } from "@/components/portal/report-builder-view";
 
 /**
  * Content for the non-entity portal zones. Overview rolls the org up; Directions
- * route each lens to a focused domain view or an honest ComingSoon; Manage reads
- * the live catalog; Scorecard / Reports are honest scaffolds.
+ * route each lens to a focused domain view or an honest ComingSoon; Reports
+ * opens the report builder.
  *
  * Org zones take no person prop — they read the global org scope (design §6) via
  * `useOrgScope`, so the topbar badge and every org subtitle always agree. Only
@@ -50,24 +50,12 @@ export function ZoneContent() {
       ) : (
         <ZoneScaffold zone={activeZone} />
       );
-    case "scorecard":
-      return <ZoneScaffold zone={activeZone} />;
     default:
       return <ZoneScaffold zone={activeZone} />;
   }
 }
 
-const PENDING_BY_ZONE: Record<string, string> = {
-  scorecard: "org snapshots + unit × quarter aggregation",
-  reports: "diagnosis circuit + report builder",
-};
-
 function ZoneScaffold({ zone }: { zone: string }) {
-  // Keyed, not defaulted: an unrecognised zone from the URL used to read
-  // "pending: diagnosis circuit + report builder", which names work that has
-  // nothing to do with it.
-  const pending =
-    PENDING_BY_ZONE[zone] ?? "this lens";
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-4 p-8">
       <div className="flex flex-col items-center gap-1 text-center">
@@ -79,7 +67,7 @@ function ZoneScaffold({ zone }: { zone: string }) {
         </p>
       </div>
       <div className="w-full max-w-md">
-        <ComingSoon variant="card" state="empty" label={`Pending: ${pending}`} />
+        <ComingSoon variant="card" state="empty" label="Pending: this lens" />
       </div>
     </div>
   );

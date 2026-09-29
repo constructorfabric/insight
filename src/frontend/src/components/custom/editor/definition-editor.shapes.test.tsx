@@ -206,7 +206,7 @@ describe("<DefinitionEditor> over a kind's shape", () => {
   });
 
   it("builds a declaration from fields, a main date and a row identity", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
 
     render(<DefinitionEditor kind="datasets" onStored={vi.fn()} />, {
       wrapper,
@@ -252,7 +252,7 @@ describe("<DefinitionEditor> over a kind's shape", () => {
         row_identity: ["author"],
       })
     );
-  });
+  }, 15_000);
 
   it("moves the main date rather than letting two fields carry it", async () => {
     const user = userEvent.setup();

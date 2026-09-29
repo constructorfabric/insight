@@ -23,7 +23,6 @@ use crate::api::admission::{
 };
 use crate::chat::ChatClient;
 use crate::domain::datasets::Datasets as _;
-use crate::domain::definition::Definitions;
 use crate::domain::query::metric_query::MetricRunner;
 use crate::store::definitions::memory::MemoryDefinitions;
 
@@ -77,7 +76,7 @@ async fn a_ready_dataset(url: &str, table: &str) -> crate::api::Datasets {
 
 fn state(mock: &Mock, datasets: crate::api::Datasets) -> Arc<AppState> {
     let url = mock.url();
-    let definitions: Arc<dyn Definitions> = Arc::new(MemoryDefinitions::new());
+    let definitions = Arc::new(MemoryDefinitions::new());
     Arc::new(AppState::new(
         MetricRunner::new(
             insight_clickhouse::Client::new(insight_clickhouse::Config::new(url, "insight")),
