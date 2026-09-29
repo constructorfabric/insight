@@ -51,7 +51,6 @@ function Body({
       rows={query.data.items}
       rowKey={(row) => row.feedback_id}
       order={order.shown}
-      orderIsDefault={order.isDefault}
       onSort={order.toggle}
       pending={query.isPlaceholderData}
       columns={[
