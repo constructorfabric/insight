@@ -22,10 +22,12 @@ pub use compiler::{
     RollupQueryRow, TimeseriesQueryRow,
 };
 pub use dto::{
-    MetricDimensionFilterDto, MetricResultSelectionDto, MetricResultViewDto,
+    MetricDimensionFilterDto, MetricResultDto, MetricResultSelectionDto, MetricResultViewDto,
     MetricResultsEntityDto, MetricResultsPeriodDto, MetricResultsRequest, MetricResultsResponse,
 };
 pub use failure::ViewFailure;
+#[cfg(test)]
+pub(crate) use validation::DateWindow;
 pub(crate) use validation::{
     ValidatedEntitySelection, normalize_key, normalize_metric_key, query_row_limit,
 };

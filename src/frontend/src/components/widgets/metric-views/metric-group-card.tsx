@@ -12,6 +12,7 @@ import { ComingSoon } from "@/components/widgets/coming-soon";
 import { GroupCardEmpty } from "@/components/widgets/group-card-empty";
 import { useSettings } from "@/hooks/use-settings";
 import { formatMetricValue } from "@/lib/format";
+import { absenceLabel } from "@/lib/metrics/absence";
 import type { MetricGroup } from "@/lib/insight/groups";
 import { countableSignals } from "@/lib/insight/metric-containment";
 import { peerStatusToStatus } from "@/lib/insight/peer-status";
@@ -119,6 +120,7 @@ export function MetricGroupCard({
     const standing = derivePeerStanding(metric.direction, {
       value: entityData.value,
       peer: peerRow,
+      absence: entityData.absence,
     });
     const rank = rankByMetricKey?.get(metric.metric_key) ?? standing.rank;
     return [{ metric, value: entityData.value, rank, standing }];
@@ -159,6 +161,7 @@ export function MetricGroupCard({
       : previewRows
   ).slice(0, 4);
   const isEmpty = !rows.some((row) => row.value != null);
+  const leaveLabel = absenceLabel(rows[0]?.metric.absenceContext?.get(entityId));
 
   // A failed computation must not render as silence: the server answered 200
   // with the failure in the view's slot, and the message is written for the
@@ -209,6 +212,7 @@ export function MetricGroupCard({
         </CardTitle>
         {subtitle || !isEmpty ? (
           <CardDescription className="flex flex-col gap-1 text-xs">
+            {leaveLabel ? <span>{leaveLabel}</span> : null}
             {subtitle ? (
               <span className="text-muted-foreground">{subtitle}</span>
             ) : null}

@@ -7,8 +7,28 @@ sources:
       - name: employees
       - name: leave_requests
       - name: meta_fields
+      - name: whos_out
 
 models:
+  - name: bamboohr__person_absences
+    description: "Confirmed person-specific absence intervals from the latest successful snapshot per tenant and source."
+    columns:
+      - name: insight_tenant_id
+        description: "Tenant associated with the snapshot."
+      - name: unique_key
+        description: "Tenant, source, account, and interval identity."
+        tests: [not_null, unique]
+      - name: account_source_type
+        description: "Identity account provider."
+      - name: account_source_id
+        description: "Raw connector instance identifier."
+      - name: account_id
+        description: "Provider employee identifier used by account resolution."
+      - name: start_date
+        description: "Inclusive absence start, clipped to the snapshot window."
+      - name: end_date
+        description: "Inclusive absence end, clipped to the snapshot window."
+
   - name: bamboohr__identity_inputs
     description: "Identity-resolution evidence, canonical person profile, and active roster membership emitted from BambooHR employee history."
     columns:

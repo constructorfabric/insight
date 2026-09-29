@@ -1978,6 +1978,12 @@
       },
       "MetricResultsResponse": {
         "properties": {
+          "absence_context": {
+            "items": {
+              "$ref": "#/components/schemas/PersonAbsenceContext"
+            },
+            "type": "array"
+          },
           "metrics": {
             "items": {
               "$ref": "#/components/schemas/MetricResultDto"
@@ -1986,7 +1992,8 @@
           }
         },
         "required": [
-          "metrics"
+          "metrics",
+          "absence_context"
         ],
         "type": "object"
       },
@@ -2321,6 +2328,27 @@
         },
         "required": [
           "entity_id"
+        ],
+        "type": "object"
+      },
+      "PersonAbsenceContext": {
+        "properties": {
+          "compare_to_overlap": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "period_overlap": {
+            "type": "boolean"
+          },
+          "person_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "person_id",
+          "period_overlap"
         ],
         "type": "object"
       },
