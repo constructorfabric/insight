@@ -677,7 +677,7 @@ async fn open(
     };
     let guard = state
         .store
-        .open(&context.key, &context.creds, freshness)
+        .open_with_size_hint(&context.key, &context.creds, freshness, context.size_hint)
         .await?;
     Ok(guard)
 }
@@ -769,6 +769,7 @@ mod tests {
             key: crate::engine::store::tests::key(&fixture),
             creds: crate::engine::store::tests::creds(),
             max_staleness: None,
+            size_hint: None,
         };
         let Ok(paging) = Paging::parse(None, None) else {
             panic!("default paging must parse")
@@ -836,6 +837,7 @@ mod tests {
             key: crate::engine::store::tests::key(&fixture),
             creds: crate::engine::store::tests::creds(),
             max_staleness: None,
+            size_hint: None,
         };
         let Ok(paging) = Paging::parse(None, None) else {
             panic!("default paging must parse")
