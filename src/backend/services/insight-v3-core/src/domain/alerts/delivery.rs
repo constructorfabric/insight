@@ -7,11 +7,15 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use thiserror::Error;
 
-use super::rule::Notification;
+use super::Number;
+use super::rule::{Condition, Notification, Operator};
 
 /// The most a provider is asked to carry. Every provider here allows more;
 /// the bound is on what an alert has any business saying.
 const MAX_MESSAGE_CHARS: usize = 1500;
+/// How precisely a float is written for a reader.
+const SIGNIFICANT_DIGITS: i32 = 6;
+const MAX_DECIMALS: i32 = 12;
 
 /// What a notification says, the same for every provider.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,14 +26,18 @@ pub(crate) struct Message {
 impl Message {
     /// The approved summary: rule, metric and column, the value seen, the
     /// condition it met, and when. Nothing else the metric produced.
+    ///
+    /// INVARIANT: plain text only. Providers differ in what markup they
+    /// read, and a name shaped like `a.b` becomes a link on some of them;
+    /// definition and column names carry no dot, so none is written here.
     pub(crate) fn of(notification: &Notification) -> Self {
         let text = format!(
-            "Insight alert `{rule}`: {metric}.{column} = {value} ({condition}) at {at}",
+            "Insight alert: {rule}\n{metric} {column} is {value}, {condition}.\nChecked {at}.",
             rule = notification.rule_name.as_str(),
             metric = notification.metric.as_str(),
             column = notification.column,
-            value = notification.value,
-            condition = notification.condition,
+            value = readable(notification.value),
+            condition = crossed(notification.condition),
             at = stamp(notification.evaluated_at),
         );
 
@@ -39,8 +47,47 @@ impl Message {
     }
 }
 
+/// The condition as a reader says it: which side of the threshold.
+fn crossed(condition: Condition) -> String {
+    let side = match condition.operator {
+        Operator::Gt => "above",
+        Operator::Ge => "at or above",
+        Operator::Lt => "below",
+        Operator::Le => "at or below",
+    };
+
+    format!("{side} the threshold of {}", readable(condition.threshold))
+}
+
+/// A number as a person reads it: an integer exactly, a float to six
+/// significant digits with no trailing zeros.
+fn readable(number: Number) -> String {
+    let Number::Float(float) = number else {
+        return number.to_string();
+    };
+    if float == 0.0 {
+        return "0".to_owned();
+    }
+
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "log10 of a finite f64 fits in i32"
+    )]
+    let magnitude = float.abs().log10().floor() as i32;
+    let decimals = usize::try_from((SIGNIFICANT_DIGITS - 1 - magnitude).clamp(0, MAX_DECIMALS))
+        .unwrap_or_default();
+    let written = format!("{float:.decimals$}");
+    let trimmed = if written.contains('.') {
+        written.trim_end_matches('0').trim_end_matches('.')
+    } else {
+        written.as_str()
+    };
+
+    trimmed.to_owned()
+}
+
 fn stamp(at: DateTime<Utc>) -> String {
-    at.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+    at.format("%Y-%m-%d %H:%M UTC").to_string()
 }
 
 /// What a provider said when it accepted the message: the identity it
@@ -114,7 +161,7 @@ mod tests {
 
     use super::*;
     use crate::domain::alerts::Number;
-    use crate::domain::alerts::rule::{Condition, NotificationStatus, Operator};
+    use crate::domain::alerts::rule::{AlertName, Condition, NotificationStatus, Operator};
     use crate::domain::definition::DefinitionName;
 
     fn notification() -> Notification {
@@ -122,7 +169,7 @@ mod tests {
             id: Uuid::nil(),
             rule_id: Uuid::nil(),
             rule_revision: 3,
-            rule_name: DefinitionName::parse("too-many-prs")
+            rule_name: AlertName::parse("Too many open PRs")
                 .unwrap_or_else(|error| panic!("{error}")),
             metric: DefinitionName::parse("prs-open").unwrap_or_else(|error| panic!("{error}")),
             column: "total".to_owned(),
@@ -150,8 +197,51 @@ mod tests {
 
         assert_eq!(
             message.text,
-            "Insight alert `too-many-prs`: prs-open.total = 63 (> 50) at 2026-09-29T08:15:00Z"
+            "Insight alert: Too many open PRs\nprs-open total is 63, above the threshold of 50.\nChecked 2026-09-29 08:15 UTC."
         );
+        assert!(!message.text.contains('`'), "no markup: {}", message.text);
+    }
+
+    #[test]
+    fn every_operator_is_said_as_the_side_of_the_threshold() {
+        let cases = [
+            (Operator::Gt, "above the threshold of 50"),
+            (Operator::Ge, "at or above the threshold of 50"),
+            (Operator::Lt, "below the threshold of 50"),
+            (Operator::Le, "at or below the threshold of 50"),
+        ];
+
+        for (operator, expected) in cases {
+            let condition = Condition {
+                operator,
+                threshold: Number::Int(50),
+            };
+            assert_eq!(
+                crossed(condition),
+                expected,
+                "should say: {}",
+                operator.as_str()
+            );
+        }
+    }
+
+    #[test]
+    fn a_number_is_written_as_a_person_reads_it() {
+        let cases = [
+            (Number::Int(63), "63"),
+            (Number::Int(-9_007_199_254_740_993), "-9007199254740993"),
+            (Number::Float(0.1 + 0.2), "0.3"),
+            (Number::Float(83.912_345_6), "83.9123"),
+            (Number::Float(2.5), "2.5"),
+            (Number::Float(1_234_567.8), "1234568"),
+            (Number::Float(0.000_012_345_67), "0.0000123457"),
+            (Number::Float(-0.0), "0"),
+            (Number::Float(0.0), "0"),
+        ];
+
+        for (number, expected) in cases {
+            assert_eq!(readable(number), expected, "should write: {number:?}");
+        }
     }
 
     #[test]
