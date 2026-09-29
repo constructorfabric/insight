@@ -403,7 +403,14 @@ export function useRenameDefinition() {
     }) => renameDefinition(kind, name, to),
     // A rename moves a body to a new key and rewrites its dependents, so
     // every cached definition is suspect, not just the lists.
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["custom"] }),
+    onSuccess: (_renamed, { name }) => {
+      queryClient.removeQueries({
+        queryKey: ["custom"],
+        predicate: (query) => query.queryKey.slice(2).includes(name),
+      });
+
+      return queryClient.invalidateQueries({ queryKey: ["custom"] });
+    },
   });
 }
 

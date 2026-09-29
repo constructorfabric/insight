@@ -25,6 +25,7 @@ import {
   useDuplicateDashboard,
   useMoveDashboard,
   useRemoveDefinition,
+  useRenameDefinition,
   useRenameFolder,
   useSetDashboardTags,
   useSetPinned,
@@ -528,5 +529,43 @@ describe("duplicating a dashboard", () => {
     );
 
     expectListsAndCountsRefreshed(invalidated);
+  });
+});
+
+describe("useRenameDefinition", () => {
+  it("drops the old name's cached reads instead of asking for them again", async () => {
+    vi.mocked(customClient.renameDefinition).mockResolvedValue({
+      name: "platform",
+      rewritten: [],
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: { mutations: { retry: false } },
+    });
+    queryClient.setQueryData(["custom", "dashboard", "engineering"], {
+      body: {},
+      tags: [],
+    });
+    queryClient.setQueryData(["custom", "dashboard", "delivery"], {
+      body: {},
+      tags: [],
+    });
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children);
+    const { result } = renderHook(() => useRenameDefinition(), { wrapper });
+
+    await act(() =>
+      result.current.mutateAsync({
+        kind: "dashboards",
+        name: "engineering",
+        to: "platform",
+      }),
+    );
+
+    expect(
+      queryClient.getQueryCache().find({ queryKey: ["custom", "dashboard", "engineering"] }),
+    ).toBeUndefined();
+    expect(
+      queryClient.getQueryState(["custom", "dashboard", "delivery"])?.isInvalidated,
+    ).toBe(true);
   });
 });
