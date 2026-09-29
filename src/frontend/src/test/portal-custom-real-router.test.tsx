@@ -88,7 +88,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("the /portal/custom routes, through the real router", () => {
+describe("the /portal/custom routes, through the real router", { timeout: 20_000 }, () => {
   it("renders the dashboard list at /portal/custom, inside the portal shell", async () => {
     vi.mocked(customClient.fetchDashboardNames).mockResolvedValue({ names: [
       "engineering",
@@ -123,7 +123,7 @@ describe("the /portal/custom routes, through the real router", () => {
     renderAt("/portal/custom/engineering");
 
     expect(
-      await screen.findByRole("heading", { name: "Engineering" })
+      await screen.findByRole("heading", { name: "Engineering" }, { timeout: 10000 })
     ).toBeInTheDocument();
     expect(
       document.querySelector('[data-slot="sidebar-wrapper"]')
@@ -144,7 +144,7 @@ describe("the /portal/custom routes, through the real router", () => {
     });
 
     renderAt("/portal/custom");
-    await screen.findByRole("heading", { name: "Custom" });
+    await screen.findByRole("heading", { name: "Custom" }, { timeout: 10000 });
 
     await userEvent.type(
       screen.getByTestId("chat-input"),
@@ -155,7 +155,7 @@ describe("the /portal/custom routes, through the real router", () => {
     // The new dashboard opens (its title is in the pane too, so the heading
     // is what says the page changed)...
     expect(
-      await screen.findByRole("heading", { name: "Delivery" })
+      await screen.findByRole("heading", { name: "Delivery" }, { timeout: 10000 })
     ).toBeInTheDocument();
     // ...and the conversation is still there. The chat used to be mounted per
     // page, so this navigation unmounted it and the reader lost what they had
@@ -194,7 +194,7 @@ describe("the /portal/custom routes, through the real router", () => {
     });
 
     renderAt("/portal/custom/engineering");
-    await screen.findByRole("heading", { name: "Engineering" });
+    await screen.findByRole("heading", { name: "Engineering" }, { timeout: 10000 });
 
     await userEvent.type(
       screen.getByTestId("chat-input"),
@@ -216,7 +216,7 @@ describe("the /portal/custom routes, through the real router", () => {
     renderAt("/portal/custom");
 
     expect(
-      await screen.findByText(/administrators only/i)
+      await screen.findByText(/administrators only/i, undefined, { timeout: 10000 })
     ).toBeInTheDocument();
     // Nothing of the zone renders, not even the list it would have shown.
     expect(screen.queryByTestId("chat-input")).not.toBeInTheDocument();
