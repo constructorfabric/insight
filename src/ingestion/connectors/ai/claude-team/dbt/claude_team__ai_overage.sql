@@ -1,4 +1,3 @@
--- depends_on: {{ ref('claude_team__bronze_promoted') }}
 -- Bronze → Silver: Claude Team per-seat credit spend vs limit → class_ai_overage
 --
 -- Source: bronze_claude_team.claude_team_overage_spend — the per-seat

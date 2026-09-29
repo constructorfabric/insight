@@ -1,0 +1,15 @@
+{
+  "id": "58-1",
+  "name": "Affected versions",
+  "localizedName": null,
+  "fieldType": {
+    "id": "version[*]",
+    "$type": "FieldType"
+  },
+  "isAutoAttached": false,
+  "isDisplayedInIssueList": true,
+  "ordinal": 1,
+  "aliases": "affected version",
+  "instances": [],
+  "$type": "CustomField"
+}

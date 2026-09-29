@@ -182,6 +182,30 @@ The system **MUST** let a dashboard be created in realtime.
 
 **Actors**: `cpt-insightspec-v3-actor-dashboard-author`
 
+#### Organise Dashboards into Folders
+
+- [ ] `p2` - **ID**: `cpt-insightspec-v3-fr-dashboard-folders`
+
+The system **MUST** let dashboards be kept in named folders, one level deep. A folder can be created, renamed and deleted; a dashboard sits in at most one folder, or in none; deleting a folder leaves its dashboards in none. Everyone who can see dashboards sees the same folders, and the AI can list folders, create one and move a dashboard between them.
+
+**Actors**: `cpt-insightspec-v3-actor-dashboard-author`
+
+#### Tag Dashboards
+
+- [ ] `p2` - **ID**: `cpt-insightspec-v3-fr-dashboard-tags`
+
+The system **MUST** let a dashboard carry several tags and let the dashboard list be narrowed to those carrying any of the chosen tags, inside a folder or across all of them. A tag comes into being when it is first applied and goes away when no dashboard carries it. Everyone who can see dashboards sees the same tags, and the AI can list tags, filter by them and set a dashboard's tags.
+
+**Actors**: `cpt-insightspec-v3-actor-dashboard-author`
+
+#### Pin and Duplicate Dashboards
+
+- [ ] `p2` - **ID**: `cpt-insightspec-v3-fr-dashboard-pins`
+
+The system **MUST** let each person pin dashboards to their own Pinned list and unpin them; pins are personal, so one person's pins never show for another. The system **MUST** let a dashboard be duplicated under a new name, keeping its content, folder and tags.
+
+**Actors**: `cpt-insightspec-v3-actor-dashboard-author`
+
 ### 5.5 AI
 
 #### Answer a Question

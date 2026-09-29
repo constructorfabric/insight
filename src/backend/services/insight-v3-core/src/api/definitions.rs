@@ -3,20 +3,27 @@
 use std::sync::Arc;
 
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Extension, Path, Query};
+use axum::extract::{Extension, Path, Query, RawQuery};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
+use chrono::SecondsFormat;
 use serde::{Deserialize, Serialize};
-use toolkit::api::{OpenApiRegistry, OperationBuilder, ParamLocation, ParamSpec};
+use toolkit::api::{OpenApiRegistry, OperationBuilder, ParamSpec};
 use toolkit_canonical_errors::{CanonicalError, Http, resource_error};
 use utoipa::ToSchema;
 
 use super::AppState;
 use super::errors::ApiErrors;
-use crate::domain::definition::{DefinitionKind, DefinitionName, MAX_PAGE_LIMIT, Page, PageError};
+use super::folders::{folder_error, folder_field_error, folder_json};
+use super::tags::{names_json, tag_error, tag_field_error, tags_in};
+use crate::domain::definition::{
+    DefinitionKind, DefinitionName, MAX_PAGE_LIMIT, NamePage, Page, PageError,
+};
+use crate::domain::folders::FolderFilter;
 use crate::domain::kinds::metric::answerable::EffectiveClock;
 use crate::domain::surfaces::CustomError;
+use crate::domain::tags::TagFilter;
 use crate::domain::violation::Violation;
 
 /// The query string on a list: what to look for, in a name or in a body, and
@@ -27,6 +34,7 @@ struct Search {
     q: String,
     limit: Option<u64>,
     offset: Option<u64>,
+    folder: Option<String>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -90,14 +98,9 @@ pub(crate) fn register_routes(
 }
 
 fn query_param(name: &str, param_type: &str, description: &str) -> ParamSpec {
-    ParamSpec {
-        name: name.to_owned(),
-        location: ParamLocation::Query,
-        required: false,
-        description: Some(description.to_owned()),
-        param_type: param_type.to_owned(),
-        array: false,
-    }
+    ParamSpec::query(name)
+        .description(description)
+        .param_type(param_type)
 }
 
 fn register_list(
@@ -106,7 +109,7 @@ fn register_list(
     kind: DefinitionKind,
     segment: &str,
 ) -> Router {
-    OperationBuilder::get(format!("/v1/{segment}"))
+    let builder = OperationBuilder::get(format!("/v1/{segment}"))
         .operation_id(format!("insight_v3_core.{segment}.list"))
         .summary("List definition names, or the ones matching ?q=")
         .anonymous()
@@ -121,7 +124,27 @@ fn register_list(
             "integer",
             &format!("Page size, 1 to {MAX_PAGE_LIMIT}"),
         ))
-        .param(query_param("offset", "integer", "Names to skip"))
+        .param(query_param("offset", "integer", "Names to skip"));
+    let builder = if kind == DefinitionKind::Dashboard {
+        builder
+            .param(query_param(
+                "folder",
+                "string",
+                "Only the dashboards in this folder id, or `unfiled` for those in none",
+            ))
+            .param(
+                query_param(
+                    "tag",
+                    "string",
+                    "Only the dashboards carrying any of these tags; repeat the key for each",
+                )
+                .array(true),
+            )
+    } else {
+        builder
+    };
+
+    builder
         .json_response(StatusCode::OK, "One page of names, and how many match")
         .error_400(openapi)
         .error_403(openapi)
@@ -141,14 +164,7 @@ fn register_kind(
 ) -> Router {
     let segment = kind.plural();
 
-    let name_param = ParamSpec {
-        name: "name".to_owned(),
-        location: ParamLocation::Path,
-        required: true,
-        description: Some("Definition name".to_owned()),
-        param_type: "string".to_owned(),
-        array: false,
-    };
+    let name_param = ParamSpec::path("name").description("Definition name");
 
     let delete_param = name_param.clone();
     let rename_param = name_param.clone();
@@ -246,6 +262,38 @@ struct DefinitionResponse {
     body: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     clock: Option<EffectiveClock>,
+    #[serde(flatten)]
+    meta: Option<DashboardMeta>,
+}
+
+#[derive(Debug, Serialize)]
+struct DashboardMeta {
+    folder: Option<serde_json::Value>,
+    tags: serde_json::Value,
+    updated_at: String,
+}
+
+async fn dashboard_meta(
+    state: &AppState,
+    name: &DefinitionName,
+) -> Result<DashboardMeta, CanonicalError> {
+    let folder = state
+        .folders()
+        .folder_of(name)
+        .await
+        .map_err(folder_error)?;
+    let tags = state.tags().tags_of(name).await.map_err(tag_error)?;
+    let updated_at = state
+        .surfaces()
+        .updated_at(DefinitionKind::Dashboard, name)
+        .await
+        .map_err(custom_error)?;
+
+    Ok(DashboardMeta {
+        folder: folder.as_ref().map(folder_json),
+        tags: names_json(&tags),
+        updated_at: updated_at.to_rfc3339_opts(SecondsFormat::Millis, true),
+    })
 }
 
 pub(super) fn custom_error(error: CustomError) -> CanonicalError {
@@ -495,11 +543,51 @@ async fn get_definition(
     match surfaces.get(kind, &name).await {
         Ok(body) => {
             let clock = surfaces.clock_of(kind, &body).await;
+            let meta = if kind == DefinitionKind::Dashboard {
+                Some(dashboard_meta(&state, &name).await?)
+            } else {
+                None
+            };
 
-            Ok(Json(DefinitionResponse { body, clock }).into_response())
+            Ok(Json(DefinitionResponse { body, clock, meta }).into_response())
         }
         Err(CustomError::NotFound { .. }) => Ok(StatusCode::NOT_FOUND.into_response()),
         Err(other) => Err(custom_error(other)),
+    }
+}
+
+async fn narrowed(
+    state: &AppState,
+    kind: DefinitionKind,
+    search: &Search,
+    page: Page,
+    tags: &[String],
+) -> Result<NamePage, CanonicalError> {
+    let folder = search
+        .folder
+        .as_deref()
+        .map(|folder| FolderFilter::parse(kind, folder))
+        .transpose()
+        .map_err(|error| folder_field_error(&error))?;
+    let tags = TagFilter::parse(kind, tags).map_err(|error| tag_field_error(&error))?;
+    let needle = search.q.trim();
+
+    match (folder, tags) {
+        (None, None) => state
+            .surfaces()
+            .page(kind, needle, page)
+            .await
+            .map_err(custom_error),
+        (Some(filter), None) => state
+            .folders()
+            .page_filed(needle, page, filter)
+            .await
+            .map_err(folder_error),
+        (folder, Some(tags)) => state
+            .tags()
+            .page_tagged(needle, page, folder, &tags)
+            .await
+            .map_err(tag_error),
     }
 }
 
@@ -508,6 +596,7 @@ async fn list_definitions(
     Extension(kind): Extension<DefinitionKind>,
     headers: axum::http::HeaderMap,
     Query(search): Query<Search>,
+    RawQuery(query): RawQuery,
 ) -> Result<Response, CanonicalError> {
     crate::api::require_admin(&state, &headers, || {
         DefinitionApiError::permission_denied()
@@ -517,11 +606,8 @@ async fn list_definitions(
     .await?;
 
     let page = Page::parse(search.limit, search.offset).map_err(page_error)?;
-    let found = state
-        .surfaces()
-        .page(kind, &search.q, page)
-        .await
-        .map_err(custom_error)?;
+    let tags = tags_in(query.as_deref());
+    let found = narrowed(&state, kind, &search, page, &tags).await?;
 
     Ok(Json(serde_json::json!({
         "names": found.names,

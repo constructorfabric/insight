@@ -881,6 +881,275 @@ async fn renaming_points_every_widget_that_drew_the_old_name_at_the_new_one() ->
 }
 
 #[tokio::test]
+async fn a_renamed_dashboard_stays_in_its_folder() -> R {
+    use crate::domain::folders::{FolderName, Folders};
+
+    let fixture = Fixture::new().await;
+    let surfaces = fixture.surfaces();
+    surfaces
+        .put(
+            DefinitionKind::Dashboard,
+            &name("board"),
+            &json!({"title": "Example board", "widgets": []}),
+        )
+        .await?;
+    let platform = fixture
+        .definitions
+        .create_folder(FolderName::parse("Platform")?)
+        .await?;
+    fixture
+        .definitions
+        .file(&name("board"), Some(platform.id))
+        .await?;
+
+    surfaces
+        .rename(DefinitionKind::Dashboard, &name("board"), &name("renamed"))
+        .await?;
+
+    let placed = fixture.definitions.folder_of(&name("renamed")).await?;
+    assert_eq!(placed.map(|folder| folder.id), Some(platform.id));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_renamed_dashboard_keeps_its_tags() -> R {
+    use crate::domain::tags::{TagSet, Tags};
+
+    let fixture = Fixture::new().await;
+    let surfaces = fixture.surfaces();
+    surfaces
+        .put(
+            DefinitionKind::Dashboard,
+            &name("board"),
+            &json!({"title": "Example board", "widgets": []}),
+        )
+        .await?;
+    fixture
+        .definitions
+        .set_tags(
+            &name("board"),
+            &TagSet::parse(&["Delivery".to_owned(), "Platform".to_owned()])?,
+        )
+        .await?;
+
+    surfaces
+        .rename(DefinitionKind::Dashboard, &name("board"), &name("renamed"))
+        .await?;
+
+    let carried: Vec<String> = fixture
+        .definitions
+        .tags_of(&name("renamed"))
+        .await?
+        .into_iter()
+        .map(|tag| tag.as_str().to_owned())
+        .collect();
+    assert_eq!(carried, ["Delivery", "Platform"]);
+    assert_eq!(fixture.definitions.list_tags().await?.len(), 2);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_renamed_dashboard_keeps_its_place_on_every_pinned_list() -> R {
+    use crate::domain::pins::Pins;
+
+    let fixture = Fixture::new().await;
+    let surfaces = fixture.surfaces();
+    let people = [uuid::Uuid::from_u128(1), uuid::Uuid::from_u128(2)];
+    for board in ["alpha", "board", "gamma"] {
+        surfaces
+            .put(
+                DefinitionKind::Dashboard,
+                &name(board),
+                &json!({"title": "Example board", "widgets": []}),
+            )
+            .await?;
+        for person in people {
+            fixture.definitions.pin(person, &name(board)).await?;
+        }
+    }
+
+    surfaces
+        .rename(DefinitionKind::Dashboard, &name("board"), &name("renamed"))
+        .await?;
+
+    for person in people {
+        assert_eq!(
+            fixture.definitions.pins_of(person).await?,
+            ["alpha", "renamed", "gamma"]
+        );
+    }
+
+    Ok(())
+}
+
+mod duplicating_a_dashboard {
+    use super::*;
+    use crate::domain::folders::{FolderName, Folders};
+    use crate::domain::pins::Pins;
+    use crate::domain::tags::{TagSet, Tags};
+
+    const ANNA: uuid::Uuid = uuid::Uuid::from_u128(1);
+
+    fn board() -> serde_json::Value {
+        json!({"title": "Example board", "widgets": []})
+    }
+
+    async fn filed_tagged_and_pinned(fixture: &Fixture) -> Result<FolderName, Box<dyn Error>> {
+        fixture
+            .surfaces()
+            .put(DefinitionKind::Dashboard, &name("board"), &board())
+            .await?;
+        let platform = fixture
+            .definitions
+            .create_folder(FolderName::parse("Platform")?)
+            .await?;
+        fixture
+            .definitions
+            .file(&name("board"), Some(platform.id))
+            .await?;
+        fixture
+            .definitions
+            .set_tags(
+                &name("board"),
+                &TagSet::parse(&["Delivery".to_owned(), "Platform".to_owned()])?,
+            )
+            .await?;
+        fixture.definitions.pin(ANNA, &name("board")).await?;
+
+        Ok(platform.name)
+    }
+
+    async fn placed(fixture: &Fixture, board: &str) -> Result<Option<String>, Box<dyn Error>> {
+        Ok(fixture
+            .definitions
+            .folder_of(&name(board))
+            .await?
+            .map(|folder| folder.name.as_str().to_owned()))
+    }
+
+    async fn carried(fixture: &Fixture, board: &str) -> Result<Vec<String>, Box<dyn Error>> {
+        Ok(fixture
+            .definitions
+            .tags_of(&name(board))
+            .await?
+            .into_iter()
+            .map(|tag| tag.as_str().to_owned())
+            .collect())
+    }
+
+    #[tokio::test]
+    async fn the_copy_holds_the_body_the_folder_and_the_tags_and_the_source_keeps_them() -> R {
+        let fixture = Fixture::new().await;
+        let folder = filed_tagged_and_pinned(&fixture).await?;
+
+        fixture
+            .surfaces()
+            .duplicate(&name("board"), &name("board-copy"))
+            .await?;
+
+        for held in ["board", "board-copy"] {
+            let body = fixture
+                .surfaces()
+                .get(DefinitionKind::Dashboard, &name(held))
+                .await?;
+            assert_eq!(body, board(), "{held}");
+            assert_eq!(
+                placed(&fixture, held).await?.as_deref(),
+                Some(folder.as_str()),
+                "{held}"
+            );
+            assert_eq!(carried(&fixture, held).await?, ["Delivery", "Platform"]);
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn the_copy_is_not_pinned_and_the_source_stays_pinned() -> R {
+        let fixture = Fixture::new().await;
+        filed_tagged_and_pinned(&fixture).await?;
+
+        fixture
+            .surfaces()
+            .duplicate(&name("board"), &name("board-copy"))
+            .await?;
+
+        fixture
+            .surfaces()
+            .get(DefinitionKind::Dashboard, &name("board-copy"))
+            .await?;
+        assert_eq!(fixture.definitions.pins_of(ANNA).await?, ["board"]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_name_already_held_is_refused_and_nothing_is_written() -> R {
+        let fixture = Fixture::new().await;
+        filed_tagged_and_pinned(&fixture).await?;
+        fixture
+            .surfaces()
+            .put(
+                DefinitionKind::Dashboard,
+                &name("taken"),
+                &json!({"title": "Taken", "widgets": []}),
+            )
+            .await?;
+
+        for onto in ["taken", "board"] {
+            let refused = fixture
+                .surfaces()
+                .duplicate(&name("board"), &name(onto))
+                .await;
+
+            assert!(
+                matches!(
+                    &refused,
+                    Err(CustomError::Store(DefinitionStoreError::NameTaken(held))) if held == onto
+                ),
+                "{onto}: {refused:?}"
+            );
+        }
+        assert_eq!(
+            fixture
+                .surfaces()
+                .get(DefinitionKind::Dashboard, &name("taken"))
+                .await?,
+            json!({"title": "Taken", "widgets": []})
+        );
+        assert_eq!(placed(&fixture, "taken").await?, None);
+        assert!(carried(&fixture, "taken").await?.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_source_that_is_not_there_is_reported_missing_and_nothing_is_written() -> R {
+        let fixture = Fixture::new().await;
+
+        let refused = fixture
+            .surfaces()
+            .duplicate(&name("nowhere"), &name("nowhere-copy"))
+            .await;
+
+        assert!(
+            matches!(
+                &refused,
+                Err(CustomError::NotFound { kind: DefinitionKind::Dashboard, name }) if name == "nowhere"
+            ),
+            "{refused:?}"
+        );
+        assert!(
+            fixture
+                .surfaces()
+                .list(DefinitionKind::Dashboard)
+                .await?
+                .is_empty()
+        );
+        Ok(())
+    }
+}
+
+#[tokio::test]
 async fn a_rename_onto_a_name_someone_holds_is_refused_and_writes_nothing() -> R {
     let fixture = Fixture::new().await;
     let surfaces = fixture.surfaces();

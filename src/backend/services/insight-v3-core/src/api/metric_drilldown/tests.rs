@@ -11,7 +11,8 @@ use tower::ServiceExt as _;
 use super::*;
 use crate::api::AppState;
 use crate::chat::ChatClient;
-use crate::domain::definition::{DefinitionKind, Definitions};
+use crate::domain::definition::DefinitionKind;
+use crate::domain::folders::DefinitionStore;
 use crate::domain::query::metric_query::MetricRunner;
 use crate::store::definitions::memory::MemoryDefinitions;
 
@@ -20,7 +21,7 @@ type Seen = Arc<Mutex<Vec<String>>>;
 
 struct TestHarness {
     router: Router,
-    definitions: Arc<dyn Definitions>,
+    definitions: Arc<dyn DefinitionStore>,
 }
 
 impl TestHarness {
@@ -30,7 +31,7 @@ impl TestHarness {
             metrics_url,
             "insight",
         ));
-        let definitions: Arc<dyn Definitions> = Arc::new(MemoryDefinitions::new());
+        let definitions: Arc<dyn DefinitionStore> = Arc::new(MemoryDefinitions::new());
         let datasets = crate::api::Datasets::holding(
             metrics_url,
             &[(

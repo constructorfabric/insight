@@ -1,74 +1,93 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CustomPageShell } from "./custom-page-shell";
+
+const SAVED = "insight.custom.assistant-hidden";
+
+function shell() {
+  return render(
+    <CustomPageShell chat={<p>assistant</p>}>
+      <p>dashboard</p>
+    </CustomPageShell>
+  );
+}
 
 beforeEach(() => {
   window.localStorage.clear();
 });
 
-describe("<CustomPageShell>", () => {
-  it("shows the assistant beside the content by default", () => {
-    render(
-      <CustomPageShell chat={<p>assistant</p>}>
-        <p>dashboard</p>
-      </CustomPageShell>
-    );
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
-    expect(screen.getByText("assistant")).toBeVisible();
+describe("<CustomPageShell>", () => {
+  it("keeps the assistant collapsed to a strip by default, with the thread mounted", () => {
+    shell();
+
+    expect(screen.getByText("assistant")).not.toBeVisible();
+    expect(screen.getByText("assistant")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Open assistant" })
+    ).toBeVisible();
     expect(screen.getByText("dashboard")).toBeVisible();
   });
 
-  it("puts the assistant away, and keeps it mounted so the thread survives", async () => {
-    render(
-      <CustomPageShell chat={<p>assistant</p>}>
-        <p>dashboard</p>
-      </CustomPageShell>
-    );
+  it("opens the assistant beside the content", async () => {
+    shell();
 
+    await userEvent.click(screen.getByRole("button", { name: "Open assistant" }));
+
+    expect(screen.getByText("assistant")).toBeVisible();
+    expect(screen.getByText("dashboard")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Open assistant" })).toBeNull();
+  });
+
+  it("collapses it back, and keeps it mounted so the thread survives", async () => {
+    shell();
+
+    await userEvent.click(screen.getByRole("button", { name: "Open assistant" }));
     await userEvent.click(
-      screen.getByRole("button", { name: "Hide the assistant" })
+      screen.getByRole("button", { name: "Collapse assistant" })
     );
 
     expect(screen.getByText("assistant")).not.toBeVisible();
     expect(screen.getByText("assistant")).toBeInTheDocument();
-    expect(screen.getByText("dashboard")).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Open assistant" })
+    ).toBeVisible();
   });
 
-  it("brings it back", async () => {
-    render(
-      <CustomPageShell chat={<p>assistant</p>}>
-        <p>dashboard</p>
-      </CustomPageShell>
-    );
+  it("remembers that it was opened", async () => {
+    const { unmount } = shell();
+    await userEvent.click(screen.getByRole("button", { name: "Open assistant" }));
+    unmount();
 
-    await userEvent.click(
-      screen.getByRole("button", { name: "Hide the assistant" })
-    );
-    await userEvent.click(
-      screen.getByRole("button", { name: "Show the assistant" })
-    );
+    shell();
 
     expect(screen.getByText("assistant")).toBeVisible();
   });
 
-  it("remembers that it was put away", async () => {
-    const { unmount } = render(
-      <CustomPageShell chat={<p>assistant</p>}>
-        <p>dashboard</p>
-      </CustomPageShell>
-    );
-    await userEvent.click(
-      screen.getByRole("button", { name: "Hide the assistant" })
-    );
-    unmount();
+  it.each([
+    ["open", "0", true],
+    ["collapsed", "1", false],
+  ])("starts %s when that was the saved choice", (_choice, saved, visible) => {
+    window.localStorage.setItem(SAVED, saved);
 
-    render(
-      <CustomPageShell chat={<p>assistant</p>}>
-        <p>dashboard</p>
-      </CustomPageShell>
-    );
+    shell();
+
+    if (visible) expect(screen.getByText("assistant")).toBeVisible();
+    else expect(screen.getByText("assistant")).not.toBeVisible();
+  });
+
+  it("starts collapsed when the saved choice cannot be read", () => {
+    window.localStorage.setItem(SAVED, "0");
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+
+    shell();
 
     expect(screen.getByText("assistant")).not.toBeVisible();
   });

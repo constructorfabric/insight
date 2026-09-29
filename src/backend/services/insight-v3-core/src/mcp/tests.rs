@@ -272,18 +272,23 @@ async fn an_authorized_client_initializes_and_lists_the_tools_over_http() -> R {
         names,
         [
             "arrange_dashboard",
+            "create_folder",
             "delete_definition",
             "describe_tables",
             "get_definition",
             "list_datasets",
             "list_definitions",
+            "list_folders",
             "list_tables",
+            "list_tags",
+            "move_dashboard",
             "put_dashboard",
             "put_dataset",
             "put_metric",
             "put_widget",
             "run_metric",
             "search_definitions",
+            "set_dashboard_tags",
         ],
         "{listed}"
     );

@@ -26,11 +26,8 @@ describe("screenLabel", () => {
 
   it("names the team route by the zone it opens — People, not Person", () => {
     expect(screenLabel("/ic/:id/team")).toBe("People");
-    expect(screenLabel("/ic/:id/team/roster")).toBe("People › People (roster)");
-    expect(screenLabel("/ic/:id/team/employees")).toBe("People › Employees");
-    expect(screenLabel("/ic/:id/team/median-by-role")).toBe(
-      "People › Median by Role",
-    );
+    expect(screenLabel("/ic/:id/team/roster")).toBe("People › My team");
+    expect(screenLabel("/ic/:id/team/employees")).toBe("People › Roster · by role");
   });
 
   it("names a metric group reached on the team route", () => {
@@ -57,13 +54,13 @@ describe("screenLabel", () => {
 
   it("names the mode the identities console was opened in", () => {
     expect(screenLabel("/portal/manage/identities/queue")).toBe(
-      "Manage › Identities › Review queue",
+      "Manage › Identities · roles & taxonomy › Review queue",
     );
     expect(screenLabel("/portal/manage/identities/person")).toBe(
-      "Manage › Identities › A person and their accounts",
+      "Manage › Identities · roles & taxonomy › A person and their accounts",
     );
     expect(screenLabel("/portal/manage/identities/accounts")).toBe(
-      "Manage › Identities › An account and whose it is",
+      "Manage › Identities · roles & taxonomy › An account and whose it is",
     );
   });
 
@@ -73,7 +70,7 @@ describe("screenLabel", () => {
       "Directions › Development › nope",
     );
     expect(screenLabel("/portal/manage/identities/nope")).toBe(
-      "Manage › Identities › nope",
+      "Manage › Identities · roles & taxonomy › nope",
     );
   });
 

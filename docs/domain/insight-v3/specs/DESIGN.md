@@ -117,6 +117,9 @@ TBD
 - Metric — a named calculation over raw data.
 - Widget — any visual representation of data over chosen columns.
 - Dashboard — a named, addressable page arranging widgets.
+- Folder — a named group of dashboards, one level deep; a dashboard is in at most one.
+- Tag — a label on dashboards; a dashboard carries several, and a tag exists while a dashboard carries it.
+- Pin — one person's shortcut to a dashboard, listed in their Dashboards pane.
 - Alert — a condition on a metric plus where to send it when it fires.
 
 ### 3.2 Component Model
@@ -199,6 +202,30 @@ The schema lives in the migration, not here: [src/backend/services/insight-v3-co
 a physical table of its own with the identical columns, requested by an
 administrator through `PUT /v1/tables/{table}` — see
 [ADR-0006](./ADR/0006-a-table-per-ingest-stream.md).
+
+- [ ] `p2` - **ID**: `cpt-insightspec-v3-db-definitions`
+
+#### Definitions store (MariaDB)
+
+Metric, widget, dashboard and dataset definitions, one table per kind. The scripts are in [src/backend/services/insight-v3-core/src/store/definitions/sql/](../../../../src/backend/services/insight-v3-core/src/store/definitions/sql/).
+
+#### Table: folders
+
+**ID**: `cpt-insightspec-v3-dbtable-folders`
+
+A folder is a row of its own, so an empty folder exists. A dashboard names its folder in a nullable `folder_id` column beside its body, not inside it: a whole-body write — the UI's `PUT` or the MCP `put_dashboard` — leaves the folder alone, and a rename carries it to the new name. Deleting a folder clears the column on its dashboards. Implements `cpt-insightspec-v3-fr-dashboard-folders`.
+
+#### Table: tags
+
+**ID**: `cpt-insightspec-v3-dbtable-tags`
+
+A tag is a row of its own with one spelling, unique by the same collation as folders; `dashboard_tags` links it to dashboards by name. Setting a dashboard's tags replaces the whole set in one transaction, reuses an existing tag's spelling, and deletes a tag no dashboard carries any more. Like the folder, the tags sit outside the body: a whole-body write leaves them alone, and a rename carries them to the new name. Implements `cpt-insightspec-v3-fr-dashboard-tags`.
+
+#### Table: dashboard_pins
+
+**ID**: `cpt-insightspec-v3-dbtable-dashboard-pins`
+
+A pin is a row of (person, dashboard name), so each person has their own list, in the order they pinned. Deleting a dashboard drops its pins, and a rename carries them to the new name, as it carries the folder and tags. Implements `cpt-insightspec-v3-fr-dashboard-pins`.
 
 ### 3.8 Deployment Topology
 

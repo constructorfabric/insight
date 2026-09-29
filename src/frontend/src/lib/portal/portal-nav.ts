@@ -2,6 +2,7 @@ import { useRouterState } from "@tanstack/react-router";
 import { useMemo } from "react";
 
 import { normalizePersonId } from "@/lib/metrics/entity";
+import { zoneById } from "@/lib/portal/nav-model";
 import { type OrgScope, usePortalShowPlanned } from "@/lib/portal/portal-store";
 import { recordUsageEvent, scopeLabel } from "@/telemetry";
 import { usePortalSearch, useSetPortalSearch } from "@/lib/portal/portal-search";
@@ -24,7 +25,7 @@ export function usePortalZone(): string | null {
   if (/^\/portal\/custom(\/|$)/.test(pathname)) return "custom";
   if (/^\/ic\/[^/]+\/team\/?$/.test(pathname)) return "people";
   if (/^\/ic\/[^/]+\/personal\/?$/.test(pathname)) return "person";
-  return zone ?? null;
+  return zoneById(zone ?? null)?.id ?? null;
 }
 
 /** The selected item within a zone; null when the zone shows its default. */
@@ -70,6 +71,7 @@ export interface PortalNavActions {
   replaceScope: (patch: Partial<OrgScope>) => void;
   setZone: (zone: string | null) => void;
   setItem: (item: string | null) => void;
+  openItem: (zone: string, item: string) => void;
   setAcct: (acct: string | null) => void;
   setDir: (dir: string) => void;
   setLens: (lens: string) => void;
@@ -105,6 +107,7 @@ export function usePortalNavActions(): PortalNavActions {
           { replace: true },
         ),
       setItem: (item) => setSearch({ item: item ?? undefined, acct: undefined }),
+      openItem: (zone, item) => setSearch({ zone, item, acct: undefined }),
       setAcct: (acct) => setSearch({ acct: acct ?? undefined }),
       // `repo` drops with the direction and the lens the same way `item` drops
       // with the zone: one repository under inspection means nothing on another

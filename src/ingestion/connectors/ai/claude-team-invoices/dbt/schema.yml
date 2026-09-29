@@ -15,11 +15,6 @@ sources:
       - name: claude_team_invoice_lines
 
 models:
-  - name: claude_team_invoices__bronze_promoted
-    description: >
-      Bootstrap view promoting this connector's bronze table to
-      ReplacingMergeTree (ADR-0002). Idempotent — an already-RMT table is
-      detected and skipped.
 
   - name: claude_team__ai_invoice
     description: >

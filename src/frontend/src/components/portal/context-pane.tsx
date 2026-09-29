@@ -1,106 +1,53 @@
-import {
-  Bug,
-  ChevronRight,
-  Layers,
-  LayoutGrid,
-  Search,
-  Settings,
-} from "lucide-react";
+import { ChevronRight, MessageSquare, Settings2 } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { AppSidebarFooter } from "@/components/app-sidebar-footer";
 import { useFeedbackDialog } from "@/components/feedback-context";
 import { CustomNav } from "@/components/portal/custom-nav";
-import { OrgTree } from "@/components/org-tree";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Input } from "@/components/ui/input";
+import { ExploreNav } from "@/components/portal/explore-nav";
+import { GroupsNav } from "@/components/portal/pane-nav";
+import { PeopleNav } from "@/components/portal/people-nav";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { visibleGroups } from "@/lib/insight/groups";
-import {
-  usePersonSectionStandings,
-  useSelectedPersonSection,
-} from "@/lib/portal/use-person-sections";
-import { STATUS_BG_CLASS } from "@/lib/status";
-import {
-  lensRoadmap,
-  visibleDirections,
-  visibleLenses,
-} from "@/lib/portal/lens-configs";
-import { useShellLayout } from "@/lib/portal/use-shell-layout";
-import { useZoneNav } from "@/lib/portal/use-zone-nav";
 import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarMenuSub,
-  SidebarMenuSubButton,
-  SidebarMenuSubItem,
-  useSidebar,
 } from "@/components/ui/sidebar";
 import {
-  manageItemsFor,
-  peopleItemsFor,
-  PLANNED_GROUP_LABEL,
-  partitionByReadiness,
+  HOME_DASHBOARD_GROUP,
+  manageGroupsFor,
   resolveZoneItem,
-  zoneById,
   zoneSections,
-  type Direction,
-  type PaneItem,
 } from "@/lib/portal/nav-model";
-import {
-  personSectionPlanned,
-} from "@/lib/portal/nav-policy";
-import { usePortalShowPlanned } from "@/lib/portal/portal-store";
-import {
-  usePortalDir,
-  usePortalItem,
-  usePortalLens,
-  usePortalNavActions,
-} from "@/lib/portal/portal-nav";
-import { useActiveZone } from "@/lib/portal/use-active-zone";
+import { usePortalItem } from "@/lib/portal/portal-nav";
+import { railItemFor, type RailId } from "@/lib/portal/rail-model";
+import { useDismissDrawer } from "@/lib/portal/use-dismiss-drawer";
+import { useRailNav } from "@/lib/portal/use-rail-nav";
+import { useShellLayout } from "@/lib/portal/use-shell-layout";
+import { useZoneNav, type ZoneNav } from "@/lib/portal/use-zone-nav";
 import { cn } from "@/lib/utils";
-import { useIsAdmin, useVisibilityPolicy } from "@/queries/identity-me";
+import { useIsAdmin } from "@/queries/identity-me";
 import { usePreviewsGate } from "@/queries/previews";
 
-const ZONE_SUB: Record<string, string> = {
-  overview: "Cross-functional org rollup",
-  directions: "Functional domains",
-  person: "Personal metrics",
-  people: "People & org structure",
-  aicost: "Adoption funnel & cost",
-  scorecard: "By unit and quarter",
-  reports: "Generated & custom",
-  manage: "Catalog, identity & governance",
-  custom: "Your dashboards, built by chat",
-};
-
-const BADGE_TONE: Record<string, string> = {
-  warn: "bg-warning/15 text-warning",
-  new: "bg-primary/10 text-foreground",
-  error: "bg-destructive/15 text-destructive",
-};
-
 /**
- * Zone-contextual secondary navigation, driven by the active rail zone.
+ * Secondary navigation for the rail item that owns the active zone.
  *
  * On a phone this is the ONLY navigation surface: the icon rail hides itself
  * (two fixed sidebars left ~60px for content), so the pane becomes an
- * off-canvas drawer — opened by the topbar trigger — and carries the zone list
+ * off-canvas drawer — opened by the topbar trigger — and carries the rail items
  * and the settings menu that normally live in the rail. Desktop is unchanged:
- * `collapsible="none"`, in normal flow, zones in the rail beside it.
+ * `collapsible="none"`, in normal flow, rail beside it.
  */
 export function ContextPane() {
   const layout = useShellLayout();
@@ -109,10 +56,8 @@ export function ContextPane() {
   // content its 256px back.
   const isPhone = layout === "phone";
   const drawer = layout !== "wide";
-  const { activeZone } = useActiveZone();
-  const zone = zoneById(activeZone);
-  const title = zone?.label ?? "Insight";
-  const active = resolveZoneItem(activeZone, usePortalItem());
+  const nav = useZoneNav();
+  const rail = railItemFor(nav.activeZone);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const dismissDrawer = useDismissDrawer();
 
@@ -124,35 +69,18 @@ export function ContextPane() {
         layout === "narrow" && "data-[side=left]:left-(--rail-width)"
       )}
     >
-      {/* The drawer's zone row already names the zone, so repeating it in a
+      {/* The drawer's rail row already names the pane, so repeating it in a
           header would cost two of the ~14 rows a phone has. */}
       {isPhone ? null : (
         <SidebarHeader>
-          <div className="flex flex-col px-2 py-1.5">
-            <span className="text-sm font-semibold tracking-tight text-sidebar-foreground">
-              {title}
-            </span>
-            <span className="text-xs text-muted-foreground">
-              {ZONE_SUB[activeZone] ?? ""}
-            </span>
-          </div>
+          <span className="px-2 py-1.5 text-sm font-semibold tracking-tight text-sidebar-foreground">
+            {rail?.paneTitle ?? rail?.label ?? "Insight"}
+          </span>
         </SidebarHeader>
       )}
       <SidebarContent>
-        {isPhone ? <MobileZoneNav /> : null}
-        {activeZone === "custom" ? (
-          <CustomNav />
-        ) : activeZone === "directions" ? (
-          <DirectionsNav />
-        ) : activeZone === "people" ? (
-          <PeopleNav active={active} />
-        ) : activeZone === "manage" ? (
-          <ManageNav active={active} />
-        ) : activeZone === "person" ? (
-          <PersonSectionsNav />
-        ) : (
-          <ThemeNav zoneId={activeZone} active={active} />
-        )}
+        {isPhone ? <MobileRailNav /> : null}
+        {rail ? <RailPane rail={rail.id} nav={nav} /> : null}
       </SidebarContent>
       {isPhone ? (
         <SidebarFooter>
@@ -167,7 +95,7 @@ export function ContextPane() {
                 <PopoverTrigger
                   render={
                     <SidebarMenuButton>
-                      <Settings aria-hidden />
+                      <Settings2 aria-hidden />
                       <span>Settings</span>
                     </SidebarMenuButton>
                   }
@@ -212,7 +140,7 @@ function FeedbackItem({ onPicked }: { onPicked: () => void }) {
           onPicked();
         }}
       >
-        <Bug aria-hidden />
+        <MessageSquare aria-hidden />
         <span>{t("feedback.nav_label")}</span>
       </SidebarMenuButton>
     </SidebarMenuItem>
@@ -220,36 +148,18 @@ function FeedbackItem({ onPicked }: { onPicked: () => void }) {
 }
 
 /**
- * Dismiss the mobile drawer after a LEAF pick (a section / lens / group): on a
- * phone the pane is the drawer, so leaving it open would hide the very view the
- * reader just chose. Zone picks deliberately keep it open — the zone's items
- * render right below, so zone-then-item is one pass. No-op on desktop, where
- * the pane is always-visible chrome.
- */
-function useDismissDrawer(): () => void {
-  const layout = useShellLayout();
-  const { setOpen, setOpenMobile } = useSidebar();
-  return () => {
-    // Below 768 the pane is a Sheet (`openMobile`); on a tablet it is an
-    // off-canvas panel (`open`). Wide keeps it in flow — nothing to dismiss.
-    if (layout === "phone") setOpenMobile(false);
-    else if (layout === "narrow") setOpen(false);
-  };
-}
-
-/**
- * Zone switcher for the mobile drawer, standing in for the hidden icon rail.
+ * Rail switcher for the mobile drawer, standing in for the hidden icon rail.
  *
- * Collapsed to a SINGLE row by default — the full list is eight zones tall, and
- * expanded it pushed the zone's own sections below the fold, so picking a zone
- * looked like it did nothing. Collapsed, the sections start right under this row:
- * changing section (the common move) costs no scrolling, and switching zone
- * costs one extra tap that also re-collapses the list.
+ * Collapsed to a SINGLE row by default — expanded, the full list pushed the
+ * pane's own sections below the fold, so picking an item looked like it did
+ * nothing. Collapsed, the sections start right under this row: changing section
+ * (the common move) costs no scrolling, and switching rail item costs one extra
+ * tap that also re-collapses the list.
  */
-function MobileZoneNav() {
-  const { zones, activeZone, selectZone } = useZoneNav();
+function MobileRailNav() {
+  const { items, activeItem, selectItem } = useRailNav();
   const [expanded, setExpanded] = useState(false);
-  const current = zones.find((z) => z.id === activeZone);
+  const current = items.find((item) => item.id === activeItem);
   const CurrentIcon = current?.icon;
 
   return (
@@ -262,7 +172,7 @@ function MobileZoneNav() {
               aria-expanded={expanded}
             >
               {CurrentIcon ? <CurrentIcon aria-hidden /> : null}
-              <span className="font-medium">{current?.label ?? "Zones"}</span>
+              <span className="font-medium">{current?.label ?? "Menu"}</span>
               <ChevronRight
                 className={cn(
                   "ms-auto transition-transform",
@@ -273,18 +183,18 @@ function MobileZoneNav() {
             </SidebarMenuButton>
           </SidebarMenuItem>
           {expanded
-            ? zones.map((z) => (
-                <SidebarMenuItem key={z.id}>
+            ? items.map((item) => (
+                <SidebarMenuItem key={item.id}>
                   <SidebarMenuButton
-                    isActive={activeZone === z.id}
+                    isActive={activeItem === item.id}
                     onClick={() => {
-                      selectZone(z);
+                      selectItem(item);
                       setExpanded(false);
                     }}
-                    className="ps-4"
+                    className={cn("ps-4", item.planned && "text-muted-foreground")}
                   >
-                    <z.icon aria-hidden />
-                    <span>{z.label}</span>
+                    <item.icon aria-hidden />
+                    <span>{item.label}</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))
@@ -295,57 +205,32 @@ function MobileZoneNav() {
   );
 }
 
-/* ── Theme zones (Overview / AI & Cost / Scorecard / Reports) ────────── */
+function RailPane({ rail, nav }: { rail: RailId; nav: ZoneNav }) {
+  const active = resolveZoneItem(nav.activeZone, usePortalItem());
+  const visibleZones = new Set(nav.zones.map((zone) => zone.id));
 
-function ThemeNav({
-  zoneId,
-  active,
-}: {
-  zoneId: string;
-  active: string | null;
-}) {
-  const groups = zoneSections(zoneId);
-  const showPlanned = usePortalShowPlanned();
-  // Everything not yet real is pulled out of its original group and collected
-  // under one demoted "Planned" group at the bottom, so the working menu reads
-  // clean and roadmap items stay honest instead of masquerading as features.
-  const split = groups.map((g) => partitionByReadiness(g.items, showPlanned));
-  const planned = split.flatMap((s) => s.planned);
-  return (
-    <>
-      {groups.map((g, i) =>
-        split[i]!.live.length ? (
-          <SidebarGroup key={g.label ?? i}>
-            {g.label ? <SidebarGroupLabel>{g.label}</SidebarGroupLabel> : null}
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {split[i]!.live.map((it) => (
-                  <ItemButton key={it.id} item={it} active={active === it.id} />
-                ))}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        ) : null
-      )}
-      {planned.length ? (
-        <SidebarGroup>
-          <SidebarGroupLabel>{PLANNED_GROUP_LABEL}</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {planned.map((it) => (
-                <ItemButton
-                  key={it.id}
-                  item={it}
-                  active={active === it.id}
-                  planned
-                />
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-      ) : null}
-    </>
-  );
+  switch (rail) {
+    case "home":
+      return (
+        <GroupsNav
+          groups={[
+            ...zoneSections("overview"),
+            ...(visibleZones.has("custom") ? [HOME_DASHBOARD_GROUP] : []),
+          ]}
+          active={active}
+        />
+      );
+    case "dashboards":
+      return <CustomNav />;
+    case "explore":
+      return <ExploreNav visibleZones={visibleZones} />;
+    case "people":
+      return <PeopleNav nav={nav} />;
+    case "reports":
+      return <GroupsNav groups={zoneSections("reports")} active={active} />;
+    case "manage":
+      return <ManageNav active={active} />;
+  }
 }
 
 function ManageNav({ active }: { active: string | null }) {
@@ -354,340 +239,6 @@ function ManageNav({ active }: { active: string | null }) {
   const { isAdmin } = useIsAdmin();
   const canManagePreviews = usePreviewsGate();
   return (
-    <ItemsNav
-      items={manageItemsFor({ isAdmin, canManagePreviews })}
-      groupLabel="Manage"
-      active={active}
-    />
-  );
-}
-
-function ItemsNav({
-  items,
-  groupLabel,
-  active,
-}: {
-  items: readonly PaneItem[];
-  groupLabel: string;
-  active: string | null;
-}) {
-  const showPlanned = usePortalShowPlanned();
-  const { live, planned } = partitionByReadiness(items, showPlanned);
-  return (
-    <>
-      {/* Skipped when empty, as ThemeNav does: with planned items hidden a
-          zone can have no live items, and a bare heading reads as a load
-          failure rather than as a filter. */}
-      {live.length ? (
-        <SidebarGroup>
-          <SidebarGroupLabel>{groupLabel}</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {live.map((it) => (
-                <ItemButton key={it.id} item={it} active={active === it.id} />
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-      ) : null}
-      {planned.length ? (
-        <SidebarGroup>
-          <SidebarGroupLabel>{PLANNED_GROUP_LABEL}</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {planned.map((it) => (
-                <ItemButton
-                  key={it.id}
-                  item={it}
-                  active={active === it.id}
-                  planned
-                />
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-      ) : null}
-    </>
-  );
-}
-
-function ItemButton({
-  item,
-  active,
-  planned = false,
-}: {
-  item: PaneItem;
-  active: boolean;
-  /** Demoted rendering: same affordance, visibly lighter weight. */
-  planned?: boolean;
-}) {
-  const { setItem } = usePortalNavActions();
-  const Icon = item.icon;
-  const dismiss = useDismissDrawer();
-  return (
-    <SidebarMenuItem>
-      <SidebarMenuButton
-        isActive={active}
-        onClick={() => {
-          setItem(item.id);
-          dismiss();
-        }}
-        className={planned ? "text-muted-foreground" : undefined}
-      >
-        <Icon />
-        <span>{item.label}</span>
-        {item.badge ? (
-          <span
-            className={cn(
-              "ml-auto rounded-full px-1.5 py-0.5 text-xs font-semibold",
-              BADGE_TONE[item.badge.tone]
-            )}
-          >
-            {item.badge.text}
-          </span>
-        ) : null}
-      </SidebarMenuButton>
-    </SidebarMenuItem>
-  );
-}
-
-/* ── Directions zone ─────────────────────────────────────────────────── */
-
-function DirectionsNav() {
-  const showPlanned = usePortalShowPlanned();
-  const directions = visibleDirections(showPlanned);
-  return (
-    <SidebarGroup>
-      <SidebarGroupLabel>
-        Directions
-        <span className="ml-1 text-xs font-normal text-muted-foreground">
-          · catalog · {directions.length}
-        </span>
-      </SidebarGroupLabel>
-      <SidebarGroupContent>
-        <SidebarMenu>
-          {directions.map((d) => (
-            <DirectionItem key={d.id} direction={d} />
-          ))}
-        </SidebarMenu>
-      </SidebarGroupContent>
-    </SidebarGroup>
-  );
-}
-
-function DirectionItem({ direction }: { direction: Direction }) {
-  const { setDir, openDirection } = usePortalNavActions();
-  const dismiss = useDismissDrawer();
-  const activeDir = usePortalDir();
-  const activeLens = usePortalLens();
-  const showPlanned = usePortalShowPlanned();
-  const expanded = activeDir === direction.id;
-  const Icon = direction.icon;
-  const lenses = visibleLenses(direction, showPlanned);
-
-  function toggle() {
-    if (expanded) {
-      setDir("");
-    } else {
-      openDirection(direction.id, lenses[0] ?? direction.lenses[0]!);
-    }
-  }
-
-  return (
-    <>
-      <SidebarMenuItem>
-        <SidebarMenuButton
-          isActive={expanded}
-          onClick={toggle}
-          aria-expanded={expanded}
-        >
-          <Icon />
-          <span>{direction.name}</span>
-          {direction.source === "bullet" ? (
-            <span className="ml-auto rounded-full bg-warning/15 px-1.5 py-0.5 text-xs font-semibold text-warning">
-              bullet
-            </span>
-          ) : null}
-          <ChevronRight
-            className={cn(
-              "size-4 text-muted-foreground transition-transform",
-              direction.source === "bullet" ? "ml-1" : "ml-auto",
-              expanded && "rotate-90"
-            )}
-          />
-        </SidebarMenuButton>
-      </SidebarMenuItem>
-
-      {expanded ? (
-        <>
-          <SidebarMenuSub>
-            {lenses.map((lens) => {
-              const roadmap = lensRoadmap(direction, lens);
-              return (
-                <SidebarMenuSubItem key={lens}>
-                  <SidebarMenuSubButton
-                    isActive={activeLens === lens}
-                    className={roadmap ? "text-muted-foreground" : undefined}
-                    onClick={() => {
-                      openDirection(direction.id, lens);
-                      dismiss();
-                    }}
-                  >
-                    <span>{lens}</span>
-                  </SidebarMenuSubButton>
-                </SidebarMenuSubItem>
-              );
-            })}
-          </SidebarMenuSub>
-        </>
-      ) : null}
-    </>
-  );
-}
-
-/* ── People / Person zones ───────────────────────────────────────────── */
-
-function PeopleNav({ active }: { active: string | null }) {
-  const { isFlat } = useVisibilityPolicy();
-  return (
-    <>
-      <ItemsNav
-        items={peopleItemsFor(isFlat)}
-        groupLabel="Views"
-        active={active}
-      />
-      <WorkChart />
-    </>
-  );
-}
-
-function WorkChart() {
-  const [query, setQuery] = useState("");
-  // A chart is what a reporting line draws. With no lines there is a roster,
-  // and calling it a chart would name a structure the reader cannot see.
-  const { isFlat } = useVisibilityPolicy();
-
-  const find = (
-    <div className="relative px-2">
-      <Search className="pointer-events-none absolute top-1/2 left-4 size-3.5 -translate-y-1/2 text-muted-foreground" />
-      <Input
-        type="search"
-        value={query}
-        onChange={(event) => setQuery(event.target.value)}
-        placeholder="Find someone"
-        aria-label="Find someone in the org"
-        className="h-8 ps-7 text-sm"
-      />
-    </div>
-  );
-
-  // WORKAROUND: Search stays outside ScrollArea because inertial scrolling can
-  // draw its scrollbar and rows over the search.
-  return (
-    <SidebarGroup className="min-h-0 flex-1">
-      {isFlat ? null : <SidebarGroupLabel>WorkChart</SidebarGroupLabel>}
-      <SidebarGroupContent className="flex min-h-0 flex-1 flex-col gap-2">
-        {find}
-        <ScrollArea className="min-h-0 flex-1">
-          <OrgTree leadsToTeam query={query} />
-        </ScrollArea>
-      </SidebarGroupContent>
-    </SidebarGroup>
-  );
-}
-
-/* ── Person zone: one person, section switcher (no WorkChart, no modal) ─── */
-
-function PersonSectionsNav() {
-  const { setItem } = usePortalNavActions();
-  const dismiss = useDismissDrawer();
-  const active = usePortalItem();
-  const { activePerson } = useActiveZone();
-  // Costs no request: these are the section screens' own queries, so
-  // react-query serves them from cache.
-  const standings = usePersonSectionStandings(activePerson);
-  const standingById = new Map(standings.map((st) => [st.id as string, st]));
-  const showPlanned = usePortalShowPlanned();
-  const groups = visibleGroups(showPlanned);
-  const glance = useSelectedPersonSection() == null;
-  return (
-    <SidebarGroup>
-      <SidebarGroupLabel>Sections</SidebarGroupLabel>
-      <SidebarGroupContent>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              isActive={glance}
-              onClick={() => {
-                setItem(null);
-                dismiss();
-              }}
-            >
-              <LayoutGrid />
-              <span>At a glance</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          {groups.map((g) => {
-            const standing = standingById.get(g.id as string);
-            return (
-              <SidebarMenuItem key={g.id}>
-                <SidebarMenuButton
-                  isActive={active === g.id}
-                  className={
-                    personSectionPlanned(g.id) ? "text-muted-foreground" : undefined
-                  }
-                  onClick={() => {
-                    setItem(g.id);
-                    dismiss();
-                  }}
-                  title={
-                    // Nothing to say until the standings arrive. Both flags
-                    // read false while the queries are in flight, so left to
-                    // fall through, the tooltip announced the strongest of the
-                    // three — that nothing feeds this section — on an answer
-                    // the hook had not given. The mark is hidden for that
-                    // reason already; the words have to follow it.
-                    standing == null || standing.isPending
-                      ? undefined
-                      : standing.hasData
-                        ? standing.phrase
-                        : standing.peersHaveData
-                          ? "No data this period"
-                          : "No data source is connected for this section"
-                  }
-                >
-                  <Layers />
-                  <span className="min-w-0 flex-1 truncate">{g.title}</span>
-                  {/* The mark that answers "which section is worth opening",
-                      beside the thing you click.
-
-                      Three marks, not two, because empty means two different
-                      things. A grey dot is a section that reads fine and holds
-                      nothing for this person this period — a fact about them.
-                      A hollow ring is one nothing feeds — a fact about the
-                      install, and not worth opening at all until that changes.
-                      Drawn identically, the second sent readers looking for a
-                      person's missing work when the connector was the whole
-                      story. */}
-                  {standing && !standing.isPending ? (
-                    <span
-                      className={cn(
-                        "size-1.5 shrink-0 rounded-full",
-                        standing.hasData
-                          ? STATUS_BG_CLASS[standing.status]
-                          : standing.peersHaveData
-                            ? "bg-muted-foreground/30"
-                            : "border border-muted-foreground/40"
-                      )}
-                      aria-hidden
-                    />
-                  ) : null}
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            );
-          })}
-        </SidebarMenu>
-      </SidebarGroupContent>
-    </SidebarGroup>
+    <GroupsNav groups={manageGroupsFor({ isAdmin, canManagePreviews })} active={active} />
   );
 }
