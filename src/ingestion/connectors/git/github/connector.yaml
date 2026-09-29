@@ -205,9 +205,11 @@ definitions:
 
   proxy_error_handler: &proxy_error_handler
     type: DefaultErrorHandler
-    # Generous on purpose: a cold blobless clone of a large repository runs
-    # for many Retry-After cycles before the first page can be served.
-    max_retries: 100
+    # The proxy holds a cold request in-connection while it clones, so a 429
+    # is the exception: cache headroom that stayed exhausted for the whole
+    # in-connection wait. 200 x the 30 s the proxy asks for outlasts a cold
+    # clone queue on a large installation.
+    max_retries: 200
     backoff_strategies:
       - type: WaitTimeFromHeader
         header: Retry-After
@@ -221,6 +223,11 @@ definitions:
     response_filters:
       # The repository is being cloned or purged in the background: the proxy
       # is working, the caller waits.
+      - type: HttpResponseFilter
+        http_codes: [401]
+        action: FAIL
+        failure_type: config_error
+        error_message: The git-cli-proxy rejected git_proxy_token; it must match the token the proxy was started with
       - type: HttpResponseFilter
         http_codes: [429]
         action: RETRY
@@ -260,6 +267,9 @@ definitions:
       X-Source-Id: "{{ config['insight_source_id'] }}"
       X-Git-Username: x-access-token
       X-Git-Token: "{{ config['github_token'] }}"
+      # GitHub reports `size` in kilobytes; the proxy reserves cache headroom
+      # from this instead of its per-repository cap.
+      X-Repo-Size-Hint: "{{ ((stream_slice.extra_fields.get('size') or 0) * 1024) or '' }}"
     error_handler: *proxy_error_handler
 
   standard_fields: &standard_fields
@@ -301,6 +311,7 @@ definitions:
           full_name: {type: [string, "null"]}
           clone_url: {type: [string, "null"]}
           pushed_at: {type: [string, "null"]}
+          size: {type: [integer, "null"]}
         additionalProperties: true
     retriever:
       type: SimpleRetriever
@@ -658,6 +669,8 @@ streams:
           - type: ParentStreamConfig
             parent_key: clone_url
             partition_field: repo_clone_url
+            extra_fields:
+              - [size]
             # `incremental_dependency` keeps the sync proportional to
             # activity: parent state persists only because this child is
             # itself incremental.
@@ -777,6 +790,8 @@ streams:
           - type: ParentStreamConfig
             parent_key: clone_url
             partition_field: repo_clone_url
+            extra_fields:
+              - [size]
             # `incremental_dependency` keeps the sync proportional to
             # activity: parent state persists only because this child is
             # itself incremental.
@@ -877,6 +892,8 @@ streams:
           - type: ParentStreamConfig
             parent_key: clone_url
             partition_field: repo_clone_url
+            extra_fields:
+              - [size]
             # Full-refresh child: parent state would not persist, so no
             # incremental_dependency.
             incremental_dependency: false
@@ -1015,6 +1032,7 @@ streams:
                       partition_field: repo_clone_url
                       extra_fields:
                         - [full_name]
+                        - [size]
                       incremental_dependency: true
                       stream: *repositories_pushed_parent
               incremental_sync:

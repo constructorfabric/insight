@@ -10,13 +10,25 @@ proxy serves the same rows from a bare clone.
 Repository discovery still uses the Bitbucket API — one call per page of
 repositories, not per commit.
 
-Auth: an Atlassian API token used as HTTP basic `username:token`, both for the
-API and (forwarded per request, never stored) for the clone the proxy performs.
+Auth: an Atlassian API token as HTTP basic `username:token`, or a workspace /
+project / repository access token as `Bearer` with the username left empty —
+both for the API and (forwarded per request, never stored) for the clone the
+proxy performs.
 
 ## Prerequisites
 
-1. A Bitbucket API token with `repository:read`, plus the account username or
-   email it belongs to.
+1. A credential that can read both repositories and pull requests — neither
+   permission implies the other, and a token holding only the first lists
+   repositories while every pull-request call 403s, which the per-repository
+   handler skips silently. The two families name them differently:
+
+   | credential | `bitbucket_username` | permissions |
+   |---|---|---|
+   | Atlassian API token | account email | `read:repository:bitbucket`, `read:pullrequest:bitbucket` |
+   | workspace / project / repository access token | empty | `repository`, `pullrequest` |
+
+   The roster stream additionally wants workspace membership read; without it
+   `workspace_members` 403s and is skipped, costing account display names.
 2. A reachable git-cli-proxy deployment and its bearer token. In-cluster the
    umbrella composes both (`insight-git-cli-proxy-config`); the proxy accepts
    traffic only from the namespaces its NetworkPolicy allows.
@@ -35,7 +47,7 @@ metadata:
     insight.cyberfabric.com/source-id: bitbucket-cloud-main
 type: Opaque
 stringData:
-  bitbucket_username: "CHANGE_ME"
+  bitbucket_username: "CHANGE_ME"   # account email for an API token; empty for an access token
   bitbucket_token: "CHANGE_ME"
   bitbucket_workspaces: '["acme"]'
   bitbucket_start_date: "2026-01-01"
@@ -52,8 +64,8 @@ repository nobody has touched since it is never listed, so never cloned.
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `bitbucket_username` | No | Atlassian account email/username. Set for personal API tokens (Basic `username:token`); leave empty for workspace/repository access tokens (Bearer). The clone username the proxy presents is derived from the same choice |
-| `bitbucket_token` | Yes | API token with `repository:read` |
+| `bitbucket_username` | No | Atlassian account email/username. Set for personal API tokens (Basic `username:token`); leave empty for workspace, project and repository access tokens (Bearer). The clone username the proxy presents is derived from the same choice |
+| `bitbucket_token` | Yes | API token or access token; see Prerequisites for the permissions each family names |
 | `bitbucket_workspaces` | Yes | JSON array of workspace slugs |
 | `bitbucket_api_base_url` | No | API base URL (default `https://api.bitbucket.org/2.0`) |
 | `bitbucket_exclude_repositories` | No | JSON array of regular expressions matched against a repository slug; a match is never listed, cloned or walked. Matched with `search`, so anchor with `$` for "ends with" (e.g. `["\\.rospecs$"]`). Empty collects everything |
@@ -80,25 +92,37 @@ kubectl apply -f src/ingestion/secrets/connectors/bitbucket-cloud.yaml
 | Stream | Upstream | Sync Mode | Cursor |
 |--------|----------|-----------|--------|
 | `repositories` | Bitbucket `/2.0/repositories/{workspace}` | incremental | `updated_on` |
+| `repository_visibility` | Bitbucket `/2.0/repositories/{workspace}`, unfiltered, one row | full refresh | — |
 | `commits` | proxy `/v1/commits` | incremental, per repository | `committed_date` |
 | `file_changes` | proxy `/v1/file-changes` | incremental, per repository | `committed_date` |
 | `branches` | proxy `/v1/branches` | full refresh, per repository | — |
-| `pull_requests` | Bitbucket `/pullrequests` (all states) | incremental | `updated_on` |
+| `pull_requests` | Bitbucket `/pullrequests` (all states) | incremental, per repository pushed to | `updated_on` |
 | `pull_request_comments` | `/pullrequests/{id}/comments` | windowed PR parent, full refresh per PR | — |
 | `pull_request_commits` | `/pullrequests/{id}/commits` | windowed PR parent, full refresh per PR | — |
 | `pull_request_diffstat` | `/pullrequests/{id}/diffstat` | windowed PR parent, full refresh per PR | — |
 | `pull_request_activity` | `/pullrequests/{id}/activity` | windowed PR parent, full refresh per PR | — |
 | `workspace_members` | `/workspaces/{w}/members` | full refresh | — |
-| `pipelines` | `/repositories/{r}/pipelines` | newest-first data feed | `created_on` |
-| `deployments` | `/repositories/{r}/deployments` | newest-first data feed | `created_on` |
+| `pipelines` | `/repositories/{r}/pipelines` | newest-first data feed, per repository pushed to | `created_on` |
+| `deployments` | `/repositories/{r}/deployments` | newest-first data feed, per repository pushed to | `created_on` |
 
 ### How the streams fit together
 
 `repositories` fans out over the configured workspaces (`ListPartitionRouter`)
-and is the incremental **parent**: the commit streams route through
-`SubstreamPartitionRouter` with `incremental_dependency: true`, so a sync visits
-only repositories whose `updated_on` advanced. The CDK persists parent state
-only when the child stream is incremental — `commits` and `file_changes` are.
+and is the incremental **parent**: every per-repository stream routes through
+`SubstreamPartitionRouter`, and every one but `branches` sets
+`incremental_dependency: true`, so a sync visits only repositories whose
+`updated_on` advanced since one lookback window before the last sync. The CDK
+persists parent state only when the child stream is incremental — `branches`
+is not, so its listing is bounded by the start date and every repository is
+re-read for heads each sync.
+
+The vendor moves a repository's `updated_on` on pushes only. For commits, file
+changes and commit authors that bound is exact. For pull requests, pipelines
+and deployments it is the accepted cost of not listing every repository every
+sync: a pull request reviewed, commented on or declined, or a pipeline started
+by a schedule or by hand, on a repository nobody pushed to since the last sync
+is collected at that repository's next push. Whatever the size of the
+workspace, a sync spends one listing request per repository pushed to.
 
 The proxy routes on a **flat** `clone_url` field, but Bitbucket nests clone
 links in an array (`links.clone[]`, one entry per protocol). Every repositories
@@ -109,26 +133,31 @@ transformation. The API link is used rather than a URL derived from
 The streams are otherwise independent: each carries its own cursor and asks the
 proxy for its own window. They join downstream by `sha`.
 
-`pull_requests` takes `repositories` as its parent by reference, and the four
-pull-request children take `pull_requests` the same way: one definition per
-listing, no copies. The CDK caches parent-stream responses per stream name and
-URL for the life of the sync, so `pull_requests` and its four children share one
-read of the repository listing (the top-level `repositories` stream reads its own
-incremental window) and each repository's pull requests are listed once for all
-five. One blocking stream group per level runs
-`repositories`, then `pull_requests`, then the children one at a time, so every
-read after the first is a cache hit rather than a race to the vendor. Each child
+Every stream that fans out over repositories takes `repositories` as its
+parent by reference, and the four pull-request children take `pull_requests`
+the same way: one definition per listing, no copies. The CDK caches
+parent-stream responses per stream name and URL for the life of the sync, so
+a stream that asks for a listing another stream already fetched reads it from
+the cache. One blocking stream group per level runs `repositories`, then
+`pull_requests`, then the four children one at a time, so on that chain every
+read after the first is a cache hit rather than a race to the vendor. The proxy
+walks, pipelines and deployments start together once `repositories` is done:
+their reads share the cache where they do not overlap and read the vendor
+where they do. `branches` is the exception to the shared read: full refresh,
+it persists no cursor, so its copy of the listing opens at the start date and
+reads the vendor on its own. Each child
 still keeps its own copy of the listing's cursor in its state; when two
 children's cursors for a repository differ (one of them lagged), their URLs
 differ, both read the vendor, and nothing is shared or lost. The listing request
 reads no clock for the same reason: its window opens at the cursor and has no
-upper bound, so the five streams, which start hours apart, build the same URL.
+upper bound, so `pull_requests` and its four children, which start hours apart,
+build the same URL.
 The cursor is per repository, so a walk is one repository's few pages and the
-one-day lookback covers a request updated while they are served. Past the CDK's
+one-hour lookback covers a request updated while they are served. Past the CDK's
 10,000-partition ceiling the cursor collapses to one global value: a walk becomes
 the whole sync, the CDK widens the next window by the previous sync's runtime on
-top of the lookback, and since each stream measures its own runtime the five
-URLs stop matching. Sharing is a per-repository-cursor property.
+top of the lookback, and since each stream measures its own runtime their URLs
+stop matching. Sharing is a per-repository-cursor property.
 
 `branches` is full refresh — bronze keeps the latest state per branch, and
 head-movement history is derived by the `snapshot` / `fields_history` dbt
@@ -143,22 +172,26 @@ collapses to current state and a head move is a tracked-column change.
 - **`fields=`** trims the response to the used properties; the full repository
   object is large and most of it is unused here.
 - **The "updated after" bound is server-side**, expressed as
-  `q=updated_on >= <bound>`: `repos_since_start` uses the configured start,
-  while the commit, file-change, and author parents use their saved cursor
-  through `repos_since_cursor`. The listing is requested `sort=created_on`
-  with a `created_on > <last seen>` bound in `q` instead of the vendor's page
-  numbers (the `repository_keyset_paginator` anchor): a repository pushed
-  while a long walk runs would otherwise shift the pages under the reader and
-  hide a neighbour. The cursor takes the newest `updated_on` seen, whatever
-  the order.
+  `q=updated_on >= <bound>` (the `repos_since_cursor` anchor). It has to be:
+  a cursor's `start_datetime` filters no records unless the stream also sets
+  `is_client_side_incremental`, and none of these do. The listing is requested
+  `sort=created_on` with a `created_on > <last seen>` bound in `q` instead of
+  the vendor's page numbers (the `repository_keyset_paginator` anchor): a
+  repository pushed while a long walk runs would otherwise shift the pages
+  under the reader and hide a neighbour. The cursor takes the newest
+  `updated_on` seen, whatever the order.
 
 ### Cold repositories
 
-The first request for an uncached repository gets `429` + `Retry-After` while
-the proxy clones it in the background; every proxy stream retries on `429`.
-`409` (the pinned snapshot was superseded) and `413` (repository over the
-proxy's size cap) fail the stream instead — retrying the same page token would
-loop.
+The first request for an uncached repository is held in-connection while the
+proxy clones it, and while it waits for cache headroom; a `429` +
+`Retry-After` is the exception (headroom exhausted for the whole wait) and
+every proxy stream retries it. Every proxy request carries
+`X-Repo-Size-Hint`, the repository's reported size, so the proxy reserves
+that much cache instead of its per-repository cap. `409` (the pinned snapshot
+was superseded) restarts the walk from the last record already seen; `413`
+(repository over the proxy's size cap) fails the stream; `401` is the proxy
+token and fails as a config error.
 
 ## The start-date bound
 
@@ -170,13 +203,21 @@ forms so an omission is visible:
 
 | anchor | applies to | form |
 |---|---|---|
-| `repos_since_start` | `repositories` (also the parent of every pull-request stream) and the repository listings of the branch, pipeline and deployment walks | `q=updated_on >= start_date`, server-side |
+| `repos_since_cursor` | `repositories`, the parent of every stream that fans out over repositories | `q=updated_on >= <the reading stream's saved cursor, one lookback back; the start date where it saved none>`, server-side |
 | `prs_since_start` | `pull_requests`, the parent of the four per-PR children | `q=updated_on >= <the stream's own cursor>` |
 
 Filtering repositories server-side is what bounds the clone cost: an untouched
 repository is never returned, so the proxy never walks it. VERIFIED against the
 live API — a workspace of 407 public repositories returns 47 for a cutoff six
 weeks back, and no row below the cutoff.
+
+That filtering is also why an empty repository listing is ordinary rather than
+alarming, and why the one listing that must mean something is exempt from it:
+`repository_visibility` asks for a single repository with no `q`, so its empty
+answer means one thing to the connector — no repository is reachable. A token
+that has lost repository access is served `200` with an empty page, not an
+error code, so without that probe every stream lands zero rows and the sync
+still reports success.
 
 One stream cannot comply. The deployments endpoint rejects `sort=created_on`
 (400) and **accepts a `q` on `created_on` while silently ignoring it** — a
@@ -224,7 +265,8 @@ source that shares it.
 | `pull_request_commits` | `bitbucket_cloud__pull_requests_commits` | `class_git_pull_requests_commits` |
 
 `pipelines`, `deployments` and `workspace_members` land in bronze only; no class
-consumes them yet.
+consumes them yet. `repository_visibility` is diagnostic and stays that way: one
+row per workspace recording that the token reached something, fed to no class.
 
 ## Not in git
 

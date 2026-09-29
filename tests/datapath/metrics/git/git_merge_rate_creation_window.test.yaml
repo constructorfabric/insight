@@ -1,0 +1,83 @@
+spec_version: 1
+description: >
+  Metric: git.merge_rate — share of created pull requests that merged, #3055.
+  How it's computed (bronze → silver → gold):
+    • bronze: the pull requests the connector reports, with whatever each says
+      about having merged
+    • silver: one class row per request, its state normalised and its close
+      time in one column
+    • gold:   both inputs are emitted per request and dated by the CREATION.
+      The denominator is every request created in the period; the numerator is
+      the same rows, contributing 1 where the request is merged NOW
+
+  The population is what this spec is about. Because both inputs ride the same
+  row and are dated the same way, the rate is the share of the period's OWN
+  requests that have merged — not the period's merges over the period's
+  creations, which is a different question with a different answer. A request
+  merged after the period ends still counts for the period it was opened in,
+  and a request opened earlier never enters, however plainly its merge lands
+  inside.
+
+  Every window asserted here is sized so that the other reading — the period's
+  merges over its creations — produces a DIFFERENT number, so no case passes
+  by coincidence.
+
+  Cases: the rate counts a merge that happened after the period closed and
+  ignores a request opened before the period even when that request merged
+  inside it, with the merged COUNT asserted beside the rate for the same window
+  where the two disagree by construction; the day series places each
+  contribution on the creation day rather than the merge day; both period
+  bounds are exercised, with a creation the day after the upper bound that must
+  not count; a declined request and an open one stay in the denominator and
+  lower the rate; a population that created but merged nothing reads zero,
+  while a period with no creations at all reads null.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/carol
+    - $ref: ../templates/people.yaml#/templates/dave
+
+  bronze_github.pull_requests:
+    # ON the lower bound, and merged well after the period closed. Both halves
+    # matter: the bound must be inclusive and the merge must still count.
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: mr-501, id: 501, number: 501, author_login: carol, created_at: "2026-10-01T08:00:00Z", updated_at: "2026-11-20T09:00:00Z", closed_at: "2026-11-20T09:00:00Z", merged_at: "2026-11-20T09:00:00Z", merge_commit_sha: merge-501}
+    # Opened inside the period and still open: denominator, not numerator. Its
+    # day is also the one-day window the zero case asks about.
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: mr-502, id: 502, number: 502, state: open, author_login: carol, created_at: "2026-10-06T08:00:00Z", updated_at: "2026-10-06T08:00:00Z", closed_at: "", merged_at: "", merge_commit_sha: ""}
+    # Opened BEFORE the period and merged inside it. It must not enter the
+    # rate at all, though it does raise the merged count for the period.
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: mr-503, id: 503, number: 503, author_login: carol, created_at: "2026-09-20T08:00:00Z", updated_at: "2026-10-10T09:00:00Z", closed_at: "2026-10-10T09:00:00Z", merged_at: "2026-10-10T09:00:00Z", merge_commit_sha: merge-503}
+    # Opened and merged inside the period: the only request the rate and the
+    # merged count for October have in common.
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: mr-504, id: 504, number: 504, author_login: carol, created_at: "2026-10-08T08:00:00Z", updated_at: "2026-10-09T09:00:00Z", closed_at: "2026-10-09T09:00:00Z", merged_at: "2026-10-09T09:00:00Z", merge_commit_sha: merge-504}
+    # ON the upper bound, merged after it. Also what makes the quotient exact:
+    # three of four rather than two of three.
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: mr-505, id: 505, number: 505, author_login: carol, created_at: "2026-10-31T08:00:00Z", updated_at: "2026-11-25T09:00:00Z", closed_at: "2026-11-25T09:00:00Z", merged_at: "2026-11-25T09:00:00Z", merge_commit_sha: merge-505}
+    # One day PAST the upper bound: an inclusive bound must stop here.
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: mr-506, id: 506, number: 506, author_login: carol, created_at: "2026-11-01T08:00:00Z", updated_at: "2026-11-05T09:00:00Z", closed_at: "2026-11-05T09:00:00Z", merged_at: "2026-11-05T09:00:00Z", merge_commit_sha: merge-506}
+
+    # dave's five, all opened on one day: the denominator is every request,
+    # whatever became of it.
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: mr-511, id: 511, number: 511, author_login: dave, created_at: "2026-10-02T08:00:00Z", updated_at: "2026-10-03T09:00:00Z", closed_at: "2026-10-03T09:00:00Z", merged_at: "2026-10-03T09:00:00Z", merge_commit_sha: merge-511}
+    # Merged after the period, which is what keeps dave's own window from
+    # reading the same under either question.
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: mr-515, id: 515, number: 515, author_login: dave, created_at: "2026-10-02T12:00:00Z", updated_at: "2026-11-10T09:00:00Z", closed_at: "2026-11-10T09:00:00Z", merged_at: "2026-11-10T09:00:00Z", merge_commit_sha: merge-515}
+    # Closed without merging, twice over.
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: mr-512, id: 512, number: 512, author_login: dave, created_at: "2026-10-02T09:00:00Z", updated_at: "2026-10-04T09:00:00Z", closed_at: "2026-10-04T09:00:00Z", merged_at: "", merge_commit_sha: ""}
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: mr-514, id: 514, number: 514, author_login: dave, created_at: "2026-10-02T11:00:00Z", updated_at: "2026-10-05T09:00:00Z", closed_at: "2026-10-05T09:00:00Z", merged_at: "", merge_commit_sha: ""}
+    # Still open.
+    - {$ref: ../templates/git_activity.yaml#/templates/pull_request, unique_key: mr-513, id: 513, number: 513, state: open, author_login: dave, created_at: "2026-10-02T10:00:00Z", updated_at: "2026-10-02T10:00:00Z", closed_at: "", merged_at: "", merge_commit_sha: ""}
+
+  bronze_github.pull_request_diff_stats:
+    # GitHub staging reads a request's author_email from here and nowhere else.
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-501, pull_number: 501, additions: 10, author_email: carol@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-502, pull_number: 502, additions: 10, author_email: carol@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-503, pull_number: 503, additions: 10, author_email: carol@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-504, pull_number: 504, additions: 10, author_email: carol@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-505, pull_number: 505, additions: 10, author_email: carol@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-506, pull_number: 506, additions: 10, author_email: carol@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-511, pull_number: 511, additions: 10, author_email: dave@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-512, pull_number: 512, additions: 10, author_email: dave@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-513, pull_number: 513, additions: 10, author_email: dave@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-514, pull_number: 514, additions: 10, author_email: dave@example.com}
+    - {$ref: ../templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-515, pull_number: 515, additions: 10, author_email: dave@example.com}

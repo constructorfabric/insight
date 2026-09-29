@@ -92,9 +92,12 @@ bronze:
     # metric's date can only be right if it came from the activity row.
     - {$ref: ../templates/bitbucket_git.yaml#/templates/pull_request, unique_key: "bb-pr:301", id: 301, author_display_name: Carol Gamma, author_account_id: carol-acct, created_on: "2026-09-25T08:00:00Z", updated_on: "2026-10-02T13:00:00Z", source_commit_sha: bb-src-301, destination_commit_sha: bb-dst-301, merge_commit_sha: bb-merge-301}
     - {$ref: ../templates/bitbucket_git.yaml#/templates/pull_request, unique_key: "bb-pr:302", id: 302, state: DECLINED, author_display_name: Carol Gamma, author_account_id: carol-acct, created_on: "2026-09-25T08:00:00Z", updated_on: "2026-10-02T13:00:00Z", source_commit_sha: bb-src-302, destination_commit_sha: bb-dst-302}
-    # Reported MERGED, and no terminal event was ever collected for it, so
-    # nothing says when it closed. Bitbucket takes the close time from the
-    # activity stream alone — see the gap this leaves in the module.
+    # Reported MERGED with no terminal event collected AND no commit seeded
+    # for the merge hash it names, so nothing corroborates the merge and
+    # nothing says when it closed. Both halves are needed: with the commit
+    # collected the close time is recovered (see
+    # git_bitbucket_merge_time_recovery), so seeding one here would silently
+    # retire this case. #3051
     - {$ref: ../templates/bitbucket_git.yaml#/templates/pull_request, unique_key: "bb-pr:303", id: 303, author_display_name: Carol Gamma, author_account_id: carol-acct, created_on: "2026-09-25T08:00:00Z", updated_on: "2026-10-02T13:00:00Z", source_commit_sha: bb-src-303, destination_commit_sha: bb-dst-303, merge_commit_sha: bb-merge-303}
 
   bronze_bitbucket_cloud.pull_request_activity:

@@ -174,11 +174,14 @@ identities) reach no account and stay unattributed.
   (body message, `x-ratelimit-remaining: 0`) run before any 403 handling;
   what remains of 403 — plus 404/410 — on repo-scoped streams skips that
   repository and the sync continues. 401 fails fast as a config error.
-- The proxy answers 429 + Retry-After while a repository is being cloned in
-  the background; proxy requesters retry generously (a cold clone of a large
-  repository runs many Retry-After cycles). 404/413 skip the repository;
-  409 (superseded snapshot) fails the attempt — the rerun resumes from the
-  stored cursor.
+- The proxy holds a request in-connection while it clones or waits for cache
+  headroom, so a 429 + Retry-After is the exception (headroom exhausted for
+  the whole wait) and proxy requesters retry it generously. Every proxy
+  request carries `X-Repo-Size-Hint`, the repository's reported size, so the
+  proxy reserves that much cache instead of its per-repository cap. 404/413
+  skip the repository; 409 (superseded snapshot) restarts the walk from the
+  last record already seen; 401 is the proxy token and fails as a config
+  error.
 - GraphQL errors arrive as HTTP 200. GitHub types an exhausted budget both
   `RATE_LIMIT` and `RATE_LIMITED`, so the throttle predicates match either and
   fall back to the message; anything else fails with GitHub's own message.

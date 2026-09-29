@@ -1,8 +1,8 @@
 """Pull requests merged, credited to the request's author and dated by the close.
 
 Each connector says a request landed its own way — GitHub's and GitLab's merged_at, and
-Bitbucket's terminal update event — and silver normalises all three to one state and one
-close time. Gold counts a request in the merged state with a known close time exactly once,
+Bitbucket's terminal update entry, falling back to the commit its merge names — and silver
+normalises all of them to one state and one close time. Gold counts a request in the merged state with a known close time exactly once,
 so an open one, a closed-but-never-merged one, a re-synced duplicate and a request whose
 state says merged while its close time is missing all stay out.
 """
@@ -177,13 +177,14 @@ def test_a_bitbucket_request_is_dated_by_its_terminal_merge_event_and_a_declined
 
 def test_a_merged_state_without_a_close_time_counts_for_nobody(spec: SpecRun) -> None:
     """A request whose state says merged while its close time is missing has no date to be
-    filed under, and the gate drops it rather than guessing one from the request's own
-    last update.
+    filed under, and the gate drops it rather than guessing one. What the pipeline will
+    guess from, where a merge commit corroborates the merge, is
+    git_bitbucket_merge_time_recovery's subject; here nothing corroborates it.
 
     Both halves of the pair are seeded, because the two connectors reach the state by
-    different routes: Bitbucket takes the close time from the activity stream and from
-    nowhere else, so a request reported MERGED whose terminal event was never collected
-    has none; GitLab copies the state from the source and derives the close time from
+    different routes: Bitbucket reads the close time from the activity stream, falling back
+    to the commit the merge names, so a request reported MERGED whose terminal event was
+    never collected AND whose merge commit was never collected either has none; GitLab copies the state from the source and derives the close time from
     merged_at and closed_at alone, so a request reported merged with neither is in the
     same position. Only GitHub is immune by construction — there the merged state IS a
     non-empty merge timestamp.
