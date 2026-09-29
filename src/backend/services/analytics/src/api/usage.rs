@@ -1,5 +1,6 @@
 use serde::Deserialize;
 use toolkit_canonical_errors::CanonicalError;
+use toolkit_security::SecurityContext;
 
 use super::ADMIN_ONLY;
 use super::error::UsageError;
@@ -7,8 +8,13 @@ use crate::domain::date_window::{self, Window, WindowError};
 
 mod breakdowns;
 mod ingest;
+mod sort;
 mod summary;
 
+pub use breakdowns::{
+    UsageActionsResponse, UsagePagesResponse, UsagePeopleResponse, get_usage_actions,
+    get_usage_pages, get_usage_people,
+};
 pub use ingest::{UsageIngestRequest, ingest_usage_events};
 pub use summary::{UsageConfigResponse, UsageSummaryResponse, get_usage_config, get_usage_summary};
 
@@ -40,15 +46,45 @@ pub struct UsageRangeQuery {
 
 impl UsageRangeQuery {
     fn window(&self) -> Result<Window, CanonicalError> {
-        date_window::parse_window(self.since.as_deref(), self.until.as_deref())
-            .map_err(range_violation)
+        parse_range(self.since.as_deref(), self.until.as_deref())
     }
+}
+
+fn parse_range(since: Option<&str>, until: Option<&str>) -> Result<Window, CanonicalError> {
+    date_window::parse_window(since, until).map_err(range_violation)
 }
 
 fn range_violation(error: WindowError) -> CanonicalError {
     UsageError::invalid_argument()
         .with_field_violation(error.field(), error.description(), "INVALID")
         .create()
+}
+
+fn visitors() -> String {
+    format!("uniqExactIf(person_id, person_id != toUUID('{NIL_UUID}'))")
+}
+
+struct WindowBinds {
+    tenant: String,
+    since: String,
+    until: String,
+}
+
+impl WindowBinds {
+    fn new(ctx: &SecurityContext, window: &Window) -> Self {
+        Self {
+            tenant: ctx.subject_tenant_id().to_string(),
+            since: window.since.to_string(),
+            until: window.until.to_string(),
+        }
+    }
+
+    fn query(&self, ch: &insight_clickhouse::Client, sql: &str) -> clickhouse::query::Query {
+        ch.query(sql)
+            .bind(self.tenant.as_str())
+            .bind(self.since.as_str())
+            .bind(self.until.as_str())
+    }
 }
 
 fn admin_only() -> CanonicalError {

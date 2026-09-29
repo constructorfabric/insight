@@ -1219,3 +1219,63 @@ async fn a_malformed_day_is_refused_before_the_store_is_asked() -> TestResult {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     Ok(())
 }
+
+const USAGE_LISTS: [&str; 3] = ["/v1/usage/people", "/v1/usage/pages", "/v1/usage/actions"];
+
+#[tokio::test]
+#[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
+async fn every_usage_list_is_refused_without_the_admin_role() -> TestResult {
+    let Some(db) = connect_or_skip().await else {
+        return Ok(());
+    };
+    let identity = spawn_identity_me(&[SOME_OTHER_ROLE]).await?;
+
+    for path in USAGE_LISTS {
+        let app = app_with_identity(db.clone(), Uuid::now_v7(), identity.clone());
+
+        let resp = app.oneshot(get(path)?).await?;
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN, "{path}");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
+async fn every_usage_list_admits_an_admin_and_reaches_the_store() -> TestResult {
+    let Some(db) = connect_or_skip().await else {
+        return Ok(());
+    };
+    let identity = spawn_identity_me(&[ADMIN_ROLE]).await?;
+
+    for path in USAGE_LISTS {
+        let app = app_with_identity(db.clone(), Uuid::now_v7(), identity.clone());
+
+        // ClickHouse is unreachable, so a 500 rather than a 403 shows the gate
+        // let them through.
+        let resp = app.oneshot(get(&format!("{path}?direction=asc"))?).await?;
+        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR, "{path}");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
+async fn an_order_a_list_cannot_take_is_refused_before_the_store_is_asked() -> TestResult {
+    let Some(db) = connect_or_skip().await else {
+        return Ok(());
+    };
+    let identity = spawn_identity_me(&[ADMIN_ROLE]).await?;
+
+    for uri in [
+        "/v1/usage/people?sort=views",
+        "/v1/usage/pages?sort=last_seen",
+        "/v1/usage/actions?direction=sideways",
+        "/v1/feedback?direction=sideways",
+    ] {
+        let app = app_with_identity(db.clone(), Uuid::now_v7(), identity.clone());
+
+        let resp = app.oneshot(get(uri)?).await?;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "{uri}");
+    }
+    Ok(())
+}

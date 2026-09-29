@@ -12,6 +12,7 @@ mod metrics;
 mod person_names;
 mod reports;
 mod saved_queries;
+mod sort_direction;
 pub(crate) mod usage;
 
 #[cfg(test)]
@@ -224,6 +225,65 @@ pub(crate) fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) ->
         .handler(usage::get_usage_summary)
         .register(router, openapi);
 
+    router = OperationBuilder::get("/v1/usage/people")
+        .operation_id("analytics_api.usage.people")
+        .summary("Who opened the product in a date range")
+        .authenticated()
+        .no_license_required()
+        .query_param_typed("since", false, "Inclusive first day, YYYY-MM-DD", "string")
+        .query_param_typed("until", false, "Inclusive last day, YYYY-MM-DD", "string")
+        .query_param_typed(
+            "sort",
+            false,
+            "visits (default), page_views or last_seen",
+            "string",
+        )
+        .query_param_typed("direction", false, "desc (default) or asc", "string")
+        .json_response_with_schema::<usage::UsagePeopleResponse>(
+            openapi,
+            StatusCode::OK,
+            "Visitors in the requested order",
+        )
+        .standard_errors(openapi)
+        .handler(usage::get_usage_people)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/v1/usage/pages")
+        .operation_id("analytics_api.usage.pages")
+        .summary("What was opened in a date range")
+        .authenticated()
+        .no_license_required()
+        .query_param_typed("since", false, "Inclusive first day, YYYY-MM-DD", "string")
+        .query_param_typed("until", false, "Inclusive last day, YYYY-MM-DD", "string")
+        .query_param_typed("sort", false, "views (default) or visitors", "string")
+        .query_param_typed("direction", false, "desc (default) or asc", "string")
+        .json_response_with_schema::<usage::UsagePagesResponse>(
+            openapi,
+            StatusCode::OK,
+            "Pages in the requested order",
+        )
+        .standard_errors(openapi)
+        .handler(usage::get_usage_pages)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/v1/usage/actions")
+        .operation_id("analytics_api.usage.actions")
+        .summary("Drill-downs and other actions in a date range")
+        .authenticated()
+        .no_license_required()
+        .query_param_typed("since", false, "Inclusive first day, YYYY-MM-DD", "string")
+        .query_param_typed("until", false, "Inclusive last day, YYYY-MM-DD", "string")
+        .query_param_typed("sort", false, "opens (default) or people", "string")
+        .query_param_typed("direction", false, "desc (default) or asc", "string")
+        .json_response_with_schema::<usage::UsageActionsResponse>(
+            openapi,
+            StatusCode::OK,
+            "Actions in the requested order",
+        )
+        .standard_errors(openapi)
+        .handler(usage::get_usage_actions)
+        .register(router, openapi);
+
     // Connector health: the operator's view of what the mover reports about
     // every connector's syncs. Admin-gated inside the handler, like every other
     // instance-wide read here.
@@ -327,10 +387,11 @@ pub(crate) fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) ->
         .no_license_required()
         .query_param_typed("since", false, "Inclusive first day, YYYY-MM-DD", "string")
         .query_param_typed("until", false, "Inclusive last day, YYYY-MM-DD", "string")
+        .query_param_typed("direction", false, "desc (default) or asc", "string")
         .json_response_with_schema::<feedback::FeedbackListResponse>(
             openapi,
             StatusCode::OK,
-            "Feedback entries, newest first",
+            "Feedback entries, newest first unless direction says otherwise",
         )
         .error_400(openapi)
         .error_401(openapi)

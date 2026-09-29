@@ -9,10 +9,10 @@ use toolkit_canonical_errors::CanonicalError;
 use toolkit_security::SecurityContext;
 
 use super::super::{AppState, require_admin};
-use super::breakdowns::{
-    UsageEvent, UsagePage, UsagePerson, actions_sql, by_page_sql, people_query,
+use super::{
+    PAGE_VIEW, TABLE, UsageRangeQuery, VISITS, WINDOW, WindowBinds, admin_only, read_error,
+    visitors,
 };
-use super::{NIL_UUID, PAGE_VIEW, TABLE, UsageRangeQuery, VISITS, WINDOW, admin_only, read_error};
 
 fn totals_sql(visitors: &str) -> String {
     format!(
@@ -50,9 +50,6 @@ pub struct UsageSummaryResponse {
     pub until: String,
     pub totals: UsageTotals,
     pub by_day: Vec<UsageDay>,
-    pub by_person: Vec<UsagePerson>,
-    pub by_page: Vec<UsagePage>,
-    pub by_event: Vec<UsageEvent>,
 }
 impl toolkit::api::api_dto::ResponseApiDto for UsageSummaryResponse {}
 
@@ -80,36 +77,24 @@ pub async fn get_usage_summary(
     require_admin(&state, &headers, admin_only).await?;
 
     let window = range.window()?;
-    let tenant = ctx.subject_tenant_id().to_string();
-    let since = window.since.to_string();
-    let until = window.until.to_string();
-    let bound = |sql: String| {
-        state
-            .ch
-            .query(&sql)
-            .bind(tenant.clone())
-            .bind(since.clone())
-            .bind(until.clone())
-    };
-    let visitors = format!("uniqExactIf(person_id, person_id != toUUID('{NIL_UUID}'))");
+    let binds = WindowBinds::new(&ctx, &window);
+    let visitors = visitors();
 
-    let (totals, by_day, by_person, by_page, by_event) = tokio::try_join!(
-        bound(totals_sql(&visitors)).fetch_one::<UsageTotals>(),
-        bound(by_day_sql(&visitors)).fetch_all::<UsageDay>(),
-        people_query(&state.ch, &tenant, &since, &until).fetch_all::<UsagePerson>(),
-        bound(by_page_sql(&visitors)).fetch_all::<UsagePage>(),
-        bound(actions_sql(&visitors)).fetch_all::<UsageEvent>(),
+    let (totals, by_day) = tokio::try_join!(
+        binds
+            .query(&state.ch, &totals_sql(&visitors))
+            .fetch_one::<UsageTotals>(),
+        binds
+            .query(&state.ch, &by_day_sql(&visitors))
+            .fetch_all::<UsageDay>(),
     )
     .map_err(read_error)?;
 
     Ok(Json(UsageSummaryResponse {
-        since,
-        until,
+        since: binds.since,
+        until: binds.until,
         totals,
         by_day,
-        by_person,
-        by_page,
-        by_event,
     }))
 }
 
