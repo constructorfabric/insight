@@ -40,7 +40,7 @@ type Story = StoryObj<typeof Catalogue>;
 
 export const Default: Story = {};
 
-export const TestHiddenAssistantToggleClearsTheCreateButton: Story = {
+export const TestAssistantTogglesClearTheCreateButton: Story = {
   decorators: [
     (Story) => (
       <div style={{ width: CARD_PX_WIDE }}>
@@ -50,14 +50,16 @@ export const TestHiddenAssistantToggleClearsTheCreateButton: Story = {
   ],
   tags: ["test"],
   play: async ({ canvas }) => {
-    await userEvent.click(
-      canvas.getByRole("button", { name: "Hide the assistant" })
-    );
-
     const create = canvas.getByRole("button", { name: "New dataset" });
-    const toggle = canvas.getByRole("button", { name: "Show the assistant" });
+    const open = canvas.getByRole("button", { name: "Open assistant" });
 
     await expect(create).toBeVisible();
-    expectNothingOverlaps(create, [toggle], () => "The assistant toggle");
+    expectNothingOverlaps(create, [open], () => "The open-assistant button");
+
+    await userEvent.click(open);
+    const collapse = canvas.getByRole("button", { name: "Collapse assistant" });
+
+    await expect(create).toBeVisible();
+    expectNothingOverlaps(create, [collapse], () => "The collapse button");
   },
 };

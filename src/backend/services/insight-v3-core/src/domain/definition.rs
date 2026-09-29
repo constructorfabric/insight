@@ -13,6 +13,7 @@ pub(crate) mod arriving;
 use std::fmt;
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use thiserror::Error;
@@ -150,6 +151,18 @@ pub(crate) enum Change {
     /// between and the rename overwrites them; the store refuses instead.
     Create(DefinitionKind, DefinitionName, serde_json::Value),
     Delete(DefinitionKind, DefinitionName),
+    CarryFolder {
+        from: DefinitionName,
+        to: DefinitionName,
+    },
+    CarryTags {
+        from: DefinitionName,
+        to: DefinitionName,
+    },
+    CarryPins {
+        from: DefinitionName,
+        to: DefinitionName,
+    },
 }
 
 /// A definition as it stands: what kind it is, what it is called, and what it
@@ -211,6 +224,12 @@ pub(crate) trait Definitions: Lookup {
         needle: &str,
         page: Page,
     ) -> Result<NamePage, DefinitionStoreError>;
+
+    async fn updated_at(
+        &self,
+        kind: DefinitionKind,
+        name: &DefinitionName,
+    ) -> Result<Option<DateTime<Utc>>, DefinitionStoreError>;
 
     /// Removes the definition, reporting whether there was one.
     async fn delete(

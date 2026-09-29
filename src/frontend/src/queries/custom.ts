@@ -8,38 +8,56 @@ import {
 
 import type {
   ChatTurn,
+  DashboardRead,
   RecordPage,
   DefinitionKind,
   EditableKind,
+  FolderFilter,
   NamePage,
   PageRequest,
 } from "@/api/custom-client";
 import {
+  createFolder,
   deleteDataset,
   deleteDefinition,
+  deleteFolder,
+  duplicateDashboard,
   fetchDashboard,
+  fetchDashboardFolder,
   fetchDashboardNames,
+  fetchDashboardRead,
   fetchDataset,
   fetchDatasetDependents,
   fetchDatasetNames,
   fetchDatasetRecords,
   fetchDependents,
+  fetchFolders,
   fetchMetric,
   fetchMetricNames,
+  fetchPins,
   fetchTable,
   fetchTables,
+  fetchTags,
   fetchWidget,
   fetchWidgetNames,
+  moveDashboard,
+  pinDashboard,
   putDataset,
   putDefinition,
   renameDefinition,
+  renameFolder,
   runMetric,
   sendChat,
+  setDashboardTags,
+  unpinDashboard,
 } from "@/api/custom-client";
 import type { RunOptions } from "@/api/custom-client";
 
 const WIDGET_QUERY_PREFIX = ["custom", "widget"] as const;
 const NAME_PAGES_PREFIX = ["custom", "names"] as const;
+const FOLDERS_PREFIX = ["custom", "folders"] as const;
+const TAGS_PREFIX = ["custom", "tags"] as const;
+const PINS_PREFIX = ["custom", "pins"] as const;
 
 /** How many names a catalogue asks for at a time. */
 const PAGE_SIZE = 50;
@@ -65,13 +83,24 @@ const FETCH_NAMES: Record<
  * `total` counts the matches rather than the page, so the list can say what
  * is behind it and stop asking once it has them all.
  */
-export function definitionPagesQuery(kind: EditableKind, search = "") {
+export function definitionPagesQuery(
+  kind: EditableKind,
+  search = "",
+  folder?: FolderFilter,
+  tags: string[] = []
+) {
   return infiniteQueryOptions({
     // The needle is part of the key, so a search is its own cached answer
     // rather than overwriting the list everyone else is reading.
-    queryKey: [...NAME_PAGES_PREFIX, kind, search],
+    queryKey: [...NAME_PAGES_PREFIX, kind, search, folder ?? null, tags],
     queryFn: ({ pageParam }) =>
-      FETCH_NAMES[kind]({ search, limit: PAGE_SIZE, offset: pageParam }),
+      FETCH_NAMES[kind]({
+        search,
+        limit: PAGE_SIZE,
+        offset: pageParam,
+        ...(folder ? { folder } : {}),
+        ...(tags.length > 0 ? { tags } : {}),
+      }),
     initialPageParam: 0,
     getNextPageParam: (last: NamePage, pages: NamePage[]) => {
       const read = pages.reduce((count, page) => count + page.names.length, 0);
@@ -119,10 +148,52 @@ export function catalogueNamesQuery(kind: EditableKind) {
   });
 }
 
-export function dashboardQuery(name: string) {
+function dashboardReadQuery(name: string) {
   return queryOptions({
     queryKey: ["custom", "dashboard", name],
-    queryFn: () => fetchDashboard(name),
+    queryFn: () => fetchDashboardRead(name),
+  });
+}
+
+export function dashboardQuery(name: string) {
+  return queryOptions({
+    ...dashboardReadQuery(name),
+    select: (read: DashboardRead) => read.body,
+  });
+}
+
+export function dashboardTagsQuery(name: string) {
+  return queryOptions({
+    ...dashboardReadQuery(name),
+    select: (read: DashboardRead) => read.tags,
+  });
+}
+
+export function tagsQuery() {
+  return queryOptions({
+    queryKey: TAGS_PREFIX,
+    queryFn: fetchTags,
+  });
+}
+
+export function pinsQuery() {
+  return queryOptions({
+    queryKey: PINS_PREFIX,
+    queryFn: fetchPins,
+  });
+}
+
+export function foldersQuery() {
+  return queryOptions({
+    queryKey: FOLDERS_PREFIX,
+    queryFn: fetchFolders,
+  });
+}
+
+export function dashboardFolderQuery(name: string) {
+  return queryOptions({
+    queryKey: [...FOLDERS_PREFIX, "of", name],
+    queryFn: () => fetchDashboardFolder(name),
   });
 }
 
@@ -298,6 +369,80 @@ export function useRenameDefinition() {
   });
 }
 
+export function useCreateFolder() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (name: string) => createFolder(name),
+    onSettled: () => invalidateDashboardList(queryClient),
+  });
+}
+
+export function useRenameFolder() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) =>
+      renameFolder(id, name),
+    onSettled: () => invalidateDashboardList(queryClient),
+  });
+}
+
+export function useDeleteFolder() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: string) => deleteFolder(id),
+    onSettled: () => invalidateDashboardList(queryClient),
+  });
+}
+
+export function useMoveDashboard() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ name, folder }: { name: string; folder: string | null }) =>
+      moveDashboard(name, folder),
+    onSettled: () => invalidateDashboardList(queryClient),
+  });
+}
+
+export function useSetDashboardTags() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ name, tags }: { name: string; tags: string[] }) =>
+      setDashboardTags(name, tags),
+    onSettled: (_done, _error, { name }) =>
+      Promise.all([
+        invalidateDashboardList(queryClient),
+        queryClient.invalidateQueries({
+          queryKey: dashboardQuery(name).queryKey,
+        }),
+      ]),
+  });
+}
+
+export function useDuplicateDashboard() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ name, to }: { name: string; to: string }) =>
+      duplicateDashboard(name, to),
+    onSettled: () => invalidateDashboardList(queryClient),
+  });
+}
+
+export function useSetPinned() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ name, pinned }: { name: string; pinned: boolean }) =>
+      pinned ? pinDashboard(name) : unpinDashboard(name),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: PINS_PREFIX }),
+  });
+}
+
 export function useSendChat() {
   return useMutation({
     mutationFn: ({
@@ -313,7 +458,12 @@ export function useSendChat() {
 export function invalidateDashboardList(queryClient: QueryClient) {
   // Every catalogue page reads these, and a chat that built a dashboard
   // built its metric and widgets too.
-  return queryClient.invalidateQueries({ queryKey: NAME_PAGES_PREFIX });
+  return Promise.all([
+    queryClient.invalidateQueries({ queryKey: NAME_PAGES_PREFIX }),
+    queryClient.invalidateQueries({ queryKey: FOLDERS_PREFIX }),
+    queryClient.invalidateQueries({ queryKey: TAGS_PREFIX }),
+    queryClient.invalidateQueries({ queryKey: PINS_PREFIX }),
+  ]);
 }
 
 export function invalidateDashboardPage(

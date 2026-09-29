@@ -11,7 +11,7 @@ use tower::ServiceExt as _;
 use super::*;
 use crate::api::AppState;
 use crate::chat::ChatClient;
-use crate::domain::definition::Definitions;
+use crate::domain::folders::DefinitionStore;
 use crate::domain::query::metric_query::MetricRunner;
 use crate::store::definitions::memory::MemoryDefinitions;
 
@@ -61,7 +61,7 @@ impl TestHarness {
     async fn with_a_store_that_is_down() -> Self {
         Self::build(
             true,
-            &(Arc::new(MemoryDefinitions::refusing()) as Arc<dyn Definitions>),
+            &(Arc::new(MemoryDefinitions::refusing()) as Arc<dyn DefinitionStore>),
         )
     }
 
@@ -70,11 +70,11 @@ impl TestHarness {
     async fn with_caller(is_admin: bool) -> Self {
         Self::build(
             is_admin,
-            &(Arc::new(MemoryDefinitions::new()) as Arc<dyn Definitions>),
+            &(Arc::new(MemoryDefinitions::new()) as Arc<dyn DefinitionStore>),
         )
     }
 
-    fn build(is_admin: bool, definitions: &Arc<dyn Definitions>) -> Self {
+    fn build(is_admin: bool, definitions: &Arc<dyn DefinitionStore>) -> Self {
         let mut mock = Mock::new();
         mock.non_exhaustive();
         let openapi = OpenApiRegistryImpl::new();
@@ -916,4 +916,61 @@ async fn a_store_that_is_down_is_ours_to_fix_and_says_nothing_about_itself() {
     assert_eq!(failed.status, StatusCode::INTERNAL_SERVER_ERROR);
     let said = String::from_utf8_lossy(&failed.body);
     assert!(!said.contains("store is down"), "{said}");
+}
+
+async fn last_written(harness: &TestHarness, path: &str) -> chrono::DateTime<chrono::Utc> {
+    let read = harness.get_json(path).await;
+    assert_eq!(read.status(), StatusCode::OK);
+    let body = read.json().await;
+    let stamp = body["updated_at"].as_str().unwrap_or_default().to_owned();
+
+    assert!(stamp.ends_with('Z'), "a UTC stamp: {body}");
+    chrono::DateTime::parse_from_rfc3339(&stamp)
+        .unwrap_or_else(|error| panic!("`{stamp}` must be RFC 3339: {error}"))
+        .with_timezone(&chrono::Utc)
+}
+
+#[tokio::test]
+async fn a_dashboard_read_says_when_it_was_last_written_and_a_write_moves_it() {
+    let harness = TestHarness::new().await;
+    let before = chrono::SubsecRound::trunc_subsecs(chrono::Utc::now(), 3);
+    harness
+        .put_json(
+            "/v1/dashboards/board",
+            json!({ "title": "Board", "widgets": [] }),
+        )
+        .await;
+
+    let first = last_written(&harness, "/v1/dashboards/board").await;
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    harness
+        .put_json(
+            "/v1/dashboards/board",
+            json!({ "title": "Board, again", "widgets": [] }),
+        )
+        .await;
+    let second = last_written(&harness, "/v1/dashboards/board").await;
+
+    assert!(first >= before, "{first} should not precede {before}");
+    assert!(second > first, "{second} should follow {first}");
+}
+
+#[tokio::test]
+async fn a_dashboard_stamp_is_utc_to_the_millisecond() {
+    let harness = TestHarness::new().await;
+    harness
+        .put_json(
+            "/v1/dashboards/board",
+            json!({ "title": "Board", "widgets": [] }),
+        )
+        .await;
+
+    let read = harness.get_json("/v1/dashboards/board").await.json().await;
+    let stamp = read["updated_at"].as_str().unwrap_or_default();
+
+    let shape = chrono::NaiveDateTime::parse_from_str(stamp, "%Y-%m-%dT%H:%M:%S%.3fZ");
+    assert!(
+        shape.is_ok() && stamp.len() == "2026-01-01T00:00:00.000Z".len(),
+        "`{stamp}` should read YYYY-MM-DDTHH:mm:ss.sssZ"
+    );
 }

@@ -1,4 +1,8 @@
-import { retainSearchParams } from "@tanstack/react-router";
+import {
+  defaultParseSearch,
+  defaultStringifySearch,
+  retainSearchParams,
+} from "@tanstack/react-router";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -177,5 +181,49 @@ describe("the picked time range", () => {
 
   it("is carried across a route change like every other portal key", () => {
     expect(PORTAL_SEARCH_KEYS).toContain("range");
+  });
+});
+
+describe("the dashboard folder param", () => {
+  it("keeps the folder a link names", () => {
+    expect(validatePortalSearch({ folder: "unfiled" }).folder).toBe("unfiled");
+    expect(validatePortalSearch({ folder: "" }).folder).toBeUndefined();
+  });
+
+  it("rides only on the link that names it, never into another zone", () => {
+    expect(PORTAL_SEARCH_KEYS).not.toContain("folder");
+  });
+});
+
+describe("the dashboard tag param", () => {
+  it("keeps every tag a link names, one or several", () => {
+    expect(validatePortalSearch({ tag: "Ops" }).tag).toEqual(["Ops"]);
+    expect(validatePortalSearch({ tag: ["Ops", "Platform"] }).tag).toEqual([
+      "Ops",
+      "Platform",
+    ]);
+  });
+
+  it.each([
+    ["an empty value", ""],
+    ["an empty list", []],
+    ["a list of empty values", ["", ""]],
+    ["an object", { name: "Ops" }],
+  ])("drops %s", (_case, tag) => {
+    expect(validatePortalSearch({ tag }).tag).toBeUndefined();
+  });
+
+  it("reads the tags a hand-written link repeats, and the list the router writes", () => {
+    const repeated = defaultParseSearch("?tag=Ops&tag=2026&tag=");
+    const written = defaultParseSearch(
+      defaultStringifySearch({ tag: ["Ops", "2026"] }),
+    );
+
+    expect(validatePortalSearch(repeated).tag).toEqual(["Ops", "2026"]);
+    expect(validatePortalSearch(written).tag).toEqual(["Ops", "2026"]);
+  });
+
+  it("rides only on the link that names it, never into another zone", () => {
+    expect(PORTAL_SEARCH_KEYS).not.toContain("tag");
   });
 });

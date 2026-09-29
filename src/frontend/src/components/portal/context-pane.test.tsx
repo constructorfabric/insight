@@ -7,7 +7,14 @@ vi.mock("@tanstack/react-router", async () => {
 import { portalRouter } from "@/test/portal-router";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, renderHook, screen } from "@testing-library/react";
+import {
+  act,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -26,6 +33,11 @@ const mocks = vi.hoisted(() => ({
   isAdmin: false,
   canSeeOthers: true,
   showPlanned: false,
+  createFolder: vi.fn(),
+  renameFolder: vi.fn(),
+  deleteFolder: vi.fn(),
+  fetchPins: vi.fn(),
+  fetchDashboardRead: vi.fn(),
 }));
 
 vi.mock("@/lib/portal/use-active-zone", () => ({ useActiveZone: () => mocks.zone }));
@@ -55,7 +67,21 @@ vi.mock("@/lib/portal/portal-store", async (orig) => ({
 vi.mock("@/api/custom-client", async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
   fetchDashboardNames: async () => ({ names: ["delivery"], total: 14 }),
+  fetchFolders: async () => ({
+    folders: [
+      { id: "f1", name: "Platform", dashboards: 3 },
+      { id: "f2", name: "Product", dashboards: 0 },
+    ],
+    unfiled: 11,
+  }),
+  createFolder: (name: string) => mocks.createFolder(name),
+  renameFolder: (id: string, name: string) => mocks.renameFolder(id, name),
+  deleteFolder: (id: string) => mocks.deleteFolder(id),
+  fetchPins: () => mocks.fetchPins(),
+  fetchDashboardRead: (name: string) => mocks.fetchDashboardRead(name),
 }));
+
+import { CustomApiError } from "@/api/custom-client";
 
 import {
   usePortalDir,
@@ -107,6 +133,11 @@ beforeEach(() => {
   mocks.canSeeOthers = true;
   mocks.showPlanned = false;
   mocks.standings = [];
+  mocks.createFolder.mockReset().mockResolvedValue({ id: "f3", name: "Hiring" });
+  mocks.renameFolder.mockReset().mockResolvedValue({ id: "f1", name: "Core" });
+  mocks.deleteFolder.mockReset().mockResolvedValue(undefined);
+  mocks.fetchPins.mockReset().mockResolvedValue([]);
+  mocks.fetchDashboardRead.mockReset().mockReturnValue(new Promise(() => {}));
   act(() => {
     portalRouter.reset();
     portalRouter.set({ dir: "dev" });
@@ -564,5 +595,225 @@ describe("ContextPane highlight", () => {
     act(() => portalRouter.set({ item: "trend" }));
     pane();
     expect(buttonFor("My team")).toHaveAttribute("data-active");
+  });
+});
+
+describe("Dashboards pane folders", () => {
+  const onTheList = (folder?: string) => {
+    inZone("custom");
+    act(() => {
+      portalRouter.go("/portal/custom");
+      if (folder) portalRouter.set({ folder });
+    });
+  };
+
+  it("lists each folder with its count, then the unfiled", async () => {
+    onTheList();
+    pane();
+
+    const platform = await screen.findByRole("link", { name: /Platform/ });
+    expect(platform).toHaveAttribute("href", "/portal/custom?folder=f1");
+    expect(platform.closest("li")).toHaveTextContent("3");
+    const unfiled = screen.getByRole("link", { name: /Unfiled/ });
+    expect(unfiled).toHaveAttribute("href", "/portal/custom?folder=unfiled");
+    expect(unfiled.closest("li")).toHaveTextContent("11");
+  });
+
+  it("marks the folder the URL names, and not All dashboards", async () => {
+    onTheList("f1");
+    pane();
+
+    expect(await screen.findByRole("link", { name: /Platform/ })).toHaveAttribute(
+      "data-active",
+    );
+    expect(buttonFor("Product")).not.toHaveAttribute("data-active");
+    expect(buttonFor("All dashboards")).not.toHaveAttribute("data-active");
+  });
+
+  it("keeps the picked tags when switching folder", async () => {
+    inZone("custom");
+    act(() => {
+      portalRouter.go("/portal/custom");
+      portalRouter.set({ folder: "f1", tag: ["Ops"] });
+    });
+    pane();
+
+    const query = (label: RegExp) =>
+      new URLSearchParams(
+        screen.getByRole("link", { name: label }).getAttribute("href")!.split("?")[1],
+      );
+    await screen.findByRole("link", { name: /Product/ });
+    expect(Object.fromEntries(query(/Product/))).toEqual({ folder: "f2", tag: "Ops" });
+    expect(Object.fromEntries(query(/Unfiled/))).toEqual({ folder: "unfiled", tag: "Ops" });
+    expect(Object.fromEntries(query(/All dashboards/))).toEqual({ tag: "Ops" });
+  });
+
+  it("marks nothing for a folder the URL names that is not there", async () => {
+    onTheList("gone");
+    pane();
+
+    await screen.findByRole("link", { name: /Platform/ });
+    for (const label of ["Platform", "Product", "Unfiled", "All dashboards"]) {
+      expect(buttonFor(label)).not.toHaveAttribute("data-active");
+    }
+  });
+
+  it("makes a folder on Enter", async () => {
+    onTheList();
+    pane();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: /New folder/ }));
+    await user.type(screen.getByRole("textbox", { name: "Folder name" }), "Hiring{Enter}");
+
+    expect(mocks.createFolder).toHaveBeenCalledWith("Hiring");
+    expect(await screen.findByRole("button", { name: /New folder/ })).toBeInTheDocument();
+  });
+
+  it("drops a new folder on Esc without asking the service", async () => {
+    onTheList();
+    pane();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: /New folder/ }));
+    await user.type(screen.getByRole("textbox", { name: "Folder name" }), "Hir{Escape}");
+
+    expect(screen.queryByRole("textbox", { name: "Folder name" })).toBeNull();
+    expect(mocks.createFolder).not.toHaveBeenCalled();
+  });
+
+  it("says under the field why a name was refused, and keeps the field", async () => {
+    mocks.createFolder.mockRejectedValue(
+      new CustomApiError(409, { detail: "a folder named `platform` already exists" }),
+    );
+    onTheList();
+    pane();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: /New folder/ }));
+    await user.type(screen.getByRole("textbox", { name: "Folder name" }), "platform{Enter}");
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "a folder named `platform` already exists",
+    );
+    expect(screen.getByRole("textbox", { name: "Folder name" })).toHaveValue("platform");
+  });
+
+  it("renames a folder from its menu, in the same field", async () => {
+    onTheList();
+    pane();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: "More for Platform" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Rename" }));
+    const field = screen.getByRole("textbox", { name: "Folder name" });
+    expect(field).toHaveValue("Platform");
+    await user.clear(field);
+    await user.type(field, "Core{Enter}");
+
+    expect(mocks.renameFolder).toHaveBeenCalledWith("f1", "Core");
+  });
+
+  it("asks before deleting a folder, and says where its dashboards go", async () => {
+    onTheList();
+    pane();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: "More for Platform" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
+
+    expect(await screen.findByRole("dialog")).toHaveTextContent(
+      "Its 3 dashboards move to Unfiled.",
+    );
+    expect(mocks.deleteFolder).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Delete folder" }));
+    expect(mocks.deleteFolder).toHaveBeenCalledWith("f1");
+  });
+});
+
+describe("Dashboards pane pins", () => {
+  const TITLES: Record<string, string> = {
+    hiring: "Hiring pipeline",
+    delivery: "Delivery",
+  };
+
+  function pinned(names: string[]) {
+    mocks.fetchPins.mockResolvedValue(names);
+    mocks.fetchDashboardRead.mockImplementation(async (name: string) => ({
+      body: { title: TITLES[name] ?? "", widgets: [] },
+      tags: [],
+    }));
+    inZone("custom");
+  }
+
+  const groupLabels = () =>
+    [...document.querySelectorAll('[data-slot="sidebar-group-label"]')].map(
+      (label) => label.textContent,
+    );
+
+  const pinnedRows = () =>
+    within(
+      screen
+        .getByText("Pinned")
+        .closest('[data-slot="sidebar-group"]') as HTMLElement,
+    ).getAllByRole("link");
+
+  it("lists the pinned dashboards after the catalogues, in pin order, by title", async () => {
+    pinned(["hiring", "delivery"]);
+    pane();
+
+    await screen.findByRole("link", { name: "Hiring pipeline" });
+    expect(groupLabels()).toEqual(["Browse", "Folders", "Catalogue", "Pinned"]);
+    const rows = pinnedRows();
+    expect(rows.map((row) => row.textContent)).toEqual([
+      "Hiring pipeline",
+      "Delivery",
+    ]);
+    expect(rows.map((row) => row.getAttribute("href"))).toEqual([
+      "/portal/custom/hiring",
+      "/portal/custom/delivery",
+    ]);
+  });
+
+  it("names a pinned dashboard by its name while its title loads or when it has none", async () => {
+    mocks.fetchPins.mockResolvedValue(["loading", "untitled"]);
+    mocks.fetchDashboardRead.mockImplementation((name: string) =>
+      name === "loading"
+        ? new Promise(() => {})
+        : Promise.resolve({ body: { title: "", widgets: [] }, tags: [] }),
+    );
+    inZone("custom");
+    pane();
+
+    await screen.findByRole("link", { name: "loading" });
+    await waitFor(() =>
+      expect(mocks.fetchDashboardRead).toHaveBeenCalledWith("untitled"),
+    );
+    expect(pinnedRows().map((row) => row.textContent)).toEqual([
+      "loading",
+      "untitled",
+    ]);
+  });
+
+  it("marks the pinned dashboard on screen", async () => {
+    pinned(["hiring", "delivery"]);
+    act(() => portalRouter.go("/portal/custom/delivery"));
+    pane();
+
+    expect(
+      await screen.findByRole("link", { name: "Delivery" }),
+    ).toHaveAttribute("data-active");
+    expect(
+      screen.getByRole("link", { name: "Hiring pipeline" }),
+    ).not.toHaveAttribute("data-active");
+  });
+
+  it("hides the group when nothing is pinned", async () => {
+    pinned([]);
+    pane();
+
+    await screen.findByText("14");
+    await waitFor(() => expect(mocks.fetchPins).toHaveBeenCalled());
+    expect(screen.queryByText("Pinned")).toBeNull();
   });
 });

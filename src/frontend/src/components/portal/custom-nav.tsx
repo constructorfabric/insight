@@ -8,7 +8,9 @@ import {
 } from "lucide-react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 
+import { FoldersGroup } from "@/components/portal/folder-rows";
 import { CountBadge, UnbuiltRow } from "@/components/portal/pane-nav";
+import { PinnedGroup } from "@/components/portal/pinned-rows";
 import {
   SidebarGroup,
   SidebarGroupContent,
@@ -18,6 +20,7 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import { DASHBOARD_BROWSE_PLANNED } from "@/lib/portal/nav-model";
+import { usePortalSearch } from "@/lib/portal/portal-search";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import { definitionPagesQuery } from "@/queries/custom";
 
@@ -37,6 +40,7 @@ export function CustomNav() {
   const showPlanned = usePortalShowPlanned();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const routeId = useRouterState({ select: (s) => s.matches.at(-1)?.routeId });
+  const { folder, tag } = usePortalSearch();
   const { data } = useInfiniteQuery(definitionPagesQuery("dashboards"));
   const total = data?.pages[0]?.total;
 
@@ -48,8 +52,10 @@ export function CustomNav() {
           <SidebarMenu>
             <SidebarMenuItem>
               <SidebarMenuButton
-                isActive={routeId != null && DASHBOARD_ROUTES.has(routeId)}
-                render={<Link to="/portal/custom" />}
+                isActive={
+                  routeId != null && DASHBOARD_ROUTES.has(routeId) && !folder
+                }
+                render={<Link to="/portal/custom" search={{ tag }} />}
               >
                 <LayoutGrid />
                 <span>All dashboards</span>
@@ -64,6 +70,7 @@ export function CustomNav() {
           </SidebarMenu>
         </SidebarGroupContent>
       </SidebarGroup>
+      <FoldersGroup />
       <SidebarGroup>
         <SidebarGroupLabel>Catalogue</SidebarGroupLabel>
         <SidebarGroupContent>
@@ -82,6 +89,7 @@ export function CustomNav() {
           </SidebarMenu>
         </SidebarGroupContent>
       </SidebarGroup>
+      <PinnedGroup />
     </>
   );
 }

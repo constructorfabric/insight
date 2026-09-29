@@ -9,16 +9,18 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/api/custom-client")>();
   return {
     ...actual,
-    fetchDashboard: vi.fn(),
+    fetchDashboardRead: vi.fn(),
     fetchWidget: vi.fn(),
     fetchMetric: vi.fn(),
     runMetric: vi.fn(),
     sendChat: vi.fn(),
+    fetchPins: vi.fn(),
+    renameDefinition: vi.fn(),
   };
 });
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -45,9 +47,9 @@ beforeEach(() => {
 
 describe("/portal/custom/$name", () => {
   it("renders a widget per name in the dashboard", async () => {
-    vi.mocked(customClient.fetchDashboard).mockResolvedValue({
-      title: "Engineering",
-      widgets: ["commits_table"],
+    vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+      body: { title: "Engineering", widgets: ["commits_table"] },
+      tags: [],
     });
     vi.mocked(customClient.fetchWidget).mockResolvedValue({
       type: "table",
@@ -69,14 +71,67 @@ describe("/portal/custom/$name", () => {
     expect(await screen.findByRole("cell", { name: "59" })).toBeInTheDocument();
   });
 
+  it("offers Edit and the ··· menu in the header", async () => {
+    vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+      body: { title: "Engineering", widgets: [] },
+      tags: [],
+    });
+    portalRouter.go("/portal/custom/engineering");
+
+    render(<Component />, { wrapper });
+
+    const header = (await screen.findByRole("heading", {
+      level: 1,
+      name: "Engineering",
+    })).closest("header") as HTMLElement;
+    expect(
+      within(header).getByRole("button", { name: "Edit engineering" })
+    ).toHaveAttribute("href", "/portal/custom/edit/dashboards/engineering");
+    expect(
+      within(header).getByRole("button", { name: "More for engineering" })
+    ).toBeInTheDocument();
+  });
+
+  it("lands on the new name after a rename, though the old one is gone", async () => {
+    vi.mocked(customClient.fetchPins).mockResolvedValue([]);
+    vi.mocked(customClient.fetchDashboardRead)
+      .mockResolvedValueOnce({
+        body: { title: "Engineering", widgets: [] },
+        tags: [],
+      })
+      .mockRejectedValue(new customClient.CustomApiError(404, null));
+    vi.mocked(customClient.renameDefinition).mockResolvedValue({
+      name: "platform",
+      rewritten: [],
+    });
+    portalRouter.go("/portal/custom/engineering");
+    const user = userEvent.setup();
+
+    render(<Component />, { wrapper });
+    await user.click(
+      await screen.findByRole("button", { name: "More for engineering" })
+    );
+    await user.click(await screen.findByRole("menuitem", { name: "Rename…" }));
+    const field = await screen.findByRole("textbox", { name: "Dashboard name" });
+    await user.clear(field);
+    await user.type(field, "platform{Enter}");
+
+    await waitFor(() =>
+      expect(portalRouter.pathname).toBe("/portal/custom/platform")
+    );
+  });
+
   it("draws items in order, with headings and prose between the widgets", async () => {
-    vi.mocked(customClient.fetchDashboard).mockResolvedValue({
-      title: "Engineering",
-      items: [
-        { heading: "Per person" },
-        { widget: "commits_table" },
-        { text: "Merge commits excluded." },
-      ],
+    vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+      body: {
+        title: "Engineering",
+        items: [
+          { heading: "Per person" },
+          { widget: "commits_table" },
+          { text: "Merge commits excluded." },
+        ],
+      },
+      tags: [],
     });
     vi.mocked(customClient.fetchWidget).mockResolvedValue({
       type: "table",
@@ -103,7 +158,7 @@ describe("/portal/custom/$name", () => {
   });
 
   it("shows a loading state before the dashboard resolves", () => {
-    vi.mocked(customClient.fetchDashboard).mockReturnValue(
+    vi.mocked(customClient.fetchDashboardRead).mockReturnValue(
       new Promise(() => {})
     );
     portalRouter.go("/portal/custom/engineering");
@@ -116,7 +171,7 @@ describe("/portal/custom/$name", () => {
   });
 
   it("says an unknown dashboard name was not found, with no retry offered", async () => {
-    vi.mocked(customClient.fetchDashboard).mockRejectedValue(
+    vi.mocked(customClient.fetchDashboardRead).mockRejectedValue(
       new customClient.CustomApiError(404, { title: "not found" })
     );
     portalRouter.go("/portal/custom/does-not-exist");
@@ -130,7 +185,7 @@ describe("/portal/custom/$name", () => {
   });
 
   it("shows a retryable error state when the dashboard fails to load for another reason", async () => {
-    vi.mocked(customClient.fetchDashboard).mockRejectedValue(
+    vi.mocked(customClient.fetchDashboardRead).mockRejectedValue(
       new Error("network down")
     );
     portalRouter.go("/portal/custom/engineering");
@@ -161,10 +216,9 @@ describe("/portal/custom/$name — the window it is read over", () => {
   };
 
   function board(extra: Record<string, unknown>) {
-    vi.mocked(customClient.fetchDashboard).mockResolvedValue({
-      title: "Engineering",
-      widgets: ["opened_line"],
-      ...extra,
+    vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+      body: { title: "Engineering", widgets: ["opened_line"], ...extra },
+      tags: [],
     });
     vi.mocked(customClient.fetchWidget).mockResolvedValue({
       type: "line",
@@ -274,11 +328,14 @@ describe("/portal/custom/$name — the window it is read over", () => {
   });
 
   it("asks for a stat as one number over the whole window", async () => {
-    vi.mocked(customClient.fetchDashboard).mockResolvedValue({
-      title: "Engineering",
-      widgets: ["merged_stat"],
-      time_ranges: ["P30D"],
-      default_range: "P30D",
+    vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+      body: {
+        title: "Engineering",
+        widgets: ["merged_stat"],
+        time_ranges: ["P30D"],
+        default_range: "P30D",
+      },
+      tags: [],
     });
     vi.mocked(customClient.fetchWidget).mockResolvedValue({
       type: "stat",
@@ -306,11 +363,14 @@ describe("/portal/custom/$name — the window it is read over", () => {
 
 describe("/portal/custom/$name — a definition that cannot be read", () => {
   it("says the metric could not be read and offers a retry", async () => {
-    vi.mocked(customClient.fetchDashboard).mockResolvedValue({
-      title: "Engineering",
-      widgets: ["opened_line"],
-      time_ranges: ["P30D"],
-      default_range: "P30D",
+    vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+      body: {
+        title: "Engineering",
+        widgets: ["opened_line"],
+        time_ranges: ["P30D"],
+        default_range: "P30D",
+      },
+      tags: [],
     });
     vi.mocked(customClient.fetchWidget).mockResolvedValue({
       type: "line",
