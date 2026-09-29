@@ -4,7 +4,13 @@ vi.mock("@/api/fetch-with-auth", () => ({ fetchWithAuth: vi.fn() }));
 
 import { fetchWithAuth } from "@/api/fetch-with-auth";
 
-import { getUsageConfig, getUsageSummary } from "./usage-client";
+import {
+  getUsageActions,
+  getUsageConfig,
+  getUsagePages,
+  getUsagePeople,
+  getUsageSummary,
+} from "./usage-client";
 import { AnalyticsApiError } from "./analytics-client";
 
 const mockFetch = fetchWithAuth as unknown as ReturnType<typeof vi.fn>;
@@ -65,5 +71,39 @@ describe("getUsageSummary", () => {
     await expect(
       getUsageSummary({ since: "2026-08-01", until: "2026-08-16" }),
     ).rejects.toBeInstanceOf(AnalyticsApiError);
+  });
+});
+
+describe("the usage lists", () => {
+  const RANGE = { since: "2026-08-01", until: "2026-08-16" };
+
+  it("leaves the order to the server until one is chosen", async () => {
+    mockFetch.mockResolvedValueOnce(response({ ...RANGE, items: [] }));
+
+    await getUsagePeople(RANGE, null);
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/analytics/v1/usage/people?since=2026-08-01&until=2026-08-16",
+    );
+  });
+
+  it.each([
+    ["people", () => getUsagePeople(RANGE, { sort: "last_seen", direction: "desc" }), "people?since=2026-08-01&until=2026-08-16&sort=last_seen&direction=desc"],
+    ["pages", () => getUsagePages(RANGE, { sort: "visitors", direction: "asc" }), "pages?since=2026-08-01&until=2026-08-16&sort=visitors&direction=asc"],
+    ["actions", () => getUsageActions(RANGE, { sort: "people", direction: "desc" }), "actions?since=2026-08-01&until=2026-08-16&sort=people&direction=desc"],
+  ] as const)("asks the server for the %s in the chosen order", async (_, read, query) => {
+    mockFetch.mockResolvedValueOnce(response({ ...RANGE, items: [] }));
+
+    await read();
+
+    expect(mockFetch).toHaveBeenCalledWith(`/api/analytics/v1/usage/${query}`);
+  });
+
+  it("raises the refusal rather than resolving to an empty list", async () => {
+    mockFetch.mockResolvedValueOnce(
+      response({ detail: "admin role required" }, { ok: false, status: 403 }),
+    );
+
+    await expect(getUsagePages(RANGE, null)).rejects.toBeInstanceOf(AnalyticsApiError);
   });
 });

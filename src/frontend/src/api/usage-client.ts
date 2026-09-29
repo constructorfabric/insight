@@ -47,10 +47,24 @@ export interface UsageSummary {
   until: string;
   totals: UsageTotals;
   by_day: UsageDay[];
-  by_person: UsagePerson[];
-  by_page: UsagePage[];
-  by_event: UsageEvent[];
 }
+
+export interface UsageList<T> {
+  since: string;
+  until: string;
+  items: T[];
+}
+
+export type SortDirection = "asc" | "desc";
+
+export interface UsageOrder<K extends string> {
+  sort: K;
+  direction: SortDirection;
+}
+
+export type UsagePeopleSort = "visits" | "page_views" | "last_seen";
+export type UsagePagesSort = "views" | "visitors";
+export type UsageActionsSort = "opens" | "people";
 
 export interface UsageRange {
   since: string;
@@ -72,4 +86,38 @@ export async function getUsageConfig(): Promise<UsageConfig> {
 export async function getUsageSummary(range: UsageRange): Promise<UsageSummary> {
   const params = new URLSearchParams({ since: range.since, until: range.until });
   return getJson<UsageSummary>(`${BASE}/usage/summary?${params}`);
+}
+
+function listUrl<K extends string>(
+  list: string,
+  range: UsageRange,
+  order: UsageOrder<K> | null,
+): string {
+  const params = new URLSearchParams({ since: range.since, until: range.until });
+  if (order) {
+    params.set("sort", order.sort);
+    params.set("direction", order.direction);
+  }
+  return `${BASE}/usage/${list}?${params}`;
+}
+
+export async function getUsagePeople(
+  range: UsageRange,
+  order: UsageOrder<UsagePeopleSort> | null,
+): Promise<UsageList<UsagePerson>> {
+  return getJson<UsageList<UsagePerson>>(listUrl("people", range, order));
+}
+
+export async function getUsagePages(
+  range: UsageRange,
+  order: UsageOrder<UsagePagesSort> | null,
+): Promise<UsageList<UsagePage>> {
+  return getJson<UsageList<UsagePage>>(listUrl("pages", range, order));
+}
+
+export async function getUsageActions(
+  range: UsageRange,
+  order: UsageOrder<UsageActionsSort> | null,
+): Promise<UsageList<UsageEvent>> {
+  return getJson<UsageList<UsageEvent>>(listUrl("actions", range, order));
 }

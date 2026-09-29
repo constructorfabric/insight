@@ -3,7 +3,7 @@
  * Platform usage. The load-bearing part is that every number on it is dated:
  * a bar the reader cannot put a day against says traffic happened, not when.
  */
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Recharts needs a real layout; the assertions here are about what the page
@@ -37,11 +37,21 @@ vi.mock("@/components/ui/chart", () => ({
 
 // The house harness for a virtualized body: report every row, and record what
 // the page asked to virtualize.
+type Asked = { since: string; until: string };
+type Order = { sort: string; direction: "asc" | "desc" } | null;
+
 const mocks = vi.hoisted(() => ({
   counts: [] as number[],
   summary: null as unknown,
-  asked: [] as Array<{ since: string; until: string }>,
-  feedbackAsked: [] as Array<{ since: string; until: string }>,
+  people: [] as unknown[],
+  peopleFailed: false,
+  pages: [] as unknown[],
+  asked: [] as Asked[],
+  peopleAsked: [] as Order[],
+  pagesAsked: [] as Order[],
+  actionsAsked: [] as Order[],
+  feedbackAsked: [] as Asked[],
+  feedbackDirection: [] as Array<"asc" | "desc" | null>,
   feedback: null as unknown,
 }));
 vi.mock("@tanstack/react-virtual", () => ({
@@ -66,15 +76,29 @@ const SUMMARY = {
     { day: "2026-08-01", visits: 3, visitors: 2 },
     { day: "2026-08-03", visits: 2, visitors: 1 },
   ],
-  by_person: [],
-  by_page: [],
-  by_event: [],
 };
 
+function listOf(items: unknown[]) {
+  return { data: { since: "2026-08-01", until: "2026-08-03", items }, isPending: false, isError: false };
+}
+
 vi.mock("@/queries/usage", () => ({
-  useUsageSummary: (range: { since: string; until: string }) => {
+  useUsageSummary: (range: Asked) => {
     mocks.asked.push(range);
     return { data: mocks.summary ?? SUMMARY, isPending: false, isError: false };
+  },
+  useUsagePeople: (_: Asked, order: Order) => {
+    mocks.peopleAsked.push(order);
+    if (mocks.peopleFailed) return { data: undefined, isPending: false, isError: true };
+    return listOf(mocks.people);
+  },
+  useUsagePages: (_: Asked, order: Order) => {
+    mocks.pagesAsked.push(order);
+    return listOf(mocks.pages);
+  },
+  useUsageActions: (_: Asked, order: Order) => {
+    mocks.actionsAsked.push(order);
+    return listOf([{ event_name: "drill", target: "pr_cycle_time", opens: 3, people: 2 }]);
   },
 }));
 
@@ -95,8 +119,9 @@ const FEEDBACK = {
 };
 
 vi.mock("@/queries/feedback", () => ({
-  useFeedbackList: (range: { since: string; until: string }) => {
+  useFeedbackList: (range: Asked, direction: "asc" | "desc" | null) => {
     mocks.feedbackAsked.push(range);
+    mocks.feedbackDirection.push(direction);
     return {
       data: mocks.feedback ?? FEEDBACK,
       isPending: false,
@@ -131,13 +156,41 @@ import { resolveDateRange } from "@/api/period-to-date-range";
 
 import { PlatformUsage } from "./platform-usage";
 
+const VISITOR = {
+  person_id: "4d1f0a6c-0000-4000-8000-0000000000bb",
+  display_name: "Grace Example",
+  username: "grace",
+  visits: 2,
+  page_views: 3,
+  last_seen: "2026-08-02 10:00:00.000",
+};
+
+function table(name: string) {
+  return within(screen.getByRole("table", { name }));
+}
+
+function header(tableName: string, column: RegExp) {
+  return table(tableName).getByRole("columnheader", { name: column });
+}
+
+function clickHeader(tableName: string, column: RegExp) {
+  fireEvent.click(table(tableName).getByRole("button", { name: column }));
+}
+
 describe("PlatformUsage", () => {
   beforeEach(() => {
     mocks.summary = null;
     mocks.feedback = null;
+    mocks.people = [VISITOR];
+    mocks.peopleFailed = false;
+    mocks.pages = [{ path: "/portal/overview", views: 4, visitors: 2 }];
     mocks.counts.length = 0;
     mocks.asked.length = 0;
+    mocks.peopleAsked.length = 0;
+    mocks.pagesAsked.length = 0;
+    mocks.actionsAsked.length = 0;
     mocks.feedbackAsked.length = 0;
+    mocks.feedbackDirection.length = 0;
   });
 
   it("asks for a period with the same control every other zone uses", () => {
@@ -148,19 +201,16 @@ describe("PlatformUsage", () => {
   });
 
   it("names a visitor by handle when the identity rows carry no display name", () => {
-    mocks.summary = {
-      ...SUMMARY,
-      by_person: [
-        {
-          person_id: "4d1f0a6c-0000-4000-8000-0000000000aa",
-          display_name: "",
-          username: "ada",
-          visits: 2,
-          page_views: 3,
-          last_seen: "2026-08-02T10:00:00Z",
-        },
-      ],
-    };
+    mocks.people = [
+      {
+        person_id: "4d1f0a6c-0000-4000-8000-0000000000aa",
+        display_name: "",
+        username: "ada",
+        visits: 2,
+        page_views: 3,
+        last_seen: "2026-08-02 10:00:00.000",
+      },
+    ];
 
     render(<PlatformUsage />);
 
@@ -200,12 +250,11 @@ describe("PlatformUsage", () => {
   });
 
   it("hands a long breakdown to the virtualizer instead of rendering all of it", () => {
-    const many = Array.from({ length: 300 }, (_, i) => ({
+    mocks.pages = Array.from({ length: 300 }, (_, i) => ({
       path: `/portal/page-${i}`,
       views: 300 - i,
       visitors: 1,
     }));
-    mocks.summary = { ...SUMMARY, by_page: many };
     render(<PlatformUsage />);
 
     expect(mocks.counts).toContain(300);
@@ -260,5 +309,72 @@ describe("PlatformUsage", () => {
     render(<PlatformUsage />);
 
     expect(screen.getByText("No feedback in this period")).toBeInTheDocument();
+  });
+
+  it("lists who opened it by visits until another order is chosen", () => {
+    render(<PlatformUsage />);
+
+    expect(mocks.peopleAsked.at(-1)).toBeNull();
+    expect(header("Who opened it", /Visits/)).toHaveAttribute("aria-sort", "descending");
+    expect(header("Who opened it", /Last seen/)).toHaveAttribute("aria-sort", "none");
+  });
+
+  it("asks for the latest visitors first, then the earliest, then the default again", () => {
+    render(<PlatformUsage />);
+
+    clickHeader("Who opened it", /Last seen/);
+    expect(mocks.peopleAsked.at(-1)).toEqual({ sort: "last_seen", direction: "desc" });
+    expect(header("Who opened it", /Last seen/)).toHaveAttribute("aria-sort", "descending");
+
+    clickHeader("Who opened it", /Last seen/);
+    expect(mocks.peopleAsked.at(-1)).toEqual({ sort: "last_seen", direction: "asc" });
+    expect(header("Who opened it", /Last seen/)).toHaveAttribute("aria-sort", "ascending");
+
+    clickHeader("Who opened it", /Last seen/);
+    expect(mocks.peopleAsked.at(-1)).toBeNull();
+    expect(header("Who opened it", /Visits/)).toHaveAttribute("aria-sort", "descending");
+  });
+
+  it("flips the default column before returning to it", () => {
+    render(<PlatformUsage />);
+
+    clickHeader("Who opened it", /Visits/);
+    expect(mocks.peopleAsked.at(-1)).toEqual({ sort: "visits", direction: "asc" });
+
+    clickHeader("Who opened it", /Visits/);
+    expect(mocks.peopleAsked.at(-1)).toBeNull();
+  });
+
+  it("orders each table on its own", () => {
+    render(<PlatformUsage />);
+
+    clickHeader("What they opened", /People/);
+    clickHeader("Drill-downs and other actions", /People/);
+
+    expect(mocks.pagesAsked.at(-1)).toEqual({ sort: "visitors", direction: "desc" });
+    expect(mocks.actionsAsked.at(-1)).toEqual({ sort: "people", direction: "desc" });
+    expect(mocks.peopleAsked.at(-1)).toBeNull();
+  });
+
+  it("reads feedback newest first until the reader asks for the oldest", () => {
+    render(<PlatformUsage />);
+
+    expect(mocks.feedbackDirection.at(-1)).toBeNull();
+    expect(header("What people told us", /When/)).toHaveAttribute("aria-sort", "descending");
+
+    clickHeader("What people told us", /When/);
+    expect(mocks.feedbackDirection.at(-1)).toBe("asc");
+
+    clickHeader("What people told us", /When/);
+    expect(mocks.feedbackDirection.at(-1)).toBeNull();
+  });
+
+  it("keeps a list that failed to load from taking the rest of the page with it", () => {
+    mocks.peopleFailed = true;
+    render(<PlatformUsage />);
+
+    expect(screen.getByText("Visitors could not be loaded")).toBeInTheDocument();
+    expect(table("What they opened").getByText("4")).toBeInTheDocument();
+    expect(screen.getByText("visits")).toBeInTheDocument();
   });
 });
