@@ -5,21 +5,13 @@ import { ChevronRight, LayoutDashboard } from "lucide-react";
 import { DashboardMenu } from "@/components/custom/dashboard-menu";
 import { DashboardTags } from "@/components/custom/dashboard-tags";
 import { Card, CardContent } from "@/components/ui/card";
-import { updatedLabel } from "@/lib/custom/updated-label";
-import {
-  dashboardQuery,
-  dashboardTagsQuery,
-  dashboardUpdatedQuery,
-} from "@/queries/custom";
+import { dashboardQuery, dashboardTagsQuery } from "@/queries/custom";
 import { TEXT_LABEL, TEXT_NAME } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
 export function DashboardCard({ name }: { name: string }) {
   const { data } = useQuery(dashboardQuery(name));
   const tags = useQuery(dashboardTagsQuery(name));
-  const updated = useQuery(dashboardUpdatedQuery(name));
-
-  const age = updatedLabel(updated.data, updated.dataUpdatedAt);
 
   return (
     <Card size="sm">
@@ -58,7 +50,6 @@ export function DashboardCard({ name }: { name: string }) {
           </span>
         </div>
         <DashboardTags tags={tags.data ?? []} className="ps-7" />
-        {age ? <p className={cn(TEXT_LABEL, "ps-7")}>{age}</p> : null}
       </CardContent>
     </Card>
   );

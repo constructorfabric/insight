@@ -9,7 +9,7 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as customClient from "@/api/custom-client";
 
@@ -26,22 +26,15 @@ function card() {
   );
 }
 
-function reading(updatedAt?: string) {
+function reading() {
   vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
     body: { title: "Delivery", widgets: [] },
     tags: [],
-    ...(updatedAt ? { updatedAt } : {}),
   });
 }
 
 beforeEach(() => {
   vi.resetAllMocks();
-  vi.useFakeTimers({ toFake: ["Date"] });
-  vi.setSystemTime(new Date("2026-09-28T10:00:00Z"));
-});
-
-afterEach(() => {
-  vi.useRealTimers();
 });
 
 describe("<DashboardCard>", () => {
@@ -66,22 +59,5 @@ describe("<DashboardCard>", () => {
     expect(
       screen.getByRole("button", { name: "More for delivery" })
     ).toBeInTheDocument();
-  });
-
-  it("says how long ago the dashboard last changed", async () => {
-    reading("2026-09-25T10:00:00Z");
-
-    card();
-
-    expect(await screen.findByText("Updated 3 d ago")).toBeInTheDocument();
-  });
-
-  it("says nothing of its age when the service does not", async () => {
-    reading();
-
-    card();
-
-    await screen.findByText("Delivery");
-    expect(screen.queryByText(/Updated/)).toBeNull();
   });
 });
