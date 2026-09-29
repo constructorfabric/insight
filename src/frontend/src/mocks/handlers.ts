@@ -1071,7 +1071,13 @@ function usageHandlers() {
     }),
     http.get("/api/analytics/v1/usage/people", ({ request }) => {
       const by_day = syntheticDays(30);
-      return usageList(request, "visits", mockVisitors(by_day));
+      const needle = (new URL(request.url).searchParams.get("search") ?? "").toLowerCase();
+      const visitors = mockVisitors(by_day).filter(
+        (visitor) =>
+          visitor.display_name.toLowerCase().includes(needle) ||
+          visitor.username.toLowerCase().includes(needle)
+      );
+      return usageList(request, "visits", visitors);
     }),
     http.get("/api/analytics/v1/usage/pages", ({ request }) =>
       usageList(request, "views", PAGE_ROWS)

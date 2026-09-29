@@ -1,5 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import type { UseQueryResult } from "@tanstack/react-query";
+import { Search } from "lucide-react";
 import {
   addDays as addCalendarDays,
   differenceInCalendarDays,
@@ -15,6 +16,7 @@ import type {
   UsagePeopleSort,
   UsageRange,
 } from "@/api/usage-client";
+import { Input } from "@/components/ui/input";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import {
@@ -40,7 +42,9 @@ import {
   TruncatedCell,
   VirtualTable,
 } from "@/components/portal/usage-table";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useUsageOrder } from "@/hooks/use-usage-order";
+import { SEARCH_DEBOUNCE_MS } from "@/queries/identity-resolution";
 import {
   useUsageActions,
   useUsagePages,
@@ -195,30 +199,37 @@ function Kpi({ label, value }: { label: string; value: number }) {
   );
 }
 
-function Empty() {
-  return <ComingSoon variant="row" state="empty" label="No usage in this period yet" />;
+function Empty({ label = "No usage in this period yet" }: { label?: string }) {
+  return <ComingSoon variant="row" state="empty" label={label} />;
 }
 
 function ListSection<T>({
   title,
   failure,
   query,
+  aside,
+  emptyLabel,
   children,
 }: {
   title: string;
   failure: string;
   query: UseQueryResult<UsageList<T>>;
+  aside?: ReactNode;
+  emptyLabel?: string;
   children: (rows: T[], pending: boolean) => ReactNode;
 }) {
   return (
     <section className="flex flex-col gap-2">
-      <h3 className={TEXT_NAME}>{title}</h3>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h3 className={TEXT_NAME}>{title}</h3>
+        {aside}
+      </div>
       {query.isPending ? (
         <CenteredSpinner />
       ) : query.isError || !query.data ? (
         <ComingSoon variant="row" state="empty" label={failure} />
       ) : query.data.items.length === 0 ? (
-        <Empty />
+        <Empty label={emptyLabel} />
       ) : (
         children(query.data.items, query.isPlaceholderData)
       )}
@@ -226,12 +237,44 @@ function ListSection<T>({
   );
 }
 
+function VisitorSearch({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="relative w-full sm:w-56">
+      <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+      <Input
+        type="search"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder="Search visitors"
+        aria-label="Search visitors"
+        className="h-8 ps-8"
+      />
+    </div>
+  );
+}
+
 function PeopleTable({ range }: { range: UsageRange }) {
   const order = useUsageOrder<UsagePeopleSort>("visits");
-  const people = useUsagePeople(range, order.chosen);
+  const [typed, setTyped] = useState("");
+  const trimmed = typed.trim();
+  const debounced = useDebouncedValue(trimmed, SEARCH_DEBOUNCE_MS);
+  const search = trimmed === "" ? "" : debounced;
+  const people = useUsagePeople(range, order.chosen, search);
 
   return (
-    <ListSection title="Who opened it" failure="Visitors could not be loaded" query={people}>
+    <ListSection
+      title="Who opened it"
+      failure="Visitors could not be loaded"
+      query={people}
+      aside={<VisitorSearch value={typed} onChange={setTyped} />}
+      emptyLabel={search ? `Nobody matches “${search}”` : undefined}
+    >
       {(rows, pending) => (
         <VirtualTable
           label="Who opened it"

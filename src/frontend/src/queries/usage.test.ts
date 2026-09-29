@@ -39,6 +39,13 @@ describe("useUsagePeople", () => {
 
   type Placeholder = (previous: unknown, previousQuery?: { queryKey: unknown }) => unknown;
 
+  it("asks again when the search changes", () => {
+    const everyone = useOptionsFor(AUGUST, null, "").queryKey;
+    const matching = useOptionsFor(AUGUST, null, "ada").queryKey;
+
+    expect(matching).not.toEqual(everyone);
+  });
+
   it("asks again when the order changes", () => {
     const byDefault = useOptionsFor(AUGUST, null).queryKey;
     const byLastSeen = useOptionsFor(AUGUST, LATEST).queryKey;

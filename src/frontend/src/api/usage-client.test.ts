@@ -99,6 +99,26 @@ describe("the usage lists", () => {
     expect(mockFetch).toHaveBeenCalledWith(`/api/analytics/v1/usage/${query}`);
   });
 
+  it("asks for the visitors matching a search, in the chosen order", async () => {
+    mockFetch.mockResolvedValueOnce(response({ ...RANGE, items: [] }));
+
+    await getUsagePeople(RANGE, { sort: "visits", direction: "asc" }, "ada");
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/analytics/v1/usage/people?since=2026-08-01&until=2026-08-16&sort=visits&direction=asc&search=ada",
+    );
+  });
+
+  it("leaves an empty search out of the request", async () => {
+    mockFetch.mockResolvedValueOnce(response({ ...RANGE, items: [] }));
+
+    await getUsagePeople(RANGE, null, "");
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/analytics/v1/usage/people?since=2026-08-01&until=2026-08-16",
+    );
+  });
+
   it("raises the refusal rather than resolving to an empty list", async () => {
     mockFetch.mockResolvedValueOnce(
       response({ detail: "admin role required" }, { ok: false, status: 403 }),

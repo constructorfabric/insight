@@ -3,8 +3,8 @@
  * Platform usage. The load-bearing part is that every number on it is dated:
  * a bar the reader cannot put a day against says traffic happened, not when.
  */
-import { fireEvent, render, screen, within } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Recharts needs a real layout; the assertions here are about what the page
 // hands the chart, so the primitives report their props as data attributes.
@@ -48,6 +48,7 @@ const mocks = vi.hoisted(() => ({
   pages: [] as unknown[],
   asked: [] as Asked[],
   peopleAsked: [] as Order[],
+  peopleSearched: [] as string[],
   pagesAsked: [] as Order[],
   actionsAsked: [] as Order[],
   feedbackAsked: [] as Asked[],
@@ -87,8 +88,9 @@ vi.mock("@/queries/usage", () => ({
     mocks.asked.push(range);
     return { data: mocks.summary ?? SUMMARY, isPending: false, isError: false };
   },
-  useUsagePeople: (_: Asked, order: Order) => {
+  useUsagePeople: (_: Asked, order: Order, search: string) => {
     mocks.peopleAsked.push(order);
+    mocks.peopleSearched.push(search);
     if (mocks.peopleFailed) return { data: undefined, isPending: false, isError: true };
     return listOf(mocks.people);
   },
@@ -187,6 +189,7 @@ describe("PlatformUsage", () => {
     mocks.counts.length = 0;
     mocks.asked.length = 0;
     mocks.peopleAsked.length = 0;
+    mocks.peopleSearched.length = 0;
     mocks.pagesAsked.length = 0;
     mocks.actionsAsked.length = 0;
     mocks.feedbackAsked.length = 0;
@@ -376,5 +379,70 @@ describe("PlatformUsage", () => {
     expect(screen.getByText("Visitors could not be loaded")).toBeInTheDocument();
     expect(table("What they opened").getByText("4")).toBeInTheDocument();
     expect(screen.getByText("visits")).toBeInTheDocument();
+  });
+
+  describe("searching who opened it", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    function type(value: string) {
+      fireEvent.change(screen.getByRole("searchbox", { name: "Search visitors" }), {
+        target: { value },
+      });
+    }
+
+    it("asks for the visitors matching what was typed once typing pauses", () => {
+      render(<PlatformUsage />);
+
+      type("  ada ");
+      expect(mocks.peopleSearched.at(-1)).toBe("");
+
+      act(() => {
+        vi.advanceTimersByTime(400);
+      });
+      expect(mocks.peopleSearched.at(-1)).toBe("ada");
+    });
+
+    it("asks for everyone again the moment the box is cleared", () => {
+      render(<PlatformUsage />);
+      type("ada");
+      act(() => {
+        vi.advanceTimersByTime(400);
+      });
+
+      type("");
+
+      expect(mocks.peopleSearched.at(-1)).toBe("");
+    });
+
+    it("says nobody matches rather than that nobody used the product", () => {
+      mocks.people = [];
+      render(<PlatformUsage />);
+
+      type("ada");
+      act(() => {
+        vi.advanceTimersByTime(400);
+      });
+
+      expect(screen.getByText("Nobody matches “ada”")).toBeInTheDocument();
+      expect(screen.getByRole("searchbox", { name: "Search visitors" })).toHaveValue("ada");
+    });
+
+    it("keeps the chosen order while searching", () => {
+      render(<PlatformUsage />);
+      clickHeader("Who opened it", /Last seen/);
+
+      type("ada");
+      act(() => {
+        vi.advanceTimersByTime(400);
+      });
+
+      expect(mocks.peopleAsked.at(-1)).toEqual({ sort: "last_seen", direction: "desc" });
+    });
   });
 });

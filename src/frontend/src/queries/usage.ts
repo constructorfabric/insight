@@ -40,7 +40,8 @@ function useUsageList<K extends string, T>(
   list: string,
   range: UsageRange,
   order: UsageOrder<K> | null,
-  read: (range: UsageRange, order: UsageOrder<K> | null) => Promise<UsageList<T>>,
+  search: string,
+  read: () => Promise<UsageList<T>>,
 ): UseQueryResult<UsageList<T>> {
   const { session } = useAuth();
   return useQuery({
@@ -52,8 +53,9 @@ function useUsageList<K extends string, T>(
       range.until,
       order?.sort ?? null,
       order?.direction ?? null,
+      search,
     ],
-    queryFn: () => read(range, order),
+    queryFn: read,
     staleTime: 0,
     refetchOnMount: "always",
     placeholderData: keepWithinPeriod<UsageList<T>>(range),
@@ -63,20 +65,23 @@ function useUsageList<K extends string, T>(
 export function useUsagePeople(
   range: UsageRange,
   order: UsageOrder<UsagePeopleSort> | null,
+  search = "",
 ): UseQueryResult<UsageList<UsagePerson>> {
-  return useUsageList("people", range, order, getUsagePeople);
+  return useUsageList("people", range, order, search, () =>
+    getUsagePeople(range, order, search),
+  );
 }
 
 export function useUsagePages(
   range: UsageRange,
   order: UsageOrder<UsagePagesSort> | null,
 ): UseQueryResult<UsageList<UsagePage>> {
-  return useUsageList("pages", range, order, getUsagePages);
+  return useUsageList("pages", range, order, "", () => getUsagePages(range, order));
 }
 
 export function useUsageActions(
   range: UsageRange,
   order: UsageOrder<UsageActionsSort> | null,
 ): UseQueryResult<UsageList<UsageEvent>> {
-  return useUsageList("actions", range, order, getUsageActions);
+  return useUsageList("actions", range, order, "", () => getUsageActions(range, order));
 }

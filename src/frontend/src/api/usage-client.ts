@@ -92,20 +92,23 @@ function listUrl<K extends string>(
   list: string,
   range: UsageRange,
   order: UsageOrder<K> | null,
+  search = "",
 ): string {
   const params = new URLSearchParams({ since: range.since, until: range.until });
   if (order) {
     params.set("sort", order.sort);
     params.set("direction", order.direction);
   }
+  if (search) params.set("search", search);
   return `${BASE}/usage/${list}?${params}`;
 }
 
 export async function getUsagePeople(
   range: UsageRange,
   order: UsageOrder<UsagePeopleSort> | null,
+  search = "",
 ): Promise<UsageList<UsagePerson>> {
-  return getJson<UsageList<UsagePerson>>(listUrl("people", range, order));
+  return getJson<UsageList<UsagePerson>>(listUrl("people", range, order, search));
 }
 
 export async function getUsagePages(
