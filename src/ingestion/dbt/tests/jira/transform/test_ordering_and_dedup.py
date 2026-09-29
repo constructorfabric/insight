@@ -155,6 +155,7 @@ STATUS = "status"
 STATUS_FIELD = field(STATUS, name="Status", schema_type="status")
 STATUS_NAMES = {"1": "Open", "3": "In Progress", "5": "Resolved", "6": "Closed", "7": "Reopened"}
 EARLIER = "2026-01-06T09:00:00"
+ENTRY_RANK_SPAN = 100_000
 LATER = "2026-01-06T11:00:00"
 
 
@@ -168,8 +169,13 @@ def _status_now(status_id: str) -> dict[str, Any]:
     return issue("TST-1", fields={STATUS: {"id": status_id, "name": STATUS_NAMES[status_id]}})
 
 
-def _changelog_seq(scenario: Scenario) -> dict[str, int]:
-    return {r["event_id"]: r["_seq"] for r in scenario.journal(field=STATUS) if r["event_kind"] == "changelog"}
+def _entry_rank(scenario: Scenario) -> dict[str, int]:
+    """Each changelog entry's position among the entries of its instant."""
+    return {
+        r["event_id"]: r["event_order"] % ENTRY_RANK_SPAN
+        for r in scenario.journal(field=STATUS)
+        if r["event_kind"] == "changelog"
+    }
 
 
 @case(
@@ -185,7 +191,7 @@ def test_a_chain_sharing_an_instant_ends_on_its_last_step_whatever_the_ids(scena
     """An imported history can stamp two transitions with one second and give
     the later step the smaller changelog id. The from→to chain decides."""
     assert scenario.states(STATUS) == [["1"], ["3"], ["5"], ["6"]]
-    assert _changelog_seq(scenario) == {"100": 0, "102": 0, "101": 1}
+    assert _entry_rank(scenario) == {"100": 0, "102": 0, "101": 1}
     assert scenario.round_trip_holds()
 
 
@@ -226,7 +232,7 @@ def test_a_cycle_within_one_instant_falls_back_to_the_changelog_id(scenario: Sce
     """A→B and B→A in one second form no unique chain: either could come first,
     so the changelog id decides, as it does for any event without a chain."""
     assert scenario.states(STATUS) == [["1"], ["3"], ["1"]]
-    assert _changelog_seq(scenario) == {"101": 0, "102": 0}
+    assert _entry_rank(scenario) == {"101": 0, "102": 1}
     assert scenario.round_trip_holds()
 
 
@@ -244,7 +250,7 @@ def test_a_four_step_chain_follows_its_links_however_the_ids_run(scenario: Scena
     """The ids count DOWN from the chain's head to its tail. The from→to chain
     still decides, walking a longer line than a single swap can exercise."""
     assert scenario.states(STATUS) == [["1"], ["3"], ["5"], ["7"], ["6"]]
-    assert _changelog_seq(scenario) == {"104": 0, "103": 1, "102": 2, "101": 3}
+    assert _entry_rank(scenario) == {"104": 0, "103": 1, "102": 2, "101": 3}
     assert scenario.round_trip_holds()
 
 
@@ -257,7 +263,7 @@ def test_a_fork_within_one_instant_falls_back_to_the_changelog_id(scenario: Scen
     """Two events leaving the SAME before form no unique chain either: nothing
     says which one happened first, so the changelog id decides."""
     assert scenario.states(STATUS) == [["1"], ["3"], ["5"]]
-    assert _changelog_seq(scenario) == {"201": 0, "202": 0}
+    assert _entry_rank(scenario) == {"201": 0, "202": 1}
     assert scenario.round_trip_holds()
 
 
@@ -287,5 +293,5 @@ def test_one_changelog_id_naming_two_items_makes_its_group_ambiguous(scenario: S
         ],
     )
     scenario.build()
-    assert _changelog_seq(scenario) == {"100": 0, "200": 0}
+    assert _entry_rank(scenario) == {"100": 0, "200": 1}
     assert {r["event_id"] for r in scenario.journal(field=STATUS) if r["event_kind"] == "changelog"} == {"100", "200"}

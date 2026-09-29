@@ -86,7 +86,14 @@ name: github
 #   means clearing the cursors of `pull_request_timeline_events` (for the link
 #   columns) and `issue_timeline_events` (for the board status changes already
 #   missed) and re-walking; without that both heal forward only.
-version: "8.2.0"
+# 9.0.0: `github__task_field_history` writes `event_order`, the one column
+#   that orders an issue's history, and orders the events of one second by the
+#   from→to chain of their field before the event id — the value at creation
+#   included, which read the earliest event's previous value with the tie
+#   unresolved. MAJOR: the model is a table, but its rows keep their
+#   `_version`, so the class admits the rewritten rows only through the scoped
+#   `dbt --full-refresh` a major bump dispatches.
+version: "9.0.0"
 schedule: "0 */4 * * *"
 workflow: sync
 
