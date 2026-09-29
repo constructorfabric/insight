@@ -105,7 +105,6 @@ export function VirtualTable<T, K extends string = string>({
                     onClick={() => onSort(sortKey)}
                     className={cn(
                       "group/sort flex min-w-0 items-center gap-1 rounded-sm hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
-                      column.align === "right" && "ml-auto flex-row-reverse",
                       direction && "text-foreground",
                     )}
                   >
