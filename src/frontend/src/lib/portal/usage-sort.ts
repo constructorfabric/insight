@@ -10,13 +10,8 @@ export function effectiveOrder<K extends string>(
 export function nextOrder<K extends string>(
   chosen: UsageOrder<K> | null,
   clicked: K,
-  defaultKey: K,
 ): UsageOrder<K> | null {
-  const current = effectiveOrder(chosen, defaultKey);
-
-  if (clicked !== current.sort) {
-    return clicked === defaultKey ? null : { sort: clicked, direction: "desc" };
-  }
-  if (current.direction === "desc") return { sort: clicked, direction: "asc" };
+  if (chosen?.sort !== clicked) return { sort: clicked, direction: "desc" };
+  if (chosen.direction === "desc") return { sort: clicked, direction: "asc" };
   return null;
 }

@@ -9,6 +9,7 @@ export function useUsageOrder<K extends string>(defaultKey: K) {
   return {
     chosen,
     shown: effectiveOrder(chosen, defaultKey),
-    toggle: (key: K) => setChosen((current) => nextOrder(current, key, defaultKey)),
+    isDefault: chosen === null,
+    toggle: (key: K) => setChosen((current) => nextOrder(current, key)),
   };
 }

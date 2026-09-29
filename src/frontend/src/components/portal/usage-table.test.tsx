@@ -94,6 +94,34 @@ describe("VirtualTable", () => {
     expect(onSort).toHaveBeenCalledWith("last_seen");
   });
 
+  it("tells a chosen order apart from the default one", () => {
+    const { rerender } = render(
+      <VirtualTable
+        label="Who opened it"
+        rows={[]}
+        rowKey={(row) => row.id}
+        columns={COLUMNS}
+        order={{ sort: "visits", direction: "desc" }}
+        orderIsDefault
+        onSort={vi.fn()}
+      />,
+    );
+    const visits = () => screen.getByRole("columnheader", { name: /Visits/ });
+    expect(visits()).toHaveAttribute("data-order", "default");
+
+    rerender(
+      <VirtualTable
+        label="Who opened it"
+        rows={[]}
+        rowKey={(row) => row.id}
+        columns={COLUMNS}
+        order={{ sort: "visits", direction: "desc" }}
+        onSort={vi.fn()}
+      />,
+    );
+    expect(visits()).toHaveAttribute("data-order", "chosen");
+  });
+
   it("leaves a column nobody can order by as a label", () => {
     renderTable();
 

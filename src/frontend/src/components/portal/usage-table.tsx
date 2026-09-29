@@ -31,9 +31,16 @@ export interface Column<T, K extends string = string> {
   cell: (row: T, index: number) => ReactNode;
 }
 
-function SortIcon({ direction }: { direction: SortDirection | null }) {
-  if (direction === "asc") return <ArrowUp className="size-3.5 shrink-0" />;
-  if (direction === "desc") return <ArrowDown className="size-3.5 shrink-0" />;
+function SortIcon({
+  direction,
+  muted,
+}: {
+  direction: SortDirection | null;
+  muted: boolean;
+}) {
+  const className = cn("size-3.5 shrink-0", muted && "text-muted-foreground");
+  if (direction === "asc") return <ArrowUp className={className} />;
+  if (direction === "desc") return <ArrowDown className={className} />;
   return (
     <ChevronsUpDown className="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/sort:opacity-100" />
   );
@@ -47,6 +54,7 @@ export function VirtualTable<T, K extends string = string>({
   rowKey,
   label,
   order,
+  orderIsDefault = false,
   onSort,
   pending = false,
 }: {
@@ -55,6 +63,7 @@ export function VirtualTable<T, K extends string = string>({
   rowKey: (row: T, index: number) => string;
   label: string;
   order?: UsageOrder<K>;
+  orderIsDefault?: boolean;
   onSort?: (key: K) => void;
   pending?: boolean;
 }) {
@@ -96,6 +105,7 @@ export function VirtualTable<T, K extends string = string>({
               <TableHead
                 key={column.header}
                 aria-sort={sortKey ? (direction ? ARIA_SORT[direction] : "none") : undefined}
+                data-order={direction ? (orderIsDefault ? "default" : "chosen") : undefined}
                 className={cn(cellClass(column), "flex h-10 items-center")}
                 style={cellStyle(column)}
               >
@@ -105,11 +115,11 @@ export function VirtualTable<T, K extends string = string>({
                     onClick={() => onSort(sortKey)}
                     className={cn(
                       "group/sort flex min-w-0 items-center gap-1 rounded-sm hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
-                      direction && "text-foreground",
+                      direction && !orderIsDefault && "text-foreground",
                     )}
                   >
                     <span className="truncate">{column.header}</span>
-                    <SortIcon direction={direction} />
+                    <SortIcon direction={direction} muted={orderIsDefault} />
                   </button>
                 ) : (
                   column.header

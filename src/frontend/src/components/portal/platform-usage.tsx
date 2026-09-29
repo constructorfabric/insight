@@ -238,6 +238,7 @@ function PeopleTable({ range }: { range: UsageRange }) {
           rows={rows}
           rowKey={(row) => row.person_id}
           order={order.shown}
+          orderIsDefault={order.isDefault}
           onSort={order.toggle}
           pending={pending}
           columns={[
@@ -276,6 +277,7 @@ function EventsTable({ range }: { range: UsageRange }) {
           rows={rows}
           rowKey={(row) => `${row.event_name}:${row.target}`}
           order={order.shown}
+          orderIsDefault={order.isDefault}
           onSort={order.toggle}
           pending={pending}
           columns={[
@@ -309,6 +311,7 @@ function PagesTable({ range }: { range: UsageRange }) {
           rows={rows}
           rowKey={(row) => row.path}
           order={order.shown}
+          orderIsDefault={order.isDefault}
           onSort={order.toggle}
           pending={pending}
           columns={[

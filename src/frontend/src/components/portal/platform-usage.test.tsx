@@ -335,8 +335,11 @@ describe("PlatformUsage", () => {
     expect(header("Who opened it", /Visits/)).toHaveAttribute("aria-sort", "descending");
   });
 
-  it("flips the default column before returning to it", () => {
+  it("cycles the default column through the same three clicks as any other", () => {
     render(<PlatformUsage />);
+
+    clickHeader("Who opened it", /Visits/);
+    expect(mocks.peopleAsked.at(-1)).toEqual({ sort: "visits", direction: "desc" });
 
     clickHeader("Who opened it", /Visits/);
     expect(mocks.peopleAsked.at(-1)).toEqual({ sort: "visits", direction: "asc" });
@@ -361,6 +364,9 @@ describe("PlatformUsage", () => {
 
     expect(mocks.feedbackDirection.at(-1)).toBeNull();
     expect(header("What people told us", /When/)).toHaveAttribute("aria-sort", "descending");
+
+    clickHeader("What people told us", /When/);
+    expect(mocks.feedbackDirection.at(-1)).toBe("desc");
 
     clickHeader("What people told us", /When/);
     expect(mocks.feedbackDirection.at(-1)).toBe("asc");
