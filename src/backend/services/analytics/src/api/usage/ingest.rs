@@ -22,6 +22,11 @@ const MAX_FIELD: usize = 128;
 
 const MAX_PATH: usize = 512;
 
+/// How long a record may plausibly have waited in the browser's buffer. Past
+/// this the correction cannot place it in the right day, which is the only
+/// thing it exists to protect.
+const MAX_BUFFERED_MS: i64 = 24 * 60 * 60 * 1000;
+
 /// SDK v2 body. Fields shared by every record are hoisted out of them into
 /// `meta`, so a record carries only what differs.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -108,11 +113,6 @@ struct UsageEventRow {
     app_name: String,
     app_version: String,
 }
-
-/// How long a record may plausibly have waited in the browser's buffer. Past
-/// this the correction cannot place it in the right day, which is the only
-/// thing it exists to protect.
-const MAX_BUFFERED_MS: i64 = 24 * 60 * 60 * 1000;
 
 /// Both stamps come off the browser's clock, so their difference — how long the
 /// record waited to be flushed — survives a clock that is hours out. Anchoring

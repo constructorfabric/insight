@@ -65,6 +65,7 @@ fn visitors() -> String {
     format!("uniqExactIf(person_id, person_id != toUUID('{NIL_UUID}'))")
 }
 
+#[derive(Debug)]
 struct WindowBinds {
     tenant: String,
     since: String,
