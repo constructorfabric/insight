@@ -12,6 +12,7 @@ Run against the installed package (see the README's develop section):
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 
@@ -75,8 +76,13 @@ def test_the_key_scan_covers_every_word_the_module_declares() -> None:
 
 
 def _import_realm_with(password: str | None) -> subprocess.CompletedProcess[str]:
-    """A subprocess because the realm generator validates at import time."""
-    env = {"PATH": "/usr/bin:/bin"}
+    """A subprocess because the realm generator validates at import time.
+
+    Inherits the environment rather than replacing it: a CI interpreter links
+    libpython dynamically and needs the loader variables its installer set, so
+    an allowlisted env exits 127 before it reaches the import under test.
+    """
+    env = {k: v for k, v in os.environ.items() if k != _ENV}
     if password is not None:
         env[_ENV] = password
     return subprocess.run(
