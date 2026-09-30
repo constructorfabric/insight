@@ -15,12 +15,11 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use bullmq::job_scheduler::RepeatOptions;
-use bullmq::options::RedisConnectionOptions;
+use bullmq::options::{JobOptions, RedisConnectionOptions};
+use bullmq::types::{BackoffStrategy, RemoveOnFinish};
 use bullmq::worker::CancellationToken as JobCancellation;
 use bullmq::{Job, Queue, QueueOptions, Worker, WorkerOptions};
 use uuid::Uuid;
-
-use bullmq::types::BackoffStrategy;
 
 use crate::domain::alerts::UnknownReason;
 use crate::domain::alerts::delivery::{Attempted, Delivered, Deliverer, Deliveries, DeliveryJob};
@@ -43,6 +42,9 @@ const LISTING_BOUND: isize = 10_000;
 /// How long a shutdown waits for running checks.
 const CLOSE_TIMEOUT_MS: u64 = 10_000;
 const STALLED_INTERVAL_MS: u64 = 30_000;
+/// How many finished checks the queue keeps for inspection, per outcome;
+/// older ones are removed as new ones finish.
+const FINISHED_CHECKS_KEPT: usize = 1000;
 
 fn scheduler_id(rule_id: Uuid) -> String {
     format!("{SCHEDULER_PREFIX}{}", rule_id.simple())
@@ -99,7 +101,11 @@ impl AlertSchedule for RedisSchedule {
                 },
                 Some(JOB),
                 Some(data),
-                None,
+                Some(JobOptions {
+                    remove_on_complete: Some(RemoveOnFinish::Count(FINISHED_CHECKS_KEPT)),
+                    remove_on_fail: Some(RemoveOnFinish::Count(FINISHED_CHECKS_KEPT)),
+                    ..JobOptions::default()
+                }),
             )
             .await
             .map_err(unreachable)?;
@@ -152,7 +158,10 @@ pub(crate) trait Sends: Send + Sync + 'static {
     fn deliverer(&self) -> Deliverer<'_>;
 }
 
-/// The queue side of delivery: what a recorded notification reaches.
+/// The queue side of delivery: what a recorded notification reaches. A
+/// finished job is removed at once, whichever way it ended: the outcome is
+/// on the notification, and a job left behind would swallow the next
+/// enqueue of the same id when reconciling queues an owed one again.
 pub(crate) struct RedisDeliveries {
     queue: Queue,
     attempts: u32,
@@ -194,6 +203,8 @@ impl Deliveries for RedisDeliveries {
             .job_id(notification_id.simple().to_string())
             .attempts(self.attempts)
             .backoff(BackoffStrategy::Exponential(backoff_ms))
+            .remove_on_complete(RemoveOnFinish::Bool(true))
+            .remove_on_fail(RemoveOnFinish::Bool(true))
             .await
             .map_err(unreachable)?;
 

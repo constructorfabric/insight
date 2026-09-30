@@ -410,6 +410,24 @@ mod delivery {
         panic!("the notification was never settled");
     }
 
+    /// A finished job leaves the queue whichever way it ended, so that the
+    /// next enqueue of the same id is a new job.
+    async fn wait_until_forgotten(deliveries: &RedisDeliveries, id: Uuid) {
+        for _ in 0..50 {
+            let held = deliveries
+                .queue
+                .get_job(&id.simple().to_string())
+                .await
+                .unwrap_or_else(|error| panic!("{error}"));
+            if held.is_none() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        panic!("the finished delivery job was kept");
+    }
+
     /// One delivery queue per Redis, so the cases take turns: a worker
     /// started by one would otherwise take the jobs of another.
     static QUEUE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -442,6 +460,7 @@ mod delivery {
             .await
             .unwrap_or_else(|error| panic!("{error}"));
         let settled = wait_until_settled(&store, notification.id).await;
+        wait_until_forgotten(&deliveries, notification.id).await;
         worker.stop().await;
 
         Some((settled, hits.load(Ordering::SeqCst)))

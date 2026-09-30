@@ -90,18 +90,27 @@ fn status(response: &reqwest::Response) -> Result<(), SendError> {
     Err(SendError::Rejected(format!("answered {status}")))
 }
 
-/// The body, bounded, or the reason it could not be read.
-async fn body(response: reqwest::Response) -> Result<Vec<u8>, SendError> {
+fn too_large() -> SendError {
+    SendError::Unconfirmed("answer too large".to_owned())
+}
+
+/// The body, read a chunk at a time and given up on as soon as it passes
+/// the bound, or the reason it could not be read.
+async fn body(mut response: reqwest::Response) -> Result<Vec<u8>, SendError> {
     if response
         .content_length()
         .is_some_and(|length| length > MAX_RESPONSE_BYTES as u64)
     {
-        return Err(SendError::Unconfirmed("answer too large".to_owned()));
-    }
-    let bytes = response.bytes().await.map_err(|error| transport(&error))?;
-    if bytes.len() > MAX_RESPONSE_BYTES {
-        return Err(SendError::Unconfirmed("answer too large".to_owned()));
+        return Err(too_large());
     }
 
-    Ok(bytes.to_vec())
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|error| transport(&error))? {
+        if bytes.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
+            return Err(too_large());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+
+    Ok(bytes)
 }

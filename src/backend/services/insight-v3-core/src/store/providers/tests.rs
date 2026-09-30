@@ -155,6 +155,38 @@ async fn a_provider_that_does_not_answer_in_time_is_unconfirmed() {
 }
 
 #[tokio::test]
+async fn an_answer_streamed_past_the_bound_is_given_up_on_as_unconfirmed() {
+    let chunk = axum::body::Bytes::from(vec![b'x'; 16 * 1024]);
+    let router = Router::new().route(
+        "/webhook",
+        post(move || {
+            let chunks = std::iter::repeat(chunk.clone()).map(Ok::<_, std::io::Error>);
+            async move { axum::body::Body::from_stream(futures::stream::iter(chunks)) }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .unwrap_or_else(|error| panic!("the provider must bind: {error}"));
+    let url = format!(
+        "http://{}/webhook",
+        listener
+            .local_addr()
+            .unwrap_or_else(|error| panic!("the provider must have an address: {error}"))
+    );
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+    let discord = Discord::new(http(), SecretString::from(url));
+
+    let result = discord.send(&message()).await;
+
+    assert!(
+        matches!(&result, Err(SendError::Unconfirmed(reason)) if reason == "answer too large"),
+        "{result:?}"
+    );
+}
+
+#[tokio::test]
 async fn telegram_reads_ok_and_the_message_id() {
     let cases = [
         (

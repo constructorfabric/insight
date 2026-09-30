@@ -349,7 +349,7 @@ Rule id, name, metric, column, operator, threshold as text so an integer stays e
 
 Notification id, rule id and revision, the rule name, metric, column, condition and value the check saw, when it was evaluated, the destination, status (`pending`, `cancelled`, `sent`, `failed`), attempts, the last error in the provider's words, and the provider receipt. Indexed by rule and time; the newest N per rule are kept, and a pending notification is never dropped.
 
-BullMQ owns its keys in Redis under its own prefix.
+BullMQ owns its keys in Redis under its own prefix. A finished check is kept there for inspection only up to a fixed count per outcome; a finished delivery job is removed at once, so that queuing a notification again after reconciling is never swallowed by the job it had before.
 
 ### 3.8 Deployment Topology
 
