@@ -662,14 +662,25 @@ insightV3Core:
   mcp:
     port: 8087
     allowInsecurePrivateNetwork: false
-  # Metric alerts. Checks are scheduled through the release's Redis, so
-  # Redis must persist (the umbrella-managed one does: AOF on a PVC).
-  # Destinations are named here and referenced by rules. Each names its
-  # provider and carries what that provider needs; every field lands in
-  # the config Secret. Discord: webhook_url. Telegram: bot_token, chat_id.
-  # Zulip: site_url, bot_email, api_key, stream, topic.
+  # Metric alerts. Checks are scheduled through Redis, so Redis must
+  # persist (the umbrella-managed one does: AOF on a PVC). The pod
+  # assembles the URL from `alerts.redis.host`/`port` and the password
+  # read from `alerts.redis.passwordSecret`.
+  # Destinations are named and referenced by rules. Each names its provider
+  # and carries what that provider needs. Discord: webhook_url. Telegram:
+  # bot_token, chat_id. Zulip: site_url, bot_email, api_key, stream, topic.
+  # Either list them under `destinations` (rendered into the config Secret
+  # when credentials.autoGenerate is on), or seal a Secret carrying
+  # APP__gears__insight_v3_core__config__alerts__destinations__<name>__<field>
+  # keys and name it in `existingSecret` (the gitops path).
   alerts:
     enabled: false
+    redis:
+      host: ""
+      port: 6379
+      passwordSecret: insight-db-creds
+      passwordKey: redis-password
+    existingSecret: ""
     destinations: {}
     #  ops:
     #    provider: discord

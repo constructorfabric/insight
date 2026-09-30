@@ -41,6 +41,25 @@ ingest:
 #   APP__gears__insight_v3_core__config__clickhouse_password
 existingSecret: ""
 
+# Metric alerts. Off unless enabled; the routes then answer that the
+# installation has none.
+alerts:
+  enabled: false
+  # The Redis the check schedule lives in. It must persist.
+  redis:
+    host: ""
+    port: 6379
+    # Where the password the URL carries is read from. An empty name
+    # connects without one.
+    passwordSecret: insight-db-creds
+    passwordKey: redis-password
+  # Optional Secret carrying the destinations, one key per field:
+  #   APP__gears__insight_v3_core__config__alerts__destinations__<name>__provider
+  #   APP__gears__insight_v3_core__config__alerts__destinations__<name>__<field>
+  # Discord: webhook_url. Telegram: bot_token, chat_id.
+  # Zulip: site_url, bot_email, api_key, stream, topic.
+  existingSecret: ""
+
 # Optional hook Secret for fresh umbrella installs. GitOps deployments
 # pre-create existingSecret, so this reference may remain absent there.
 migrateEnvSecret: ""

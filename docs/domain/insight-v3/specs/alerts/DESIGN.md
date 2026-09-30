@@ -359,6 +359,8 @@ The worker runs inside every `insight-v3-core` replica, started after the state 
 
 Configuration: `alerts.enabled`, `alerts.redis_url`, `alerts.destinations.<name>` with `provider` and its fields (Discord `webhook_url`; Telegram `bot_token`, `chat_id`; Zulip `site_url`, `bot_email`, `api_key`, `stream`, `topic`), and the bounds `min_interval_secs`, `max_interval_secs`, `max_rules`, `evaluation_concurrency`, `evaluation_lock_secs`, `notifications_kept_per_rule`, `delivery_attempts`, `delivery_backoff_secs`, `delivery_timeout_secs`, `delivery_concurrency`.
 
+In the Helm chart, `insightV3Core.alerts.enabled` and `insightV3Core.alerts.redis` turn alerts on and point them at Redis; the pod assembles the Redis URL from the host and the password Secret, so the password stays in the one Secret it is sealed in. Destinations come either from `insightV3Core.alerts.destinations` in values, rendered into the config Secret when the chart generates credentials, or from a Secret the operator seals and names in `insightV3Core.alerts.existingSecret`, which is how a gitops environment supplies them.
+
 ## 4. Additional Context
 
 ### Compatibility Findings
