@@ -20,7 +20,115 @@ fn valid_config() -> GearConfig {
         chat_model: "claude-sonnet-5".to_owned(),
         database_url: "mysql://insight:secret@mariadb.example.test:3306/insight_v3".to_owned(),
         identity_url: "http://identity-resolution.example.test:8082".to_owned(),
+        alerts: AlertsConfig::default(),
     }
+}
+
+fn alerts_on() -> AlertsConfig {
+    AlertsConfig {
+        enabled: true,
+        redis_url: "redis://redis.example.test:6379".to_owned(),
+        destinations: std::collections::BTreeMap::from([(
+            "ops".to_owned(),
+            DestinationConfig {
+                provider: DestinationProvider::Discord,
+            },
+        )]),
+        ..AlertsConfig::default()
+    }
+}
+
+#[test]
+fn alerts_are_off_by_default_and_need_no_redis_then() {
+    let config = valid_config();
+    assert!(!config.alerts.enabled);
+    assert!(config.validate().is_ok());
+}
+
+#[test]
+fn enabled_alerts_need_a_redis_and_sane_bounds() {
+    let mut config = valid_config();
+    config.alerts = AlertsConfig {
+        redis_url: String::new(),
+        ..alerts_on()
+    };
+    assert!(matches!(
+        config.validate(),
+        Err(ConfigError::Empty("alerts.redis_url"))
+    ));
+
+    let cases: Vec<(&str, AlertsConfig)> = vec![
+        (
+            "min above max",
+            AlertsConfig {
+                min_interval_secs: 10,
+                max_interval_secs: 5,
+                ..alerts_on()
+            },
+        ),
+        (
+            "zero interval",
+            AlertsConfig {
+                min_interval_secs: 0,
+                ..alerts_on()
+            },
+        ),
+        (
+            "no rules allowed",
+            AlertsConfig {
+                max_rules: 0,
+                ..alerts_on()
+            },
+        ),
+        (
+            "no concurrency",
+            AlertsConfig {
+                evaluation_concurrency: 0,
+                ..alerts_on()
+            },
+        ),
+        (
+            "destination with a space",
+            AlertsConfig {
+                destinations: std::collections::BTreeMap::from([(
+                    "ops team".to_owned(),
+                    DestinationConfig {
+                        provider: DestinationProvider::Zulip,
+                    },
+                )]),
+                ..alerts_on()
+            },
+        ),
+    ];
+    for (case, alerts) in cases {
+        let mut config = valid_config();
+        config.alerts = alerts;
+        assert!(config.validate().is_err(), "should refuse: {case}");
+    }
+
+    let mut config = valid_config();
+    config.alerts = alerts_on();
+    let validated = config
+        .validate()
+        .unwrap_or_else(|error| panic!("a whole alerts section is accepted: {error}"));
+    assert_eq!(
+        validated.alerts().destinations().provider_of("ops"),
+        Some("discord")
+    );
+    assert_eq!(validated.alerts().limits().max_rules, 200);
+}
+
+#[test]
+fn the_redis_url_is_redacted_from_debug_output() {
+    let mut config = valid_config();
+    config.alerts = AlertsConfig {
+        redis_url: "redis://:alert-redis-secret@redis.example.test:6379".to_owned(),
+        ..alerts_on()
+    };
+
+    let shown = format!("{config:?}");
+    assert!(!shown.contains("alert-redis-secret"), "{shown}");
+    assert!(shown.contains("Discord"), "{shown}");
 }
 
 #[test]

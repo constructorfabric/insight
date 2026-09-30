@@ -662,6 +662,15 @@ insightV3Core:
   mcp:
     port: 8087
     allowInsecurePrivateNetwork: false
+  # Metric alerts. Checks are scheduled through the release's Redis, so
+  # Redis must persist (the umbrella-managed one does: AOF on a PVC).
+  # Destinations are named here and referenced by rules; each names the
+  # provider behind it. Delivery credentials arrive with the providers.
+  alerts:
+    enabled: false
+    destinations: {}
+    #  ops:
+    #    provider: discord
 # ─── Identity Resolution (Rust identity service, epic #1602) ─────────────
 # The persons-store API. Reads from MariaDB `persons`, written by the seed
 # CronJob (the service's own `seed` subcommand) fed off ClickHouse
