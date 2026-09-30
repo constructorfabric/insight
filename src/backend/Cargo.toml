@@ -32,7 +32,7 @@ edition = "2024"
 license = "Apache-2.0"
 authors = ["Constructor Fabric"]
 repository = "https://github.com/constructorfabric/insight"
-rust-version = "1.95.0"
+rust-version = "1.98.1"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

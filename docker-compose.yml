@@ -781,7 +781,7 @@ services:
 
   build-rust:
     profiles: ["build"]
-    image: rust:1.95-bookworm
+    image: rust:1.98.1-bookworm
     container_name: ${COMPOSE_PROJECT_NAME:-insight}-build-rust
     networks: [insight]
     working_dir: /workspace
