@@ -23,6 +23,7 @@ pub(crate) mod tags;
 use admission::IngestAdmission;
 
 use crate::chat::ChatClient;
+use crate::domain::alerts::delivery::{Deliveries, Provider};
 use crate::domain::alerts::rule::AlertStore;
 use crate::domain::alerts::schedule::AlertSchedule;
 use crate::domain::alerts::{Destinations, Limits};
@@ -110,6 +111,8 @@ pub(crate) struct AppState {
 pub(crate) struct Alerts {
     pub(crate) store: Arc<dyn AlertStore>,
     pub(crate) schedule: Arc<dyn AlertSchedule>,
+    pub(crate) deliveries: Arc<dyn Deliveries>,
+    pub(crate) providers: std::collections::BTreeMap<String, Arc<dyn Provider>>,
     pub(crate) limits: Limits,
     pub(crate) destinations: Destinations,
 }
@@ -243,6 +246,22 @@ impl AppState {
 
     pub(crate) fn alert_schedule(&self) -> Option<&dyn AlertSchedule> {
         self.alerts.as_ref().map(|alerts| alerts.schedule.as_ref())
+    }
+
+    pub(crate) fn alert_deliveries(&self) -> Option<&dyn Deliveries> {
+        self.alerts
+            .as_ref()
+            .map(|alerts| alerts.deliveries.as_ref())
+    }
+
+    /// One send of one notification, for the delivery worker.
+    pub(crate) fn alert_deliverer(&self) -> Option<crate::domain::alerts::delivery::Deliverer<'_>> {
+        let alerts = self.alerts.as_ref()?;
+
+        Some(crate::domain::alerts::delivery::Deliverer::new(
+            alerts.store.as_ref(),
+            &alerts.providers,
+        ))
     }
 
     /// One check of one rule, for the worker.

@@ -1,4 +1,5 @@
 use secrecy::SecretString;
+use serde_json::json;
 
 use super::*;
 
@@ -30,8 +31,10 @@ fn alerts_on() -> AlertsConfig {
         redis_url: "redis://redis.example.test:6379".to_owned(),
         destinations: std::collections::BTreeMap::from([(
             "ops".to_owned(),
-            DestinationConfig {
-                provider: DestinationProvider::Discord,
+            DestinationConfig::Discord {
+                webhook_url: SecretString::from(
+                    "https://discord.example.test/api/webhooks/1/alert-webhook-secret",
+                ),
             },
         )]),
         ..AlertsConfig::default()
@@ -92,8 +95,39 @@ fn enabled_alerts_need_a_redis_and_sane_bounds() {
             AlertsConfig {
                 destinations: std::collections::BTreeMap::from([(
                     "ops team".to_owned(),
-                    DestinationConfig {
-                        provider: DestinationProvider::Zulip,
+                    DestinationConfig::Telegram {
+                        bot_token: SecretString::from("token"),
+                        chat_id: "1".to_owned(),
+                    },
+                )]),
+                ..alerts_on()
+            },
+        ),
+        (
+            "webhook over plain http",
+            AlertsConfig {
+                destinations: std::collections::BTreeMap::from([(
+                    "ops".to_owned(),
+                    DestinationConfig::Discord {
+                        webhook_url: SecretString::from(
+                            "http://discord.example.test/api/webhooks/1/x",
+                        ),
+                    },
+                )]),
+                ..alerts_on()
+            },
+        ),
+        (
+            "zulip without a topic",
+            AlertsConfig {
+                destinations: std::collections::BTreeMap::from([(
+                    "ops".to_owned(),
+                    DestinationConfig::Zulip {
+                        site_url: "https://zulip.example.test".to_owned(),
+                        bot_email: "bot@example.test".to_owned(),
+                        api_key: SecretString::from("key"),
+                        stream: "alerts".to_owned(),
+                        topic: " ".to_owned(),
                     },
                 )]),
                 ..alerts_on()
@@ -128,6 +162,7 @@ fn the_redis_url_is_redacted_from_debug_output() {
 
     let shown = format!("{config:?}");
     assert!(!shown.contains("alert-redis-secret"), "{shown}");
+    assert!(!shown.contains("alert-webhook-secret"), "{shown}");
     assert!(shown.contains("Discord"), "{shown}");
 }
 
@@ -424,4 +459,28 @@ fn a_config_whose_mcp_section_is_invalid_is_refused_as_a_whole() {
         matches!(error, ConfigError::Empty("mcp.public_url")),
         "{error:?}"
     );
+}
+
+#[test]
+fn a_telegram_chat_id_is_read_whether_the_environment_gave_digits_or_text() {
+    let cases = [
+        (json!(754_770_951), "754770951"),
+        (json!(-1_001_234_567_890_i64), "-1001234567890"),
+        (json!("754770951"), "754770951"),
+        (json!("@insight_alerts"), "@insight_alerts"),
+    ];
+
+    for (written, expected) in cases {
+        let parsed: DestinationConfig = serde_json::from_value(json!({
+            "provider": "telegram",
+            "bot_token": "token",
+            "chat_id": written,
+        }))
+        .unwrap_or_else(|error| panic!("should read chat id {written}: {error}"));
+
+        let DestinationConfig::Telegram { chat_id, .. } = parsed else {
+            panic!("should be a Telegram destination: {written}");
+        };
+        assert_eq!(chat_id, expected, "should read chat id: {written}");
+    }
 }

@@ -13,6 +13,7 @@ use sea_orm::{
 };
 use uuid::Uuid;
 
+use crate::domain::alerts::delivery::Attempted;
 use crate::domain::alerts::rule::{
     Accepted, AlertName, AlertPage, AlertRule, AlertStore, AlertStoreError, AlertSummary,
     Condition, EvaluationState, Notification, NotificationStatus, Operator, Recorded, Recording,
@@ -51,7 +52,14 @@ const INSERT_NOTIFICATION: &str = "INSERT INTO alert_notifications (id, rule_id,
 /// Notifications past the kept count go, oldest first; one still owed stays.
 const TRIM_NOTIFICATIONS: &str = "DELETE FROM alert_notifications WHERE rule_id = ? AND status <> ? AND id NOT IN (SELECT id FROM (SELECT id FROM alert_notifications WHERE rule_id = ? ORDER BY created_at DESC, id DESC LIMIT ?) AS kept)";
 
-const NOTIFICATION_COLUMNS: &str = "id, rule_id, rule_revision, rule_name, metric, column_name, operator, threshold, value, evaluated_at, destination, status, created_at";
+const NOTIFICATION_COLUMNS: &str = "id, rule_id, rule_revision, rule_name, metric, column_name, operator, threshold, value, evaluated_at, destination, status, attempts, last_error, provider_receipt, created_at";
+const SELECT_NOTIFICATION: &str = "SELECT {columns} FROM alert_notifications WHERE id = ?";
+const SELECT_NOTIFICATION_HELD: &str =
+    "SELECT {columns} FROM alert_notifications WHERE id = ? FOR UPDATE";
+const SELECT_PENDING: &str =
+    "SELECT {columns} FROM alert_notifications WHERE status = ? ORDER BY created_at ASC, id ASC";
+/// A send lands only on a notification still owed.
+const RECORD_ATTEMPT: &str = "UPDATE alert_notifications SET status = ?, attempts = attempts + 1, last_error = ?, provider_receipt = ?, updated_at = ? WHERE id = ? AND status = ?";
 const SELECT_NOTIFICATIONS: &str = "SELECT {columns} FROM alert_notifications WHERE rule_id = ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?";
 
 fn rules_sql(template: &str) -> String {
@@ -209,6 +217,9 @@ impl MariaAlerts {
             evaluated_at,
             destination: current.spec.destination.clone(),
             status: NotificationStatus::Pending,
+            attempts: 0,
+            last_error: None,
+            provider_receipt: None,
             created_at: now,
         };
         transaction
@@ -503,6 +514,82 @@ impl AlertStore for MariaAlerts {
         .map(NotificationRow::into_notification)
         .collect()
     }
+
+    async fn notification(&self, id: Uuid) -> Result<Option<Notification>, AlertStoreError> {
+        NotificationRow::find_by_statement(statement(
+            notifications_sql(SELECT_NOTIFICATION),
+            [id_column(id)],
+        ))
+        .one(&self.db)
+        .await?
+        .map(NotificationRow::into_notification)
+        .transpose()
+    }
+
+    async fn pending_notifications(&self) -> Result<Vec<Notification>, AlertStoreError> {
+        NotificationRow::find_by_statement(statement(
+            notifications_sql(SELECT_PENDING),
+            [NotificationStatus::Pending.as_str().into()],
+        ))
+        .all(&self.db)
+        .await?
+        .into_iter()
+        .map(NotificationRow::into_notification)
+        .collect()
+    }
+
+    async fn record_attempt(
+        &self,
+        id: Uuid,
+        attempted: &Attempted,
+    ) -> Result<Option<Notification>, AlertStoreError> {
+        let transaction = self.db.begin().await?;
+        let now = Self::now(&transaction).await?;
+
+        let held = NotificationRow::find_by_statement(statement(
+            notifications_sql(SELECT_NOTIFICATION_HELD),
+            [id_column(id)],
+        ))
+        .one(&transaction)
+        .await?
+        .map(NotificationRow::into_notification)
+        .transpose()?;
+        let Some(current) = held.filter(|held| held.status == NotificationStatus::Pending) else {
+            transaction.rollback().await?;
+            return Ok(None);
+        };
+
+        let (status, last_error, receipt) = match attempted {
+            Attempted::Sent(receipt) => (NotificationStatus::Sent, None, Some(receipt.0.clone())),
+            Attempted::Retry(error) => (NotificationStatus::Pending, Some(error.clone()), None),
+            Attempted::Failed(error) => (NotificationStatus::Failed, Some(error.clone()), None),
+        };
+        transaction
+            .execute_raw(statement(
+                RECORD_ATTEMPT.to_owned(),
+                [
+                    status.as_str().into(),
+                    last_error.into(),
+                    receipt.into(),
+                    stamp(now),
+                    id_column(current.id),
+                    NotificationStatus::Pending.as_str().into(),
+                ],
+            ))
+            .await?;
+
+        let updated = NotificationRow::find_by_statement(statement(
+            notifications_sql(SELECT_NOTIFICATION),
+            [id_column(id)],
+        ))
+        .one(&transaction)
+        .await?
+        .map(NotificationRow::into_notification)
+        .transpose()?;
+        transaction.commit().await?;
+
+        Ok(updated)
+    }
 }
 
 impl fmt::Debug for MariaAlerts {
@@ -615,6 +702,9 @@ struct NotificationRow {
     evaluated_at: NaiveDateTime,
     destination: String,
     status: String,
+    attempts: u32,
+    last_error: Option<String>,
+    provider_receipt: Option<String>,
     created_at: NaiveDateTime,
 }
 
@@ -633,6 +723,9 @@ impl NotificationRow {
             destination: self.destination,
             status: NotificationStatus::parse(&self.status)
                 .ok_or_else(|| unreadable(&self.status))?,
+            attempts: self.attempts,
+            last_error: self.last_error,
+            provider_receipt: self.provider_receipt,
             created_at: self.created_at.and_utc(),
         })
     }

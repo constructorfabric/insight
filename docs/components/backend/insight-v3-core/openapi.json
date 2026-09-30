@@ -182,6 +182,11 @@
       },
       "NotificationResponse": {
         "properties": {
+          "attempts": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
           "column": {
             "type": "string"
           },
@@ -197,11 +202,23 @@
           "id": {
             "type": "string"
           },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "metric": {
             "type": "string"
           },
           "operator": {
             "type": "string"
+          },
+          "provider_receipt": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "rule_revision": {
             "format": "int32",
@@ -209,7 +226,7 @@
             "type": "integer"
           },
           "status": {
-            "description": "`pending` or `cancelled`.",
+            "description": "`pending`, `cancelled`, `sent` or `failed`.",
             "type": "string"
           },
           "threshold": {},
@@ -226,6 +243,7 @@
           "evaluated_at",
           "destination",
           "status",
+          "attempts",
           "created_at"
         ],
         "type": "object"

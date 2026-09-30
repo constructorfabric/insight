@@ -489,11 +489,13 @@ services:
       APP__gears__insight_v3_core__config__mcp__jwks_url: "http://gateway:8080/.well-known/jwks.json"
       APP__gears__insight_v3_core__config__mcp__allow_insecure_private_network: "true"
       # Metric alerts schedule their checks through the same Redis the
-      # authenticator keeps sessions in. Destinations are named here and
-      # referenced by rules; delivery credentials arrive with the providers.
+      # authenticator keeps sessions in. A destination is a name rules refer
+      # to plus the provider's credentials, e.g. for a Discord webhook:
+      #   APP__gears__insight_v3_core__config__alerts__destinations__ops__provider: discord
+      #   APP__gears__insight_v3_core__config__alerts__destinations__ops__webhook_url: https://...
+      # Add them to a compose override; none ships here.
       APP__gears__insight_v3_core__config__alerts__enabled: "${INSIGHT_V3_ALERTS_ENABLED:-true}"
       APP__gears__insight_v3_core__config__alerts__redis_url: "redis://${REDIS_HOST:-redis}:${REDIS_INTERNAL_PORT:-6379}"
-      APP__gears__insight_v3_core__config__alerts__destinations__ops__provider: "${INSIGHT_V3_ALERTS_OPS_PROVIDER:-discord}"
     command:
       - "/app/insight-v3-core" # <watched path>
       - "--"

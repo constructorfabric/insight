@@ -1,14 +1,14 @@
 ---
 status: draft
-version: "0.5"
+version: "0.6"
 date: 2026-09-28
 ---
 
 # PRD — Insight v3 Metric Alerts
 
-**Status:** Alert behavior, scheduling, the numeric contract, edit semantics, limits and destination provisioning are approved. Delivery to a provider is deferred to the next release; the first provider set stays open in D3.
+**Status:** Alert behavior, scheduling, the numeric contract, edit semantics, limits, destination provisioning and delivery are approved. The first providers are Discord, Telegram and Zulip.
 
-**Revision 0.5:** Resolve D4–D8, defer delivery, and mark each requirement approved or deferred. Revision 0.4 made notification requirements destination-neutral.
+**Revision 0.6:** Approve delivery and resolve D3. Revision 0.5 resolved D4–D8; 0.4 made notification requirements destination-neutral.
 
 <!-- toc -->
 
@@ -114,19 +114,19 @@ Checks and delivery run without an active API client. [DESIGN](./DESIGN.md) reco
 
 **Approved:** Insight v3 custom metrics; administrator API and MCP; one numeric result per alert; threshold checks; a notification owed to a configured destination on the first breach; per-rule interval checks; the latest check and the owed notifications visible to administrators.
 
-**Deferred to the next release:** sending the owed notification to a provider, delivery retries and delivery status. The notification exists and is visible before that; nothing is sent.
+**Approved, delivery:** the owed notification is sent to its destination through the configured provider, retried while the outcome is unknown, and shown with its delivery status.
 
 ### 4.2 Out of Scope
 
 Excluded: web administration UI, legacy analytics alerts and separate alerts per result group.
 
-First release excludes reminder and recovery messages, cron schedules, replaying missed checks, and delivery itself. The initial set of notification providers is open in D3.
+First release excludes reminder and recovery messages, cron schedules, replaying missed checks, and administrator-managed destinations.
 
 This PRD narrows the parent's actor: the parent names the dashboard author (`cpt-insightspec-v3-actor-dashboard-author`); alerts are administered by administrators only, because a rule runs a stored metric unattended and a notification leaves the product. It also widens the parent decomposition's destination, which named one provider: rules are provider-neutral and the provider set is D3.
 
 ## 5. Functional Requirements
 
-Each requirement says whether it is approved for this release or deferred.
+Every requirement below is approved for this release.
 
 ### 5.1 Rule Administration
 
@@ -187,19 +187,19 @@ Editing, enabling or re-enabling a rule resets what its checks found, so the fir
 
 #### Deliver Notifications
 
-- [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-fr-deliver` (deferred: next release)
+- [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-fr-deliver` (approved)
 
 The system **MUST** record the rule, metric, value, condition and check time a notification carries in the same step as the check that owes it, and send them to the configured destination.
 
-Recording is in this release; sending is deferred. When delivery arrives it retries without rerunning the metric or creating another episode, shows permanent failures and exhausted retries, never reports an uncertain outcome as confirmed delivery, and may produce duplicate messages on retry.
+Delivery retries an unconfirmed send without rerunning the metric or creating another episode, gives up after the configured attempts, shows rejections and exhausted retries, never reports an unconfirmed send as delivered, and may produce a duplicate message when a send landed but its confirmation did not.
 
 **Actors**: `cpt-insightspec-v3-alerts-actor-provider`, `cpt-insightspec-v3-alerts-actor-recipient`
 
 #### Inspect Outcomes
 
-- [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-fr-inspect` (approved; delivery status deferred with delivery)
+- [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-fr-inspect` (approved)
 
-The system **MUST** show rule status, revision, latest check time, outcome and reason, latest valid value, and the notifications owed with their status. Each notification carries the revision and configuration it was owed under, and the value and condition the check saw, without exposing secrets.
+The system **MUST** show rule status, revision, latest check time, outcome and reason, latest valid value, and the notifications owed with their delivery status, attempts, last error and provider receipt. Each notification carries the revision and configuration it was owed under, and the value and condition the check saw, without exposing secrets.
 
 **Actors**: `cpt-insightspec-v3-alerts-actor-admin`
 
@@ -287,7 +287,7 @@ No parent NFR is excluded. A new visual UI and its browser accessibility measure
 
 **Protocol/Format**: Provider-supported message delivery.
 
-**Compatibility**: Provider rate limits and payload constraints apply. The first provider set is pending D3; Insight does not control destination membership or provider retention.
+**Compatibility**: Provider rate limits and payload constraints apply. The first provider set is D3; Insight does not control destination membership or provider retention.
 
 ## 8. Use Cases
 
@@ -333,14 +333,14 @@ All evidence is pending. Engineering verifies these against synthetic inputs aft
 
 ## 11. Assumptions
 
-D4–D8 are resolved. Only D3 remains open, for product owner approval before delivery work starts, with engineering and security input where needed. Recommendations are not defaults.
+D3–D8 are resolved; the product owner approved each, with engineering and security input where needed.
 
-- **D3 — First delivery providers.** Open. No provider ships in this release; the notification is recorded and visible. Discord, Telegram and Zulip remain the candidates, and rules stay provider-neutral.
+- **D3 — First delivery providers.** Resolved: Discord (incoming webhook), Telegram (bot) and Zulip (bot to a stream topic). Rules stay provider-neutral; a destination names its provider in configuration.
 - **D4 — Numeric values.** Resolved: exactly one row and one selected column; `>`, `>=`, `<`, `<=`; integers exact, floats as double precision, an integer compared with a float only where the conversion is exact, otherwise unknown.
 - **D5 — Unknown data.** Resolved: an unknown check keeps the last valid finding and records its time and reason. No freshness condition; the check time is shown without claiming the source data is fresh.
 - **D6 — Edits, disabling and deletion.** Resolved: every write bumps a revision and an update names the one it replaces; a check for any other revision is discarded. Editing, enabling and re-enabling reset the finding; disabling withdraws unsent notifications; deleting removes the rule and its notifications.
-- **D7 — Limits.** Resolved for this release: interval 60 seconds to 7 days, 200 rules, 4 concurrent checks, 60-second check lock, 200 notifications kept per rule, each configurable. Latency targets and delivery retry duration await synthetic load and delivery.
-- **D8 — Destinations and content.** Resolved: the operator provisions destinations in configuration; each has a name and a provider; administrators reference the name. Per-administrator destinations follow behind the same interface. The notification carries rule, metric, value, condition and check time; message formatting is decided with delivery.
+- **D7 — Limits.** Resolved for this release: interval 60 seconds to 7 days, 200 rules, 4 concurrent checks, 60-second check lock, 200 notifications kept per rule, 5 delivery attempts with a doubling wait from 30 seconds, a 10-second provider call, 4 concurrent sends; each configurable. Latency targets await synthetic load.
+- **D8 — Destinations and content.** Resolved: the operator provisions destinations in configuration; each has a name, a provider and that provider's credentials; administrators reference the name and read only the name and provider. Per-administrator destinations follow behind the same interface. The message is one line: rule, metric and column, value, condition, and the check time in UTC.
 
 ## 12. Risks
 

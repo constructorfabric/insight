@@ -41,17 +41,48 @@ impl crate::store::alert_schedule::Checks for AlertChecks {
             .alert_evaluator()
             .unwrap_or_else(|| unreachable!("the worker is started only with alerts on"))
     }
+
+    fn deliveries(&self) -> &dyn crate::domain::alerts::delivery::Deliveries {
+        self.0
+            .alert_deliveries()
+            .unwrap_or_else(|| unreachable!("the worker is started only with alerts on"))
+    }
+}
+
+impl crate::store::alert_schedule::Sends for AlertChecks {
+    fn deliverer(&self) -> crate::domain::alerts::delivery::Deliverer<'_> {
+        self.0
+            .alert_deliverer()
+            .unwrap_or_else(|| unreachable!("the worker is started only with alerts on"))
+    }
 }
 
 /// How often the schedule is made to say what the store says again. A rule
 /// write that reached the store but not the schedule is put right here.
 const RECONCILE_EVERY: std::time::Duration = std::time::Duration::from_mins(5);
 
-/// The schedule as the store says it should be, logged when it was not.
-async fn repair_schedule(app: &crate::api::AppState) {
-    let (Some(store), Some(schedule)) = (app.alert_store(), app.alert_schedule()) else {
+/// The schedule and the delivery queue as the store says they should be,
+/// logged when they were not.
+async fn repair(app: &crate::api::AppState) {
+    let (Some(store), Some(schedule), Some(deliveries)) = (
+        app.alert_store(),
+        app.alert_schedule(),
+        app.alert_deliveries(),
+    ) else {
         return;
     };
+    match store.pending_notifications().await {
+        Ok(pending) => {
+            for notification in &pending {
+                if let Err(error) = deliveries.enqueue(notification.id).await {
+                    tracing::error!(notification_id = %notification.id, error = ?error, "an owed notification could not be queued again");
+                }
+            }
+        }
+        Err(error) => {
+            tracing::error!(error = ?error, "the owed notifications could not be read to reconcile");
+        }
+    }
     let enabled = match store.enabled().await {
         Ok(enabled) => enabled,
         Err(error) => {
@@ -71,19 +102,23 @@ async fn repair_schedule(app: &crate::api::AppState) {
     }
 }
 
-/// Brings the alert schedule and worker up, after the rest of the state:
-/// the schedule is made to say what the store says, then checks start. A
-/// schedule that cannot be reconciled yet is left to the periodic repair.
+/// Brings the alert schedule and workers up, after the rest of the state:
+/// the schedule and the delivery queue are made to say what the store says,
+/// then checks and sends start. What cannot be put right yet is left to the
+/// periodic repair.
 async fn start_alerts(
     config: &crate::config::AlertsConfig,
     app: &Arc<crate::api::AppState>,
     cancellation: tokio_util::sync::CancellationToken,
 ) -> anyhow::Result<()> {
-    if app.alert_store().is_none() || app.alert_schedule().is_none() {
+    if app.alert_store().is_none()
+        || app.alert_schedule().is_none()
+        || app.alert_deliveries().is_none()
+    {
         return Ok(());
     }
 
-    repair_schedule(app).await;
+    repair(app).await;
 
     let worker = crate::store::alert_schedule::AlertWorker::start(
         &config.redis_url,
@@ -97,6 +132,19 @@ async fn start_alerts(
         "alert worker started"
     );
 
+    let delivery_worker = crate::store::alert_schedule::DeliveryWorker::start(
+        &config.redis_url,
+        Arc::new(AlertChecks(Arc::clone(app))),
+        config.delivery_concurrency,
+        std::time::Duration::from_secs(config.delivery_timeout_secs),
+        config.delivery_attempts,
+    )
+    .await?;
+    tracing::info!(
+        concurrency = config.delivery_concurrency,
+        "delivery worker started"
+    );
+
     let repairing = Arc::clone(app);
     let stop = cancellation.clone();
     tokio::spawn(async move {
@@ -105,7 +153,7 @@ async fn start_alerts(
         loop {
             tokio::select! {
                 () = stop.cancelled() => break,
-                _ = every.tick() => repair_schedule(&repairing).await,
+                _ = every.tick() => repair(&repairing).await,
             }
         }
     });
@@ -113,7 +161,8 @@ async fn start_alerts(
     tokio::spawn(async move {
         cancellation.cancelled().await;
         worker.stop().await;
-        tracing::info!("alert worker stopped");
+        delivery_worker.stop().await;
+        tracing::info!("alert workers stopped");
     });
 
     Ok(())
@@ -165,6 +214,18 @@ impl Gear for InsightV3CoreGear {
                 schedule: Arc::new(
                     crate::store::alert_schedule::RedisSchedule::connect(&alerts.redis_url).await?,
                 ),
+                deliveries: Arc::new(
+                    crate::store::alert_schedule::RedisDeliveries::connect(
+                        &alerts.redis_url,
+                        alerts.delivery_attempts,
+                        std::time::Duration::from_secs(alerts.delivery_backoff_secs),
+                    )
+                    .await?,
+                ),
+                providers: crate::store::providers::providers(
+                    &alerts.destinations,
+                    std::time::Duration::from_secs(alerts.delivery_timeout_secs),
+                )?,
                 limits: alerts.limits(),
                 destinations: alerts.destinations(),
             });

@@ -23,6 +23,10 @@ pub(crate) const MIN_INGEST_TOKEN_BYTES: usize = 32;
 pub(crate) const MAX_INGEST_TOKEN_BYTES: usize = 1024;
 const DEFAULT_CHAT_MODEL: &str = "claude-sonnet-5";
 const DEFAULT_MCP_BIND_ADDR: &str = "0.0.0.0:8087";
+const DEFAULT_DELIVERY_ATTEMPTS: u32 = 5;
+const DEFAULT_DELIVERY_BACKOFF_SECS: u64 = 30;
+const DEFAULT_DELIVERY_TIMEOUT_SECS: u64 = 10;
+const DEFAULT_DELIVERY_CONCURRENCY: usize = 4;
 
 /// The MCP server's own listener, off unless a deployment asks for it.
 ///
@@ -59,12 +63,113 @@ impl Default for McpConfig {
     }
 }
 
-/// Where a notification may be sent: a name administrators refer to, and
-/// the provider behind it. Delivery credentials are not read here yet;
-/// a destination's provider is what a rule is checked against.
+/// Where a notification may be sent: a name administrators refer to, the
+/// provider behind it, and what that provider needs to accept a message.
 #[derive(Debug, Clone, Deserialize)]
-pub(crate) struct DestinationConfig {
-    pub(crate) provider: DestinationProvider,
+#[serde(tag = "provider", rename_all = "lowercase")]
+pub(crate) enum DestinationConfig {
+    /// A Discord channel, through an incoming webhook.
+    Discord { webhook_url: SecretString },
+    /// A Telegram chat, through a bot.
+    Telegram {
+        bot_token: SecretString,
+        #[serde(deserialize_with = "text_or_number")]
+        chat_id: String,
+    },
+    /// A Zulip stream topic, through a bot.
+    Zulip {
+        site_url: String,
+        bot_email: String,
+        api_key: SecretString,
+        stream: String,
+        topic: String,
+    },
+}
+
+impl DestinationConfig {
+    pub(crate) fn provider(&self) -> DestinationProvider {
+        match self {
+            Self::Discord { .. } => DestinationProvider::Discord,
+            Self::Telegram { .. } => DestinationProvider::Telegram,
+            Self::Zulip { .. } => DestinationProvider::Zulip,
+        }
+    }
+
+    /// The first thing wrong with this destination, if anything is.
+    fn check(&self, name: &str) -> Result<(), ConfigError> {
+        let field = |field: &'static str| ConfigError::AlertDestinationField {
+            name: name.to_owned(),
+            field,
+        };
+        match self {
+            Self::Discord { webhook_url } => {
+                if !is_https_url(webhook_url.expose_secret()) {
+                    return Err(field("webhook_url"));
+                }
+            }
+            Self::Telegram { bot_token, chat_id } => {
+                if bot_token.expose_secret().trim().is_empty() {
+                    return Err(field("bot_token"));
+                }
+                if chat_id.trim().is_empty() {
+                    return Err(field("chat_id"));
+                }
+            }
+            Self::Zulip {
+                site_url,
+                bot_email,
+                api_key,
+                stream,
+                topic,
+            } => {
+                if !is_https_url(site_url) {
+                    return Err(field("site_url"));
+                }
+                if bot_email.trim().is_empty() {
+                    return Err(field("bot_email"));
+                }
+                if api_key.expose_secret().trim().is_empty() {
+                    return Err(field("api_key"));
+                }
+                if stream.trim().is_empty() {
+                    return Err(field("stream"));
+                }
+                if topic.trim().is_empty() {
+                    return Err(field("topic"));
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// A value written as text that an environment variable delivers as a
+/// number when it is all digits: a Telegram chat id is a number or
+/// `@channel`.
+fn text_or_number<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Written {
+        Text(String),
+        Number(i64),
+    }
+
+    Ok(match Written::deserialize(deserializer)? {
+        Written::Text(text) => text,
+        Written::Number(number) => number.to_string(),
+    })
+}
+
+/// A credential travels in the address, so the address is not sent in the
+/// clear. Loopback is the one exception, for a stand's mock provider.
+fn is_https_url(value: &str) -> bool {
+    let Ok(url) = url::Url::parse(value) else {
+        return false;
+    };
+    let loopback = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "::1"));
+
+    url.scheme() == "https" || (url.scheme() == "http" && loopback)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -104,6 +209,14 @@ pub(crate) struct AlertsConfig {
     /// its hold for as long as the check runs.
     pub(crate) evaluation_lock_secs: u64,
     pub(crate) notifications_kept_per_rule: u64,
+    /// How many times a notification is sent for before it is given up on.
+    pub(crate) delivery_attempts: u32,
+    /// The wait before the second attempt; each later wait doubles.
+    pub(crate) delivery_backoff_secs: u64,
+    /// How long one provider call may take.
+    pub(crate) delivery_timeout_secs: u64,
+    /// How many notifications are sent at once.
+    pub(crate) delivery_concurrency: usize,
 }
 
 impl Default for AlertsConfig {
@@ -119,6 +232,10 @@ impl Default for AlertsConfig {
             evaluation_lock_secs: crate::domain::alerts::rule::DEFAULT_EVALUATION_LOCK_SECS,
             notifications_kept_per_rule:
                 crate::domain::alerts::rule::DEFAULT_NOTIFICATIONS_KEPT_PER_RULE,
+            delivery_attempts: DEFAULT_DELIVERY_ATTEMPTS,
+            delivery_backoff_secs: DEFAULT_DELIVERY_BACKOFF_SECS,
+            delivery_timeout_secs: DEFAULT_DELIVERY_TIMEOUT_SECS,
+            delivery_concurrency: DEFAULT_DELIVERY_CONCURRENCY,
         }
     }
 }
@@ -136,7 +253,9 @@ impl AlertsConfig {
         crate::domain::alerts::Destinations::new(
             self.destinations
                 .iter()
-                .map(|(name, destination)| (name.clone(), destination.provider.as_str().to_owned()))
+                .map(|(name, destination)| {
+                    (name.clone(), destination.provider().as_str().to_owned())
+                })
                 .collect(),
         )
     }
@@ -597,12 +716,18 @@ fn validate_alerts(alerts: &AlertsConfig) -> Result<(), ConfigError> {
     if alerts.evaluation_lock_secs == 0 || alerts.notifications_kept_per_rule == 0 {
         return Err(ConfigError::AlertCapacity);
     }
-    if let Some(name) = alerts
-        .destinations
-        .keys()
-        .find(|name| !is_destination_name(name))
+    if alerts.delivery_attempts == 0
+        || alerts.delivery_backoff_secs == 0
+        || alerts.delivery_timeout_secs == 0
+        || alerts.delivery_concurrency == 0
     {
-        return Err(ConfigError::AlertDestinationName(name.clone()));
+        return Err(ConfigError::AlertCapacity);
+    }
+    for (name, destination) in &alerts.destinations {
+        if !is_destination_name(name) {
+            return Err(ConfigError::AlertDestinationName(name.clone()));
+        }
+        destination.check(name)?;
     }
 
     Ok(())
@@ -666,6 +791,10 @@ pub(crate) enum ConfigError {
     AlertCapacity,
     #[error("gears.insight-v3-core.config.alerts.destinations.{0} is not a plain name")]
     AlertDestinationName(String),
+    #[error(
+        "gears.insight-v3-core.config.alerts.destinations.{name}.{field} is missing or not usable"
+    )]
+    AlertDestinationField { name: String, field: &'static str },
 }
 
 #[derive(Debug, Error)]

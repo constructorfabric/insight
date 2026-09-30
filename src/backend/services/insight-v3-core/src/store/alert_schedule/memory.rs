@@ -70,3 +70,38 @@ impl AlertSchedule for MemorySchedule {
         Ok(self.lock().keys().copied().collect())
     }
 }
+
+/// The delivery queue the handler tests use: which notifications were
+/// queued, and nothing that sends.
+#[derive(Debug, Default)]
+pub(crate) struct MemoryDeliveries {
+    queued: Mutex<Vec<Uuid>>,
+}
+
+impl MemoryDeliveries {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn queued(&self) -> Vec<Uuid> {
+        self.queued
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+}
+
+#[async_trait]
+impl crate::domain::alerts::delivery::Deliveries for MemoryDeliveries {
+    async fn enqueue(&self, notification_id: Uuid) -> Result<(), ScheduleError> {
+        let mut queued = self
+            .queued
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !queued.contains(&notification_id) {
+            queued.push(notification_id);
+        }
+
+        Ok(())
+    }
+}
