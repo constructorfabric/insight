@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -89,6 +89,34 @@ describe("MetricEvidenceTable", () => {
     expect(header.style.gridTemplateColumns.split(/\s+(?![^(]*\))/)).toHaveLength(
       columns.length + 1
     );
+  });
+
+  it("numbers the rows in the order they are drawn when asked to", () => {
+    renderTable({ numbered: true });
+    const [header, ...body] = screen.getAllByRole("row");
+    const [numberHeader] = within(header!).getAllByRole("columnheader");
+
+    expect(numberHeader).toHaveTextContent("#");
+    expect(
+      body.map((row) => within(row).getAllByRole("cell")[0]!.textContent)
+    ).toEqual(["1", "2"]);
+    expect(
+      header!.style.gridTemplateColumns.split(/\s+(?![^(]*\))/)
+    ).toHaveLength(columns.length + 2);
+  });
+
+  it("spans a numbered row's full record across the number column too", async () => {
+    const user = userEvent.setup();
+    renderTable({ numbered: true });
+
+    await user.click(
+      screen.getAllByRole("button", { name: "Show full record" })[0]!
+    );
+
+    const record = screen
+      .getAllByRole("cell")
+      .find((cell) => cell.hasAttribute("aria-colspan"));
+    expect(record).toHaveAttribute("aria-colspan", String(columns.length + 2));
   });
 
   it("renders a branch column the server sent, value and header alike", () => {
