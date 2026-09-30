@@ -983,7 +983,7 @@ SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_gr
 
 CREATE TABLE IF NOT EXISTS silver.class_task_links
 (
-    `unique_key` String,
+    `unique_key` Nullable(String),
     `insight_source_id` String,
     `data_source` String,
     `id_readable` String,
@@ -1409,3 +1409,4 @@ CREATE OR REPLACE VIEW silver.contract_version
 )
 AS SELECT toUInt32(1) AS version
 ;
+
