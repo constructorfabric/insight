@@ -32,6 +32,93 @@ struct RuntimeState {
     admission: crate::api::admission::IngestAdmission,
 }
 
+/// The state the alert worker checks against.
+struct AlertChecks(Arc<crate::api::AppState>);
+
+impl crate::store::alert_schedule::Checks for AlertChecks {
+    fn evaluator(&self) -> crate::domain::alerts::evaluation::Evaluator<'_> {
+        self.0
+            .alert_evaluator()
+            .unwrap_or_else(|| unreachable!("the worker is started only with alerts on"))
+    }
+}
+
+/// How often the schedule is made to say what the store says again. A rule
+/// write that reached the store but not the schedule is put right here.
+const RECONCILE_EVERY: std::time::Duration = std::time::Duration::from_mins(5);
+
+/// The schedule as the store says it should be, logged when it was not.
+async fn repair_schedule(app: &crate::api::AppState) {
+    let (Some(store), Some(schedule)) = (app.alert_store(), app.alert_schedule()) else {
+        return;
+    };
+    let enabled = match store.enabled().await {
+        Ok(enabled) => enabled,
+        Err(error) => {
+            tracing::error!(error = ?error, "the alert rules could not be read to reconcile");
+            return;
+        }
+    };
+    match crate::domain::alerts::schedule::reconcile(schedule, &enabled).await {
+        Ok(reconciled) if reconciled.removed > 0 => {
+            tracing::warn!(
+                removed = reconciled.removed,
+                "alert schedule held checks for rules that are gone"
+            );
+        }
+        Ok(_) => {}
+        Err(error) => tracing::error!(error = ?error, "the alert schedule could not be reconciled"),
+    }
+}
+
+/// Brings the alert schedule and worker up, after the rest of the state:
+/// the schedule is made to say what the store says, then checks start. A
+/// schedule that cannot be reconciled yet is left to the periodic repair.
+async fn start_alerts(
+    config: &crate::config::AlertsConfig,
+    app: &Arc<crate::api::AppState>,
+    cancellation: tokio_util::sync::CancellationToken,
+) -> anyhow::Result<()> {
+    if app.alert_store().is_none() || app.alert_schedule().is_none() {
+        return Ok(());
+    }
+
+    repair_schedule(app).await;
+
+    let worker = crate::store::alert_schedule::AlertWorker::start(
+        &config.redis_url,
+        Arc::new(AlertChecks(Arc::clone(app))),
+        config.evaluation_concurrency,
+        std::time::Duration::from_secs(config.evaluation_lock_secs),
+    )
+    .await?;
+    tracing::info!(
+        concurrency = config.evaluation_concurrency,
+        "alert worker started"
+    );
+
+    let repairing = Arc::clone(app);
+    let stop = cancellation.clone();
+    tokio::spawn(async move {
+        let mut every = tokio::time::interval(RECONCILE_EVERY);
+        every.tick().await;
+        loop {
+            tokio::select! {
+                () = stop.cancelled() => break,
+                _ = every.tick() => repair_schedule(&repairing).await,
+            }
+        }
+    });
+
+    tokio::spawn(async move {
+        cancellation.cancelled().await;
+        worker.stop().await;
+        tracing::info!("alert worker stopped");
+    });
+
+    Ok(())
+}
+
 #[async_trait]
 impl Gear for InsightV3CoreGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
@@ -40,6 +127,7 @@ impl Gear for InsightV3CoreGear {
         // The definitions are rows read by name and edited in place, so they
         // live in MariaDB rather than beside the data they describe.
         let db = sea_orm::Database::connect(config.database_url()).await?;
+        let db_for_alerts = db.clone();
         let definitions = Arc::new(crate::store::definitions::MariaDefinitions::new(db.clone()));
         let datasets = crate::api::Datasets::new(
             Arc::new(crate::store::datasets::MariaDatasets::new(
@@ -52,7 +140,7 @@ impl Gear for InsightV3CoreGear {
         );
         let admission = crate::api::admission::IngestAdmission::new(config.ingest_token());
         let chat = crate::chat::ChatClient::new(config.anthropic_token(), config.chat_model());
-        let app = Arc::new(crate::api::AppState::new(
+        let mut app = crate::api::AppState::new(
             crate::domain::query::metric_query::MetricRunner::new(
                 config.clickhouse_query_client(),
                 crate::domain::query::metric_query::People::new(config.identity_database()),
@@ -66,7 +154,22 @@ impl Gear for InsightV3CoreGear {
                 config.clickhouse_database(),
                 &config.datasets_database(),
             ),
-        ));
+        );
+        if config.alerts().enabled {
+            let alerts = config.alerts();
+            app = app.with_alerts(crate::api::Alerts {
+                store: Arc::new(crate::store::alerts::MariaAlerts::new(
+                    db_for_alerts,
+                    alerts.notifications_kept_per_rule,
+                )),
+                schedule: Arc::new(
+                    crate::store::alert_schedule::RedisSchedule::connect(&alerts.redis_url).await?,
+                ),
+                limits: alerts.limits(),
+                destinations: alerts.destinations(),
+            });
+        }
+        let app = Arc::new(app);
         let runtime = RuntimeState {
             app: Arc::clone(&app),
             admission,
@@ -77,7 +180,14 @@ impl Gear for InsightV3CoreGear {
 
         crate::mcp::start(
             config.mcp(),
-            crate::mcp::tools::CustomSurfaces::new(app),
+            crate::mcp::tools::CustomSurfaces::new(Arc::clone(&app)),
+            ctx.cancellation_token().child_token(),
+        )
+        .await?;
+
+        start_alerts(
+            config.alerts(),
+            &app,
             ctx.cancellation_token().child_token(),
         )
         .await?;

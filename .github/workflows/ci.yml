@@ -318,6 +318,7 @@ jobs:
         # isolated and never reset the DB, so parallel runs don't collide.
         env:
           INTEGRATION_TESTS_MARIADB_URL: ${{ matrix.entry.live_db && format('mysql://insight:insight@127.0.0.1:3306/{0}', matrix.entry.live_db_name) || '' }}
+          INTEGRATION_TESTS_REDIS_URL: ${{ matrix.entry.live_db && 'redis://127.0.0.1:6379/' || '' }}
           INTEGRATION_TESTS_CLICKHOUSE_URL: ${{ matrix.entry.live_ch && 'http://127.0.0.1:8123' || '' }}
           INTEGRATION_TESTS_CLICKHOUSE_USER: ${{ matrix.entry.live_ch && 'insight' || '' }}
           INTEGRATION_TESTS_CLICKHOUSE_PASSWORD: ${{ matrix.entry.live_ch && 'insight' || '' }}
@@ -356,6 +357,7 @@ jobs:
         working-directory: ${{ matrix.entry.root }}
         env:
           INTEGRATION_TESTS_MARIADB_URL: ${{ matrix.entry.live_db && format('mysql://insight:insight@127.0.0.1:3306/{0}', matrix.entry.live_db_name) || '' }}
+          INTEGRATION_TESTS_REDIS_URL: ${{ matrix.entry.live_db && 'redis://127.0.0.1:6379/' || '' }}
           INTEGRATION_TESTS_CLICKHOUSE_URL: ${{ matrix.entry.live_ch && 'http://127.0.0.1:8123' || '' }}
           INTEGRATION_TESTS_CLICKHOUSE_USER: ${{ matrix.entry.live_ch && 'insight' || '' }}
           INTEGRATION_TESTS_CLICKHOUSE_PASSWORD: ${{ matrix.entry.live_ch && 'insight' || '' }}

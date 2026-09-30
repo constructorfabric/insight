@@ -1,6 +1,39 @@
 {
   "components": {
     "schemas": {
+      "AlertsPage": {
+        "description": "One page of alerts, by name, and how many match in all.",
+        "properties": {
+          "alerts": {
+            "items": {
+              "$ref": "#/components/schemas/SummaryResponse"
+            },
+            "type": "array"
+          },
+          "limit": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "offset": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "alerts",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "type": "object"
+      },
       "ChatRequest": {
         "properties": {
           "history": {
@@ -16,6 +49,35 @@
         },
         "required": [
           "message"
+        ],
+        "type": "object"
+      },
+      "DestinationResponse": {
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "provider"
+        ],
+        "type": "object"
+      },
+      "DestinationsResponse": {
+        "properties": {
+          "destinations": {
+            "items": {
+              "$ref": "#/components/schemas/DestinationResponse"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "destinations"
         ],
         "type": "object"
       },
@@ -79,6 +141,21 @@
         ],
         "type": "object"
       },
+      "EnabledRequest": {
+        "additionalProperties": false,
+        "description": "Turning a rule on or off names the revision it expects to change.",
+        "properties": {
+          "expected_revision": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_revision"
+        ],
+        "type": "object"
+      },
       "MoveRequest": {
         "properties": {
           "folder": {
@@ -102,6 +179,93 @@
           "name"
         ],
         "type": "object"
+      },
+      "NotificationResponse": {
+        "properties": {
+          "column": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "destination": {
+            "type": "string"
+          },
+          "evaluated_at": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "metric": {
+            "type": "string"
+          },
+          "operator": {
+            "type": "string"
+          },
+          "rule_revision": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "status": {
+            "description": "`pending` or `cancelled`.",
+            "type": "string"
+          },
+          "threshold": {},
+          "value": {}
+        },
+        "required": [
+          "id",
+          "rule_revision",
+          "metric",
+          "column",
+          "operator",
+          "threshold",
+          "value",
+          "evaluated_at",
+          "destination",
+          "status",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "NotificationsPage": {
+        "description": "One page of a rule's notifications, newest first.",
+        "properties": {
+          "limit": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/NotificationResponse"
+            },
+            "type": "array"
+          },
+          "offset": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "notifications",
+          "limit",
+          "offset"
+        ],
+        "type": "object"
+      },
+      "Operator": {
+        "description": "How the observed value is compared with the threshold.",
+        "enum": [
+          ">",
+          ">=",
+          "<",
+          "<="
+        ],
+        "type": "string"
       },
       "Problem": {
         "description": "RFC 9457 problem+json. `context` varies by error category.",
@@ -165,6 +329,140 @@
         ],
         "type": "object"
       },
+      "RuleDraft": {
+        "additionalProperties": false,
+        "description": "A rule as an administrator writes it.",
+        "properties": {
+          "column": {
+            "description": "The result column holding the number, by the `as_name` the metric\ngives it.",
+            "type": "string"
+          },
+          "destination": {
+            "description": "The configured destination the notification goes to.",
+            "type": "string"
+          },
+          "enabled": {
+            "description": "Whether checks run. `true` by default.",
+            "type": "boolean"
+          },
+          "expected_revision": {
+            "description": "The revision this write expects to replace. Required to change an\nalert that exists; not sent when creating one.",
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "interval_secs": {
+            "description": "How often to check, in seconds.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "metric": {
+            "description": "The stored metric to check.",
+            "type": "string"
+          },
+          "name": {
+            "description": "What the alert is called, as people read it: up to 200 characters.",
+            "type": "string"
+          },
+          "operator": {
+            "$ref": "#/components/schemas/Operator",
+            "description": "One of `>`, `>=`, `<`, `<=`."
+          },
+          "range": {
+            "description": "The window the metric is run over, as `run_metric` takes it. Omit it\nto run the metric unbounded.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "threshold": {
+            "description": "The number the value is compared with."
+          }
+        },
+        "required": [
+          "name",
+          "metric",
+          "column",
+          "operator",
+          "threshold",
+          "interval_secs",
+          "destination"
+        ],
+        "type": "object"
+      },
+      "RuleResponse": {
+        "description": "A rule as a reader is shown it.",
+        "properties": {
+          "column": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "destination": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "description": "The handle every other operation takes.",
+            "type": "string"
+          },
+          "interval_secs": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "metric": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "operator": {
+            "type": "string"
+          },
+          "range": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "revision": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "state": {
+            "$ref": "#/components/schemas/StateResponse"
+          },
+          "threshold": {},
+          "updated_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "metric",
+          "column",
+          "operator",
+          "threshold",
+          "interval_secs",
+          "destination",
+          "enabled",
+          "revision",
+          "state",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
       "SortBody": {
         "properties": {
           "direction": {
@@ -177,6 +475,68 @@
         "required": [
           "key",
           "direction"
+        ],
+        "type": "object"
+      },
+      "StateResponse": {
+        "description": "What the latest checks left: when, what was found, and whether the\nlast valid check saw the condition met.",
+        "properties": {
+          "breached_since": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_evaluated_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_outcome": {
+            "description": "`breach`, `no_breach` or `unknown`; absent before the first check.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_valid_breached": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "last_value": {}
+        },
+        "type": "object"
+      },
+      "SummaryResponse": {
+        "description": "One alert as a listing shows it.",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "metric": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "metric",
+          "enabled"
         ],
         "type": "object"
       },
@@ -229,6 +589,761 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/v1/alert-destinations": {
+      "get": {
+        "operationId": "insight_v3_core.alerts.destinations",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DestinationsResponse"
+                }
+              }
+            },
+            "description": "Every configured destination, by name"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "The destinations an alert may send to",
+        "x-toolkit-visibility": "exposed"
+      }
+    },
+    "/v1/alerts": {
+      "get": {
+        "operationId": "insight_v3_core.alerts.list",
+        "parameters": [
+          {
+            "description": "Text to look for in a name or in the metric it watches",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Page size, 1 to 200",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Alerts to skip",
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlertsPage"
+                }
+              }
+            },
+            "description": "One page of alerts, and how many match"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "504": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Gateway Timeout"
+          }
+        },
+        "summary": "List alerts, or the ones matching ?q=",
+        "x-toolkit-visibility": "exposed"
+      },
+      "post": {
+        "operationId": "insight_v3_core.alerts.create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RuleDraft"
+              }
+            }
+          },
+          "description": "The rule",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuleResponse"
+                }
+              }
+            },
+            "description": "The rule as stored, with its id"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "504": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Gateway Timeout"
+          }
+        },
+        "summary": "Create an alert",
+        "x-toolkit-visibility": "exposed"
+      }
+    },
+    "/v1/alerts/{id}": {
+      "delete": {
+        "operationId": "insight_v3_core.alerts.delete",
+        "parameters": [
+          {
+            "description": "Alert id, as create answered it",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Alert removed"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "504": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Gateway Timeout"
+          }
+        },
+        "summary": "Remove an alert, its schedule and its notifications",
+        "x-toolkit-visibility": "exposed"
+      },
+      "get": {
+        "operationId": "insight_v3_core.alerts.get",
+        "parameters": [
+          {
+            "description": "Alert id, as create answered it",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuleResponse"
+                }
+              }
+            },
+            "description": "The rule and its state"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "504": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Gateway Timeout"
+          }
+        },
+        "summary": "Read an alert and what its latest check found",
+        "x-toolkit-visibility": "exposed"
+      },
+      "put": {
+        "operationId": "insight_v3_core.alerts.replace",
+        "parameters": [
+          {
+            "description": "Alert id, as create answered it",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RuleDraft"
+              }
+            }
+          },
+          "description": "The rule",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuleResponse"
+                }
+              }
+            },
+            "description": "The rule as stored"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "504": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Gateway Timeout"
+          }
+        },
+        "summary": "Replace an alert at its expected revision",
+        "x-toolkit-visibility": "exposed"
+      }
+    },
+    "/v1/alerts/{id}/disable": {
+      "post": {
+        "operationId": "insight_v3_core.alerts.disable",
+        "parameters": [
+          {
+            "description": "Alert id, as create answered it",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnabledRequest"
+              }
+            }
+          },
+          "description": "The revision this expects to change",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuleResponse"
+                }
+              }
+            },
+            "description": "The rule as stored"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "504": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Gateway Timeout"
+          }
+        },
+        "summary": "Turn an alert's checks off and withdraw what it has not sent",
+        "x-toolkit-visibility": "exposed"
+      }
+    },
+    "/v1/alerts/{id}/enable": {
+      "post": {
+        "operationId": "insight_v3_core.alerts.enable",
+        "parameters": [
+          {
+            "description": "Alert id, as create answered it",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnabledRequest"
+              }
+            }
+          },
+          "description": "The revision this expects to change",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuleResponse"
+                }
+              }
+            },
+            "description": "The rule as stored"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "504": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Gateway Timeout"
+          }
+        },
+        "summary": "Turn an alert's checks on",
+        "x-toolkit-visibility": "exposed"
+      }
+    },
+    "/v1/alerts/{id}/notifications": {
+      "get": {
+        "operationId": "insight_v3_core.alerts.notifications",
+        "parameters": [
+          {
+            "description": "Alert id, as create answered it",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Page size, 1 to 200",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Notifications to skip",
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationsPage"
+                }
+              }
+            },
+            "description": "One page of notifications"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "504": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Gateway Timeout"
+          }
+        },
+        "summary": "The notifications an alert's checks have owed, newest first",
+        "x-toolkit-visibility": "exposed"
+      }
+    },
     "/v1/chat": {
       "post": {
         "operationId": "insight_v3_core.chat",

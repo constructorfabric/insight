@@ -36,6 +36,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260924_000003_folders::Migration),
             Box::new(m20260928_000004_tags::Migration),
             Box::new(m20260928_000005_pins::Migration),
+            Box::new(m20260928_000006_alerts::Migration),
         ]
     }
 }
@@ -305,6 +306,31 @@ mod m20260928_000005_pins {
     }
 }
 
+mod m20260928_000006_alerts {
+    use super::{DbErr, MigrationName, MigrationTrait, SchemaManager, apply_sql};
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &'static str {
+            "m20260928_000006_alerts"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            apply_sql(manager, include_str!("sql/006_alerts.sql")).await
+        }
+
+        async fn down(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
+            Err(DbErr::Custom(
+                "dropping the alerts would lose every rule and what it saw".to_owned(),
+            ))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -349,6 +375,7 @@ mod tests {
                 "m20260924_000003_folders",
                 "m20260928_000004_tags",
                 "m20260928_000005_pins",
+                "m20260928_000006_alerts",
             ],
             "a migration's name is the ledger's key, so it is written down here"
         );
@@ -369,6 +396,7 @@ mod tests {
             ("003_folders.sql", include_str!("sql/003_folders.sql"), 2),
             ("004_tags.sql", include_str!("sql/004_tags.sql"), 4),
             ("005_pins.sql", include_str!("sql/005_pins.sql"), 3),
+            ("006_alerts.sql", include_str!("sql/006_alerts.sql"), 2),
         ];
 
         for (named, script, expected) in scripts {

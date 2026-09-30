@@ -11696,6 +11696,14 @@ dashboards:
 alerting:
   rules.yaml:
     apiVersion: 1
+    # insight-red-telemetry-absent was replaced by insight-otlp-telemetry-absent,
+    # but file-provisioned rules are not removed when they leave this file and the
+    # alert-state PVC now keeps them across restarts. deleteRules is the only way
+    # out: the API refuses a 'classic-file-provisioning' rule. Safe to drop once
+    # every stand has reconciled.
+    deleteRules:
+    - orgId: 1
+      uid: insight-red-telemetry-absent
     groups:
     - orgId: 1
       name: insight-availability
@@ -11920,7 +11928,7 @@ alerting:
           model:
             refId: A
             expr: absent(target_info{job="insight-analytics"}) or absent(target_info{job="insight-authenticator"})
-              or absent(target_info{job="insight-identity-resolution"})
+              or absent(target_info{job="insight-identity-resolution"}) or absent(target_info{job="insight-v3-core"})
             instant: true
             range: false
         - refId: B
