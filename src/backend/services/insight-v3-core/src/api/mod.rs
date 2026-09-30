@@ -355,6 +355,9 @@ pub(crate) fn register_routes(
     let api = metric_run::register_routes(api, openapi, state.clone());
     let api = metric_drilldown::register_routes(api, openapi, state.clone());
     let api = chat::register_routes(api, openapi, state)
+        .layer(insight_http_metrics::ServerMetricsLayer::new(
+            "insight-v3-core",
+        ))
         .layer(insight_log_context::LogContextLayer::new());
 
     router.merge(api)
