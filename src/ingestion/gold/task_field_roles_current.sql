@@ -61,18 +61,14 @@ vendor_defaults AS (
 
     UNION ALL
 
-    -- GitHub's issue FIELDS are defined per organization and carry no defaults,
-    -- but its title is not one of them: `title` is fixed by the product, the
-    -- same in every installation, so it is stated here for the same reason
-    -- Jira's system fields are. This is the whole of GitHub's default set.
     SELECT
         s.insight_source_id                     AS insight_source_id,
         s.data_source                           AS data_source,
-        'title'                                 AS field_id,
+        if(s.data_source = 'youtrack', 'summary', 'title') AS field_id,
         'title'                                 AS role,
         'none'                                  AS value_unit
     FROM observed_sources AS s
-    WHERE s.data_source = 'github'
+    WHERE s.data_source IN ('github', 'youtrack')
 ),
 
 -- INVARIANT: `recorded_at` is part of `unique_key`, so a retraction is a NEWER

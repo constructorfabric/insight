@@ -1,0 +1,3 @@
+{{ config(materialized='table', engine='ReplacingMergeTree(_version)', order_by=['unique_key'], settings={'allow_nullable_key': 1}, schema='staging', tags=['youtrack', 'staging', 'silver:class_task_projects']) }}
+
+SELECT unique_key, source_id AS insight_source_id, 'youtrack' AS data_source, id AS project_id, shortName AS project_key, name, nullIf(JSONExtractString({{ youtrack_json('project_json') }}, 'leader', 'id'), '') AS lead_id, CAST(NULL AS Nullable(String)) AS project_type, CAST(NULL AS Nullable(String)) AS project_style, CAST(archived AS Nullable(UInt8)) AS archived, toDateTime64(_airbyte_extracted_at, 3) AS collected_at, toUnixTimestamp64Milli(now64(3)) AS _version FROM {{ source('bronze_youtrack', 'youtrack_projects') }} FINAL

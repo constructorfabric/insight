@@ -887,6 +887,37 @@ heal_task_id_column staging jira__task_comments comment_id
 heal_task_id_column silver class_task_worklogs worklog_id
 heal_task_id_column silver class_task_comments comment_id
 
+echo "=== Healing task relationship ID columns ==="
+heal_task_parent_id() {
+  local table="$1"
+  ch_table_is_real staging "${table}" || return 0
+  echo "  staging.${table}"
+  run_ch <<SQL
+ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS issue_id Nullable(String) AFTER _version;
+ALTER TABLE staging.${table} MODIFY COLUMN issue_id Nullable(String) AFTER _version;
+SQL
+}
+
+heal_task_link_ids() {
+  local table="$1"
+  ch_table_is_real staging "${table}" || return 0
+  echo "  staging.${table}"
+  run_ch <<SQL
+ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS issue_id Nullable(String) AFTER _version;
+ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS target_id Nullable(String) AFTER issue_id;
+ALTER TABLE staging.${table} MODIFY COLUMN issue_id Nullable(String) AFTER _version;
+ALTER TABLE staging.${table} MODIFY COLUMN target_id Nullable(String) AFTER issue_id;
+SQL
+}
+
+for _task_parent_table in jira__task_comments jira__task_worklogs youtrack__task_comments youtrack__task_worklogs; do
+  heal_task_parent_id "${_task_parent_table}"
+done
+
+for _task_link_table in github__task_links youtrack__task_links; do
+  heal_task_link_ids "${_task_link_table}"
+done
+
 # The cohort and coverage relations are dbt VIEWs (identity resolves at query
 # time). A cluster that predates that holds them as MergeTree TABLEs, and dbt's
 # view materialization replaces via CREATE OR REPLACE VIEW, which is not

@@ -54,6 +54,12 @@ models:
         description: "The one column that orders a task's history, within one field and across all fields of the task: `ms(order_at) * 1 000 000 + band * 100 000 + rank`, composed by the `task_event_order` macro. `order_at` is `event_at`, except on `synthetic_initial` rows, where it is the earlier of the issue's creation and its first event. `band` is 0 for `synthetic_initial`, 1 for `changelog`, 2 for rows observed rather than recorded. `rank` is, for a changelog row, the position of its entry among the task's entries of that instant — shared by every field the entry changed, ordered by the from→to chains of those fields, then by the changelog id — and for a `synthetic_initial` row the field's index (0 for the creation marker). Unique per (issue, field); `event_at` stays the real time for durations and date filters."
         tests:
           - not_null
+      - name: field_cardinality
+        description: >
+          Native cardinality when evidenced by the producer: single or multi.
+          unknown means historical cardinality cannot be established; the value
+          arrays are retained without truncation and current metadata is not
+          projected backwards onto the event.
       - name: _seq
         description: "Superseded by `event_order`, which readers sort by. A `synthetic_initial` row's field index (0 for the creation marker) and a changelog row's rank within its instant; 0 elsewhere."
 
@@ -70,6 +76,8 @@ models:
   - name: class_task_comments
     description: "Unified issue comments from all task-tracker sources."
     columns:
+      - name: issue_id
+        description: "Immutable source-native parent issue ID. Join with insight_source_id; id_readable is for display and search only."
       - name: insight_source_id
         tests:
           - not_null
@@ -80,6 +88,8 @@ models:
   - name: class_task_worklogs
     description: "Unified issue worklogs from all task-tracker sources."
     columns:
+      - name: issue_id
+        description: "Immutable source-native parent issue ID. Join with insight_source_id; id_readable is for display and search only."
       - name: insight_source_id
         tests:
           - not_null
@@ -128,6 +138,10 @@ models:
       `valid_from` is part of the key rather than a version of one row. Both directions are stored: a
       parent-child pair yields a `sub_issue` row on the parent and a `parent` row on the child.
     columns:
+      - name: issue_id
+        description: "Immutable source-native ID of the item owning the link, scoped by insight_source_id."
+      - name: target_id
+        description: "Immutable source-native ID of the target, scoped by insight_source_id and target_type. Never substitute target_readable when missing."
       - name: unique_key
         description: "Source, item, link type, target and `valid_from` — the occurrence, not the link."
         tests:
@@ -136,11 +150,11 @@ models:
         tests:
           - not_null
       - name: data_source
-        description: "Vendor that recorded the link; `github` today."
+        description: "Vendor that recorded the link."
         tests:
           - not_null
       - name: id_readable
-        description: "The item the link belongs to, as the tracker addresses it (`owner/repo#12`)."
+        description: "Display/search label of the source item; never a relationship key."
         tests:
           - not_null
       - name: link_type
@@ -150,7 +164,7 @@ models:
       - name: target_type
         description: "What sits at the other end: issue | pull_request."
       - name: target_readable
-        description: "The other end, addressed the same way. Carries its own repository, because a link may cross repositories."
+        description: "Display/search label of the target item; never a relationship key."
         tests:
           - not_null
       - name: valid_from

@@ -1,7 +1,9 @@
+-- depends_on: {{ ref('youtrack__task_field_metadata') }}
 -- depends_on: {{ ref('jira__task_field_metadata') }}
 -- depends_on: {{ ref('github__task_field_metadata') }}
 {{ config(
     materialized='incremental',
+    pre_hook="{{ youtrack_reconcile_class() }}",
     incremental_strategy='delete+insert',
     unique_key='unique_key',
     schema='silver',
@@ -15,5 +17,5 @@ SELECT * FROM (
     {{ union_by_tag('silver:class_task_field_metadata') }}
 )
 {% if is_incremental() %}
-WHERE _version > (SELECT max(_version) FROM {{ this }})
+WHERE data_source = 'youtrack' OR _version > (SELECT max(_version) FROM {{ this }})
 {% endif %}
