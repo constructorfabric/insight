@@ -19,14 +19,26 @@ WITH snapshots AS (
     GROUP BY tenant_id, source_id
 ),
 
-entries AS (
+latest AS (
     SELECT
         coalesce(tenant_id, '') AS insight_tenant_id,
         coalesce(source_id, '') AS account_source_id,
         toDateOrNull(snapshot.2) AS window_start,
         toDateOrNull(snapshot.3) AS window_end,
-        arrayJoin(JSONExtractArrayRaw(assumeNotNull(snapshot.1))) AS entry
+        JSONExtractArrayRaw(assumeNotNull(snapshot.1)) AS raw_entries
     FROM snapshots
+),
+
+-- INVARIANT: only scalars and the entry array enter ARRAY JOIN; the payload would replicate per entry.
+entries AS (
+    SELECT
+        insight_tenant_id,
+        account_source_id,
+        window_start,
+        window_end,
+        entry
+    FROM latest
+    ARRAY JOIN raw_entries AS entry
 ),
 
 intervals AS (
