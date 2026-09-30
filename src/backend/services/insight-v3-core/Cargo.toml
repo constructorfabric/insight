@@ -15,6 +15,7 @@ workspace = true
 toolkit = { workspace = true, features = ["bootstrap"] }
 toolkit-canonical-errors = { workspace = true }
 insight-clickhouse = { workspace = true }
+insight-http-metrics = { workspace = true }
 insight-log-context = { workspace = true }
 insight-openapi = { workspace = true }
 

@@ -3909,6 +3909,7 @@ dependencies = [
  "clickhouse",
  "futures",
  "insight-clickhouse",
+ "insight-http-metrics",
  "insight-log-context",
  "insight-openapi",
  "jsonwebtoken",
