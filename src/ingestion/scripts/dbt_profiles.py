@@ -15,6 +15,22 @@ from pathlib import Path
 
 import yaml
 
+TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def on_cluster() -> str:
+    """The cluster the adapter's `cluster` key names, or nothing.
+
+    Empty on a standalone install, and on a cluster whose database carries the
+    `Replicated` engine: that one distributes DDL itself and needs no
+    `ON CLUSTER` clause. A name without the flag names no cluster — the flag
+    is what turns on the replicated engines the clause would qualify.
+    """
+    if os.environ.get("CLICKHOUSE_CLUSTER_MODE", "").strip().lower() not in TRUTHY:
+        return ""
+
+    return os.environ.get("CLICKHOUSE_CLUSTER_NAME", "").strip()
+
 
 def build_profile(correlated_subqueries: bool) -> dict:
     output = {
@@ -29,6 +45,11 @@ def build_profile(correlated_subqueries: bool) -> dict:
         "query_limit": 0,
         "connect_timeout": 30,
     }
+
+    cluster_name = on_cluster()
+    if cluster_name:
+        output["cluster"] = cluster_name
+
     if correlated_subqueries:
         # Correlated subqueries (LEFT ANTI JOIN in the identity seed models)
         # are gated behind this experimental flag on CH 25.7. A model-level

@@ -109,7 +109,18 @@
       }
     },
 
-    "clickhouse": { "$ref": "#/definitions/infraDep" },
+    "clickhouse": {
+      "allOf": [
+        { "$ref": "#/definitions/infraDep" },
+        {
+          "properties": {
+            "protocol":    { "enum": ["http", "https"] },
+            "clusterMode": { "type": "boolean" },
+            "clusterName": { "type": "string" }
+          }
+        }
+      ]
+    },
     "mariadb":    { "$ref": "#/definitions/infraDep" },
     "redis":      { "$ref": "#/definitions/infraDep" },
     "redpanda":   { "$ref": "#/definitions/infraDep" },

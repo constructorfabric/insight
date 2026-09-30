@@ -121,6 +121,16 @@ spec:
                 secretKeyRef:
                   name: {{ required "clickhouse.passwordSecret.name is required" .Values.clickhouse.passwordSecret.name | quote }}
                   key:  {{ required "clickhouse.passwordSecret.key is required"  .Values.clickhouse.passwordSecret.key  | quote }}
+            # Topology of the target ClickHouse (epic #2010). The Bronze
+            # destination is the only creator of bronze tables, so it has to
+            # know whether to emit `Replicated*` engines and `ON CLUSTER`.
+            # Defaults render "false" / "", and the destination config then
+            # carries neither key — the fields arrived in
+            # destination-clickhouse 2.1.29 and an older one rejects them.
+            - name: RECONCILE_DEST_CLICKHOUSE_CLUSTER_MODE
+              value: {{ include "insight.clickhouse.clusterMode" . | quote }}
+            - name: RECONCILE_DEST_CLICKHOUSE_CLUSTER_NAME
+              value: {{ include "insight.clickhouse.clusterName" . | quote }}
             - name: INSIGHT_TENANT_ID
               value: {{ required "ingestion.reconcile.tenantId is required (the Insight tenant slug; used in source/connection names per ADR-0005)" .Values.ingestion.reconcile.tenantId | quote }}
             # ARGO_INSTANCE_ID — set only when the cluster's Argo workflow

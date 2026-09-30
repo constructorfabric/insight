@@ -2,6 +2,8 @@
 
 use std::time::Duration;
 
+use crate::topology::Topology;
+
 /// `ClickHouse` connection configuration.
 ///
 /// `Debug` impl redacts the password field.
@@ -24,6 +26,9 @@ pub struct Config {
     /// Per-query memory ceiling in bytes. Applied as `max_memory_usage`
     /// setting. `None` means the `ClickHouse` server default.
     pub query_max_memory_bytes: Option<u64>,
+    /// Topology of the server this config dials. Decides the engines and the
+    /// `ON CLUSTER` clause of any DDL a caller emits through this client.
+    pub topology: Topology,
 }
 
 impl core::fmt::Debug for Config {
@@ -36,6 +41,7 @@ impl core::fmt::Debug for Config {
             .field("query_timeout", &self.query_timeout)
             .field("query_max_threads", &self.query_max_threads)
             .field("query_max_memory_bytes", &self.query_max_memory_bytes)
+            .field("topology", &self.topology)
             .finish()
     }
 }
@@ -43,7 +49,7 @@ impl core::fmt::Debug for Config {
 impl Config {
     /// Creates a new config with the given URL and database.
     ///
-    /// Defaults: no auth, 30-second query timeout.
+    /// Defaults: no auth, 30-second query timeout, standalone topology.
     #[must_use]
     pub fn new(url: impl Into<String>, database: impl Into<String>) -> Self {
         Self {
@@ -54,6 +60,7 @@ impl Config {
             query_timeout: Some(Duration::from_secs(30)),
             query_max_threads: None,
             query_max_memory_bytes: None,
+            topology: Topology::Standalone,
         }
     }
 
@@ -92,6 +99,13 @@ impl Config {
         self.query_max_memory_bytes = Some(max_memory_bytes);
         self
     }
+
+    /// Sets the topology of the server this config dials.
+    #[must_use]
+    pub fn with_topology(mut self, topology: Topology) -> Self {
+        self.topology = topology;
+        self
+    }
 }
 
 #[cfg(test)]
@@ -107,6 +121,7 @@ mod tests {
         assert!(cfg.user.is_none());
         assert!(cfg.password.is_none());
         assert_eq!(cfg.query_timeout, Some(Duration::from_secs(30)));
+        assert_eq!(cfg.topology, Topology::Standalone);
     }
 
     #[test]
@@ -130,6 +145,14 @@ mod tests {
         let cfg = Config::new("http://ch:8123", "insight").without_query_timeout();
 
         assert!(cfg.query_timeout.is_none());
+    }
+
+    #[test]
+    fn topology_travels_with_the_connection() {
+        let cfg = Config::new("http://ch:8123", "insight")
+            .with_topology(Topology::new(true, "insight_cluster"));
+
+        assert_eq!(cfg.topology.on_cluster(), Some("insight_cluster"));
     }
 
     #[test]

@@ -125,6 +125,7 @@ mod tests {
             query_timeout: None,
             query_max_threads: None,
             query_max_memory_bytes: None,
+            topology: insight_clickhouse::Topology::Standalone,
         })
     }
 

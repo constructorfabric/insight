@@ -11,6 +11,8 @@ fn valid_config() -> GearConfig {
         clickhouse_database: "insight".to_owned(),
         identity_database: "identity".to_owned(),
         datasets_database: "insight_datasets".to_owned(),
+        clickhouse_cluster_mode: false,
+        clickhouse_cluster_name: String::new(),
         clickhouse_user: None,
         clickhouse_password: None,
         clickhouse_query_user: None,
@@ -482,5 +484,39 @@ fn a_telegram_chat_id_is_read_whether_the_environment_gave_digits_or_text() {
             panic!("should be a Telegram destination: {written}");
         };
         assert_eq!(chat_id, expected, "should read chat id: {written}");
+    }
+}
+
+#[test]
+fn a_warehouse_is_standalone_until_the_operator_says_otherwise() {
+    let validated = valid_config()
+        .validate()
+        .unwrap_or_else(|error| panic!("the default config is valid: {error}"));
+
+    assert_eq!(
+        validated.datasets_client().config().topology,
+        insight_clickhouse::Topology::Standalone
+    );
+}
+
+#[test]
+fn a_clustered_warehouse_carries_its_cluster_into_every_client() {
+    let validated = GearConfig {
+        clickhouse_cluster_mode: true,
+        clickhouse_cluster_name: "insight_cluster".to_owned(),
+        ..valid_config()
+    }
+    .validate()
+    .unwrap_or_else(|error| panic!("a named cluster is valid: {error}"));
+
+    for client in [
+        validated.clickhouse_client(),
+        validated.clickhouse_query_client(),
+        validated.datasets_client(),
+    ] {
+        assert_eq!(
+            client.config().topology.on_cluster(),
+            Some("insight_cluster")
+        );
     }
 }
