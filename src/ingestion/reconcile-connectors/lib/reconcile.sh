@@ -112,30 +112,15 @@ reconcile_resolve_destination_id() {
   : "${RECONCILE_DEST_CLICKHOUSE_DATABASE:?RECONCILE_DEST_CLICKHOUSE_DATABASE must be set}"
   : "${RECONCILE_DEST_CLICKHOUSE_USERNAME:?RECONCILE_DEST_CLICKHOUSE_USERNAME must be set}"
   : "${RECONCILE_DEST_CLICKHOUSE_PASSWORD:?RECONCILE_DEST_CLICKHOUSE_PASSWORD must be set}"
-  # connectionConfiguration for airbyte/destination-clickhouse 2.x (Bulk-CDK):
-  # required keys are host/port/protocol/database/username/password. NOTE the
-  # 1.x->2.x rewrite changed the schema — `port` is now a STRING (not int),
-  # `protocol` (http|https) is required, and the old `ssl`/`schema` keys were
-  # removed (sending them now yields a 422). `protocol` defaults to http to
-  # match the bundled plain-HTTP ClickHouse on 8123 (the chart's
-  # insight.clickhouse.url helper makes the same assumption); the chart
-  # injects RECONCILE_DEST_CLICKHOUSE_PROTOCOL explicitly.
+  # connectionConfiguration for airbyte/destination-clickhouse 2.x — the shape
+  # and the topology keys both live in python/compose_destination_config.py.
+  # RECONCILE_DEST_CLICKHOUSE_CLUSTER_MODE / _CLUSTER_NAME are optional and
+  # default to a standalone install (epic #2010).
   local config_json
-  # ClickHouse destination v2.0+ spec: port is a string, protocol is
-  # required ("http"/"https"). The old ssl+schema fields are gone.
-  config_json="$(python3 -c '
-import os, json
-ssl = os.environ.get("RECONCILE_DEST_CLICKHOUSE_SSL", "false").lower() in ("1", "true", "yes")
-print(json.dumps({
-  "host":        os.environ["RECONCILE_DEST_CLICKHOUSE_HOST"],
-  "port":        os.environ["RECONCILE_DEST_CLICKHOUSE_PORT"],
-  "protocol":    os.environ.get("RECONCILE_DEST_CLICKHOUSE_PROTOCOL", "http"),
-  "database":    os.environ["RECONCILE_DEST_CLICKHOUSE_DATABASE"],
-  "username":    os.environ["RECONCILE_DEST_CLICKHOUSE_USERNAME"],
-  "password":    os.environ["RECONCILE_DEST_CLICKHOUSE_PASSWORD"],
-  "enable_json": False,
-}))
-')"
+  if ! config_json="$(python3 "${_RECONCILE_PY_DIR}/compose_destination_config.py")"; then
+    reconcile__log ERROR "${subject}" "could not compose the Bronze destination configuration"
+    return 1
+  fi
 
   local dest_id
   if ! dest_id="$(ab_ensure_destination "${dest_name}" "${def_id}" "${config_json}")"; then

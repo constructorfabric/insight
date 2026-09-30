@@ -274,6 +274,10 @@ pub(crate) struct GearConfig {
     pub(crate) dataset_preview_rows: u64,
     /// How long an abandoned create or removal holds its dataset.
     pub(crate) dataset_lease_secs: i64,
+    /// Topology of the warehouse: whether the tables this service creates
+    /// must replicate, and the cluster its DDL is qualified with.
+    pub(crate) clickhouse_cluster_mode: bool,
+    pub(crate) clickhouse_cluster_name: String,
     pub(crate) clickhouse_user: Option<String>,
     pub(crate) clickhouse_password: Option<SecretString>,
     /// The read-only principal the assistant's query path connects as. Blank
@@ -298,6 +302,8 @@ impl Default for GearConfig {
             datasets_database: DEFAULT_DATASETS_DATABASE.to_owned(),
             dataset_preview_rows: DEFAULT_DATASET_PREVIEW_ROWS,
             dataset_lease_secs: crate::domain::datasets::LEASE_SECS,
+            clickhouse_cluster_mode: false,
+            clickhouse_cluster_name: String::new(),
             clickhouse_user: None,
             clickhouse_password: None,
             clickhouse_query_user: None,
@@ -342,6 +348,7 @@ pub(crate) struct ValidatedConfig {
     datasets_database: String,
     dataset_preview_rows: u64,
     dataset_lease_secs: i64,
+    topology: insight_clickhouse::Topology,
     clickhouse_user: Option<String>,
     clickhouse_password: Option<SecretString>,
     clickhouse_query_user: Option<String>,
@@ -368,6 +375,8 @@ impl fmt::Debug for GearConfig {
             .field("datasets_database", &self.datasets_database)
             .field("dataset_preview_rows", &self.dataset_preview_rows)
             .field("dataset_lease_secs", &self.dataset_lease_secs)
+            .field("clickhouse_cluster_mode", &self.clickhouse_cluster_mode)
+            .field("clickhouse_cluster_name", &self.clickhouse_cluster_name)
             .field("clickhouse_user", &self.clickhouse_user)
             .field("clickhouse_password", &REDACTED)
             .field("clickhouse_query_user", &self.clickhouse_query_user)
@@ -415,6 +424,7 @@ impl fmt::Debug for ValidatedConfig {
             .field("datasets_database", &self.datasets_database)
             .field("dataset_preview_rows", &self.dataset_preview_rows)
             .field("dataset_lease_secs", &self.dataset_lease_secs)
+            .field("topology", &self.topology)
             .field("clickhouse_user", &self.clickhouse_user)
             .field("clickhouse_password", &REDACTED)
             .field("clickhouse_query_user", &self.clickhouse_query_user)
@@ -474,7 +484,8 @@ impl ValidatedConfig {
         password: Option<&SecretString>,
     ) -> insight_clickhouse::Client {
         let mut config =
-            insight_clickhouse::Config::new(&self.clickhouse_url, &self.clickhouse_database);
+            insight_clickhouse::Config::new(&self.clickhouse_url, &self.clickhouse_database)
+                .with_topology(self.topology.clone());
         if let (Some(user), Some(password)) = (user, password) {
             config = config.with_auth(user, password.expose_secret());
         }
@@ -537,7 +548,8 @@ impl ValidatedConfig {
     /// is the only database this service creates or drops a table in.
     pub(crate) fn datasets_client(&self) -> insight_clickhouse::Client {
         let mut config =
-            insight_clickhouse::Config::new(&self.clickhouse_url, &self.datasets_database);
+            insight_clickhouse::Config::new(&self.clickhouse_url, &self.datasets_database)
+                .with_topology(self.topology.clone());
         if let (Some(user), Some(password)) = (
             self.clickhouse_user.as_deref(),
             self.clickhouse_password.as_ref(),
@@ -550,6 +562,14 @@ impl ValidatedConfig {
 }
 
 impl GearConfig {
+    /// Whether the warehouse replicates, as the DDL this service emits reads it.
+    fn topology(&self) -> insight_clickhouse::Topology {
+        insight_clickhouse::Topology::new(
+            self.clickhouse_cluster_mode,
+            &self.clickhouse_cluster_name,
+        )
+    }
+
     /// What a migration needs: the warehouse it creates tables in, and the
     /// definition store it migrates.
     pub(crate) fn validate_stores(self) -> Result<StoreConfig, ConfigError> {
@@ -562,6 +582,8 @@ impl GearConfig {
             self.clickhouse_password.as_ref(),
         )?;
 
+        let topology = self.topology();
+
         Ok(StoreConfig {
             clickhouse: insight_clickhouse::Client::new(
                 match (
@@ -572,11 +594,13 @@ impl GearConfig {
                         &self.clickhouse_url,
                         &self.clickhouse_database,
                     )
+                    .with_topology(topology)
                     .with_auth(user, password.expose_secret()),
                     _ => insight_clickhouse::Config::new(
                         &self.clickhouse_url,
                         &self.clickhouse_database,
-                    ),
+                    )
+                    .with_topology(topology),
                 },
             ),
             datasets_database: self.datasets_database,
@@ -598,6 +622,7 @@ impl GearConfig {
         require_non_empty("chat_model", &self.chat_model)?;
         require_non_empty("database_url", &self.database_url)?;
         require_non_empty("identity_url", &self.identity_url)?;
+        let topology = self.topology();
         let ingest_token = IngestToken::parse(self.ingest_token)?;
         validate_credentials(
             self.clickhouse_user.as_deref(),
@@ -622,6 +647,7 @@ impl GearConfig {
             datasets_database: self.datasets_database,
             dataset_preview_rows: self.dataset_preview_rows,
             dataset_lease_secs: self.dataset_lease_secs,
+            topology,
             clickhouse_user: self.clickhouse_user,
             clickhouse_password: self.clickhouse_password,
             clickhouse_query_user,

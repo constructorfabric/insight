@@ -23,6 +23,14 @@ vars:
   # gold macros and per-model configs read this rather than a literal.
   gold_database: insight
 
+  # Topology of the target ClickHouse (epic #2010) — what DDL the models must
+  # emit. Read from the environment rather than `--vars` so every entry point
+  # (the deploy hook, the Argo dbt-run step, bootstrap, the datapath harness)
+  # agrees without each one growing a flag. Jinja in dbt_project.yml renders to
+  # text, so `cluster_mode` is the STRING "true"/"false", never a boolean.
+  cluster_mode: "{{ env_var('CLICKHOUSE_CLUSTER_MODE', 'false') }}"
+  cluster_name: "{{ env_var('CLICKHOUSE_CLUSTER_NAME', '') }}"
+
   # Window git_file_change_coverage judges a live source over. The all-time
   # share carries history no re-read can reach, so only the recent window says
   # whether collection is working NOW. Wide enough that a connector's own

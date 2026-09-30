@@ -91,6 +91,13 @@ spec:
               value: {{ include "insight.clickhouse.url" . | quote }}
             - name: CLICKHOUSE_DATABASE
               value: {{ include "insight.clickhouse.database" . | quote }}
+            # Topology of the target ClickHouse (epic #2010) — what the
+            # migrations and the gold build must emit DDL for. Defaults
+            # render "false" / "", which is the standalone DDL.
+            - name: CLICKHOUSE_CLUSTER_MODE
+              value: {{ include "insight.clickhouse.clusterMode" . | quote }}
+            - name: CLICKHOUSE_CLUSTER_NAME
+              value: {{ include "insight.clickhouse.clusterName" . | quote }}
             - name: CLICKHOUSE_USER
               value: {{ required "clickhouse.username is required" .Values.clickhouse.username | quote }}
             - name: CLICKHOUSE_PASSWORD

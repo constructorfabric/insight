@@ -4,6 +4,7 @@
 //! - [`Client`] — configured `ClickHouse` connection with tenant-scoped queries
 //! - [`QueryBuilder`] — parameterized query builder (no string interpolation)
 //! - [`Config`] — connection configuration
+//! - [`Topology`] — whether the target `ClickHouse` replicates
 //! - [`Error`] — error types
 //!
 //! # Usage
@@ -26,10 +27,12 @@
 pub mod config;
 pub mod error;
 pub mod query;
+pub mod topology;
 
 pub use config::Config;
 pub use error::Error;
 pub use query::QueryBuilder;
+pub use topology::Topology;
 
 use clickhouse::Client as ChClient;
 

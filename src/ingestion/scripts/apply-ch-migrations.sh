@@ -26,6 +26,11 @@
 #   CLICKHOUSE_USER, CLICKHOUSE_PASSWORD
 #   CLICKHOUSE_DATABASE  the Insight app database
 #
+# Optional env (topology of the target ClickHouse, epic #2010):
+#   CLICKHOUSE_CLUSTER_MODE  true -> the DDL emitted here replicates
+#   CLICKHOUSE_CLUSTER_NAME  the cluster the ON CLUSTER clause names
+# Both default to a standalone single node.
+#
 # Options:
 #   --full-refresh   rebuild the selected dbt models from source instead of
 #                    appending to them. The deploy Hook never passes it; the
@@ -52,6 +57,10 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 
 : "${CLICKHOUSE_URL:?CLICKHOUSE_URL must be set (e.g. http://ch-host:8123)}"
 : "${CLICKHOUSE_DATABASE:?CLICKHOUSE_DATABASE must be set (the Insight app database)}"
+# Read by the dbt profile below and, through the environment, by the cluster
+# vars in dbt_project.yml. Exported so both see the same values.
+export CLICKHOUSE_CLUSTER_MODE="${CLICKHOUSE_CLUSTER_MODE:-false}"
+export CLICKHOUSE_CLUSTER_NAME="${CLICKHOUSE_CLUSTER_NAME:-}"
 
 source "$SCRIPT_DIR/lib/ch-exec.sh"
 
@@ -968,6 +977,12 @@ profile = {
         },
     }
 }
+# The adapter's own key: present, it appends ON CLUSTER to the DDL
+# dbt-clickhouse emits. Same rule as scripts/dbt_profiles.on_cluster.
+cluster_mode = os.environ.get("CLICKHOUSE_CLUSTER_MODE", "").strip().lower()
+cluster_name = os.environ.get("CLICKHOUSE_CLUSTER_NAME", "").strip()
+if cluster_mode in ("1", "true", "yes", "on") and cluster_name:
+    profile["ingestion"]["outputs"]["migrate"]["cluster"] = cluster_name
 with open(os.path.join(os.environ["DBT_PROFILES_DIR"], "profiles.yml"), "w") as f:
     yaml.safe_dump(profile, f)
 PY
