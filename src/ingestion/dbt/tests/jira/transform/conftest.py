@@ -166,7 +166,9 @@ class Warehouse:
         if not invocation.success:
             pytest.fail(f"dbt {' '.join(args)} failed:\n{invocation.log}", pytrace=False)
 
-    def build(self, selector: str = FIELD_HISTORY_SELECTOR, *, full_refresh: bool = True) -> None:
+    def build(
+        self, selector: str = FIELD_HISTORY_SELECTOR, *, full_refresh: bool = True, dbt_vars: dict[str, Any] | None = None
+    ) -> None:
         # `run`, not `build`: `build` interleaves the singular tests, so a
         # scenario written to make an invariant fail — and there is one, because
         # the failure is the point — would look like a broken model instead.
@@ -176,7 +178,13 @@ class Warehouse:
         # across runs on purpose (`jira__catalogue_first_seen`, the journal):
         # every scenario seeds its own bronze and reads its own answer. The
         # tests that are ABOUT the persistence build again without the flag.
-        self.dbt("run", "--select", *selector.split(), *(["--full-refresh"] if full_refresh else []))
+        self.dbt(
+            "run",
+            "--select",
+            *selector.split(),
+            *(["--full-refresh"] if full_refresh else []),
+            *(["--vars", json.dumps(dbt_vars)] if dbt_vars else []),
+        )
 
 
 def _apply_sql_file(warehouse: Warehouse, path: Path) -> None:
@@ -306,8 +314,10 @@ class Scenario:
             for r in records
         ]
 
-    def build(self, selector: str = FIELD_HISTORY_SELECTOR, *, full_refresh: bool = True) -> None:
-        self.warehouse.build(selector, full_refresh=full_refresh)
+    def build(
+        self, selector: str = FIELD_HISTORY_SELECTOR, *, full_refresh: bool = True, dbt_vars: dict[str, Any] | None = None
+    ) -> None:
+        self.warehouse.build(selector, full_refresh=full_refresh, dbt_vars=dbt_vars)
 
     def journal(self, *, issue: str | None = None, field: str | None = None) -> list[dict[str, Any]]:
         """The journal rows, ordered the way a reader reconstructs history.

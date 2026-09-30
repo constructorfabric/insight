@@ -15,12 +15,15 @@
         'max_bytes_before_external_sort': 2000000000,
     },
     pre_hook="{{ jira_journal_drop_rows_bronze_cannot_account_for() }}",
-    post_hook="{{ jira_journal_record_catalogue() }}",
+    post_hook=[
+        "{{ jira_journal_derive_remaining_batches() }}",
+        "{{ jira_journal_record_catalogue() }}",
+    ],
     tags=['staging', 'jira', 'silver:class_task_field_history']
 ) }}
 
 {%- set catalogue = jira_journal_catalogue_state() -%}
-{%- set touched_only = is_incremental() and not catalogue.rebuild -%}
+{%- set scope = jira_journal_scope(catalogue) -%}
 
 -- The per-(issue x field x event) journal, derived in dbt. The Jira producer of
 -- `silver.class_task_field_history`, joined there by the availability and
@@ -34,7 +37,9 @@
 -- are not read. A field catalogue that differs from the one the last build
 -- used rebuilds the whole table, because `retired_field`,
 -- `unclassified_field` and `synthetic_initial` rows depend on it
--- (`jira_journal_catalogue_state`).
+-- (`jira_journal_catalogue_state`). A scope larger than one batch of issues is
+-- derived one batch per statement, this one and the post-hook's replays of it
+-- (`jira_journal_scope`), so a rebuild needs the memory of a batch.
 --
 -- INVARIANT: `delete+insert` alongside ReplacingMergeTree is deliberate, not
 -- two dedup mechanisms stacked. The engine collapses a key re-emitted with a
@@ -74,69 +79,10 @@ WITH kinds AS (
       AND field_id != 'created'
 ),
 
-{% if touched_only %}
--- ── the issues this run recomputes ──────────────────────────────────────────
--- When bronze last delivered anything about an issue — its own row or one of
--- its changelog entries. Narrow columns only: this reads every issue in bronze
--- and every row of the journal, and neither the JSON nor the value arrays.
-input_freshness AS (
-    SELECT
-        insight_source_id,
-        issue_id,
-        max(extracted_at)                                 AS fresh_at
-    FROM (
-        SELECT
-            COALESCE(source_id, '')                       AS insight_source_id,
-            COALESCE(toString(jira_id), '')               AS issue_id,
-            toDateTime64(_airbyte_extracted_at, 3)        AS extracted_at
-        FROM {{ source('bronze_jira', 'jira_issue') }}
-        WHERE jira_id IS NOT NULL
-
-        UNION ALL
-
-        SELECT
-            insight_source_id,
-            assumeNotNull(jira_id)                        AS issue_id,
-            extracted_at
-        FROM {{ ref('jira__changelog_items') }}
-        WHERE jira_id IS NOT NULL
-    )
-    GROUP BY insight_source_id, issue_id
-),
-
-journal_versions AS (
-    SELECT
-        insight_source_id,
-        issue_id,
-        max(_version)                                     AS journal_version
-    FROM {{ this }}
-    GROUP BY insight_source_id, issue_id
-),
-
--- Two ways of knowing an issue is stale, and the union of them is the scope.
---
--- The issue's own rows are one: bronze holds an extraction the version those
--- rows carry does not cover. This is what catches an issue whose rows a run
--- never wrote at all, including one bronze re-delivered under an OLDER
--- extraction stamp than the journal already held — a restore does that.
---
--- How far the last COMPLETED run had read is the other, and it is what makes a
--- failed run recoverable. `delete+insert` is two statements: an insert that
--- dies partway leaves an issue holding some of its rows, and those rows carry
--- the version the complete set would have carried, so the issue reads as
--- current and the first test alone would skip it forever. `processed_ms` is
--- written only after a replacement completed, so everything bronze delivered
--- since then is in scope again, the half-written issue with it.
+{% if scope.touched %}
+-- ── the issues this run recomputes (`jira_journal_touched`) ────────────────
 touched AS (
-    SELECT
-        f.insight_source_id                               AS insight_source_id,
-        f.issue_id                                        AS issue_id
-    FROM input_freshness AS f
-    LEFT JOIN journal_versions AS v
-        ON v.insight_source_id = f.insight_source_id
-       AND v.issue_id = f.issue_id
-    WHERE toUnixTimestamp64Milli(f.fresh_at) > toInt64(COALESCE(v.journal_version, 0))
-       OR toUnixTimestamp64Milli(f.fresh_at) > toInt64({{ catalogue.processed_ms }})
+{{- jira_journal_touched(catalogue.processed_ms) -}}
 ),
 
 -- The set as ONE scalar, computed once for the whole statement. A CTE named in
@@ -156,8 +102,8 @@ issue_winner AS (
     SELECT source_id, jira_id, argMax(_airbyte_raw_id, _airbyte_extracted_at) AS raw_id
     FROM {{ source('bronze_jira', 'jira_issue') }}
     WHERE jira_id IS NOT NULL
-    {% if touched_only -%}
-      AND {{ jira_journal_issue_in_scope("COALESCE(source_id, '')", "COALESCE(toString(jira_id), '')") }}
+    {% if scope.narrowed -%}
+      AND {{ jira_journal_issue_in_scope(scope, "COALESCE(source_id, '')", "COALESCE(toString(jira_id), '')") }}
     {%- endif %}
     GROUP BY source_id, jira_id
 ),
@@ -176,8 +122,8 @@ issues AS (
         toDateTime64(i._airbyte_extracted_at, 3)          AS observed_at
     FROM {{ source('bronze_jira', 'jira_issue') }} AS i
     INNER JOIN issue_winner AS w ON i._airbyte_raw_id = w.raw_id
-    {% if touched_only -%}
-    WHERE {{ jira_journal_issue_in_scope("COALESCE(i.source_id, '')", "COALESCE(toString(i.jira_id), '')") }}
+    {% if scope.narrowed -%}
+    WHERE {{ jira_journal_issue_in_scope(scope, "COALESCE(i.source_id, '')", "COALESCE(toString(i.jira_id), '')") }}
     {%- endif %}
 ),
 
@@ -195,8 +141,8 @@ issue_json AS (
                                                           AS resolved_at
     FROM {{ source('bronze_jira', 'jira_issue') }} AS i
     INNER JOIN issue_winner AS w ON i._airbyte_raw_id = w.raw_id
-    {% if touched_only -%}
-    WHERE {{ jira_journal_issue_in_scope("COALESCE(i.source_id, '')", "COALESCE(toString(i.jira_id), '')") }}
+    {% if scope.narrowed -%}
+    WHERE {{ jira_journal_issue_in_scope(scope, "COALESCE(i.source_id, '')", "COALESCE(toString(i.jira_id), '')") }}
     {%- endif %}
 ),
 
@@ -213,8 +159,8 @@ changelog_items AS (
         assumeNotNull(ci.jira_id)                         AS issue_id
     FROM {{ ref('jira__changelog_items') }} AS ci
     WHERE ci.jira_id IS NOT NULL
-    {% if touched_only -%}
-      AND {{ jira_journal_issue_in_scope('ci.insight_source_id', 'assumeNotNull(ci.jira_id)') }}
+    {% if scope.narrowed -%}
+      AND {{ jira_journal_issue_in_scope(scope, 'ci.insight_source_id', 'assumeNotNull(ci.jira_id)') }}
     {%- endif %}
 ),
 
@@ -497,8 +443,8 @@ snapshot_element_wise AS (
         ON k.insight_source_id = s.insight_source_id
        AND k.field_id = s.field_id
     WHERE k.field_kind IN {{ jira_element_wise_kinds() }}
-    {% if touched_only -%}
-      AND {{ jira_journal_issue_in_scope('s.insight_source_id', 's.issue_id') }}
+    {% if scope.narrowed -%}
+      AND {{ jira_journal_issue_in_scope(scope, 's.insight_source_id', 's.issue_id') }}
     {%- endif %}
 ),
 
@@ -510,8 +456,8 @@ snapshot AS (
         s.value_ids                                       AS value_ids,
         s.value_displays                                  AS value_displays
     FROM {{ ref('jira__issue_field_snapshot') }} AS s FINAL
-    {% if touched_only -%}
-    WHERE {{ jira_journal_issue_in_scope('s.insight_source_id', 's.issue_id') }}
+    {% if scope.narrowed -%}
+    WHERE {{ jira_journal_issue_in_scope(scope, 's.insight_source_id', 's.issue_id') }}
     {%- endif %}
 ),
 
