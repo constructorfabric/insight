@@ -3116,6 +3116,28 @@
         },
         "type": "object"
       },
+      "UsageActionsResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/UsageEvent"
+            },
+            "type": "array"
+          },
+          "since": {
+            "type": "string"
+          },
+          "until": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "since",
+          "until",
+          "items"
+        ],
+        "type": "object"
+      },
       "UsageConfigResponse": {
         "properties": {
           "enabled": {
@@ -3216,6 +3238,50 @@
         ],
         "type": "object"
       },
+      "UsagePagesResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/UsagePage"
+            },
+            "type": "array"
+          },
+          "since": {
+            "type": "string"
+          },
+          "until": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "since",
+          "until",
+          "items"
+        ],
+        "type": "object"
+      },
+      "UsagePeopleResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/UsagePerson"
+            },
+            "type": "array"
+          },
+          "since": {
+            "type": "string"
+          },
+          "until": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "since",
+          "until",
+          "items"
+        ],
+        "type": "object"
+      },
       "UsagePerson": {
         "properties": {
           "display_name": {
@@ -3261,24 +3327,6 @@
             },
             "type": "array"
           },
-          "by_event": {
-            "items": {
-              "$ref": "#/components/schemas/UsageEvent"
-            },
-            "type": "array"
-          },
-          "by_page": {
-            "items": {
-              "$ref": "#/components/schemas/UsagePage"
-            },
-            "type": "array"
-          },
-          "by_person": {
-            "items": {
-              "$ref": "#/components/schemas/UsagePerson"
-            },
-            "type": "array"
-          },
           "since": {
             "type": "string"
           },
@@ -3293,10 +3341,7 @@
           "since",
           "until",
           "totals",
-          "by_day",
-          "by_person",
-          "by_page",
-          "by_event"
+          "by_day"
         ],
         "type": "object"
       },
@@ -4754,6 +4799,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "description": "desc (default) or asc",
+            "in": "query",
+            "name": "direction",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -4765,7 +4819,7 @@
                 }
               }
             },
-            "description": "Feedback entries, newest first"
+            "description": "Feedback entries, newest first unless direction says otherwise"
           },
           "400": {
             "content": {
@@ -6822,6 +6876,137 @@
         "summary": "Preview a metric report"
       }
     },
+    "/v1/usage/actions": {
+      "get": {
+        "operationId": "analytics_api.usage.actions",
+        "parameters": [
+          {
+            "description": "Inclusive first day, YYYY-MM-DD",
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Inclusive last day, YYYY-MM-DD",
+            "in": "query",
+            "name": "until",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "opens (default) or people",
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "desc (default) or asc",
+            "in": "query",
+            "name": "direction",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageActionsResponse"
+                }
+              }
+            },
+            "description": "Actions in the requested order"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Drill-downs and other actions in a date range"
+      }
+    },
     "/v1/usage/config": {
       "get": {
         "operationId": "analytics_api.usage.config",
@@ -6960,6 +7145,277 @@
           }
         ],
         "summary": "Record usage events"
+      }
+    },
+    "/v1/usage/pages": {
+      "get": {
+        "operationId": "analytics_api.usage.pages",
+        "parameters": [
+          {
+            "description": "Inclusive first day, YYYY-MM-DD",
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Inclusive last day, YYYY-MM-DD",
+            "in": "query",
+            "name": "until",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "views (default) or visitors",
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "desc (default) or asc",
+            "in": "query",
+            "name": "direction",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsagePagesResponse"
+                }
+              }
+            },
+            "description": "Pages in the requested order"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "What was opened in a date range"
+      }
+    },
+    "/v1/usage/people": {
+      "get": {
+        "operationId": "analytics_api.usage.people",
+        "parameters": [
+          {
+            "description": "Inclusive first day, YYYY-MM-DD",
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Inclusive last day, YYYY-MM-DD",
+            "in": "query",
+            "name": "until",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "visits (default), page_views or last_seen",
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "desc (default) or asc",
+            "in": "query",
+            "name": "direction",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Part of a visitor's name or handle, any case",
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsagePeopleResponse"
+                }
+              }
+            },
+            "description": "Visitors in the requested order"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Who opened the product in a date range"
       }
     },
     "/v1/usage/summary": {

@@ -1,4 +1,6 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
+import type { UseQueryResult } from "@tanstack/react-query";
+import { Search } from "lucide-react";
 import {
   addDays as addCalendarDays,
   differenceInCalendarDays,
@@ -7,12 +9,14 @@ import {
 } from "date-fns";
 
 import type {
+  UsageActionsSort,
   UsageDay,
-  UsageEvent,
-  UsagePage,
-  UsagePerson,
+  UsageList,
+  UsagePagesSort,
+  UsagePeopleSort,
   UsageRange,
 } from "@/api/usage-client";
+import { Input } from "@/components/ui/input";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import {
@@ -38,7 +42,15 @@ import {
   TruncatedCell,
   VirtualTable,
 } from "@/components/portal/usage-table";
-import { useUsageSummary } from "@/queries/usage";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { useUsageOrder } from "@/hooks/use-usage-order";
+import { SEARCH_DEBOUNCE_MS } from "@/queries/identity-resolution";
+import {
+  useUsageActions,
+  useUsagePages,
+  useUsagePeople,
+  useUsageSummary,
+} from "@/queries/usage";
 import { formatDate, formatMetricNumber, formatUtcClock } from "@/lib/format";
 import { screenLabel } from "@/lib/portal/screen-label";
 import { TEXT_FIGURE, TEXT_LABEL, TEXT_NAME } from "@/lib/type-scale";
@@ -88,9 +100,8 @@ export function PlatformUsage() {
     setCustomRange(null);
   };
 
-  // The two reads are siblings, not a sequence: nesting the feedback section
-  // under the summary's pending branch delayed its request until the summary
-  // landed, and hid it entirely when the summary failed.
+  // The reads are siblings, not a sequence: a section nested under the
+  // summary's pending branch waits for the summary and vanishes when it fails.
   return (
     <div className="flex w-full flex-col gap-6 p-6">
       <PeriodSelectorBar
@@ -101,6 +112,9 @@ export function PlatformUsage() {
       />
 
       <UsageSummary range={range} />
+      <PeopleTable range={range} />
+      <PagesTable range={range} />
+      <EventsTable range={range} />
       <FeedbackTable range={range} />
     </div>
   );
@@ -118,7 +132,7 @@ function UsageSummary({ range }: { range: UsageRange }) {
     );
   }
 
-  const { totals, by_person, by_page, by_event } = summary.data;
+  const { totals } = summary.data;
   const by_day = fillRange(summary.data.by_day, {
     since: summary.data.since || range.since,
     until: summary.data.until || range.until,
@@ -136,10 +150,6 @@ function UsageSummary({ range }: { range: UsageRange }) {
         <h3 className={TEXT_NAME}>Visits per day</h3>
         {by_day.length === 0 ? <Empty /> : <VisitsChart days={by_day} />}
       </section>
-
-      <PeopleTable rows={by_person} />
-      <PagesTable rows={by_page} />
-      <EventsTable rows={by_event} />
     </>
   );
 }
@@ -189,47 +199,128 @@ function Kpi({ label, value }: { label: string; value: number }) {
   );
 }
 
-function Empty() {
-  return <ComingSoon variant="row" state="empty" label="No usage in this period yet" />;
+function Empty({ label = "No usage in this period yet" }: { label?: string }) {
+  return <ComingSoon variant="row" state="empty" label={label} />;
 }
 
-function PeopleTable({ rows }: { rows: UsagePerson[] }) {
+function ListSection<T>({
+  title,
+  failure,
+  query,
+  aside,
+  emptyLabel,
+  children,
+}: {
+  title: string;
+  failure: string;
+  query: UseQueryResult<UsageList<T>>;
+  aside?: ReactNode;
+  emptyLabel?: string;
+  children: (rows: T[], pending: boolean) => ReactNode;
+}) {
   return (
     <section className="flex flex-col gap-2">
-      <h3 className={TEXT_NAME}>Who opened it</h3>
-      {rows.length === 0 ? (
-        <Empty />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h3 className={TEXT_NAME}>{title}</h3>
+        {aside}
+      </div>
+      {query.isPending ? (
+        <CenteredSpinner />
+      ) : query.isError || !query.data ? (
+        <ComingSoon variant="row" state="empty" label={failure} />
+      ) : query.data.items.length === 0 ? (
+        <Empty label={emptyLabel} />
       ) : (
-        <VirtualTable
-          label="Who opened it"
-          rows={rows}
-          rowKey={(row) => row.person_id}
-          columns={[
-            {
-              header: "Person",
-              cell: (row) => <PersonName row={row} />,
-            },
-            { header: "Visits", width: 6, align: "right", cell: (row) => row.visits },
-            { header: "Pages", width: 6, align: "right", cell: (row) => row.page_views },
-            { header: "Last seen (UTC)", width: 11, cell: (row) => formatUtcClock(row.last_seen, "d MMM HH:mm") },
-          ]}
-        />
+        children(query.data.items, query.isPlaceholderData)
       )}
     </section>
   );
 }
 
-function EventsTable({ rows }: { rows: UsageEvent[] }) {
+function VisitorSearch({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
   return (
-    <section className="flex flex-col gap-2">
-      <h3 className={TEXT_NAME}>Drill-downs and other actions, by opens</h3>
-      {rows.length === 0 ? (
-        <Empty />
-      ) : (
+    <div className="relative w-full sm:w-56">
+      <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+      <Input
+        type="search"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder="Search visitors"
+        aria-label="Search visitors"
+        className="h-8 ps-8"
+      />
+    </div>
+  );
+}
+
+function PeopleTable({ range }: { range: UsageRange }) {
+  const order = useUsageOrder<UsagePeopleSort>("visits");
+  const [typed, setTyped] = useState("");
+  const trimmed = typed.trim();
+  const debounced = useDebouncedValue(trimmed, SEARCH_DEBOUNCE_MS);
+  const search = trimmed === "" ? "" : debounced;
+  const people = useUsagePeople(range, order.chosen, search);
+
+  return (
+    <ListSection
+      title="Who opened it"
+      failure="Visitors could not be loaded"
+      query={people}
+      aside={<VisitorSearch value={typed} onChange={setTyped} />}
+      emptyLabel={search ? `Nobody matches “${search}”` : undefined}
+    >
+      {(rows, pending) => (
+        <VirtualTable
+          label="Who opened it"
+          rows={rows}
+          rowKey={(row) => row.person_id}
+          order={order.shown}
+          onSort={order.toggle}
+          pending={pending}
+          columns={[
+            {
+              header: "Person",
+              cell: (row) => <PersonName row={row} />,
+            },
+            { header: "Visits", width: 6, align: "right", sortKey: "visits", cell: (row) => row.visits },
+            { header: "Pages", width: 6, align: "right", sortKey: "page_views", cell: (row) => row.page_views },
+            {
+              header: "Last seen (UTC)",
+              width: 11,
+              sortKey: "last_seen",
+              cell: (row) => formatUtcClock(row.last_seen, "d MMM HH:mm"),
+            },
+          ]}
+        />
+      )}
+    </ListSection>
+  );
+}
+
+function EventsTable({ range }: { range: UsageRange }) {
+  const order = useUsageOrder<UsageActionsSort>("opens");
+  const actions = useUsageActions(range, order.chosen);
+
+  return (
+    <ListSection
+      title="Drill-downs and other actions"
+      failure="Actions could not be loaded"
+      query={actions}
+    >
+      {(rows, pending) => (
         <VirtualTable
           label="Drill-downs and other actions"
           rows={rows}
           rowKey={(row) => `${row.event_name}:${row.target}`}
+          order={order.shown}
+          onSort={order.toggle}
+          pending={pending}
           columns={[
             { header: "Action", cell: (row) => row.event_name },
             {
@@ -240,26 +331,29 @@ function EventsTable({ rows }: { rows: UsageEvent[] }) {
                 </span>
               ),
             },
-            { header: "Opens", width: 6, align: "right", cell: (row) => row.opens },
-            { header: "People", width: 6, align: "right", cell: (row) => row.people },
+            { header: "Opens", width: 6, align: "right", sortKey: "opens", cell: (row) => row.opens },
+            { header: "People", width: 6, align: "right", sortKey: "people", cell: (row) => row.people },
           ]}
         />
       )}
-    </section>
+    </ListSection>
   );
 }
 
-function PagesTable({ rows }: { rows: UsagePage[] }) {
+function PagesTable({ range }: { range: UsageRange }) {
+  const order = useUsageOrder<UsagePagesSort>("views");
+  const pages = useUsagePages(range, order.chosen);
+
   return (
-    <section className="flex flex-col gap-2">
-      <h3 className={TEXT_NAME}>What they opened</h3>
-      {rows.length === 0 ? (
-        <Empty />
-      ) : (
+    <ListSection title="What they opened" failure="Pages could not be loaded" query={pages}>
+      {(rows, pending) => (
         <VirtualTable
           label="What they opened"
           rows={rows}
           rowKey={(row) => row.path}
+          order={order.shown}
+          onSort={order.toggle}
+          pending={pending}
           columns={[
             {
               header: "Page",
@@ -269,11 +363,11 @@ function PagesTable({ rows }: { rows: UsagePage[] }) {
                 </TruncatedCell>
               ),
             },
-            { header: "Views", width: 6, align: "right", cell: (row) => row.views },
-            { header: "People", width: 6, align: "right", cell: (row) => row.visitors },
+            { header: "Views", width: 6, align: "right", sortKey: "views", cell: (row) => row.views },
+            { header: "People", width: 6, align: "right", sortKey: "visitors", cell: (row) => row.visitors },
           ]}
         />
       )}
-    </section>
+    </ListSection>
   );
 }

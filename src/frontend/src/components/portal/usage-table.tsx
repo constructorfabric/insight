@@ -1,6 +1,9 @@
 /** The virtualized table the platform-usage surfaces share. */
 import { useState, type ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { ArrowDown, ArrowUp, ChevronsUpDown } from "lucide-react";
+
+import type { SortDirection, UsageOrder } from "@/api/usage-client";
 
 import {
   Table,
@@ -20,23 +23,40 @@ import { cn } from "@/lib/utils";
 
 const ROW_HEIGHT = 40;
 
-export interface Column<T> {
+export interface Column<T, K extends string = string> {
   header: string;
   width?: number;
   align?: "left" | "right";
+  sortKey?: K;
   cell: (row: T, index: number) => ReactNode;
 }
 
-export function VirtualTable<T>({
+function SortIcon({ direction }: { direction: SortDirection | null }) {
+  if (direction === "asc") return <ArrowUp className="size-3.5 shrink-0" />;
+  if (direction === "desc") return <ArrowDown className="size-3.5 shrink-0" />;
+  return (
+    <ChevronsUpDown className="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/sort:opacity-100" />
+  );
+}
+
+const ARIA_SORT = { asc: "ascending", desc: "descending" } as const;
+
+export function VirtualTable<T, K extends string = string>({
   rows,
   columns,
   rowKey,
   label,
+  order,
+  onSort,
+  pending = false,
 }: {
   rows: T[];
-  columns: Column<T>[];
+  columns: Column<T, K>[];
   rowKey: (row: T, index: number) => string;
   label: string;
+  order?: UsageOrder<K>;
+  onSort?: (key: K) => void;
+  pending?: boolean;
 }) {
   // State, not a ref: the virtualizer re-reads the scroll element once it
   // exists, and a ref never re-renders to tell it.
@@ -49,15 +69,16 @@ export function VirtualTable<T>({
   });
   const bodyHeight = virtualizer.getTotalSize();
 
-  const cellClass = (column: Column<T>) =>
+  const cellClass = (column: Column<T, K>) =>
     cn("truncate", column.align === "right" ? "text-right" : "");
-  const cellStyle = (column: Column<T>) => ({
+  const cellStyle = (column: Column<T, K>) => ({
     flex: column.width ? `0 0 ${column.width}rem` : "1 1 0%",
   });
 
   return (
     <Table
       aria-label={label}
+      aria-busy={pending || undefined}
       containerRef={setViewport}
       containerClassName="max-h-90 overflow-auto rounded-md border"
       className="grid min-w-full"
@@ -68,18 +89,40 @@ export function VirtualTable<T>({
     >
       <TableHeader className="sticky top-0 z-10 grid bg-background">
         <TableRow className="flex w-full">
-          {columns.map((column) => (
-            <TableHead
-              key={column.header}
-              className={cn(cellClass(column), "flex h-10 items-center")}
-              style={cellStyle(column)}
-            >
-              {column.header}
-            </TableHead>
-          ))}
+          {columns.map((column) => {
+            const sortKey = column.sortKey;
+            const direction = sortKey && order?.sort === sortKey ? order.direction : null;
+            return (
+              <TableHead
+                key={column.header}
+                aria-sort={sortKey ? (direction ? ARIA_SORT[direction] : "none") : undefined}
+                className={cn(cellClass(column), "flex h-10 items-center")}
+                style={cellStyle(column)}
+              >
+                {sortKey && onSort ? (
+                  <button
+                    type="button"
+                    onClick={() => onSort(sortKey)}
+                    className={cn(
+                      "group/sort flex min-w-0 items-center gap-1 rounded-sm hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+                      direction && "text-foreground",
+                    )}
+                  >
+                    <span className="truncate">{column.header}</span>
+                    <SortIcon direction={direction} />
+                  </button>
+                ) : (
+                  column.header
+                )}
+              </TableHead>
+            );
+          })}
         </TableRow>
       </TableHeader>
-      <TableBody className="relative grid" style={{ height: bodyHeight }}>
+      <TableBody
+        className={cn("relative grid transition-opacity", pending && "opacity-60")}
+        style={{ height: bodyHeight }}
+      >
         {virtualizer.getVirtualItems().map((virtualRow) => {
           const row = rows[virtualRow.index];
           if (!row) return null;

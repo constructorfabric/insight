@@ -927,6 +927,11 @@ function feedbackHandlers() {
           const day = row.ts.slice(0, 10);
           return (!since || day >= since) && (!until || day <= until);
         })
+        .sort((a, b) =>
+          params.get("direction") === "asc"
+            ? a.ts.localeCompare(b.ts)
+            : b.ts.localeCompare(a.ts)
+        )
         .slice(0, MOCK_FEEDBACK_LIMIT);
 
       return HttpResponse.json({ since, until, items });
@@ -1062,53 +1067,94 @@ function usageHandlers() {
           page_views: 214,
         },
         by_day,
-        by_person: [
-          {
-            person_id: defaultPerson?.person_id ?? "",
-            display_name: defaultPerson?.name ?? "",
-            username: defaultPerson?.email.split("@")[0] ?? "",
-            visits: 31,
-            page_views: 96,
-            last_seen: `${by_day.at(-1)?.day ?? ""} 09:12`,
-          },
-          {
-            person_id: PEOPLE[1]?.person_id ?? "",
-            display_name: PEOPLE[1]?.name ?? "",
-            username: PEOPLE[1]?.email.split("@")[0] ?? "",
-            visits: 18,
-            page_views: 64,
-            last_seen: `${by_day.at(-1)?.day ?? ""} 08:40`,
-          },
-          {
-            person_id: PEOPLE[2]?.person_id ?? "",
-            display_name: PEOPLE[2]?.name ?? "",
-            username: PEOPLE[2]?.email.split("@")[0] ?? "",
-            visits: 7,
-            page_views: 54,
-            last_seen: `${by_day.at(-2)?.day ?? ""} 17:05`,
-          },
-        ],
-        by_event: [
-          {
-            event_name: "drill",
-            target: "pr_cycle_time",
-            opens: 34,
-            people: 3,
-          },
-          { event_name: "drill", target: "review_load", opens: 21, people: 3 },
-          { event_name: "drill", target: "ai_share", opens: 12, people: 2 },
-          { event_name: "session_start", target: "", opens: 57, people: 4 },
-        ],
-        by_page: [
-          { path: "/portal/overview", views: 88, visitors: 4 },
-          { path: "/portal/people", views: 61, visitors: 3 },
-          { path: "/portal/manage/connector-health", views: 42, visitors: 2 },
-          { path: "/portal/manage/platform-usage", views: 23, visitors: 1 },
-        ],
       });
     }),
+    http.get("/api/analytics/v1/usage/people", ({ request }) => {
+      const by_day = syntheticDays(30);
+      const needle = (new URL(request.url).searchParams.get("search") ?? "").toLowerCase();
+      const visitors = mockVisitors(by_day).filter(
+        (visitor) =>
+          visitor.display_name.toLowerCase().includes(needle) ||
+          visitor.username.toLowerCase().includes(needle)
+      );
+      return usageList(request, "visits", visitors);
+    }),
+    http.get("/api/analytics/v1/usage/pages", ({ request }) =>
+      usageList(request, "views", PAGE_ROWS)
+    ),
+    http.get("/api/analytics/v1/usage/actions", ({ request }) =>
+      usageList(request, "opens", ACTION_ROWS)
+    ),
   ];
 }
+
+function usageList<T extends Record<string, string | number>>(
+  request: Request,
+  defaultSort: string,
+  rows: T[]
+) {
+  const params = new URL(request.url).searchParams;
+  const key = params.get("sort") ?? defaultSort;
+  const flip = params.get("direction") === "asc" ? 1 : -1;
+  const items = [...rows].sort((a, b) => {
+    const left = a[key] ?? 0;
+    const right = b[key] ?? 0;
+    if (left === right) return 0;
+    return left < right ? -flip : flip;
+  });
+
+  return HttpResponse.json({
+    since: params.get("since") ?? "",
+    until: params.get("until") ?? "",
+    items,
+  });
+}
+
+const mockVisitors = (by_day: Array<{ day: string }>) => [
+  {
+    person_id: defaultPerson?.person_id ?? "",
+    display_name: defaultPerson?.name ?? "",
+    username: defaultPerson?.email.split("@")[0] ?? "",
+    visits: 31,
+    page_views: 96,
+    last_seen: `${by_day.at(-1)?.day ?? ""} 09:12`,
+  },
+  {
+    person_id: PEOPLE[1]?.person_id ?? "",
+    display_name: PEOPLE[1]?.name ?? "",
+    username: PEOPLE[1]?.email.split("@")[0] ?? "",
+    visits: 18,
+    page_views: 64,
+    last_seen: `${by_day.at(-1)?.day ?? ""} 08:40`,
+  },
+  {
+    person_id: PEOPLE[2]?.person_id ?? "",
+    display_name: PEOPLE[2]?.name ?? "",
+    username: PEOPLE[2]?.email.split("@")[0] ?? "",
+    visits: 7,
+    page_views: 54,
+    last_seen: `${by_day.at(-2)?.day ?? ""} 17:05`,
+  },
+];
+
+const ACTION_ROWS = [
+  {
+    event_name: "drill",
+    target: "pr_cycle_time",
+    opens: 34,
+    people: 3,
+  },
+  { event_name: "drill", target: "review_load", opens: 21, people: 3 },
+  { event_name: "drill", target: "ai_share", opens: 12, people: 2 },
+  { event_name: "session_start", target: "", opens: 57, people: 4 },
+];
+
+const PAGE_ROWS = [
+  { path: "/portal/overview", views: 88, visitors: 4 },
+  { path: "/portal/people", views: 61, visitors: 3 },
+  { path: "/portal/manage/connector-health", views: 42, visitors: 2 },
+  { path: "/portal/manage/platform-usage", views: 23, visitors: 1 },
+];
 
 function aiAssistHandlers() {
   return [
