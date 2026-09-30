@@ -317,6 +317,10 @@ pub async fn revoke(
     no_store(StatusCode::OK.into_response())
 }
 
+#[expect(
+    clippy::result_large_err,
+    reason = "the Err is the ready OAuth error response, not an error type to box"
+)]
 async fn authorization_request(
     state: &AppState,
     query: AuthorizeQuery,
@@ -655,6 +659,10 @@ fn token_response(
     )
 }
 
+#[expect(
+    clippy::result_large_err,
+    reason = "the Err is the ready OAuth error response, not an error type to box"
+)]
 async fn load_client(state: &AppState, client_id: &str) -> Result<RegisteredClient, Response> {
     if !valid_opaque_parameter(client_id) {
         return Err(oauth_error(
