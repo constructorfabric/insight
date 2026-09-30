@@ -9,6 +9,24 @@ children = ["identity-svc", "ir"]
 
 [[systems.artifacts]]
 kind = "PRD"
+path = "docs/domain/insight-v3/specs/alerts/PRD.md"
+name = "Insight v3 Metric Alerts PRD"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/domain/insight-v3/specs/alerts/DESIGN.md"
+name = "Insight v3 Metric Alerts Design"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/insight-v3/specs/ADR/0009-bullmq-schedules-alert-checks.md"
+name = "ADR-0009: BullMQ Schedules the Alert Checks"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "PRD"
 path = "docs/components/backend/authenticator/PRD.md"
 name = "Authenticator Service PRD"
 traceability = "DOCS-ONLY"

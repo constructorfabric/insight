@@ -1,5 +1,6 @@
 //! Rules and computation: everything decidable without reaching another system.
 
+pub(crate) mod alerts;
 pub(crate) mod assistant;
 pub(crate) mod dataset_ingest;
 pub(crate) mod dataset_lifecycle;

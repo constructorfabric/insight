@@ -15,6 +15,7 @@ use url::Url;
 
 use crate::config::McpConfig;
 
+pub(crate) mod alerts;
 pub(crate) mod auth;
 pub(crate) mod tools;
 

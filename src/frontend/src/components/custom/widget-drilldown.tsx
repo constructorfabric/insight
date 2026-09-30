@@ -318,6 +318,7 @@ function Rows({
         reordering={pages.isFetching && !pages.isFetchingNextPage}
         nextPageError={pages.isFetchNextPageError}
         pageLimitReached={pageLimitReached}
+        numbered
       />
     </div>
   );

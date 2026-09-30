@@ -272,10 +272,16 @@ async fn an_authorized_client_initializes_and_lists_the_tools_over_http() -> R {
         names,
         [
             "arrange_dashboard",
+            "create_alert",
             "create_folder",
+            "delete_alert",
             "delete_definition",
             "describe_tables",
+            "get_alert",
             "get_definition",
+            "list_alert_destinations",
+            "list_alert_notifications",
+            "list_alerts",
             "list_datasets",
             "list_definitions",
             "list_folders",
@@ -288,7 +294,9 @@ async fn an_authorized_client_initializes_and_lists_the_tools_over_http() -> R {
             "put_widget",
             "run_metric",
             "search_definitions",
+            "set_alert_enabled",
             "set_dashboard_tags",
+            "update_alert",
         ],
         "{listed}"
     );

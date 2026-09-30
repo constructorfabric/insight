@@ -460,6 +460,7 @@ services:
       clickhouse: {condition: service_healthy, required: false}
       mariadb: {condition: service_healthy, required: false}
       insight-v3-core-migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy, required: false}
     environment:
       !!merge <<: *backend-env
       APP__gears__insight_v3_core__config__clickhouse_url: "http://${CLICKHOUSE_HOST:-clickhouse}:${CLICKHOUSE_INTERNAL_HTTP_PORT:-8123}"
@@ -487,6 +488,12 @@ services:
       # this container is not the gateway. Keys come over the compose network.
       APP__gears__insight_v3_core__config__mcp__jwks_url: "http://gateway:8080/.well-known/jwks.json"
       APP__gears__insight_v3_core__config__mcp__allow_insecure_private_network: "true"
+      # Metric alerts schedule their checks through the same Redis the
+      # authenticator keeps sessions in. Destinations are named here and
+      # referenced by rules; delivery credentials arrive with the providers.
+      APP__gears__insight_v3_core__config__alerts__enabled: "${INSIGHT_V3_ALERTS_ENABLED:-true}"
+      APP__gears__insight_v3_core__config__alerts__redis_url: "redis://${REDIS_HOST:-redis}:${REDIS_INTERNAL_PORT:-6379}"
+      APP__gears__insight_v3_core__config__alerts__destinations__ops__provider: "${INSIGHT_V3_ALERTS_OPS_PROVIDER:-discord}"
     command:
       - "/app/insight-v3-core" # <watched path>
       - "--"

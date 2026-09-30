@@ -6,6 +6,7 @@ use axum::Router;
 use toolkit::api::{OpenApiInfo, OpenApiRegistry, OpenApiRegistryImpl};
 
 pub(crate) mod admission;
+pub(crate) mod alerts;
 pub(crate) mod chat;
 pub(crate) mod datasets;
 pub(crate) mod definitions;
@@ -22,6 +23,9 @@ pub(crate) mod tags;
 use admission::IngestAdmission;
 
 use crate::chat::ChatClient;
+use crate::domain::alerts::rule::AlertStore;
+use crate::domain::alerts::schedule::AlertSchedule;
+use crate::domain::alerts::{Destinations, Limits};
 use crate::domain::definition::Definitions;
 use crate::domain::folders::{DefinitionStore, Folders};
 use crate::domain::pins::Pins;
@@ -96,6 +100,18 @@ pub(crate) struct AppState {
     catalog: Catalog,
     /// How many drilldown pages may be read at once.
     drilldown_slots: Arc<tokio::sync::Semaphore>,
+    /// Absent on an installation that has alerts turned off.
+    alerts: Option<Alerts>,
+}
+
+/// Everything alerts reach: the rules, the schedule their checks are on,
+/// and what an installation allows.
+#[derive(Debug)]
+pub(crate) struct Alerts {
+    pub(crate) store: Arc<dyn AlertStore>,
+    pub(crate) schedule: Arc<dyn AlertSchedule>,
+    pub(crate) limits: Limits,
+    pub(crate) destinations: Destinations,
 }
 
 /// Everything about datasets this service reaches: their rows, the tables
@@ -199,7 +215,46 @@ impl AppState {
             drilldown_slots: Arc::new(tokio::sync::Semaphore::new(
                 metric_drilldown::MAX_CONCURRENT_PAGES,
             )),
+            alerts: None,
         }
+    }
+
+    pub(crate) fn with_alerts(mut self, alerts: Alerts) -> Self {
+        self.alerts = Some(alerts);
+        self
+    }
+
+    /// The alert operations, on an installation that has them.
+    pub(crate) fn alerts(&self) -> Option<crate::domain::alerts::rules::AlertRules<'_>> {
+        let alerts = self.alerts.as_ref()?;
+
+        Some(crate::domain::alerts::rules::AlertRules::new(
+            alerts.store.as_ref(),
+            alerts.schedule.as_ref(),
+            self.definitions.as_ref(),
+            alerts.limits,
+            &alerts.destinations,
+        ))
+    }
+
+    pub(crate) fn alert_store(&self) -> Option<&dyn AlertStore> {
+        self.alerts.as_ref().map(|alerts| alerts.store.as_ref())
+    }
+
+    pub(crate) fn alert_schedule(&self) -> Option<&dyn AlertSchedule> {
+        self.alerts.as_ref().map(|alerts| alerts.schedule.as_ref())
+    }
+
+    /// One check of one rule, for the worker.
+    pub(crate) fn alert_evaluator(
+        &self,
+    ) -> Option<crate::domain::alerts::evaluation::Evaluator<'_>> {
+        let alerts = self.alerts.as_ref()?;
+
+        Some(crate::domain::alerts::evaluation::Evaluator::new(
+            alerts.store.as_ref(),
+            self.metric_runs(),
+        ))
     }
 
     pub(crate) fn drilldown_slots(&self) -> &Arc<tokio::sync::Semaphore> {
@@ -377,7 +432,11 @@ pub(crate) fn register_routes(
     let api = tables::register_routes(api, openapi, &state);
     let api = metric_run::register_routes(api, openapi, state.clone());
     let api = metric_drilldown::register_routes(api, openapi, state.clone());
+    let api = alerts::register_routes(api, openapi, &state);
     let api = chat::register_routes(api, openapi, state)
+        .layer(insight_http_metrics::ServerMetricsLayer::new(
+            "insight-v3-core",
+        ))
         .layer(insight_log_context::LogContextLayer::new());
 
     router.merge(api)
