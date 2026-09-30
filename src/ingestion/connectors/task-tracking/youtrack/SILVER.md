@@ -16,20 +16,33 @@ observations. If two observations disagree, the transition occurred at an
 unknown point between them; neither endpoint is claimed as its exact time.
 This is observation history, not a complete historical schema registry.
 
-Custom-field changelog rows therefore carry `field_cardinality='unknown'`.
-Snapshot rows use their own issue-field `$type`, including for null values.
-No current catalogue type is projected backwards onto activities. Arrays are
-never truncated. Values use remove/add set algebra, which works for both
-complete before/after sets and element deltas, independent of cardinality.
-The first operation on each value establishes its initial membership; snapshot
-members untouched by the available history supply the remaining baseline.
-Missing source changes cannot be recovered by this algebra.
+A custom-field changelog row therefore takes the cardinality of the field type
+observed last at or before the activity (`[*]` is `multi`, any other type
+`single`); an activity older than every observation takes the first observed
+type, and a field never observed stays `unknown`. A later observation thus
+never reinterprets an activity it does not precede. Snapshot rows use their own
+issue-field `$type` where it names the cardinality (the `Multi*`/`Single*`
+families, simple, text and period fields), including for null values, and the
+same observed-type rule otherwise. A retired field keeps the cardinality its
+field last had. Arrays are never truncated.
+
+Multi-valued and `unknown` fields use remove/add set algebra, which works for
+both complete before/after sets and element deltas. The first operation on each
+value establishes its initial membership; snapshot members untouched by the
+available history supply the remaining baseline. A `single` field is replaced,
+not merged: its state before the first available change is what that change
+removed, and each change sets it to what the change added — an id-merge would
+keep the old value whenever the replaced text differs from it by a byte.
+Missing source changes cannot be recovered by either rule.
 
 Only the creation marker is synthesized at issue creation. Field values without
 creation-time evidence are observations at collection time, not historical
 initial values. A snapshot disagreement is `snapshot_diff`; a field absent from
 a subsequent complete issue snapshot is `retired_field`. Identical observations
-are suppressed so repeated syncs cannot move a close time forward.
+are suppressed so repeated syncs cannot move a close time forward. Comment and
+work-item lifecycle events are one per observed state — a comment's
+`(deleted, updated)`, a work item's `updated` — keyed and dated by that state's
+first observation, so re-reading an unchanged record adds nothing.
 
 ## Ordering and rebuilds
 

@@ -1,9 +1,9 @@
 import json
 
-from conftest import SOURCE, TENANT
+from conftest import SOURCE, TENANT, Warehouse
 
 
-def test_project_move_preserves_relationships_and_keys(case):
+def test_project_move_preserves_relationships_and_keys(case: Warehouse) -> None:
     link = {'linkType': {'id': 'depends'}, 'direction': 'OUTWARD',
             'issues': [{'id': 'issue-2', 'idReadable': 'EX-2'}]}
     case.issue([], links=[link])
@@ -50,11 +50,11 @@ def test_project_move_preserves_relationships_and_keys(case):
     assert list(case.rows("SELECT unique_key,issue_id,target_id,valid_from FROM silver.class_task_links FINAL WHERE data_source='youtrack'")) == link_before
 
 
-def value(key):
+def value(key: str) -> dict[str, str]:
     return {'id': key, 'name': key, '$type': 'EnumBundleElement'}
 
 
-def test_cardinality_change_does_not_reinterpret_history(case):
+def test_cardinality_change_does_not_reinterpret_history(case: Warehouse) -> None:
     case.issue([value('a'), value('b')])
     case.event('opaque-z', [value('old')], [value('a')])
     case.event('opaque-a', [], [value('b')], at=1767398400000)
@@ -71,7 +71,7 @@ def test_cardinality_change_does_not_reinterpret_history(case):
     assert [r['field_cardinality'] for r in observed] == ['multi', 'single']
 
 
-def test_opaque_ids_follow_same_instant_value_chain(case):
+def test_opaque_ids_follow_same_instant_value_chain(case: Warehouse) -> None:
     case.issue([value('c')])
     case.event('z-first', [value('a')], [value('b')])
     case.event('a-last', [value('b')], [value('c')])
@@ -82,7 +82,7 @@ def test_opaque_ids_follow_same_instant_value_chain(case):
     assert rows[1]['event_order'] - rows[0]['event_order'] == 1
 
 
-def test_partial_history_keeps_snapshot_at_observation_time(case):
+def test_partial_history_keeps_snapshot_at_observation_time(case: Warehouse) -> None:
     case.issue([value('a')])
     case.build()
     initial = list(case.rows("SELECT field_id FROM staging.youtrack__task_field_history WHERE event_kind='synthetic_initial'"))
@@ -94,7 +94,7 @@ def test_partial_history_keeps_snapshot_at_observation_time(case):
     assert len(list(case.rows("SELECT * FROM staging.youtrack__task_field_history WHERE field_id='field-1'"))) == 1
 
 
-def test_null_empty_and_comma_values_are_not_split(case):
+def test_null_empty_and_comma_values_are_not_split(case: Warehouse) -> None:
     case.issue([])
     case.event('e1', None, ['a,b', 'c'])
     case.event('e2', ['a,b'], [], at=1767398400000)
@@ -104,7 +104,7 @@ def test_null_empty_and_comma_values_are_not_split(case):
     assert [r['value_ids'] for r in rows] == [['a,b', 'c'], ['c'], []]
 
 
-def test_repeated_build_and_late_event_replace_silver(case):
+def test_repeated_build_and_late_event_replace_silver(case: Warehouse) -> None:
     case.issue([value('c')])
     case.event('e2', [value('b')], [value('c')], at=1767398400000)
     case.build()
@@ -121,7 +121,7 @@ def test_repeated_build_and_late_event_replace_silver(case):
     assert list(case.rows("SELECT event_id FROM silver.class_task_field_history FINAL WHERE data_source='youtrack' AND event_kind='changelog'")) == [{'event_id': 'e1'}]
 
 
-def test_link_removal_and_readdition_are_separate_intervals(case):
+def test_link_removal_and_readdition_are_separate_intervals(case: Warehouse) -> None:
     link = {'linkType': {'id': 'depends'}, 'direction': 'OUTWARD', 'issues': [{'id': 'issue-2', 'idReadable': 'EX-2'}]}
     case.issue([], links=[link])
     case.build()
@@ -136,7 +136,7 @@ def test_link_removal_and_readdition_are_separate_intervals(case):
     assert all(r['valid_from_known'] == 0 and r['evidence'] == 'observation' for r in rows)
 
 
-def test_all_task_classes_match_shared_contract_and_units(case):
+def test_all_task_classes_match_shared_contract_and_units(case: Warehouse) -> None:
     case.issue([])
     case.insert('youtrack_users', {'unique_key': 'synthetic-user', 'id': 'user-1', 'email': 'user@example.com', 'fullName': 'Example User', 'login': 'example.user', 'banned': False})
     case.insert('youtrack_comments', {'unique_key': 'synthetic-comment', 'id': 'comment-1', 'issue_id': 'issue-1', 'issue_id_readable': 'EX-1', 'created': 1767312000000, 'deleted': True, 'author_id': 'user-1', 'text': 'Synthetic comment'})
@@ -150,7 +150,7 @@ def test_all_task_classes_match_shared_contract_and_units(case):
     assert list(case.rows("SELECT event_kind FROM silver.class_task_field_history FINAL WHERE data_source='youtrack' AND field_id='comment'")) == [{'event_kind': 'lifecycle'}]
 
 
-def test_retired_field_is_observed_not_an_invented_change(case):
+def test_retired_field_is_observed_not_an_invented_change(case: Warehouse) -> None:
     import json
     case.issue([value('a')])
     case.build()
@@ -164,7 +164,7 @@ def test_retired_field_is_observed_not_an_invented_change(case):
                     {'event_kind': 'retired_field', 'value_ids': [], 'field_cardinality': 'multi'}]
 
 
-def test_gold_uses_bindings_and_does_not_choose_first_of_many_assignees(case):
+def test_gold_uses_bindings_and_does_not_choose_first_of_many_assignees(case: Warehouse) -> None:
     deadline = {'id': 'deadline', 'name': 'Deadline', '$type': 'SimpleIssueCustomField',
                 'projectCustomField': {'field': {'id': 'due-1'}}, 'value': 1768089600000}
     case.issue({'id': 'user-1', 'fullName': 'Example User', '$type': 'User'}, 'SingleUserIssueCustomField', extra_fields=[deadline])
@@ -182,7 +182,7 @@ def test_gold_uses_bindings_and_does_not_choose_first_of_many_assignees(case):
     assert list(case.rows('SELECT issue_id FROM insight.task_issue_state')) == []
 
 
-def test_metadata_observations_do_not_claim_exact_change_time(case):
+def test_metadata_observations_do_not_claim_exact_change_time(case: Warehouse) -> None:
     case.issue([])
     case.insert('youtrack_custom_fields', {'id': 'field-1', 'unique_key': 'synthetic-field', 'name': 'Synthetic field', 'field_type_id': 'enum[1]'})
     case.build()
@@ -196,7 +196,7 @@ def test_metadata_observations_do_not_claim_exact_change_time(case):
     assert len(list(case.rows('SELECT * FROM staging.youtrack__field_type_history'))) == 2
 
 
-def test_comment_lifecycle_survives_bronze_replacement(case):
+def test_comment_lifecycle_survives_bronze_replacement(case: Warehouse) -> None:
     case.issue([])
     row = {'unique_key': 'synthetic-comment', 'id': 'comment-1', 'issue_id': 'issue-1',
            'issue_id_readable': 'EX-1', 'created': 1767312000000, 'deleted': False,
@@ -209,7 +209,7 @@ def test_comment_lifecycle_survives_bronze_replacement(case):
     assert [r['delta_action'] for r in rows] == ['set', 'remove']
 
 
-def activity_issue(case, observed, id_readable):
+def activity_issue(case: Warehouse, observed: str, id_readable: str) -> None:
     # The same record shape as youtrack_issues, from the activity-feed stream.
     case.insert('youtrack_activity_issues', {
         'id': 'issue-1', 'idReadable': id_readable, 'created': 1767225600000,
@@ -221,7 +221,7 @@ def activity_issue(case, observed, id_readable):
     }, observed)
 
 
-def test_activity_issue_snapshot_backs_history_the_search_missed(case):
+def test_activity_issue_snapshot_backs_history_the_search_missed(case: Warehouse) -> None:
     # A change that left `updated` untouched: the search never returned the
     # issue, only the activity-feed stream did.
     activity_issue(case, '2026-01-10T00:00:00', 'EX-1')
@@ -236,7 +236,7 @@ def test_activity_issue_snapshot_backs_history_the_search_missed(case):
     assert list(case.rows("SELECT id_readable FROM staging.youtrack__issues")) == [{'id_readable': 'EX-12'}]
 
 
-def test_single_value_field_is_replaced_not_merged(case):
+def test_single_value_field_is_replaced_not_merged(case: Warehouse) -> None:
     # The replaced text differs from the snapshot's by a trailing space; an
     # id-merge keeps both and the summary would hold two values.
     case.issue([])
@@ -252,7 +252,7 @@ def test_single_value_field_is_replaced_not_merged(case):
     assert rows == [{'field_name': 'Summary', 'field_cardinality': 'single', 'value_ids': ['Synthetic issue ']}]
 
 
-def test_custom_field_cardinality_is_the_type_observed_at_the_event(case):
+def test_custom_field_cardinality_is_the_type_observed_at_the_event(case: Warehouse) -> None:
     case.issue([value('a')])
     case.insert('youtrack_custom_fields', {'id': 'field-1', 'unique_key': 'synthetic-field', 'name': 'Synthetic field', 'field_type_id': 'enum[*]'})
     case.event('before-first-observation', [], [value('a')])
@@ -268,7 +268,7 @@ def test_custom_field_cardinality_is_the_type_observed_at_the_event(case):
                     {'event_id': 'after-type-change', 'field_cardinality': 'single', 'value_ids': ['b']}]
 
 
-def board(case, board_id, project_id, sprint_id, sprint_name):
+def board(case: Warehouse, board_id: str, project_id: str, sprint_id: str, sprint_name: str) -> None:
     case.insert('youtrack_agiles', {'id': board_id, 'name': board_id, 'unique_key': 'synthetic-' + board_id,
         'agile_json': json.dumps({'id': board_id, 'projects': [{'id': project_id}], 'sprintsSettings': {
             'isExplicit': False, 'disableSprints': False, 'sprintSyncField': {'id': 'field-1', 'name': 'Sprints'}}})})
@@ -276,7 +276,7 @@ def board(case, board_id, project_id, sprint_id, sprint_name):
         'unique_key': 'synthetic-' + sprint_id, 'sprint_json': json.dumps({'id': sprint_id, 'name': sprint_name})})
 
 
-def test_sync_field_membership_reads_as_the_sprints_property(case):
+def test_sync_field_membership_reads_as_the_sprints_property(case: Warehouse) -> None:
     # The board manages sprints through field-1, so membership changes arrive
     # only as that field's change; they restate as `sprints`, in sprint ids,
     # for the boards the issue's project is on.
@@ -292,7 +292,7 @@ def test_sync_field_membership_reads_as_the_sprints_property(case):
         {'field_id': 'sprints', 'field_name': 'Sprints', 'field_cardinality': 'multi', 'value_ids': ['sprint-7']}]
 
 
-def test_sprint_activity_is_named_as_the_property_not_the_board(case):
+def test_sprint_activity_is_named_as_the_property_not_the_board(case: Warehouse) -> None:
     case.issue([])
     case.insert('youtrack_activities', {
         'id': 'board-assignment', 'unique_key': TENANT + '-' + SOURCE + '-board-assignment',
@@ -305,3 +305,27 @@ def test_sprint_activity_is_named_as_the_property_not_the_board(case):
     case.build()
     assert list(case.rows("SELECT field_id, field_name, value_ids FROM staging.youtrack__task_field_history WHERE event_id='board-assignment'")) == [
         {'field_id': 'sprints', 'field_name': 'Sprints', 'value_ids': ['sprint-7']}]
+
+
+def test_rereading_an_unchanged_record_adds_no_lifecycle_event(case: Warehouse) -> None:
+    # Work items are re-read on every sync and a comment whenever its issue
+    # changes: each state is one event, dated by its first observation.
+    case.issue([])
+    work = {'unique_key': 'synthetic-work', 'id': 'work-1', 'issue_id': 'issue-1', 'author_id': 'user-1',
+            'date': 1767312000000, 'created': 1767312000000, 'work_item_json': '{"duration":{"minutes":15}}'}
+    comment = {'unique_key': 'synthetic-comment', 'id': 'comment-1', 'issue_id': 'issue-1', 'issue_id_readable': 'EX-1',
+               'created': 1767312000000, 'deleted': False, 'author_id': 'user-1', 'text': 'Synthetic comment'}
+    case.insert('youtrack_work_items', work)
+    case.insert('youtrack_comments', comment)
+    case.build()
+    case.insert('youtrack_work_items', work, '2026-01-11T00:00:00')
+    case.insert('youtrack_comments', comment, '2026-01-11T00:00:00')
+    case.insert('youtrack_comments', {**comment, 'deleted': True}, '2026-01-12T00:00:00')
+    case.build()
+    case.insert('youtrack_comments', {**comment, 'deleted': True}, '2026-01-13T00:00:00')
+    case.build()
+    rows = list(case.rows("SELECT field_id, delta_action, toString(event_at) AS event_at FROM staging.youtrack__task_field_history WHERE field_id IN ('comment', 'worklog') ORDER BY field_id, event_order"))
+    assert rows == [
+        {'field_id': 'comment', 'delta_action': 'set', 'event_at': '2026-01-02 00:00:00.000'},
+        {'field_id': 'comment', 'delta_action': 'remove', 'event_at': '2026-01-12 00:00:00.000'},
+        {'field_id': 'worklog', 'delta_action': 'set', 'event_at': '2026-01-02 00:00:00.000'}]

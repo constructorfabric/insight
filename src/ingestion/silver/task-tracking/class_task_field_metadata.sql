@@ -17,5 +17,9 @@ SELECT * FROM (
     {{ union_by_tag('silver:class_task_field_metadata') }}
 )
 {% if is_incremental() %}
-WHERE data_source = 'youtrack' OR _version > (SELECT max(_version) FROM {{ this }})
+-- YouTrack is reconciled whole by the pre_hook. The watermark is every other
+-- vendor's own: YouTrack rows are versioned at build time, so a max over the
+-- whole class would run ahead of a vendor's pending, older evidence.
+WHERE data_source = 'youtrack'
+   OR _version > (SELECT max(_version) FROM {{ this }} WHERE data_source != 'youtrack')
 {% endif %}

@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections.abc import Iterator, Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -11,6 +12,7 @@ from uuid import uuid4
 import clickhouse_connect
 import pytest
 import yaml
+from clickhouse_connect.driver.client import Client
 from dbt.cli.main import dbtRunner
 
 INGESTION = Path(__file__).resolve().parents[4]
@@ -20,13 +22,13 @@ TENANT = 'synthetic-tenant'
 
 
 class Warehouse:
-    def __init__(self, client, profile):
+    def __init__(self, client: Client, profile: Path) -> None:
         self.client = client
         self.profile = profile
         self.tables = set(re.findall(r'CREATE TABLE IF NOT EXISTS bronze_youtrack\.(\w+)',
                                      (INGESTION / 'scripts/connectors-ddl/youtrack.sql').read_text()))
 
-    def build(self, selector='tag:youtrack', full_refresh=False):
+    def build(self, selector: str = 'tag:youtrack', full_refresh: bool = False) -> None:
         messages = []
         result = dbtRunner(callbacks=[lambda e: messages.append(e.info.msg)]).invoke([
             'run', '--project-dir', str(DBT), '--profiles-dir', str(self.profile),
@@ -34,7 +36,7 @@ class Warehouse:
         ])
         assert result.success, '\n'.join(messages)[-10000:]
 
-    def insert(self, table, row, observed='2026-01-10T00:00:00'):
+    def insert(self, table: str, row: Mapping[str, object], observed: str = '2026-01-10T00:00:00') -> None:
         assert table in self.tables
         values = {
             '_airbyte_raw_id': str(uuid4()),
@@ -45,7 +47,9 @@ class Warehouse:
         }
         self.client.insert('bronze_youtrack.' + table, [list(values.values())], column_names=list(values))
 
-    def issue(self, value, field_type='MultiEnumIssueCustomField', observed='2026-01-10T00:00:00', links=(), extra_fields=(), id_readable='EX-1', project_id='project-1'):
+    def issue(self, value: object, field_type: str = 'MultiEnumIssueCustomField', observed: str = '2026-01-10T00:00:00',
+              links: Sequence[Mapping[str, object]] = (), extra_fields: Sequence[Mapping[str, object]] = (),
+              id_readable: str = 'EX-1', project_id: str = 'project-1') -> None:
         cf = {'id': 'issue-field', 'name': 'Synthetic field', '$type': field_type,
               'projectCustomField': {'id': 'project-field', 'field': {'id': 'field-1'}}, 'value': value}
         self.insert('youtrack_issues', {
@@ -55,7 +59,8 @@ class Warehouse:
             'issue_json': json.dumps({'summary': 'Synthetic issue', 'description': '', 'links': list(links)}),
         }, observed)
 
-    def event(self, event_id, before, after, at=1767312000000, observed='2026-01-10T00:00:00'):
+    def event(self, event_id: str, before: object, after: object, at: int = 1767312000000,
+              observed: str = '2026-01-10T00:00:00') -> None:
         self.insert('youtrack_activities', {
             'id': event_id, 'unique_key': TENANT + '-' + SOURCE + '-' + event_id,
             '_type': 'CustomFieldActivityItem', 'timestamp': str(at), 'author_id': 'user-1',
@@ -64,12 +69,12 @@ class Warehouse:
             'added_json': json.dumps(after), 'removed_json': json.dumps(before), 'activity_json': '{}',
         }, observed)
 
-    def rows(self, sql):
+    def rows(self, sql: str) -> Iterator[dict[str, object]]:
         return self.client.query(sql).named_results()
 
 
 @pytest.fixture(scope='session')
-def warehouse(tmp_path_factory):
+def warehouse(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Warehouse]:
     if os.environ['YOUTRACK_TEST_DISPOSABLE'] != 'yes':
         raise RuntimeError('Use only a disposable ClickHouse: this suite resets its YouTrack tables')
     output = {'type': 'clickhouse', 'host': os.environ['CLICKHOUSE_HOST'],
@@ -98,7 +103,7 @@ def warehouse(tmp_path_factory):
 
 
 @pytest.fixture
-def case(warehouse):
+def case(warehouse: Warehouse) -> Warehouse:
     for table in sorted(warehouse.tables):
         warehouse.client.command('TRUNCATE TABLE bronze_youtrack.' + table)
     for name in ['youtrack__field_observations', 'youtrack__issue_observations', 'youtrack__users_snapshot', 'youtrack__comment_observations', 'youtrack__work_item_observations']:
