@@ -35,7 +35,7 @@ spec:
             - bash
             - -ec
             - |
-              printf 'gears:\n  insight-v3-core:\n    config: {}\n' > /tmp/migrate.yaml
+              printf 'server:\n  home_dir: /tmp/gears\ngears:\n  insight-v3-core:\n    config: {}\n' > /tmp/migrate.yaml
               exec /app/insight-v3-core -c /tmp/migrate.yaml migrate
           envFrom:
             - secretRef:
@@ -46,9 +46,19 @@ spec:
                 name: {{ . | quote }}
                 optional: true
             {{- end }}
+          volumeMounts:
+            # INVARIANT: config load calls create_dir_all on server.home_dir
+            # before the subcommand runs, so home_dir must point here too --
+            # its default is under $HOME, which the read-only root rejects.
+            - name: tmp
+              mountPath: /tmp
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir: {}

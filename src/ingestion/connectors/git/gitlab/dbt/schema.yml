@@ -42,9 +42,6 @@ sources:
         freshness: null
 
 models:
-  - name: gitlab__bronze_promoted
-    description: "Promotes every GitLab bronze table to ReplacingMergeTree keyed on unique_key"
-
   - name: gitlab__repositories
     description: "GitLab projects -> staging, feeds class_git_repositories"
 

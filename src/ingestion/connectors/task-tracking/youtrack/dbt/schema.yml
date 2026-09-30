@@ -1,0 +1,34 @@
+version: 2
+
+sources:
+  - name: bronze_youtrack
+    loaded_at_field: _airbyte_extracted_at
+    schema: bronze_youtrack
+    tables:
+      - name: youtrack_projects
+      - name: youtrack_users
+      - name: youtrack_custom_fields
+      - name: youtrack_project_fields
+      - name: youtrack_field_values
+      - name: youtrack_agiles
+      - name: youtrack_sprints
+      - name: youtrack_issue_keys
+      - name: youtrack_issues
+      - name: youtrack_activities
+      - name: youtrack_work_items
+      - name: youtrack_comments
+      - name: youtrack_issue_links
+      - name: youtrack_issue_sprints
+      - name: youtrack_issue_census
+
+models:
+  - name: youtrack__projects
+    description: "Deduplicated YouTrack project catalog — one row per project, with the raw project JSON the task-tracking silver layer will map onto the class contract."
+    columns:
+      - name: unique_key
+        tests:
+          - not_null
+          - unique
+      - name: project_id
+        tests:
+          - not_null

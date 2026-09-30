@@ -11,6 +11,7 @@ import { CustomChat } from "@/components/custom/custom-chat";
 import { CustomPageShell } from "@/components/custom/custom-page-shell";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
+import { dashboardNameFromPath } from "@/lib/custom/dashboard-path";
 import { useIsAdmin } from "@/queries/identity-me";
 import {
   invalidateDashboardList,
@@ -28,11 +29,6 @@ import {
 export const Route = createFileRoute("/portal/custom")({
   component: CustomZone,
 });
-
-function dashboardNameFromPath(pathname: string): string {
-  const match = pathname.match(/^\/portal\/custom\/([^/]+)/);
-  return match ? decodeURIComponent(match[1]) : "";
-}
 
 function CustomZone() {
   const { isAdmin, isPending, isError, retry } = useIsAdmin();

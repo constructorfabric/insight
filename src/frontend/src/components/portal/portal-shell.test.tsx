@@ -62,6 +62,9 @@ vi.mock("@/components/portal/ai-cost-view", () => ({
 vi.mock("@/components/portal/manage-view", () => ({
   ManageView: () => <div data-testid="manage" />,
 }));
+vi.mock("@/components/portal/report-builder-view", () => ({
+  ReportBuilderView: () => <div data-testid="report-builder" />,
+}));
 vi.mock("@/components/portal/team-state-view", () => ({
   TeamStateView: () => <div data-testid="team-state" />,
 }));
@@ -143,6 +146,7 @@ describe("ZoneContent routing", () => {
     ["aicost", "ai-cost"],
     ["people", "team-state"],
     ["manage", "manage"],
+    ["reports", "report-builder"],
   ];
   it.each(cases)("zone %s renders its view", (zone, testid) => {
     mocks.zone = { activeZone: zone, activePerson: pid("boss") };
@@ -150,12 +154,6 @@ describe("ZoneContent routing", () => {
     expect(screen.getByTestId(testid)).toBeInTheDocument();
   });
 
-  it("scorecard renders an honest scaffold, not a fake dashboard", () => {
-    mocks.zone = { activeZone: "scorecard", activePerson: pid("boss") };
-    render(<ZoneContent />);
-    expect(screen.getByText("Scorecard")).toBeInTheDocument();
-    expect(screen.getByText(/org snapshots/)).toBeInTheDocument();
-  });
 });
 
 describe("DirectionView", () => {
@@ -250,6 +248,12 @@ describe("PeopleView", () => {
 });
 
 describe("PortalLayout landing", () => {
+  it("reads a zone id the portal no longer has as no zone", () => {
+    act(() => portalRouter.set({ zone: "scorecard" }));
+    const zone = renderHook(() => usePortalZone());
+    expect(zone.result.current).toBeNull();
+  });
+
   it("pins a manager's landing zone to Overview once resolved", () => {
     const zone = renderHook(() => usePortalZone());
     render(<PortalLayout />);

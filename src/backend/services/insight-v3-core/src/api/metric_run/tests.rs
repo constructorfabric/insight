@@ -54,7 +54,7 @@ impl TestHarness {
             metrics_url,
             "insight",
         ));
-        let definitions: Arc<dyn Definitions> = Arc::new(MemoryDefinitions::new());
+        let definitions = Arc::new(MemoryDefinitions::new());
         let datasets = a_ready_dataset(metrics_url);
         let state = Arc::new(AppState::new(
             MetricRunner::new(

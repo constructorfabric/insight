@@ -34,7 +34,7 @@ sentry:
 nav:
   # Navigation entries hidden on this install, read by the SPA from
   # /config.js. Typed paths, one per entry:
-  #   - "zone:scorecard"                          (a rail zone)
+  #   - "zone:reports"                            (a zone)
   #   - "zone:aicost/item:idle-seats"             (a pane item)
   #   - "zone:directions/dir:sales"               (a whole direction)
   #   - "zone:directions/dir:dev/lens:git-output" (one lens, by URL slug)

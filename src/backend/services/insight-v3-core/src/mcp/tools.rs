@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
+use axum::http::request::Parts;
 use rmcp::handler::server::router::tool::ToolRouter;
+use rmcp::handler::server::tool::Extension;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig};
 use rmcp::{ServerHandler, tool, tool_handler, tool_router};
@@ -8,12 +10,19 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use super::auth::McpCaller;
 use crate::api::AppState;
-use crate::domain::definition::{DefinitionKind, DefinitionName, Page};
+use crate::api::folders::{folder_json, folders_json};
+use crate::api::tags::{names_json, tags_json};
+use crate::domain::dataset_lifecycle::DatasetChangeError;
+use crate::domain::definition::{DefinitionKind, DefinitionName, NamePage, Page};
+use crate::domain::folders::{FolderError, FolderFilter, FolderId, FolderName};
 use crate::domain::kinds::dashboard::Item;
 use crate::domain::metric_run::MetricRuns;
 use crate::domain::query::time_window::WindowRequest;
 use crate::domain::surfaces::{CustomError, Surfaces};
+use crate::domain::tags::{TagError, TagFilter, TagSet};
+use crate::domain::violation::said;
 use crate::store::catalog::{CatalogError, TableSchema};
 
 #[cfg(test)]
@@ -31,6 +40,12 @@ pub(crate) struct KindRequest {
     pub(crate) limit: Option<u64>,
     /// How many names to skip, for the page after the first.
     pub(crate) offset: Option<u64>,
+    /// Dashboards only: a folder id from `list_folders`, or `unfiled` for the
+    /// dashboards in no folder. Leave it out to list every one.
+    pub(crate) folder: Option<String>,
+    /// Dashboards only: tag names from `list_tags`, to list the dashboards
+    /// carrying any of them. Combines with `folder`.
+    pub(crate) tags: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -98,6 +113,36 @@ pub(crate) struct DescribeTablesRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct FolderRequest {
+    /// 1 to 64 characters, unique ignoring case.
+    pub(crate) name: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct MoveRequest {
+    /// The dashboard to move.
+    pub(crate) dashboard: String,
+    /// The folder's id from `list_folders`, or null to take the dashboard out
+    /// of every folder.
+    #[serde(deserialize_with = "Option::deserialize")]
+    #[schemars(required, schema_with = "id_or_null")]
+    pub(crate) folder: Option<String>,
+}
+
+fn id_or_null(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({ "type": ["string", "null"] })
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct TagsRequest {
+    /// The dashboard to tag. It must already exist.
+    pub(crate) name: String,
+    /// Every tag the dashboard carries from now on, replacing what it had:
+    /// each 1 to 32 characters, at most 10. `[]` removes them all.
+    pub(crate) tags: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct PutRequest {
     /// The name to store under. An existing definition of the same kind and
     /// name is replaced.
@@ -141,20 +186,57 @@ impl CustomSurfaces {
         needle: &str,
         limit: Option<u64>,
         offset: Option<u64>,
+        folder: Option<&str>,
+        tags: &[String],
     ) -> CallToolResult {
         let page = match Page::parse(limit, offset) {
             Ok(page) => page,
             Err(error) => return refuse(&error.to_string()),
         };
 
-        match self.surfaces().page(kind, needle, page).await {
+        match self.narrowed(kind, needle.trim(), page, folder, tags).await {
             Ok(found) => CallToolResult::structured(json!({
                 "names": found.names,
                 "total": found.total,
                 "limit": page.limit(),
                 "offset": page.offset(),
             })),
-            Err(error) => tool_error(&error),
+            Err(refusal) => refusal,
+        }
+    }
+
+    async fn narrowed(
+        &self,
+        kind: DefinitionKind,
+        needle: &str,
+        page: Page,
+        folder: Option<&str>,
+        tags: &[String],
+    ) -> Result<NamePage, CallToolResult> {
+        let folder = folder
+            .map(|folder| FolderFilter::parse(kind, folder))
+            .transpose()
+            .map_err(|error| folder_refusal(&error))?;
+        let tags = TagFilter::parse(kind, tags).map_err(|error| tag_refusal(&error))?;
+
+        match (folder, tags) {
+            (None, None) => self
+                .surfaces()
+                .page(kind, needle, page)
+                .await
+                .map_err(|error| tool_error(&error)),
+            (Some(filter), None) => self
+                .state
+                .folders()
+                .page_filed(needle, page, filter)
+                .await
+                .map_err(|error| folder_refusal(&error)),
+            (folder, Some(tags)) => self
+                .state
+                .tags()
+                .page_tagged(needle, page, folder, &tags)
+                .await
+                .map_err(|error| tag_refusal(&error)),
         }
     }
 
@@ -175,7 +257,7 @@ impl CustomSurfaces {
 impl CustomSurfaces {
     #[tool(
         name = "list_definitions",
-        description = "Names the stored metrics, widgets or dashboards, one page at a time. Start here before writing one, so an existing definition is replaced deliberately rather than by accident. Answers `total`: when it exceeds the page, ask again with `offset`."
+        description = "Names the stored metrics, widgets or dashboards, one page at a time. Start here before writing one, so an existing definition is replaced deliberately rather than by accident. Answers `total`: when it exceeds the page, ask again with `offset`. Pass `folder` to list only the dashboards in one folder, or `unfiled` for those in none, and `tags` to list only the dashboards carrying any of them; the two combine."
     )]
     async fn list_definitions(
         &self,
@@ -183,9 +265,19 @@ impl CustomSurfaces {
             kind,
             limit,
             offset,
+            folder,
+            tags,
         }): Parameters<KindRequest>,
     ) -> CallToolResult {
-        self.read_page(kind, "", limit, offset).await
+        self.read_page(
+            kind,
+            "",
+            limit,
+            offset,
+            folder.as_deref(),
+            &tags.unwrap_or_default(),
+        )
+        .await
     }
 
     /// Find definitions by name or by what their body says.
@@ -196,8 +288,15 @@ impl CustomSurfaces {
         &self,
         Parameters(request): Parameters<SearchRequest>,
     ) -> CallToolResult {
-        self.read_page(request.kind, &request.query, request.limit, request.offset)
-            .await
+        self.read_page(
+            request.kind,
+            &request.query,
+            request.limit,
+            request.offset,
+            None,
+            &[],
+        )
+        .await
     }
 
     #[tool(
@@ -221,7 +320,7 @@ impl CustomSurfaces {
 
     #[tool(
         name = "get_definition",
-        description = "Reads one definition's stored body, so it can be inspected or amended rather than rewritten from scratch."
+        description = "Reads one definition's stored body, answered as `body`, so it can be inspected or amended rather than rewritten from scratch. A dashboard also answers the `folder` it is filed in, or null for none, and the `tags` it carries. Neither is part of the body: move_dashboard changes the folder and set_dashboard_tags the tags."
     )]
     async fn get_definition(
         &self,
@@ -232,9 +331,26 @@ impl CustomSurfaces {
             Err(refusal) => return refusal,
         };
 
-        match self.surfaces().get(kind, &parsed).await {
-            Ok(body) => CallToolResult::structured(body),
-            Err(error) => tool_error(&error),
+        let body = match self.surfaces().get(kind, &parsed).await {
+            Ok(body) => body,
+            Err(error) => return tool_error(&error),
+        };
+        if kind != DefinitionKind::Dashboard {
+            return CallToolResult::structured(json!({ "body": body }));
+        }
+
+        let folder = match self.state.folders().folder_of(&parsed).await {
+            Ok(folder) => folder,
+            Err(error) => return folder_refusal(&error),
+        };
+
+        match self.state.tags().tags_of(&parsed).await {
+            Ok(tags) => CallToolResult::structured(json!({
+                "body": body,
+                "folder": folder.as_ref().map(folder_json),
+                "tags": names_json(&tags),
+            })),
+            Err(error) => tag_refusal(&error),
         }
     }
 
@@ -260,6 +376,104 @@ impl CustomSurfaces {
     )]
     async fn put_dashboard(&self, Parameters(request): Parameters<PutRequest>) -> CallToolResult {
         self.write(DefinitionKind::Dashboard, request).await
+    }
+
+    #[tool(
+        name = "list_folders",
+        description = "Every dashboard folder, with its id and how many dashboards it holds, and how many dashboards are in no folder. Pass a folder's id to list_definitions to list its dashboards, or to move_dashboard to file one there."
+    )]
+    async fn list_folders(&self) -> CallToolResult {
+        match self.state.folders().list_folders().await {
+            Ok(listed) => CallToolResult::structured(folders_json(&listed)),
+            Err(error) => folder_refusal(&error),
+        }
+    }
+
+    #[tool(
+        name = "create_folder",
+        description = "Makes a dashboard folder and answers its id. The name is 1 to 64 characters and unique ignoring case, so call list_folders first: a name already held is refused. Folders are renamed and removed in the portal, not here."
+    )]
+    async fn create_folder(
+        &self,
+        Parameters(FolderRequest { name }): Parameters<FolderRequest>,
+    ) -> CallToolResult {
+        let name = match FolderName::parse(&name) {
+            Ok(name) => name,
+            Err(error) => return folder_refusal(&error),
+        };
+
+        match self.state.folders().create_folder(name).await {
+            Ok(folder) => CallToolResult::structured(folder_json(&folder)),
+            Err(error) => folder_refusal(&error),
+        }
+    }
+
+    #[tool(
+        name = "move_dashboard",
+        description = "Files a dashboard in a folder, named by its id from list_folders, or takes it out of every folder with `folder: null`. A dashboard is in one folder at most, so this replaces where it was. The dashboard's body is untouched."
+    )]
+    async fn move_dashboard(
+        &self,
+        Parameters(MoveRequest { dashboard, folder }): Parameters<MoveRequest>,
+    ) -> CallToolResult {
+        let parsed = match parse_name(&dashboard) {
+            Ok(parsed) => parsed,
+            Err(refusal) => return refusal,
+        };
+        let into = match folder.as_deref().map(FolderId::parse).transpose() {
+            Ok(into) => into,
+            Err(error) => return folder_refusal(&error),
+        };
+
+        match self.state.folders().file(&parsed, into).await {
+            Ok(()) => CallToolResult::structured(json!({
+                "dashboard": dashboard,
+                "folder": folder,
+            })),
+            Err(error) => folder_refusal(&error),
+        }
+    }
+
+    #[tool(
+        name = "list_tags",
+        description = "Every dashboard tag, with how many dashboards carry it. Pass tag names to list_definitions to list the dashboards carrying any of them, or to set_dashboard_tags to tag one."
+    )]
+    async fn list_tags(&self) -> CallToolResult {
+        match self.state.tags().list_tags().await {
+            Ok(listed) => CallToolResult::structured(tags_json(&listed)),
+            Err(error) => tag_refusal(&error),
+        }
+    }
+
+    #[tool(
+        name = "set_dashboard_tags",
+        description = "Replaces every tag a dashboard carries with `tags`: at most 10, each 1 to 32 characters. A name equal to an existing tag but for case is that tag, under its stored spelling, so call list_tags first; a new name makes a tag, and a tag no dashboard carries any more goes away. At most 200 tags exist at once. `[]` removes them all. The dashboard's body is untouched. Answers the tags the dashboard now carries."
+    )]
+    async fn set_dashboard_tags(
+        &self,
+        Parameters(TagsRequest { name, tags }): Parameters<TagsRequest>,
+    ) -> CallToolResult {
+        let parsed = match parse_name(&name) {
+            Ok(parsed) => parsed,
+            Err(refusal) => return refusal,
+        };
+        let wanted = match TagSet::parse(&tags) {
+            Ok(wanted) => wanted,
+            Err(error) => return tag_refusal(&error),
+        };
+
+        let stored = self.state.tags();
+        if let Err(error) = stored.set_tags(&parsed, &wanted).await {
+            return tag_refusal(&error);
+        }
+
+        match stored.tags_of(&parsed).await {
+            Ok(carried) => CallToolResult::structured(json!({
+                "dashboard": name,
+                "tags": names_json(&carried),
+            })),
+            Err(error) => tag_refusal(&error),
+        }
     }
 
     #[tool(
@@ -316,8 +530,42 @@ impl CustomSurfaces {
     }
 
     #[tool(
+        name = "put_dataset",
+        description = "Declares a dataset, or replaces the declaration of one that stands: {\"title\": \"Commits\", \"fields\": [{\"name\": \"day\", \"path\": \"day\", \"type\": \"datetime\", \"default_clock\": true}, {\"name\": \"lines\", \"path\": \"lines\", \"type\": \"int\"}], \"row_identity\": [\"day\"]}. `type` is string, int, float, bool or datetime; `path` is where the value sits in a record, dot-separated. `default_clock` marks the date a window selects by. `row_identity` names the fields that make two records the same one; leave it out and every record stands alone. Optional per field: `role` (dimension, measurable, time), `description`, `absent_value`, `person` (email or id). A replacement that would change what a stored metric reads is refused and names the metric."
+    )]
+    async fn put_dataset(
+        &self,
+        Extension(parts): Extension<Parts>,
+        Parameters(request): Parameters<PutRequest>,
+    ) -> CallToolResult {
+        let Some(McpCaller(caller)) = parts.extensions.get::<McpCaller>() else {
+            return refuse("only an administrator declares a dataset");
+        };
+
+        let name = match parse_name(&request.name) {
+            Ok(name) => name,
+            Err(refusal) => return refusal,
+        };
+
+        tracing::info!(%caller, dataset = name.as_str(), "declaring a dataset over MCP");
+
+        match self
+            .state
+            .dataset_lifecycle()
+            .declare(&name, &request.body)
+            .await
+        {
+            Ok(stored) => CallToolResult::structured(json!({
+                "name": request.name,
+                "declaration": stored,
+            })),
+            Err(error) => change_refusal(error),
+        }
+    }
+
+    #[tool(
         name = "list_datasets",
-        description = "Every dataset this server can read, with what each of its fields holds and which records count as one. Call this before writing a metric, so the metric names a dataset and fields that exist. Only an administrator declares a dataset; this server cannot."
+        description = "Every dataset this server can read, with what each of its fields holds and which records count as one. Call this before writing a metric, so the metric names a dataset and fields that exist."
     )]
     async fn list_datasets(&self) -> CallToolResult {
         let described = self.state.assistant().briefing().await;
@@ -433,8 +681,11 @@ impl ServerHandler for CustomSurfaces {
                  put_widget to draw those rows and put_dashboard to hold the widgets. A metric \
                  names a `table` and its columns, or a dataset and its declared fields; a widget \
                  names its metric's columns by their as_name; and a definition still in use \
-                 cannot be deleted until its dependents are. Datasets themselves are declared by \
-                 an administrator, not here.",
+                 cannot be deleted until its dependents are. put_dataset declares a dataset for \
+                 metrics to read. Dashboards are filed in folders: list_folders shows \
+                 them, create_folder makes one, and move_dashboard files a dashboard in one or \
+                 takes it out. Dashboards also carry tags: list_tags shows them, and \
+                 set_dashboard_tags replaces a dashboard's set.",
             )
     }
 }
@@ -453,6 +704,53 @@ fn tool_error(error: &CustomError) -> CallToolResult {
     tracing::error!(%error, "an MCP tool call failed");
 
     refuse("the request could not be completed")
+}
+
+fn folder_refusal(error: &FolderError) -> CallToolResult {
+    if error.is_about_the_caller() {
+        return refuse(&error.to_string());
+    }
+
+    tracing::error!(%error, "an MCP folder call failed");
+
+    refuse("the request could not be completed")
+}
+
+fn tag_refusal(error: &TagError) -> CallToolResult {
+    if error.is_about_the_caller() {
+        return refuse(&error.to_string());
+    }
+
+    tracing::error!(%error, "an MCP tag call failed");
+
+    refuse("the request could not be completed")
+}
+
+fn change_refusal(error: DatasetChangeError) -> CallToolResult {
+    match error {
+        DatasetChangeError::Invalid(violations) => refuse(&format!(
+            "the declaration is not valid: {}",
+            said(&violations)
+        )),
+        DatasetChangeError::WouldBreak(broken) => refuse(&format!(
+            "the replacement would change what these metrics read: {}",
+            broken
+                .iter()
+                .map(|one| format!("{}: {}", one.metric, one.why))
+                .collect::<Vec<_>>()
+                .join("; ")
+        )),
+        DatasetChangeError::Table(_)
+        | DatasetChangeError::Store(_)
+        | DatasetChangeError::Definitions(_) => {
+            tracing::error!(%error, "an MCP dataset declaration failed");
+            refuse("the request could not be completed")
+        }
+        about_the_caller @ (DatasetChangeError::NotFound
+        | DatasetChangeError::StillRead(_)
+        | DatasetChangeError::Unreadable(_)
+        | DatasetChangeError::Refused(_)) => refuse(&about_the_caller.to_string()),
+    }
 }
 
 fn refuse(message: &str) -> CallToolResult {

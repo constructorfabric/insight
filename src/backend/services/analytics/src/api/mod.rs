@@ -553,12 +553,12 @@ pub(crate) fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) ->
             openapi,
             "Report export recipe",
         )
-        .response(ResponseSpec {
-            status: StatusCode::OK.as_u16(),
-            content_type: "text/csv",
-            description: "Complete metric report export".to_owned(),
-            schema: None,
-        })
+        .response(ResponseSpec::new(
+            StatusCode::OK.as_u16(),
+            "text/csv",
+            "Complete metric report export",
+            None,
+        ))
         .error_400(openapi)
         .error_401(openapi)
         .error_403(openapi)
@@ -693,12 +693,12 @@ pub(crate) fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) ->
             openapi,
             "Metric evidence export selection",
         )
-        .response(ResponseSpec {
-            status: StatusCode::OK.as_u16(),
-            content_type: "text/csv",
-            description: "Complete metric evidence export".to_owned(),
-            schema: None,
-        })
+        .response(ResponseSpec::new(
+            StatusCode::OK.as_u16(),
+            "text/csv",
+            "Complete metric evidence export",
+            None,
+        ))
         .standard_errors(openapi)
         .handler(metric_drilldown::export_metric_drilldown)
         .register(router, openapi);

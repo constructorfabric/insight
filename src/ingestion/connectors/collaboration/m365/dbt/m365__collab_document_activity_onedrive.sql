@@ -1,4 +1,3 @@
--- depends_on: {{ ref('m365__bronze_promoted') }}
 {{ config(
     materialized='incremental',
     unique_key='unique_key',

@@ -6,7 +6,7 @@
 # git-cli-proxy, previews.
 
 # ─── toolchain ──────────────────────────────────────────────────────────────
-FROM lukemathwalker/cargo-chef:0.1.78-rust-1.98.1-bookworm@sha256:14ac293f096e29d01296479bb2f81ec1fb0d6ff166dc2be399cf79cc79ec4906 AS chef
+FROM lukemathwalker/cargo-chef:0.1.78-rust-1.98.1-bookworm@sha256:5a37e174ceb7ccbebd6d0024049e9308f4de399bbcabbc3c6c649c70486880d5 AS chef
 
 # protobuf-compiler: grpc-hub -> prost-build. cmake + libcurl headers: the
 # authenticator vendors librdkafka, whose OAUTHBEARER path needs curl/curl.h.
@@ -52,7 +52,7 @@ COPY . .
 RUN cargo build --release --locked --bin previews
 
 # ─── watchexec, the compose auto-reload wrapper ─────────────────────────────
-FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171 AS watchexec
+FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251 AS watchexec
 
 ARG TARGETARCH
 ARG WATCHEXEC_VERSION=2.3.2
@@ -73,9 +73,12 @@ RUN set -eux; \
     install -m 0755 "/tmp/watchexec-${WATCHEXEC_VERSION}-${WX_ARCH}/watchexec" /usr/local/bin/watchexec
 
 # ─── runtime bases ──────────────────────────────────────────────────────────
-FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171 AS runtime
+FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251 AS runtime
 
+# The base digest is pinned, so the security pocket is only picked up if this
+# stage upgrades explicitly; without it the image ships whatever the pin froze.
 RUN apt-get update && \
+    apt-get upgrade -y --no-install-recommends && \
     apt-get install -y --no-install-recommends ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
@@ -91,9 +94,10 @@ ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 # WORKAROUND: git-cli-proxy's blob purge needs `git repack --filter --filter-to`
 # (git >= 2.43); bookworm ships 2.39 with no backport, trixie ships 2.47. A
 # binary built against bookworm's glibc runs on trixie's newer one.
-FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS runtime-git
+FROM debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a AS runtime-git
 
 RUN apt-get update && \
+    apt-get upgrade -y --no-install-recommends && \
     apt-get install -y --no-install-recommends ca-certificates git && \
     rm -rf /var/lib/apt/lists/*
 

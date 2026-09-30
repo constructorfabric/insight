@@ -1,4 +1,3 @@
--- depends_on: {{ ref('chatgpt_team__bronze_promoted') }}
 {{ config(
     materialized='table',
     engine='ReplacingMergeTree',
@@ -8,8 +7,8 @@
     tags=['chatgpt-team']
 ) }}
 
--- The roster projection the identity chain reads. FINAL dedups the promoted
--- ReplacingMergeTree source before the snapshot compares versions (ADR-0001).
+-- The roster projection the identity chain reads. FINAL dedups the
+-- ReplacingMergeTree bronze source before the snapshot compares versions (ADR-0001).
 
 -- INVARIANT: user_id keys the whole identity chain, so a row without one is
 -- dropped here rather than carried forward under an empty key. A row without

@@ -1,8 +1,12 @@
 use std::error::Error;
 use std::sync::Arc;
 
+use axum::http::request::Parts;
+use clickhouse::test::{Mock, handlers};
+use rmcp::handler::server::tool::Extension;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
+use serde::Serialize;
 use serde_json::{Value, json};
 
 use super::*;
@@ -19,10 +23,14 @@ type R = Result<(), Box<dyn Error>>;
 /// A stand whose one dataset stands ready, since every stored metric reads
 /// one.
 fn surfaces() -> CustomSurfaces {
+    surfaces_over("http://offline.invalid")
+}
+
+fn surfaces_over(url: &str) -> CustomSurfaces {
     built_over(
         Catalog::fixed(Vec::new()),
         crate::api::Datasets::holding(
-            "http://offline.invalid",
+            url,
             &[(
                 "commits",
                 json!({
@@ -120,11 +128,46 @@ fn put(name: &str, body: Value) -> Parameters<PutRequest> {
     })
 }
 
+#[derive(Debug, Serialize, clickhouse::Row)]
+struct NoTable {
+    sorting_key: String,
+}
+
+fn parts(caller: Option<&str>) -> Extension<Parts> {
+    let Ok(request) = axum::http::Request::builder().body(()) else {
+        panic!("an empty request builds");
+    };
+    let (mut parts, ()) = request.into_parts();
+    if let Some(caller) = caller {
+        parts
+            .extensions
+            .insert(super::super::auth::McpCaller(caller.to_owned()));
+    }
+
+    Extension(parts)
+}
+
+fn administrator() -> Extension<Parts> {
+    parts(Some("test-admin"))
+}
+
+fn reviews() -> Value {
+    json!({
+        "title": "Reviews",
+        "fields": [
+            { "name": "day", "path": "day", "type": "datetime", "default_clock": true },
+            { "name": "reviewer", "path": "reviewer", "type": "string" }
+        ]
+    })
+}
+
 fn listing(kind: DefinitionKind) -> Parameters<KindRequest> {
     Parameters(KindRequest {
         kind,
         limit: None,
         offset: None,
+        folder: None,
+        tags: None,
     })
 }
 
@@ -176,7 +219,7 @@ fn assert_accepted(result: &CallToolResult) -> Value {
 }
 
 #[test]
-fn the_server_announces_exactly_the_twelve_custom_surface_tools() {
+fn the_server_announces_exactly_the_eighteen_custom_surface_tools() {
     let tools = CustomSurfaces::tool_router().list_all();
 
     let mut names: Vec<&str> = tools.iter().map(|tool| tool.name.as_ref()).collect();
@@ -186,17 +229,23 @@ fn the_server_announces_exactly_the_twelve_custom_surface_tools() {
         names,
         [
             "arrange_dashboard",
+            "create_folder",
             "delete_definition",
             "describe_tables",
             "get_definition",
             "list_datasets",
             "list_definitions",
+            "list_folders",
             "list_tables",
+            "list_tags",
+            "move_dashboard",
             "put_dashboard",
+            "put_dataset",
             "put_metric",
             "put_widget",
             "run_metric",
             "search_definitions",
+            "set_dashboard_tags",
         ]
     );
 }
@@ -243,7 +292,7 @@ async fn a_stored_metric_is_listed_and_read_back() -> R {
             .get_definition(named(DefinitionKind::Metric, "per-actor"))
             .await,
     );
-    assert_eq!(read, metric_body());
+    assert_eq!(read, json!({ "body": metric_body() }));
 
     Ok(())
 }
@@ -525,6 +574,8 @@ async fn a_page_answers_its_own_slice_and_the_whole_count() {
                 kind: DefinitionKind::Metric,
                 limit: Some(2),
                 offset: None,
+                folder: None,
+                tags: None,
             }))
             .await,
     );
@@ -537,6 +588,8 @@ async fn a_page_answers_its_own_slice_and_the_whole_count() {
                 kind: DefinitionKind::Metric,
                 limit: Some(2),
                 offset: Some(2),
+                folder: None,
+                tags: None,
             }))
             .await,
     );
@@ -576,6 +629,8 @@ async fn a_page_beyond_the_cap_is_refused_rather_than_served() {
                 kind: DefinitionKind::Metric,
                 limit: Some(5_000),
                 offset: None,
+                folder: None,
+                tags: None,
             }))
             .await,
         "limit must be between 1 and 200",
@@ -684,6 +739,76 @@ async fn arranging_a_board_that_is_not_there_is_refused() {
 }
 
 #[tokio::test]
+async fn a_declared_dataset_is_listed_for_a_metric_to_read() {
+    let mock = Mock::new();
+    mock.add(handlers::provide(Vec::<NoTable>::new()));
+    mock.add(handlers::record_ddl());
+    let surfaces = surfaces_over(mock.url());
+
+    let stored = assert_accepted(
+        &surfaces
+            .put_dataset(administrator(), put("reviews", reviews()))
+            .await,
+    );
+    assert_eq!(stored["declaration"], reviews());
+
+    let listed = assert_accepted(&surfaces.list_datasets().await);
+    let Some(datasets) = listed["datasets"].as_str() else {
+        panic!("the listing describes the datasets: {listed}");
+    };
+    assert!(datasets.contains("reviews: Reviews"), "{datasets}");
+}
+
+#[tokio::test]
+async fn a_declaration_wrong_in_several_places_names_every_one() {
+    let surfaces = surfaces();
+
+    let refused = surfaces
+        .put_dataset(
+            administrator(),
+            put(
+                "reviews",
+                json!({
+                    "title": "Reviews",
+                    "fields": [
+                        { "name": "day", "path": "day", "type": "datetime" },
+                        { "name": "day", "path": "other", "type": "int" }
+                    ],
+                    "row_identity": ["nowhere"]
+                }),
+            ),
+        )
+        .await;
+
+    assert_refused(&refused, "fields[1].name");
+    assert_refused(&refused, "row_identity[0]");
+}
+
+#[tokio::test]
+async fn a_replacement_that_would_break_a_metric_names_the_metric() {
+    let surfaces = surfaces();
+    assert_accepted(&surfaces.put_metric(put("per-actor", metric_body())).await);
+
+    assert_refused(
+        &surfaces
+            .put_dataset(
+                administrator(),
+                put(
+                    "commits",
+                    json!({
+                        "title": "Commits",
+                        "fields": [
+                            { "name": "occurred_at", "path": "occurred_at", "type": "datetime" }
+                        ]
+                    }),
+                ),
+            )
+            .await,
+        "per-actor",
+    );
+}
+
+#[tokio::test]
 async fn a_board_draws_a_metric_over_a_warehouse_table() -> R {
     let surfaces = surfaces_without_a_dataset();
     assert_accepted(
@@ -750,6 +875,18 @@ async fn every_warehouse_table_is_listed_by_database_name_and_layer() {
 }
 
 #[tokio::test]
+async fn a_declaration_no_verified_caller_stands_behind_is_refused() {
+    let surfaces = surfaces();
+
+    assert_refused(
+        &surfaces
+            .put_dataset(parts(None), put("reviews", reviews()))
+            .await,
+        "administrator",
+    );
+}
+
+#[tokio::test]
 async fn a_table_listing_can_be_narrowed_to_one_database() {
     let result = surfaces_over_a_warehouse()
         .list_tables(Parameters(TablesRequest {
@@ -801,4 +938,483 @@ async fn a_description_of_nothing_or_of_too_much_is_refused() {
 
     assert_refused(&none, "at least one table");
     assert_refused(&many, "at most 20 tables");
+}
+
+fn listing_in(kind: DefinitionKind, folder: &str) -> Parameters<KindRequest> {
+    Parameters(KindRequest {
+        kind,
+        limit: None,
+        offset: None,
+        folder: Some(folder.to_owned()),
+        tags: None,
+    })
+}
+
+fn folder_named(name: &str) -> Parameters<FolderRequest> {
+    Parameters(FolderRequest {
+        name: name.to_owned(),
+    })
+}
+
+fn moving(dashboard: &str, folder: Option<&str>) -> Parameters<MoveRequest> {
+    Parameters(MoveRequest {
+        dashboard: dashboard.to_owned(),
+        folder: folder.map(str::to_owned),
+    })
+}
+
+async fn board(surfaces: &CustomSurfaces, name: &str) {
+    assert_accepted(
+        &surfaces
+            .put_dashboard(put(name, json!({"title": name, "widgets": []})))
+            .await,
+    );
+}
+
+async fn made_folder(surfaces: &CustomSurfaces, name: &str) -> String {
+    let made = assert_accepted(&surfaces.create_folder(folder_named(name)).await);
+
+    made["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("a made folder names its id: {made}"))
+        .to_owned()
+}
+
+async fn folder_of(surfaces: &CustomSurfaces, dashboard: &str) -> Value {
+    let read = assert_accepted(
+        &surfaces
+            .get_definition(named(DefinitionKind::Dashboard, dashboard))
+            .await,
+    );
+
+    read["folder"].clone()
+}
+
+#[test]
+fn the_instructions_name_the_folder_tools() {
+    let info = rmcp::ServerHandler::get_info(&surfaces());
+
+    let Some(instructions) = info.instructions else {
+        panic!("the server carries instructions");
+    };
+    for tool in ["list_folders", "create_folder", "move_dashboard"] {
+        assert!(instructions.contains(tool), "{tool}: {instructions}");
+    }
+}
+
+#[tokio::test]
+async fn a_made_folder_is_listed_with_what_it_holds() {
+    let surfaces = surfaces();
+    board(&surfaces, "delivery").await;
+
+    let id = made_folder(&surfaces, "Platform").await;
+    let listed = assert_accepted(&surfaces.list_folders().await);
+
+    assert_eq!(
+        listed,
+        json!({
+            "folders": [{ "id": id, "name": "Platform", "dashboards": 0 }],
+            "unfiled": 1
+        })
+    );
+}
+
+#[tokio::test]
+async fn a_folder_name_another_folder_holds_in_another_case_is_refused_readably() {
+    let surfaces = surfaces();
+    made_folder(&surfaces, "Platform").await;
+
+    let clash = surfaces.create_folder(folder_named("platform")).await;
+
+    assert_refused(&clash, "already exists");
+}
+
+#[tokio::test]
+async fn a_folder_name_of_nothing_is_refused() {
+    let clash = surfaces().create_folder(folder_named("  ")).await;
+
+    assert_refused(&clash, "1 to 64 characters");
+}
+
+#[tokio::test]
+async fn a_dashboard_is_moved_into_a_folder_and_out_again() {
+    let surfaces = surfaces();
+    let id = made_folder(&surfaces, "Platform").await;
+    board(&surfaces, "delivery").await;
+
+    assert_accepted(&surfaces.move_dashboard(moving("delivery", Some(&id))).await);
+    let filed = folder_of(&surfaces, "delivery").await;
+    assert_accepted(&surfaces.move_dashboard(moving("delivery", None)).await);
+
+    assert_eq!(filed, json!({ "id": id, "name": "Platform" }));
+    assert_eq!(folder_of(&surfaces, "delivery").await, Value::Null);
+}
+
+#[tokio::test]
+async fn moving_into_a_folder_that_is_not_there_is_refused() {
+    let surfaces = surfaces();
+    board(&surfaces, "delivery").await;
+
+    let moved = surfaces
+        .move_dashboard(moving(
+            "delivery",
+            Some("0192a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"),
+        ))
+        .await;
+
+    assert_refused(&moved, "no folder has the id");
+}
+
+#[tokio::test]
+async fn moving_a_dashboard_that_is_not_there_is_refused() {
+    let surfaces = surfaces();
+    let id = made_folder(&surfaces, "Platform").await;
+
+    let moved = surfaces.move_dashboard(moving("nowhere", Some(&id))).await;
+
+    assert_refused(&moved, "no dashboard is named `nowhere`");
+}
+
+#[tokio::test]
+async fn rewriting_a_filed_dashboard_keeps_its_folder_and_a_new_one_lands_unfiled() {
+    let surfaces = surfaces();
+    let id = made_folder(&surfaces, "Platform").await;
+    board(&surfaces, "delivery").await;
+    assert_accepted(&surfaces.move_dashboard(moving("delivery", Some(&id))).await);
+
+    board(&surfaces, "delivery").await;
+    board(&surfaces, "hiring").await;
+
+    assert_eq!(folder_of(&surfaces, "delivery").await["id"], json!(id));
+    assert_eq!(folder_of(&surfaces, "hiring").await, Value::Null);
+}
+
+#[tokio::test]
+async fn a_dashboard_listing_narrows_to_one_folder_or_to_the_unfiled() {
+    let surfaces = surfaces();
+    let id = made_folder(&surfaces, "Platform").await;
+    board(&surfaces, "delivery").await;
+    board(&surfaces, "hiring").await;
+    assert_accepted(&surfaces.move_dashboard(moving("delivery", Some(&id))).await);
+
+    let filed = assert_accepted(
+        &surfaces
+            .list_definitions(listing_in(DefinitionKind::Dashboard, &id))
+            .await,
+    );
+    let unfiled = assert_accepted(
+        &surfaces
+            .list_definitions(listing_in(DefinitionKind::Dashboard, "unfiled"))
+            .await,
+    );
+
+    assert_eq!(filed["names"], json!(["delivery"]));
+    assert_eq!(unfiled["names"], json!(["hiring"]));
+}
+
+#[tokio::test]
+async fn only_dashboards_are_listed_by_folder() {
+    let listed = surfaces()
+        .list_definitions(listing_in(DefinitionKind::Metric, "unfiled"))
+        .await;
+
+    assert_refused(&listed, "are not filed in folders");
+}
+
+#[tokio::test]
+async fn a_listing_in_a_folder_that_is_not_an_id_is_refused() {
+    let listed = surfaces()
+        .list_definitions(listing_in(DefinitionKind::Dashboard, "Platform"))
+        .await;
+
+    assert_refused(&listed, "folder ids are UUIDs");
+}
+
+#[test]
+fn a_move_names_its_folder_even_when_the_folder_is_none() {
+    let tools = CustomSurfaces::tool_router().list_all();
+    let Some(tool) = tools.iter().find(|tool| tool.name == "move_dashboard") else {
+        panic!("move_dashboard is announced");
+    };
+
+    let schema = Value::Object((*tool.input_schema).clone());
+
+    assert_eq!(
+        schema["required"],
+        json!(["dashboard", "folder"]),
+        "{schema}"
+    );
+    assert_eq!(
+        schema["properties"]["folder"]["type"],
+        json!(["string", "null"])
+    );
+    assert!(schema["properties"]["folder"]["description"].is_string());
+}
+
+#[test]
+fn a_move_without_its_folder_is_not_read() {
+    let read = serde_json::from_value::<MoveRequest>(json!({ "dashboard": "delivery" }));
+
+    assert!(read.is_err(), "{read:?}");
+}
+
+fn tagging(name: &str, tags: &[&str]) -> Parameters<TagsRequest> {
+    Parameters(TagsRequest {
+        name: name.to_owned(),
+        tags: tags.iter().map(|tag| (*tag).to_owned()).collect(),
+    })
+}
+
+fn listing_tagged(
+    kind: DefinitionKind,
+    folder: Option<&str>,
+    tags: &[&str],
+) -> Parameters<KindRequest> {
+    Parameters(KindRequest {
+        kind,
+        limit: None,
+        offset: None,
+        folder: folder.map(str::to_owned),
+        tags: Some(tags.iter().map(|tag| (*tag).to_owned()).collect()),
+    })
+}
+
+async fn tags_of(surfaces: &CustomSurfaces, dashboard: &str) -> Value {
+    let read = assert_accepted(
+        &surfaces
+            .get_definition(named(DefinitionKind::Dashboard, dashboard))
+            .await,
+    );
+
+    read["tags"].clone()
+}
+
+#[test]
+fn the_instructions_name_the_tag_tools() {
+    let info = rmcp::ServerHandler::get_info(&surfaces());
+
+    let Some(instructions) = info.instructions else {
+        panic!("the server carries instructions");
+    };
+    for tool in ["list_tags", "set_dashboard_tags"] {
+        assert!(instructions.contains(tool), "{tool}: {instructions}");
+    }
+}
+
+#[tokio::test]
+async fn a_dashboard_s_tags_are_set_and_listed_with_their_counts() {
+    let surfaces = surfaces();
+    board(&surfaces, "delivery").await;
+    board(&surfaces, "support").await;
+
+    let set = assert_accepted(
+        &surfaces
+            .set_dashboard_tags(tagging("delivery", &["Platform", "Delivery"]))
+            .await,
+    );
+    assert_accepted(
+        &surfaces
+            .set_dashboard_tags(tagging("support", &["platform"]))
+            .await,
+    );
+    let listed = assert_accepted(&surfaces.list_tags().await);
+
+    assert_eq!(
+        set,
+        json!({ "dashboard": "delivery", "tags": ["Delivery", "Platform"] })
+    );
+    assert_eq!(
+        listed,
+        json!({
+            "tags": [
+                { "name": "Delivery", "dashboards": 1 },
+                { "name": "Platform", "dashboards": 2 }
+            ]
+        })
+    );
+}
+
+#[tokio::test]
+async fn a_set_answers_the_stored_spelling_of_a_tag_that_exists() {
+    let surfaces = surfaces();
+    board(&surfaces, "delivery").await;
+    board(&surfaces, "support").await;
+    assert_accepted(
+        &surfaces
+            .set_dashboard_tags(tagging("delivery", &["Delivery"]))
+            .await,
+    );
+
+    let set = assert_accepted(
+        &surfaces
+            .set_dashboard_tags(tagging("support", &["DELIVERY"]))
+            .await,
+    );
+
+    assert_eq!(set["tags"], json!(["Delivery"]));
+}
+
+#[tokio::test]
+async fn a_dashboard_read_answers_its_body_folder_and_tags() {
+    let surfaces = surfaces();
+    board(&surfaces, "delivery").await;
+    assert_accepted(
+        &surfaces
+            .set_dashboard_tags(tagging("delivery", &["beta", "Alpha"]))
+            .await,
+    );
+
+    let read = assert_accepted(
+        &surfaces
+            .get_definition(named(DefinitionKind::Dashboard, "delivery"))
+            .await,
+    );
+
+    assert_eq!(
+        read,
+        json!({
+            "body": { "title": "delivery", "widgets": [] },
+            "folder": null,
+            "tags": ["Alpha", "beta"]
+        })
+    );
+}
+
+#[tokio::test]
+async fn rewriting_a_tagged_dashboard_keeps_its_tags() {
+    let surfaces = surfaces();
+    board(&surfaces, "delivery").await;
+    assert_accepted(
+        &surfaces
+            .set_dashboard_tags(tagging("delivery", &["Delivery"]))
+            .await,
+    );
+
+    board(&surfaces, "delivery").await;
+
+    assert_eq!(tags_of(&surfaces, "delivery").await, json!(["Delivery"]));
+}
+
+#[tokio::test]
+async fn an_empty_set_clears_and_the_tag_goes() {
+    let surfaces = surfaces();
+    board(&surfaces, "delivery").await;
+    assert_accepted(
+        &surfaces
+            .set_dashboard_tags(tagging("delivery", &["Delivery"]))
+            .await,
+    );
+
+    assert_accepted(&surfaces.set_dashboard_tags(tagging("delivery", &[])).await);
+
+    assert_eq!(tags_of(&surfaces, "delivery").await, json!([]));
+    assert_eq!(
+        assert_accepted(&surfaces.list_tags().await),
+        json!({ "tags": [] })
+    );
+}
+
+#[tokio::test]
+async fn a_set_the_rules_refuse_says_why() {
+    let surfaces = surfaces();
+    board(&surfaces, "delivery").await;
+    let eleven: Vec<String> = (0..11).map(|index| format!("t{index}")).collect();
+    let eleven: Vec<&str> = eleven.iter().map(String::as_str).collect();
+
+    let blank = surfaces
+        .set_dashboard_tags(tagging("delivery", &["  "]))
+        .await;
+    let crowded = surfaces
+        .set_dashboard_tags(tagging("delivery", &eleven))
+        .await;
+    let nowhere = surfaces
+        .set_dashboard_tags(tagging("nowhere", &["Delivery"]))
+        .await;
+
+    assert_refused(&blank, "1 to 32 characters");
+    assert_refused(&crowded, "at most 10 tags");
+    assert_refused(&nowhere, "no dashboard is named `nowhere`");
+}
+
+#[tokio::test]
+async fn a_set_past_the_cap_is_refused_and_says_why() {
+    let surfaces = surfaces();
+    for index in 0..crate::domain::tags::MAX_TAGS / 10 {
+        let name = format!("b{index}");
+        board(&surfaces, &name).await;
+        let full: Vec<String> = (0..10).map(|tag| format!("t{index}_{tag}")).collect();
+        let full: Vec<&str> = full.iter().map(String::as_str).collect();
+        assert_accepted(&surfaces.set_dashboard_tags(tagging(&name, &full)).await);
+    }
+    board(&surfaces, "last").await;
+
+    let refused = surfaces
+        .set_dashboard_tags(tagging("last", &["one more"]))
+        .await;
+
+    assert_refused(&refused, "200 tags");
+}
+
+#[tokio::test]
+async fn a_dashboard_listing_narrows_to_any_of_the_tags_inside_a_folder() {
+    let surfaces = surfaces();
+    let id = made_folder(&surfaces, "Platform").await;
+    for (name, tags) in [
+        ("delivery", &["Alpha"][..]),
+        ("delivery_ai", &["Alpha", "Beta"][..]),
+        ("hiring", &["Beta"][..]),
+        ("support", &["Gamma"][..]),
+    ] {
+        board(&surfaces, name).await;
+        assert_accepted(&surfaces.set_dashboard_tags(tagging(name, tags)).await);
+    }
+    assert_accepted(&surfaces.move_dashboard(moving("delivery", Some(&id))).await);
+
+    let everywhere = assert_accepted(
+        &surfaces
+            .list_definitions(listing_tagged(
+                DefinitionKind::Dashboard,
+                None,
+                &["alpha", "BETA"],
+            ))
+            .await,
+    );
+    let filed = assert_accepted(
+        &surfaces
+            .list_definitions(listing_tagged(
+                DefinitionKind::Dashboard,
+                Some(&id),
+                &["alpha", "beta"],
+            ))
+            .await,
+    );
+
+    assert_eq!(
+        everywhere["names"],
+        json!(["delivery", "delivery_ai", "hiring"])
+    );
+    assert_eq!(everywhere["total"], 3);
+    assert_eq!(filed["names"], json!(["delivery"]));
+}
+
+#[tokio::test]
+async fn only_dashboards_are_listed_by_tag() {
+    let listed = surfaces()
+        .list_definitions(listing_tagged(DefinitionKind::Metric, None, &["Alpha"]))
+        .await;
+
+    assert_refused(&listed, "metrics are not tagged");
+}
+
+#[test]
+fn a_set_names_its_dashboard_and_its_tags() {
+    let tools = CustomSurfaces::tool_router().list_all();
+    let Some(tool) = tools.iter().find(|tool| tool.name == "set_dashboard_tags") else {
+        panic!("set_dashboard_tags is announced");
+    };
+
+    let schema = Value::Object((*tool.input_schema).clone());
+
+    assert_eq!(schema["required"], json!(["name", "tags"]), "{schema}");
+    assert!(schema["properties"]["tags"]["description"].is_string());
 }

@@ -1,0 +1,21 @@
+{
+  "id": "120-1",
+  "name": "Example Sprint",
+  "goal": "Synthetic sprint goal",
+  "start": 1782777600000,
+  "finish": 1783382400000,
+  "archived": false,
+  "isDefault": false,
+  "unresolvedIssuesCount": 1,
+  "agile": {
+    "id": "108-1",
+    "name": "Example Board"
+  },
+  "issues": [
+    {
+      "id": "2-1",
+      "idReadable": "EX-1",
+      "summary": "Synthetic issue"
+    }
+  ]
+}

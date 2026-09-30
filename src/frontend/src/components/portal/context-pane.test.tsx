@@ -1,10 +1,4 @@
 // @vitest-environment jsdom
-/**
- * ContextPane semantics: the second navigation level follows the active zone
- * (theme items for Overview, direction→lens tree for Directions, roster/org
- * items for People, catalog items for Manage), and clicking writes the
- * portal-store selection the content area renders from.
- */
 vi.mock("@tanstack/react-router", async () => {
   const { portalRouterMock } = await import("@/test/portal-router");
   return portalRouterMock();
@@ -12,7 +6,15 @@ vi.mock("@tanstack/react-router", async () => {
 
 import { portalRouter } from "@/test/portal-router";
 
-import { act, render, renderHook, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  act,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -29,6 +31,13 @@ const mocks = vi.hoisted(() => ({
     isPending: boolean;
   }>,
   isAdmin: false,
+  canSeeOthers: true,
+  showPlanned: false,
+  createFolder: vi.fn(),
+  renameFolder: vi.fn(),
+  deleteFolder: vi.fn(),
+  fetchPins: vi.fn(),
+  fetchDashboardRead: vi.fn(),
 }));
 
 vi.mock("@/lib/portal/use-active-zone", () => ({ useActiveZone: () => mocks.zone }));
@@ -43,6 +52,36 @@ vi.mock("@/queries/identity-me", () => ({
     isPending: false,
   }),
 }));
+vi.mock("@/lib/portal/use-viewer-reach", () => ({
+  useViewerReach: () => ({
+    canSeeOthers: mocks.canSeeOthers,
+    isManager: mocks.canSeeOthers,
+    isPending: false,
+  }),
+}));
+vi.mock("@/auth", () => ({ useViewer: () => ({ personId: "me@x", email: "me@x" }) }));
+vi.mock("@/lib/portal/portal-store", async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
+  usePortalShowPlanned: () => mocks.showPlanned,
+}));
+vi.mock("@/api/custom-client", async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
+  fetchDashboardNames: async () => ({ names: ["delivery"], total: 14 }),
+  fetchFolders: async () => ({
+    folders: [
+      { id: "f1", name: "Platform", dashboards: 3 },
+      { id: "f2", name: "Product", dashboards: 0 },
+    ],
+    unfiled: 11,
+  }),
+  createFolder: (name: string) => mocks.createFolder(name),
+  renameFolder: (id: string, name: string) => mocks.renameFolder(id, name),
+  deleteFolder: (id: string) => mocks.deleteFolder(id),
+  fetchPins: () => mocks.fetchPins(),
+  fetchDashboardRead: (name: string) => mocks.fetchDashboardRead(name),
+}));
+
+import { CustomApiError } from "@/api/custom-client";
 
 import {
   usePortalDir,
@@ -62,9 +101,20 @@ vi.mock("@/lib/portal/use-person-sections", async (orig) => ({
 
 import { ContextPane } from "./context-pane";
 
-const pane = () => render(<SidebarProvider><ContextPane /></SidebarProvider>);
+const pane = () =>
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <SidebarProvider>
+        <ContextPane />
+      </SidebarProvider>
+    </QueryClientProvider>,
+  );
 
-const buttonFor = (label: string) => screen.getByText(label).closest("button");
+const buttonFor = (label: string) => screen.getByText(label).closest("button, a");
+
+const inZone = (activeZone: string) => {
+  mocks.zone = { activeZone, activePerson: "boss@x" };
+};
 
 beforeEach(() => {
   window.matchMedia ??= ((query: string) => ({
@@ -77,44 +127,102 @@ beforeEach(() => {
     removeListener: () => {},
     dispatchEvent: () => false,
   })) as unknown as typeof window.matchMedia;
-  mocks.zone = { activeZone: "overview", activePerson: "boss@x" };
+  inZone("overview");
   mocks.isFlat = false;
+  mocks.isAdmin = false;
+  mocks.canSeeOthers = true;
+  mocks.showPlanned = false;
   mocks.standings = [];
+  mocks.createFolder.mockReset().mockResolvedValue({ id: "f3", name: "Hiring" });
+  mocks.renameFolder.mockReset().mockResolvedValue({ id: "f1", name: "Core" });
+  mocks.deleteFolder.mockReset().mockResolvedValue(undefined);
+  mocks.fetchPins.mockReset().mockResolvedValue([]);
+  mocks.fetchDashboardRead.mockReset().mockReturnValue(new Promise(() => {}));
   act(() => {
-    portalRouter.set({ zone: undefined });
-    portalRouter.set({ item: undefined });
+    portalRouter.reset();
     portalRouter.set({ dir: "dev" });
     portalRouter.set({ lens: "Delivery" });
   });
 });
 
-describe("ContextPane", () => {
-  it("lists the Overview theme items and writes the selection on click", async () => {
+describe("ContextPane header", () => {
+  it("titles the Home pane with the product name", () => {
     pane();
-    expect(screen.getByText("Overview")).toBeInTheDocument();
-    expect(screen.getByText("Cross-functional org rollup")).toBeInTheDocument();
+    expect(screen.getByText("Constructor Insight")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["directions", "Explore"],
+    ["aicost", "Explore"],
+    ["person", "People"],
+    ["people", "People"],
+    ["custom", "Dashboards"],
+    ["manage", "Manage"],
+  ])("titles the %s pane %s", (zone, title) => {
+    inZone(zone);
+    pane();
+    expect(screen.getByText(title, { selector: '[data-slot="sidebar-header"] *' })).toBeInTheDocument();
+  });
+});
+
+describe("Home pane", () => {
+  it("lists the themes and writes the selection on click", async () => {
+    pane();
     const item = renderHook(() => usePortalItem());
     await userEvent.click(screen.getByText("Data coverage"));
     expect(item.result.current).toBe("health");
   });
 
-  it("shows the direction catalog with lenses and drives dir+lens state", async () => {
-    mocks.zone = { activeZone: "directions", activePerson: "boss@x" };
+  it("keeps the Dashboards group from a viewer who cannot open dashboards", () => {
+    mocks.showPlanned = true;
     pane();
-    expect(screen.getByText("Functional domains")).toBeInTheDocument();
-    expect(screen.getByText("Development")).toBeInTheDocument();
-    expect(screen.getByText("Collaboration")).toBeInTheDocument();
+    expect(screen.queryByText("My dashboards")).toBeNull();
+  });
 
+  it("shows an admin the planned Dashboards group only with planned sections on", () => {
+    mocks.isAdmin = true;
+    const { unmount } = pane();
+    expect(screen.queryByText("My dashboards")).toBeNull();
+    unmount();
+
+    mocks.showPlanned = true;
+    pane();
+    expect(buttonFor("My dashboards")).toHaveAttribute("aria-disabled", "true");
+    expect(screen.queryByText("Starter dashboards")).toBeNull();
+  });
+
+  it("goes nowhere from a planned row", async () => {
+    mocks.isAdmin = true;
+    mocks.showPlanned = true;
+    pane();
+
+    await userEvent.click(screen.getByText("My dashboards"));
+
+    expect(portalRouter.navigations).toHaveLength(0);
+  });
+});
+
+describe("Explore pane", () => {
+  it("holds the directions and the AI & Cost views together", () => {
+    inZone("directions");
+    pane();
+    expect(screen.getByText("Development")).toBeInTheDocument();
+    expect(screen.getByText("AI adoption")).toBeInTheDocument();
+    expect(screen.getByText("Cost")).toBeInTheDocument();
+  });
+
+  it("shows the open direction's lenses and drives dir+lens state", async () => {
+    inZone("directions");
+    pane();
     const dir = renderHook(() => usePortalDir());
     const lens = renderHook(() => usePortalLens());
-    // dev is the active dir → its lens list is expanded
     await userEvent.click(screen.getByText("Git output"));
     expect(dir.result.current).toBe("dev");
     expect(lens.result.current).toBe("Git output");
   });
 
   it("expands a direction and its first lens in one navigation", async () => {
-    mocks.zone = { activeZone: "directions", activePerson: "boss@x" };
+    inZone("directions");
     pane();
     portalRouter.navigations.length = 0;
 
@@ -125,7 +233,7 @@ describe("ContextPane", () => {
   });
 
   it("picks a lens in one navigation", async () => {
-    mocks.zone = { activeZone: "directions", activePerson: "boss@x" };
+    inZone("directions");
     pane();
     portalRouter.navigations.length = 0;
 
@@ -134,19 +242,109 @@ describe("ContextPane", () => {
     expect(portalRouter.navigations).toHaveLength(1);
   });
 
-  it("switches direction when another domain is clicked", async () => {
-    mocks.zone = { activeZone: "directions", activePerson: "boss@x" };
+  it("does not open a direction while AI & Cost is on screen", () => {
+    inZone("aicost");
     pane();
-    const dir = renderHook(() => usePortalDir());
-    await userEvent.click(screen.getByText("Knowledge / Wiki"));
-    expect(dir.result.current).toBe("wiki");
+    expect(screen.queryByText("Git output")).toBeNull();
+    expect(buttonFor("Development")).not.toHaveAttribute("data-active");
   });
 
-  it("renders the People zone with the org tree and roster items", () => {
-    mocks.zone = { activeZone: "people", activePerson: "boss@x" };
+  it("opens an AI & Cost view from Directions in one navigation", async () => {
+    inZone("directions");
     pane();
-    expect(screen.getByText("People & org structure")).toBeInTheDocument();
+    portalRouter.navigations.length = 0;
+
+    await userEvent.click(screen.getByText("AI adoption"));
+
+    expect(portalRouter.navigations).toHaveLength(1);
+    expect(portalRouter.search).toMatchObject({ zone: "aicost", item: "adoption-funnel" });
+  });
+
+  it("folds the open AI & Cost group on a second click without navigating", async () => {
+    inZone("aicost");
+    act(() => portalRouter.set({ item: "idle-seats" }));
+    pane();
+    portalRouter.navigations.length = 0;
+
+    await userEvent.click(screen.getByText("Cost"));
+
+    expect(screen.queryByText("Idle seats")).toBeNull();
+    expect(portalRouter.navigations).toHaveLength(0);
+  });
+
+  it("opens a view picked inside an AI & Cost group", async () => {
+    inZone("aicost");
+    act(() => portalRouter.set({ item: "idle-seats" }));
+    pane();
+
+    await userEvent.click(screen.getByText("Credits burn-down"));
+
+    expect(portalRouter.search).toMatchObject({ zone: "aicost", item: "credits" });
+  });
+
+  it("lists the views of the open AI & Cost group", () => {
+    inZone("aicost");
+    act(() => portalRouter.set({ item: "idle-seats" }));
+    pane();
+    expect(buttonFor("Idle seats")).toHaveAttribute("data-active");
+    expect(screen.queryByText("Adoption funnel")).toBeNull();
+  });
+});
+
+describe("People pane", () => {
+  it("offers Me and the team views", () => {
+    inZone("people");
+    pane();
+    expect(screen.getByText("Me")).toBeInTheDocument();
+    expect(screen.getByText("My team")).toBeInTheDocument();
+    expect(screen.getByText("Roster · by role")).toBeInTheDocument();
     expect(screen.getByTestId("org-tree")).toBeInTheDocument();
+  });
+
+  it("opens Me on the viewer's own page", async () => {
+    inZone("people");
+    pane();
+
+    await userEvent.click(screen.getByText("Me"));
+
+    expect(portalRouter.pathname).toBe("/ic/me%40x/personal");
+  });
+
+  it("opens a team view from a person page on the viewer's team", async () => {
+    inZone("person");
+    pane();
+
+    await userEvent.click(screen.getByText("Roster · by role"));
+
+    expect(portalRouter.navigations).toHaveLength(1);
+    expect(portalRouter.pathname).toBe("/ic/me%40x/team");
+    expect(portalRouter.search).toMatchObject({ item: "employees" });
+  });
+
+  it("switches team view in place on a team page", async () => {
+    inZone("people");
+    pane();
+
+    await userEvent.click(screen.getByText("Roster · by role"));
+
+    expect(portalRouter.search).toMatchObject({ item: "employees" });
+    expect(portalRouter.pathname).toBe("/portal");
+  });
+
+  it("offers a viewer with nobody to look at their own page only", () => {
+    mocks.canSeeOthers = false;
+    inZone("person");
+    pane();
+    expect(screen.getByText("Me")).toBeInTheDocument();
+    expect(screen.queryByText("My team")).toBeNull();
+  });
+
+  it("lists the person's sections under the views", () => {
+    inZone("person");
+    pane();
+    expect(screen.getByText("Me")).toBeInTheDocument();
+    expect(screen.getByText("At a glance")).toBeInTheDocument();
+    expect(screen.queryByTestId("org-tree")).toBeNull();
   });
 
   it.each([
@@ -154,7 +352,7 @@ describe("ContextPane", () => {
     ["flat roster", true],
   ])("keeps the %s list in its own scroll region", (_policy, isFlat) => {
     mocks.isFlat = isFlat;
-    mocks.zone = { activeZone: "people", activePerson: "boss@x" };
+    inZone("people");
 
     pane();
 
@@ -172,65 +370,8 @@ describe("ContextPane", () => {
     );
   });
 
-  it("renders Manage items", () => {
-    mocks.zone = { activeZone: "manage", activePerson: "boss@x" };
-    pane();
-    expect(screen.getByText("Catalog, identity & governance")).toBeInTheDocument();
-    expect(screen.getByText(/Metric catalog/i)).toBeInTheDocument();
-  });
-
-  it.each([
-    ["overview", "At a glance"],
-    ["aicost", "Overview"],
-    ["people", "People (roster)"],
-    ["scorecard", "Fixed scorecard"],
-    ["reports", "Delivery trend"],
-    ["manage", "Metric catalog"],
-  ])("highlights the default item of %s when the URL names none", (zone, label) => {
-    mocks.zone = { activeZone: zone, activePerson: "boss@x" };
-    pane();
-    expect(buttonFor(label)).toHaveAttribute("data-active");
-  });
-
-  it("moves the highlight to the item the URL names", () => {
-    act(() => portalRouter.set({ item: "trend" }));
-    pane();
-    expect(buttonFor("Trend")).toHaveAttribute("data-active");
-    expect(buttonFor("At a glance")).not.toHaveAttribute("data-active");
-  });
-
-  it("ignores an item left behind by another zone", () => {
-    mocks.zone = { activeZone: "people", activePerson: "boss@x" };
-    act(() => portalRouter.set({ item: "trend" }));
-    pane();
-    expect(buttonFor("People (roster)")).toHaveAttribute("data-active");
-  });
-
-  it("keeps admin-only Manage items away from a non-admin", () => {
-    mocks.zone = { activeZone: "manage", activePerson: "boss@x" };
-    mocks.isAdmin = false;
-    pane();
-    expect(screen.queryByText(/Platform usage/i)).not.toBeInTheDocument();
-  });
-
-  it("shows admin-only Manage items to an admin", () => {
-    mocks.zone = { activeZone: "manage", activePerson: "boss@x" };
-    mocks.isAdmin = true;
-    pane();
-    expect(screen.getByText(/Platform usage/i)).toBeInTheDocument();
-  });
-
-  it("renders the person's sections nav in the Person zone", () => {
-    mocks.zone = { activeZone: "person", activePerson: "boss@x" };
-    pane();
-    expect(screen.getByText("Personal metrics")).toBeInTheDocument();
-    expect(screen.getByText("At a glance")).toBeInTheDocument();
-  });
-
   it("marks a section with where the person stands in it", () => {
-    // The mark is the whole point of this nav: it says which section is worth
-    // opening. Its colour and its reason have to reach the reader.
-    mocks.zone = { activeZone: "person", activePerson: "boss@x" };
+    inZone("person");
     mocks.standings = [
       {
         id: "git_output",
@@ -248,7 +389,7 @@ describe("ContextPane", () => {
   });
 
   it("says a section has nothing rather than colouring it", () => {
-    mocks.zone = { activeZone: "person", activePerson: "boss@x" };
+    inZone("person");
     mocks.standings = [
       {
         id: "git_output",
@@ -266,10 +407,7 @@ describe("ContextPane", () => {
   });
 
   it("marks a section nothing feeds apart from one this person is absent from", () => {
-    // Same grey dot for both sent readers into a section to look for work
-    // that was never being measured. The hollow mark says the section itself
-    // is not wired, which is not worth opening at all.
-    mocks.zone = { activeZone: "person", activePerson: "boss@x" };
+    inZone("person");
     mocks.standings = [
       {
         id: "git_output",
@@ -289,9 +427,7 @@ describe("ContextPane", () => {
   });
 
   it("draws no mark while the standings are still loading", () => {
-    // A pending section drawn grey would read as "nothing here" — an answer
-    // the hook has not given yet.
-    mocks.zone = { activeZone: "person", activePerson: "boss@x" };
+    inZone("person");
     mocks.standings = [
       {
         id: "git_output",
@@ -306,38 +442,378 @@ describe("ContextPane", () => {
     pane();
     const button = screen.getByText("Git output").closest("button")!;
     expect(button.querySelector("span[aria-hidden]")).toBeNull();
-    // And says nothing either. Both flags read false while the queries are in
-    // flight, so a tooltip that trusted them would announce the strongest
-    // claim of the three on an answer the hook has not given.
     expect(button.getAttribute("title")).toBeNull();
   });
 });
 
-describe("ContextPane on an organisation with no reporting lines", () => {
-  it("names the People views for an organisation with no reporting lines", () => {
+describe("People pane on an organisation with no reporting lines", () => {
+  it("names the team views for an organisation with no reporting lines", () => {
     mocks.isFlat = true;
-    mocks.zone = { activeZone: "people", activePerson: "boss@x" };
+    inZone("people");
 
     pane();
 
     expect(screen.getByText("Overview")).toBeInTheDocument();
     expect(screen.getByText("Roster")).toBeInTheDocument();
-    expect(screen.queryByText("Employees")).toBeNull();
-    expect(screen.queryByText("People (roster)")).toBeNull();
-    expect(screen.queryByText("Median by Role")).toBeNull();
+    expect(screen.queryByText("My team")).toBeNull();
   });
 
   it("does not call the roster a chart", () => {
-    // "WorkChart" describes a structure a flat organisation does not have, and
-    // the list needs no heading of its own inside the People zone.
     mocks.isFlat = true;
-    mocks.zone = { activeZone: "people", activePerson: "boss@x" };
+    inZone("people");
 
     pane();
 
     expect(screen.queryByText("WorkChart")).toBeNull();
+    expect(screen.getByLabelText("Find someone in the org")).toBeInTheDocument();
+  });
+});
+
+describe("Manage pane", () => {
+  it("groups the surfaces into Data, People & access and Platform", () => {
+    inZone("manage");
+    mocks.isAdmin = true;
+    pane();
+    expect(screen.getByText("Data")).toBeInTheDocument();
+    expect(screen.getByText("People & access")).toBeInTheDocument();
+    expect(screen.getByText("Platform")).toBeInTheDocument();
+    expect(screen.getByText("Sources & connectors")).toBeInTheDocument();
+  });
+
+  it("keeps admin-only surfaces away from a non-admin", () => {
+    inZone("manage");
+    pane();
+    expect(screen.queryByText(/Platform usage/i)).not.toBeInTheDocument();
+    expect(screen.queryByText("Sources & connectors")).not.toBeInTheDocument();
+  });
+
+  it("shows admin-only surfaces to an admin", () => {
+    inZone("manage");
+    mocks.isAdmin = true;
+    pane();
+    expect(screen.getByText(/Platform usage/i)).toBeInTheDocument();
+  });
+
+  it("shows Access as planned only with planned sections on", () => {
+    inZone("manage");
+    const { unmount } = pane();
+    expect(screen.queryByText("Access")).toBeNull();
+    unmount();
+
+    mocks.showPlanned = true;
+    pane();
+    expect(buttonFor("Access")).toHaveAttribute("aria-disabled", "true");
+  });
+});
+
+describe("Reports pane", () => {
+  it("opens on the report builder", () => {
+    inZone("reports");
+    pane();
+    expect(buttonFor("Report builder")).toHaveAttribute("data-active");
+  });
+
+  it("lists what is planned and opens none of it", () => {
+    inZone("reports");
+    mocks.showPlanned = true;
+    pane();
+    for (const label of ["Snapshots", "Export PDF / HTML", "Templates"]) {
+      expect(buttonFor(label)).toHaveAttribute("aria-disabled", "true");
+    }
+  });
+});
+
+describe("Dashboards pane", () => {
+  it("counts every dashboard beside All dashboards", async () => {
+    inZone("custom");
+    pane();
+    const all = screen.getByRole("link", { name: /All dashboards/ });
+    expect(all).toHaveAttribute("href", "/portal/custom");
+    expect(await screen.findByText("14")).toBeInTheDocument();
+  });
+
+  it("links the catalogues", () => {
+    inZone("custom");
+    pane();
+    expect(screen.getByRole("link", { name: "Metrics" })).toHaveAttribute(
+      "href",
+      "/portal/custom/metrics",
+    );
+    expect(screen.getByRole("link", { name: "Widgets" })).toHaveAttribute(
+      "href",
+      "/portal/custom/widgets",
+    );
+    expect(screen.getByRole("link", { name: "Datasets" })).toHaveAttribute(
+      "href",
+      "/portal/custom/datasets",
+    );
+  });
+
+  it("no longer lists each saved dashboard", async () => {
+    inZone("custom");
+    pane();
+    await screen.findByText("14");
+    expect(screen.queryByText("delivery")).toBeNull();
+  });
+
+  it("shows the planned browse filters only with planned sections on", () => {
+    inZone("custom");
+    const { unmount } = pane();
+    expect(screen.queryByText("Shared with me")).toBeNull();
+    unmount();
+
+    mocks.showPlanned = true;
+    pane();
+    for (const label of ["My dashboards", "Shared with me", "Starred"]) {
+      expect(buttonFor(label)).toHaveAttribute("aria-disabled", "true");
+    }
+    expect(screen.queryByText("Starter")).toBeNull();
+  });
+});
+
+describe("ContextPane highlight", () => {
+  it.each([
+    ["overview", "At a glance"],
+    ["aicost", "Overview"],
+    ["people", "My team"],
+    ["manage", "Data exclusions"],
+  ])("highlights the default item of %s when the URL names none", (zone, label) => {
+    inZone(zone);
+    pane();
+    expect(buttonFor(label)).toHaveAttribute("data-active");
+  });
+
+  it("moves the highlight to the item the URL names", () => {
+    act(() => portalRouter.set({ item: "trend" }));
+    pane();
+    expect(buttonFor("Trend")).toHaveAttribute("data-active");
+    expect(buttonFor("At a glance")).not.toHaveAttribute("data-active");
+  });
+
+  it("ignores an item left behind by another zone", () => {
+    inZone("people");
+    act(() => portalRouter.set({ item: "trend" }));
+    pane();
+    expect(buttonFor("My team")).toHaveAttribute("data-active");
+  });
+});
+
+describe("Dashboards pane folders", () => {
+  const onTheList = (folder?: string) => {
+    inZone("custom");
+    act(() => {
+      portalRouter.go("/portal/custom");
+      if (folder) portalRouter.set({ folder });
+    });
+  };
+
+  it("lists each folder with its count, then the unfiled", async () => {
+    onTheList();
+    pane();
+
+    const platform = await screen.findByRole("link", { name: /Platform/ });
+    expect(platform).toHaveAttribute("href", "/portal/custom?folder=f1");
+    expect(platform.closest("li")).toHaveTextContent("3");
+    const unfiled = screen.getByRole("link", { name: /Unfiled/ });
+    expect(unfiled).toHaveAttribute("href", "/portal/custom?folder=unfiled");
+    expect(unfiled.closest("li")).toHaveTextContent("11");
+  });
+
+  it("marks the folder the URL names, and not All dashboards", async () => {
+    onTheList("f1");
+    pane();
+
+    expect(await screen.findByRole("link", { name: /Platform/ })).toHaveAttribute(
+      "data-active",
+    );
+    expect(buttonFor("Product")).not.toHaveAttribute("data-active");
+    expect(buttonFor("All dashboards")).not.toHaveAttribute("data-active");
+  });
+
+  it("keeps the picked tags when switching folder", async () => {
+    inZone("custom");
+    act(() => {
+      portalRouter.go("/portal/custom");
+      portalRouter.set({ folder: "f1", tag: ["Ops"] });
+    });
+    pane();
+
+    const query = (label: RegExp) =>
+      new URLSearchParams(
+        screen.getByRole("link", { name: label }).getAttribute("href")!.split("?")[1],
+      );
+    await screen.findByRole("link", { name: /Product/ });
+    expect(Object.fromEntries(query(/Product/))).toEqual({ folder: "f2", tag: "Ops" });
+    expect(Object.fromEntries(query(/Unfiled/))).toEqual({ folder: "unfiled", tag: "Ops" });
+    expect(Object.fromEntries(query(/All dashboards/))).toEqual({ tag: "Ops" });
+  });
+
+  it("marks nothing for a folder the URL names that is not there", async () => {
+    onTheList("gone");
+    pane();
+
+    await screen.findByRole("link", { name: /Platform/ });
+    for (const label of ["Platform", "Product", "Unfiled", "All dashboards"]) {
+      expect(buttonFor(label)).not.toHaveAttribute("data-active");
+    }
+  });
+
+  it("makes a folder on Enter", async () => {
+    onTheList();
+    pane();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: /New folder/ }));
+    await user.type(screen.getByRole("textbox", { name: "Folder name" }), "Hiring{Enter}");
+
+    expect(mocks.createFolder).toHaveBeenCalledWith("Hiring");
+    expect(await screen.findByRole("button", { name: /New folder/ })).toBeInTheDocument();
+  });
+
+  it("drops a new folder on Esc without asking the service", async () => {
+    onTheList();
+    pane();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: /New folder/ }));
+    await user.type(screen.getByRole("textbox", { name: "Folder name" }), "Hir{Escape}");
+
+    expect(screen.queryByRole("textbox", { name: "Folder name" })).toBeNull();
+    expect(mocks.createFolder).not.toHaveBeenCalled();
+  });
+
+  it("says under the field why a name was refused, and keeps the field", async () => {
+    mocks.createFolder.mockRejectedValue(
+      new CustomApiError(409, { detail: "a folder named `platform` already exists" }),
+    );
+    onTheList();
+    pane();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: /New folder/ }));
+    await user.type(screen.getByRole("textbox", { name: "Folder name" }), "platform{Enter}");
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "a folder named `platform` already exists",
+    );
+    expect(screen.getByRole("textbox", { name: "Folder name" })).toHaveValue("platform");
+  });
+
+  it("renames a folder from its menu, in the same field", async () => {
+    onTheList();
+    pane();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: "More for Platform" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Rename" }));
+    const field = screen.getByRole("textbox", { name: "Folder name" });
+    expect(field).toHaveValue("Platform");
+    await user.clear(field);
+    await user.type(field, "Core{Enter}");
+
+    expect(mocks.renameFolder).toHaveBeenCalledWith("f1", "Core");
+  });
+
+  it("asks before deleting a folder, and says where its dashboards go", async () => {
+    onTheList();
+    pane();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: "More for Platform" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
+
+    expect(await screen.findByRole("dialog")).toHaveTextContent(
+      "Its 3 dashboards move to Unfiled.",
+    );
+    expect(mocks.deleteFolder).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Delete folder" }));
+    expect(mocks.deleteFolder).toHaveBeenCalledWith("f1");
+  });
+});
+
+describe("Dashboards pane pins", () => {
+  const TITLES: Record<string, string> = {
+    hiring: "Hiring pipeline",
+    delivery: "Delivery",
+  };
+
+  function pinned(names: string[]) {
+    mocks.fetchPins.mockResolvedValue(names);
+    mocks.fetchDashboardRead.mockImplementation(async (name: string) => ({
+      body: { title: TITLES[name] ?? "", widgets: [] },
+      tags: [],
+    }));
+    inZone("custom");
+  }
+
+  const groupLabels = () =>
+    [...document.querySelectorAll('[data-slot="sidebar-group-label"]')].map(
+      (label) => label.textContent,
+    );
+
+  const pinnedRows = () =>
+    within(
+      screen
+        .getByText("Pinned")
+        .closest('[data-slot="sidebar-group"]') as HTMLElement,
+    ).getAllByRole("link");
+
+  it("lists the pinned dashboards after the catalogues, in pin order, by title", async () => {
+    pinned(["hiring", "delivery"]);
+    pane();
+
+    await screen.findByRole("link", { name: "Hiring pipeline" });
+    expect(groupLabels()).toEqual(["Browse", "Folders", "Catalogue", "Pinned"]);
+    const rows = pinnedRows();
+    expect(rows.map((row) => row.textContent)).toEqual([
+      "Hiring pipeline",
+      "Delivery",
+    ]);
+    expect(rows.map((row) => row.getAttribute("href"))).toEqual([
+      "/portal/custom/hiring",
+      "/portal/custom/delivery",
+    ]);
+  });
+
+  it("names a pinned dashboard by its name while its title loads or when it has none", async () => {
+    mocks.fetchPins.mockResolvedValue(["loading", "untitled"]);
+    mocks.fetchDashboardRead.mockImplementation((name: string) =>
+      name === "loading"
+        ? new Promise(() => {})
+        : Promise.resolve({ body: { title: "", widgets: [] }, tags: [] }),
+    );
+    inZone("custom");
+    pane();
+
+    await screen.findByRole("link", { name: "loading" });
+    await waitFor(() =>
+      expect(mocks.fetchDashboardRead).toHaveBeenCalledWith("untitled"),
+    );
+    expect(pinnedRows().map((row) => row.textContent)).toEqual([
+      "loading",
+      "untitled",
+    ]);
+  });
+
+  it("marks the pinned dashboard on screen", async () => {
+    pinned(["hiring", "delivery"]);
+    act(() => portalRouter.go("/portal/custom/delivery"));
+    pane();
+
     expect(
-      screen.getByLabelText("Find someone in the org"),
-    ).toBeInTheDocument();
+      await screen.findByRole("link", { name: "Delivery" }),
+    ).toHaveAttribute("data-active");
+    expect(
+      screen.getByRole("link", { name: "Hiring pipeline" }),
+    ).not.toHaveAttribute("data-active");
+  });
+
+  it("hides the group when nothing is pinned", async () => {
+    pinned([]);
+    pane();
+
+    await screen.findByText("14");
+    await waitFor(() => expect(mocks.fetchPins).toHaveBeenCalled());
+    expect(screen.queryByText("Pinned")).toBeNull();
   });
 });

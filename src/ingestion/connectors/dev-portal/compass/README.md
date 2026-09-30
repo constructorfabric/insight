@@ -154,9 +154,12 @@ this data has to respect them.
 
 ## Silver Targets
 
-None yet — this connector is **bronze-only**. `dbt/` carries just the bronze→RMT
-promotion, which makes later `FINAL` reads well-defined (load-bearing for
-`deployment_events`, whose rows are replaced rather than appended).
+None yet. `dbt/` carries a single staging model, `compass__components` — a
+deduplicated projection of the component catalog that the silver families below
+will build on. Bronze is `ReplacingMergeTree` ordered by `unique_key` by
+construction (Airbyte `append_dedup`), but RMT only collapses versions on
+background merge, so every read dedups explicitly — load-bearing for
+`deployment_events`, whose rows are rewritten in place rather than appended.
 
 Proposed silver class families are sketched in [SPEC.md](SPEC.md) §7 and
 deliberately deferred: they introduce a service-ownership concept that does not

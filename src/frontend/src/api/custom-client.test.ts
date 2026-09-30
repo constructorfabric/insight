@@ -6,21 +6,34 @@ import { fetchWithAuth } from "@/api/fetch-with-auth";
 
 import {
   CustomApiError,
+  createFolder,
   deleteDataset,
   deleteDefinition,
+  deleteFolder,
+  duplicateDashboard,
   fetchDashboard,
+  fetchDashboardFolder,
   fetchDashboardNames,
+  fetchDashboardRead,
   fetchDataset,
   fetchDatasetDependents,
   fetchDatasetRecords,
   fetchDependents,
+  fetchFolders,
   fetchMetric,
+  fetchPins,
   fetchTable,
+  fetchTags,
   fetchWidget,
+  moveDashboard,
+  pinDashboard,
   putDataset,
   putDefinition,
   renameDefinition,
+  renameFolder,
   runMetric,
+  setDashboardTags,
+  unpinDashboard,
 } from "./custom-client";
 
 const mockFetch = fetchWithAuth as unknown as ReturnType<typeof vi.fn>;
@@ -252,6 +265,12 @@ describe("a name that reached the client empty", () => {
     ["fetchMetric", () => fetchMetric("")],
     ["fetchWidget", () => fetchWidget("")],
     ["fetchDashboard", () => fetchDashboard("")],
+    ["fetchDashboardFolder", () => fetchDashboardFolder("")],
+    ["fetchDashboardRead", () => fetchDashboardRead("")],
+    ["setDashboardTags", () => setDashboardTags("", [])],
+    ["moveDashboard", () => moveDashboard("", null)],
+    ["renameFolder", () => renameFolder("", "Product")],
+    ["deleteFolder", () => deleteFolder("")],
     ["fetchDatasetRecords", () => fetchDatasetRecords("", { limit: 20 })],
     ["putDataset", () => putDataset("", {})],
     ["deleteDataset", () => deleteDataset("")],
@@ -266,5 +285,295 @@ describe("a name that reached the client empty", () => {
   ])("is refused before %s asks for it", async (_name, call) => {
     await expect(call()).rejects.toBeInstanceOf(CustomApiError);
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("folders", () => {
+  it("lists every folder with what it holds, and the unfiled count", async () => {
+    const list = {
+      folders: [{ id: "f1", name: "Platform", dashboards: 2 }],
+      unfiled: 3,
+    };
+    mockFetch.mockResolvedValueOnce(response(list));
+
+    await expect(fetchFolders()).resolves.toEqual(list);
+    expect(mockFetch).toHaveBeenCalledWith("/api/v3/v1/folders");
+  });
+
+  it("makes a folder from a name", async () => {
+    mockFetch.mockResolvedValueOnce(
+      response({ id: "f1", name: "Platform" }, { status: 201 })
+    );
+
+    await expect(createFolder("Platform")).resolves.toEqual({
+      id: "f1",
+      name: "Platform",
+    });
+    expect(mockFetch).toHaveBeenCalledWith("/api/v3/v1/folders", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Platform" }),
+    });
+  });
+
+  it("refuses a name another folder holds with what the service said", async () => {
+    mockFetch.mockResolvedValueOnce(
+      response({ detail: "taken" }, { ok: false, status: 409 })
+    );
+
+    await expect(createFolder("platform")).rejects.toMatchObject({
+      status: 409,
+      body: { detail: "taken" },
+    });
+  });
+
+  it("renames a folder by its id", async () => {
+    mockFetch.mockResolvedValueOnce(response({ id: "f1", name: "Product" }));
+
+    await expect(renameFolder("f1", "Product")).resolves.toEqual({
+      id: "f1",
+      name: "Product",
+    });
+    expect(mockFetch).toHaveBeenCalledWith("/api/v3/v1/folders/f1", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Product" }),
+    });
+  });
+
+  it("removes a folder by its id", async () => {
+    mockFetch.mockResolvedValueOnce(response(null, { status: 204 }));
+
+    await expect(deleteFolder("f1")).resolves.toBeUndefined();
+    expect(mockFetch).toHaveBeenCalledWith("/api/v3/v1/folders/f1", {
+      method: "DELETE",
+    });
+  });
+
+  it("moves a dashboard into a folder, and out of every folder", async () => {
+    mockFetch.mockResolvedValue(response(null, { status: 204 }));
+
+    await moveDashboard("delivery", "f1");
+    await moveDashboard("delivery", null);
+
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      1,
+      "/api/v3/v1/dashboards/delivery/folder",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ folder: "f1" }),
+      }
+    );
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      2,
+      "/api/v3/v1/dashboards/delivery/folder",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ folder: null }),
+      }
+    );
+  });
+
+  it("reads the folder a dashboard is filed in, or none", async () => {
+    const body = { title: "Delivery", items: [] };
+    mockFetch
+      .mockResolvedValueOnce(
+        response({ body, folder: { id: "f1", name: "Platform" } })
+      )
+      .mockResolvedValueOnce(response({ body, folder: null }));
+
+    await expect(fetchDashboardFolder("delivery")).resolves.toEqual({
+      id: "f1",
+      name: "Platform",
+    });
+    await expect(fetchDashboardFolder("delivery")).resolves.toBeNull();
+    expect(mockFetch).toHaveBeenCalledWith("/api/v3/v1/dashboards/delivery");
+  });
+
+  it("asks for one folder's dashboards, or the unfiled ones", async () => {
+    mockFetch.mockResolvedValue(response({ names: [], total: 0 }));
+
+    await fetchDashboardNames({ folder: "unfiled", limit: 50 });
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/v3/v1/dashboards?limit=50&folder=unfiled"
+    );
+  });
+});
+
+describe("tags", () => {
+  it("lists every tag with how many dashboards carry it", async () => {
+    const list = { tags: [{ name: "Ops", dashboards: 2 }] };
+    mockFetch.mockResolvedValueOnce(response(list));
+
+    await expect(fetchTags()).resolves.toEqual(list);
+    expect(mockFetch).toHaveBeenCalledWith("/api/v3/v1/tags");
+  });
+
+  it("sets a dashboard's whole tag set, and clears it", async () => {
+    mockFetch.mockResolvedValue(response(null, { status: 204 }));
+
+    await setDashboardTags("delivery", ["Ops", "Platform"]);
+    await setDashboardTags("delivery", []);
+
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      1,
+      "/api/v3/v1/dashboards/delivery/tags",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tags: ["Ops", "Platform"] }),
+      }
+    );
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      2,
+      "/api/v3/v1/dashboards/delivery/tags",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tags: [] }),
+      }
+    );
+  });
+
+  it("refuses a set past the bounds with what the service said", async () => {
+    mockFetch.mockResolvedValueOnce(
+      response({ detail: "too many" }, { ok: false, status: 409 })
+    );
+
+    await expect(setDashboardTags("delivery", ["Ops"])).rejects.toMatchObject({
+      status: 409,
+      body: { detail: "too many" },
+    });
+  });
+
+  it("reads a dashboard with the tags it carries, or none", async () => {
+    const body = { title: "Delivery", widgets: [] };
+    mockFetch
+      .mockResolvedValueOnce(response({ body, folder: null, tags: ["Ops"] }))
+      .mockResolvedValueOnce(response({ body, folder: null }));
+
+    await expect(fetchDashboardRead("delivery")).resolves.toEqual({
+      body,
+      tags: ["Ops"],
+    });
+    await expect(fetchDashboardRead("delivery")).resolves.toEqual({
+      body,
+      tags: [],
+    });
+    expect(mockFetch).toHaveBeenCalledWith("/api/v3/v1/dashboards/delivery");
+  });
+
+  it("asks for the dashboards carrying any of the tags, inside a folder", async () => {
+    mockFetch.mockResolvedValue(response({ names: [], total: 0 }));
+
+    await fetchDashboardNames({
+      search: "cycle",
+      folder: "f1",
+      tags: ["Ops", "R&D"],
+      limit: 50,
+    });
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/v3/v1/dashboards?q=cycle&limit=50&folder=f1&tag=Ops&tag=R%26D"
+    );
+  });
+});
+
+describe("pins", () => {
+  it("lists the caller's pinned dashboards, oldest pin first", async () => {
+    mockFetch.mockResolvedValueOnce(response({ pins: ["delivery", "hiring"] }));
+
+    await expect(fetchPins()).resolves.toEqual(["delivery", "hiring"]);
+    expect(mockFetch).toHaveBeenCalledWith("/api/v3/v1/pins");
+  });
+
+  it("pins and unpins a dashboard by its name", async () => {
+    mockFetch.mockResolvedValue(response(null, { status: 204 }));
+
+    await pinDashboard("R&D board");
+    await unpinDashboard("R&D board");
+
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      1,
+      "/api/v3/v1/pins/R%26D%20board",
+      { method: "PUT" }
+    );
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      2,
+      "/api/v3/v1/pins/R%26D%20board",
+      { method: "DELETE" }
+    );
+  });
+
+  it("refuses a pin past the limit with what the service said", async () => {
+    mockFetch.mockResolvedValueOnce(
+      response({ detail: "at most 20 pins" }, { ok: false, status: 409 })
+    );
+
+    await expect(pinDashboard("delivery")).rejects.toMatchObject({
+      status: 409,
+      body: { detail: "at most 20 pins" },
+    });
+  });
+
+  it("refuses to unpin a dashboard that is not there", async () => {
+    mockFetch.mockResolvedValueOnce(
+      response({ detail: "no such dashboard" }, { ok: false, status: 404 })
+    );
+
+    await expect(unpinDashboard("gone")).rejects.toMatchObject({
+      status: 404,
+    });
+  });
+});
+
+describe("duplicateDashboard", () => {
+  it("copies a dashboard under a new name, and reads the name it took", async () => {
+    mockFetch.mockResolvedValueOnce(
+      response({ name: "delivery-copy" }, { status: 201 })
+    );
+
+    await expect(duplicateDashboard("R&D", "delivery-copy")).resolves.toBe(
+      "delivery-copy"
+    );
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/v3/v1/dashboards/R%26D/duplicate",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "delivery-copy" }),
+      }
+    );
+  });
+
+  it("refuses a taken name with what the service said", async () => {
+    mockFetch.mockResolvedValueOnce(
+      response({ detail: "taken" }, { ok: false, status: 409 })
+    );
+
+    await expect(
+      duplicateDashboard("delivery", "hiring")
+    ).rejects.toMatchObject({ status: 409, body: { detail: "taken" } });
+  });
+});
+
+describe("a dashboard's age", () => {
+  it("reads when the dashboard was last changed, when the service says", async () => {
+    const body = { title: "Delivery", widgets: [] };
+    mockFetch
+      .mockResolvedValueOnce(
+        response({ body, tags: [], updated_at: "2026-09-25T10:00:00Z" })
+      )
+      .mockResolvedValueOnce(response({ body, tags: [] }));
+
+    await expect(fetchDashboardRead("delivery")).resolves.toMatchObject({
+      updatedAt: "2026-09-25T10:00:00Z",
+    });
+    await expect(fetchDashboardRead("delivery")).resolves.not.toHaveProperty(
+      "updatedAt"
+    );
   });
 });

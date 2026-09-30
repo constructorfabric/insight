@@ -44,7 +44,7 @@ enum Mode {
     /// A fixed answer, so a handler test can be a caller with or without the
     /// role without standing up an identity service.
     #[cfg(test)]
-    Fixed(bool),
+    Fixed(Option<Uuid>),
 }
 
 impl IdentityClient {
@@ -62,7 +62,14 @@ impl IdentityClient {
     #[cfg(test)]
     pub(crate) fn fixed(is_admin: bool) -> Self {
         Self {
-            mode: Mode::Fixed(is_admin),
+            mode: Mode::Fixed(is_admin.then_some(FIXED_CALLER)),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn admin(caller: Uuid) -> Self {
+        Self {
+            mode: Mode::Fixed(Some(caller)),
         }
     }
 
@@ -87,8 +94,8 @@ impl IdentityClient {
         let (http, base_url) = match &self.mode {
             Mode::Live { http, base_url } => (http, base_url),
             #[cfg(test)]
-            Mode::Fixed(is_admin) => {
-                return Ok(is_admin.then_some(FIXED_CALLER));
+            Mode::Fixed(caller) => {
+                return Ok(*caller);
             }
         };
 

@@ -3,22 +3,24 @@
 use std::sync::Arc;
 
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Extension, Path, Query};
+use axum::extract::{Extension, Path, Query, RawQuery};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
-use toolkit::api::{OpenApiRegistry, OperationBuilder, ParamLocation, ParamSpec};
+use toolkit::api::{OpenApiRegistry, OperationBuilder, ParamSpec};
 use toolkit_canonical_errors::{CanonicalError, Http, resource_error};
 use utoipa::ToSchema;
 
 use super::AppState;
 use super::errors::ApiErrors;
+use super::tags::tags_in;
 use crate::domain::dataset_lifecycle::{Broken, DatasetChangeError, Removal};
 use crate::domain::dataset_records::PreviewError;
 use crate::domain::datasets::Refused;
 use crate::domain::definition::{DefinitionName, MAX_PAGE_LIMIT, Page};
 use crate::domain::kinds::dataset::state::DatasetState;
+use crate::domain::tags::TagError;
 use crate::domain::violation::Violation;
 use crate::store::dataset_tables::Record;
 
@@ -115,14 +117,9 @@ struct Search {
 }
 
 fn query_param(name: &str, param_type: &str, description: &str) -> ParamSpec {
-    ParamSpec {
-        name: name.to_owned(),
-        location: ParamLocation::Query,
-        required: false,
-        description: Some(description.to_owned()),
-        param_type: param_type.to_owned(),
-        array: false,
-    }
+    ParamSpec::query(name)
+        .description(description)
+        .param_type(param_type)
 }
 
 pub(crate) fn register_routes(
@@ -130,14 +127,7 @@ pub(crate) fn register_routes(
     openapi: &dyn OpenApiRegistry,
     state: &Arc<AppState>,
 ) -> Router {
-    let name_param = ParamSpec {
-        name: "name".to_owned(),
-        location: ParamLocation::Path,
-        required: true,
-        description: Some("Dataset name".to_owned()),
-        param_type: "string".to_owned(),
-        array: false,
-    };
+    let name_param = ParamSpec::path("name").description("Dataset name");
 
     let put = OperationBuilder::put("/v1/datasets/{name}")
         .operation_id("insight_v3_core.datasets.put")
@@ -300,8 +290,16 @@ async fn list_datasets(
     Extension(state): Extension<Arc<AppState>>,
     headers: axum::http::HeaderMap,
     Query(search): Query<Search>,
+    RawQuery(query): RawQuery,
 ) -> Result<Response, CanonicalError> {
     admin_only(&state, &headers).await?;
+    if !tags_in(query.as_deref()).is_empty() {
+        return Err(DatasetApiError::invalid_field(
+            "tag",
+            TagError::NotTagged("datasets").to_string(),
+        ));
+    }
+
     let page = Page::parse(search.limit, search.offset)
         .map_err(|error| DatasetApiError::invalid_field("limit", error.to_string()))?;
 
@@ -321,14 +319,7 @@ async fn list_datasets(
 /// What a dataset's page reads beside its declaration: the records that have
 /// arrived, and what would go with it.
 fn register_reads(router: Router, openapi: &dyn OpenApiRegistry, state: &Arc<AppState>) -> Router {
-    let name_param = ParamSpec {
-        name: "name".to_owned(),
-        location: ParamLocation::Path,
-        required: true,
-        description: Some("Dataset name".to_owned()),
-        param_type: "string".to_owned(),
-        array: false,
-    };
+    let name_param = ParamSpec::path("name").description("Dataset name");
 
     let records = OperationBuilder::get("/v1/datasets/{name}/records")
         .operation_id("insight_v3_core.datasets.records")

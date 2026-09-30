@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { BookOpenText, Bug, Megaphone, type LucideIcon } from "lucide-react";
+import { Bug, Megaphone, type LucideIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { useViewer } from "@/auth";
@@ -20,7 +20,7 @@ import { useActiveZone } from "@/lib/portal/use-active-zone";
 import { useIcPerson } from "@/queries/ic-dashboard";
 
 /**
- * Shared footer for the sidebar chrome: metric catalog, What's new, view
+ * Shared footer for the sidebar chrome: What's new, view
  * settings (portal / focus / explanations), theme switch, and the viewer
  * identity block. The portal's rail and its context pane both mount it, so the
  * settings popover and the pane offer the same controls.
@@ -51,12 +51,6 @@ export function AppSidebarFooter({
   return (
     <>
       <SidebarMenu>
-        <MenuEntry
-          surface="metric-catalog"
-          icon={BookOpenText}
-          label={t("metric_definitions.nav_label")}
-          onNavigate={onNavigate}
-        />
         <MenuEntry
           surface="whats-new"
           icon={Megaphone}
