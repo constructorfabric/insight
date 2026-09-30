@@ -303,6 +303,27 @@ describe("<WidgetDrilldown>", () => {
     expect(await screen.findByText("example-api")).toBeInTheDocument();
   });
 
+  it("numbers the rows behind a widget, as the card does", async () => {
+    vi.mocked(customClient.fetchMetric).mockResolvedValue(CLOCKLESS);
+    vi.mocked(customClient.fetchDrilldownPage).mockResolvedValue(
+      page([
+        { service: "example-api", commits: 96 },
+        { service: "example-web", commits: 128 },
+      ])
+    );
+
+    renderDrilldown();
+    await screen.findByText("example-api");
+
+    const [header, ...body] = screen.getAllByRole("row");
+    const [numberHeader] = within(header!).getAllByRole("columnheader");
+
+    expect(numberHeader).toHaveTextContent("#");
+    expect(
+      body.map((row) => within(row).getAllByRole("cell")[0]!.textContent)
+    ).toEqual(["1", "2"]);
+  });
+
   it("links a cell that is a URL, so a row can be followed", async () => {
     vi.mocked(customClient.fetchMetric).mockResolvedValue(CLOCKLESS);
     vi.mocked(customClient.fetchDrilldownPage).mockResolvedValue(

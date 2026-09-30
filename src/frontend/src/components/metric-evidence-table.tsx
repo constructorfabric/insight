@@ -50,6 +50,9 @@ function columnLayout(column: MetricEvidenceColumn) {
 }
 
 const EXPANDER_REM = 2.25;
+const NUMBER_REM = 3.5;
+const LEADING_REM: readonly number[] = [EXPANDER_REM];
+const NUMBERED_LEADING_REM: readonly number[] = [NUMBER_REM, EXPANDER_REM];
 
 /**
  * Columns whose link belongs to the summary line only. The full record shows a
@@ -78,6 +81,7 @@ export function MetricEvidenceTable({
   reordering,
   nextPageError,
   pageLimitReached,
+  numbered = false,
 }: {
   metricKey: string | null;
   rows: MetricEvidenceRow[];
@@ -95,6 +99,7 @@ export function MetricEvidenceTable({
   reordering?: boolean;
   nextPageError: boolean;
   pageLimitReached: boolean;
+  numbered?: boolean;
 }) {
   const [viewport, setViewport] = useState<HTMLDivElement | null>(null);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
@@ -114,9 +119,11 @@ export function MetricEvidenceTable({
   const virtualRows = virtualizer.getVirtualItems();
   const virtualBodyHeight = virtualizer.getTotalSize();
   const last = virtualRows.at(-1)?.index ?? 0;
-  const minimumWidth = columns.reduce((total, column) => {
-    return total + columnLayout(column).basisRem;
-  }, EXPANDER_REM);
+  const leadingRem = numbered ? NUMBERED_LEADING_REM : LEADING_REM;
+  const minimumWidth = columns.reduce(
+    (total, column) => total + columnLayout(column).basisRem,
+    leadingRem.reduce((total, rem) => total + rem, 0)
+  );
   // INVARIANT: the header and every body row lay out on THIS template. Two
   // rows sizing themselves independently drift apart as soon as one of them
   // has different free space to grow into, and a value under the wrong
@@ -126,8 +133,9 @@ export function MetricEvidenceTable({
       const { basisRem, grow } = columnLayout(column);
       return grow > 0 ? `minmax(${basisRem}rem, ${grow}fr)` : `${basisRem}rem`;
     });
-    return [`${EXPANDER_REM}rem`, ...tracks].join(" ");
-  }, [columns]);
+    const leading = leadingRem.map((rem) => `${rem}rem`);
+    return [...leading, ...tracks].join(" ");
+  }, [columns, leadingRem]);
 
   function toggleRow(key: string): void {
     setExpanded((current) => {
@@ -182,6 +190,14 @@ export function MetricEvidenceTable({
             className="grid w-full border-b-0 hover:bg-transparent"
             style={{ gridTemplateColumns: gridTemplate }}
           >
+            {numbered ? (
+              <TableHead
+                role="columnheader"
+                className="flex h-10 items-center justify-end px-2 py-0 text-muted-foreground"
+              >
+                #
+              </TableHead>
+            ) : null}
             <TableHead
               role="columnheader"
               className="flex h-10 items-center p-0"
@@ -270,6 +286,14 @@ export function MetricEvidenceTable({
                   transform: `translateY(${virtualRow.start}px)`,
                 }}
               >
+                {numbered ? (
+                  <TableCell
+                    role="cell"
+                    className="flex h-11 items-center justify-end px-2 py-0 text-muted-foreground tabular-nums"
+                  >
+                    {virtualRow.index + 1}
+                  </TableCell>
+                ) : null}
                 <TableCell
                   role="cell"
                   className="flex h-11 items-center justify-center p-0"
@@ -334,7 +358,7 @@ export function MetricEvidenceTable({
                 {isOpen ? (
                   <TableCell
                     role="cell"
-                    aria-colspan={columns.length + 1}
+                    aria-colspan={leadingRem.length + columns.length}
                     // INVARIANT: selecting text here must not reach the row's
                     // expand toggle.
                     onClick={(event) => event.stopPropagation()}
