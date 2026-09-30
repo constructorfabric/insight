@@ -153,12 +153,7 @@ _REPO_LISTING_PATH = "/repositories/{{ stream_partition.workspace }}"
 
 
 def _repository_listings(streams: list[dict]) -> list[tuple[str, str]]:
-    """(owner, fields) for every requester that lists a workspace's repositories.
-
-    The proxy walks carry fan-out parents inlined inside their partition
-    routers, each bounded differently, so they cannot share one definition and
-    have to be audited instead.
-    """
+    """(owner, fields) for every requester that lists a workspace's repositories."""
     found: list[tuple[str, str]] = []
 
     def walk(node: object, owner: str | None) -> None:
@@ -279,9 +274,9 @@ def test_every_fan_out_listing_walks_by_created_on_instead_of_page_number() -> N
         else:
             paged.append(path)
             assert paginator.get("page_token_option") == {"type": "RequestPath"}, f"{path}: {paginator}"
-    # repositories and pull_requests (read by reference from every pull-request
-    # stream) plus the six inlined repository parents of the proxy walks.
-    assert len(keyset) == 8, keyset
+    # repositories and pull_requests, each read by reference from every stream
+    # that fans out over it.
+    assert len(keyset) == 2, keyset
     assert len(paged) == 7, paged
 
 
@@ -300,34 +295,53 @@ def _parent_configs(node, out=None):
     return out
 
 
-_CURSOR_BOUNDED_PARENTS = {"repositories_for_commits", "repositories_for_files", "repositories_for_authors"}
+def _owned_parent_configs(manifest: dict) -> list[tuple[dict, dict]]:
+    """(owning top-level stream, ParentStreamConfig) for every parent config in the tree."""
+    return [(stream, config) for stream in manifest["streams"] for config in _parent_configs(stream)]
 
 
-def test_a_parent_that_carries_state_lists_repositories_from_its_cursor() -> None:
-    """A repository listing bounded by the start date returns every repository
-    on every run, and each one becomes a proxy walk. A parent whose state the
-    child persists bounds the listing by its own cursor instead, one lookback
-    window back, so only repositories pushed to since the last sync are walked.
-    The vendor moves a repository's updated_on on commit activity only, so the
-    bound is exact for commits, file changes and commit authors, and for nothing
-    else."""
+def test_every_repository_walk_lists_repositories_from_the_shared_cursor_bounded_parent() -> None:
+    """One repository listing serves every stream that fans out over
+    repositories: each takes `repositories` by reference, so the CDK's per-name
+    response cache turns their reads into one. The listing is bounded by the
+    cursor the child persists, one lookback window back, so a sync visits only
+    repositories pushed to since the last one. The vendor moves a repository's
+    updated_on on commit activity only: exact for commits, file changes and
+    commit authors; for pull requests, pipelines and deployments an event
+    without a push on a repository nobody pushed to waits for its next push,
+    the accepted cost of not listing every repository every sync. A full-refresh
+    child persists no parent state, so its copy opens at the start date and
+    every repository is re-read for heads each sync."""
     manifest = yaml.safe_load((connector_dir(_CONNECTOR) / "connector.yaml").read_text())
-    seen = set()
-    for parent_config in _parent_configs(manifest["streams"]):
-        parent = _referenced_stream(manifest, parent_config["stream"])
-        name = parent["name"]
-        bound = (parent["retriever"]["requester"].get("request_parameters") or {}).get("q", "")
-        if name not in _CURSOR_BOUNDED_PARENTS:
-            if name.startswith("repositories_for"):
-                assert "stream_interval" not in bound, f"{name}: updated_on does not track this stream's activity"
+    repositories = manifest["streams"][0]
+    assert repositories["name"] == "repositories"
+    bound = repositories["retriever"]["requester"]["request_parameters"]["q"]
+    assert "stream_interval.start_time" in bound, bound
+    assert repositories["incremental_sync"]["cursor_field"] == "updated_on"
+    assert repositories["incremental_sync"].get("lookback_window") == "P1D", "a push lands after its commit"
+
+    repository_walks = set()
+    for owner, config in _owned_parent_configs(manifest):
+        parent = _referenced_stream(manifest, config["stream"])
+        assert "$ref" in config["stream"] or parent["name"] == "repository_authors", (
+            f"{owner['name']}: an inlined repository listing cannot share the cached read: {parent['name']}"
+        )
+        if parent["name"] != "repositories":
             continue
-        seen.add(name)
-        assert parent_config.get("incremental_dependency") is True, f"{name}: state must persist"
-        assert "stream_interval.start_time" in bound, f"{name}: {bound}"
-        cursor = parent["incremental_sync"]
-        assert cursor["cursor_field"] == "updated_on", name
-        assert cursor.get("lookback_window") == "P1D", f"{name}: a push lands after its commit"
-    assert seen == _CURSOR_BOUNDED_PARENTS
+        repository_walks.add(owner["name"])
+        if "incremental_sync" in owner:
+            assert config.get("incremental_dependency") is True, f"{owner['name']}: state must persist"
+        else:
+            assert "incremental_dependency" not in config, f"{owner['name']}: full refresh persists no parent state"
+    assert repository_walks == {
+        "commits",
+        "file_changes",
+        "branches",
+        "pull_requests",
+        "pipelines",
+        "deployments",
+        "commit_authors",
+    }
 
 
 _PROXY_RESET_ACTIONS = {
@@ -404,8 +418,8 @@ def test_the_pull_request_children_read_the_pull_requests_stream_itself() -> Non
     """Each child hangs off the top-level pull_requests stream by reference, and
     pull_requests off the top-level repositories stream, so one definition serves
     every listing and the CDK's per-name response cache turns the five reads of
-    each into one. The cache flag is stated on both: the CDK enables it only on a
-    direct parent, and the nested copy under a child's parent would go without."""
+    each into one. The cache flag is stated on both: a `$ref` copy inherits it,
+    and without it every copy would read the vendor."""
     manifest = yaml.safe_load((connector_dir(_CONNECTOR) / "connector.yaml").read_text())
     by_name = {s["name"]: s for s in manifest["streams"]}
     children = [s for s in manifest["streams"] if s["name"].startswith("pull_request_")]

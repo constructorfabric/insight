@@ -10,6 +10,24 @@ mod store;
 #[cfg(test)]
 mod window_live_tests;
 
+#[cfg(test)]
+mod live_mariadb;
+
+#[cfg(test)]
+mod folders_live_tests;
+
+#[cfg(test)]
+mod tags_live_tests;
+
+#[cfg(test)]
+mod pins_live_tests;
+
+#[cfg(test)]
+mod duplicate_live_tests;
+
+#[cfg(test)]
+mod updated_at_live_tests;
+
 use api_gateway as _;
 use authn_resolver as _;
 use authz_resolver as _;

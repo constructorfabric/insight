@@ -67,7 +67,6 @@ kubectl apply -f src/ingestion/secrets/connectors/zulip-proxy.yaml
 
 ## Silver Targets
 
-- `staging.zulip_proxy__bronze_promoted` — RMT promotion bootstrap (one-shot per bronze table).
 - `staging.zulip_proxy__users_snapshot` — SCD2 snapshot of the user directory.
 - `staging.zulip_proxy__users_fields_history` — field-level history for SCD2 columns.
 - `staging.zulip_proxy__identity_inputs` — feeds Identity Manager (email → person).

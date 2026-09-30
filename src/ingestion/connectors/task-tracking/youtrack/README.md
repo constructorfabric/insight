@@ -53,6 +53,43 @@ public API require a connector update.
 Snapshots and census records are observations only. Interpretation of missing
 objects, access changes, or deletions belongs to a future Silver layer.
 
+## Access and snapshot retention
+
+Use a dedicated read-only service account restricted to the intended projects.
+Grant only the metadata permissions needed by the selected streams; do not use
+an administrator token as a shortcut. The connector has no project allowlist:
+its collection boundary is the token's visibility. Restrict configuration access
+and outbound destinations to the approved YouTrack service.
+
+Custom-field, project-field, and bundle-value records are historical observations.
+Their timestamp-bearing keys intentionally retain successive snapshots instead
+of replacing them. Repeated reads can therefore add observations even when the
+source value is unchanged. Do not remove the timestamp to deduplicate these
+streams: later interpretation needs the contemporaneous field metadata.
+
+The connector does not configure automatic expiration for these snapshots.
+Before enabling scheduled collection, define a retention period and access policy
+for the Bronze history in the warehouse. Include embedded entity JSON in that
+policy; removing a top-level field does not remove its copy from a JSON snapshot.
+
+## Full refresh cost
+
+Work items use the paginated [`/api/workItems` collection](https://www.jetbrains.com/help/youtrack/devportal/resource-api-workItems.html).
+This avoids listing every issue and making a separate work-item request per issue.
+The stream deliberately reads all work items: `updated` can be null, and filtering
+only by update time could omit records that have never been edited.
+
+Sprint membership still enumerates all accessible issues and paginates each
+issue's sprint collection. Its request count grows with the number of issues,
+including issues with no sprints. It does not use `youtrack_start_date` to filter
+the parent listing. An `updated:` filter is unsafe without a guarantee that every
+membership change advances the parent issue timestamp.
+
+The descriptor schedules the whole connector, not individual streams. Choose the
+schedule with the full membership scan in mind; increasing page size does not
+remove the per-issue request. A separate lower-frequency membership connection
+requires orchestration support and is not provided by this descriptor.
+
 ## Local validation
 
 From `src/ingestion` run:

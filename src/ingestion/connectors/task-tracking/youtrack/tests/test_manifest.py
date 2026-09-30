@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 from connector_tests.source import load_manifest
 from jsonschema import ValidationError, validate
@@ -26,15 +24,14 @@ _EXPECTED = {
 }
 
 
-def test_stream_contract_and_promotions_match() -> None:
+def test_the_manifest_declares_exactly_the_contracted_streams() -> None:
+    """Bronze tables are created by the destination from this stream set, so the
+    manifest and the contract cannot drift apart unnoticed."""
     manifest = load_manifest(_CONNECTOR)
     names = {stream["name"] for stream in manifest["streams"]}
-    promotion = Path(__file__).parents[1] / "dbt" / "youtrack__bronze_promoted.sql"
-    sql = promotion.read_text()
 
     assert names == _EXPECTED
     assert set(manifest["metadata"]["autoImportSchema"]) == _EXPECTED
-    assert all(f"bronze_youtrack.{name}" in sql for name in _EXPECTED)
 
 
 def test_every_stream_has_stable_bronze_stamps() -> None:
@@ -133,9 +130,8 @@ def test_work_items_are_full_refresh_and_allow_null_updated() -> None:
     stream = next(stream for stream in manifest["streams"] if stream["name"] == "youtrack_work_items")
 
     assert "incremental_sync" not in stream
-    assert stream["retriever"]["requester"]["url"].endswith(
-        "/api/issues/{{ stream_partition.issue_id }}/timeTracking/workItems"
-    )
+    assert "partition_router" not in stream["retriever"]
+    assert stream["retriever"]["requester"]["url"].endswith("/api/workItems")
     assert "null" in stream["schema_loader"]["schema"]["properties"]["updated"]["type"]
 
 
@@ -160,3 +156,12 @@ def test_start_date_is_required_without_a_default() -> None:
     assert "default" not in specification["properties"]["youtrack_start_date"]
     with pytest.raises(ValidationError):
         validate(instance=config_without_start_date, schema=specification)
+
+
+def test_sprint_requests_exclude_embedded_issues() -> None:
+    manifest = load_manifest(_CONNECTOR)
+    stream = next(stream for stream in manifest["streams"] if stream["name"] == "youtrack_sprints")
+    fields = stream["retriever"]["requester"]["request_parameters"]["fields"]
+
+    assert "issues(" not in fields
+    assert "unresolvedIssuesCount" in fields

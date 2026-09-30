@@ -1,5 +1,6 @@
 //! Storing, reading and renaming definitions, whatever kind they are.
 
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 use thiserror::Error;
 
@@ -18,6 +19,7 @@ use crate::domain::query::metric_query::{MetricQuery, MetricQueryError, MetricRu
 use crate::domain::query::time_window::WindowError;
 use crate::domain::violation::Violation;
 
+mod duplicate;
 #[cfg(test)]
 mod tests;
 
@@ -134,6 +136,21 @@ impl<'a> Surfaces<'a> {
     ) -> Result<Value, CustomError> {
         self.definitions
             .get(kind, name)
+            .await
+            .map_err(CustomError::Store)?
+            .ok_or_else(|| CustomError::NotFound {
+                kind,
+                name: name.as_str().to_owned(),
+            })
+    }
+
+    pub(crate) async fn updated_at(
+        &self,
+        kind: DefinitionKind,
+        name: &DefinitionName,
+    ) -> Result<DateTime<Utc>, CustomError> {
+        self.definitions
+            .updated_at(kind, name)
             .await
             .map_err(CustomError::Store)?
             .ok_or_else(|| CustomError::NotFound {
@@ -312,10 +329,22 @@ impl<'a> Surfaces<'a> {
             return Ok(Vec::new());
         }
 
-        let mut changes = vec![
-            Change::Create(kind, to.clone(), body),
-            Change::Delete(kind, from.clone()),
-        ];
+        let mut changes = vec![Change::Create(kind, to.clone(), body)];
+        if kind == DefinitionKind::Dashboard {
+            changes.push(Change::CarryFolder {
+                from: from.clone(),
+                to: to.clone(),
+            });
+            changes.push(Change::CarryTags {
+                from: from.clone(),
+                to: to.clone(),
+            });
+            changes.push(Change::CarryPins {
+                from: from.clone(),
+                to: to.clone(),
+            });
+        }
+        changes.push(Change::Delete(kind, from.clone()));
         let mut rewritten = Vec::new();
 
         for holder in self.holders_of(kind, from).await? {

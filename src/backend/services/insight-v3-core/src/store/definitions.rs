@@ -1,6 +1,9 @@
 //! The definitions as `MariaDB` holds them.
 
+mod folders;
 pub(crate) mod migration;
+mod pins;
+mod tags;
 
 #[cfg(test)]
 pub(crate) mod memory;
@@ -8,6 +11,7 @@ pub(crate) mod memory;
 use std::fmt;
 
 use async_trait::async_trait;
+use chrono::{DateTime, NaiveDateTime, Utc};
 use sea_orm::{
     ConnectionTrait as _, DatabaseConnection, DbBackend, FromQueryResult, Statement,
     TransactionTrait as _,
@@ -29,7 +33,20 @@ const INSERT_NEW: &str = "INSERT INTO {table} (name, body, updated_at)
 VALUES (?, ?, UTC_TIMESTAMP(6))";
 
 const DELETE_ONE: &str = "DELETE FROM {table} WHERE name = ?";
+
+const CARRY_FOLDER: &str = "UPDATE dashboards AS moved
+JOIN dashboards AS source ON source.name = ?
+SET moved.folder_id = source.folder_id
+WHERE moved.name = ?";
+
+const CARRY_TAGS: &str = "INSERT INTO dashboard_tags (dashboard, tag_id)
+SELECT ?, tag_id FROM dashboard_tags WHERE dashboard = ?";
+
+const CARRY_PINS: &str = "INSERT INTO dashboard_pins (person, dashboard, pinned_at)
+SELECT person, ?, pinned_at FROM dashboard_pins WHERE dashboard = ?";
+
 const SELECT_BODY: &str = "SELECT body FROM {table} WHERE name = ?";
+const SELECT_UPDATED_AT: &str = "SELECT updated_at FROM {table} WHERE name = ?";
 const SELECT_NAMES: &str = "SELECT name FROM {table} ORDER BY name";
 
 /// No ESCAPE clause: backslash is already the default LIKE escape here, and
@@ -56,6 +73,11 @@ fn sql(template: &str, kind: DefinitionKind) -> String {
 #[derive(Debug, FromQueryResult)]
 struct BodyRow {
     body: String,
+}
+
+#[derive(Debug, FromQueryResult)]
+struct UpdatedAtRow {
+    updated_at: NaiveDateTime,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -178,25 +200,50 @@ impl Definitions for MariaDefinitions {
         })
     }
 
+    async fn updated_at(
+        &self,
+        kind: DefinitionKind,
+        name: &DefinitionName,
+    ) -> Result<Option<DateTime<Utc>>, DefinitionStoreError> {
+        let row = UpdatedAtRow::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::MySql,
+            sql(SELECT_UPDATED_AT, kind),
+            [name.as_str().into()],
+        ))
+        .one(&self.db)
+        .await?;
+
+        Ok(row.map(|row| row.updated_at.and_utc()))
+    }
+
     async fn delete(
         &self,
         kind: DefinitionKind,
         name: &DefinitionName,
     ) -> Result<bool, DefinitionStoreError> {
-        let result = self
-            .db
-            .execute_raw(Statement::from_sql_and_values(
-                DbBackend::MySql,
-                sql(DELETE_ONE, kind),
-                [name.as_str().into()],
-            ))
-            .await?;
+        let removal = Statement::from_sql_and_values(
+            DbBackend::MySql,
+            sql(DELETE_ONE, kind),
+            [name.as_str().into()],
+        );
+        if kind == DefinitionKind::Dashboard {
+            return self.delete_dashboard(removal).await;
+        }
+
+        let result = self.db.execute_raw(removal).await?;
 
         Ok(result.rows_affected() > 0)
     }
 
     async fn apply(&self, changes: &[Change]) -> Result<(), DefinitionStoreError> {
         let transaction = self.db.begin().await?;
+        if changes
+            .iter()
+            .any(|change| matches!(change, Change::CarryTags { .. }))
+        {
+            tags::lock_tags(&transaction).await?;
+        }
+
         for change in changes {
             let statement = match change {
                 Change::Put(kind, name, body) => Self::upsert(*kind, name, body)?,
@@ -207,6 +254,21 @@ impl Definitions for MariaDefinitions {
                     DbBackend::MySql,
                     sql(DELETE_ONE, *kind),
                     [name.as_str().into()],
+                ),
+                Change::CarryFolder { from, to } => Statement::from_sql_and_values(
+                    DbBackend::MySql,
+                    CARRY_FOLDER,
+                    [from.as_str().into(), to.as_str().into()],
+                ),
+                Change::CarryTags { from, to } => Statement::from_sql_and_values(
+                    DbBackend::MySql,
+                    CARRY_TAGS,
+                    [to.as_str().into(), from.as_str().into()],
+                ),
+                Change::CarryPins { from, to } => Statement::from_sql_and_values(
+                    DbBackend::MySql,
+                    CARRY_PINS,
+                    [to.as_str().into(), from.as_str().into()],
                 ),
             };
             transaction

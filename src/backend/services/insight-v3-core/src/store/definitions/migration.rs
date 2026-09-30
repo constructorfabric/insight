@@ -33,6 +33,9 @@ impl MigratorTrait for Migrator {
         vec![
             Box::new(m20260907_000001_definitions::Migration),
             Box::new(m20260916_000002_datasets::Migration),
+            Box::new(m20260924_000003_folders::Migration),
+            Box::new(m20260928_000004_tags::Migration),
+            Box::new(m20260928_000005_pins::Migration),
         ]
     }
 }
@@ -227,6 +230,81 @@ mod m20260916_000002_datasets {
     }
 }
 
+mod m20260924_000003_folders {
+    use super::{DbErr, MigrationName, MigrationTrait, SchemaManager, apply_sql};
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &'static str {
+            "m20260924_000003_folders"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            apply_sql(manager, include_str!("sql/003_folders.sql")).await
+        }
+
+        async fn down(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
+            Err(DbErr::Custom(
+                "dropping the folders would unfile every dashboard".to_owned(),
+            ))
+        }
+    }
+}
+
+mod m20260928_000004_tags {
+    use super::{DbErr, MigrationName, MigrationTrait, SchemaManager, apply_sql};
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &'static str {
+            "m20260928_000004_tags"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            apply_sql(manager, include_str!("sql/004_tags.sql")).await
+        }
+
+        async fn down(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
+            Err(DbErr::Custom(
+                "dropping the tags would untag every dashboard".to_owned(),
+            ))
+        }
+    }
+}
+
+mod m20260928_000005_pins {
+    use super::{DbErr, MigrationName, MigrationTrait, SchemaManager, apply_sql};
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &'static str {
+            "m20260928_000005_pins"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            apply_sql(manager, include_str!("sql/005_pins.sql")).await
+        }
+
+        async fn down(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
+            Err(DbErr::Custom(
+                "dropping the pins would empty every pinned list".to_owned(),
+            ))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -265,7 +343,13 @@ mod tests {
 
         assert_eq!(
             names,
-            ["m20260907_000001_definitions", "m20260916_000002_datasets"],
+            [
+                "m20260907_000001_definitions",
+                "m20260916_000002_datasets",
+                "m20260924_000003_folders",
+                "m20260928_000004_tags",
+                "m20260928_000005_pins",
+            ],
             "a migration's name is the ledger's key, so it is written down here"
         );
     }
@@ -282,6 +366,9 @@ mod tests {
                 3,
             ),
             ("002_datasets.sql", include_str!("sql/002_datasets.sql"), 1),
+            ("003_folders.sql", include_str!("sql/003_folders.sql"), 2),
+            ("004_tags.sql", include_str!("sql/004_tags.sql"), 4),
+            ("005_pins.sql", include_str!("sql/005_pins.sql"), 3),
         ];
 
         for (named, script, expected) in scripts {
@@ -293,13 +380,18 @@ mod tests {
                 "{named} should hold {expected} statements: {statements:#?}"
             );
             for statement in &statements {
+                let whole = if statement.starts_with("ALTER TABLE") {
+                    statement.ends_with("ON DELETE SET NULL")
+                } else if statement.starts_with("INSERT IGNORE INTO") {
+                    statement.ends_with(')')
+                } else {
+                    statement.starts_with("CREATE TABLE IF NOT EXISTS")
+                        && (statement.ends_with(')')
+                            || statement.contains("COLLATE=utf8mb4_unicode_ci"))
+                };
                 assert!(
-                    statement.starts_with("CREATE TABLE IF NOT EXISTS"),
+                    whole,
                     "{named} holds a statement that is not a whole one: {statement}"
-                );
-                assert!(
-                    statement.ends_with(')') || statement.contains("COLLATE=utf8mb4_unicode_ci"),
-                    "{named} holds a statement that stops early: {statement}"
                 );
             }
         }
@@ -326,6 +418,61 @@ mod tests {
                 script.contains(column),
                 "{column} is missing from the script"
             );
+        }
+    }
+
+    #[test]
+    fn a_folder_is_a_row_of_its_own_and_a_dashboard_names_it_beside_its_body() {
+        let script = include_str!("sql/003_folders.sql");
+
+        for part in [
+            "CREATE TABLE IF NOT EXISTS folders",
+            "id CHAR(36) NOT NULL PRIMARY KEY",
+            "name VARCHAR(64) NOT NULL",
+            "UNIQUE KEY folders_name (name)",
+            "ALTER TABLE dashboards",
+            "ADD COLUMN IF NOT EXISTS folder_id CHAR(36) NULL",
+            "REFERENCES folders (id) ON DELETE SET NULL",
+        ] {
+            assert!(script.contains(part), "{part} is missing from the script");
+        }
+    }
+
+    #[test]
+    fn a_tag_is_a_row_of_its_own_and_a_dashboard_links_it_by_name() {
+        let script = include_str!("sql/004_tags.sql");
+
+        for part in [
+            "CREATE TABLE IF NOT EXISTS tags",
+            "id CHAR(36) NOT NULL PRIMARY KEY",
+            "name VARCHAR(32) NOT NULL COLLATE utf8mb4_uca1400_as_ci",
+            "UNIQUE KEY tags_name (name)",
+            "CREATE TABLE IF NOT EXISTS dashboard_tags",
+            "PRIMARY KEY (dashboard, tag_id)",
+            "REFERENCES dashboards (name) ON DELETE CASCADE",
+            "REFERENCES tags (id) ON DELETE CASCADE",
+            "CREATE TABLE IF NOT EXISTS tags_lock",
+            "INSERT IGNORE INTO tags_lock (id) VALUES (1)",
+        ] {
+            assert!(script.contains(part), "{part} is missing from the script");
+        }
+    }
+
+    #[test]
+    fn a_pin_is_a_row_per_person_and_dashboard_that_goes_with_the_dashboard() {
+        let script = include_str!("sql/005_pins.sql");
+
+        for part in [
+            "CREATE TABLE IF NOT EXISTS dashboard_pins",
+            "person CHAR(36) NOT NULL",
+            "dashboard VARCHAR(128) NOT NULL",
+            "pinned_at DATETIME(6) NOT NULL",
+            "PRIMARY KEY (person, dashboard)",
+            "REFERENCES dashboards (name) ON DELETE CASCADE",
+            "CREATE TABLE IF NOT EXISTS pins_lock",
+            "INSERT IGNORE INTO pins_lock (id) VALUES (1)",
+        ] {
+            assert!(script.contains(part), "{part} is missing from the script");
         }
     }
 }

@@ -14,12 +14,6 @@ sources:
       - name: messages
 
 models:
-  - name: zulip_proxy__bronze_promoted
-    description: >
-      Bootstrap model that promotes `bronze_zulip_proxy.users` and
-      `bronze_zulip_proxy.messages` from plain `MergeTree` (as written by
-      Airbyte) to `ReplacingMergeTree(_airbyte_extracted_at)` ordered by
-      `(unique_key)` on the first dbt run. Idempotent — see ADR-0002.
 
   - name: zulip_proxy__users_snapshot
     description: >

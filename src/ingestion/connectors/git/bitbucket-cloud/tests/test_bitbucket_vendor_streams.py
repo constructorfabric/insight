@@ -642,7 +642,16 @@ def test_a_429_is_retried_rather_than_failing_the_stream(http_mocker: HttpMocker
             query_params=ANY_QUERY_PARAMS,
         ),
         [
-            HttpResponse(body="", status_code=429, headers={"Retry-After": "0"}),
+            # A real 429 still reports the hourly budget left. Without
+            # x-ratelimit-remaining the api_budget layer reads a ratelimit-hit
+            # status as budget 0 and, with no reset header, sleeps out the rest
+            # of the one-hour window — which hangs this test for an hour
+            # instead of retrying instantly.
+            HttpResponse(
+                body="",
+                status_code=429,
+                headers={"Retry-After": "0", "x-ratelimit-remaining": "999"},
+            ),
             HttpResponse(
                 body=json.dumps({"values": [_pr(1, author={"uuid": "{u-1}", "display_name": "Alice"})]}),
                 status_code=200,
@@ -1107,7 +1116,7 @@ def test_a_resumed_sync_asks_for_less_than_the_first(http_mocker: HttpMocker) ->
         if "/pullrequests?" in str(r.url)
     ]
     assert 'updated_on >= "2026-06-01' in asked[0], f"first run starts at the floor: {asked[0]}"
-    assert 'updated_on >= "2026-06-19' in asked[-1], (
+    assert 'updated_on >= "2026-06-20T09' in asked[-1], (
         f"a resumed run starts at stored state, not the floor: {asked[-1]}"
     )
 
@@ -1502,7 +1511,7 @@ def test_a_pull_request_updated_mid_walk_is_listed_now_when_its_page_is_ahead_an
     page is still ahead, and the cursor closes at that update. One whose page
     was already served keeps its old row this walk; the next sync's window
     opens one lookback below the cursor and lists it updated. A repository's
-    walk is minutes, the lookback a day."""
+    walk is minutes, the lookback an hour."""
     config = BitbucketCloudConfigBuilder().build()
     prs_url = f"{BB_URL}/repositories/acme/app/pullrequests"
     prs = [
@@ -1543,7 +1552,7 @@ def test_a_pull_request_updated_mid_walk_is_listed_now_when_its_page_is_ahead_an
 
     resumed = _listing_requests(http_mocker, prs_url)[pages_of_the_first_sync]
     lower, upper = _updated_on_window(resumed)
-    assert _instant(lower) == _instant("2026-06-30T05:00:00Z"), f"the cursor minus the P1D lookback: {lower}"
+    assert _instant(lower) == _instant("2026-07-01T04:00:00Z"), f"the cursor minus the PT1H lookback: {lower}"
     assert upper is None, f"no upper bound: {upper}"
     assert _keyset_bound(resumed, "id") == "0", "the resumed walk still opens at the bottom of the id range"
 
@@ -1587,7 +1596,7 @@ def test_a_resumed_commits_sync_lists_repositories_from_one_window_before_the_sa
     assert not first.errors
     assert [_instant(b) for b in _repository_listing_bounds(http_mocker)] == [_instant("2026-06-01T00:00:00+00:00")]
     saved = first.state_messages[-1].state.stream.stream_state.__dict__
-    parent = saved["parent_state"]["repositories_for_commits"]["state"]["updated_on"]
+    parent = saved["parent_state"]["repositories"]["state"]["updated_on"]
     assert _instant(parent) == _instant(repo_updated), f"the parent cursor must follow the listing: {saved}"
 
     resume_mocker = HttpMocker()
@@ -1603,6 +1612,99 @@ def test_a_resumed_commits_sync_lists_repositories_from_one_window_before_the_sa
         second = read_stream(
             _CONNECTOR,
             "commits",
+            config,
+            state=[m.state for m in first.state_messages][-1:],
+            sync_mode=SyncMode.incremental,
+        )
+
+        assert not second.errors
+        bounds = _repository_listing_bounds(resume_mocker)
+        assert bounds, "the resumed run must list repositories"
+        assert all(_instant(b) == _instant(one_window_before) for b in bounds), bounds
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_a_resumed_pull_requests_sync_lists_repositories_from_one_window_before_the_saved_cursor(
+    http_mocker: HttpMocker,
+) -> None:
+    """The pull-request listing costs one request per repository it visits, so
+    the repository cursor persists in this stream's state and a resumed run
+    visits only the repositories pushed to since one lookback window before
+    the newest update it saw. The parent copy the children read is bounded the
+    same way, one level deeper in their state."""
+    config = BitbucketCloudConfigBuilder().build()
+    one_window_before = "2026-06-19T10:00:00+00:00"
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(f"{BB_URL}/repositories/acme/app/pullrequests", query_params=ANY_QUERY_PARAMS),
+        _pr_listing(7, "2026-06-15T10:00:00.000000+00:00"),
+    )
+
+    first = read_stream(_CONNECTOR, "pull_requests", config, sync_mode=SyncMode.incremental)
+
+    assert not first.errors
+    assert [_instant(b) for b in _repository_listing_bounds(http_mocker)] == [_instant("2026-06-01T00:00:00+00:00")]
+    saved = first.state_messages[-1].state.stream.stream_state.__dict__
+    parent = saved["parent_state"]["repositories"]["state"]["updated_on"]
+    assert _instant(parent) == _instant(_repo()["updated_on"]), f"the repository cursor must persist: {saved}"
+
+    resume_mocker = HttpMocker()
+    with resume_mocker:
+        resume_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+        resume_mocker.get(
+            HttpRequest(f"{BB_URL}/repositories/acme/app/pullrequests", query_params=ANY_QUERY_PARAMS),
+            HttpResponse(body=json.dumps({"values": []}), status_code=200),
+        )
+
+        second = read_stream(
+            _CONNECTOR,
+            "pull_requests",
+            config,
+            state=[m.state for m in first.state_messages][-1:],
+            sync_mode=SyncMode.incremental,
+        )
+
+        assert not second.errors
+        bounds = _repository_listing_bounds(resume_mocker)
+        assert bounds, "the resumed run must list repositories"
+        assert all(_instant(b) == _instant(one_window_before) for b in bounds), bounds
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_a_resumed_pipelines_sync_lists_repositories_from_one_window_before_the_saved_cursor(
+    http_mocker: HttpMocker,
+) -> None:
+    """Same bound for the pipeline listing: one request per repository visited,
+    so a resumed run visits only the repositories pushed to since one lookback
+    window before the newest update it saw."""
+    config = BitbucketCloudConfigBuilder().build()
+    one_window_before = "2026-06-19T10:00:00+00:00"
+    pipelines_url = f"{BB_URL}/repositories/acme/app/pipelines/"
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(pipelines_url, query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps({"values": []}), status_code=200),
+    )
+
+    first = read_stream(_CONNECTOR, "pipelines", config, sync_mode=SyncMode.incremental)
+
+    assert not first.errors
+    assert [_instant(b) for b in _repository_listing_bounds(http_mocker)] == [_instant("2026-06-01T00:00:00+00:00")]
+    saved = first.state_messages[-1].state.stream.stream_state.__dict__
+    parent = saved["parent_state"]["repositories"]["state"]["updated_on"]
+    assert _instant(parent) == _instant(_repo()["updated_on"]), f"the repository cursor must persist: {saved}"
+
+    resume_mocker = HttpMocker()
+    with resume_mocker:
+        resume_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+        resume_mocker.get(
+            HttpRequest(pipelines_url, query_params=ANY_QUERY_PARAMS),
+            HttpResponse(body=json.dumps({"values": []}), status_code=200),
+        )
+
+        second = read_stream(
+            _CONNECTOR,
+            "pipelines",
             config,
             state=[m.state for m in first.state_messages][-1:],
             sync_mode=SyncMode.incremental,

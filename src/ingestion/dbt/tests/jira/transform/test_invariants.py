@@ -104,8 +104,8 @@ def test_the_pipeline_selector_builds(scenario: Scenario) -> None:
     """`tag:jira,tag:staging` is the string the prod staging step runs.
 
     Selecting it here is the only thing that catches a field-history model that
-    works in isolation but breaks the chain — a name collision, a missing
-    `depends_on`, or a model the promote view has to precede.
+    works in isolation but breaks the chain — a name collision or a missing
+    `depends_on`.
     """
     _seed(scenario)
     scenario.build(PROD_SELECTOR)

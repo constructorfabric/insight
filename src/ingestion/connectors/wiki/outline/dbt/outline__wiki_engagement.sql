@@ -1,4 +1,3 @@
--- depends_on: {{ ref('outline__bronze_promoted') }}
 -- Bronze → Silver: Outline comments → class_wiki_engagement.
 --
 -- Grain: one row per (tenant, source, page, day) summarising comment

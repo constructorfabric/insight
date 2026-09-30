@@ -1,4 +1,3 @@
--- depends_on: {{ ref('jira__bronze_promoted') }}
 {{ config(
     materialized='incremental',
     alias='jira__task_field_metadata',
@@ -43,6 +42,6 @@ SELECT
     toDateTime64(f._airbyte_extracted_at, 3)      AS observed_at,
     toUnixTimestamp64Milli(f._airbyte_extracted_at) AS _version
 FROM {{ source('bronze_jira', 'jira_fields') }} f FINAL
--- FINAL: `jira_fields` is promoted to ReplacingMergeTree keyed by `unique_key`
--- (see `jira__bronze_promoted`), and the stream is append-only, so an unmerged
--- read returns one row per emission of the same field.
+-- FINAL: `jira_fields` is ReplacingMergeTree keyed by `unique_key` and the
+-- stream is append-only, so an unmerged read returns one row per emission of
+-- the same field.

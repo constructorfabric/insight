@@ -191,8 +191,8 @@ describe("shell layout: phone", () => {
     render(<Shell />);
     await openDrawer();
     // One row for the active zone; the other zones are not listed yet.
-    expect(screen.getByRole("button", { name: "Overview", expanded: false })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "AI & Cost" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Home", expanded: false })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Explore" })).not.toBeInTheDocument();
     // …and the zone's own sections are already there.
     expect(screen.getByText("Trend")).toBeInTheDocument();
   });
@@ -202,11 +202,11 @@ describe("shell layout: phone", () => {
     const user = await openDrawer();
     const zoneState = renderHook(() => usePortalZone());
 
-    await user.click(screen.getByRole("button", { name: "Overview", expanded: false }));
-    const aiCost = screen.getByRole("button", { name: "AI & Cost" });
+    await user.click(screen.getByRole("button", { name: "Home", expanded: false }));
+    const explore = screen.getByRole("button", { name: "Explore" });
 
-    await user.click(aiCost);
-    expect(zoneState.result.current).toBe("aicost");
+    await user.click(explore);
+    expect(zoneState.result.current).toBe("directions");
     // Collapsed again: "Manage" only exists while the list is expanded, so its
     // absence is the collapse. The drawer itself stays open — the Settings row
     // is still there — so the new zone's sections are what the reader sees next.
@@ -280,8 +280,8 @@ describe("shell layout: phone", () => {
   it("drops the header — the zone row already names the zone", async () => {
     render(<Shell />);
     await openDrawer();
-    expect(screen.queryByText("Cross-functional org rollup")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Overview", expanded: false })).toBeInTheDocument();
+    expect(screen.queryByText("Constructor Insight")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Home", expanded: false })).toBeInTheDocument();
   });
 
   it("adds neither the zone switcher nor the settings menu on desktop", () => {
@@ -292,11 +292,11 @@ describe("shell layout: phone", () => {
       </SidebarProvider>,
     );
     // Desktop keeps its header, and the rail's duties stay in the rail.
-    const pane = screen.getByText("Cross-functional org rollup").closest("[data-slot='sidebar']");
+    const pane = screen.getByText("Constructor Insight").closest("[data-slot='sidebar']");
     expect(screen.getByText("At a glance")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Settings" })).not.toBeInTheDocument();
     expect(
-      within(pane as HTMLElement).queryByRole("button", { name: "Overview", expanded: false }),
+      within(pane as HTMLElement).queryByRole("button", { name: "Home", expanded: false }),
     ).not.toBeInTheDocument();
   });
 });
@@ -320,12 +320,12 @@ describe("shell layout: narrow (tablet)", () => {
     // — no zone list, no settings row, and the header stays.
     render(<Shell />);
     const pane = screen
-      .getByText("Cross-functional org rollup")
+      .getByText("Constructor Insight")
       .closest("[data-slot='sidebar']") as HTMLElement;
     // Settings still exist — in the RAIL, where they belong at this width.
     expect(within(pane).queryByRole("button", { name: "Settings" })).not.toBeInTheDocument();
     expect(
-      within(pane).queryByRole("button", { name: "Overview", expanded: false }),
+      within(pane).queryByRole("button", { name: "Home", expanded: false }),
     ).not.toBeInTheDocument();
   });
 
