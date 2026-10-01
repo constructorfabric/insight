@@ -175,6 +175,107 @@ scoped_events AS (
     WHERE ev.field_id != '' AND ev.event_at IS NOT NULL
 ),
 
+-- ── the order of the events that share a second ─────────────────────────────
+-- GitHub dates a timeline event to the second and records no position within
+-- it. INVARIANT: the from→to chain of one field's events of one second orders
+-- them (`task_instant_order`); the event id decides only what no chain does.
+-- It is an opaque node id compared as text: reproducible, not chronological.
+tied_seconds AS (
+    SELECT
+        tenant_id,
+        source_id,
+        issue_id,
+        event_at
+    FROM scoped_events
+    GROUP BY tenant_id, source_id, issue_id, event_at
+    HAVING min(event_id) != max(event_id)
+),
+
+tied_fields AS (
+    SELECT
+        tenant_id,
+        source_id,
+        issue_id,
+        event_at,
+        field_id,
+        arraySort(x -> x.1, groupUniqArray((event_id, prev_value_id, value_id)))  AS evs
+    FROM scoped_events
+    WHERE (tenant_id, source_id, issue_id, event_at)
+          IN (SELECT tenant_id, source_id, issue_id, event_at FROM tied_seconds)
+    GROUP BY tenant_id, source_id, issue_id, event_at, field_id
+),
+
+tied_field_links AS (
+    SELECT
+        tenant_id,
+        source_id,
+        issue_id,
+        event_at,
+        arrayMap(x -> x.1, evs)                                 AS entries,
+        {{ task_chain_walk('arrayMap(x -> x.2, evs)', 'arrayMap(x -> x.3, evs)', 'false') }} AS walk,
+        arrayMap(k -> ((evs[walk[k]]).1, (evs[walk[k + 1]]).1),
+                 range(1, length(walk)))                        AS links
+    FROM tied_fields
+),
+
+tied_orders AS (
+    SELECT
+        tenant_id,
+        source_id,
+        issue_id,
+        entries,
+        {{ task_instant_order('length(entries)',
+                              "arrayMap(l -> (toUInt64(indexOf(entries, l.1)), toUInt64(indexOf(entries, l.2))), links)") }}
+                                                                AS entry_order
+    FROM (
+        SELECT
+            tenant_id,
+            source_id,
+            issue_id,
+            arraySort(arrayDistinct(arrayFlatten(groupArray(entries))))  AS entries,
+            arrayDistinct(arrayFlatten(groupArray(links)))      AS links
+        FROM tied_field_links
+        GROUP BY tenant_id, source_id, issue_id, event_at
+    )
+),
+
+-- INVARIANT: a scalar, not a CTE: evaluated once per query, while a CTE is
+-- recomputed at every reference of `ranked_events`.
+(
+    SELECT groupArray(position)
+    FROM (
+        -- INVARIANT: the arrayJoin stays alone in its own SELECT list. Reading
+        -- its elements beside it re-evaluates it per reference.
+        SELECT arrayJoin(arrayMap(k -> (tenant_id, source_id, issue_id,
+                                        entries[entry_order[k]], toUInt32(k - 1)),
+                                  range(1, length(entries) + 1)))  AS position
+        FROM tied_orders
+    )
+) AS entry_positions,
+
+ranked_events AS (
+    SELECT
+        e.*,
+        COALESCE(p.entry_rank, toUInt32(0))                     AS entry_rank
+    FROM scoped_events AS e
+    LEFT JOIN (
+        SELECT
+            position.1                                          AS tenant_id,
+            position.2                                          AS source_id,
+            position.3                                          AS issue_id,
+            position.4                                          AS event_id,
+            position.5                                          AS entry_rank
+        FROM (
+            -- INVARIANT: the arrayJoin stays alone in its own SELECT list.
+            SELECT arrayJoin(entry_positions) AS position
+        )
+    ) AS p
+        ON p.tenant_id = e.tenant_id
+        AND p.source_id = e.source_id
+        AND p.issue_id = e.issue_id
+        AND p.event_id = e.event_id
+),
+
 -- Snapshot values, one row per (issue, field). These are the fallback when a
 -- field never changed; where it did change, the earliest event's previous
 -- value wins because it states the value at creation.
@@ -269,8 +370,8 @@ initial_values AS (
     LEFT JOIN (
         SELECT
             tenant_id, source_id, issue_id, field_id,
-            argMin(prev_value_id, event_at)                     AS first_prev
-        FROM scoped_events
+            argMin(prev_value_id, (event_at, entry_rank))       AS first_prev
+        FROM ranked_events
         GROUP BY tenant_id, source_id, issue_id, field_id
     ) AS e
         ON e.tenant_id = s.tenant_id
@@ -292,9 +393,9 @@ initial_values AS (
     FROM (
         SELECT
             tenant_id, source_id, issue_id, id_readable, field_id,
-            argMin(prev_value_id, event_at)                     AS first_prev,
+            argMin(prev_value_id, (event_at, entry_rank))       AS first_prev,
             max(_airbyte_extracted_at)                          AS _airbyte_extracted_at
-        FROM scoped_events
+        FROM ranked_events
         GROUP BY tenant_id, source_id, issue_id, id_readable, field_id
     ) AS e
     INNER JOIN issues AS i
@@ -325,6 +426,7 @@ creation_marker AS (
         toDateTime64(i.created_at, 3)                           AS event_at,
         'synthetic_initial'                                     AS event_kind,
         toUInt32(0)                                             AS _seq,
+        toUInt32(0)                                             AS order_rank,
         i.author_id                                             AS author_id,
         'created'                                               AS field_id,
         ''                                                      AS value_id,
@@ -345,6 +447,7 @@ initial_rows AS (
         toUInt32(row_number() OVER (
             PARTITION BY v.tenant_id, v.source_id, v.issue_id ORDER BY v.field_id
         ))                                                      AS _seq,
+        _seq                                                    AS order_rank,
         v.author_id,
         v.field_id,
         v.value_id,
@@ -363,13 +466,14 @@ changelog_rows AS (
         event_id,
         toDateTime64(event_at, 3)                               AS event_at,
         'changelog'                                             AS event_kind,
-        toUInt32(0)                                             AS _seq,
+        entry_rank                                              AS _seq,
+        entry_rank                                              AS order_rank,
         actor_id                                                AS author_id,
         field_id,
         value_id,
         value_display,
         _airbyte_extracted_at
-    FROM scoped_events
+    FROM ranked_events
 ),
 
 every_row AS (
@@ -398,6 +502,10 @@ SELECT
     -- this arm name the values every other source's arm emits.
     CAST(event_kind AS LowCardinality(String))                  AS event_kind,
     _seq                                                        AS _seq,
+    -- A timeline event can be dated before the issue's creation; the initial
+    -- state still precedes it.
+    {{ task_event_order("if(event_kind = 'synthetic_initial', least(assumeNotNull(event_at), ifNull(first_event_at, assumeNotNull(event_at))), assumeNotNull(event_at))",
+                        task_event_band('event_kind'), 'order_rank') }}  AS event_order,
     CAST(nullIf(author_id, '0') AS Nullable(String))            AS author_id,
     CAST(field_id AS String)                                    AS field_id,
     CAST(field_id AS String)                                    AS field_name,
@@ -421,4 +529,16 @@ SELECT
     toDateTime64(_airbyte_extracted_at, 3)                      AS collected_at,
     CAST(toUnixTimestamp64Milli(toDateTime64(_airbyte_extracted_at, 3)) AS UInt64) AS _version
 FROM every_row
+LEFT JOIN (
+    SELECT
+        tenant_id                                               AS origin_tenant_id,
+        source_id                                               AS origin_source_id,
+        issue_id                                                AS origin_issue_id,
+        CAST(toDateTime64(min(event_at), 3) AS Nullable(DateTime64(3)))  AS first_event_at
+    FROM scoped_events
+    GROUP BY tenant_id, source_id, issue_id
+) AS origin
+    ON origin.origin_tenant_id = every_row.tenant_id
+    AND origin.origin_source_id = every_row.source_id
+    AND origin.origin_issue_id = every_row.issue_id
 WHERE event_at IS NOT NULL

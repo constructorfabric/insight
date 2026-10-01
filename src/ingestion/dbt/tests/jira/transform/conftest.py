@@ -321,22 +321,15 @@ class Scenario:
         # either way, and a query that is never assembled cannot be assembled
         # wrongly.
         return self.warehouse.rows(
-            "SELECT field_id, event_kind, event_id, toString(event_at) AS event_at, _seq,"
+            "SELECT field_id, event_kind, event_id, toString(event_at) AS event_at, _seq, event_order,"
             "       field_cardinality, delta_action, value_ids, value_displays, value_id_type,"
             "       author_id"
             " FROM staging.jira__field_history_derived FINAL"
             " WHERE insight_source_id = {src:String}"
             "   AND ({issue:String} = '' OR id_readable = {issue:String})"
             "   AND ({field:String} = '' OR field_id = {field:String})"
-            # The reading order, matching the round-trip invariant: the kind
-            # first (an initial row is the state at creation, so it precedes any
-            # event of the same instant), then `_seq` — a self-describing
-            # changelog row's position in its instant's chain, 0 otherwise —
-            # then the event id numerically because '101' sorts before '99'.
-            " ORDER BY field_id, event_at,"
-            "          multiIf(event_kind = 'synthetic_initial', 0,"
-            "                  event_kind = 'changelog', 1, 2),"
-            "          _seq, toUInt64OrZero(event_id), event_id",
+            # The reading order: the class's one ordering key.
+            " ORDER BY field_id, event_order",
             {"src": self.source, "issue": issue or "", "field": field or ""},
         )
 

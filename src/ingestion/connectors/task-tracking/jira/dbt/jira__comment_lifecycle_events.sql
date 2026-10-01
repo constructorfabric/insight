@@ -100,6 +100,7 @@ SELECT
     t.event_at                                                  AS event_at,
     CAST('lifecycle' AS LowCardinality(String))                AS event_kind,
     toUInt32(0)                                                 AS _seq,
+    {{ task_event_order('t.event_at', task_event_band("'lifecycle'"), 't.same_instant_rank') }} AS event_order,
     t.author_id                                                 AS author_id,
     CAST('comment' AS String)                                   AS field_id,
     CAST('Comment' AS String)                                   AS field_name,
@@ -110,4 +111,15 @@ SELECT
     CAST('opaque_id' AS LowCardinality(String))                AS value_id_type,
     toDateTime64(t.detected_at, 3)                              AS collected_at,
     toUInt64(toUnixTimestamp64Milli(now64(3)))                  AS _version
-FROM resolved AS t
+FROM (
+    -- Every run recomputes the whole history, so the rank sees every
+    -- transition of its millisecond.
+    SELECT
+        *,
+        toUInt32(row_number() OVER (
+            PARTITION BY source_id, jira_id, toUnixTimestamp64Milli(event_at)
+            ORDER BY toUInt64OrZero(comment_id), comment_id,
+                     multiIf(action = 'add', 0, action = 'set', 1, 2)
+        ) - 1)                                                  AS same_instant_rank
+    FROM resolved
+) AS t

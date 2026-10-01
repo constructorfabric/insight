@@ -33,6 +33,9 @@ SELECT
     toDateTime64(h.updated_at, 3)                               AS event_at,
     CAST('availability' AS LowCardinality(String))             AS event_kind,
     toUInt32(0)                                                 AS _seq,
+    -- Rank 0 suffices: `event_id` carries the issue and the millisecond, so an
+    -- issue holds at most one availability row per millisecond.
+    {{ task_event_order('toDateTime64(h.updated_at, 3)', task_event_band("'availability'"), 0) }} AS event_order,
     CAST(NULL AS Nullable(String))                              AS author_id,
     CAST('availability' AS String)                              AS field_id,
     CAST('Availability' AS String)                              AS field_name,
