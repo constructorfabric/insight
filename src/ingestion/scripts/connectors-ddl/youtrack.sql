@@ -26,6 +26,40 @@ ORDER BY unique_key
 SETTINGS index_granularity = 8192
 ;
 
+CREATE TABLE IF NOT EXISTS bronze_youtrack.youtrack_activity_issues
+(
+    `_airbyte_raw_id` String,
+    `_airbyte_extracted_at` DateTime64(3),
+    `_airbyte_meta` String,
+    `_airbyte_generation_id` UInt32,
+    `id` Nullable(String),
+    `_type` Nullable(String),
+    `idReadable` Nullable(String),
+    `summary` Nullable(String),
+    `description` Nullable(String),
+    `created` Nullable(Decimal(38, 9)),
+    `updated` Nullable(String),
+    `resolved` Nullable(Decimal(38, 9)),
+    `numberInProject` Nullable(Decimal(38, 9)),
+    `isDraft` Nullable(Bool),
+    `commentsCount` Nullable(Decimal(38, 9)),
+    `votes` Nullable(Decimal(38, 9)),
+    `wikifiedDescription` Nullable(String),
+    `project_id` Nullable(String),
+    `reporter_id` Nullable(String),
+    `updater_id` Nullable(String),
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `unique_key` String,
+    `custom_fields_json` Nullable(String),
+    `issue_json` Nullable(String),
+    `observed_at` Nullable(String)
+)
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
+SETTINGS index_granularity = 8192
+;
+
 CREATE TABLE IF NOT EXISTS bronze_youtrack.youtrack_agiles
 (
     `_airbyte_raw_id` String,

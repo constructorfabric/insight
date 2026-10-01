@@ -154,8 +154,14 @@ history AS (
         fh.event_at                                                           AS event_at,
         fh.event_kind                                                         AS event_kind,
         fh.delta_action                                                       AS delta_action,
-        fh.value_ids                                                          AS value_ids,
-        fh.value_displays                                                     AS value_displays,
+        if(fh.data_source = 'youtrack' AND length(fh.value_ids) > 1,
+           CAST([] AS Array(String)), fh.value_ids)                           AS value_ids,
+        multiIf(
+            fh.data_source = 'youtrack' AND length(fh.value_ids) > 1, CAST([] AS Array(String)),
+            fh.data_source = 'youtrack' AND r.role = 'duedate',
+                arrayMap(v -> if(isNotNull(toInt64OrNull(v)),
+                    toString(fromUnixTimestamp64Milli(toInt64OrZero(v))), v), fh.value_displays),
+            fh.value_displays)                                               AS value_displays,
         fh._version                                                           AS _version,
         -- The one ordering key of the class (`task_event_order`).
         fh.event_order                                                        AS event_order,

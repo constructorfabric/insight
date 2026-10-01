@@ -1,3 +1,4 @@
+-- depends_on: {{ ref('youtrack__identity_inputs') }}
 -- depends_on: {{ ref('active_directory__identity_inputs') }}
 -- depends_on: {{ ref('active_directory__manager_identity_inputs') }}
 -- depends_on: {{ ref('seed_identity_inputs_from_cursor') }}

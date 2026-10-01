@@ -15,19 +15,27 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from load_field_value_map import (  # noqa: E402
+from load_field_value_map import (
     DEFAULT_TIMEOUT,
     Default,
     Mapping,
     MappingFileError,
+    Role,
+    TaskValue,
     _http_client,
     deduplicate,
     defaults_insert_statement,
     insert_statement,
+    load_roles,
     parse_bundle,
     parse_defaults,
+    parse_roles,
+    parse_task_values,
     read_bundle,
+    read_task_config,
+    roles_insert_statement,
     select_missing,
+    task_values_insert_statement,
 )
 
 HEADER = "tenant_id\tinsight_source_id\tdata_source\tfield\tsource_key\tdisplay_name\ttarget_value\tnote"
@@ -471,3 +479,85 @@ class TestHttpTimeout:
         execute, _ = _http_client(urlopen=urlopen)
         with pytest.raises(urllib.error.URLError):
             execute("SELECT 1")
+
+
+ROLE_ROW = "zz-test\tsrc-1\tyoutrack\t92-9\testimate\t0\tminutes\t60"
+VALUE_ROW = "zz-test\tsrc-1\tyoutrack\t92-2\t97-1\tIn Progress\tin_progress"
+
+
+class TestTaskConfig:
+    """`roles.tsv` feeds config.task_field_roles, `task-values.tsv` config.task_value_map."""
+
+    def test_a_role_line_becomes_a_binding(self):
+        assert parse_roles([("roles.tsv", f"{ROLE_ROW}\tminutes, not seconds\n")]) == [
+            Role("zz-test", "src-1", "youtrack", "92-9", "estimate", "0", "minutes", "60", "minutes, not seconds")
+        ]
+
+    def test_a_value_line_becomes_a_decision(self):
+        assert parse_task_values([("task-values.tsv", f"{VALUE_ROW}\n")]) == [
+            TaskValue("zz-test", "src-1", "youtrack", "92-2", "97-1", "In Progress", "in_progress")
+        ]
+
+    @pytest.mark.parametrize(
+        ("line", "problem"),
+        [
+            (ROLE_ROW.replace("estimate", "estimation"), "role 'estimation' is not one of"),
+            (ROLE_ROW.replace("\t0\t", "\tfirst\t"), "precedence 'first' is not an integer 0-255"),
+            (ROLE_ROW.replace("minutes", "weeks"), "value_unit 'weeks' is not one of"),
+            (ROLE_ROW.replace("\t60", "\t0"), "unit_multiplier '0' is not a positive number"),
+            ("zz-test\tsrc-1\tyoutrack\t92-9\testimate", "expected 8-9 tab-separated columns, got 5"),
+        ],
+        ids=["role", "precedence", "unit", "multiplier", "width"],
+    )
+    def test_a_role_a_consumer_cannot_read_is_rejected(self, line, problem):
+        with pytest.raises(MappingFileError, match=problem):
+            parse_roles([("roles.tsv", f"{line}\n")])
+
+    @pytest.mark.parametrize(
+        ("line", "problem"),
+        [
+            (VALUE_ROW.replace("in_progress", "closed"), "canonical_value 'closed' is not one of"),
+            (VALUE_ROW.replace("In Progress", ""), "the first 7 columns are all required"),
+        ],
+        ids=["category", "display"],
+    )
+    def test_a_value_outside_the_status_categories_is_rejected(self, line, problem):
+        with pytest.raises(MappingFileError, match=problem):
+            parse_task_values([("task-values.tsv", f"{line}\n")])
+
+    def test_the_reserved_files_never_reach_the_value_map(self, tmp_path):
+        (tmp_path / "a.tsv").write_text(f"{ROW}\n")
+        (tmp_path / "roles.tsv").write_text(f"{ROLE_ROW}\n")
+        (tmp_path / "task-values.tsv").write_text(f"{VALUE_ROW}\n")
+        mappings, defaults = read_bundle(tmp_path)
+        roles, values = read_task_config(tmp_path)
+        assert [m.source_key for m in mappings] == ["story"]
+        assert defaults == []
+        assert [r.field_id for r in roles] == ["92-9"]
+        assert [v.value_id for v in values] == ["97-1"]
+
+    def test_a_bundle_without_task_config_reads_as_empty(self, tmp_path):
+        (tmp_path / "a.tsv").write_text(f"{ROW}\n")
+        assert read_task_config(tmp_path) == ([], [])
+
+    def test_a_bound_field_is_never_rebound(self):
+        """Insert-only: a field with any stored binding, retracted or not, is an operator decision."""
+        roles = parse_roles([("roles.tsv", f"{ROLE_ROW}\n{ROLE_ROW.replace('92-9', '92-10')}\n")])
+        executed: list[str] = []
+
+        def fetch_rows(sql: str) -> list[list[str]]:
+            return [["1"]] if "system.tables" in sql else [["zz-test", "src-1", "youtrack", "92-9"]]
+
+        assert load_roles(roles, recorded_by="gitops", execute=executed.append, fetch_rows=fetch_rows) == 1
+        assert executed[0].count("\t92-10\t") == 1 and "\t92-9\t" not in executed[0]
+
+    def test_the_statements_stamp_the_loader_columns(self):
+        roles_sql = roles_insert_statement(parse_roles([("roles.tsv", f"{ROLE_ROW}\n")]), recorded_by="gitops")
+        values_sql = task_values_insert_statement(
+            parse_task_values([("task-values.tsv", f"{VALUE_ROW}\n")]), recorded_by="gitops"
+        )
+        assert "INSERT INTO config.task_field_roles" in roles_sql
+        assert "toUInt8(precedence)" in roles_sql and "toFloat64(unit_multiplier)" in roles_sql
+        assert "INSERT INTO config.task_value_map" in values_sql
+        for sql in (roles_sql, values_sql):
+            assert "toDateTime64(0, 3), now64(3)" in sql and "'gitops'" in sql
