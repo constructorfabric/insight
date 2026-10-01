@@ -100,9 +100,10 @@ describe("<WidgetFrame>", () => {
       </WidgetFrame>
     );
 
-    expect(screen.getByText("table").parentElement).toHaveClass(
-      "overflow-auto"
-    );
+    const body = screen.getByText("table").parentElement;
+
+    expect(body).toHaveClass("overflow-auto");
+    expect(body).toHaveClass("pt-0");
   });
 
   it("leaves its body inert when nothing opens from it", () => {

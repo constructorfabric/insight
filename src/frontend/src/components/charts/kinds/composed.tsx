@@ -1,10 +1,10 @@
-import { Bar, ComposedChart, Line, YAxis } from "recharts";
+import { Bar, ComposedChart, LabelList, Line, YAxis } from "recharts";
 
 import type { ComposedWidget, MetricResult } from "@/api/custom-client";
 import { compactNumber, unitFor } from "@/components/custom/chart-format";
 
 import { seriesRows } from "../adapters/series";
-import { AXIS_TICK } from "../chart-style";
+import { AXIS_TICK, VALUE_LABEL } from "../chart-style";
 import { IsolatedDot, KindChart, KindFigure } from "../chrome";
 import { seriesColor } from "../palette";
 import { SeriesAxes } from "./series-axes";
@@ -37,7 +37,7 @@ export function ComposedKind({
       <KindChart>
         <ComposedChart
           data={rows}
-          margin={{ top: 8, right: 8, bottom: 0, left: 0 }}
+          margin={{ top: 20, right: 8, bottom: 0, left: 0 }}
         >
           <SeriesAxes
             categories={rows.map((row) => row.x)}
@@ -60,7 +60,14 @@ export function ComposedKind({
             radius={[4, 4, 0, 0]}
             maxBarSize={20}
             isAnimationActive={false}
-          />
+          >
+            <LabelList
+              {...VALUE_LABEL}
+              formatter={(value) =>
+                compactNumber(value, unitFor(result.percents, widget.y))
+              }
+            />
+          </Bar>
           <Line
             yAxisId={LINE_KEY}
             type="monotone"

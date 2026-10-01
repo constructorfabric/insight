@@ -2,6 +2,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  LabelList,
   Rectangle,
   Tooltip,
   XAxis,
@@ -13,7 +14,12 @@ import type { CategoryWidget, MetricResult } from "@/api/custom-client";
 import { compactNumber, unitFor } from "@/components/custom/chart-format";
 
 import { bridgeRows, type BridgeRow } from "../adapters/bridge";
-import { AXIS_TICK, GRID_STROKE, tooltipContent } from "../chart-style";
+import {
+  AXIS_TICK,
+  GRID_STROKE,
+  VALUE_LABEL,
+  tooltipContent,
+} from "../chart-style";
 import { CategoryTick, KindChart, KindFigure } from "../chrome";
 import { seriesColor } from "../palette";
 
@@ -45,7 +51,7 @@ export function WaterfallKind({
       <KindChart>
         <BarChart
           data={rows}
-          margin={{ top: 12, right: 16, bottom: 4, left: 4 }}
+          margin={{ top: 20, right: 16, bottom: 4, left: 4 }}
         >
           <CartesianGrid stroke={GRID_STROKE} vertical={false} />
           <XAxis
@@ -80,7 +86,15 @@ export function WaterfallKind({
                 fill={KIND_COLOR[(props.payload as BridgeRow).kind]}
               />
             )}
-          />
+          >
+            <LabelList
+              {...VALUE_LABEL}
+              valueAccessor={(entry: { payload?: BridgeRow }) =>
+                entry.payload?.delta
+              }
+              formatter={(value) => compactNumber(value, unit)}
+            />
+          </Bar>
         </BarChart>
       </KindChart>
     </KindFigure>

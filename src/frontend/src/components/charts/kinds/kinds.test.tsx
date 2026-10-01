@@ -314,4 +314,45 @@ describe("<ChartKind>", () => {
 
     expect(label?.getAttribute("transform")).toMatch(/^rotate\(-\d+/);
   });
+  it.each<[string, ChartWidget, MetricResult, string[]]>([
+    [
+      "each grouped bar",
+      { type: "bar", metric: "m", x: "day", y: "n", series: "repo" },
+      BY_DAY,
+      ["40", "60", "20", "10"],
+    ],
+    [
+      "the total of a stack",
+      { type: "bar", metric: "m", x: "day", y: "n", series: "who" },
+      {
+        columns: ["day", "who", "n"],
+        rows: [
+          ["2026-09-01", "a", 1],
+          ["2026-09-01", "b", 2],
+          ["2026-09-01", "c", 3],
+          ["2026-09-01", "d", 4],
+        ],
+      },
+      ["10"],
+    ],
+    [
+      "each composed bar",
+      { type: "composed", metric: "m", x: "day", y: "n", y2: "files" },
+      BY_DAY,
+      ["60", "70"],
+    ],
+    [
+      "each waterfall step and the total",
+      { type: "waterfall", metric: "m", label: "repo", value: "n" },
+      BY_REPO,
+      ["120", "80", "-10", "190"],
+    ],
+  ])("writes the value on top of %s", (_case, widget, result, values) => {
+    const { figure } = drawn(widget, result);
+    const labels = [
+      ...figure.querySelectorAll(".recharts-label-list text"),
+    ].map((text) => text.textContent);
+
+    expect(labels).toEqual(values);
+  });
 });

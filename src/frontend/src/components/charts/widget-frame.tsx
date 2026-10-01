@@ -92,8 +92,8 @@ function Body({
   children: ReactNode;
 }) {
   const layout = cn(
-    "min-h-0 min-w-0 flex-1 px-5 pt-2 pb-[23px]",
-    scroll && "overflow-auto"
+    "min-h-0 min-w-0 flex-1 px-5 pb-[23px]",
+    scroll ? "overflow-auto pt-0" : "pt-2"
   );
 
   if (!onActivate) return <div className={layout}>{children}</div>;
