@@ -53,6 +53,7 @@ export function CategoryTick({
   anchor = "end",
   chars = LABEL_CHARS,
   angle,
+  format,
 }: {
   x?: number | string;
   y?: number | string;
@@ -60,6 +61,7 @@ export function CategoryTick({
   anchor?: "start" | "middle" | "end";
   chars?: number;
   angle?: number;
+  format?: (value: unknown) => string;
 }) {
   const full = String(payload?.value ?? "");
 
@@ -74,7 +76,7 @@ export function CategoryTick({
       fontSize={AXIS_TICK.fontSize}
     >
       <title>{full}</title>
-      {cut(full, chars)}
+      {format ? format(payload?.value) : cut(full, chars)}
     </text>
   );
 }

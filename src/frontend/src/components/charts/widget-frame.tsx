@@ -10,7 +10,7 @@ export type WidgetState = "ready" | "loading" | "empty" | "error";
 
 export type WidgetSize = "standard" | "tall";
 
-export const WIDGET_HEIGHT: Record<WidgetSize, number> = {
+const WIDGET_HEIGHT: Record<WidgetSize, number> = {
   standard: 304,
   tall: 464,
 };

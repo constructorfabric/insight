@@ -355,4 +355,21 @@ describe("<ChartKind>", () => {
 
     expect(labels).toEqual(values);
   });
+  it.each<[string, ChartWidget]>([
+    ["bar", { type: "bar", metric: "m", x: "day", y: "n" }],
+    ["composed", { type: "composed", metric: "m", x: "day", y: "n", y2: "n" }],
+  ])("labels every %s on its own vertical tick", (_kind, widget) => {
+    const days = ["01", "02", "03", "04", "05", "06", "07", "08"];
+    const { figure } = drawn(widget, {
+      columns: ["day", "n"],
+      rows: days.map((day, index) => [`2026-09-${day}`, index + 1]),
+    });
+    const ticks = [...figure.querySelectorAll("text")].filter((text) =>
+      text.getAttribute("transform")?.startsWith("rotate(-90")
+    );
+
+    expect(ticks.map((text) => text.lastChild?.textContent)).toEqual(
+      days.map((day) => `Sep ${Number(day)}`)
+    );
+  });
 });

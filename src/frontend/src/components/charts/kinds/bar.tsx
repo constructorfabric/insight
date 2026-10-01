@@ -33,7 +33,11 @@ export function BarKind({
           margin={{ top: 20, right: 8, bottom: 0, left: 0 }}
           barGap={5}
         >
-          <SeriesAxes categories={rows.map((row) => row.x)} unit={unit} />
+          <SeriesAxes
+            categories={rows.map((row) => row.x)}
+            unit={unit}
+            everyTick
+          />
           {colored.map(({ key, label, color }, index) => (
             <Bar
               key={key}

@@ -42,6 +42,7 @@ export function ComposedKind({
           <SeriesAxes
             categories={rows.map((row) => row.x)}
             unit={unitFor(result.percents, widget.y)}
+            everyTick
           />
           <YAxis
             yAxisId={LINE_KEY}
