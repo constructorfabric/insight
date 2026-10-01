@@ -34,6 +34,20 @@ vendor value detectable.
 
     tenant_id  insight_source_id  field  default_value
 
+Two more reserved files carry the other operator-authored task tables, so a
+source whose vendor states neither its field roles nor its status categories
+(GitHub, YouTrack) is configured from the same bundle:
+
+`roles.tsv` lands in `config.task_field_roles` — which vendor field plays which
+metric role. All but `note` required:
+
+    tenant_id  insight_source_id  data_source  field_id  role  precedence  value_unit  unit_multiplier  [note]
+
+`task-values.tsv` lands in `config.task_value_map` — the canonical category of
+one vendor value of a field, today the status lifecycle category:
+
+    tenant_id  insight_source_id  data_source  field_id  value_id  value_display  canonical_value  [note]
+
 The operator states business columns only. `valid_from` / `recorded_at` /
 `recorded_by` are the loader's, which is what makes a hand-written file unable
 to supersede a stored decision. `valid_from` is epoch: a seeded decision is the
@@ -67,7 +81,12 @@ LOG = insight_logging.configure("field-value-map")
 
 MAP_TABLE = "config.field_value_map"
 DEFAULTS_TABLE = "config.field_value_defaults"
+ROLES_TABLE = "config.task_field_roles"
+VALUES_TABLE = "config.task_value_map"
 DEFAULTS_FILE = "defaults.tsv"
+ROLES_FILE = "roles.tsv"
+VALUES_FILE = "task-values.tsv"
+RESERVED_FILES = frozenset({DEFAULTS_FILE, ROLES_FILE, VALUES_FILE})
 DEFAULT_DIR = "/config/field-value-map"
 DEFAULT_RECORDED_BY = "gitops"
 DEFAULT_TIMEOUT = 30.0
@@ -84,6 +103,19 @@ VALUE_COLUMNS = ("display_name", "target_value", "note")
 MIN_COLUMNS = 7
 MAX_COLUMNS = 8
 DEFAULTS_COLUMNS = ("tenant_id", "insight_source_id", "field", "default_value")
+ROLE_KEY_COLUMNS = ("tenant_id", "insight_source_id", "data_source", "field_id")
+ROLE_VALUE_COLUMNS = ("role", "precedence", "value_unit", "unit_multiplier", "note")
+VALUE_KEY_COLUMNS = ("tenant_id", "insight_source_id", "data_source", "field_id", "value_id")
+VALUE_VALUE_COLUMNS = ("value_display", "canonical_value", "note")
+
+# The roles gold matches (task_field_roles_current, task_issue_state); `ignored`
+# is the retraction of a built-in default. The units gold converts to seconds.
+# A role or unit outside these sets would be read as no binding at all.
+ROLES = frozenset({"status", "assignee", "issuetype", "resolution", "duedate", "estimate", "spent", "title", "ignored"})
+VALUE_UNITS = frozenset({"none", "seconds", "minutes", "hours", "days", "man_days"})
+# The status lifecycle categories class_task_statuses carries, the only domain
+# config.task_value_map serves today.
+TASK_VALUE_DOMAIN = frozenset({"new", "in_progress", "done", "undefined"})
 
 # Canonical domain per standardized field. A row for a field outside this set is
 # rejected: no consumer resolves it yet, so it could only mislead.
@@ -94,6 +126,7 @@ FIELD_DOMAINS = {
 
 Key = tuple[str, str, str, str, str]
 DefaultKey = tuple[str, str, str]
+RoleKey = tuple[str, str, str, str]
 
 
 class MappingFileError(Exception):
@@ -130,6 +163,43 @@ class Default:
     @property
     def key(self) -> DefaultKey:
         return (self.tenant_id, self.insight_source_id, self.field)
+
+
+@dataclass(frozen=True)
+class Role:
+    """One operator role binding: which vendor field plays which metric role."""
+
+    tenant_id: str
+    insight_source_id: str
+    data_source: str
+    field_id: str
+    role: str
+    precedence: str
+    value_unit: str
+    unit_multiplier: str
+    note: str = ""
+
+    @property
+    def key(self) -> RoleKey:
+        return (self.tenant_id, self.insight_source_id, self.data_source, self.field_id)
+
+
+@dataclass(frozen=True)
+class TaskValue:
+    """One operator value decision: the canonical category of a vendor value."""
+
+    tenant_id: str
+    insight_source_id: str
+    data_source: str
+    field_id: str
+    value_id: str
+    value_display: str
+    canonical_value: str
+    note: str = ""
+
+    @property
+    def key(self) -> Key:
+        return (self.tenant_id, self.insight_source_id, self.data_source, self.field_id, self.value_id)
 
 
 class Keyed(Protocol):
@@ -189,6 +259,16 @@ def parse_defaults(files: Iterable[tuple[str, str]]) -> list[Default]:
     return _parse_files(files, rejection=_defaults_rejection, build=lambda fields: Default(*fields))
 
 
+def parse_roles(files: Iterable[tuple[str, str]]) -> list[Role]:
+    width = len(ROLE_KEY_COLUMNS) + len(ROLE_VALUE_COLUMNS)
+    return _parse_files(files, rejection=_roles_rejection, build=lambda fields: Role(*(*fields, "")[:width]))
+
+
+def parse_task_values(files: Iterable[tuple[str, str]]) -> list[TaskValue]:
+    width = len(VALUE_KEY_COLUMNS) + len(VALUE_VALUE_COLUMNS)
+    return _parse_files(files, rejection=_task_values_rejection, build=lambda fields: TaskValue(*(*fields, "")[:width]))
+
+
 def _rejection(fields: Sequence[str]) -> str | None:
     if not MIN_COLUMNS <= len(fields) <= MAX_COLUMNS:
         return f"expected {MIN_COLUMNS}-{MAX_COLUMNS} tab-separated columns, got {len(fields)}"
@@ -209,6 +289,39 @@ def _defaults_rejection(fields: Sequence[str]) -> str | None:
     return _domain_problem(field=fields[2], value=fields[3], value_column="default_value")
 
 
+def _roles_rejection(fields: Sequence[str]) -> str | None:
+    required = len(ROLE_KEY_COLUMNS) + len(ROLE_VALUE_COLUMNS) - 1
+    if not required <= len(fields) <= required + 1:
+        return f"expected {required}-{required + 1} tab-separated columns, got {len(fields)}"
+    if any(value == "" for value in fields[:required]):
+        return f"the first {required} columns are all required"
+    role, precedence, value_unit, multiplier = fields[4:8]
+    if role not in ROLES:
+        return f"role {role!r} is not one of {', '.join(sorted(ROLES))}"
+    if not precedence.isdigit() or int(precedence) > 255:
+        return f"precedence {precedence!r} is not an integer 0-255"
+    if value_unit not in VALUE_UNITS:
+        return f"value_unit {value_unit!r} is not one of {', '.join(sorted(VALUE_UNITS))}"
+    try:
+        positive = float(multiplier) > 0
+    except ValueError:
+        positive = False
+    if not positive:
+        return f"unit_multiplier {multiplier!r} is not a positive number"
+    return None
+
+
+def _task_values_rejection(fields: Sequence[str]) -> str | None:
+    required = len(VALUE_KEY_COLUMNS) + len(VALUE_VALUE_COLUMNS) - 1
+    if not required <= len(fields) <= required + 1:
+        return f"expected {required}-{required + 1} tab-separated columns, got {len(fields)}"
+    if any(value == "" for value in fields[:required]):
+        return f"the first {required} columns are all required"
+    if fields[6] not in TASK_VALUE_DOMAIN:
+        return f"canonical_value {fields[6]!r} is not one of {', '.join(sorted(TASK_VALUE_DOMAIN))}"
+    return None
+
+
 def _domain_problem(*, field: str, value: str, value_column: str) -> str | None:
     domain = FIELD_DOMAINS.get(field)
     if domain is None:
@@ -221,7 +334,7 @@ def _domain_problem(*, field: str, value: str, value_column: str) -> str | None:
 def read_bundle(directory: Path) -> tuple[list[Mapping], list[Default]]:
     """Split the bundle: `defaults.tsv` feeds the defaults table, the rest the map."""
     paths = sorted(directory.glob("*.tsv"))
-    map_files = [(path.name, path.read_text(encoding="utf-8")) for path in paths if path.name != DEFAULTS_FILE]
+    map_files = [(path.name, path.read_text(encoding="utf-8")) for path in paths if path.name not in RESERVED_FILES]
     defaults_files = [(path.name, path.read_text(encoding="utf-8")) for path in paths if path.name == DEFAULTS_FILE]
     LOG.info("bundle read", extra={"files": len(paths), "dir": str(directory)})
 
@@ -240,6 +353,29 @@ def read_bundle(directory: Path) -> tuple[list[Mapping], list[Default]]:
     if errors:
         raise MappingFileError("\n".join(errors))
     return mappings, defaults
+
+
+def read_task_config(directory: Path) -> tuple[list[Role], list[TaskValue]]:
+    """The bundle's `roles.tsv` and `task-values.tsv`; either may be absent."""
+    roles_path, values_path = directory / ROLES_FILE, directory / VALUES_FILE
+    roles_files = [(ROLES_FILE, roles_path.read_text(encoding="utf-8"))] if roles_path.is_file() else []
+    values_files = [(VALUES_FILE, values_path.read_text(encoding="utf-8"))] if values_path.is_file() else []
+
+    errors: list[str] = []
+    roles: list[Role] = []
+    values: list[TaskValue] = []
+    try:
+        roles = parse_roles(roles_files)
+    except MappingFileError as error:
+        errors.append(str(error))
+    try:
+        values = parse_task_values(values_files)
+    except MappingFileError as error:
+        errors.append(str(error))
+
+    if errors:
+        raise MappingFileError("\n".join(errors))
+    return roles, values
 
 
 def deduplicate[RowT: Keyed](rows: Iterable[RowT]) -> list[RowT]:
@@ -300,6 +436,44 @@ def defaults_insert_statement(defaults: Sequence[Default], *, recorded_by: str) 
     )
 
 
+def roles_insert_statement(roles: Sequence[Role], *, recorded_by: str) -> str:
+    rows = "\n".join(
+        "\t".join(
+            field.translate(TSV_ESCAPES)
+            for field in (*role.key, role.role, role.precedence, role.value_unit, role.unit_multiplier, role.note)
+        )
+        for role in roles
+    )
+    structure = ", ".join(f"{column} String" for column in (*ROLE_KEY_COLUMNS, *ROLE_VALUE_COLUMNS))
+    return (
+        f"INSERT INTO {ROLES_TABLE} "
+        f"(tenant_id, insight_source_id, data_source, field_id, valid_from, recorded_at, "
+        f"role, precedence, value_unit, unit_multiplier, note, recorded_by) "
+        f"SELECT tenant_id, insight_source_id, data_source, field_id, toDateTime64(0, 3), now64(3), "
+        f"role, toUInt8(precedence), value_unit, toFloat64(unit_multiplier), note, {_lit(recorded_by)} "
+        f"FROM input('{structure}') FORMAT TSV\n{rows}\n"
+    )
+
+
+def task_values_insert_statement(values: Sequence[TaskValue], *, recorded_by: str) -> str:
+    rows = "\n".join(
+        "\t".join(
+            field.translate(TSV_ESCAPES)
+            for field in (*value.key, value.value_display, value.canonical_value, value.note)
+        )
+        for value in values
+    )
+    structure = ", ".join(f"{column} String" for column in (*VALUE_KEY_COLUMNS, *VALUE_VALUE_COLUMNS))
+    return (
+        f"INSERT INTO {VALUES_TABLE} "
+        f"(tenant_id, insight_source_id, data_source, field_id, value_id, valid_from, recorded_at, "
+        f"canonical_value, value_display, note, recorded_by) "
+        f"SELECT tenant_id, insight_source_id, data_source, field_id, value_id, toDateTime64(0, 3), now64(3), "
+        f"canonical_value, value_display, note, {_lit(recorded_by)} "
+        f"FROM input('{structure}') FORMAT TSV\n{rows}\n"
+    )
+
+
 def _lit(value: str) -> str:
     return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
@@ -337,6 +511,42 @@ def load_defaults(
         table=DEFAULTS_TABLE,
         stored_sql=stored_sql,
         statement=lambda missing: defaults_insert_statement(missing, recorded_by=recorded_by),
+        execute=execute,
+        fetch_rows=fetch_rows,
+    )
+
+
+def load_roles(
+    roles: Sequence[Role],
+    *,
+    recorded_by: str,
+    execute: Callable[[str], None],
+    fetch_rows: Callable[[str], Sequence[Sequence[str]]],
+) -> int:
+    """Insert the declared role bindings whose field holds no stored binding. Returns the count."""
+    return _load(
+        roles,
+        table=ROLES_TABLE,
+        stored_sql=f"SELECT DISTINCT {', '.join(ROLE_KEY_COLUMNS)} FROM {ROLES_TABLE}",
+        statement=lambda missing: roles_insert_statement(missing, recorded_by=recorded_by),
+        execute=execute,
+        fetch_rows=fetch_rows,
+    )
+
+
+def load_task_values(
+    values: Sequence[TaskValue],
+    *,
+    recorded_by: str,
+    execute: Callable[[str], None],
+    fetch_rows: Callable[[str], Sequence[Sequence[str]]],
+) -> int:
+    """Insert the declared value decisions whose key holds no stored decision. Returns the count."""
+    return _load(
+        values,
+        table=VALUES_TABLE,
+        stored_sql=f"SELECT DISTINCT {', '.join(VALUE_KEY_COLUMNS)} FROM {VALUES_TABLE}",
+        statement=lambda missing: task_values_insert_statement(missing, recorded_by=recorded_by),
         execute=execute,
         fetch_rows=fetch_rows,
     )
@@ -403,14 +613,14 @@ def _http_client(
     timeout = _timeout()
 
     def _post(sql: str) -> str:
-        request = urllib.request.Request(  # noqa: S310 — fixed http(s) endpoint from config
+        request = urllib.request.Request(
             endpoint,
             data=sql.encode("utf-8"),
             headers={"X-ClickHouse-User": user, "X-ClickHouse-Key": password},
             method="POST",
         )
         try:
-            with urlopen(request, timeout=timeout) as response:  # type: ignore[attr-defined]  # noqa: S310
+            with urlopen(request, timeout=timeout) as response:  # type: ignore[attr-defined]
                 return response.read().decode("utf-8")
         except TimeoutError as error:
             raise SystemExit(f"ClickHouse did not answer within {timeout}s ({endpoint})") from error
@@ -454,19 +664,25 @@ def main() -> int:
 
     try:
         mappings, defaults = read_bundle(directory)
+        roles, values = read_task_config(directory)
     except MappingFileError as error:
         LOG.error("rejected bundle", extra={"problems": str(error)})
         return 1
 
-    if not mappings and not defaults:
+    if not mappings and not defaults and not roles and not values:
         LOG.warning("no data rows — nothing to load", extra={"dir": str(directory)})
         return 0
 
     execute, fetch_rows = _http_client()
     inserted = load(mappings, recorded_by=recorded_by, execute=execute, fetch_rows=fetch_rows)
     defaults_inserted = load_defaults(defaults, recorded_by=recorded_by, execute=execute, fetch_rows=fetch_rows)
+    roles_inserted = load_roles(roles, recorded_by=recorded_by, execute=execute, fetch_rows=fetch_rows)
+    values_inserted = load_task_values(values, recorded_by=recorded_by, execute=execute, fetch_rows=fetch_rows)
 
-    LOG.info("field value config loaded", extra={"map": inserted, "defaults": defaults_inserted})
+    LOG.info(
+        "field value config loaded",
+        extra={"map": inserted, "defaults": defaults_inserted, "roles": roles_inserted, "task_values": values_inserted},
+    )
     return 0
 
 

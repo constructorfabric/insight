@@ -329,3 +329,34 @@ def test_rereading_an_unchanged_record_adds_no_lifecycle_event(case: Warehouse) 
         {'field_id': 'comment', 'delta_action': 'set', 'event_at': '2026-01-02 00:00:00.000'},
         {'field_id': 'comment', 'delta_action': 'remove', 'event_at': '2026-01-12 00:00:00.000'},
         {'field_id': 'worklog', 'delta_action': 'set', 'event_at': '2026-01-02 00:00:00.000'}]
+
+
+def state_value(case: Warehouse, value_id: str, name: str, resolved: bool) -> None:
+    case.insert('youtrack_field_values', {
+        'unique_key': 'synthetic-state-' + value_id, 'project_id': 'project-1', 'field_id': 'field-state',
+        'field_type_id': 'state[1]', 'bundle_id': 'bundle-state',
+        'values_json': json.dumps({'collection': 'values', 'value': {
+            'id': value_id, 'name': name, 'isResolved': resolved, '$type': 'StateBundleElement'}})})
+
+
+def test_status_category_is_resolved_from_youtrack_and_split_by_the_operator(case: Warehouse) -> None:
+    # `done` is YouTrack's own isResolved; the open split is the operator's, and
+    # an open value nobody decided stays `undefined`.
+    case.client.command(f"""INSERT INTO config.task_field_roles
+        (tenant_id, insight_source_id, data_source, field_id, valid_from, recorded_at, role)
+        VALUES ('{TENANT}', '{SOURCE}', 'youtrack', 'field-state', toDateTime64(0, 3), now64(3), 'status')""")
+    case.client.command(f"""INSERT INTO config.task_value_map
+        (tenant_id, insight_source_id, data_source, field_id, value_id, valid_from, recorded_at,
+         canonical_value, value_display)
+        VALUES ('{TENANT}', '{SOURCE}', 'youtrack', 'field-state', 'state-progress', toDateTime64(0, 3), now64(3),
+                'in_progress', 'In Progress')""")
+    state_value(case, 'state-fixed', 'Fixed', True)
+    state_value(case, 'state-progress', 'In Progress', False)
+    state_value(case, 'state-open', 'Open', False)
+    case.issue([])
+    case.build()
+    rows = list(case.rows("SELECT status_id, status_name, status_category FROM staging.youtrack__task_statuses ORDER BY status_id"))
+    assert rows == [
+        {'status_id': 'state-fixed', 'status_name': 'Fixed', 'status_category': 'done'},
+        {'status_id': 'state-open', 'status_name': 'Open', 'status_category': 'undefined'},
+        {'status_id': 'state-progress', 'status_name': 'In Progress', 'status_category': 'in_progress'}]

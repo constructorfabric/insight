@@ -81,8 +81,18 @@ older activities may use their native filter-field ID. Missing snapshot field
 identities and activities without parent snapshots have explicit coverage tests.
 
 Use `config.task_field_roles` for field roles, `config.task_value_map` for status
-categories, and `config.field_value_map` / `field_value_defaults` for issue kinds.
-Only the fixed `summary` property has a built-in role. Field names do not infer
+categories, and `config.field_value_map` / `field_value_defaults` for issue kinds;
+all four are seeded per environment from the gitops field-value-map bundle
+(`roles.tsv`, `task-values.tsv`, `*.tsv`, `defaults.tsv`).
+Only the fixed `summary` property has a built-in role.
+
+The status dimension lists every value of a field bound to `status`. A state
+value's `isResolved` is YouTrack's own statement that it closes an issue, so it
+is `done` without configuration, as Jira's status category is. Whether an open
+value means `new` or `in_progress` YouTrack does not state: that is a
+`task_value_map` decision, which also overrides the flag. An open value nobody
+has decided is `undefined`, so in-progress measures leave its issues out, and a
+warning test lists the ones issues currently sit in. Field names do not infer
 roles. The same global field cannot have different project-specific bindings in
 the current config contract.
 
