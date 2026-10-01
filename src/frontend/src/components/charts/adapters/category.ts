@@ -1,6 +1,7 @@
 import type { MetricResult } from "@/api/custom-client";
 
 import { columnReader, labelOf, toNumber } from "./cells";
+import { OTHER_LABEL } from "./series";
 
 export interface CategoryRow {
   label: string;
@@ -27,7 +28,13 @@ export function categoryRows(
     positiveOnly = false,
     order = "first",
     limit,
-  }: { positiveOnly?: boolean; order?: "first" | "desc"; limit?: number } = {}
+    keep,
+  }: {
+    positiveOnly?: boolean;
+    order?: "first" | "desc";
+    limit?: number;
+    keep?: number;
+  } = {}
 ): CategoryRow[] {
   const readLabel = columnReader(result, label);
   const readValue = columnReader(result, value);
@@ -44,10 +51,19 @@ export function categoryRows(
   const rows = [...totals]
     .map(([name, total]) => ({ label: name, value: total }))
     .filter((row) => !positiveOnly || row.value > 0);
+  if (keep !== undefined && rows.length > keep) return withOther(rows, keep);
+
   const ordered =
     order === "desc" ? rows.sort((a, b) => b.value - a.value) : rows;
 
   return limit === undefined ? ordered : ordered.slice(0, limit);
+}
+
+function withOther(rows: CategoryRow[], keep: number): CategoryRow[] {
+  const ranked = [...rows].sort((a, b) => b.value - a.value);
+  const rest = ranked.slice(keep).reduce((sum, row) => sum + row.value, 0);
+
+  return [...ranked.slice(0, keep), { label: OTHER_LABEL, value: rest }];
 }
 
 export function radarRows(

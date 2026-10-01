@@ -11,3 +11,9 @@ export function seriesColor(index: number): string {
 export function keyColor(key: SeriesKey, index: number): string {
   return key.key === "other" ? OTHER_COLOR : seriesColor(index);
 }
+
+export function colorKeys<K extends SeriesKey>(
+  keys: K[]
+): (K & { color: string })[] {
+  return keys.map((key, index) => ({ ...key, color: keyColor(key, index) }));
+}

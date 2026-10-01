@@ -85,6 +85,29 @@ describe("categoryRows", () => {
     ]);
   });
 
+  it("keeps the largest shares and sums the rest into Other", () => {
+    const rows = categoryRows(
+      result(
+        ["repo", "n"],
+        [
+          ["a", 1],
+          ["b", 5],
+          ["c", 2],
+          ["d", 4],
+        ]
+      ),
+      "repo",
+      "n",
+      { keep: 2 }
+    );
+
+    expect(rows).toEqual([
+      { label: "b", value: 5 },
+      { label: "d", value: 4 },
+      { label: "Other", value: 3 },
+    ]);
+  });
+
   it("names a missing label (none)", () => {
     expect(categoryRows(result(["who", "n"], [[null, 1]]), "who", "n")).toEqual(
       [{ label: "(none)", value: 1 }]

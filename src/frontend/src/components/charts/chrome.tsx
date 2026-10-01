@@ -1,34 +1,93 @@
-import { ChartTooltipContent } from "@gears-frontx/ui-kit";
+import type { CSSProperties, ReactNode } from "react";
+import { ChartContainer } from "@gears-frontx/ui-kit";
+import type { DotItemDotProps } from "recharts";
 
-import { groupedNumber } from "@/components/custom/chart-format";
+import { AXIS_TICK, LABEL_CHARS, cut } from "./chart-style";
+import { WidgetLegend, type LegendItem } from "./widget-legend";
 
-export const AXIS_TICK = { fill: "var(--muted-foreground)", fontSize: 12 };
-export const GRID_STROKE = "var(--grid)";
-export const NO_ANIMATION = { isAnimationActive: false } as const;
+const CONTAINER_STYLE: CSSProperties = {
+  width: "100%",
+  height: "100%",
+  minWidth: 0,
+  minHeight: 0,
+  aspectRatio: "auto",
+  flex: "1 1 0",
+};
 
-export function tooltipContent({
-  unit = "",
-  hideLabel = false,
-  labelFormatter,
+export function KindFigure({
+  kind,
+  legend = [],
+  children,
 }: {
-  unit?: string;
-  hideLabel?: boolean;
-  labelFormatter?: (label: unknown) => string;
-} = {}) {
+  kind: string;
+  legend?: LegendItem[];
+  children: ReactNode;
+}) {
   return (
-    <ChartTooltipContent
-      hideLabel={hideLabel}
-      labelFormatter={
-        labelFormatter ? (label) => labelFormatter(label) : undefined
-      }
-      formatter={(value, name) => (
-        <span className="flex min-w-40 justify-between gap-5">
-          <span className="text-muted-foreground">{String(name ?? "")}</span>
-          <strong className="font-medium tabular-nums">
-            {groupedNumber(value, unit)}
-          </strong>
-        </span>
-      )}
-    />
+    <figure
+      aria-label={`${kind} chart`}
+      className="m-0 flex h-full min-h-0 w-full min-w-0 flex-col"
+    >
+      {children}
+      <WidgetLegend items={legend} />
+    </figure>
   );
+}
+
+export function KindChart({
+  children,
+}: {
+  children: Parameters<typeof ChartContainer>[0]["children"];
+}) {
+  return (
+    <ChartContainer config={{}} style={CONTAINER_STYLE}>
+      {children}
+    </ChartContainer>
+  );
+}
+
+export function CategoryTick({
+  x,
+  y,
+  payload,
+  anchor = "end",
+  chars = LABEL_CHARS,
+}: {
+  x?: number | string;
+  y?: number | string;
+  payload?: { value?: unknown };
+  anchor?: "start" | "middle" | "end";
+  chars?: number;
+}) {
+  const full = String(payload?.value ?? "");
+
+  return (
+    <text
+      x={x}
+      y={y}
+      dy={4}
+      textAnchor={anchor}
+      fill={AXIS_TICK.fill}
+      fontSize={AXIS_TICK.fontSize}
+    >
+      <title>{full}</title>
+      {cut(full, chars)}
+    </text>
+  );
+}
+
+export function IsolatedDot({
+  cx,
+  cy,
+  index,
+  points,
+  stroke,
+  value,
+}: DotItemDotProps) {
+  if (value == null || cx == null || cy == null) return null;
+
+  const isolated =
+    points[index - 1]?.value == null && points[index + 1]?.value == null;
+
+  return isolated ? <circle cx={cx} cy={cy} r={3} fill={stroke} /> : null;
 }
