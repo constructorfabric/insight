@@ -38,10 +38,18 @@ export function FunnelKind({
             />
           </FunnelChart>
         </KindChart>
-        <ol aria-label="Stages" className="flex min-w-0 flex-col gap-2.5">
+        <ol
+          aria-label="Stages"
+          className="flex max-h-full min-w-0 flex-col gap-1.5 overflow-y-auto"
+        >
           {stages.map((stage) => (
-            <li key={stage.label} className="flex flex-col gap-0.5">
-              <span className={cn(TEXT_LABEL, "flex items-center gap-1.5")}>
+            <li
+              key={stage.label}
+              className="flex items-center justify-between gap-3"
+            >
+              <span
+                className={cn(TEXT_LABEL, "flex min-w-0 items-center gap-1.5")}
+              >
                 <i
                   aria-hidden="true"
                   className="size-2 shrink-0 rounded-full"
@@ -49,7 +57,7 @@ export function FunnelKind({
                 />
                 <span title={stage.label}>{cut(stage.label, 16)}</span>
               </span>
-              <strong className="pl-3.5 text-sm font-semibold tabular-nums">
+              <strong className="text-sm font-semibold tabular-nums">
                 {groupedNumber(stage.value, unit)}
               </strong>
             </li>

@@ -3,7 +3,12 @@ import { Bar, BarChart, CartesianGrid, Tooltip, XAxis, YAxis } from "recharts";
 import type { MetricResult, StackedWidget } from "@/api/custom-client";
 
 import { shareRows } from "../adapters/series";
-import { AXIS_TICK, GRID_STROKE, tooltipContent } from "../chart-style";
+import {
+  AXIS_TICK,
+  CATEGORY_AXIS_WIDTH,
+  GRID_STROKE,
+  tooltipContent,
+} from "../chart-style";
 import { CategoryTick, KindChart, KindFigure } from "../chrome";
 import { colorKeys } from "../palette";
 
@@ -50,7 +55,7 @@ export function StackedKind({
             tick={<CategoryTick />}
             tickLine={false}
             axisLine={false}
-            width={80}
+            width={CATEGORY_AXIS_WIDTH}
           />
           <Tooltip content={tooltipContent({ unit: "%" })} />
           {colored.map(({ key, label, color }, index) => (

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { MetricResult } from "@/api/custom-client";
 
+import { CATEGORY_AXIS_WIDTH, LABEL_CHARS } from "../chart-style";
 import { ChartKind, type ChartWidget } from "./index";
 
 vi.mock("recharts", async (importOriginal) => {
@@ -260,5 +261,46 @@ describe("<ChartKind>", () => {
 
     expect(within(figure).getByText("an-extremely…")).toBeInTheDocument();
     expect(titles(figure)).toContain("an-extremely-long-repository-name");
+  });
+  it("gives a category axis room for a cut label and its ellipsis", () => {
+    expect(CATEGORY_AXIS_WIDTH).toBeGreaterThanOrEqual((LABEL_CHARS + 1) * 8);
+  });
+
+  it("stacks bars once there are more than two series", () => {
+    const { figure } = drawn(
+      { type: "bar", metric: "m", x: "day", y: "n", series: "who" },
+      {
+        columns: ["day", "who", "n"],
+        rows: [
+          ["2026-09-01", "a", 1],
+          ["2026-09-01", "b", 2],
+          ["2026-09-01", "c", 3],
+          ["2026-09-01", "d", 4],
+        ],
+      }
+    );
+    const lefts = [
+      ...figure.querySelectorAll(".recharts-bar-rectangle path"),
+    ].map((path) =>
+      Number(/^M\s*([\d.]+)/.exec(path.getAttribute("d") ?? "")?.[1])
+    );
+
+    expect(lefts).toHaveLength(4);
+    expect(new Set(lefts).size).toBe(1);
+  });
+
+  it("keeps the twelve largest treemap tiles and folds the rest into Other", () => {
+    const rows = Array.from({ length: 20 }, (_, index) => [
+      `env-${index}`,
+      100 - index,
+    ]);
+    const { figure } = drawn(
+      { type: "treemap", metric: "m", label: "env", value: "n" },
+      { columns: ["env", "n"], rows }
+    );
+    const tiles = titles(figure).filter((title) => title.includes(":"));
+
+    expect(tiles).toHaveLength(13);
+    expect(tiles.some((title) => title.startsWith("Other:"))).toBe(true);
   });
 });

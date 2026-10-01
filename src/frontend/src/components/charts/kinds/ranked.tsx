@@ -16,7 +16,12 @@ import {
 } from "@/components/custom/chart-format";
 
 import { categoryRows } from "../adapters/category";
-import { AXIS_TICK, GRID_STROKE, tooltipContent } from "../chart-style";
+import {
+  AXIS_TICK,
+  CATEGORY_AXIS_WIDTH,
+  GRID_STROKE,
+  tooltipContent,
+} from "../chart-style";
 import { CategoryTick, KindChart, KindFigure } from "../chrome";
 import { seriesColor } from "../palette";
 
@@ -58,7 +63,7 @@ export function RankedKind({
             tick={<CategoryTick />}
             tickLine={false}
             axisLine={false}
-            width={96}
+            width={CATEGORY_AXIS_WIDTH}
           />
           <Tooltip content={tooltipContent({ unit })} />
           <Bar

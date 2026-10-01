@@ -5,11 +5,13 @@ import type { CategoryWidget, MetricResult } from "@/api/custom-client";
 import { groupedNumber, unitFor } from "@/components/custom/chart-format";
 
 import { categoryRows } from "../adapters/category";
+import { OTHER_LABEL } from "../adapters/series";
 import { tooltipContent } from "../chart-style";
 import { KindChart, KindFigure } from "../chrome";
-import { seriesColor } from "../palette";
+import { OTHER_COLOR, seriesColor } from "../palette";
 
 const CHAR_WIDTH = 6.8;
+const TREEMAP_TILES = 12;
 
 export function TreemapKind({
   widget,
@@ -22,6 +24,7 @@ export function TreemapKind({
   const tiles = categoryRows(result, widget.label, widget.value, {
     positiveOnly: true,
     order: "desc",
+    keep: TREEMAP_TILES,
   }).map(({ label, value }) => ({ name: label, value }));
 
   return (
@@ -45,10 +48,10 @@ export function TreemapKind({
 function tile(node: TreemapNode, unit: string): ReactElement {
   if (node.depth === 0 || node.children?.length) return <g />;
 
-  const color = seriesColor(node.index);
+  const name = String(node.name ?? "");
+  const color = name === OTHER_LABEL ? OTHER_COLOR : seriesColor(node.index);
   const roomy = node.width >= 62 && node.height >= 34;
   const fits = Math.max(3, Math.floor((node.width - 24) / CHAR_WIDTH));
-  const name = String(node.name ?? "");
   const label = name.length > fits ? `${name.slice(0, fits - 1)}…` : name;
 
   return (

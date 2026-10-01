@@ -5,6 +5,7 @@ import { groupedNumber } from "@/components/custom/chart-format";
 export const AXIS_TICK = { fill: "var(--muted-foreground)", fontSize: 12 };
 export const GRID_STROKE = "var(--grid)";
 export const LABEL_CHARS = 12;
+export const CATEGORY_AXIS_WIDTH = 112;
 
 export function cut(label: unknown, chars = LABEL_CHARS): string {
   const text = String(label ?? "");
