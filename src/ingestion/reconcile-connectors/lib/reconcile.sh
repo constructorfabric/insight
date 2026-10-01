@@ -82,6 +82,10 @@ reconcile__log() {
 #      RECONCILE_DESTINATION_NAME (default `clickhouse-bronze`); if absent,
 #      create one with definition Clickhouse and config from
 #      RECONCILE_DEST_CLICKHOUSE_* env (host/port/db/user/password).
+# The Clickhouse definition is resolved by name, so this path also refuses a
+# destination older than python/check_destination_version.py's minimum. The
+# explicit-id override skips both the lookup and the check: that destination's
+# configuration belongs to whoever set the id, not to reconcile.
 # Caches the resolved id in _RECONCILE_DESTINATION_ID for the run.
 # Echoes the destinationId on stdout; returns non-zero on failure.
 # ---------------------------------------------------------------------------
@@ -97,10 +101,19 @@ reconcile_resolve_destination_id() {
     return 0
   fi
   local dest_name="${RECONCILE_DESTINATION_NAME:-clickhouse-bronze}"  # RULE-DEFAULTS-OK: project-fixed name, not operator-tunable
-  local def_id
-  if ! def_id="$(ab_destination_definition_id_by_name Clickhouse 2>/dev/null)"; then
+  local definition
+  if ! definition="$(ab_destination_definition_by_name Clickhouse 2>/dev/null)"; then
     reconcile__log ERROR "${subject}" \
       "Airbyte does not register a Clickhouse destination definition in this workspace — cannot bootstrap Bronze sink"
+    return 1
+  fi
+
+  local def_id def_version
+  IFS=$'\t' read -r def_id def_version <<<"${definition}"
+
+  local refusal
+  if ! refusal="$(python3 "${_RECONCILE_PY_DIR}/check_destination_version.py" "${def_version}")"; then
+    reconcile__log ERROR "${subject}" "${refusal}"
     return 1
   fi
 

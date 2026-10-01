@@ -700,27 +700,20 @@ print(json.dumps(payload))
 }
 
 # ---------------------------------------------------------------------------
-# ab_destination_definition_id_by_name <name>
+# ab_destination_definition_by_name <name>
 # Looks up a built-in destination_definition by name (e.g. "Clickhouse",
-# "Postgres"). Returns the UUID or empty + non-zero exit if not found.
-# Reconcile uses this once at install time to find the Clickhouse
-# connector definition before creating the Bronze destination.
+# "Postgres"). Echoes "<definitionId><TAB><dockerImageTag>", or nothing +
+# non-zero exit if not found. Reconcile uses this once at install time to find
+# the Clickhouse connector definition before creating the Bronze destination,
+# and to hold the version Airbyte carries to a minimum.
 # ---------------------------------------------------------------------------
-ab_destination_definition_id_by_name() {
+ab_destination_definition_by_name() {
   local target="$1"
   local workspace_id
   workspace_id="$(ab_workspace_id)"
   ab__curl POST /api/v1/destination_definitions/list_for_workspace \
     "$(printf '{"workspaceId":"%s"}' "${workspace_id}")" \
-    | python3 -c '
-import sys, json
-target = sys.argv[1].lower()
-data = json.load(sys.stdin)
-for d in data.get("destinationDefinitions", []):
-    if (d.get("name") or "").lower() == target:
-        print(d["destinationDefinitionId"]); sys.exit(0)
-sys.exit(1)
-' "${target}"
+    | python3 "${_AIRBYTE_PY_DIR}/select_destination_definition.py" "${target}"
 }
 
 # ---------------------------------------------------------------------------
