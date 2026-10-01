@@ -452,9 +452,31 @@ fn the_widget_schema_offers_exactly_the_kinds_the_renderer_draws() {
 
     assert_eq!(
         widget["type"]["enum"],
-        json!(["table", "line", "bar", "area", "stat", "pie"])
+        json!([
+            "table",
+            "line",
+            "bar",
+            "area",
+            "stat",
+            "pie",
+            "donut",
+            "ranked",
+            "treemap",
+            "funnel",
+            "waterfall",
+            "stacked",
+            "composed",
+            "scatter",
+            "bubble",
+            "radar",
+            "radial",
+            "heatmap",
+            "pulse"
+        ])
     );
-    for field in ["metric", "columns", "x", "y", "value", "label"] {
+    for field in [
+        "metric", "columns", "x", "y", "y2", "value", "label", "series", "target", "size", "max",
+    ] {
         assert!(widget[field].is_object(), "{field} is offered");
     }
 }

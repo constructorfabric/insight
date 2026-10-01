@@ -2,6 +2,8 @@ use serde_json::json;
 
 use super::*;
 
+mod kinds;
+
 /// A metric whose run has no date to bucket by.
 fn metric() -> MetricQuery {
     serde_json::from_value(json!({
