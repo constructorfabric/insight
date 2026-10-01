@@ -106,7 +106,7 @@ def test_tenant_source_stamping(http_mocker: HttpMocker) -> None:
 @pytest.mark.skip(
     reason="same known drift as jira_issue_keys: jira_id is declared "
     "['string','null'] for consistency with every other jira_id column (the "
-    "2.4.0 rule, migration 20260723000000), but the AddFields Jinja "
+    "2.4.0 rule, held by heal_jira_issue_jira_id_type), but the AddFields "
     "literal-eval emits int for numeric ids. The ClickHouse destination "
     "coerces per the declared schema, so bronze stays String."
 )
