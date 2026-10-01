@@ -983,7 +983,7 @@ SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_gr
 
 CREATE TABLE IF NOT EXISTS silver.class_task_links
 (
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `insight_source_id` String,
     `data_source` String,
     `id_readable` String,
