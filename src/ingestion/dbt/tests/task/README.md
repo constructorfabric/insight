@@ -21,6 +21,9 @@ tag, add `config(tags=['task_tracker'])` as a SQL comment at the top of each tes
 | `assert_no_duplicate_items_in_array` | `value_ids` contains the same item twice (buggy Add) |
 | `assert_event_kind_matches_event_id` | `event_kind='initial'` without `initial:` prefix, or vice versa |
 | `assert_no_duplicate_silver_rows` | PK collision after ReplacingMergeTree merge |
+| `assert_event_order_unique_per_field` | Two rows of one (issue, field) share `event_order`, leaving that field's order undefined |
+| `assert_event_order_carries_event_time` | A row other than `synthetic_initial` whose `event_order` does not lead with its `event_at` millisecond |
+| `assert_initial_state_precedes_first_event` | An issue's `synthetic_initial` rows order after one of its changelog rows |
 | `assert_multi_value_no_comma_strings` | Jira legacy comma-list treated as single Add (Sprint/Roadmap bug) |
 | `assert_single_value_arrays_max_one` | Single-value field ended up with multiple elements |
 | `assert_delta_action_matches_cardinality` | `delta_action` incompatible with `field_cardinality` |

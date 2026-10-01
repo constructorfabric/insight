@@ -12188,8 +12188,7 @@ alerting:
               hist AS (
                   SELECT fh.insight_source_id AS insight_source_id, fh.data_source AS data_source,
                       fh.issue_id AS issue_id, fh.event_at AS event_at, fh.value_ids[1] AS value_id,
-                      (fh.event_at, multiIf(fh.event_kind = 'synthetic_initial', 0, fh.event_kind = 'changelog', 1, 2),
-                       fh._seq, toUInt64OrZero(fh.event_id)) AS ord,
+                      fh.event_order AS ord,
                       -- Authored binding wins; Jira's system fields carry their built-in
                       -- roles, the same two task_field_roles_current defaults for them.
                       multiIf(fh.field_id = 'availability', 'availability',

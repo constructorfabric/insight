@@ -87,12 +87,14 @@ name: jira
 # keep in transition order within one second. MAJOR because rows already
 # written change `_seq` and initial state, and only the full refresh a major
 # dispatches (ADR-0015) re-derives them.
-# 9.1.0: connections carry destinationSyncMode append_dedup with
-#   primaryKey unique_key, so the Airbyte destination owns the bronze table
-#   shape and the RMT promotion step is gone (#2877). MINOR per ADR-0015:
-#   reconcile must republish this connector so the connection catalog is
-#   refreshed; nothing already stored changes meaning.
-version: "9.1.0"
+# 10.0.0 (major): every journal row carries `event_order`, the one column that
+# orders an issue's history. Entries of one instant are ranked as a whole, from
+# the from→to chains of every field they touch, so all fields an entry changed
+# share its position; the initial state orders before an entry dated ahead of
+# the issue's creation. MAJOR because rows already written change `_seq` and
+# gain the column's real value, and only the full refresh a major dispatches
+# (ADR-0015) re-derives them.
+version: "10.0.0"
 schedule: "0 3 * * *"
 workflow: sync
 # Silver routing (class_task_*) is delivered by the task-tracking Silver layer
