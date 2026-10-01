@@ -87,7 +87,14 @@ name: jira
 # keep in transition order within one second. MAJOR because rows already
 # written change `_seq` and initial state, and only the full refresh a major
 # dispatches (ADR-0015) re-derives them.
-version: "9.0.0"
+# 10.0.0 (major): every journal row carries `event_order`, the one column that
+# orders an issue's history. Entries of one instant are ranked as a whole, from
+# the from→to chains of every field they touch, so all fields an entry changed
+# share its position; the initial state orders before an entry dated ahead of
+# the issue's creation. MAJOR because rows already written change `_seq` and
+# gain the column's real value, and only the full refresh a major dispatches
+# (ADR-0015) re-derives them.
+version: "10.0.0"
 schedule: "0 3 * * *"
 workflow: sync
 # CI build metadata + runtime image refs (ADR-0016). The `images:` block is

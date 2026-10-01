@@ -2,6 +2,7 @@
 -- depends_on: {{ ref('jira__task_field_kind') }}
 -- depends_on: {{ ref('jira__issue_field_snapshot') }}
 -- depends_on: {{ ref('jira__changelog_items') }}
+-- depends_on: {{ ref('jira__changelog_entry_ranks') }}
 {{ config(
     materialized='incremental',
     incremental_strategy='delete+insert',
@@ -225,15 +226,20 @@ changelog_items AS (
 -- and the class's incremental filter leaves the issue alone; an issue that
 -- received anything has all its rows re-emitted under the new version. Every
 -- row's issue is in one of the two inputs, so no row is left without one.
+--
+-- `origin_at` is the earlier of the issue's creation and its first changelog
+-- entry: the `synthetic_initial` rows order there, since an imported history
+-- can date an entry before the creation.
 issue_freshness AS (
     SELECT
         insight_source_id,
         issue_id,
-        max(observed_at)                                  AS fresh_at
+        max(observed_at)                                  AS fresh_at,
+        min(origin_at)                                    AS origin_at
     FROM (
-        SELECT insight_source_id, issue_id, observed_at FROM issues
+        SELECT insight_source_id, issue_id, observed_at, created_at AS origin_at FROM issues
         UNION ALL
-        SELECT insight_source_id, issue_id, extracted_at AS observed_at FROM changelog_items
+        SELECT insight_source_id, issue_id, extracted_at AS observed_at, created_at AS origin_at FROM changelog_items
     )
     GROUP BY insight_source_id, issue_id
 ),
@@ -246,7 +252,7 @@ events AS (
         ci.issue_id                                       AS issue_id,
         ci.changelog_id                                   AS changelog_id,
         -- INVARIANT: the changelog id orders two events of one instant only after
-        -- `same_instant_chain`, and only as a NUMBER — as text '101' sorts before
+        -- the entry's rank, and only as a NUMBER — as text '101' sorts before
         -- '99'. The string form stays the event id, an identifier, not an order.
         toUInt64OrZero(ci.changelog_id)                   AS event_ord,
         ci.created_at                                     AS event_at,
@@ -260,14 +266,8 @@ events AS (
                             'ci.value_to', 'ci.value_to_string') }}    AS sides,
         {{ jira_delta_element('ci.value_from', 'ci.value_from_string',
                               'ci.value_to', 'ci.value_to_string') }}  AS element,
-        -- Both sides spelled IDENTICALLY: the item records no change at all.
-        -- Compared as the changelog wrote them, NOT after the kind resolved
-        -- them: `duration` folds zero to the empty state, so a resolved
-        -- comparison also swallows `null -> 0`, which is a real event (work
-        -- logged against an unestimated issue, §3.5) that the journal keeps.
-        COALESCE(ci.value_from, '') = COALESCE(ci.value_to, '')
-            AND COALESCE(ci.value_from_string, '') = COALESCE(ci.value_to_string, '')
-                                                                       AS sides_unchanged
+        {{ jira_item_is_live('k.field_kind', 'ci.value_from', 'ci.value_from_string',
+                             'ci.value_to', 'ci.value_to_string') }}   AS is_live
     FROM changelog_items AS ci
     INNER JOIN kinds AS k
         ON k.insight_source_id = ci.insight_source_id
@@ -290,156 +290,27 @@ events AS (
 -- whole purpose is to carry the new display.
 live_events AS (
     SELECT * FROM events
-    WHERE delta_action != 'none'
-      AND (field_kind IN {{ jira_element_wise_kinds() }}
-           OR NOT sides_unchanged)
+    WHERE is_live
 ),
 
--- ── the order of self-describing events that share an instant (§5) ─────────
--- INVARIANT: the unique from→to chain orders them, not the changelog id; a
--- non-unique chain gives every event 0 and leaves the order to the id.
--- MEMORY (§13): only this narrow aggregation touches every event; arrays are
--- gathered for the tied keys alone.
-same_instant_keys AS (
-    SELECT
-        insight_source_id,
-        issue_id,
-        field_id,
-        event_at
-    FROM live_events
-    WHERE field_kind NOT IN {{ jira_element_wise_kinds() }}
-    GROUP BY insight_source_id, issue_id, field_id, event_at
-    HAVING min(event_ord) != max(event_ord)
-),
-
-same_instant_groups AS (
-    SELECT
-        insight_source_id,
-        issue_id,
-        field_id,
-        arraySort(x -> x.1, groupUniqArray((event_ord, changelog_id, sides.1, sides.3))) AS evs,
-        uniqExact(changelog_id)                           AS distinct_changelog_ids
-    FROM live_events
-    WHERE field_kind NOT IN {{ jira_element_wise_kinds() }}
-      AND (insight_source_id, issue_id, field_id, event_at)
-          IN (SELECT insight_source_id, issue_id, field_id, event_at FROM same_instant_keys)
-    GROUP BY insight_source_id, issue_id, field_id, event_at
-),
-
-same_instant_shape AS (
-    SELECT
-        insight_source_id,
-        issue_id,
-        field_id,
-        evs,
-        length(evs)                                       AS n,
-        length(evs) > distinct_changelog_ids              AS ambiguous_changelog,
-        arrayMap(x -> x.3, evs)                           AS befores,
-        arrayMap(x -> x.4, evs)                           AS afters
-    FROM same_instant_groups
-),
-
-same_instant_links AS (
-    SELECT
-        insight_source_id,
-        issue_id,
-        field_id,
-        evs,
-        n,
-        ambiguous_changelog,
-        befores,
-        afters,
-        arrayMap(i -> indexOf(befores, afters[i]), range(1, n + 1)) AS nexts
-    FROM same_instant_shape
-),
-
-same_instant_heads AS (
-    SELECT
-        insight_source_id,
-        issue_id,
-        field_id,
-        evs,
-        n,
-        ambiguous_changelog,
-        befores,
-        afters,
-        nexts,
-        arrayFilter(i -> NOT has(nexts, i), range(1, n + 1)) AS heads
-    FROM same_instant_links
-),
-
-same_instant_walks AS (
-    SELECT
-        insight_source_id,
-        issue_id,
-        field_id,
-        evs,
-        n,
-        -- INVARIANT: a walk that leaves the chain yields index 0, which
-        -- `same_instant_chain` rejects.
-        if(NOT ambiguous_changelog
-             AND length(arrayDistinct(befores)) = n
-             AND length(arrayDistinct(afters)) = n
-             AND NOT arrayExists(i -> nexts[i] = i, range(1, n + 1))
-             AND length(heads) = 1,
-           arrayFold((acc, k) -> arrayPushBack(acc, nexts[acc[-1]]),
-                     range(1, n), [heads[1]]),
-           CAST([] AS Array(UInt64)))                     AS walk
-    FROM same_instant_heads
-),
-
-same_instant_chain AS (
-    SELECT
-        insight_source_id,
-        issue_id,
-        field_id,
-        position.1                                        AS changelog_id,
-        any(position.2)                                   AS chain_pos
-    FROM (
-        -- INVARIANT: the arrayJoin stays alone in its own SELECT list. Reading
-        -- its elements beside it re-evaluates it per reference.
-        SELECT
-            insight_source_id,
-            issue_id,
-            field_id,
-            arrayJoin(arrayMap(i -> ((evs[i]).2,
-                                     toUInt32(if(length(arrayDistinct(walk)) = n AND NOT has(walk, 0),
-                                                 indexOf(walk, i) - 1, 0))),
-                               range(1, n + 1)))          AS position
-        FROM same_instant_walks
-    )
-    -- INVARIANT: a changelog id repeated in a group makes it ambiguous, so its
-    -- rows all carry 0 and `any()` picks no winner.
-    GROUP BY insight_source_id, issue_id, field_id, changelog_id
-),
-
--- INVARIANT: a scalar, not a CTE: evaluated once per query, while a CTE is
--- recomputed at every reference of `ordered_events`.
-(SELECT groupArray((insight_source_id, issue_id, field_id, changelog_id, chain_pos)) FROM same_instant_chain) AS same_instant_positions,
-
-ordered_events AS (
+-- ── the order of the entries that share an instant (§5) ────────────────────
+-- An entry's rank among the issue's entries of its instant, shared by every
+-- field it changed (`jira__changelog_entry_ranks`). An entry sharing its
+-- instant with none has no row there and ranks 0.
+ranked_events AS (
     SELECT
         e.*,
-        COALESCE(p.chain_pos, toUInt32(0))                AS chain_pos
+        COALESCE(r.entry_rank, toUInt32(0))               AS entry_rank
     FROM live_events AS e
-    LEFT JOIN (
-        SELECT
-            position.1                                    AS insight_source_id,
-            position.2                                    AS issue_id,
-            position.3                                    AS field_id,
-            position.4                                    AS changelog_id,
-            position.5                                    AS chain_pos
-        FROM (
-            -- INVARIANT: the arrayJoin stays alone in its own SELECT list. Reading
-            -- its elements beside it re-evaluates it per reference.
-            SELECT arrayJoin(same_instant_positions) AS position
-        )
-    ) AS p
-        ON p.insight_source_id = e.insight_source_id
-       AND p.issue_id = e.issue_id
-       AND p.field_id = e.field_id
-       AND p.changelog_id = e.changelog_id
-    WHERE e.field_kind NOT IN {{ jira_element_wise_kinds() }}
+    LEFT JOIN {{ ref('jira__changelog_entry_ranks') }} AS r FINAL
+        ON r.insight_source_id = e.insight_source_id
+       AND r.issue_id = e.issue_id
+       AND r.changelog_id = e.changelog_id
+),
+
+ordered_events AS (
+    SELECT * FROM ranked_events
+    WHERE field_kind NOT IN {{ jira_element_wise_kinds() }}
 ),
 
 -- ── fields the catalogue does not contain ───────────────────────────────────
@@ -606,16 +477,18 @@ element_wise_items AS (
         e.event_at                                        AS event_at,
         e.author_id                                       AS author_id,
         e.delta_action                                    AS delta_action,
+        e.entry_rank                                      AS entry_rank,
         e.element.1                                       AS element_id,
         concat(e.element.1, '\x1f', e.element.2)           AS pair,
-        -- The event's position in this (issue, field)'s sequence. Items of one
-        -- ENTRY share (event_at, event_ord); the element id breaks that tie so
+        -- The event's position in this (issue, field)'s sequence, entries in
+        -- the order of their instant. Items of one ENTRY share (event_at,
+        -- entry_rank, event_ord); the element id breaks that tie so
         -- the numbering is reproducible where the window's order among them was
         -- arbitrary. Items of one entry name distinct elements, so no element's
         -- own order depends on the tiebreak.
         row_number() OVER (PARTITION BY e.insight_source_id, e.issue_id, e.field_id
-                           ORDER BY e.event_at, e.event_ord, e.element.1) AS seq
-    FROM live_events AS e
+                           ORDER BY e.event_at, e.entry_rank, e.event_ord, e.element.1) AS seq
+    FROM ranked_events AS e
     WHERE e.field_kind IN {{ jira_element_wise_kinds() }}
 ),
 
@@ -794,6 +667,7 @@ element_wise_state AS (
         i.event_at                                        AS event_at,
         i.author_id                                       AS author_id,
         i.delta_action                                    AS delta_action,
+        i.entry_rank                                      AS entry_rank,
         COALESCE(st.state_pairs, CAST([] AS Array(String)))     AS state_pairs,
         i.seq                                             AS ops_seq
     FROM element_wise_items AS i
@@ -830,7 +704,7 @@ newest_from_events AS (
             e.insight_source_id                            AS src,
             e.issue_id                                     AS iss,
             e.field_id                                     AS fid,
-            (e.event_at, e.chain_pos, e.event_ord)         AS ord,
+            (e.event_at, e.entry_rank, e.event_ord)         AS ord,
             length(e.sides.3) > 0                          AS holds,
             {{ jira_value_set_digest('e.sides.3') }}       AS ids_d,
             {{ jira_value_set_digest('e.sides.4') }}       AS displays_d
@@ -969,10 +843,10 @@ initial_state AS (
             e.insight_source_id                            AS insight_source_id,
             e.issue_id                                     AS issue_id,
             e.field_id                                     AS field_id,
-            argMin(e.field_name, (e.event_at, e.chain_pos, e.event_ord))  AS field_name,
-            argMin(e.field_kind, (e.event_at, e.chain_pos, e.event_ord))  AS field_kind,
-            argMin(e.sides.1, (e.event_at, e.chain_pos, e.event_ord))     AS value_ids,
-            argMin(e.sides.2, (e.event_at, e.chain_pos, e.event_ord))     AS value_displays
+            argMin(e.field_name, (e.event_at, e.entry_rank, e.event_ord))  AS field_name,
+            argMin(e.field_kind, (e.event_at, e.entry_rank, e.event_ord))  AS field_kind,
+            argMin(e.sides.1, (e.event_at, e.entry_rank, e.event_ord))     AS value_ids,
+            argMin(e.sides.2, (e.event_at, e.entry_rank, e.event_ord))     AS value_displays
         FROM ordered_events AS e
         GROUP BY e.insight_source_id, e.issue_id, e.field_id
 
@@ -1041,6 +915,7 @@ SELECT
     created_at                                            AS event_at,
     CAST('synthetic_initial' AS String)                   AS event_kind,
     toUInt32(0)                                           AS _seq,
+    toUInt32(0)                                           AS order_rank,
     reporter_id                                           AS author_id,
     CAST('created' AS String)                             AS field_id,
     CAST('Created' AS String)                             AS field_name,
@@ -1065,7 +940,8 @@ SELECT
     e.changelog_id                                        AS event_id,
     e.event_at,
     CAST('changelog' AS String)                           AS event_kind,
-    e.chain_pos                                           AS _seq,
+    e.entry_rank                                          AS _seq,
+    e.entry_rank                                          AS order_rank,
     e.author_id,
     e.field_id,
     e.field_name,
@@ -1101,7 +977,8 @@ SELECT
     a.changelog_id                                        AS event_id,
     any(a.event_at)                                       AS event_at,
     CAST('changelog' AS String)                           AS event_kind,
-    toUInt32(0)                                           AS _seq,
+    any(a.entry_rank)                                     AS _seq,
+    any(a.entry_rank)                                     AS order_rank,
     any(a.author_id)                                      AS author_id,
     a.field_id,
     any(a.field_name)                                     AS field_name,
@@ -1137,6 +1014,7 @@ SELECT
     COALESCE(i.created_at, toDateTime64(0, 3))            AS event_at,
     CAST('synthetic_initial' AS String)                   AS event_kind,
     s.seq                                                 AS _seq,
+    s.seq                                                 AS order_rank,
     i.reporter_id                                         AS author_id,
     s.field_id,
     s.field_name,
@@ -1168,6 +1046,7 @@ SELECT
     r.event_at,
     CAST('retired_field' AS String)                       AS event_kind,
     toUInt32(0)                                           AS _seq,
+    toUInt32(0)                                           AS order_rank,
     -- Withdrawing a field is a configuration change, not an edit of the issue;
     -- the changelog carries no actor for it and Jira exposes none.
     CAST(NULL AS Nullable(String))                        AS author_id,
@@ -1214,6 +1093,7 @@ SELECT
     c.event_at,
     CAST('snapshot_diff' AS String)                       AS event_kind,
     toUInt32(0)                                           AS _seq,
+    toUInt32(0)                                           AS order_rank,
     -- Nobody is recorded as having done this: there is no entry to name an author.
     CAST(NULL AS Nullable(String))                        AS author_id,
     c.field_id,
@@ -1257,6 +1137,7 @@ SELECT
     u.event_at,
     CAST('unclassified_field' AS String)                  AS event_kind,
     toUInt32(0)                                           AS _seq,
+    toUInt32(0)                                           AS order_rank,
     u.author_id,
     u.field_id,
     u.field_name,
@@ -1300,6 +1181,8 @@ SELECT
     j.event_at,
     CAST(j.event_kind AS LowCardinality(String))        AS event_kind,
     j._seq,
+    {{ task_event_order("if(j.event_kind = 'synthetic_initial', least(j.event_at, f.origin_at), j.event_at)",
+                        task_event_band('j.event_kind'), 'j.order_rank') }}  AS event_order,
     j.author_id,
     j.field_id,
     j.field_name,

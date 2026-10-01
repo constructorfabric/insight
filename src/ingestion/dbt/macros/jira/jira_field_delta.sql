@@ -223,6 +223,22 @@
 {% endmacro %}
 
 
+{#-
+  Does the journal keep this item? An item with nothing on either side carries
+  no information (§6), and neither does one whose two sides are spelled
+  identically — compared as the changelog wrote them, not after the kind
+  resolved them, because `duration` folds zero to the empty state and `null -> 0`
+  is a real event. Element-wise kinds are exempt from the second rule: an item
+  naming the same element on both sides is the RENAME of that element.
+-#}
+{% macro jira_item_is_live(kind, from_id, from_str, to_id, to_str) %}
+    ({{ jira_delta_action(kind, from_id, from_str, to_id, to_str) }} != 'none'
+     AND ({{ kind }} IN {{ jira_element_wise_kinds() }}
+          OR NOT (COALESCE({{ from_id }}, '') = COALESCE({{ to_id }}, '')
+                  AND COALESCE({{ from_str }}, '') = COALESCE({{ to_str }}, ''))))
+{% endmacro %}
+
+
 {#- The (id, display) of the element an `obj_array` item adds or removes. -#}
 {% macro jira_delta_element(from_id, from_str, to_id, to_str) %}
     if(COALESCE({{ to_id }}, {{ to_str }}, '') != '',

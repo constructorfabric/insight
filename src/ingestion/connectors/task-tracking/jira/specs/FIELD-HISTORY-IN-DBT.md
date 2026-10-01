@@ -638,18 +638,32 @@ The round trip does not catch this — it compares ids, and the id set is correc
 either way. Only the initial row is wrong, which is why it took a test over
 controlled inputs to surface. Found that way, not by reading the code.
 
-**Two events of one instant are ordered by their chain, then by the numeric
+**Entries of one instant are ordered by their chains, then by the numeric
 changelog id.** A history imported from another tracker can carry timestamps
 to the second and number a chain of transitions out of order within one
 second — `Open → In Progress` and `In Progress → Closed` stamped alike, the
 second with the smaller id. The id order then applies them backwards and the
-issue ends one step short. So for the self-describing kinds, events sharing
-`(issue, field, event_at)` are ordered first by the from→to chain: one event
-follows another when its `before` side is the other's `after` side
-(`same_instant_chain`). A chain that is not unique — a fork, a cycle, an event
-linked to none of the others — orders nothing, and the id decides as before.
-The position reaches the class as `_seq`, and `initial_state` and the newest
-state read the same order.
+issue ends one step short. So the entries sharing `(issue, event_at)` are
+ranked as a whole, not per field (`task_instant_order`, computed once in
+`jira__changelog_entry_ranks`, which the journal joins):
+
+- each self-describing field links the entries that touched it at that instant
+  where its from→to chain is unique — one event follows another when its
+  `before` side is the other's `after` side (`task_chain_walk`). A fork, a
+  cycle, a repeated side or an entry carrying two items of the field links
+  nothing;
+- the links of all fields together order the entries. Links that contradict
+  each other — one field puts A first, another B — lie on a cycle, and only
+  those are dropped: the entries on it fall back to the id while every other
+  link still holds;
+- the id decides whatever no link does.
+
+Every field an entry changed carries the entry's rank, because those changes
+happened together. The rank reaches the class inside `event_order` (§10), and
+`initial_state`, the newest state and the element-wise spans read the same
+order. `assert_jira_same_instant_events_chain` warns where a field's
+same-instant events, in that order, still do not chain — the changelog does not
+say which came first there.
 
 The id reaches staging as a String, and as text `'101'` sorts before `'99'`,
 which inverts a pair of events every time the id crosses a digit-count
@@ -1012,33 +1026,21 @@ The output table is consumed by `silver.class_task_field_history` through
   it as `minIf(event_at, event_kind = 'synthetic_initial')`
 - `event_id`: `initial:{issue_id}` for synthetic rows, the changelog id for
   changelog rows
-- `_seq`: for a self-describing changelog row, its 0-based position in the
-  from→to chain of the events sharing its instant, 0 when it shares it with
-  none or the chain is not unique (§5); 0 for element-wise changelog rows; for
-  `synthetic_initial` rows, the 0-based index of the field in the
-  `field_id`-ascending list. **`(event_at, _seq)` is not a
-  total order**, and the claim that it is was wrong in two ways:
-
-  - two changelog rows of one instant can both carry 0. The tie-break after
-    `_seq` is the event id, compared numerically — it is the changelog id;
-  - worse, `_seq` sorts an initial row *after* a changelog row of the same
-    instant, because the initial rows carry 1..N and the changelog rows 0. Every
-    initial row of an issue is stamped with the creation timestamp, so this
-    happens to every issue whose first event landed on its own creation — and
-    the newest state of that field then reads as the empty state it had before
-    the event. The kind is what orders them (`task_event_rank`): an initial row
-    is by definition the state before any event, and a `retired_field` row is
-    stamped at or after every event.
-
-  Found by measuring, not by reading: it accounted for the entire round-trip
-  failure of one epic-link-shaped field and part of several others.
-
-  This also reaches gold. `task_issue_state` reads current state as
-  `argMax(..., (event_at, _version))`, and `_version` is a build-time stamp
-  shared by every row of one build — so on a same-instant pair it ties too, and
-  resolves arbitrarily. Widening `_seq` to carry the changelog id would make the
-  ordering intrinsic and is the better fix, but it is a contract change across
-  every source, so it is recorded here rather than made
+- `event_order`: the one column a reader sorts a task's history by, within one
+  field and across all fields (`task_event_order`):
+  `ms(order_at) * 1 000 000 + band * 100 000 + rank`. The band is the kind —
+  0 for `synthetic_initial`, 1 for `changelog`, 2 for the observed kinds — so an
+  initial row precedes any event of its instant and a `retired_field` row,
+  stamped at or after every event, follows them. The rank is the entry's
+  position among the issue's entries of that instant (§5) for a changelog row,
+  the field's index for a `synthetic_initial` row (0 for the creation marker).
+  `order_at` is `event_at`, except on `synthetic_initial` rows, where it is the
+  earlier of the creation and the issue's first changelog entry, so the initial
+  state still precedes an entry dated before the creation. `event_at` stays the
+  real time for durations and date filters
+- `_seq`: superseded by `event_order` and read by nothing. It holds the
+  `synthetic_initial` field index and a changelog row's rank within its
+  instant, 0 elsewhere
 - the `event_kind`, `delta_action`, `field_cardinality` and `value_id_type`
   enums, and the `value_ids` / `value_displays` array pairing. `event_kind` gains
   two values, `retired_field` (§3.6) and `unclassified_field` (§3.2); the enum is

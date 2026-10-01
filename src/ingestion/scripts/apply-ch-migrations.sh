@@ -431,6 +431,39 @@ heal_task_field_history_arm jira__availability_events
 heal_task_field_history_arm jira__comment_lifecycle_events
 heal_task_field_history_arm jira__worklog_lifecycle_events
 
+# `event_order` joined the class right after `_seq`
+# (migrations/20260925000000_task-field-history-event-order.sql), and every arm
+# must carry it there before the class unions them — the GitHub arm and the
+# derived journal too, because a class build can run before their own models
+# rebuild them. Rows already stored get the migration's approximation, so the
+# class never folds zeros in; the full refresh the major versions dispatch
+# writes the real values. The guard keeps a re-run from mutating anything:
+# only a row whose approximation is itself 0 still matches it.
+heal_task_field_history_event_order() {
+  local table="$1"
+  ch_table_exists staging "${table}" || return 0
+  echo "  staging.${table}"
+  run_ch <<SQL
+ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS event_order Int64 AFTER _seq;
+ALTER TABLE staging.${table} MODIFY COLUMN event_order Int64 AFTER _seq;
+ALTER TABLE staging.${table}
+    UPDATE event_order = toUnixTimestamp64Milli(event_at) * 1000000
+                       + multiIf(event_kind = 'synthetic_initial', 0, event_kind = 'changelog', 1, 2) * 100000
+                       + _seq
+    WHERE event_order = 0
+      AND toUnixTimestamp64Milli(event_at) * 1000000
+          + multiIf(event_kind = 'synthetic_initial', 0, event_kind = 'changelog', 1, 2) * 100000
+          + _seq != 0
+    SETTINGS mutations_sync = 1;
+SQL
+}
+
+heal_task_field_history_event_order jira__field_history_derived
+heal_task_field_history_event_order jira__availability_events
+heal_task_field_history_event_order jira__comment_lifecycle_events
+heal_task_field_history_event_order jira__worklog_lifecycle_events
+heal_task_field_history_event_order github__task_field_history
+
 echo "=== Healing CRM staging contract schemas ==="
 # The CRM overflow blob left the contract — the connectors carry the
 # unabridged record in raw_data — so the column must leave the physical

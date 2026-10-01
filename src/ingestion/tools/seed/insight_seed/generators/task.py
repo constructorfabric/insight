@@ -222,6 +222,17 @@ def _value_id_type(field_id: str) -> str:
     return "account_id" if field_id == "assignee" else "string_literal"
 
 
+_EVENT_BANDS = {"synthetic_initial": 0, "changelog": 1}
+_OBSERVED_BAND = 2
+
+
+def _event_order(event_at: _dt.datetime, event_kind: str, rank: int) -> int:
+    """The class's ordering key, as the `task_event_order` dbt macro composes it."""
+    epoch_ms = int(event_at.timestamp() * 1000)
+    band = _EVENT_BANDS.get(event_kind, _OBSERVED_BAND)
+    return epoch_ms * 1_000_000 + band * 100_000 + rank
+
+
 def _fh_row(
     *,
     tenant_uuid: str,
@@ -251,6 +262,7 @@ def _fh_row(
         event_at,
         event_kind,
         seq,
+        _event_order(event_at, event_kind, seq),
         author_id,
         field_id,
         field_name,
@@ -370,6 +382,7 @@ def seed_task_field_history(
         "event_at",
         "event_kind",
         "_seq",
+        "event_order",
         "author_id",
         "field_id",
         "field_name",
