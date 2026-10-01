@@ -5,9 +5,9 @@
  */
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { TruncatedCell } from "./usage-table";
+import { TruncatedCell, VirtualTable, type Column } from "./usage-table";
 
 async function popupFor(trigger: string) {
   await userEvent.hover(screen.getByText(trigger));
@@ -45,5 +45,59 @@ describe("TruncatedCell", () => {
     const popup = await popupFor("a long message");
 
     expect(popup).toHaveClass("max-h-[var(--available-height)]", "max-w-sm");
+  });
+});
+
+describe("VirtualTable", () => {
+  interface Row {
+    id: string;
+  }
+
+  const COLUMNS: Column<Row>[] = [
+    { header: "Person", cell: (row) => row.id },
+    { header: "Visits", sortKey: "visits", align: "right", cell: () => 1 },
+    { header: "Last seen (UTC)", sortKey: "last_seen", cell: () => "1 Aug 09:00" },
+  ];
+
+  function renderTable(onSort = vi.fn()) {
+    render(
+      <VirtualTable
+        label="Who opened it"
+        rows={[]}
+        rowKey={(row) => row.id}
+        columns={COLUMNS}
+        order={{ sort: "visits", direction: "desc" }}
+        onSort={onSort}
+      />,
+    );
+    return onSort;
+  }
+
+  it("announces the order the rows are in on the column that holds it", () => {
+    renderTable();
+
+    expect(screen.getByRole("columnheader", { name: /Visits/ })).toHaveAttribute(
+      "aria-sort",
+      "descending",
+    );
+    expect(screen.getByRole("columnheader", { name: /Last seen/ })).toHaveAttribute(
+      "aria-sort",
+      "none",
+    );
+  });
+
+  it("hands a click on a sortable header to whoever owns the order", async () => {
+    const onSort = renderTable();
+
+    await userEvent.click(screen.getByRole("button", { name: /Last seen/ }));
+
+    expect(onSort).toHaveBeenCalledWith("last_seen");
+  });
+
+  it("leaves a column nobody can order by as a label", () => {
+    renderTable();
+
+    expect(screen.queryByRole("button", { name: "Person" })).toBeNull();
+    expect(screen.getByRole("columnheader", { name: "Person" })).not.toHaveAttribute("aria-sort");
   });
 });

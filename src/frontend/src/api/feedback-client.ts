@@ -1,5 +1,6 @@
 import { AnalyticsApiError } from "@/api/analytics-client";
 import { fetchWithAuth } from "@/api/fetch-with-auth";
+import type { SortDirection } from "@/api/usage-client";
 
 const BASE =
   (import.meta.env.VITE_API_BASE as string | undefined) ?? "/api/analytics/v1";
@@ -48,8 +49,12 @@ export async function submitFeedback(body: FeedbackSubmission): Promise<void> {
   }
 }
 
-export async function getFeedback(range: FeedbackRange): Promise<FeedbackList> {
+export async function getFeedback(
+  range: FeedbackRange,
+  direction: SortDirection | null = null,
+): Promise<FeedbackList> {
   const params = new URLSearchParams({ since: range.since, until: range.until });
+  if (direction) params.set("direction", direction);
   const res = await fetchWithAuth(`${BASE}/feedback?${params}`);
   if (!res.ok) {
     throw new AnalyticsApiError(res.status, await res.json().catch(() => null));

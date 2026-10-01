@@ -163,8 +163,13 @@ pub(crate) struct NotificationResponse {
     value: serde_json::Value,
     evaluated_at: String,
     destination: String,
-    /// `pending` or `cancelled`.
+    /// `pending`, `cancelled`, `sent` or `failed`.
     status: &'static str,
+    attempts: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider_receipt: Option<String>,
     created_at: String,
 }
 
@@ -231,6 +236,9 @@ pub(crate) fn notification_response(notification: &Notification) -> Notification
         evaluated_at: notification.evaluated_at.to_rfc3339(),
         destination: notification.destination.clone(),
         status: notification.status.as_str(),
+        attempts: notification.attempts,
+        last_error: notification.last_error.clone(),
+        provider_receipt: notification.provider_receipt.clone(),
         created_at: notification.created_at.to_rfc3339(),
     }
 }

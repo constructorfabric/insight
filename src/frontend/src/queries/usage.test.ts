@@ -17,7 +17,7 @@ vi.mock("@tanstack/react-query", () => ({
 
 vi.mock("@/auth/use-auth", () => ({ useAuth: () => ({ session: null }) }));
 
-import { useUsageSummary } from "./usage";
+import { useUsagePeople, useUsageSummary } from "./usage";
 
 describe("useUsageSummary", () => {
   it("re-reads rather than trusting the hour-long default", () => {
@@ -25,5 +25,50 @@ describe("useUsageSummary", () => {
 
     expect(mocks.options?.staleTime).toBe(0);
     expect(mocks.options?.refetchOnMount).toBe("always");
+  });
+});
+
+describe("useUsagePeople", () => {
+  const AUGUST = { since: "2026-08-01", until: "2026-08-31" };
+  const LATEST = { sort: "last_seen", direction: "desc" } as const;
+
+  function useOptionsFor(...args: Parameters<typeof useUsagePeople>) {
+    useUsagePeople(...args);
+    return mocks.options ?? {};
+  }
+
+  type Placeholder = (previous: unknown, previousQuery?: { queryKey: unknown }) => unknown;
+
+  it("asks again when the search changes", () => {
+    const everyone = useOptionsFor(AUGUST, null, "").queryKey;
+    const matching = useOptionsFor(AUGUST, null, "ada").queryKey;
+
+    expect(matching).not.toEqual(everyone);
+  });
+
+  it("asks again when the order changes", () => {
+    const byDefault = useOptionsFor(AUGUST, null).queryKey;
+    const byLastSeen = useOptionsFor(AUGUST, LATEST).queryKey;
+
+    expect(byLastSeen).not.toEqual(byDefault);
+  });
+
+  it("keeps the rows on screen while the same period loads in a new order", () => {
+    const previousQuery = { queryKey: useOptionsFor(AUGUST, null).queryKey };
+    const placeholder = useOptionsFor(AUGUST, LATEST).placeholderData as Placeholder;
+    const rows = { ...AUGUST, items: [] };
+
+    expect(placeholder(rows, previousQuery)).toBe(rows);
+  });
+
+  it("drops the rows of another period rather than show them under this one", () => {
+    const previousQuery = {
+      queryKey: useOptionsFor({ since: "2026-07-01", until: "2026-07-31" }, LATEST).queryKey,
+    };
+    const placeholder = useOptionsFor(AUGUST, LATEST).placeholderData as Placeholder;
+
+    const july = { since: "2026-07-01", until: "2026-07-31", items: [] };
+
+    expect(placeholder(july, previousQuery)).toBeUndefined();
   });
 });

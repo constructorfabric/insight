@@ -37,6 +37,10 @@ data:
   CLICKHOUSE_URL:      {{ include "insight.clickhouse.url" .       | quote }}
   CLICKHOUSE_DATABASE: {{ include "insight.clickhouse.database" .  | quote }}
   CLICKHOUSE_USER:     {{ required "clickhouse.username is required" .Values.clickhouse.username | quote }}
+  # Topology of the warehouse (epic #2010): what DDL every toolbox job must
+  # emit. "false" / "" is a standalone single node.
+  CLICKHOUSE_CLUSTER_MODE: {{ include "insight.clickhouse.clusterMode" . | quote }}
+  CLICKHOUSE_CLUSTER_NAME: {{ include "insight.clickhouse.clusterName" . | quote }}
 
   # ─── MariaDB ───
   MARIADB_HOST:     {{ include "insight.mariadb.host" .     | quote }}

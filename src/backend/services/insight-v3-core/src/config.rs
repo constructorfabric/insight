@@ -23,6 +23,10 @@ pub(crate) const MIN_INGEST_TOKEN_BYTES: usize = 32;
 pub(crate) const MAX_INGEST_TOKEN_BYTES: usize = 1024;
 const DEFAULT_CHAT_MODEL: &str = "claude-sonnet-5";
 const DEFAULT_MCP_BIND_ADDR: &str = "0.0.0.0:8087";
+const DEFAULT_DELIVERY_ATTEMPTS: u32 = 5;
+const DEFAULT_DELIVERY_BACKOFF_SECS: u64 = 30;
+const DEFAULT_DELIVERY_TIMEOUT_SECS: u64 = 10;
+const DEFAULT_DELIVERY_CONCURRENCY: usize = 4;
 
 /// The MCP server's own listener, off unless a deployment asks for it.
 ///
@@ -59,12 +63,113 @@ impl Default for McpConfig {
     }
 }
 
-/// Where a notification may be sent: a name administrators refer to, and
-/// the provider behind it. Delivery credentials are not read here yet;
-/// a destination's provider is what a rule is checked against.
+/// Where a notification may be sent: a name administrators refer to, the
+/// provider behind it, and what that provider needs to accept a message.
 #[derive(Debug, Clone, Deserialize)]
-pub(crate) struct DestinationConfig {
-    pub(crate) provider: DestinationProvider,
+#[serde(tag = "provider", rename_all = "lowercase")]
+pub(crate) enum DestinationConfig {
+    /// A Discord channel, through an incoming webhook.
+    Discord { webhook_url: SecretString },
+    /// A Telegram chat, through a bot.
+    Telegram {
+        bot_token: SecretString,
+        #[serde(deserialize_with = "text_or_number")]
+        chat_id: String,
+    },
+    /// A Zulip stream topic, through a bot.
+    Zulip {
+        site_url: String,
+        bot_email: String,
+        api_key: SecretString,
+        stream: String,
+        topic: String,
+    },
+}
+
+impl DestinationConfig {
+    pub(crate) fn provider(&self) -> DestinationProvider {
+        match self {
+            Self::Discord { .. } => DestinationProvider::Discord,
+            Self::Telegram { .. } => DestinationProvider::Telegram,
+            Self::Zulip { .. } => DestinationProvider::Zulip,
+        }
+    }
+
+    /// The first thing wrong with this destination, if anything is.
+    fn check(&self, name: &str) -> Result<(), ConfigError> {
+        let field = |field: &'static str| ConfigError::AlertDestinationField {
+            name: name.to_owned(),
+            field,
+        };
+        match self {
+            Self::Discord { webhook_url } => {
+                if !is_https_url(webhook_url.expose_secret()) {
+                    return Err(field("webhook_url"));
+                }
+            }
+            Self::Telegram { bot_token, chat_id } => {
+                if bot_token.expose_secret().trim().is_empty() {
+                    return Err(field("bot_token"));
+                }
+                if chat_id.trim().is_empty() {
+                    return Err(field("chat_id"));
+                }
+            }
+            Self::Zulip {
+                site_url,
+                bot_email,
+                api_key,
+                stream,
+                topic,
+            } => {
+                if !is_https_url(site_url) {
+                    return Err(field("site_url"));
+                }
+                if bot_email.trim().is_empty() {
+                    return Err(field("bot_email"));
+                }
+                if api_key.expose_secret().trim().is_empty() {
+                    return Err(field("api_key"));
+                }
+                if stream.trim().is_empty() {
+                    return Err(field("stream"));
+                }
+                if topic.trim().is_empty() {
+                    return Err(field("topic"));
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// A value written as text that an environment variable delivers as a
+/// number when it is all digits: a Telegram chat id is a number or
+/// `@channel`.
+fn text_or_number<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Written {
+        Text(String),
+        Number(i64),
+    }
+
+    Ok(match Written::deserialize(deserializer)? {
+        Written::Text(text) => text,
+        Written::Number(number) => number.to_string(),
+    })
+}
+
+/// A credential travels in the address, so the address is not sent in the
+/// clear. Loopback is the one exception, for a stand's mock provider.
+fn is_https_url(value: &str) -> bool {
+    let Ok(url) = url::Url::parse(value) else {
+        return false;
+    };
+    let loopback = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "::1"));
+
+    url.scheme() == "https" || (url.scheme() == "http" && loopback)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -104,6 +209,14 @@ pub(crate) struct AlertsConfig {
     /// its hold for as long as the check runs.
     pub(crate) evaluation_lock_secs: u64,
     pub(crate) notifications_kept_per_rule: u64,
+    /// How many times a notification is sent for before it is given up on.
+    pub(crate) delivery_attempts: u32,
+    /// The wait before the second attempt; each later wait doubles.
+    pub(crate) delivery_backoff_secs: u64,
+    /// How long one provider call may take.
+    pub(crate) delivery_timeout_secs: u64,
+    /// How many notifications are sent at once.
+    pub(crate) delivery_concurrency: usize,
 }
 
 impl Default for AlertsConfig {
@@ -119,6 +232,10 @@ impl Default for AlertsConfig {
             evaluation_lock_secs: crate::domain::alerts::rule::DEFAULT_EVALUATION_LOCK_SECS,
             notifications_kept_per_rule:
                 crate::domain::alerts::rule::DEFAULT_NOTIFICATIONS_KEPT_PER_RULE,
+            delivery_attempts: DEFAULT_DELIVERY_ATTEMPTS,
+            delivery_backoff_secs: DEFAULT_DELIVERY_BACKOFF_SECS,
+            delivery_timeout_secs: DEFAULT_DELIVERY_TIMEOUT_SECS,
+            delivery_concurrency: DEFAULT_DELIVERY_CONCURRENCY,
         }
     }
 }
@@ -136,7 +253,9 @@ impl AlertsConfig {
         crate::domain::alerts::Destinations::new(
             self.destinations
                 .iter()
-                .map(|(name, destination)| (name.clone(), destination.provider.as_str().to_owned()))
+                .map(|(name, destination)| {
+                    (name.clone(), destination.provider().as_str().to_owned())
+                })
                 .collect(),
         )
     }
@@ -155,6 +274,10 @@ pub(crate) struct GearConfig {
     pub(crate) dataset_preview_rows: u64,
     /// How long an abandoned create or removal holds its dataset.
     pub(crate) dataset_lease_secs: i64,
+    /// Topology of the warehouse: whether the tables this service creates
+    /// must replicate, and the cluster its DDL is qualified with.
+    pub(crate) clickhouse_cluster_mode: bool,
+    pub(crate) clickhouse_cluster_name: String,
     pub(crate) clickhouse_user: Option<String>,
     pub(crate) clickhouse_password: Option<SecretString>,
     /// The read-only principal the assistant's query path connects as. Blank
@@ -179,6 +302,8 @@ impl Default for GearConfig {
             datasets_database: DEFAULT_DATASETS_DATABASE.to_owned(),
             dataset_preview_rows: DEFAULT_DATASET_PREVIEW_ROWS,
             dataset_lease_secs: crate::domain::datasets::LEASE_SECS,
+            clickhouse_cluster_mode: false,
+            clickhouse_cluster_name: String::new(),
             clickhouse_user: None,
             clickhouse_password: None,
             clickhouse_query_user: None,
@@ -223,6 +348,7 @@ pub(crate) struct ValidatedConfig {
     datasets_database: String,
     dataset_preview_rows: u64,
     dataset_lease_secs: i64,
+    topology: insight_clickhouse::Topology,
     clickhouse_user: Option<String>,
     clickhouse_password: Option<SecretString>,
     clickhouse_query_user: Option<String>,
@@ -249,6 +375,8 @@ impl fmt::Debug for GearConfig {
             .field("datasets_database", &self.datasets_database)
             .field("dataset_preview_rows", &self.dataset_preview_rows)
             .field("dataset_lease_secs", &self.dataset_lease_secs)
+            .field("clickhouse_cluster_mode", &self.clickhouse_cluster_mode)
+            .field("clickhouse_cluster_name", &self.clickhouse_cluster_name)
             .field("clickhouse_user", &self.clickhouse_user)
             .field("clickhouse_password", &REDACTED)
             .field("clickhouse_query_user", &self.clickhouse_query_user)
@@ -296,6 +424,7 @@ impl fmt::Debug for ValidatedConfig {
             .field("datasets_database", &self.datasets_database)
             .field("dataset_preview_rows", &self.dataset_preview_rows)
             .field("dataset_lease_secs", &self.dataset_lease_secs)
+            .field("topology", &self.topology)
             .field("clickhouse_user", &self.clickhouse_user)
             .field("clickhouse_password", &REDACTED)
             .field("clickhouse_query_user", &self.clickhouse_query_user)
@@ -355,7 +484,8 @@ impl ValidatedConfig {
         password: Option<&SecretString>,
     ) -> insight_clickhouse::Client {
         let mut config =
-            insight_clickhouse::Config::new(&self.clickhouse_url, &self.clickhouse_database);
+            insight_clickhouse::Config::new(&self.clickhouse_url, &self.clickhouse_database)
+                .with_topology(self.topology.clone());
         if let (Some(user), Some(password)) = (user, password) {
             config = config.with_auth(user, password.expose_secret());
         }
@@ -418,7 +548,8 @@ impl ValidatedConfig {
     /// is the only database this service creates or drops a table in.
     pub(crate) fn datasets_client(&self) -> insight_clickhouse::Client {
         let mut config =
-            insight_clickhouse::Config::new(&self.clickhouse_url, &self.datasets_database);
+            insight_clickhouse::Config::new(&self.clickhouse_url, &self.datasets_database)
+                .with_topology(self.topology.clone());
         if let (Some(user), Some(password)) = (
             self.clickhouse_user.as_deref(),
             self.clickhouse_password.as_ref(),
@@ -431,6 +562,14 @@ impl ValidatedConfig {
 }
 
 impl GearConfig {
+    /// Whether the warehouse replicates, as the DDL this service emits reads it.
+    fn topology(&self) -> insight_clickhouse::Topology {
+        insight_clickhouse::Topology::new(
+            self.clickhouse_cluster_mode,
+            &self.clickhouse_cluster_name,
+        )
+    }
+
     /// What a migration needs: the warehouse it creates tables in, and the
     /// definition store it migrates.
     pub(crate) fn validate_stores(self) -> Result<StoreConfig, ConfigError> {
@@ -443,6 +582,8 @@ impl GearConfig {
             self.clickhouse_password.as_ref(),
         )?;
 
+        let topology = self.topology();
+
         Ok(StoreConfig {
             clickhouse: insight_clickhouse::Client::new(
                 match (
@@ -453,11 +594,13 @@ impl GearConfig {
                         &self.clickhouse_url,
                         &self.clickhouse_database,
                     )
+                    .with_topology(topology)
                     .with_auth(user, password.expose_secret()),
                     _ => insight_clickhouse::Config::new(
                         &self.clickhouse_url,
                         &self.clickhouse_database,
-                    ),
+                    )
+                    .with_topology(topology),
                 },
             ),
             datasets_database: self.datasets_database,
@@ -479,6 +622,7 @@ impl GearConfig {
         require_non_empty("chat_model", &self.chat_model)?;
         require_non_empty("database_url", &self.database_url)?;
         require_non_empty("identity_url", &self.identity_url)?;
+        let topology = self.topology();
         let ingest_token = IngestToken::parse(self.ingest_token)?;
         validate_credentials(
             self.clickhouse_user.as_deref(),
@@ -503,6 +647,7 @@ impl GearConfig {
             datasets_database: self.datasets_database,
             dataset_preview_rows: self.dataset_preview_rows,
             dataset_lease_secs: self.dataset_lease_secs,
+            topology,
             clickhouse_user: self.clickhouse_user,
             clickhouse_password: self.clickhouse_password,
             clickhouse_query_user,
@@ -597,12 +742,18 @@ fn validate_alerts(alerts: &AlertsConfig) -> Result<(), ConfigError> {
     if alerts.evaluation_lock_secs == 0 || alerts.notifications_kept_per_rule == 0 {
         return Err(ConfigError::AlertCapacity);
     }
-    if let Some(name) = alerts
-        .destinations
-        .keys()
-        .find(|name| !is_destination_name(name))
+    if alerts.delivery_attempts == 0
+        || alerts.delivery_backoff_secs == 0
+        || alerts.delivery_timeout_secs == 0
+        || alerts.delivery_concurrency == 0
     {
-        return Err(ConfigError::AlertDestinationName(name.clone()));
+        return Err(ConfigError::AlertCapacity);
+    }
+    for (name, destination) in &alerts.destinations {
+        if !is_destination_name(name) {
+            return Err(ConfigError::AlertDestinationName(name.clone()));
+        }
+        destination.check(name)?;
     }
 
     Ok(())
@@ -666,6 +817,10 @@ pub(crate) enum ConfigError {
     AlertCapacity,
     #[error("gears.insight-v3-core.config.alerts.destinations.{0} is not a plain name")]
     AlertDestinationName(String),
+    #[error(
+        "gears.insight-v3-core.config.alerts.destinations.{name}.{field} is missing or not usable"
+    )]
+    AlertDestinationField { name: String, field: &'static str },
 }
 
 #[derive(Debug, Error)]

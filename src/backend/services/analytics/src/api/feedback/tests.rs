@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use sea_orm::{DbBackend, QueryTrait};
 use toolkit_canonical_errors::Problem;
 
 use super::*;
@@ -233,6 +234,64 @@ fn a_failed_read_says_nothing_about_the_database() -> Result<(), serde_json::Err
     assert!(
         !refusal.to_string().contains("db-7"),
         "the wire error must not carry the internal detail: {refusal}"
+    );
+    Ok(())
+}
+
+fn listing_sql(direction: Option<&str>) -> String {
+    let Ok(window) = date_window::parse_window(Some("2026-08-01"), Some("2026-08-02")) else {
+        panic!("a real window")
+    };
+    let query = FeedbackRangeQuery {
+        since: None,
+        until: None,
+        direction: direction.map(str::to_owned),
+    };
+    let Ok(direction) = query.direction() else {
+        panic!("should accept: {direction:?}")
+    };
+
+    listing(Uuid::now_v7(), &window, direction)
+        .build(DbBackend::MySql)
+        .to_string()
+}
+
+#[test]
+fn the_listing_reads_the_newest_first_unless_asked_otherwise() {
+    let sql = listing_sql(None);
+
+    assert!(
+        sql.contains("ORDER BY `feedback`.`created_at` DESC, `feedback`.`id` DESC"),
+        "{sql}"
+    );
+}
+
+#[test]
+fn the_listing_reads_the_oldest_first_when_asked() {
+    let sql = listing_sql(Some("asc"));
+
+    assert!(
+        sql.contains("ORDER BY `feedback`.`created_at` ASC, `feedback`.`id` ASC"),
+        "{sql}"
+    );
+}
+
+#[test]
+fn a_refused_direction_names_the_parameter() -> Result<(), serde_json::Error> {
+    let query = FeedbackRangeQuery {
+        since: None,
+        until: None,
+        direction: Some("sideways".to_owned()),
+    };
+    let Err(error) = query.direction() else {
+        panic!("sideways is not a direction")
+    };
+    let refused = problem(error)?;
+
+    assert_eq!(refused["status"], 400);
+    assert_eq!(
+        refused["context"]["field_violations"][0]["field"],
+        "direction"
     );
     Ok(())
 }

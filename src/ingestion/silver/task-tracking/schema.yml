@@ -57,9 +57,10 @@ models:
       - name: field_cardinality
         description: >
           Native cardinality when evidenced by the producer: single or multi.
-          unknown means historical cardinality cannot be established; the value
-          arrays are retained without truncation and current metadata is not
-          projected backwards onto the event.
+          A producer reads it from the field type as observed at or before the
+          event, so a later type change never reinterprets an earlier event;
+          unknown means no such evidence exists. Value arrays are retained
+          without truncation.
       - name: _seq
         description: "Superseded by `event_order`, which readers sort by. A `synthetic_initial` row's field index (0 for the creation marker) and a changelog row's rank within its instant; 0 elsewhere."
 

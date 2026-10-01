@@ -43,6 +43,10 @@ spec:
                 optional: true
             - secretRef:
                 name: {{ required "existingSecret is required" .Values.existingSecret | quote }}
+            {{- if and .Values.alerts.enabled .Values.alerts.existingSecret }}
+            - secretRef:
+                name: {{ .Values.alerts.existingSecret | quote }}
+            {{- end }}
           env:
             # An explicit `env` entry beats the same name arriving via
             # `envFrom`, so this wins over a stale copy in `existingSecret`.
@@ -51,6 +55,27 @@ spec:
                 secretKeyRef:
                   name: {{ required "ingest.tokenSecret is required" (.Values.ingest).tokenSecret | quote }}
                   key: {{ required "ingest.tokenKey is required" (.Values.ingest).tokenKey | quote }}
+            {{- with .Values.alerts }}
+            {{- if .enabled }}
+            {{- $redis := required "alerts.redis is required when alerts are enabled" .redis }}
+            {{- $host := required "alerts.redis.host is required when alerts are enabled" $redis.host }}
+            - name: APP__gears__insight_v3_core__config__alerts__enabled
+              value: "true"
+            {{- if $redis.passwordSecret }}
+            # SAFETY: the pod assembles the URL, so the password is never copied into another Secret.
+            - name: ALERTS_REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $redis.passwordSecret | quote }}
+                  key: {{ required "alerts.redis.passwordKey is required with alerts.redis.passwordSecret" $redis.passwordKey | quote }}
+            - name: APP__gears__insight_v3_core__config__alerts__redis_url
+              value: {{ printf "redis://:$(ALERTS_REDIS_PASSWORD)@%s:%v" $host $redis.port | quote }}
+            {{- else }}
+            - name: APP__gears__insight_v3_core__config__alerts__redis_url
+              value: {{ printf "redis://%s:%v" $host $redis.port | quote }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
             {{- if ((.Values.global).mcp).enabled }}
             - name: APP__gears__insight_v3_core__config__mcp__enabled
               value: "true"

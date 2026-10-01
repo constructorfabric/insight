@@ -68,6 +68,18 @@ describe("getFeedback", () => {
     );
   });
 
+  it("asks for the oldest first when that order is chosen", async () => {
+    mockFetch.mockResolvedValueOnce(
+      response({ since: "2026-08-01", until: "2026-08-16", items: [] }),
+    );
+
+    await getFeedback({ since: "2026-08-01", until: "2026-08-16" }, "asc");
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/analytics/v1/feedback?since=2026-08-01&until=2026-08-16&direction=asc",
+    );
+  });
+
   it("raises the refusal rather than resolving to an empty list", async () => {
     mockFetch.mockResolvedValueOnce(
       response({ detail: "admin role required" }, { ok: false, status: 403 }),

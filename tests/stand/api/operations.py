@@ -127,12 +127,15 @@ ANALYTICS_OPERATIONS: Final[tuple[Operation, ...]] = (
     _a("GET", f"/v1/metrics/{SOME_METRIC_KEY}"),
     _a("PUT", f"/v1/metrics/{SOME_METRIC_KEY}"),
     _a("DELETE", f"/v1/metrics/{SOME_METRIC_KEY}"),
-    # Usage monitoring. All three are `.authenticated()` at the edge; the
-    # summary's admin gate lives inside the handler, so it is invisible here and
+    # Usage monitoring. All are `.authenticated()` at the edge; the admin gate
+    # on the reads lives inside the handler, so it is invisible here and
     # asserted in test_usage.py instead.
     _a("POST", "/v1/usage/events"),
     _a("GET", "/v1/usage/config"),
     _a("GET", "/v1/usage/summary"),
+    _a("GET", "/v1/usage/people"),
+    _a("GET", "/v1/usage/pages"),
+    _a("GET", "/v1/usage/actions"),
     # Ingestion intensity (ops). `.authenticated()` at the edge; the admin gate
     # is inside the handler, so it is invisible here and asserted in
     # test_ingestion.py.

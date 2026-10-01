@@ -130,6 +130,36 @@ L2 infra (ClickHouse, MariaDB, Redis, Redpanda) is always **external** — deplo
 
 The umbrella validator (`templates/_helpers.tpl` → `insight.validate`) fails fast on the typical misconfigurations: missing `<dep>.host` / `.brokers`, missing `passwordSecret.{name,key}`, `identityResolution.deploy: false`, incomplete `authenticator.oidc` (e.g. `resolveBy: email` without `identityResolution.rosterSourceType`), and the `gitops` + `autoGenerate: true` combination.
 
+## ClickHouse topology
+
+A clustered ClickHouse needs `Replicated*` table engines and, depending on how
+its databases were created, an `ON CLUSTER` clause; a single node needs
+neither. Two chart values carry that one decision to every creator in the
+release, and they are the only place an operator sets it:
+
+- `clickhouse.clusterMode` (bool, default `false`) — created engines replicate.
+- `clickhouse.clusterName` (string, default `""`) — the cluster `ON CLUSTER`
+  names. It may stay empty under `clusterMode: true`: a database created with
+  the `Replicated` engine distributes DDL by itself.
+
+The same decision under a different name in each layer:
+
+| Layer | Name | Where |
+| --- | --- | --- |
+| Chart values | `clickhouse.clusterMode` / `clickhouse.clusterName` | [`values.yaml`](./values.yaml) |
+| Chart helpers | `insight.clickhouse.clusterMode` / `insight.clickhouse.clusterName` | [`templates/_helpers.tpl`](./templates/_helpers.tpl) |
+| Toolbox jobs | `CLICKHOUSE_CLUSTER_MODE` / `CLICKHOUSE_CLUSTER_NAME` | the `<release>-platform` ConfigMap, the `clickhouse-migrate` Job, `apply-ch-migrations.sh` |
+| Reconcile | `RECONCILE_DEST_CLICKHOUSE_CLUSTER_MODE` / `RECONCILE_DEST_CLICKHOUSE_CLUSTER_NAME` | `reconcile-cron.yaml`, consumed by `compose_destination_config.py` as the destination's `use_replicated_engines` / `cluster_name` |
+| dbt | project vars `cluster_mode` / `cluster_name`, plus the adapter's `cluster:` profile key | `dbt_project.yml`, `dbt_profiles.py` |
+| Rust | `insight_clickhouse::Topology` on `Config.topology`, from `clickhouse_cluster_mode` / `clickhouse_cluster_name` | `libs/insight-clickhouse`, `insight-v3-core` gear config |
+
+Tests that must know the topology read `CLICKHOUSE_CLUSTER_MODE` /
+`CLICKHOUSE_CLUSTER_NAME` from their harness, defaulting to a single node.
+
+Flipping the values does not by itself make an install clustered — the
+creators act on them task by task (epic #2010), and the clustered path is not
+supported until its CI lane is green.
+
 ## Values reference
 
 See comments in [`values.yaml`](./values.yaml) — every block is documented inline.
@@ -144,6 +174,7 @@ Key groups:
 - `authenticator.oidc.*` — OIDC upstream and login-resolution mode (`resolveBy: external_id | email`)
 - `identityResolution.*` — identity-resolution service (must stay deployed; `rosterSourceType` for email-mode logins)
 - `keycloak.deploy` + `keycloakConfig.*` — the in-stack identity broker and its realms-as-code hook
+- `clickhouse.clusterMode` / `clickhouse.clusterName` — warehouse topology, see [ClickHouse topology](#clickhouse-topology)
 - `clickhouse.fieldValueMap.*` — insert-only seed of operator-authored `config.field_value_map` / `config.field_value_defaults` rows from a TSV ConfigMap (post-upgrade hook, weight 300)
 - `previews.*`, `gitCliProxy.*`, `frontend.*` — optional services, on by default
 - `ingestion.templates.enabled` — whether to ship Argo WorkflowTemplates; requires Argo CRDs to be present in the cluster

@@ -49,6 +49,18 @@ spec:
             value: {{ `"{{inputs.parameters.clickhouse_port}}"` }}
           - name: CLICKHOUSE_USER
             value: {{ `"{{inputs.parameters.clickhouse_user}}"` }}
+          # Warehouse topology from the platform ConfigMap (epic #2010):
+          # the profile's `cluster` key and the dbt project's cluster vars.
+          - name: CLICKHOUSE_CLUSTER_MODE
+            valueFrom:
+              configMapKeyRef:
+                name: {{ .Release.Name }}-platform
+                key: CLICKHOUSE_CLUSTER_MODE
+          - name: CLICKHOUSE_CLUSTER_NAME
+            valueFrom:
+              configMapKeyRef:
+                name: {{ .Release.Name }}-platform
+                key: CLICKHOUSE_CLUSTER_NAME
           # Install-wide log level knob from the platform ConfigMap (#3191).
           - name: INSIGHT_LOG_LEVEL
             valueFrom:

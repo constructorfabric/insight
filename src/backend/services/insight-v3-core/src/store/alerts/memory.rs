@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use uuid::Uuid;
 
+use crate::domain::alerts::delivery::Attempted;
 use crate::domain::alerts::rule::{
     Accepted, AlertPage, AlertRule, AlertStore, AlertStoreError, AlertSummary, EvaluationState,
     Notification, NotificationStatus, Recorded, Recording, Write,
@@ -251,6 +252,9 @@ impl AlertStore for MemoryAlerts {
                 evaluated_at: recording.evaluated_at,
                 destination: current.spec.destination.clone(),
                 status: NotificationStatus::Pending,
+                attempts: 0,
+                last_error: None,
+                provider_receipt: None,
                 created_at: now,
             }),
             _ => None,
@@ -283,5 +287,58 @@ impl AlertStore for MemoryAlerts {
             .take(usize::try_from(page.limit()).unwrap_or(usize::MAX))
             .cloned()
             .collect())
+    }
+
+    async fn notification(&self, id: Uuid) -> Result<Option<Notification>, AlertStoreError> {
+        self.check()?;
+
+        Ok(self
+            .held()
+            .iter()
+            .find(|notification| notification.id == id)
+            .cloned())
+    }
+
+    async fn pending_notifications(&self) -> Result<Vec<Notification>, AlertStoreError> {
+        self.check()?;
+
+        Ok(self
+            .held()
+            .iter()
+            .filter(|notification| notification.status == NotificationStatus::Pending)
+            .cloned()
+            .collect())
+    }
+
+    async fn record_attempt(
+        &self,
+        id: Uuid,
+        attempted: &Attempted,
+    ) -> Result<Option<Notification>, AlertStoreError> {
+        self.check()?;
+        let mut held = self.held();
+        let Some(current) = held.iter_mut().find(|notification| {
+            notification.id == id && notification.status == NotificationStatus::Pending
+        }) else {
+            return Ok(None);
+        };
+
+        current.attempts += 1;
+        match attempted {
+            Attempted::Sent(receipt) => {
+                current.status = NotificationStatus::Sent;
+                current.last_error = None;
+                current.provider_receipt = Some(receipt.0.clone());
+            }
+            Attempted::Retry(error) => {
+                current.last_error = Some(error.clone());
+            }
+            Attempted::Failed(error) => {
+                current.status = NotificationStatus::Failed;
+                current.last_error = Some(error.clone());
+            }
+        }
+
+        Ok(Some(current.clone()))
     }
 }

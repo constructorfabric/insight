@@ -70,6 +70,21 @@ Contract per dep (all infra is external — out-of-chart L2):
 {{- default "http" .Values.clickhouse.protocol -}}
 {{- end -}}
 
+{{/* Topology of the target ClickHouse (epic #2010). One pair of values tells
+     every creator in this release which DDL to emit: `clusterMode` turns on
+     `Replicated*` engines, `clusterName` supplies the `ON CLUSTER <name>`
+     clause. They are independent — a database on the `Replicated` engine
+     replicates without any `ON CLUSTER`, so an empty name under
+     `clusterMode: true` is a valid clustered install.
+     Defaults render "false" and "", which is today's standalone DDL. */}}
+{{- define "insight.clickhouse.clusterMode" -}}
+{{- .Values.clickhouse.clusterMode | default false -}}
+{{- end -}}
+
+{{- define "insight.clickhouse.clusterName" -}}
+{{- default "" .Values.clickhouse.clusterName -}}
+{{- end -}}
+
 {{/* ---------- MariaDB (external) ---------- */}}
 {{- define "insight.mariadb.host" -}}
 {{- required "mariadb.host is required" .Values.mariadb.host -}}

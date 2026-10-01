@@ -120,6 +120,10 @@ impl SqlExplorer {
     }
 }
 
+#[expect(
+    clippy::unused_async_trait_impl,
+    reason = "the ServerHandler body is rmcp's, not ours"
+)]
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for SqlExplorer {
     fn get_info(&self) -> ServerConfig {

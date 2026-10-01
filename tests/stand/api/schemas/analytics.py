@@ -1038,6 +1038,15 @@ class UsagePage(BaseModel):
     visitors: int = Field(..., ge=0)
 
 
+class UsagePagesResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    items: list[UsagePage]
+    since: str
+    until: str
+
+
 class UsagePerson(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -1396,14 +1405,29 @@ class TimeseriesDto(BaseModel):
     total: float | None
 
 
+class UsageActionsResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    items: list[UsageEvent]
+    since: str
+    until: str
+
+
+class UsagePeopleResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    items: list[UsagePerson]
+    since: str
+    until: str
+
+
 class UsageSummaryResponse(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
     by_day: list[UsageDay]
-    by_event: list[UsageEvent]
-    by_page: list[UsagePage]
-    by_person: list[UsagePerson]
     since: str
     totals: UsageTotals
     until: str

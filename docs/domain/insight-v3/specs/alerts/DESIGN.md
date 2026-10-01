@@ -1,6 +1,6 @@
 ---
 status: draft
-version: "0.4"
+version: "0.5"
 date: 2026-09-28
 ---
 
@@ -8,9 +8,9 @@ date: 2026-09-28
 
 **Approved:** Insight v3 custom metrics, administrator API and MCP, one numeric result per alert, per-rule interval checks, one current check after downtime, first-breach notifications without reminders or recovery messages, provider-neutral delivery, and BullMQ on the deployment's Redis as the job library ([ADR-0009](../ADR/0009-bullmq-schedules-alert-checks.md)).
 
-**Flow:** an enabled rule is one repeating job; each run loads the rule, runs the stored metric as an on-demand run would, reads one number, records the outcome on the rule and, on the first breach, writes the notification it owes. Delivering that notification is a later release.
+**Flow:** an enabled rule is one repeating job; each run loads the rule, runs the stored metric as an on-demand run would, reads one number, records the outcome on the rule and, on the first breach, writes the notification it owes and queues it. A second queue hands each owed notification to its provider and records what the provider said.
 
-**Version 0.4:** Replace the Apalis proposal with BullMQ, collapse the state model to rules and notifications, and record the resolved decisions.
+**Version 0.5:** Add delivery: a second queue, one adapter per provider, and the send outcome on the notification. Version 0.4 replaced the Apalis proposal with BullMQ and collapsed the state model to rules and notifications.
 
 <!-- toc -->
 
@@ -61,8 +61,8 @@ The parent [separate-service ADR](../ADR/0001-separate-service.md) still applies
 | `cpt-insightspec-v3-alerts-fr-evaluate` | The existing metric run, unbucketed, read through a typed scalar boundary that accepts exactly one row and one column |
 | `cpt-insightspec-v3-alerts-fr-schedule` | One BullMQ job scheduler per enabled rule, repeating every rule interval; a missed iteration is skipped, not queued |
 | `cpt-insightspec-v3-alerts-fr-episodes` | The last valid finding on the rule row; a breach owes a notification only when the last valid finding was not a breach |
-| `cpt-insightspec-v3-alerts-fr-deliver` | A notification row written in the same transaction as the check that owes it; delivery reads that row, in a later release |
-| `cpt-insightspec-v3-alerts-fr-inspect` | The latest check on the rule; notifications listed per rule with their status |
+| `cpt-insightspec-v3-alerts-fr-deliver` | A notification row written in the same transaction as the check that owes it, then one delivery job keyed by the notification; unconfirmed sends fail the job so BullMQ retries with backoff, rejections and exhausted attempts are final |
+| `cpt-insightspec-v3-alerts-fr-inspect` | The latest check on the rule; notifications listed per rule with status, attempts, last error and provider receipt |
 
 #### NFR Allocation
 
@@ -70,7 +70,7 @@ The parent [separate-service ADR](../ADR/0001-separate-service.md) still applies
 |--------|--------------|-----------------|-----------------------|
 | `cpt-insightspec-v3-alerts-nfr-durability` | Store and schedule | Check and notification in one transaction, revision fence, startup reconcile, BullMQ locks and stalled recovery | Live tests against MariaDB and Redis in CI |
 | `cpt-insightspec-v3-alerts-nfr-timeliness` | Worker | Bounded concurrency; a check that outlives its lock on a dead worker is taken over; scheduling and check duration logged with the rule | Log fields per check; targets await synthetic load |
-| `cpt-insightspec-v3-alerts-nfr-confidentiality` | Configuration and API | Destinations named in configuration, rules reference a name, reads answer name and provider only; the Redis URL is redacted from debug output | Handler and configuration tests |
+| `cpt-insightspec-v3-alerts-nfr-confidentiality` | Configuration, API and adapters | Destinations and their credentials in configuration as secrets, rules reference a name, reads answer name and provider only; credentials and the Redis URL are redacted from debug output; a provider's words are stored, never the request | Handler, configuration and adapter tests |
 | `cpt-insightspec-v3-nfr-efficiency` | Worker | Bounded concurrency; notifications kept per rule capped | Compare synthetic resource use against the parent baseline |
 | `cpt-insightspec-v3-nfr-reliability` | Service lifecycle | Worker stops on the gear's cancellation token; unfinished checks are recovered by the next worker | Existing service availability evidence plus the live tests |
 | `cpt-insightspec-v3-nfr-performance` | Metric execution | Checks share the metric runner's timeouts and result bounds | Parent dashboard latency measurements under alert load |
@@ -89,13 +89,17 @@ flowchart LR
     Schedule --> Worker[Alert worker]
     Worker --> Metric[Existing custom-metric runner]
     Worker --> Store
+    Worker --> Deliveries[(Redis: BullMQ delivery queue)]
+    Deliveries --> Sender[Delivery worker]
+    Sender --> Store
+    Sender --> Provider[Discord, Telegram or Zulip]
 ```
 
 | Layer | Responsibility | Technology |
 |-------|----------------|------------|
 | Interface | Administrator operations and safe result presentation | Existing Rust REST and MCP integration |
 | Application/domain | Rule lifecycle, scalar comparison, breach transition | Typed Rust operations in Insight v3 |
-| Infrastructure | Durable state, schedule, metric execution | MariaDB, BullMQ on Redis, existing ClickHouse client |
+| Infrastructure | Durable state, schedule, metric execution, outbound messages | MariaDB, BullMQ on Redis, existing ClickHouse client, HTTP client per provider |
 
 ## 2. Principles & Constraints
 
@@ -125,7 +129,7 @@ BullMQ through its official Rust port, on the deployment's Redis. Redis must per
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-constraint-boundary`
 
-Only Insight v3 custom metrics are checked. Rules do not depend on a specific provider. API and MCP keep their current administrator authorization. Destinations are provisioned by the operator in configuration; a rule references one by name, and a read answers the name and the provider, never a credential.
+Only Insight v3 custom metrics are checked. Rules do not depend on a specific provider. API and MCP keep their current administrator authorization. Destinations and their credentials are provisioned by the operator in configuration; a rule references one by name, a read answers the name and the provider, and only a provider adapter ever holds a credential. A credential travels in a request address or header, so a destination address must be `https` (loopback excepted, for a stand's mock).
 
 ## 3. Technical Architecture
 
@@ -135,12 +139,14 @@ Only Insight v3 custom metrics are checked. Rules do not depend on a specific pr
 |--------|----------|-----------|
 | Rule | A generated id, the handle every operation takes; a name people read, not unique; a revision bumped by every configuration write | One metric, one result column, one condition, one interval, one destination; the latest check's finding lives on the row |
 | Check | Rule id plus revision, carried by the job | Recorded only while the rule is enabled at that revision |
-| Notification | Its own id; references the rule and the revision that owed it | Carries the value, condition and time the check saw; a later edit to the rule rewrites nothing it says |
-| Destination | A name in configuration | Names a provider; credentials are not part of the domain |
+| Notification | Its own id; references the rule and the revision that owed it | Carries the value, condition and time the check saw; a later edit to the rule rewrites nothing it says. Status is pending, cancelled, sent or failed; a send is recorded only while pending |
+| Destination | A name in configuration | Names a provider and holds its credentials; the domain sees the name and provider |
 
 A valid check is exactly one row and one named column holding a finite number comparable with the threshold. Anything else is unknown, with a reason: no rows, many rows, column missing, null, non-numeric, incomparable, metric missing, compile failed, run failed, timeout. An unknown check records itself on the rule and leaves the last valid finding as it was.
 
 A notification is owed when a valid check finds the condition met and the last valid finding was not a breach. It is owed again only after a valid check has seen the condition clear.
+
+A send ends one of three ways: the provider confirmed it and gave it an identity, the receipt; the provider rejected it and will keep rejecting it; or the outcome is unknown — a timeout, a rate limit, a server error, an answer not understood. Unknown is retried until the attempts run out; the message may therefore land twice. Rejection is final at once.
 
 ### 3.2 Component Model
 
@@ -222,6 +228,26 @@ A metric that does not answer is a finding about the rule, recorded as unknown, 
 
 ##### Related components (by ID)
 
+`cpt-insightspec-v3-alerts-component-store`, `cpt-insightspec-v3-alerts-component-delivery`.
+
+#### Delivery
+
+- [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-component-delivery`
+
+##### Why this component exists
+
+Provider failures must not touch the check or the rule.
+
+##### Responsibility scope
+
+One BullMQ queue, one job per notification keyed by its id, with the configured attempts and a doubling backoff. The delivery worker loads the notification, stops if it is not pending, builds the one-line message, sends it through the destination's adapter, and records the outcome: sent with the receipt, pending with the error when a retry follows, failed when the provider rejected it or the attempts are spent. At startup, and every five minutes after, every pending notification is queued again; the job id makes that idempotent.
+
+##### Responsibility boundaries
+
+Never reruns the metric. A destination removed from configuration rejects the send. Adapters: Discord posts to the webhook with `wait=true` and no mentions, and reads the created message id; Telegram calls `sendMessage` and reads `result.message_id`; Zulip posts to a stream topic with basic authentication and reads `id`. Each treats 429 and 5xx as unknown, other 4xx as rejection, and a body it does not understand as unknown.
+
+##### Related components (by ID)
+
 `cpt-insightspec-v3-alerts-component-store`.
 
 ### 3.3 API Contracts
@@ -238,7 +264,7 @@ Administration follows `cpt-insightspec-v3-alerts-interface-administration`. The
 | `GET /v1/alerts` | Optional search over name and metric, and page | One page of id, name, metric and enabled, and a total | Administrator |
 | `DELETE /v1/alerts/{id}` | — | No content | Administrator |
 | `POST /v1/alerts/{id}/enable`, `/disable` | `expected_revision` | The rule | Administrator |
-| `GET /v1/alerts/{id}/notifications` | Page | Notifications, newest first, with status | Administrator |
+| `GET /v1/alerts/{id}/notifications` | Page | Notifications, newest first, with status, attempts, last error and provider receipt | Administrator |
 | `GET /v1/alert-destinations` | — | Names and providers | Administrator |
 
 Refusals distinguish an invalid rule, a missing metric or alert, a revision conflict, the rule limit, and an installation with alerts off. An id that is malformed names no alert and answers the same as one that is absent. No login, SSO or MFA mechanism is added.
@@ -262,7 +288,9 @@ A metric edit takes effect at the next check without resetting the rule; only a 
 | BullMQ | The `bullmq-official` crate; one queue, one scheduler per rule | Redis 6.2 or later; persistence required |
 | MariaDB | Two tables in the service's existing database and migration ledger | Existing SeaORM connection |
 | ClickHouse | Existing custom-metric runner | Existing read-only restrictions and result limits |
-| Notification providers | Not integrated in this release | Destinations are named and typed in configuration; delivery arrives with the providers |
+| Discord | Incoming webhook, `POST {webhook_url}?wait=true` | Rate limits answered as 429; the webhook's channel membership is Discord's |
+| Telegram | Bot API `sendMessage` | The bot must be a member of the chat; rate limits answered as 429 |
+| Zulip | `POST /api/v1/messages` with bot credentials | The bot must be subscribed to the stream |
 
 ### 3.6 Interactions & Sequences
 
@@ -289,7 +317,15 @@ sequenceDiagram
     W->>M: Run metric, unbucketed
     M-->>W: Rows or failure
     W->>DB: Record outcome at revision; insert notification if owed
+    W->>Q: Queue delivery keyed by notification id
     Q->>Q: Schedule the next iteration
+    participant S as Delivery worker
+    participant P as Provider
+    Q->>S: Send {notification id}
+    S->>DB: Load notification, skip unless pending
+    S->>P: One message
+    P-->>S: Receipt, rejection or nothing usable
+    S->>DB: Record sent, pending with error, or failed
 ```
 
 Recovery rules:
@@ -311,9 +347,9 @@ Rule id, name, metric, column, operator, threshold as text so an integer stays e
 
 #### Table: alert notifications
 
-Notification id, rule id and revision, the rule name, metric, column, condition and value the check saw, when it was evaluated, the destination, status (`pending` or `cancelled` in this release), attempts, last error and provider receipt for delivery. Indexed by rule and time; the newest N per rule are kept, and a pending notification is never dropped.
+Notification id, rule id and revision, the rule name, metric, column, condition and value the check saw, when it was evaluated, the destination, status (`pending`, `cancelled`, `sent`, `failed`), attempts, the last error in the provider's words, and the provider receipt. Indexed by rule and time; the newest N per rule are kept, and a pending notification is never dropped.
 
-BullMQ owns its keys in Redis under its own prefix.
+BullMQ owns its keys in Redis under its own prefix. A finished check is kept there for inspection only up to a fixed count per outcome; a finished delivery job is removed at once, so that queuing a notification again after reconciling is never swallowed by the job it had before.
 
 ### 3.8 Deployment Topology
 
@@ -321,7 +357,9 @@ BullMQ owns its keys in Redis under its own prefix.
 
 The worker runs inside every `insight-v3-core` replica, started after the state is built and stopped on the gear's cancellation token. Replicas coordinate through BullMQ's locks; a check runs on one of them. Alerts are off unless the configuration names a Redis; with them off, the routes answer that the installation has none.
 
-Configuration: `alerts.enabled`, `alerts.redis_url`, `alerts.destinations.<name>.provider`, and the bounds `min_interval_secs`, `max_interval_secs`, `max_rules`, `evaluation_concurrency`, `evaluation_lock_secs`, `notifications_kept_per_rule`.
+Configuration: `alerts.enabled`, `alerts.redis_url`, `alerts.destinations.<name>` with `provider` and its fields (Discord `webhook_url`; Telegram `bot_token`, `chat_id`; Zulip `site_url`, `bot_email`, `api_key`, `stream`, `topic`), and the bounds `min_interval_secs`, `max_interval_secs`, `max_rules`, `evaluation_concurrency`, `evaluation_lock_secs`, `notifications_kept_per_rule`, `delivery_attempts`, `delivery_backoff_secs`, `delivery_timeout_secs`, `delivery_concurrency`.
+
+In the Helm chart, `insightV3Core.alerts.enabled` and `insightV3Core.alerts.redis` turn alerts on and point them at Redis; the pod assembles the Redis URL from the host and the password Secret, so the password stays in the one Secret it is sealed in. Destinations come either from `insightV3Core.alerts.destinations` in values, rendered into the config Secret when the chart generates credentials, or from a Secret the operator seals and names in `insightV3Core.alerts.existingSecret`, which is how a gitops environment supplies them.
 
 ## 4. Additional Context
 
@@ -333,22 +371,23 @@ The alternatives were run, not read, against a local MariaDB and Redis before Bu
 
 - Pure tests for number comparison, scalar classification, the breach transition and draft validation.
 - Live MariaDB tests for revisions, conflicts, one notification per breach, stale checks, withdrawal on disable and the kept count.
-- Live Redis tests for one scheduler per rule and for a worker taking a scheduled check through the metric runner to a recorded notification.
+- Live Redis tests for one scheduler per rule, for a worker taking a scheduled check through the metric runner to a recorded and queued notification, and for delivery: sent once with a receipt, retried after an unconfirmed answer, failed after the last attempt.
+- Adapter tests against a local server playing each provider: acceptance, rate limit, rejection, server error, an answer not understood, and no answer in time.
 - Handler tests for every route's authorization, validation and revision handling; an MCP tool-list test.
 
-Every check logs the rule, revision, outcome, reason, whether a notification was owed, and its duration. Redis persistence and worker health are operator signals.
+Every check logs the rule, revision, outcome, reason, whether a notification was owed, and its duration. Every send logs the notification, attempt, and receipt or reason. Redis persistence, worker health and failed notifications are operator signals.
 
 ### Resolved Decisions
 
 | Decision | Outcome |
 |----------|---------|
 | Job library | BullMQ on Redis ([ADR-0009](../ADR/0009-bullmq-schedules-alert-checks.md)) |
-| D3 first providers | None in this release: the notification is owed and visible; delivery and providers follow |
+| D3 first providers | Discord, Telegram and Zulip, one adapter each behind one provider interface |
 | D4 numbers | Exactly one row and one column; `>`, `>=`, `<`, `<=`; integers exact, floats as `f64`, mixed only where exact |
 | D5 unknown | Keeps the last valid finding; records time and reason; no freshness condition |
 | D6 edits | Revision per write, `expected_revision` on update; edit or enable resets the finding; disable withdraws pending notifications; delete removes everything |
-| D7 limits | Interval 60 s to 7 d, 200 rules, concurrency 4, check lock 60 s, 200 notifications kept per rule; all configurable |
-| D8 destinations | Operator-provisioned names with a provider in configuration; per-administrator destinations later behind the same interface |
+| D7 limits | Interval 60 s to 7 d, 200 rules, concurrency 4, check lock 60 s, 200 notifications kept per rule, 5 delivery attempts from 30 s doubling, 10 s provider call, 4 concurrent sends; all configurable |
+| D8 destinations | Operator-provisioned names with a provider and its credentials in configuration; one-line message; per-administrator destinations later behind the same interface |
 | Evaluation history | Latest check on the rule only; history is the notifications |
 | Metric snapshot | None; a metric edit applies at the next check |
 
@@ -358,4 +397,4 @@ Every check logs the rule, revision, outcome, reason, whether a notification was
 - **Parent PRD**: [Insight v3](../PRD.md), specifically `cpt-insightspec-v3-fr-create-alerts` and the inherited quality requirements.
 - **Parent DESIGN**: [Insight v3](../DESIGN.md).
 - **Applicable ADRs**: [Separate service](../ADR/0001-separate-service.md), [BullMQ schedules the alert checks](../ADR/0009-bullmq-schedules-alert-checks.md).
-- **Implementation**: `src/backend/services/insight-v3-core/src/domain/alerts`, `store/alerts.rs`, `store/alert_schedule.rs`, `api/alerts.rs`, `mcp/alerts.rs`.
+- **Implementation**: `src/backend/services/insight-v3-core/src/domain/alerts`, `store/alerts.rs`, `store/alert_schedule.rs`, `store/providers`, `api/alerts.rs`, `mcp/alerts.rs`.

@@ -4,6 +4,9 @@
     GET  /v1/usage/config    200 · whether this instance records at all
     GET  /v1/usage/summary   200 for the admin operator · 400 malformed day ·
                              403 for everybody else
+    GET  /v1/usage/people    the same gate · 400 for a sort or direction the
+    GET  /v1/usage/pages     list cannot take
+    GET  /v1/usage/actions
 
 `/v1/usage/summary` is the first admin-gated operation analytics serves. The gate
 is inside the handler, not at the edge: it asks identity `/v1/me` for an active
@@ -13,13 +16,13 @@ routes, and the refusal is only observable with a session.
 
 Ingest is the one place this suite writes rows it cannot remove. Usage events are
 append-only and no operation deletes them, so `scratch.py`'s create-then-delete
-policy does not reach them. `/v1/usage/summary` is the table's only reader, so
-nothing else in the suite sees what accumulates — but this module has to defend
-itself: the breakdowns are ranked top-N lists, so every read here asks for THIS
+policy does not reach them. The `/v1/usage/*` reads are the table's only
+readers, so nothing else in the suite sees what accumulates — but this module has
+to defend itself: the lists are ranked top-N, so every read here asks for THIS
 RUN's day only. Left on the default window, a stand with more than
 `BREAKDOWN_LIMIT` single-view paths from earlier runs would tie-break the fresh
-one out of `by_page`, and the wait below would fail for a reason that has nothing
-to do with the code under test.
+one out of the pages list, and the wait below would fail for a reason that has
+nothing to do with the code under test.
 
 The 401 half is in `test_gateway.py`, swept over every operation at once.
 """
@@ -34,11 +37,31 @@ from insight_stand import ApiClient, PersonaSession, analytics_path, wait_until
 from insight_stand.api import JsonValue
 
 from .. import scratch
-from ..schemas import ProblemDocument, UsageConfigResponse, UsageSummaryResponse
+from ..schemas import (
+    ProblemDocument,
+    UsageActionsResponse,
+    UsageConfigResponse,
+    UsagePage,
+    UsagePagesResponse,
+    UsagePeopleResponse,
+    UsagePerson,
+    UsageSummaryResponse,
+)
 
 EVENTS = analytics_path("/v1/usage/events")
 CONFIG = analytics_path("/v1/usage/config")
 SUMMARY = analytics_path("/v1/usage/summary")
+PEOPLE = analytics_path("/v1/usage/people")
+PAGES = analytics_path("/v1/usage/pages")
+ACTIONS = analytics_path("/v1/usage/actions")
+
+ADMIN_READS = (SUMMARY, PEOPLE, PAGES, ACTIONS)
+
+LISTS: dict[str, type[UsagePeopleResponse | UsagePagesResponse | UsageActionsResponse]] = {
+    PEOPLE: UsagePeopleResponse,
+    PAGES: UsagePagesResponse,
+    ACTIONS: UsageActionsResponse,
+}
 
 #: A page in the shape the SPA sends: the person the screen is about is already
 #: reduced to `:id` before it leaves the browser. Ingest stores the path as it
@@ -85,18 +108,32 @@ def _today() -> str:
     return datetime.now(UTC).date().isoformat()
 
 
-def _summary(client: ApiClient, since: str) -> UsageSummaryResponse:
+def _read(client: ApiClient, path: str, since: str, **order: str) -> str:
     # `since` is captured before the write and `until` read now, so a run that
     # straddles UTC midnight still spans the day its own beacon landed on.
-    response = client.get(SUMMARY, params={"since": since, "until": _today()})
-    assert response.status_code == 200, f"summary: {response.status_code} {response.text[:300]}"
-    return response.parse(UsageSummaryResponse)
+    response = client.get(path, params={"since": since, "until": _today(), **order})
+    assert response.status_code == 200, f"{path}: {response.status_code} {response.text[:300]}"
+    return response.text
+
+
+def _summary(client: ApiClient, since: str) -> UsageSummaryResponse:
+    return UsageSummaryResponse.model_validate_json(_read(client, SUMMARY, since))
+
+
+def _pages(client: ApiClient, since: str) -> list[UsagePage]:
+    return UsagePagesResponse.model_validate_json(_read(client, PAGES, since)).items
+
+
+def _people(client: ApiClient, since: str, **params: str) -> list[UsagePerson]:
+    return UsagePeopleResponse.model_validate_json(_read(client, PEOPLE, since, **params)).items
+
+
+def _paths(client: ApiClient, since: str) -> set[str]:
+    return {page.path for page in _pages(client, since)}
 
 
 @pytest.fixture(scope="module")
-def summary_after_a_beacon(
-    lead_session: PersonaSession, admin_operator_session: PersonaSession
-) -> UsageSummaryResponse:
+def day_of_a_beacon(lead_session: PersonaSession, admin_operator_session: PersonaSession) -> str:
     """Ingest one page view as an ordinary caller, then read it back as admin.
 
     Module-scoped so the run adds one undeletable row rather than one per test,
@@ -120,13 +157,12 @@ def summary_after_a_beacon(
         f"ingest answered {accepted.status_code}, expected 204: {accepted.text[:300]}"
     )
 
-    admin = admin_operator_session.client
     wait_until(
-        lambda: BEACON_PATH in {page.path for page in _summary(admin, day).by_page},
+        lambda: BEACON_PATH in _paths(admin_operator_session.client, day),
         timeout_s=20,
-        description=f"the page view at {BEACON_PATH} to reach the usage summary",
+        description=f"the page view at {BEACON_PATH} to reach the usage lists",
     )
-    return _summary(admin, day)
+    return day
 
 
 @pytest.mark.reliability
@@ -143,7 +179,7 @@ def test_usage_config_is_readable_by_any_signed_in_caller(api: ApiClient) -> Non
 @pytest.mark.requires_seed("admin_operator")
 @pytest.mark.reliability
 def test_a_beacon_is_recorded_and_reaches_the_summary(
-    summary_after_a_beacon: UsageSummaryResponse,
+    day_of_a_beacon: str, admin_operator_session: PersonaSession
 ) -> None:
     """The whole point of the feature, end to end on the deployed path.
 
@@ -152,12 +188,13 @@ def test_a_beacon_is_recorded_and_reaches_the_summary(
     surfaces in the product. Only the read model can show the event was stored,
     which is why the 204 and this assertion belong to one test.
     """
-    pages = {page.path: page for page in summary_after_a_beacon.by_page}
+    admin = admin_operator_session.client
+    pages = {page.path: page for page in _pages(admin, day_of_a_beacon)}
     assert BEACON_PATH in pages, (
-        f"the recorded page is absent from the summary; it lists {sorted(pages)[:20]}"
+        f"the recorded page is absent from the pages list; it lists {sorted(pages)[:20]}"
     )
     assert pages[BEACON_PATH].views >= 1
-    assert summary_after_a_beacon.totals.page_views >= 1
+    assert _summary(admin, day_of_a_beacon).totals.page_views >= 1
 
 
 @pytest.mark.requires_seed("admin_operator")
@@ -191,9 +228,9 @@ def test_a_beacon_carrying_no_session_is_not_a_visit(
     assert accepted.status_code == 204, accepted.text[:300]
 
     wait_until(
-        lambda: path in {page.path for page in _summary(admin, day).by_page},
+        lambda: path in _paths(admin, day),
         timeout_s=20,
-        description="the sessionless page view to reach the summary",
+        description="the sessionless page view to reach the usage lists",
     )
 
     assert _summary(admin, day).totals.visits == before, (
@@ -201,9 +238,9 @@ def test_a_beacon_carrying_no_session_is_not_a_visit(
     )
 
 
-def _figures_for(summary: UsageSummaryResponse, person_id: str) -> tuple[int, int]:
-    """That person's (visits, page_views) in this summary. (0, 0) when absent."""
-    for person in summary.by_person:
+def _figures_for(people: list[UsagePerson], person_id: str) -> tuple[int, int]:
+    """That person's (visits, page_views) in this list. (0, 0) when absent."""
+    for person in people:
         if person.person_id == person_id:
             return person.visits, person.page_views
     return 0, 0
@@ -231,7 +268,7 @@ def test_the_sender_owns_the_visit_whoever_the_message_names(
     named = admin_operator_session.person.uuid
     assert sender != named, "the sender and the person named must differ"
 
-    before = _summary(admin, day)
+    before = _people(admin, day)
     before_sender = _figures_for(before, sender)
     before_named = _figures_for(before, named)
 
@@ -264,12 +301,12 @@ def test_the_sender_owns_the_visit_whoever_the_message_names(
     assert accepted.status_code == 204, accepted.text[:300]
 
     wait_until(
-        lambda: path in {page.path for page in _summary(admin, day).by_page},
+        lambda: path in _paths(admin, day),
         timeout_s=20,
-        description="the page view claiming to be somebody else to reach the summary",
+        description="the page view claiming to be somebody else to reach the usage lists",
     )
 
-    after = _summary(admin, day)
+    after = _people(admin, day)
     assert _figures_for(after, sender) == (before_sender[0] + 1, before_sender[1] + 1), (
         f"the sender was not credited: {before_sender} -> {_figures_for(after, sender)}"
     )
@@ -280,16 +317,17 @@ def test_the_sender_owns_the_visit_whoever_the_message_names(
 
 
 @pytest.mark.security
-def test_the_summary_is_refused_without_the_admin_grant(api: ApiClient) -> None:
+@pytest.mark.parametrize("path", ADMIN_READS)
+def test_the_usage_reads_are_refused_without_the_admin_grant(api: ApiClient, path: str) -> None:
     """Admin-only is enforced by the service, not by hiding the nav entry.
 
     The SPA hides the page from non-admins, which is a courtesy and not a
     boundary: anybody signed in can address the url. This is the assertion that
     the boundary exists at all.
     """
-    response = api.get(SUMMARY)
+    response = api.get(path)
     assert response.status_code == 403, (
-        f"the usage summary answered {response.status_code} to a caller holding no "
+        f"{path} answered {response.status_code} to a caller holding no "
         f"admin grant: {response.text[:300]}"
     )
     problem = response.parse(ProblemDocument)
@@ -299,8 +337,9 @@ def test_the_summary_is_refused_without_the_admin_grant(api: ApiClient) -> None:
 
 @pytest.mark.requires_seed("admin_operator")
 @pytest.mark.reliability
+@pytest.mark.parametrize("path", ADMIN_READS)
 def test_a_malformed_day_is_refused_rather_than_queried(
-    admin_operator_session: PersonaSession,
+    admin_operator_session: PersonaSession, path: str
 ) -> None:
     """The window is parsed before ClickHouse is asked anything.
 
@@ -308,8 +347,94 @@ def test_a_malformed_day_is_refused_rather_than_queried(
     avoid is one where an unparseable value is carried far enough to become a
     500 — or worse, part of a statement.
     """
-    response = admin_operator_session.client.get(SUMMARY, params={"since": "not-a-date"})
+    response = admin_operator_session.client.get(path, params={"since": "not-a-date"})
     assert response.status_code == 400, (
         f"a malformed `since` answered {response.status_code}: {response.text[:300]}"
     )
     assert response.parse(ProblemDocument).status == 400
+
+
+@pytest.mark.requires_seed("admin_operator")
+@pytest.mark.reliability
+@pytest.mark.parametrize(
+    ("path", "sort"),
+    [
+        (PEOPLE, "visits"),
+        (PEOPLE, "page_views"),
+        (PEOPLE, "last_seen"),
+        (PAGES, "views"),
+        (PAGES, "visitors"),
+        (ACTIONS, "opens"),
+        (ACTIONS, "people"),
+    ],
+)
+@pytest.mark.parametrize("direction", ["asc", "desc"])
+def test_a_list_comes_back_in_the_order_it_was_asked_for(
+    day_of_a_beacon: str,
+    admin_operator_session: PersonaSession,
+    path: str,
+    sort: str,
+    direction: str,
+) -> None:
+    """`last_seen` is fixed-width text, so its string order is its time order."""
+    body = _read(
+        admin_operator_session.client, path, day_of_a_beacon, sort=sort, direction=direction
+    )
+    values = [getattr(row, sort) for row in LISTS[path].model_validate_json(body).items]
+
+    assert values == sorted(values, reverse=direction == "desc"), (
+        f"{path}?sort={sort}&direction={direction} came back as {values[:20]}"
+    )
+
+
+@pytest.mark.requires_seed("admin_operator")
+@pytest.mark.reliability
+@pytest.mark.parametrize(
+    ("path", "params", "field"),
+    [
+        (PEOPLE, {"sort": "views"}, "sort"),
+        (PAGES, {"sort": "last_seen"}, "sort"),
+        (ACTIONS, {"sort": "opens, path"}, "sort"),
+        (PEOPLE, {"direction": "sideways"}, "direction"),
+    ],
+)
+def test_an_order_a_list_cannot_take_is_refused_rather_than_queried(
+    admin_operator_session: PersonaSession, path: str, params: dict[str, str], field: str
+) -> None:
+    response = admin_operator_session.client.get(path, params=params)
+    assert response.status_code == 400, (
+        f"{path} {params} answered {response.status_code}: {response.text[:300]}"
+    )
+    violations = response.parse(ProblemDocument).context.get("field_violations")
+    assert isinstance(violations, list) and violations, response.text[:300]
+    first = violations[0]
+    assert isinstance(first, dict) and first.get("field") == field, response.text[:300]
+
+
+@pytest.mark.requires_seed("dev_lead", "admin_operator")
+@pytest.mark.reliability
+def test_a_search_narrows_the_visitors_to_the_person_it_names(
+    day_of_a_beacon: str, lead_session: PersonaSession, admin_operator_session: PersonaSession
+) -> None:
+    admin = admin_operator_session.client
+    sender = next(
+        (
+            person
+            for person in _people(admin, day_of_a_beacon)
+            if person.person_id == lead_session.person.uuid
+        ),
+        None,
+    )
+    assert sender is not None, "the beacon's sender is missing from the visitors"
+    needle = sender.username or sender.display_name
+    if not needle:
+        pytest.skip(
+            "the sender is not mirrored into the identity rows, so there is no name to search"
+        )
+
+    found = _people(admin, day_of_a_beacon, search=needle.upper())
+
+    assert sender.person_id in {person.person_id for person in found}
+    assert all(
+        needle.lower() in f"{person.display_name} {person.username}".lower() for person in found
+    ), [person.display_name for person in found]

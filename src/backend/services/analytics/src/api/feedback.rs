@@ -6,7 +6,7 @@ use axum::extract::{Extension, Query};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use chrono::{DateTime, Duration, NaiveDate, NaiveTime, TimeZone, Utc};
-use sea_orm::{ColumnTrait, EntityTrait, Order, QueryFilter, QueryOrder, QuerySelect, Set};
+use sea_orm::{ColumnTrait, EntityTrait, Order, QueryFilter, QueryOrder, QuerySelect, Select, Set};
 use serde::{Deserialize, Serialize};
 use toolkit_canonical_errors::CanonicalError;
 use toolkit_security::SecurityContext;
@@ -14,13 +14,15 @@ use uuid::Uuid;
 
 use super::error::FeedbackError;
 use super::person_names::{self, PersonName};
+use super::sort_direction::SortDirection;
 use super::{ADMIN_ONLY, AppState, clip, require_admin};
-use crate::domain::date_window::{self, WindowError};
+use crate::domain::date_window::{self, Window, WindowError};
 use crate::infra::db::entities::feedback;
 use crate::migration::feedback_schema;
 
-/// The newest submissions in the window. A window holding more is cut without
-/// saying so — narrowing the period is the only way to reach what falls past it.
+/// The first submissions in the requested order. A window holding more is cut
+/// without saying so — narrowing the period is the only way to reach what falls
+/// past it.
 const LIST_LIMIT: u64 = 200;
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -59,6 +61,14 @@ pub struct FeedbackRangeQuery {
     pub since: Option<String>,
     /// Inclusive `YYYY-MM-DD` upper bound. Defaults to today.
     pub until: Option<String>,
+    pub direction: Option<String>,
+}
+
+impl FeedbackRangeQuery {
+    fn direction(&self) -> Result<SortDirection, CanonicalError> {
+        SortDirection::from_param(self.direction.as_deref())
+            .ok_or_else(|| violation("direction", SortDirection::EXPECTED))
+    }
 }
 
 pub async fn submit_feedback(
@@ -89,14 +99,10 @@ pub async fn list_feedback(
 
     let window = date_window::parse_window(range.since.as_deref(), range.until.as_deref())
         .map_err(refused_window)?;
+    let direction = range.direction()?;
     let tenant = ctx.subject_tenant_id();
 
-    let rows = feedback::Entity::find()
-        .filter(feedback::Column::InsightTenantId.eq(tenant))
-        .filter(feedback::Column::CreatedAt.gte(day_start(window.since)))
-        .filter(feedback::Column::CreatedAt.lt(day_after(window.until)))
-        .order_by(feedback::Column::CreatedAt, Order::Desc)
-        .limit(LIST_LIMIT)
+    let rows = listing(tenant, &window, direction)
         .all(&state.db)
         .await
         .map_err(read_error)?;
@@ -108,6 +114,21 @@ pub async fn list_feedback(
         until: window.until.to_string(),
         items: rows.into_iter().map(|row| entry(row, &names)).collect(),
     }))
+}
+
+fn listing(tenant: Uuid, window: &Window, direction: SortDirection) -> Select<feedback::Entity> {
+    let order = match direction {
+        SortDirection::Asc => Order::Asc,
+        SortDirection::Desc => Order::Desc,
+    };
+
+    feedback::Entity::find()
+        .filter(feedback::Column::InsightTenantId.eq(tenant))
+        .filter(feedback::Column::CreatedAt.gte(day_start(window.since)))
+        .filter(feedback::Column::CreatedAt.lt(day_after(window.until)))
+        .order_by(feedback::Column::CreatedAt, order.clone())
+        .order_by(feedback::Column::Id, order)
+        .limit(LIST_LIMIT)
 }
 
 fn to_row(

@@ -157,7 +157,7 @@ static LAST_SYNC_SQL: LazyLock<String> = LazyLock::new(|| {
                      FROM {TABLE} WHERE event = '{SYNC_COMPLETED}') \
                GROUP BY {INSTANCE_COLUMNS} \
                ORDER BY {INSTANCE_COLUMNS} LIMIT ?)",
-        order = &*ROW_ORDER
+        order = *ROW_ORDER
     )
 });
 
@@ -193,7 +193,7 @@ fn sync_history(scope: &str) -> String {
                      WHERE event = '{SYNC_COMPLETED}' AND connector = ?{scope}) \
                GROUP BY job_id) \
          ORDER BY newest DESC LIMIT ?",
-        order = &*ROW_ORDER
+        order = *ROW_ORDER
     )
 }
 

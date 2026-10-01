@@ -10,23 +10,31 @@ import {
   TruncatedCell,
   VirtualTable,
 } from "@/components/portal/usage-table";
+import { useUsageOrder } from "@/hooks/use-usage-order";
 import { formatUtcClock } from "@/lib/format";
 import { screenLabel } from "@/lib/portal/screen-label";
 import { TEXT_NAME } from "@/lib/type-scale";
 import { useFeedbackList } from "@/queries/feedback";
 
 export function FeedbackTable({ range }: { range: FeedbackRange }) {
-  const feedback = useFeedbackList(range);
+  const order = useUsageOrder("ts");
+  const feedback = useFeedbackList(range, order.chosen?.direction ?? null);
 
   return (
     <section className="flex flex-col gap-2">
       <h3 className={TEXT_NAME}>What people told us</h3>
-      <Body query={feedback} />
+      <Body query={feedback} order={order} />
     </section>
   );
 }
 
-function Body({ query }: { query: ReturnType<typeof useFeedbackList> }) {
+function Body({
+  query,
+  order,
+}: {
+  query: ReturnType<typeof useFeedbackList>;
+  order: ReturnType<typeof useUsageOrder<"ts">>;
+}) {
   if (query.isPending) return <CenteredSpinner />;
   if (query.isError || !query.data) {
     return (
@@ -42,10 +50,14 @@ function Body({ query }: { query: ReturnType<typeof useFeedbackList> }) {
       label="What people told us"
       rows={query.data.items}
       rowKey={(row) => row.feedback_id}
+      order={order.shown}
+      onSort={order.toggle}
+      pending={query.isPlaceholderData}
       columns={[
         {
           header: "When (UTC)",
           width: 11,
+          sortKey: "ts",
           cell: (row) => formatUtcClock(row.ts, "d MMM HH:mm"),
         },
         { header: "Person", width: 12, cell: (row) => <PersonName row={row} /> },

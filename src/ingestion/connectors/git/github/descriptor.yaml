@@ -86,11 +86,6 @@ name: github
 #   means clearing the cursors of `pull_request_timeline_events` (for the link
 #   columns) and `issue_timeline_events` (for the board status changes already
 #   missed) and re-walking; without that both heal forward only.
-# 8.3.0: connections carry destinationSyncMode append_dedup with
-#   primaryKey unique_key, so the Airbyte destination owns the bronze table
-#   shape and the RMT promotion step is gone (#2877). MINOR per ADR-0015:
-#   reconcile must republish this connector so the connection catalog is
-#   refreshed; nothing already stored changes meaning.
 # 9.0.0: `github__task_field_history` writes `event_order`, the one column
 #   that orders an issue's history, and orders the events of one second by the
 #   from→to chain of their field before the event id — the value at creation
