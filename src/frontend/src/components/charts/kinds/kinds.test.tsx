@@ -303,4 +303,15 @@ describe("<ChartKind>", () => {
     expect(tiles).toHaveLength(13);
     expect(tiles.some((title) => title.startsWith("Other:"))).toBe(true);
   });
+  it("tilts waterfall step labels so neighbours do not overlap", () => {
+    const { figure } = drawn(
+      { type: "waterfall", metric: "m", label: "repo", value: "n" },
+      BY_REPO
+    );
+    const label = [...figure.querySelectorAll("text")].find((text) =>
+      text.textContent?.startsWith("api")
+    );
+
+    expect(label?.getAttribute("transform")).toMatch(/^rotate\(-\d+/);
+  });
 });

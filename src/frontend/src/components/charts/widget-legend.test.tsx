@@ -37,4 +37,12 @@ describe("<WidgetLegend>", () => {
 
     expect(container).toBeEmptyDOMElement();
   });
+  it("cuts a long series name and keeps it whole on hover", () => {
+    const name = "email_development_01@company.nonpresent";
+    render(<WidgetLegend items={[{ label: name, color: "red" }]} />);
+
+    const item = screen.getByRole("listitem");
+    expect(item).toHaveAttribute("title", name);
+    expect(item.textContent?.length).toBeLessThan(name.length);
+  });
 });

@@ -51,11 +51,10 @@ export function WaterfallKind({
           <XAxis
             dataKey="label"
             interval={0}
-            tick={<CategoryTick anchor="end" chars={10} />}
-            angle={-14}
+            tick={<CategoryTick anchor="end" chars={10} angle={-30} />}
             tickLine={false}
             axisLine={false}
-            height={46}
+            height={58}
           />
           <YAxis
             tick={AXIS_TICK}

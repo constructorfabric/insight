@@ -52,12 +52,14 @@ export function CategoryTick({
   payload,
   anchor = "end",
   chars = LABEL_CHARS,
+  angle,
 }: {
   x?: number | string;
   y?: number | string;
   payload?: { value?: unknown };
   anchor?: "start" | "middle" | "end";
   chars?: number;
+  angle?: number;
 }) {
   const full = String(payload?.value ?? "");
 
@@ -67,6 +69,7 @@ export function CategoryTick({
       y={y}
       dy={4}
       textAnchor={anchor}
+      transform={angle ? `rotate(${angle}, ${x}, ${y})` : undefined}
       fill={AXIS_TICK.fill}
       fontSize={AXIS_TICK.fontSize}
     >
