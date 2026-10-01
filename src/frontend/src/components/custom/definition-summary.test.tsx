@@ -6,7 +6,7 @@ vi.mock("@tanstack/react-router", async () => {
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { MetricSummary } from "./definition-summary";
+import { MetricSummary, WidgetSummary } from "./definition-summary";
 
 describe("<MetricSummary>", () => {
   it("names the dataset a metric reads, and its fields by their declared names", () => {
@@ -72,5 +72,40 @@ describe("<MetricSummary>", () => {
     );
 
     expect(screen.getByText("silver.class_usage")).toBeInTheDocument();
+  });
+});
+
+describe("<WidgetSummary>", () => {
+  it("names a table's columns in the order it shows them", () => {
+    render(
+      <WidgetSummary
+        linkMetric={false}
+        widget={{ type: "table", metric: "m", columns: ["day", "n"] }}
+      />
+    );
+
+    expect(screen.getByText("Columns")).toBeInTheDocument();
+    expect(screen.getByText("day, n")).toBeInTheDocument();
+  });
+
+  it("names every column a chart draws by the part it plays", () => {
+    render(
+      <WidgetSummary
+        linkMetric={false}
+        widget={{
+          type: "bubble",
+          metric: "m",
+          x: "files",
+          y: "lines",
+          size: "goal",
+          series: "repo",
+        }}
+      />
+    );
+
+    expect(screen.getByText("Draws")).toBeInTheDocument();
+    expect(
+      screen.getByText("x files · y lines · size goal · series repo")
+    ).toBeInTheDocument();
   });
 });

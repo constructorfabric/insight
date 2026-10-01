@@ -26,11 +26,19 @@ export interface TableWidget extends WidgetBase {
   columns: string[];
 }
 
-/** A line, a bar and an area all read one column against another. */
-export interface SeriesWidget extends WidgetBase {
-  type: "line" | "bar" | "area";
+export interface LineWidget extends WidgetBase {
+  type: "line";
   x: string;
   y: string;
+  series?: string;
+  target?: string;
+}
+
+export interface SeriesWidget extends WidgetBase {
+  type: "bar" | "area";
+  x: string;
+  y: string;
+  series?: string;
 }
 
 export interface StatWidget extends WidgetBase {
@@ -39,13 +47,82 @@ export interface StatWidget extends WidgetBase {
   label?: string;
 }
 
-export interface PieWidget extends WidgetBase {
-  type: "pie";
+export interface CategoryWidget extends WidgetBase {
+  type: "pie" | "donut" | "ranked" | "treemap" | "funnel" | "waterfall";
   label: string;
   value: string;
 }
 
-export type Widget = TableWidget | SeriesWidget | StatWidget | PieWidget;
+export interface StackedWidget extends WidgetBase {
+  type: "stacked";
+  label: string;
+  value: string;
+  series: string;
+}
+
+export interface ComposedWidget extends WidgetBase {
+  type: "composed";
+  x: string;
+  y: string;
+  y2: string;
+}
+
+export interface ScatterWidget extends WidgetBase {
+  type: "scatter";
+  x: string;
+  y: string;
+  series?: string;
+}
+
+export interface BubbleWidget extends WidgetBase {
+  type: "bubble";
+  x: string;
+  y: string;
+  size: string;
+  series?: string;
+}
+
+export interface RadarWidget extends WidgetBase {
+  type: "radar";
+  label: string;
+  value: string;
+  target?: string;
+}
+
+export interface RadialWidget extends WidgetBase {
+  type: "radial";
+  value: string;
+  max?: string;
+}
+
+export interface HeatmapWidget extends WidgetBase {
+  type: "heatmap";
+  x: string;
+  value: string;
+}
+
+export interface PulseWidget extends WidgetBase {
+  type: "pulse";
+  x: string;
+  y: string;
+}
+
+export type Widget =
+  | TableWidget
+  | LineWidget
+  | SeriesWidget
+  | StatWidget
+  | CategoryWidget
+  | StackedWidget
+  | ComposedWidget
+  | ScatterWidget
+  | BubbleWidget
+  | RadarWidget
+  | RadialWidget
+  | HeatmapWidget
+  | PulseWidget;
+
+export type WidgetKind = Widget["type"];
 
 /**
  * Where one field or one condition of a metric reads its value from.
