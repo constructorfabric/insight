@@ -32,8 +32,8 @@ importers:
         specifier: 0.3.0-alpha.0
         version: 0.3.0-alpha.0
       '@gears-frontx/ui-kit':
-        specifier: 0.4.0-alpha.4
-        version: 0.4.0-alpha.4(@date-fns/tz@1.5.0)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react-is@19.2.6)(react@19.3.0)(redux@5.0.1)
+        specifier: 0.4.0-alpha.6
+        version: 0.4.0-alpha.6(@date-fns/tz@1.5.0)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react-is@19.2.6)(react@19.3.0)(redux@5.0.1)
       '@sentry/react':
         specifier: 10.75.0
         version: 10.75.0(react@19.3.0)
@@ -742,8 +742,8 @@ packages:
   '@gears-frontx/telemetry@0.3.0-alpha.0':
     resolution: {integrity: sha512-6h9VRN/c3IabWe14cxxuIt9LHsM//09yuZaUpBxx4LawQUBfQffcHqKpSfRkBPRia+I0MF7IWbL9lqVytqlp7A==}
 
-  '@gears-frontx/ui-kit@0.4.0-alpha.4':
-    resolution: {integrity: sha512-9qpy+PrqIl5GZ6gNXw08KRe1bQu54OSKxB0TnPYwhoyb5IBKOUbcVSnYTO9BIHfN4bzH3JVI9nqS+SUlWLd4AQ==}
+  '@gears-frontx/ui-kit@0.4.0-alpha.6':
+    resolution: {integrity: sha512-1zxaxVv94ajBV5MBr0wyFZ+eS5A3kNDAO2RRYK8L76ISlgw7pJ2qe/PcVaPGvcWbmY8FDn0YeLCKWk1pQMYSZA==}
     peerDependencies:
       react: 19.3.0
       react-dom: 19.3.0
@@ -5347,7 +5347,7 @@ snapshots:
     dependencies:
       bowser: 2.11.0
 
-  '@gears-frontx/ui-kit@0.4.0-alpha.4(@date-fns/tz@1.5.0)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react-is@19.2.6)(react@19.3.0)(redux@5.0.1)':
+  '@gears-frontx/ui-kit@0.4.0-alpha.6(@date-fns/tz@1.5.0)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react-is@19.2.6)(react@19.3.0)(redux@5.0.1)':
     dependencies:
       '@base-ui/react': 1.6.0(@date-fns/tz@1.5.0)(@types/react@19.3.0)(date-fns@4.4.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@shadcn/react': 0.3.0(@types/react@19.3.0)(react@19.3.0)
