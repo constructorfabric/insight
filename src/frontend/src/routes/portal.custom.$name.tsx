@@ -248,6 +248,10 @@ function DashboardWidgetSlot({
         title={heading ?? fallbackTitle}
         state="ready"
         scroll={widgetState.data.type === "table"}
+        size={widgetState.data.type === "table" ? "tall" : "standard"}
+        className={
+          widgetState.data.type === "table" ? "col-span-full" : undefined
+        }
         onBodyActivate={() => setDrilldown(true)}
         bodyLabel={label}
         action={

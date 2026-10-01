@@ -115,4 +115,16 @@ describe("<WidgetFrame>", () => {
 
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
+  it.each([
+    ["standard", "304px"],
+    ["tall", "464px"],
+  ] as const)("stands %s at %s", (size, height) => {
+    const { container } = render(
+      <WidgetFrame title="Rows" state="ready" size={size}>
+        <p>table</p>
+      </WidgetFrame>
+    );
+
+    expect(container.firstElementChild).toHaveStyle({ height });
+  });
 });

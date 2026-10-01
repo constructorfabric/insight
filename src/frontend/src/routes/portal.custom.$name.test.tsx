@@ -80,10 +80,12 @@ describe("/portal/custom/$name", () => {
 
     render(<Component />, { wrapper });
 
-    const header = (await screen.findByRole("heading", {
-      level: 1,
-      name: "Engineering",
-    })).closest("header") as HTMLElement;
+    const header = (
+      await screen.findByRole("heading", {
+        level: 1,
+        name: "Engineering",
+      })
+    ).closest("header") as HTMLElement;
     expect(
       within(header).getByRole("button", { name: "Edit engineering" })
     ).toHaveAttribute("href", "/portal/custom/edit/dashboards/engineering");
@@ -112,13 +114,39 @@ describe("/portal/custom/$name", () => {
       await screen.findByRole("button", { name: "More for engineering" })
     );
     await user.click(await screen.findByRole("menuitem", { name: "Rename…" }));
-    const field = await screen.findByRole("textbox", { name: "Dashboard name" });
+    const field = await screen.findByRole("textbox", {
+      name: "Dashboard name",
+    });
     await user.clear(field);
     await user.type(field, "platform{Enter}");
 
     await waitFor(() =>
       expect(portalRouter.pathname).toBe("/portal/custom/platform")
     );
+  });
+
+  it("gives a table widget the whole row and the tall height so its rows can be read", async () => {
+    vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+      body: { title: "Engineering", items: [{ widget: "commits_table" }] },
+      tags: [],
+    });
+    vi.mocked(customClient.fetchWidget).mockResolvedValue({
+      type: "table",
+      metric: "commits_per_day",
+      columns: ["day"],
+    });
+    vi.mocked(customClient.runMetric).mockResolvedValue({
+      columns: ["day"],
+      rows: [["2026-09-01"]],
+    });
+    portalRouter.go("/portal/custom/engineering");
+
+    render(<Component />, { wrapper });
+    const cell = await screen.findByRole("cell", { name: "2026-09-01" });
+    const card = cell.closest("[data-slot=card]");
+
+    expect(card).toHaveClass("col-span-full");
+    expect(card).toHaveStyle({ height: "464px" });
   });
 
   it("draws items in order, with headings and prose between the widgets", async () => {
@@ -241,7 +269,7 @@ describe("/portal/custom/$name — the window it is read over", () => {
 
     expect(await screen.findByText("Engineering")).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Last 30 days" }),
+      screen.queryByRole("button", { name: "Last 30 days" })
     ).not.toBeInTheDocument();
     await vi.waitFor(() => {
       expect(customClient.runMetric).toHaveBeenCalledWith("opened", undefined);
@@ -255,7 +283,7 @@ describe("/portal/custom/$name — the window it is read over", () => {
     render(<Component />, { wrapper });
 
     expect(
-      await screen.findByRole("button", { name: "Last 30 days" }),
+      await screen.findByRole("button", { name: "Last 30 days" })
     ).toHaveAttribute("aria-pressed", "true");
     await vi.waitFor(() => {
       expect(customClient.runMetric).toHaveBeenCalledWith("opened", {
@@ -281,7 +309,7 @@ describe("/portal/custom/$name — the window it is read over", () => {
     render(<Component />, { wrapper });
 
     await userEvent.click(
-      await screen.findByRole("button", { name: "Yesterday" }),
+      await screen.findByRole("button", { name: "Yesterday" })
     );
 
     expect(portalRouter.search.range).toBe("PDC");
@@ -383,9 +411,7 @@ describe("/portal/custom/$name — a definition that cannot be read", () => {
 
     render(<Component />, { wrapper });
 
-    expect(
-      await screen.findByRole("button", { name: /retry/i }),
-    ).toBeVisible();
+    expect(await screen.findByRole("button", { name: /retry/i })).toBeVisible();
     expect(customClient.runMetric).not.toHaveBeenCalled();
   });
 });

@@ -8,7 +8,12 @@ import { cn } from "@/lib/utils";
 
 export type WidgetState = "ready" | "loading" | "empty" | "error";
 
-export const WIDGET_HEIGHT = 304;
+export type WidgetSize = "standard" | "tall";
+
+export const WIDGET_HEIGHT: Record<WidgetSize, number> = {
+  standard: 304,
+  tall: 464,
+};
 
 const SKELETON_BARS = [40, 65, 45, 80, 55, 90, 70];
 
@@ -22,6 +27,7 @@ export interface WidgetFrameProps {
   onRetry?: () => void;
   onBodyActivate?: () => void;
   scroll?: boolean;
+  size?: WidgetSize;
   bodyLabel?: string;
   className?: string;
   children: ReactNode;
@@ -37,6 +43,7 @@ export function WidgetFrame({
   onRetry,
   onBodyActivate,
   scroll = false,
+  size = "standard",
   bodyLabel,
   className,
   children,
@@ -47,7 +54,7 @@ export function WidgetFrame({
         "min-w-0 gap-0 rounded-[12px] border border-border py-0 shadow-[0_2px_3px_#12204805] ring-0",
         className
       )}
-      style={{ height: WIDGET_HEIGHT }}
+      style={{ height: WIDGET_HEIGHT[size] }}
     >
       <div className="flex min-h-[76px] shrink-0 items-start justify-between gap-2.5 px-6 pt-[23px] pb-3.5">
         <div className="min-w-0">
@@ -93,7 +100,9 @@ function Body({
 }) {
   const layout = cn(
     "min-h-0 min-w-0 flex-1 px-5 pb-[23px]",
-    scroll ? "overflow-auto pt-0" : "pt-2"
+    scroll
+      ? "[scrollbar-width:thin] [scrollbar-color:var(--border)_transparent] overflow-auto pt-0"
+      : "pt-2"
   );
 
   if (!onActivate) return <div className={layout}>{children}</div>;

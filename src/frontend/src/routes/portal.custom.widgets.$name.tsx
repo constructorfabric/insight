@@ -118,6 +118,7 @@ function Drawn({ name, widget }: { name: string; widget: Widget }) {
       }
       state="ready"
       scroll={widget.type === "table"}
+      size={widget.type === "table" ? "tall" : "standard"}
       action={
         <span className="flex flex-wrap items-center justify-end gap-1">
           <Window
