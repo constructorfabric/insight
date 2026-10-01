@@ -20,11 +20,11 @@ import {
   usePortalSearch,
 } from "@/lib/portal/portal-search";
 import { dashboardItems } from "@/lib/custom/dashboard-items";
+import { WidgetFrame } from "@/components/charts/widget-frame";
 import { CustomWidget } from "@/components/custom/custom-widget";
 import { refusal } from "@/components/custom/refusal";
 import { WidgetDrilldown } from "@/components/custom/widget-drilldown";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import {
@@ -33,7 +33,7 @@ import {
   metricResultQuery,
   widgetQuery,
 } from "@/queries/custom";
-import { TEXT_BODY, TEXT_HEADING, TEXT_TITLE } from "@/lib/type-scale";
+import { TEXT_BODY, TEXT_TITLE } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/portal/custom/$name")({
@@ -204,84 +204,70 @@ function DashboardWidgetSlot({
     enabled: Boolean(metric) && known,
   });
 
+  const fallbackTitle = <span className="font-mono">{name}</span>;
+
   if (widgetState.isPending) {
     return (
-      <Card>
-        <CardContent>
-          <CenteredSpinner className="min-h-40" />
-        </CardContent>
-      </Card>
+      <WidgetFrame title={fallbackTitle} state="loading">
+        {null}
+      </WidgetFrame>
     );
   }
   // A definition that cannot be read leaves the card unable to say whether its
   // metric is windowed, so it says that rather than running something.
   if (range && definitionState.isError) {
     return (
-      <Card>
-        <CardContent>
-          <ComingSoon
-            variant="card"
-            state="error"
-            label={`Couldn't read the metric behind ${name}.`}
-            onRetry={() => void definitionState.refetch()}
-          />
-        </CardContent>
-      </Card>
+      <WidgetFrame
+        title={fallbackTitle}
+        state="error"
+        errorLabel={`Couldn't read the metric behind ${name}.`}
+        onRetry={() => void definitionState.refetch()}
+      >
+        {null}
+      </WidgetFrame>
     );
   }
   if (widgetState.isError) {
     return (
-      <Card>
-        <CardContent>
-          <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
-            {refusal(widgetState.error, `Couldn't read ${name}.`)}
-          </p>
-        </CardContent>
-      </Card>
+      <WidgetFrame
+        title={fallbackTitle}
+        state="error"
+        errorLabel={refusal(widgetState.error, `Couldn't read ${name}.`)}
+      >
+        {null}
+      </WidgetFrame>
     );
   }
 
   const heading = widgetState.data.title;
+  const label = `Show the data behind ${heading ?? name}`;
 
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-start gap-2">
-        <CardTitle
-          className={cn(
-            TEXT_HEADING,
-            "min-w-0 flex-1",
-            heading ? "" : "font-mono"
-          )}
-        >
-          {heading ?? name}
-        </CardTitle>
-        {range && definitionState.isSuccess && !clocked ? (
-          <Badge variant="secondary" className="shrink-0">
-            All time
-          </Badge>
-        ) : null}
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label={`Show the data behind ${heading ?? name}`}
-          className="text-muted-foreground"
-          onClick={() => setDrilldown(true)}
-        >
-          <Table2 />
-        </Button>
-      </CardHeader>
-      <CardContent
-        role="button"
-        tabIndex={0}
-        aria-label={`Show the data behind ${heading ?? name}`}
-        className="max-h-72 cursor-pointer overflow-auto"
-        onClick={() => setDrilldown(true)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            setDrilldown(true);
-          }
-        }}
+    <>
+      <WidgetFrame
+        title={heading ?? fallbackTitle}
+        state="ready"
+        scroll={widgetState.data.type === "table"}
+        onBodyActivate={() => setDrilldown(true)}
+        bodyLabel={label}
+        action={
+          <>
+            {range && definitionState.isSuccess && !clocked ? (
+              <Badge variant="secondary" className="shrink-0">
+                All time
+              </Badge>
+            ) : null}
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label={label}
+              className="text-muted-foreground"
+              onClick={() => setDrilldown(true)}
+            >
+              <Table2 />
+            </Button>
+          </>
+        }
       >
         <CustomWidget
           widget={widgetState.data}
@@ -290,7 +276,7 @@ function DashboardWidgetSlot({
           windowed={Boolean(options)}
           pending={!known || resultState.isPending || resultState.isFetching}
         />
-      </CardContent>
+      </WidgetFrame>
       <WidgetDrilldown
         widget={widgetState.data}
         name={name}
@@ -299,6 +285,6 @@ function DashboardWidgetSlot({
         onOpenChange={setDrilldown}
         options={options}
       />
-    </Card>
+    </>
   );
 }

@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
 import type { RunOptions, Widget } from "@/api/custom-client";
+import { WidgetFrame } from "@/components/charts/widget-frame";
 import { CustomWidget } from "@/components/custom/custom-widget";
 import { WidgetSummary } from "@/components/custom/definition-summary";
 import { EditLink } from "@/components/custom/editor/edit-link";
@@ -14,7 +15,7 @@ import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { drawsBucket } from "@/lib/custom/draws-bucket";
 import { metricQuery, metricResultQuery, widgetQuery } from "@/queries/custom";
 import { RANGE_PRESETS } from "@/lib/custom/time-range";
-import { TEXT_BODY, TEXT_HEADING, TEXT_LABEL } from "@/lib/type-scale";
+import { TEXT_BODY, TEXT_HEADING } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/portal/custom/widgets/$name")({
@@ -108,10 +109,17 @@ function Drawn({ name, widget }: { name: string; widget: Widget }) {
   });
 
   return (
-    <Card>
-      <CardHeader className="flex flex-row flex-wrap items-center gap-2">
-        <CardTitle className={TEXT_HEADING}>{widget.title ?? name}</CardTitle>
-        <span className="ms-auto flex flex-wrap items-center gap-1">
+    <WidgetFrame
+      title={widget.title ?? name}
+      subtitle={
+        range && metric.isSuccess && !clocked
+          ? "Nothing dates this widget's metric, so every window shows all time."
+          : undefined
+      }
+      state="ready"
+      scroll={widget.type === "table"}
+      action={
+        <span className="flex flex-wrap items-center justify-end gap-1">
           <Window
             label="All time"
             chosen={range === undefined}
@@ -126,22 +134,16 @@ function Drawn({ name, widget }: { name: string; widget: Widget }) {
             />
           ))}
         </span>
-      </CardHeader>
-      <CardContent>
-        {range && metric.isSuccess && !clocked ? (
-          <p className={cn(TEXT_LABEL, "mb-2 text-muted-foreground")}>
-            Nothing dates this widget's metric, so every window shows all time.
-          </p>
-        ) : null}
-        <CustomWidget
-          widget={widget}
-          result={result.data}
-          error={result.error ?? metric.error}
-          windowed={Boolean(options)}
-          pending={metric.isPending || result.isPending || result.isFetching}
-        />
-      </CardContent>
-    </Card>
+      }
+    >
+      <CustomWidget
+        widget={widget}
+        result={result.data}
+        error={result.error ?? metric.error}
+        windowed={Boolean(options)}
+        pending={metric.isPending || result.isPending || result.isFetching}
+      />
+    </WidgetFrame>
   );
 }
 

@@ -430,6 +430,46 @@ const SERIES: readonly Field[] = [
   },
 ];
 
+function column(
+  name: string,
+  label: string,
+  hint: string,
+  required = true
+): Field {
+  return { name, label, hint, shape: { of: "text" }, required };
+}
+
+const SERIES_COLUMN = column(
+  "series",
+  "Series",
+  "A metric column that splits the value into one series per value; the six largest are drawn and the rest summed as Other.",
+  false
+);
+const TARGET = column(
+  "target",
+  "Target",
+  "A metric column drawn as a dashed target beside the value.",
+  false
+);
+const LABEL = column(
+  "label",
+  "Label",
+  "The metric column that names each category."
+);
+const VALUE = column(
+  "value",
+  "Value",
+  "The metric column that sizes each category."
+);
+const NUMERIC_X = column(
+  "x",
+  "x",
+  "The metric column along the horizontal axis."
+);
+const Y_COLUMN = column("y", "y", "The metric column along the vertical axis.");
+
+const CATEGORY: readonly Field[] = [METRIC_REFERENCE, LABEL, VALUE];
+
 const WIDGET: Description = {
   kind: "widgets",
   noun: "widget",
@@ -456,9 +496,9 @@ const WIDGET: Description = {
               required: true,
             },
           ],
-          line: SERIES,
-          bar: SERIES,
-          area: SERIES,
+          line: [...SERIES, SERIES_COLUMN, TARGET],
+          bar: [...SERIES, SERIES_COLUMN],
+          area: [...SERIES, SERIES_COLUMN],
           stat: [
             METRIC_REFERENCE,
             {
@@ -491,6 +531,82 @@ const WIDGET: Description = {
               shape: { of: "text" },
               required: true,
             },
+          ],
+          donut: CATEGORY,
+          ranked: CATEGORY,
+          treemap: CATEGORY,
+          funnel: CATEGORY,
+          waterfall: [
+            METRIC_REFERENCE,
+            LABEL,
+            column(
+              "value",
+              "Change",
+              "The metric column holding each step's change; the bridge closes on their total."
+            ),
+          ],
+          stacked: [
+            METRIC_REFERENCE,
+            LABEL,
+            VALUE,
+            column(
+              "series",
+              "Split by",
+              "The metric column whose values divide each bar into its 100% shares."
+            ),
+          ],
+          composed: [
+            ...SERIES,
+            column(
+              "y2",
+              "y2",
+              "The metric column drawn as a line against a second axis on the right."
+            ),
+          ],
+          scatter: [METRIC_REFERENCE, NUMERIC_X, Y_COLUMN, SERIES_COLUMN],
+          bubble: [
+            METRIC_REFERENCE,
+            NUMERIC_X,
+            Y_COLUMN,
+            column("size", "Size", "The metric column that sizes each point."),
+            SERIES_COLUMN,
+          ],
+          radar: [METRIC_REFERENCE, LABEL, VALUE, TARGET],
+          radial: [
+            METRIC_REFERENCE,
+            column(
+              "value",
+              "Value",
+              "The metric column read from the first row as progress."
+            ),
+            column(
+              "max",
+              "Out of",
+              "The metric column holding the full amount; without it the value is read as a percentage.",
+              false
+            ),
+          ],
+          heatmap: [
+            METRIC_REFERENCE,
+            column(
+              "x",
+              "Day",
+              "The metric column holding each day; bucket for a run over time."
+            ),
+            column("value", "Value", "The metric column that shades each day."),
+          ],
+          pulse: [
+            METRIC_REFERENCE,
+            column(
+              "x",
+              "x",
+              "The metric column the readings are ordered by; bucket for a run over time."
+            ),
+            column(
+              "y",
+              "Value",
+              "The metric column whose latest reading leads the card."
+            ),
           ],
         },
       },

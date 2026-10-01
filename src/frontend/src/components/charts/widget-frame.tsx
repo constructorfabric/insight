@@ -21,6 +21,7 @@ export interface WidgetFrameProps {
   errorLabel?: string;
   onRetry?: () => void;
   onBodyActivate?: () => void;
+  scroll?: boolean;
   bodyLabel?: string;
   className?: string;
   children: ReactNode;
@@ -35,6 +36,7 @@ export function WidgetFrame({
   errorLabel = "Could not load this widget.",
   onRetry,
   onBodyActivate,
+  scroll = false,
   bodyLabel,
   className,
   children,
@@ -62,7 +64,7 @@ export function WidgetFrame({
           <div className="flex shrink-0 items-center gap-1">{action}</div>
         ) : null}
       </div>
-      <Body onActivate={onBodyActivate} label={bodyLabel}>
+      <Body onActivate={onBodyActivate} label={bodyLabel} scroll={scroll}>
         {state === "ready" ? (
           children
         ) : (
@@ -81,13 +83,18 @@ export function WidgetFrame({
 function Body({
   onActivate,
   label,
+  scroll,
   children,
 }: {
   onActivate?: () => void;
   label?: string;
+  scroll: boolean;
   children: ReactNode;
 }) {
-  const layout = "min-h-0 min-w-0 flex-1 px-5 pt-2 pb-[23px]";
+  const layout = cn(
+    "min-h-0 min-w-0 flex-1 px-5 pt-2 pb-[23px]",
+    scroll && "overflow-auto"
+  );
 
   if (!onActivate) return <div className={layout}>{children}</div>;
 
@@ -174,7 +181,7 @@ function StateBody({
           }}
         >
           <RotateCcw />
-          Try again
+          Retry
         </Button>
       ) : null}
     </div>

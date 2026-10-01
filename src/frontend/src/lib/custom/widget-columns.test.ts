@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Widget } from "@/api/custom-client";
 
-import { widgetFields } from "./widget-columns";
+import { isWidgetKind, WIDGET_KINDS, widgetFields } from "./widget-columns";
 
 describe("widgetFields", () => {
   it.each<[Widget, [string, string][]]>([
@@ -114,4 +114,15 @@ describe("widgetFields", () => {
       ).toEqual(fields);
     }
   );
+});
+
+describe("isWidgetKind", () => {
+  it("knows the nineteen kinds the service accepts", () => {
+    expect(WIDGET_KINDS).toHaveLength(19);
+    expect(WIDGET_KINDS.every(isWidgetKind)).toBe(true);
+  });
+
+  it.each(["sankey", "", undefined, 3])("refuses %j", (kind) => {
+    expect(isWidgetKind(kind)).toBe(false);
+  });
 });

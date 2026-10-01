@@ -1,4 +1,26 @@
-import type { Widget } from "@/api/custom-client";
+import type { Widget, WidgetKind } from "@/api/custom-client";
+
+export const WIDGET_KINDS: readonly WidgetKind[] = [
+  "table",
+  "line",
+  "bar",
+  "area",
+  "stat",
+  "pie",
+  "donut",
+  "ranked",
+  "treemap",
+  "funnel",
+  "waterfall",
+  "stacked",
+  "composed",
+  "scatter",
+  "bubble",
+  "radar",
+  "radial",
+  "heatmap",
+  "pulse",
+];
 
 export interface WidgetField {
   field: string;
@@ -57,6 +79,10 @@ export function widgetFields(widget: Widget): WidgetField[] {
     case "pulse":
       return named({ x: widget.x, y: widget.y });
   }
+}
+
+export function isWidgetKind(type: unknown): type is WidgetKind {
+  return WIDGET_KINDS.includes(type as WidgetKind);
 }
 
 export function widgetColumns(widget: Widget): string[] {

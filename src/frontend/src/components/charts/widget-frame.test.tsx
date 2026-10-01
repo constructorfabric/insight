@@ -64,7 +64,7 @@ describe("<WidgetFrame>", () => {
       </WidgetFrame>
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
 
     expect(screen.getByRole("alert")).toHaveTextContent("The metric failed.");
     expect(retry).toHaveBeenCalledOnce();
@@ -92,6 +92,18 @@ describe("<WidgetFrame>", () => {
       expect(open).toHaveBeenCalledTimes(2);
     }
   );
+
+  it("lets a long body scroll inside the frame when asked", () => {
+    render(
+      <WidgetFrame title="Rows" state="ready" scroll>
+        <p>table</p>
+      </WidgetFrame>
+    );
+
+    expect(screen.getByText("table").parentElement).toHaveClass(
+      "overflow-auto"
+    );
+  });
 
   it("leaves its body inert when nothing opens from it", () => {
     render(

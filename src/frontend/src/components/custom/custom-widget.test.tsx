@@ -1,65 +1,16 @@
-import { render, screen } from "@testing-library/react";
+import { cloneElement, isValidElement, type ReactNode } from "react";
+import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-// Deterministic, DOM-inspectable stand-ins for the recharts wrappers (which
-// render nothing under jsdom's zero-size ResponsiveContainer). Partial, not
-// whole: the kit's own chart container imports pieces of recharts these tests
-// never look at, and a bare object mock hid them.
 vi.mock("recharts", async (importOriginal) => {
   const actual = await importOriginal<typeof import("recharts")>();
 
-  const chart =
-    (testId: string) =>
-    ({
-      data,
-      children,
-    }: {
-      data?: Record<string, unknown>[];
-      children: React.ReactNode;
-    }) => (
-      <div data-testid={testId} data-chart-data={JSON.stringify(data ?? null)}>
-        {children}
-      </div>
-    );
-  const series =
-    (testId: string) =>
-    ({ dataKey }: { dataKey: string }) => (
-      <div data-testid={testId} data-key={dataKey} />
-    );
-
   return {
     ...actual,
-    ResponsiveContainer: ({ children }: { children: React.ReactNode }) => (
-      <>{children}</>
-    ),
-    LineChart: chart("line-chart"),
-    BarChart: chart("bar-chart"),
-    AreaChart: chart("area-chart"),
-    PieChart: chart("pie-chart"),
-    CartesianGrid: () => null,
-    Tooltip: () => null,
-    Legend: () => null,
-    XAxis: ({ dataKey }: { dataKey: string }) => (
-      <div data-testid="x-axis" data-key={dataKey} />
-    ),
-    YAxis: () => null,
-    Line: series("line"),
-    Bar: series("bar"),
-    Area: series("area"),
-    Pie: ({
-      dataKey,
-      nameKey,
-      children,
-    }: {
-      dataKey: string;
-      nameKey: string;
-      children: React.ReactNode;
-    }) => (
-      <div data-testid="pie" data-key={dataKey} data-name-key={nameKey}>
-        {children}
-      </div>
-    ),
-    Cell: () => null,
+    ResponsiveContainer: ({ children }: { children: ReactNode }) =>
+      isValidElement(children)
+        ? cloneElement(children, { width: 600, height: 300 } as never)
+        : null,
   };
 });
 
@@ -98,27 +49,22 @@ describe("<CustomWidget>", () => {
       />
     );
 
-    expect(screen.getByTestId("custom-line-chart")).toBeInTheDocument();
+    expect(
+      screen.getByRole("figure", { name: "line chart" })
+    ).toBeInTheDocument();
   });
 
-  it("maps the widget's x and y fields to the chart axes and row values", () => {
+  it("reads the widget's x column along the axis and names its y series", () => {
     render(
       <CustomWidget
         widget={{ type: "line", metric: "m", x: "day", y: "lines" }}
         result={result}
       />
     );
+    const figure = screen.getByRole("figure", { name: "line chart" });
 
-    expect(screen.getByTestId("x-axis")).toHaveAttribute("data-key", "day");
-    expect(screen.getByTestId("line")).toHaveAttribute("data-key", "lines");
-
-    const chartData = JSON.parse(
-      screen.getByTestId("line-chart").getAttribute("data-chart-data")!
-    );
-    expect(chartData).toEqual([
-      { day: "2026-09-01", lines: 59 },
-      { day: "2026-09-02", lines: 12 },
-    ]);
+    expect(within(figure).getByText("Sep 1")).toBeInTheDocument();
+    expect(within(figure).getByRole("listitem")).toHaveTextContent("lines");
   });
 
   // A card is where a reader meets a refusal, so it shows what the service
@@ -233,19 +179,18 @@ describe("<CustomWidget>", () => {
   });
 
   it.each([
-    ["bar", "custom-bar-chart", "bar"],
-    ["area", "custom-area-chart", "area"],
-  ])("renders a %s widget from its x and y", (type, frame, series) => {
-    render(
-      <CustomWidget
-        widget={{ type, metric: "m", x: "day", y: "lines" } as never}
-        result={result}
-      />
-    );
+    [{ type: "bar", metric: "m", x: "day", y: "lines" }],
+    [{ type: "area", metric: "m", x: "day", y: "lines" }],
+    [{ type: "donut", metric: "m", label: "day", value: "lines" }],
+    [{ type: "composed", metric: "m", x: "day", y: "lines", y2: "lines" }],
+    [{ type: "heatmap", metric: "m", x: "day", value: "lines" }],
+    [{ type: "pulse", metric: "m", x: "day", y: "lines" }],
+  ])("renders a %o through its own kind", (widget) => {
+    render(<CustomWidget widget={widget as never} result={result} />);
 
-    expect(screen.getByTestId(frame)).toBeInTheDocument();
-    expect(screen.getByTestId("x-axis")).toHaveAttribute("data-key", "day");
-    expect(screen.getByTestId(series)).toHaveAttribute("data-key", "lines");
+    expect(
+      screen.getByRole("figure", { name: `${widget.type} chart` })
+    ).toBeInTheDocument();
   });
 
   it("renders a stat widget as the one number it is", () => {
@@ -279,26 +224,48 @@ describe("<CustomWidget>", () => {
       />
     );
 
-    expect(screen.getByTestId("custom-pie-chart")).toBeInTheDocument();
-    expect(screen.getByTestId("pie")).toHaveAttribute("data-key", "lines");
-    expect(screen.getByTestId("pie")).toHaveAttribute("data-name-key", "day");
+    const figure = screen.getByRole("figure", { name: "pie chart" });
+
+    expect(
+      within(figure)
+        .getAllByRole("listitem")
+        .map((item) => item.textContent)
+    ).toEqual(["2026-09-01", "2026-09-02"]);
   });
 
   it.each([
+    [{ type: "bar", metric: "lines_per_day", x: "day", y: "lines" }],
+    [{ type: "area", metric: "lines_per_day", x: "day", y: "lines" }],
+    [{ type: "stat", metric: "lines_per_day", value: "lines" }],
+    [{ type: "pie", metric: "lines_per_day", label: "day", value: "lines" }],
     [
-      { type: "bar", metric: "lines_per_day", x: "day", y: "lines" },
-      "custom-bar-chart",
+      {
+        type: "line",
+        metric: "lines_per_day",
+        x: "day",
+        y: "total_lines",
+        target: "lines",
+      },
     ],
     [
-      { type: "area", metric: "lines_per_day", x: "day", y: "lines" },
-      "custom-area-chart",
+      {
+        type: "composed",
+        metric: "lines_per_day",
+        x: "day",
+        y: "total_lines",
+        y2: "lines",
+      },
     ],
-    [{ type: "stat", metric: "lines_per_day", value: "lines" }, "custom-stat"],
     [
-      { type: "pie", metric: "lines_per_day", label: "day", value: "lines" },
-      "custom-pie-chart",
+      {
+        type: "bubble",
+        metric: "lines_per_day",
+        x: "day",
+        y: "total_lines",
+        size: "lines",
+      },
     ],
-  ])("names the missing column rather than drawing %#", (widget, frame) => {
+  ])("names the missing column rather than drawing %o", (widget) => {
     render(
       <CustomWidget
         widget={widget as never}
@@ -310,7 +277,8 @@ describe("<CustomWidget>", () => {
     );
 
     expect(screen.getByRole("alert")).toHaveTextContent("draws lines");
-    expect(screen.queryByTestId(frame)).not.toBeInTheDocument();
+    expect(screen.queryByRole("figure")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("custom-stat")).not.toBeInTheDocument();
   });
 
   it("says which column is missing instead of drawing an empty chart", () => {
@@ -330,7 +298,7 @@ describe("<CustomWidget>", () => {
     expect(alert).toHaveTextContent("draws lines");
     expect(alert).toHaveTextContent("lines_per_day does not return");
     expect(alert).toHaveTextContent("day, total_lines");
-    expect(screen.queryByTestId("custom-line-chart")).not.toBeInTheDocument();
+    expect(screen.queryByRole("figure")).not.toBeInTheDocument();
   });
 });
 
