@@ -650,8 +650,8 @@ ranked as a whole, not per field (`task_instant_order`, computed once in
 - each self-describing field links the entries that touched it at that instant
   where its from→to chain is unique — one event follows another when its
   `before` side is the other's `after` side (`task_chain_walk`). A fork, a
-  cycle, a repeated side or an entry carrying two items of the field links
-  nothing;
+  cycle or a repeated side links nothing, and an entry carrying several items
+  of the field takes part as the one event they collapse into (below);
 - the links of all fields together order the entries. Links that contradict
   each other — one field puts A first, another B — lie on a cycle, and only
   those are dropped: the entries on it fall back to the id while every other
@@ -670,6 +670,37 @@ which inverts a pair of events every time the id crosses a digit-count
 boundary. For an element-wise field an inverted add/remove pair changes the
 resulting set, so the comparison is numeric wherever it orders and stays a
 string wherever it identifies (the event id and the unique key).
+
+**An entry is one event per field, however many items it carries.** An entry can
+hold two or more items of one self-describing field — `Y → ∅` and `∅ → X`
+under one changelog id, say. Those items share every key the journal orders
+and identifies by: the instant, the entry's rank, the changelog id, and the
+`unique_key` built from them. Kept apart, they left the ReplacingMergeTree to
+keep an arbitrary row, `initial_state` and the newest state to an arbitrary
+argMin / argMax, and therefore whether a `snapshot_diff` followed — two
+rebuilds over the same bronze could differ. So the items collapse into one
+event before any ordering (`jira_entry_item_ends`), in the journal and in
+`jira__changelog_entry_ranks` alike, so the ranks order the events the journal
+emits:
+
+- **They chain.** Each item states the whole value, so a unique from→to chain
+  through them (`task_chain_walk`, the same rule as across entries) is the
+  order the field went through. The event runs from the chain head's `from` to
+  its tail's `to`: `Y → ∅` and `∅ → X` are `Y → X`, whichever order the items
+  array lists them in. The intermediate empty state is not recorded: it lasts
+  no time at all.
+- **They do not.** A fork, a cycle or a repeated side orders nothing, so one
+  item stands for the entry with both its sides: the first whose `to` holds a
+  value, then by the items' content. The choice is arbitrary but a function of
+  the items alone. The item's position in Jira's array is not used: nothing
+  documents it as meaningful, and the content order is equally reproducible.
+
+Several items of one full-value field in one entry are not the shape §3 expects,
+and the second case is a best effort: when the items each add or remove one
+element, the field changes element-wise and is classified as a full-list kind.
+The history between events is then wrong, and only its final state is repaired,
+by `snapshot_diff` (§6.1). `assert_jira_entry_items_one_per_field` warns on
+every such field so the classification can be checked rather than absorbed.
 
 Two properties of the changelog constrain the handlers, both found by measuring:
 
@@ -1242,6 +1273,8 @@ cheap and it fails loudly the first time someone reaches for a field id.
   matches none of them is a defect in this model, and lumping it in with the
   irreconcilable ones is how the previous shape of this document mis-scoped the
   work.
+- *one item per field and entry*: a self-describing field whose entries carry
+  several items is reported, at warn, with sample changelog ids (§5).
 - the existing singular tests on ordering, cardinality and event-id conventions
   are retained.
 
@@ -1270,6 +1303,8 @@ Shapes covered, one test each:
 - a labels-type field changed several times, never present in any snapshot list
 - an element-wise multi-value field with interleaved adds and removes
 - a bracketed-id multi-select field
+- one entry carrying two items of a multi-select field, chained and forked,
+  each built twice from scratch to an identical journal (§5)
 - a field set at creation and never changed
 - a field absent from the issue's field context entirely — asserting **no** row
 - a multi-value field cleared to empty
