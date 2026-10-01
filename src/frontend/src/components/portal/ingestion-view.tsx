@@ -260,7 +260,7 @@ function IntensityChart({
   return (
     <ChartContainer config={config} className="w-full" style={{ height: 200 }}>
       <BarChart data={rows} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+        <CartesianGrid stroke="var(--grid)" vertical={false} />
         {/* A numeric time axis, not a category one: an hour with no extraction
             must read as a gap, and a categorical axis would close it up. */}
         <XAxis

@@ -62,7 +62,7 @@ export function SeriesAxes({
 
   return (
     <>
-      <CartesianGrid vertical={false} strokeDasharray="4 4" />
+      <CartesianGrid vertical={false} stroke="var(--grid)" />
       <XAxis
         dataKey={x}
         tickLine={false}

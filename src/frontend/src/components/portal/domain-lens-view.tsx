@@ -1641,8 +1641,7 @@ function DistributionSection({
             >
               <CartesianGrid
                 vertical={false}
-                strokeDasharray="3 3"
-                stroke="var(--border)"
+                stroke="var(--grid)"
               />
               <XAxis
                 dataKey="label"
@@ -1772,8 +1771,7 @@ function EventHistogramSection({
             >
               <CartesianGrid
                 vertical={false}
-                strokeDasharray="3 3"
-                stroke="var(--border)"
+                stroke="var(--grid)"
               />
               <XAxis
                 dataKey="label"

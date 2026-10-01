@@ -67,8 +67,7 @@ export function ScatterSection({
           <ChartContainer config={SCATTER_CONFIG} className="h-64 w-full">
             <ScatterChart margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
               <CartesianGrid
-                strokeDasharray="3 3"
-                stroke="var(--border)"
+                stroke="var(--grid)"
               />
               <XAxis
                 type="number"
