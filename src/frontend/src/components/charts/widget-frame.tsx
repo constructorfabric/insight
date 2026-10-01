@@ -99,9 +99,9 @@ function Body({
   children: ReactNode;
 }) {
   const layout = cn(
-    "min-h-0 min-w-0 flex-1 px-5 pb-[23px]",
+    "min-h-0 min-w-0 flex-1 overflow-auto px-5 pb-[23px]",
     scroll
-      ? "[scrollbar-width:thin] [scrollbar-color:var(--border)_transparent] overflow-auto pt-0"
+      ? "[scrollbar-width:thin] [scrollbar-color:var(--border)_transparent] pt-0"
       : "pt-2"
   );
 

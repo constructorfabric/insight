@@ -3,7 +3,7 @@ import { Bar, ComposedChart, LabelList, Line, YAxis } from "recharts";
 import type { ComposedWidget, MetricResult } from "@/api/custom-client";
 import { compactNumber, unitFor } from "@/components/custom/chart-format";
 
-import { seriesRows } from "../adapters/series";
+import { pairedRows } from "../adapters/series";
 import { AXIS_TICK, VALUE_LABEL } from "../chart-style";
 import { IsolatedDot, KindChart, KindFigure } from "../chrome";
 import { seriesColor } from "../palette";
@@ -18,10 +18,8 @@ export function ComposedKind({
   widget: ComposedWidget;
   result: MetricResult;
 }) {
-  const { rows, keys } = seriesRows(result, widget.x, widget.y, undefined, {
-    [LINE_KEY]: widget.y2,
-  });
-  const barKey = keys[0]?.key ?? "s0";
+  const rows = pairedRows(result, widget.x, widget.y, widget.y2);
+  const barKey = "y";
   const barColor = seriesColor(0);
   const lineColor = seriesColor(2);
   const lineUnit = unitFor(result.percents, widget.y2);

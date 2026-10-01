@@ -109,42 +109,42 @@ function Drawn({ name, widget }: { name: string; widget: Widget }) {
   });
 
   return (
-    <WidgetFrame
-      title={widget.title ?? name}
-      subtitle={
-        range && metric.isSuccess && !clocked
-          ? "Nothing dates this widget's metric, so every window shows all time."
-          : undefined
-      }
-      state="ready"
-      scroll={widget.type === "table"}
-      size={widget.type === "table" ? "tall" : "standard"}
-      action={
-        <span className="flex flex-wrap items-center justify-end gap-1">
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-center justify-end gap-1">
+        <Window
+          label="All time"
+          chosen={range === undefined}
+          onPick={() => setRange(undefined)}
+        />
+        {WINDOWS.map(({ token, label }) => (
           <Window
-            label="All time"
-            chosen={range === undefined}
-            onPick={() => setRange(undefined)}
+            key={token}
+            label={label}
+            chosen={range === token}
+            onPick={() => setRange(token)}
           />
-          {WINDOWS.map(({ token, label }) => (
-            <Window
-              key={token}
-              label={label}
-              chosen={range === token}
-              onPick={() => setRange(token)}
-            />
-          ))}
-        </span>
-      }
-    >
-      <CustomWidget
-        widget={widget}
-        result={result.data}
-        error={result.error ?? metric.error}
-        windowed={Boolean(options)}
-        pending={metric.isPending || result.isPending || result.isFetching}
-      />
-    </WidgetFrame>
+        ))}
+      </div>
+      <WidgetFrame
+        title={widget.title ?? name}
+        subtitle={
+          range && metric.isSuccess && !clocked
+            ? "Nothing dates this widget's metric, so every window shows all time."
+            : undefined
+        }
+        state="ready"
+        scroll={widget.type === "table"}
+        size={widget.type === "table" ? "tall" : "standard"}
+      >
+        <CustomWidget
+          widget={widget}
+          result={result.data}
+          error={result.error ?? metric.error}
+          windowed={Boolean(options)}
+          pending={metric.isPending || result.isPending || result.isFetching}
+        />
+      </WidgetFrame>
+    </div>
   );
 }
 

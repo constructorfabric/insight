@@ -1,7 +1,11 @@
 import type { HeatmapWidget, MetricResult } from "@/api/custom-client";
 import { groupedNumber, unitFor } from "@/components/custom/chart-format";
 
-import { calendarCells, type CalendarCell } from "../adapters/calendar";
+import {
+  calendarCells,
+  calendarGrain,
+  type CalendarCell,
+} from "../adapters/calendar";
 import { KindFigure } from "../chrome";
 
 const LEVEL_FILL: Record<CalendarCell["level"], string> = {
@@ -26,6 +30,17 @@ export function HeatmapKind({
   widget: HeatmapWidget;
   result: MetricResult;
 }) {
+  if (calendarGrain(result, widget.x) !== "day") {
+    return (
+      <KindFigure kind="heatmap">
+        <p className="m-auto max-w-72 text-center text-xs text-muted-foreground">
+          This calendar needs one row per day. Pick a window of 31 days or less,
+          or group the metric by a day column.
+        </p>
+      </KindFigure>
+    );
+  }
+
   const unit = unitFor(result.percents, widget.value);
   const cells = calendarCells(result, widget.x, widget.value);
   const weeks = (cells.at(-1)?.week ?? 0) + 1;
@@ -37,7 +52,10 @@ export function HeatmapKind({
       <div className="flex h-full min-h-0 flex-col justify-center gap-1.5 text-xs text-muted-foreground">
         <div className="grid grid-cols-[auto_1fr] gap-x-2">
           <span />
-          <div className="grid" style={{ gridTemplateColumns: columns }}>
+          <div
+            className="grid gap-x-[3px]"
+            style={{ gridTemplateColumns: columns }}
+          >
             {months.map(({ week, label }) => (
               <span key={week} style={{ gridColumnStart: week + 1 }}>
                 {label}

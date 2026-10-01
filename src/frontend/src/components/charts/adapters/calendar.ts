@@ -46,6 +46,25 @@ export function calendarCells(
   return cells;
 }
 
+export function calendarGrain(
+  result: MetricResult,
+  x: string
+): "day" | "week" | "month" {
+  const days = [...dayTotals(result, x, x).keys()].sort();
+  if (days.length < 2) return "day";
+
+  if (days.every((day) => day.endsWith("-01"))) return "month";
+
+  const gaps = days
+    .slice(1)
+    .map((day, index) => utc(day) - utc(days[index] ?? ""));
+  if (gaps.every((gap) => gap >= 7 * DAY_MS && gap % (7 * DAY_MS) === 0)) {
+    return "week";
+  }
+
+  return "day";
+}
+
 function dayTotals(result: MetricResult, x: string, value: string) {
   const readDay = columnReader(result, x);
   const readValue = columnReader(result, value);

@@ -13,6 +13,7 @@ import { CategoryTick, KindChart, KindFigure } from "../chrome";
 import { colorKeys } from "../palette";
 
 const SHARE_TICKS = [0, 25, 50, 75, 100];
+const STACKED_LABELS = 8;
 
 export function StackedKind({
   widget,
@@ -25,7 +26,8 @@ export function StackedKind({
     result,
     widget.label,
     widget.value,
-    widget.series
+    widget.series,
+    STACKED_LABELS
   );
   const colored = colorKeys(keys);
   const last = colored.length - 1;

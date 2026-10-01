@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { MetricResult } from "@/api/custom-client";
 
-import { calendarCells } from "./calendar";
+import { calendarCells, calendarGrain } from "./calendar";
 
 function result(rows: unknown[][]): MetricResult {
   return { columns: ["day", "n"], rows };
@@ -86,5 +86,18 @@ describe("calendarCells", () => {
 
     expect(cells.at(-1)?.date).toBe("2026-01-01");
     expect(Math.max(...cells.map((cell) => cell.week))).toBeLessThanOrEqual(52);
+  });
+});
+
+describe("calendarGrain", () => {
+  it.each([
+    ["one row per day", ["2026-09-01", "2026-09-02", "2026-09-04"], "day"],
+    ["weekly buckets", ["2026-08-31", "2026-09-07", "2026-09-14"], "week"],
+    ["monthly buckets", ["2026-07-01", "2026-08-01", "2026-09-01"], "month"],
+    ["a single day", ["2026-09-01"], "day"],
+  ] as const)("reads %s", (_name, days, grain) => {
+    expect(calendarGrain(result(days.map((day) => [day, 1])), "day")).toBe(
+      grain
+    );
   });
 });

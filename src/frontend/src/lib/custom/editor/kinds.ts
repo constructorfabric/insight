@@ -591,7 +591,7 @@ const WIDGET: Description = {
             column(
               "x",
               "Day",
-              "The metric column holding each day; bucket for a run over time."
+              "The metric column holding each day: a day column, or bucket over a window of 31 days or less."
             ),
             column("value", "Value", "The metric column that shades each day."),
           ],

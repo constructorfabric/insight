@@ -59,13 +59,23 @@ export function seriesRows(
   return { rows: [...byX.values()], keys: kept.keys };
 }
 
+export interface PairedRow {
+  x: unknown;
+  y: number | null;
+  y2: number | null;
+}
+
 export function shareRows(
   result: MetricResult,
   label: string,
   value: string,
-  series: string
+  series: string,
+  labelLimit?: number
 ): SeriesData {
-  const drawn = seriesRows(result, label, value, series);
+  const drawn = keptLabels(
+    seriesRows(result, label, value, series),
+    labelLimit
+  );
 
   const rows = drawn.rows.map((row) => {
     const total = drawn.keys.reduce(
@@ -81,6 +91,24 @@ export function shareRows(
   });
 
   return { rows, keys: drawn.keys };
+}
+
+export function pairedRows(
+  result: MetricResult,
+  x: string,
+  y: string,
+  y2: string
+): PairedRow[] {
+  const bars = seriesRows(result, x, y);
+  const line = new Map(
+    seriesRows(result, x, y2).rows.map((row) => [row.x, toNumber(row.s0)])
+  );
+
+  return bars.rows.map((row) => ({
+    x: row.x,
+    y: toNumber(row.s0),
+    y2: line.get(row.x) ?? null,
+  }));
 }
 
 export function pointGroups(
@@ -113,6 +141,28 @@ export function pointGroups(
   }
 
   return [...groups.values()].filter((group) => group.points.length > 0);
+}
+
+function keptLabels(drawn: SeriesData, limit: number | undefined): SeriesData {
+  if (limit === undefined || drawn.rows.length <= limit) return drawn;
+
+  const total = (row: SeriesRow) =>
+    drawn.keys.reduce((sum, { key }) => sum + (toNumber(row[key]) ?? 0), 0);
+  const kept = new Set(
+    [...drawn.rows].sort((a, b) => total(b) - total(a)).slice(0, limit)
+  );
+
+  const other: SeriesRow = { x: OTHER_LABEL };
+  for (const { key } of drawn.keys) {
+    other[key] = drawn.rows
+      .filter((row) => !kept.has(row))
+      .reduce((sum, row) => sum + (toNumber(row[key]) ?? 0), 0);
+  }
+
+  return {
+    rows: [...drawn.rows.filter((row) => kept.has(row)), other],
+    keys: drawn.keys,
+  };
 }
 
 function keptSeries(readings: [string, number | null][]) {

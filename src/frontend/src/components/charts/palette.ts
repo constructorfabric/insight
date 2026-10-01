@@ -2,7 +2,8 @@ import type { SeriesKey } from "./adapters/series";
 
 const CHART_TOKENS = 12;
 
-export const OTHER_COLOR = "var(--chart-11)";
+export const OTHER_COLOR =
+  "color-mix(in srgb, var(--muted-foreground) 55%, var(--card))";
 
 export function seriesColor(index: number): string {
   return `var(--chart-${(index % CHART_TOKENS) + 1})`;

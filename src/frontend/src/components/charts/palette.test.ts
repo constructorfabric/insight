@@ -19,4 +19,10 @@ describe("palette", () => {
     expect(keyColor({ key: "other", label: "Other" }, 0)).toBe(OTHER_COLOR);
     expect(keyColor({ key: "s0", label: "api" }, 0)).toBe("var(--chart-1)");
   });
+  it("keeps Other apart from every series colour", () => {
+    const series = Array.from({ length: 12 }, (_, index) => seriesColor(index));
+
+    expect(series).not.toContain(OTHER_COLOR);
+    expect(OTHER_COLOR).not.toMatch(/--chart-|--viz-/);
+  });
 });

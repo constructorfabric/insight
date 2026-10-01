@@ -109,3 +109,17 @@ describe("<WidgetSummary>", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("<WidgetSummary> over a stored kind this build does not know", () => {
+  it("still names its type and metric", () => {
+    render(
+      <WidgetSummary
+        linkMetric={false}
+        widget={{ type: "sankey", metric: "m" } as never}
+      />
+    );
+
+    expect(screen.getByText("sankey")).toBeInTheDocument();
+    expect(screen.getByText("m")).toBeInTheDocument();
+  });
+});

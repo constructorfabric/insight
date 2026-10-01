@@ -127,4 +127,15 @@ describe("<WidgetFrame>", () => {
 
     expect(container.firstElementChild).toHaveStyle({ height });
   });
+  it("lets anything taller than a chart, such as a long refusal, be scrolled to", () => {
+    render(
+      <WidgetFrame title="Traffic" state="ready">
+        <p>chart</p>
+      </WidgetFrame>
+    );
+
+    expect(screen.getByText("chart").parentElement).toHaveClass(
+      "overflow-auto"
+    );
+  });
 });

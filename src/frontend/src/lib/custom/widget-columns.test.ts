@@ -126,3 +126,9 @@ describe("isWidgetKind", () => {
     expect(isWidgetKind(kind)).toBe(false);
   });
 });
+
+describe("widgetFields over a stored kind this build does not know", () => {
+  it("names no columns rather than throwing", () => {
+    expect(widgetFields({ type: "sankey", metric: "m" } as never)).toEqual([]);
+  });
+});

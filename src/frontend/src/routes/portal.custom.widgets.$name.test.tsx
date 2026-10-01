@@ -89,6 +89,14 @@ describe("/portal/custom/widgets/$name", () => {
     );
   });
 
+  it("keeps the window picker outside the card so every window stays reachable", async () => {
+    render(<Component />, { wrapper });
+
+    const window = await screen.findByRole("button", { name: "Last 30 days" });
+
+    expect(window.closest("[data-slot=card]")).toBeNull();
+  });
+
   // A chart over time is drawn from buckets; a table is not.
   it("runs over the window picked, sliced as the chart draws it", async () => {
     const user = userEvent.setup();

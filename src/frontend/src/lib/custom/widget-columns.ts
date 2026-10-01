@@ -78,6 +78,8 @@ export function widgetFields(widget: Widget): WidgetField[] {
       return named({ x: widget.x, value: widget.value });
     case "pulse":
       return named({ x: widget.x, y: widget.y });
+    default:
+      return [];
   }
 }
 

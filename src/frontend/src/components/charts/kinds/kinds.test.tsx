@@ -372,4 +372,20 @@ describe("<ChartKind>", () => {
       days.map((day) => `Sep ${Number(day)}`)
     );
   });
+  it("asks for daily rows instead of drawing weekly buckets as gaps", () => {
+    const { figure } = drawn(
+      { type: "heatmap", metric: "m", x: "day", value: "n" },
+      {
+        columns: ["day", "n"],
+        rows: [
+          ["2026-08-31", 5],
+          ["2026-09-07", 6],
+          ["2026-09-14", 7],
+        ],
+      }
+    );
+
+    expect(figure).toHaveTextContent("one row per day");
+    expect(figure.querySelectorAll("[data-day]")).toHaveLength(0);
+  });
 });

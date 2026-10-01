@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { MetricResult } from "@/api/custom-client";
 
-import { pointGroups, seriesRows, shareRows } from "./series";
+import { pairedRows, pointGroups, seriesRows, shareRows } from "./series";
 
 function result(columns: string[], rows: unknown[][]): MetricResult {
   return { columns, rows };
@@ -184,6 +184,52 @@ describe("pointGroups", () => {
 
     expect(groups).toEqual([
       { key: "s0", label: "lines", points: [{ x: 1, y: 10, size: 4 }] },
+    ]);
+  });
+});
+
+describe("shareRows over many labels", () => {
+  it("keeps the largest labels and folds the rest into one Other row", () => {
+    const rows = Array.from({ length: 15 }, (_, index) => [
+      `repo-${index}`,
+      "new",
+      100 - index,
+    ]);
+
+    const drawn = shareRows(
+      result(["repo", "kind", "n"], rows),
+      "repo",
+      "n",
+      "kind",
+      8
+    );
+
+    expect(drawn.rows.map((row) => row.x)).toEqual([
+      ...Array.from({ length: 8 }, (_, index) => `repo-${index}`),
+      "Other",
+    ]);
+  });
+});
+
+describe("pairedRows", () => {
+  it("sums both columns over the rows that share an x", () => {
+    const drawn = pairedRows(
+      result(
+        ["day", "repo", "n", "files"],
+        [
+          ["d1", "api", 40, 3],
+          ["d1", "web", 20, 5],
+          ["d2", "api", 60, 4],
+        ]
+      ),
+      "day",
+      "n",
+      "files"
+    );
+
+    expect(drawn).toEqual([
+      { x: "d1", y: 60, y2: 8 },
+      { x: "d2", y: 60, y2: 4 },
     ]);
   });
 });
