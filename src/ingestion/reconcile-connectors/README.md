@@ -23,6 +23,19 @@ src/ingestion/reconcile-connectors/
 └── templates/               Argo/K8s YAML templates
 ```
 
+## The Bronze destination
+
+Reconcile resolves the `Clickhouse` destination definition by name, so an
+installation runs whatever `airbyte/destination-clickhouse` version its Airbyte
+carries. Below the minimum named in `python/check_destination_version.py`
+(2.1.29, the release that added `use_replicated_engines` / `cluster_name`) the
+tick refuses rather than creating the destination, and the log line says which
+version was found. Pinning the definition instead would fight the operator's
+own Airbyte upgrades.
+
+`RECONCILE_DESTINATION_ID` hands that destination's configuration — including
+its version — to whoever set it, and skips both the lookup and the check.
+
 ## The sync-history sweep
 
 The tick's last layer copies the mover's account of every sync into
