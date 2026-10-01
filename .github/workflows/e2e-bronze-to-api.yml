@@ -416,6 +416,10 @@ jobs:
         id: suite
         env:
           SHARD: ${{ matrix.shard }}
+          # pytest block-buffers its output when stdout is a pipe, so a shard
+          # killed by the job timeout flushes nothing and leaves no trace of how
+          # far it got.
+          PYTHONUNBUFFERED: "1"
         run: |
           set -euo pipefail
           trees=()
@@ -433,7 +437,10 @@ jobs:
           esac
           [ "${#trees[@]}" -gt 0 ] || { echo "::error::shard ${SHARD} selected no trees"; exit 1; }
           printf 'shard %s → %s\n' "$SHARD" "${trees[*]}"
-          ./dev-compose.sh test-stand test "${trees[@]}" --tb=short -q
+          # -v names each spec as it starts, --log-cli-level surfaces the dbt
+          # invocation behind it, and --durations ranks them once the run ends:
+          # between them a shard that runs long says where the time went.
+          ./dev-compose.sh test-stand test "${trees[@]}" --tb=short -v --durations=25 --log-cli-level=INFO
 
       # The shards' ledgers merge into one directory, which keeps one file per
       # name — so each carries its own or the gate sees a quarter of the coverage.
