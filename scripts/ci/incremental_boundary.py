@@ -34,15 +34,13 @@ DDL_DIR = INGESTION / "scripts" / "connectors-ddl"
 SKIPPED_DIRS = ("dbt/macros", "dbt/tests", "dbt/target", "scripts")
 
 LINE_COMMENT = re.compile(r"--[^\n]*")
-JINJA_COMMENT = re.compile(r"\{#.*?#\}", re.S)
-TABLE_WIDE = re.compile(r"max\(\s*_version\s*\)\s+FROM\s+\{\{\s*this\s*\}\}", re.I)
+JINJA_COMMENT = re.compile(r"\{#.*?#\}", re.DOTALL)
+TABLE_WIDE = re.compile(r"max\(\s*_version\s*\)\s+FROM\s+\{\{\s*this\s*\}\}", re.IGNORECASE)
 WATERMARK_KEYS = re.compile(r"silver_incremental_watermark\(\s*\[([^\]]*)\]")
 QUOTED = re.compile(r"'([^']+)'|\"([^\"]+)\"")
 SCHEMA = re.compile(r"\bschema\s*=\s*'([^']+)'")
-CREATE_TABLE = re.compile(
-    r"CREATE TABLE (?:IF NOT EXISTS )?`?(\w+)`?\.`?(\w+)`?\s*\((.*?)\n\)\s*ENGINE", re.S
-)
-DDL_COLUMN = re.compile(r"^\s*`?(\w+)`?\s+\S", re.M)
+CREATE_TABLE = re.compile(r"CREATE TABLE (?:IF NOT EXISTS )?`?(\w+)`?\.`?(\w+)`?\s*\((.*?)\n\)\s*ENGINE", re.DOTALL)
+DDL_COLUMN = re.compile(r"^\s*`?(\w+)`?\s+\S", re.MULTILINE)
 
 
 @dataclass(frozen=True)
@@ -71,26 +69,32 @@ def relation_of(path: Path, sql: str) -> tuple[str, str]:
 
 
 def ddl_columns(ddl: str) -> dict[tuple[str, str], set[str]]:
-    return {
-        (schema, table): set(DDL_COLUMN.findall(body)) for schema, table, body in CREATE_TABLE.findall(ddl)
-    }
+    return {(schema, table): set(DDL_COLUMN.findall(body)) for schema, table, body in CREATE_TABLE.findall(ddl)}
 
 
-def check_model(path: str, relation: tuple[str, str], sql: str, columns: dict[tuple[str, str], set[str]]) -> tuple[list[Finding], list[Finding]]:
+def check_model(
+    path: str, relation: tuple[str, str], sql: str, columns: dict[tuple[str, str], set[str]]
+) -> tuple[list[Finding], list[Finding]]:
     errors: list[Finding] = []
     warnings: list[Finding] = []
 
     if has_table_wide_boundary(sql):
-        errors.append(Finding(path, "table-wide `max(_version) FROM {{ this }}` boundary; use silver_incremental_watermark"))
+        errors.append(
+            Finding(path, "table-wide `max(_version) FROM {{ this }}` boundary; use silver_incremental_watermark")
+        )
 
     for keys in watermark_keys(sql):
         known = columns.get(relation)
         if known is None:
-            warnings.append(Finding(path, f"{relation[0]}.{relation[1]} is not in the connectors-ddl snapshot; keys unchecked"))
+            warnings.append(
+                Finding(path, f"{relation[0]}.{relation[1]} is not in the connectors-ddl snapshot; keys unchecked")
+            )
             continue
         missing = [k for k in keys if k not in known]
         if missing:
-            errors.append(Finding(path, f"watermark keys not columns of {relation[0]}.{relation[1]}: {', '.join(missing)}"))
+            errors.append(
+                Finding(path, f"watermark keys not columns of {relation[0]}.{relation[1]}: {', '.join(missing)}")
+            )
 
     return errors, warnings
 
@@ -104,7 +108,7 @@ def models(root: Path) -> list[Path]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--root", type=Path, default=Path("."))
+    parser.add_argument("--root", type=Path, default=Path())
     args = parser.parse_args()
 
     ddl = "\n".join(p.read_text() for p in sorted((args.root / DDL_DIR).glob("*.sql")))

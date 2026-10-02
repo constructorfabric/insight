@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2].parent
 sys.path.insert(0, str(ROOT / "scripts" / "ci"))
 
-import incremental_boundary as ib  # noqa: E402
+import incremental_boundary as ib
 
 TABLE_WIDE = """
 SELECT * FROM ({{ union_by_tag('silver:class_x') }})

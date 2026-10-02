@@ -15,22 +15,26 @@ issue's rows must arrive.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
+import pytest
 from conftest import Scenario
 from helpers import LATER_SYNC, event, field, issue, item, status
 
 FAR_FUTURE_MS = 4_102_444_800_000
 
 STATUS_FIELD = field("status", name="Status", schema_type="status")
-STATUSES = [
-    status("1", name="Open", category_key="new"),
-    status("3", name="In Progress", category_key="indeterminate"),
-]
+STATUSES = [status("1", name="Open", category_key="new"), status("3", name="In Progress", category_key="indeterminate")]
 
 
 def _started(key: str, *, extracted_at: str | None = None) -> dict:
     extra = {"extracted_at": extracted_at} if extracted_at else {}
     return event(
-        key, 101, "2026-01-06T10:00:00", [item("status", frm="1", frm_str="Open", to="3", to_str="In Progress")], **extra
+        key,
+        101,
+        "2026-01-06T10:00:00",
+        [item("status", frm="1", frm_str="Open", to="3", to_str="In Progress")],
+        **extra,
     )
 
 
@@ -77,12 +81,23 @@ def _plant_future_row(scenario: Scenario, *, source: str, data_source: str, even
     )
 
 
-def _land_first_issue(scenario: Scenario) -> None:
+def _clear_class(scenario: Scenario) -> None:
     scenario.warehouse.execute(
         "DELETE FROM silver.class_task_field_history WHERE insight_source_id IN ({src:String}, 'another-connection')"
         " SETTINGS mutations_sync = 2",
         {"src": scenario.source},
     )
+
+
+@pytest.fixture(autouse=True)
+def _own_class_rows(scenario: Scenario) -> Iterator[None]:
+    """The class table outlives the test; a planted far-future row must not."""
+    _clear_class(scenario)
+    yield
+    _clear_class(scenario)
+
+
+def _land_first_issue(scenario: Scenario) -> None:
     scenario.seed(fields=[STATUS_FIELD], issues=[_issue("TST-1")], events=[_started("TST-1")], statuses=STATUSES)
     scenario.build()
     _build_class(scenario)
