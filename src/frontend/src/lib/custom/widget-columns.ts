@@ -68,7 +68,7 @@ export function widgetLayout(widget: Widget): {
   return {
     tall: rows,
     fullRow: rows,
-    fullscreen: !rows && widget.type !== "stat",
+    fullscreen: widget.type !== "stat",
   };
 }
 

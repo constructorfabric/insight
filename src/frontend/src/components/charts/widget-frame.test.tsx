@@ -1,5 +1,11 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { WidgetFrame } from "./widget-frame";
 
@@ -127,21 +133,10 @@ describe("<WidgetFrame>", () => {
 });
 
 describe("<WidgetFrame> full screen", () => {
-  afterEach(() => {
-    Object.defineProperty(document, "fullscreenElement", {
-      configurable: true,
-      value: null,
-    });
-  });
+  function openFullScreen() {
+    fireEvent.click(screen.getByRole("button", { name: "Full screen" }));
 
-  function enterFullscreen(element: Element) {
-    Object.defineProperty(document, "fullscreenElement", {
-      configurable: true,
-      value: element,
-    });
-    act(() => {
-      document.dispatchEvent(new Event("fullscreenchange"));
-    });
+    return screen.getByRole("dialog", { name: "Traffic" });
   }
 
   it("offers no full screen button unless asked", () => {
@@ -156,29 +151,27 @@ describe("<WidgetFrame> full screen", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("puts the widget in full screen and takes it out again", () => {
-    const request = vi.fn().mockResolvedValue(undefined);
-    const exit = vi.fn().mockResolvedValue(undefined);
-    HTMLElement.prototype.requestFullscreen = request;
-    document.exitFullscreen = exit;
+  it("opens the widget in a dialog over the page and closes it again", async () => {
     render(
       <WidgetFrame title="Traffic" state="ready" fullscreen>
         <p>chart</p>
       </WidgetFrame>
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Full screen" }));
-    const shown = request.mock.contexts[0] as HTMLElement;
-    enterFullscreen(shown);
-    fireEvent.click(screen.getByRole("button", { name: "Exit full screen" }));
+    const dialog = openFullScreen();
+    expect(within(dialog).getByText("chart")).toBeInTheDocument();
 
-    expect(shown).toContainElement(screen.getByText("chart"));
-    expect(exit).toHaveBeenCalledOnce();
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Exit full screen" })
+    );
+
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
+    );
+    expect(screen.getByText("chart")).toBeInTheDocument();
   });
 
-  it("leaves full screen before opening what the body opens", () => {
-    const exit = vi.fn().mockResolvedValue(undefined);
-    document.exitFullscreen = exit;
+  it("closes the dialog before opening what the body opens", async () => {
     const open = vi.fn();
     render(
       <WidgetFrame
@@ -192,17 +185,18 @@ describe("<WidgetFrame> full screen", () => {
       </WidgetFrame>
     );
 
-    enterFullscreen(
-      screen.getByText("chart").closest("[data-fullscreen]") as Element
+    const dialog = openFullScreen();
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Show the data" })
     );
-    fireEvent.click(screen.getByRole("button", { name: "Show the data" }));
 
-    expect(exit).toHaveBeenCalledOnce();
     expect(open).toHaveBeenCalledOnce();
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
+    );
   });
-  it("leaves full screen before running a header action", () => {
-    const exit = vi.fn().mockResolvedValue(undefined);
-    document.exitFullscreen = exit;
+
+  it("closes the dialog before running a header action", async () => {
     const open = vi.fn();
     render(
       <WidgetFrame
@@ -219,12 +213,12 @@ describe("<WidgetFrame> full screen", () => {
       </WidgetFrame>
     );
 
-    enterFullscreen(
-      screen.getByText("chart").closest("[data-fullscreen]") as Element
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Data" }));
+    const dialog = openFullScreen();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Data" }));
 
-    expect(exit).toHaveBeenCalledOnce();
     expect(open).toHaveBeenCalledOnce();
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
+    );
   });
 });

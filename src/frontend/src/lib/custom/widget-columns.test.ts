@@ -142,7 +142,7 @@ describe("widgetLayout", () => {
   it.each<[Widget, { tall: boolean; fullRow: boolean; fullscreen: boolean }]>([
     [
       { type: "table", metric: "m", columns: ["a"] },
-      { tall: true, fullRow: true, fullscreen: false },
+      { tall: true, fullRow: true, fullscreen: true },
     ],
     [
       { type: "bar", metric: "m", x: "day", y: "n" },
