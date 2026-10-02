@@ -27,22 +27,22 @@ pub(crate) const KINDS: [&str; 19] = [
 
 #[derive(Debug, Deserialize)]
 pub(super) struct Widget {
-    pub(super) metric: String,
+    metric: String,
     #[serde(default)]
-    pub(super) detail: Option<String>,
+    detail: Option<String>,
     #[serde(flatten)]
-    pub(super) draws: Draws,
+    draws: Draws,
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct Category {
+struct Category {
     label: String,
     value: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
-pub(super) enum Draws {
+enum Draws {
     Table {
         #[serde(default)]
         columns: Vec<String>,

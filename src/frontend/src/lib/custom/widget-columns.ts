@@ -1,86 +1,61 @@
 import type { Widget, WidgetKind } from "@/api/custom-client";
 
-export const WIDGET_KINDS: readonly WidgetKind[] = [
-  "table",
-  "line",
-  "bar",
-  "area",
-  "stat",
-  "pie",
-  "donut",
-  "ranked",
-  "treemap",
-  "funnel",
-  "waterfall",
-  "stacked",
-  "composed",
-  "scatter",
-  "bubble",
-  "radar",
-  "radial",
-  "heatmap",
-  "pulse",
-];
+type WidgetOf<K extends WidgetKind> = Widget extends infer W
+  ? W extends { type: infer T }
+    ? K extends T
+      ? W
+      : never
+    : never
+  : never;
 
-export interface WidgetField {
+type DrawnFields = {
+  [K in WidgetKind]: readonly Exclude<
+    keyof WidgetOf<K>,
+    "type" | "metric" | "title" | "detail"
+  >[];
+};
+
+const DRAWN: DrawnFields = {
+  table: [],
+  line: ["x", "y", "series", "target"],
+  bar: ["x", "y", "series"],
+  area: ["x", "y", "series"],
+  stat: ["value"],
+  pie: ["label", "value"],
+  donut: ["label", "value"],
+  ranked: ["label", "value"],
+  treemap: ["label", "value"],
+  funnel: ["label", "value"],
+  waterfall: ["label", "value"],
+  stacked: ["label", "value", "series"],
+  composed: ["x", "y", "y2"],
+  scatter: ["x", "y", "series"],
+  bubble: ["x", "y", "size", "series"],
+  radar: ["label", "value", "target"],
+  radial: ["value", "max"],
+  heatmap: ["x", "value"],
+  pulse: ["x", "y"],
+};
+
+export const WIDGET_KINDS = Object.keys(DRAWN) as WidgetKind[];
+
+interface WidgetField {
   field: string;
   column: string;
 }
 
 export function widgetFields(widget: Widget): WidgetField[] {
-  switch (widget.type) {
-    case "table":
-      return widget.columns.map((column) => ({ field: "column", column }));
-    case "line":
-      return named({
-        x: widget.x,
-        y: widget.y,
-        series: widget.series,
-        target: widget.target,
-      });
-    case "bar":
-    case "area":
-    case "scatter":
-      return named({ x: widget.x, y: widget.y, series: widget.series });
-    case "stat":
-      return named({ value: widget.value });
-    case "pie":
-    case "donut":
-    case "ranked":
-    case "treemap":
-    case "funnel":
-    case "waterfall":
-      return named({ label: widget.label, value: widget.value });
-    case "stacked":
-      return named({
-        label: widget.label,
-        value: widget.value,
-        series: widget.series,
-      });
-    case "composed":
-      return named({ x: widget.x, y: widget.y, y2: widget.y2 });
-    case "bubble":
-      return named({
-        x: widget.x,
-        y: widget.y,
-        size: widget.size,
-        series: widget.series,
-      });
-    case "radar":
-      return named({
-        label: widget.label,
-        value: widget.value,
-        target: widget.target,
-      });
-    case "radial":
-      return named({ value: widget.value, max: widget.max });
-    case "heatmap":
-      return named({ x: widget.x, value: widget.value });
-    case "pulse":
-      return named({ x: widget.x, y: widget.y });
-    default:
-      return [];
+  if (widget.type === "table") {
+    return widget.columns.map((column) => ({ field: "column", column }));
   }
+  if (!isWidgetKind(widget.type)) return [];
+
+  const named = widget as unknown as Record<string, unknown>;
+  const fields: readonly string[] = DRAWN[widget.type];
+  return fields.flatMap((field) => {
+    const column = named[field];
+    return typeof column === "string" && column ? [{ field, column }] : [];
+  });
 }
 
 export function widgetLayout(widget: Widget): {
@@ -98,10 +73,4 @@ export function isWidgetKind(type: unknown): type is WidgetKind {
 
 export function widgetColumns(widget: Widget): string[] {
   return widgetFields(widget).map(({ column }) => column);
-}
-
-function named(fields: Record<string, string | undefined>): WidgetField[] {
-  return Object.entries(fields).flatMap(([field, column]) =>
-    column ? [{ field, column }] : []
-  );
 }

@@ -1,5 +1,7 @@
 use serde_json::{Value, json};
 
+use crate::domain::kinds::widget::KINDS;
+
 use super::anthropic::{Message, MessagesResponse};
 use super::conversation::{ModelTransport, converse, thread};
 use super::prompt::system_prompt;
@@ -450,30 +452,7 @@ fn the_widget_schema_offers_exactly_the_kinds_the_renderer_draws() {
     let created = tool(CREATE_TOOL);
     let widget = &created["input_schema"]["properties"]["widgets"]["items"]["properties"]["body"]["properties"];
 
-    assert_eq!(
-        widget["type"]["enum"],
-        json!([
-            "table",
-            "line",
-            "bar",
-            "area",
-            "stat",
-            "pie",
-            "donut",
-            "ranked",
-            "treemap",
-            "funnel",
-            "waterfall",
-            "stacked",
-            "composed",
-            "scatter",
-            "bubble",
-            "radar",
-            "radial",
-            "heatmap",
-            "pulse"
-        ])
-    );
+    assert_eq!(widget["type"]["enum"], json!(KINDS));
     for field in [
         "metric", "columns", "x", "y", "y2", "value", "label", "series", "target", "size", "max",
     ] {
