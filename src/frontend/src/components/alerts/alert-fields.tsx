@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
 
 import type { AlertDestination, AlertOperator } from "@/api/alerts-types";
+import type { MetricDefinition } from "@/api/custom-types";
 import { FieldSelect } from "@/components/alerts/field-select";
 import { MetricPicker } from "@/components/alerts/metric-picker";
 import { Row } from "@/components/custom/editor/controls";
@@ -20,6 +21,12 @@ import {
   toSeconds,
   type IntervalUnit,
 } from "@/lib/alerts/interval";
+import {
+  alertColumns,
+  isRatio,
+  metricShape,
+  type MetricShape,
+} from "@/lib/alerts/shape";
 import { describing } from "@/lib/custom/editor/aria";
 import { RANGE_PRESETS, rangeLabel } from "@/lib/custom/time-range";
 import { TEXT_HEADING, TEXT_LABEL } from "@/lib/type-scale";
@@ -48,10 +55,23 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 }
 
 /** The columns a metric answers, by the names a rule calls them. */
-function useMetricColumns(metric: string): string[] {
+function useMetricDefinition(metric: string): MetricDefinition | undefined {
   const read = useQuery({ ...metricQuery(metric), enabled: metric !== "" });
 
-  return read.data?.definition.fields.map((field) => field.as_name) ?? [];
+  return read.data?.definition;
+}
+
+/** What the picked metric's shape means for an alert, before anything runs. */
+function ShapeNote({ shape }: { shape: MetricShape }) {
+  if (shape.kind === "one") return null;
+
+  return (
+    <p role="status" className={cn(TEXT_LABEL, "text-destructive")}>
+      {shape.kind === "grouped"
+        ? `This metric answers a list, one row per ${shape.by.join(", ")}. An alert reads one number, so every check would be unknown.`
+        : "This metric answers its rows one by one. An alert reads one number, so every check would be unknown."}
+    </p>
+  );
 }
 
 /** The windows a rule may name: the presets, and the one it already has. */
@@ -80,7 +100,10 @@ export function AlertFields({
   destinations: readonly AlertDestination[];
   onChange: (next: AlertForm) => void;
 }) {
-  const columns = useMetricColumns(form.metric);
+  const definition = useMetricDefinition(form.metric);
+  const columns = definition
+    ? alertColumns(definition).map((field) => field.as_name)
+    : [];
   const set = (patch: Partial<AlertForm>) => onChange({ ...form, ...patch });
 
   const secs = toSeconds(form.interval);
@@ -120,6 +143,7 @@ export function AlertFields({
             onChange={(metric) => set({ metric, column: "" })}
           />
         </Row>
+        {definition ? <ShapeNote shape={metricShape(definition)} /> : null}
         <div className="grid gap-4 sm:grid-cols-2">
           <Row id="alert-column" label="Column" required said={errors.column}>
             <FieldSelect
@@ -194,6 +218,7 @@ export function AlertFields({
           range={form.range}
           operator={form.operator}
           threshold={thresholdOf(form.threshold)}
+          ratio={isRatio(definition, form.column)}
         />
 
         <div className="grid gap-4 sm:grid-cols-2">

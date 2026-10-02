@@ -25,12 +25,15 @@ export function CurrentValue({
   range,
   operator,
   threshold,
+  ratio,
 }: {
   metric: string;
   column: string;
   range: string;
   operator: AlertOperator;
   threshold: number | undefined;
+  /** The column divides one total by another, so an empty value means nothing to divide by. */
+  ratio: boolean;
 }) {
   const askedMetric = useDebouncedValue(metric, RUN_DEBOUNCE_MS);
   const askedRange = useDebouncedValue(range, RUN_DEBOUNCE_MS);
@@ -75,7 +78,10 @@ export function CurrentValue({
     if (preview.kind === "unknown") {
       return (
         <p className="text-destructive">
-          Now: unknown. {reasonText(preview.reason)}
+          Now: unknown.{" "}
+          {ratio && preview.reason === "null"
+            ? "Nothing to divide by: the window holds no rows to count."
+            : reasonText(preview.reason)}
         </p>
       );
     }

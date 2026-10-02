@@ -151,6 +151,64 @@ describe("NewAlertPage", () => {
     );
   });
 
+  it("says a grouped metric cannot be alerted on and offers only its numbers", async () => {
+    vi.mocked(customClient.fetchMetric).mockResolvedValue({
+      definition: {
+        dataset: "runs",
+        fields: [
+          { field: "stand", type: "string", as_name: "stand" },
+          { field: "runs", type: "int", agg: "sum", as_name: "runs" },
+        ],
+        group_by: ["stand"],
+      },
+    } as unknown as Awaited<ReturnType<typeof customClient.fetchMetric>>);
+
+    render(<NewAlertPage />, { wrapper });
+    await userEvent.type(await screen.findByLabelText("Metric"), "prs");
+    await userEvent.click(
+      await screen.findByRole("option", { name: "prs-open" })
+    );
+
+    expect(
+      await screen.findByText(/answers a list, one row per stand/)
+    ).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("combobox", { name: "Column" }));
+    expect(
+      await screen.findByRole("option", { name: "runs" })
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "stand" })).toBeNull();
+  });
+
+  it("explains an empty ratio as nothing to divide by", async () => {
+    vi.mocked(customClient.fetchMetric).mockResolvedValue({
+      definition: {
+        dataset: "runs",
+        fields: [
+          { field: "passed", type: "int", agg: "sum", as_name: "passed" },
+          { field: "runs", type: "int", agg: "sum", as_name: "runs" },
+          { type: "float", as_name: "pass_rate", divide: ["passed", "runs"] },
+        ],
+      },
+    } as unknown as Awaited<ReturnType<typeof customClient.fetchMetric>>);
+    vi.mocked(customClient.runMetric).mockResolvedValue(
+      answer(
+        [[0, 0, null]],
+        ["passed", "runs", "pass_rate"]
+      ) as unknown as Awaited<ReturnType<typeof customClient.runMetric>>
+    );
+
+    render(<NewAlertPage />, { wrapper });
+    await userEvent.type(await screen.findByLabelText("Metric"), "prs");
+    await userEvent.click(
+      await screen.findByRole("option", { name: "prs-open" })
+    );
+    await pick("Column", "pass_rate");
+
+    expect(
+      await screen.findByText(/Nothing to divide by/, {}, { timeout: 3_000 })
+    ).toBeInTheDocument();
+  });
+
   it("moves to the first field that needs fixing", async () => {
     render(<NewAlertPage />, { wrapper });
     await userEvent.click(

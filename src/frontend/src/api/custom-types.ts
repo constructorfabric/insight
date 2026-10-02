@@ -83,6 +83,8 @@ export interface MetricDefinition {
     type: string;
     agg?: string;
     as_name: string;
+    /** A ratio of two other columns, numerator first, by their `as_name`. */
+    divide?: [string, string];
   })[];
   group_by?: string[];
   filters?: (MetricRead & {
