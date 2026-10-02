@@ -226,6 +226,21 @@ def test_an_attachment_removed_beside_a_same_named_one_is_observed(scenario: Sce
     ]
 
 
+@case(
+    fields=[REMAINING_FIELD],
+    issues=[issue("TST-1", fields={REMAINING: 0})],
+    events=[
+        event(
+            "TST-1", 101, "2026-03-05T10:00:00", [item(REMAINING, frm=None, frm_str=None, to="86400", to_str="86400")]
+        )
+    ],
+)
+def test_a_clearing_older_than_the_newest_event_is_not_recorded(scenario: Scenario) -> None:
+    """The issue row predates the changelog entry that set the estimate, so the
+    empty value it shows is the stale side, as for `differs` (§7)."""
+    assert _diff_rows(scenario, REMAINING) == []
+
+
 DESCRIPTION_ADF = {
     "type": "doc",
     "version": 1,

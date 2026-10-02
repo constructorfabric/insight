@@ -790,9 +790,10 @@ present_keys AS (
     ARRAY JOIN JSONExtractKeys(j.custom_fields_json) AS k
 ),
 
--- A `differs` pair whose events are newer than the issue row is excluded: the
--- issue stream and its changelog substream are read at different moments of one
--- sync, and a snapshot that has not caught up is not a disagreement (§7).
+-- A pair whose events are newer than the issue row is excluded, `cleared` as
+-- much as `differs`: the issue stream and its changelog substream are read at
+-- different moments of one sync, and a snapshot that has not caught up is not a
+-- disagreement (§7).
 --
 -- The date of a `differs` row must be stable across syncs, or a closure it
 -- records slides forward every time the issue is recomputed. A status the issue
@@ -825,8 +826,7 @@ snapshot_diff_pairs AS (
         ON m.insight_source_id = p.insight_source_id
        AND m.issue_id = p.issue_id
        AND m.field_id = p.field_id
-    WHERE m.disagreement = 'cleared'
-       OR m.last_event_at <= p.observed_at
+    WHERE m.last_event_at <= p.observed_at
 ),
 
 -- ── the value of every modelled field at issue creation ─────────────────────
