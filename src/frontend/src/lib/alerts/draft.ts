@@ -1,11 +1,6 @@
 /** An alert as the form holds it, and the rule it sends. */
 
 import type { Alert, AlertDraft, AlertOperator } from "@/api/alerts-types";
-import {
-  fromSeconds,
-  toSeconds,
-  type IntervalInput,
-} from "@/lib/alerts/interval";
 
 /** The longest name the service accepts. */
 export const NAME_MAX = 200;
@@ -19,13 +14,8 @@ export interface AlertForm {
   threshold: string;
   /** A window token, or "" to run the metric over all time. */
   range: string;
-  interval: IntervalInput;
-  /**
-   * The interval as stored, when the units above cannot hold it exactly
-   * (90 seconds is shown as 2 minutes). Sent back unchanged unless the
-   * reader changes the interval.
-   */
-  storedIntervalSecs?: number;
+  /** How often to check, in seconds. */
+  intervalSecs: number;
   destination: string;
   enabled: boolean;
 }
@@ -50,7 +40,7 @@ export function blankForm(destination = ""): AlertForm {
     operator: ">",
     threshold: "",
     range: "",
-    interval: { amount: 5, unit: "minutes" },
+    intervalSecs: 300,
     destination,
     enabled: true,
   };
@@ -64,8 +54,7 @@ export function formOf(alert: Alert): AlertForm {
     operator: alert.operator,
     threshold: String(alert.threshold),
     range: alert.range ?? "",
-    interval: fromSeconds(alert.interval_secs),
-    storedIntervalSecs: alert.interval_secs,
+    intervalSecs: alert.interval_secs,
     destination: alert.destination,
     enabled: alert.enabled,
   };
@@ -94,18 +83,6 @@ function thresholdError(typed: string): string {
     : "Enter a number.";
 }
 
-/** The stored interval while the reader has not changed it, else what they entered. */
-function intervalSecsOf(form: AlertForm): number {
-  const stored = form.storedIntervalSecs;
-  if (stored === undefined) return toSeconds(form.interval);
-
-  const shown = fromSeconds(stored);
-  const untouched =
-    shown.amount === form.interval.amount && shown.unit === form.interval.unit;
-
-  return untouched ? stored : toSeconds(form.interval);
-}
-
 export type Checked =
   { ok: true; draft: AlertDraft } | { ok: false; errors: FieldErrors };
 
@@ -122,7 +99,6 @@ export function checkForm(form: AlertForm): Checked {
   // INVARIANT: the service counts characters, and `length` counts UTF-16 units.
   const nameLength = [...name].length;
   const threshold = thresholdOf(form.threshold);
-  const amount = form.interval.amount;
 
   if (name === "") errors.name = "Enter a name.";
   else if (nameLength > NAME_MAX) {
@@ -132,9 +108,6 @@ export function checkForm(form: AlertForm): Checked {
   if (form.column === "") errors.column = "Pick a column.";
   if (threshold === undefined)
     errors.threshold = thresholdError(form.threshold);
-  if (!Number.isInteger(amount) || amount < 1) {
-    errors.interval_secs = "Enter a whole number of 1 or more.";
-  }
   if (form.destination === "") errors.destination = "Pick a destination.";
 
   if (Object.keys(errors).length > 0 || threshold === undefined) {
@@ -150,7 +123,7 @@ export function checkForm(form: AlertForm): Checked {
       operator: form.operator,
       threshold,
       range: form.range === "" ? null : form.range,
-      interval_secs: intervalSecsOf(form),
+      interval_secs: form.intervalSecs,
       destination: form.destination,
       enabled: form.enabled,
     },

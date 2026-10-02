@@ -1,5 +1,4 @@
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
 
 import type { AlertDestination, AlertOperator } from "@/api/alerts-types";
 import type { StoredMetric } from "@/api/custom-types";
@@ -14,13 +13,7 @@ import {
   type AlertForm,
   type FieldErrors,
 } from "@/lib/alerts/draft";
-import {
-  INTERVAL_PRESETS_SECS,
-  fromSeconds,
-  intervalLabel,
-  toSeconds,
-  type IntervalUnit,
-} from "@/lib/alerts/interval";
+import { INTERVAL_PRESETS_SECS, intervalLabel } from "@/lib/alerts/interval";
 import {
   alertColumns,
   isRatio,
@@ -34,8 +27,6 @@ import { metricQuery } from "@/queries/custom";
 
 import { CurrentValue } from "./current-value";
 
-const CUSTOM = "custom";
-
 /** The window value meaning no window, since a kit select takes no empty value. */
 const ALL_TIME = "all-time";
 
@@ -44,8 +35,6 @@ const UTC_NOTE = "Days, months and quarters end at midnight UTC.";
 
 /** The windows bounded by calendar days rather than counted back from now. */
 const CALENDAR_WINDOWS = new Set(["PDC", "PMC", "PQC"]);
-
-const UNITS: readonly IntervalUnit[] = ["minutes", "hours", "days"];
 
 /** The columns a metric answers, by the names a rule calls them. */
 function useStoredMetric(metric: string): StoredMetric | undefined {
@@ -112,11 +101,9 @@ export function AlertFields({
     : [];
   const set = (patch: Partial<AlertForm>) => onChange({ ...form, ...patch });
 
-  const secs = toSeconds(form.interval);
-  // Custom is a choice of its own: typing an amount that happens to equal a
-  // preset must not snap the control back to the preset mid-edit.
-  const [custom, setCustom] = useState(!INTERVAL_PRESETS_SECS.includes(secs));
-  const preset = custom ? CUSTOM : String(secs);
+  const intervals = INTERVAL_PRESETS_SECS.includes(form.intervalSecs)
+    ? INTERVAL_PRESETS_SECS
+    : [...INTERVAL_PRESETS_SECS, form.intervalSecs].sort((a, b) => a - b);
 
   return (
     <div className="flex flex-col gap-6">
@@ -233,65 +220,16 @@ export function AlertFields({
         >
           <FieldSelect
             id="alert-interval"
-            value={preset}
-            options={[
-              ...INTERVAL_PRESETS_SECS.map((one) => ({
-                value: String(one),
-                label: intervalLabel(one),
-              })),
-              { value: CUSTOM, label: "Custom…" },
-            ]}
+            value={String(form.intervalSecs)}
+            options={intervals.map((secs) => ({
+              value: String(secs),
+              label: intervalLabel(secs),
+            }))}
             describe={describing("alert-interval", {
               said: errors.interval_secs,
             })}
-            onChange={(picked) => {
-              setCustom(picked === CUSTOM);
-              if (picked !== CUSTOM) {
-                set({ interval: fromSeconds(Number(picked)) });
-              }
-            }}
+            onChange={(picked) => set({ intervalSecs: Number(picked) })}
           />
-          {preset === CUSTOM ? (
-            <span className="mt-2 flex items-center gap-2">
-              <Input
-                id="alert-interval-amount"
-                aria-label="Amount"
-                {...describing("alert-interval", {
-                  said: errors.interval_secs,
-                })}
-                type="number"
-                min={1}
-                step={1}
-                value={
-                  Number.isNaN(form.interval.amount) ? "" : form.interval.amount
-                }
-                className="h-9 w-24 tabular-nums"
-                onChange={(event) =>
-                  set({
-                    interval: {
-                      ...form.interval,
-                      amount: event.target.valueAsNumber,
-                    },
-                  })
-                }
-              />
-              <FieldSelect
-                id="alert-interval-unit"
-                label="Unit"
-                value={form.interval.unit}
-                options={UNITS.map((unit) => ({ value: unit, label: unit }))}
-                className="w-28"
-                onChange={(unit) =>
-                  set({
-                    interval: {
-                      ...form.interval,
-                      unit: unit as IntervalUnit,
-                    },
-                  })
-                }
-              />
-            </span>
-          ) : null}
         </Row>
         <Row
           id="alert-destination"

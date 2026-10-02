@@ -77,8 +77,6 @@ describe("checkForm", () => {
     ["column", { column: "" }],
     ["threshold", { threshold: "" }],
     ["threshold", { threshold: "ten" }],
-    ["interval_secs", { interval: { amount: 0, unit: "minutes" as const } }],
-    ["interval_secs", { interval: { amount: 1.5, unit: "hours" as const } }],
     ["destination", { destination: "" }],
   ])("refuses a form with a bad %s", (field, change) => {
     const checked = checkForm({ ...FILLED, ...change });
@@ -89,20 +87,10 @@ describe("checkForm", () => {
 });
 
 describe("what the form sends back", () => {
-  it.each([
-    ["an interval no unit holds exactly, untouched", {}, 90],
-    [
-      "the same interval, changed",
-      { interval: { amount: 3, unit: "minutes" as const } },
-      180,
-    ],
-  ])("sends %s as it should", (_case, change, secs) => {
-    const checked = checkForm({
-      ...formOf({ ...ALERT, interval_secs: 90 }),
-      ...change,
-    });
+  it("sends a stored interval back exactly, even one that is no preset", () => {
+    const checked = checkForm(formOf({ ...ALERT, interval_secs: 90 }));
 
-    expect(checked.ok && checked.draft.interval_secs).toBe(secs);
+    expect(checked.ok && checked.draft.interval_secs).toBe(90);
   });
 
   it("counts a name's characters, not its UTF-16 units", () => {

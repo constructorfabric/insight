@@ -292,21 +292,17 @@ describe("NewAlertPage", () => {
     );
   });
 
-  it("checks at a custom interval", async () => {
+  it("checks at the interval picked", async () => {
     vi.mocked(alertsClient.createAlert).mockResolvedValue(ALERT);
 
     render(<NewAlertPage />, { wrapper });
     await fillNew();
-    await pick("Check every", "Custom…");
-    const every = screen.getByLabelText("Amount");
-    await userEvent.clear(every);
-    await userEvent.type(every, "2");
-    await pick("Unit", "hours");
+    await pick("Check every", "6 hours");
     await userEvent.click(screen.getByRole("button", { name: "Create alert" }));
 
     await waitFor(() =>
       expect(alertsClient.createAlert).toHaveBeenCalledWith(
-        expect.objectContaining({ interval_secs: 7_200 })
+        expect.objectContaining({ interval_secs: 21_600 })
       )
     );
   });
