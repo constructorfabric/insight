@@ -33,7 +33,7 @@ status_events AS (
         fh.issue_id                                               AS issue_id,
         arrayMap(x -> (x.1.1, x.2),
                  arraySort(x -> x.1.2, groupArray(((fh.event_at, fh.event_order),
-                                                   fh.value_ids[1])))) AS evs
+                                                   if(fh.data_source = 'youtrack' AND length(fh.value_ids) > 1, '', fh.value_ids[1]))))) AS evs
     FROM {{ ref('class_task_field_history') }} AS fh FINAL
     INNER JOIN {{ ref('task_field_roles_current') }} AS r
         ON r.insight_source_id = fh.insight_source_id

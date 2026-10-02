@@ -1,7 +1,7 @@
 # YouTrack connector
 
 This declarative connector collects the YouTrack task-tracking domain into
-`bronze_youtrack`. It intentionally contains no Silver transformations.
+`bronze_youtrack`. Its dbt adapter supplies the shared task Silver classes; see [SILVER.md](SILVER.md) for history evidence, configuration and limitations.
 
 ## Configuration
 
@@ -79,16 +79,27 @@ This avoids listing every issue and making a separate work-item request per issu
 The stream deliberately reads all work items: `updated` can be null, and filtering
 only by update time could omit records that have never been edited.
 
-Sprint membership still enumerates all accessible issues and paginates each
-issue's sprint collection. Its request count grows with the number of issues,
-including issues with no sprints. It does not use `youtrack_start_date` to filter
-the parent listing. An `updated:` filter is unsafe without a guarantee that every
-membership change advances the parent issue timestamp.
+Sprint membership reads each issue's sprint collection only for issues whose
+membership may have changed since the last sync. Two parents name those issues:
+the `updated:` search over the incremental window, and the `SprintCategory`
+activity feed over the same window. The second parent is required because a
+sprint assignment does not advance the issue's `updated` timestamp, so the
+search alone misses it. An issue both parents name is read twice into the same
+`unique_key`. The first sync covers `youtrack_start_date` onward, so membership
+of an issue untouched since then is not snapshotted — the same scope as the
+other issue-scoped streams.
 
-The descriptor schedules the whole connector, not individual streams. Choose the
-schedule with the full membership scan in mind; increasing page size does not
-remove the per-issue request. A separate lower-frequency membership connection
-requires orchestration support and is not provided by this descriptor.
+The per-issue request remains, so the cost follows the number of changed issues
+in the window rather than the number of accessible issues.
+
+Issue snapshots come from two streams with one record shape. `youtrack_issues`
+is the `updated:` search. `youtrack_activity_issues` re-reads, in batches of 50
+`idReadable` values, every issue the activity feed names in its incremental
+window. It exists because some writes do not advance `updated` — sprint
+assignments, and field writes by workflows and the system user — so the search
+never returns those issues, and their history would have no snapshot to replay
+from. The feed is read with target ids only, so its cost is one request per
+activity page plus one search per batch.
 
 ## Local validation
 

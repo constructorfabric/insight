@@ -1,0 +1,3 @@
+{{ config(materialized='table', engine='ReplacingMergeTree(_version)', order_by=['unique_key'], settings={'allow_nullable_key': 1}, schema='staging', tags=['youtrack', 'staging', 'silver:class_task_users']) }}
+
+SELECT unique_key, tenant_id, source_id AS insight_source_id, 'youtrack' AS data_source, id AS user_id, email, fullName AS display_name, login AS username, CAST(NULL AS Nullable(String)) AS account_type, CAST(NOT (banned OR isAnonymized) AS Nullable(UInt8)) AS is_active, toDateTime64(_airbyte_extracted_at, 3) AS collected_at, toUnixTimestamp64Milli(now64(3)) AS _version FROM {{ source('bronze_youtrack', 'youtrack_users') }} FINAL

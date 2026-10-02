@@ -229,5 +229,7 @@ SELECT
     CAST(evidence AS Enum8('event' = 1, 'observation' = 2))     AS evidence,
     CAST(nullIf(origin_event_id, '') AS Nullable(String))       AS origin_event_id,
     toDateTime64(collected_at, 3)                               AS collected_at,
-    CAST(toUnixTimestamp64Milli(toDateTime64(collected_at, 3)) AS UInt64) AS _version
+    CAST(toUnixTimestamp64Milli(toDateTime64(collected_at, 3)) AS UInt64) AS _version,
+    CAST(NULL AS Nullable(String))                              AS issue_id,
+    CAST(NULL AS Nullable(String))                              AS target_id
 FROM every_interval
