@@ -125,6 +125,30 @@ describe("/portal/custom/$name", () => {
     );
   });
 
+  it("offers full screen on a chart widget and not on a table", async () => {
+    vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
+      body: { title: "Engineering", items: [{ widget: "opened_line" }] },
+      tags: [],
+    });
+    vi.mocked(customClient.fetchWidget).mockResolvedValue({
+      type: "line",
+      metric: "opened",
+      x: "day",
+      y: "opened",
+    });
+    vi.mocked(customClient.runMetric).mockResolvedValue({
+      columns: ["day", "opened"],
+      rows: [["2026-09-01", 3]],
+    });
+    portalRouter.go("/portal/custom/engineering");
+
+    render(<Component />, { wrapper });
+
+    expect(
+      await screen.findByRole("button", { name: "Full screen" })
+    ).toBeInTheDocument();
+  });
+
   it("gives a table widget the whole row and the tall height so its rows can be read", async () => {
     vi.mocked(customClient.fetchDashboardRead).mockResolvedValue({
       body: { title: "Engineering", items: [{ widget: "commits_table" }] },
@@ -147,6 +171,9 @@ describe("/portal/custom/$name", () => {
 
     expect(card).toHaveClass("col-span-full");
     expect(card).toHaveStyle({ height: "464px" });
+    expect(
+      screen.queryByRole("button", { name: "Full screen" })
+    ).not.toBeInTheDocument();
   });
 
   it("draws items in order, with headings and prose between the widgets", async () => {

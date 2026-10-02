@@ -139,18 +139,18 @@ describe("widgetFields over a stored kind this build does not know", () => {
 });
 
 describe("widgetLayout", () => {
-  it.each<[Widget, { tall: boolean; fullRow: boolean }]>([
+  it.each<[Widget, { tall: boolean; fullRow: boolean; fullscreen: boolean }]>([
     [
       { type: "table", metric: "m", columns: ["a"] },
-      { tall: true, fullRow: true },
+      { tall: true, fullRow: true, fullscreen: false },
     ],
     [
       { type: "bar", metric: "m", x: "day", y: "n" },
-      { tall: false, fullRow: false },
+      { tall: false, fullRow: false, fullscreen: true },
     ],
     [
       { type: "stat", metric: "m", value: "n" },
-      { tall: false, fullRow: false },
+      { tall: false, fullRow: false, fullscreen: false },
     ],
   ])("lays out %o", (widget, layout) => {
     expect(widgetLayout(widget)).toEqual(layout);

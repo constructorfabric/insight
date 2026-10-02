@@ -1,10 +1,14 @@
 import type { KeyboardEvent, ReactNode } from "react";
+import { Maximize2, Minimize2 } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { TEXT_HEADING } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
+
+import { useFullscreen } from "./use-fullscreen";
 
 const STANDARD_HEIGHT = 304;
 const TALL_HEIGHT = 464;
@@ -20,6 +24,7 @@ interface WidgetFrameProps {
   onBodyActivate?: () => void;
   bodyLabel?: string;
   tall?: boolean;
+  fullscreen?: boolean;
   className?: string;
   children?: ReactNode;
 }
@@ -34,9 +39,12 @@ export function WidgetFrame({
   onBodyActivate,
   bodyLabel,
   tall = false,
+  fullscreen = false,
   className,
   children,
 }: WidgetFrameProps) {
+  const screen = useFullscreen<HTMLDivElement>();
+
   return (
     <Card
       className={cn(
@@ -45,33 +53,65 @@ export function WidgetFrame({
       )}
       style={{ height: tall ? TALL_HEIGHT : STANDARD_HEIGHT }}
     >
-      <div className="flex min-h-[76px] shrink-0 items-start justify-between gap-2.5 px-6 pt-[23px] pb-3.5">
-        <div className="min-w-0">
-          <h3 className={cn(TEXT_HEADING, "truncate leading-tight")}>
-            {title}
-          </h3>
-          {subtitle ? (
-            <p className="mt-1.5 line-clamp-2 max-w-[440px] text-xs leading-normal text-muted-foreground">
-              {subtitle}
-            </p>
+      <div
+        ref={screen.ref}
+        data-fullscreen=""
+        className="flex h-full min-h-0 flex-col bg-card [&:fullscreen]:p-6"
+      >
+        <div className="flex min-h-[76px] shrink-0 items-start justify-between gap-2.5 px-6 pt-[23px] pb-3.5">
+          <div className="min-w-0">
+            <h3 className={cn(TEXT_HEADING, "truncate leading-tight")}>
+              {title}
+            </h3>
+            {subtitle ? (
+              <p className="mt-1.5 line-clamp-2 max-w-[440px] text-xs leading-normal text-muted-foreground">
+                {subtitle}
+              </p>
+            ) : null}
+          </div>
+          {action || fullscreen ? (
+            <div className="flex shrink-0 items-center gap-1">
+              {action}
+              {fullscreen ? (
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={
+                    screen.active ? "Exit full screen" : "Full screen"
+                  }
+                  className="text-muted-foreground"
+                  onClick={screen.toggle}
+                >
+                  {screen.active ? <Minimize2 /> : <Maximize2 />}
+                </Button>
+              ) : null}
+            </div>
           ) : null}
         </div>
-        {action ? (
-          <div className="flex shrink-0 items-center gap-1">{action}</div>
-        ) : null}
+        <Body
+          onActivate={
+            onBodyActivate
+              ? () => {
+                  screen.exit();
+                  onBodyActivate();
+                }
+              : undefined
+          }
+          label={bodyLabel}
+          tall={tall}
+        >
+          {state === "ready" ? children : null}
+          {state === "loading" ? <Loading /> : null}
+          {state === "error" ? (
+            <ComingSoon
+              variant="card"
+              state="error"
+              label={errorLabel}
+              onRetry={onRetry}
+            />
+          ) : null}
+        </Body>
       </div>
-      <Body onActivate={onBodyActivate} label={bodyLabel} tall={tall}>
-        {state === "ready" ? children : null}
-        {state === "loading" ? <Loading /> : null}
-        {state === "error" ? (
-          <ComingSoon
-            variant="card"
-            state="error"
-            label={errorLabel}
-            onRetry={onRetry}
-          />
-        ) : null}
-      </Body>
     </Card>
   );
 }

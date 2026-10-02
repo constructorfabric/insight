@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { WidgetFrame } from "./widget-frame";
 
@@ -123,5 +123,81 @@ describe("<WidgetFrame>", () => {
     expect(screen.getByText("chart").parentElement).toHaveClass(
       "overflow-auto"
     );
+  });
+});
+
+describe("<WidgetFrame> full screen", () => {
+  afterEach(() => {
+    Object.defineProperty(document, "fullscreenElement", {
+      configurable: true,
+      value: null,
+    });
+  });
+
+  function enterFullscreen(element: Element) {
+    Object.defineProperty(document, "fullscreenElement", {
+      configurable: true,
+      value: element,
+    });
+    act(() => {
+      document.dispatchEvent(new Event("fullscreenchange"));
+    });
+  }
+
+  it("offers no full screen button unless asked", () => {
+    render(
+      <WidgetFrame title="Rows" state="ready">
+        <p>table</p>
+      </WidgetFrame>
+    );
+
+    expect(
+      screen.queryByRole("button", { name: "Full screen" })
+    ).not.toBeInTheDocument();
+  });
+
+  it("puts the widget in full screen and takes it out again", () => {
+    const request = vi.fn().mockResolvedValue(undefined);
+    const exit = vi.fn().mockResolvedValue(undefined);
+    HTMLElement.prototype.requestFullscreen = request;
+    document.exitFullscreen = exit;
+    render(
+      <WidgetFrame title="Traffic" state="ready" fullscreen>
+        <p>chart</p>
+      </WidgetFrame>
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Full screen" }));
+    const shown = request.mock.contexts[0] as HTMLElement;
+    enterFullscreen(shown);
+    fireEvent.click(screen.getByRole("button", { name: "Exit full screen" }));
+
+    expect(shown).toContainElement(screen.getByText("chart"));
+    expect(exit).toHaveBeenCalledOnce();
+  });
+
+  it("leaves full screen before opening what the body opens", () => {
+    const exit = vi.fn().mockResolvedValue(undefined);
+    document.exitFullscreen = exit;
+    const open = vi.fn();
+    render(
+      <WidgetFrame
+        title="Traffic"
+        state="ready"
+        fullscreen
+        onBodyActivate={open}
+        bodyLabel="Show the data"
+      >
+        <p>chart</p>
+      </WidgetFrame>
+    );
+
+    enterFullscreen(
+      screen.getByText("chart").closest("[data-fullscreen]") as Element
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Show the data" }));
+
+    expect(exit).toHaveBeenCalledOnce();
+    expect(open).toHaveBeenCalledOnce();
   });
 });

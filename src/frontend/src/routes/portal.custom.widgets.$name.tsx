@@ -135,6 +135,7 @@ function Drawn({ name, widget }: { name: string; widget: Widget }) {
         }
         state="ready"
         tall={widgetLayout(widget).tall}
+        fullscreen={widgetLayout(widget).fullscreen}
       >
         <CustomWidget
           widget={widget}

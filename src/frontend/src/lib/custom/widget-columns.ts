@@ -61,10 +61,15 @@ export function widgetFields(widget: Widget): WidgetField[] {
 export function widgetLayout(widget: Widget): {
   tall: boolean;
   fullRow: boolean;
+  fullscreen: boolean;
 } {
   const rows = widget.type === "table";
 
-  return { tall: rows, fullRow: rows };
+  return {
+    tall: rows,
+    fullRow: rows,
+    fullscreen: !rows && widget.type !== "stat",
+  };
 }
 
 export function isWidgetKind(type: unknown): type is WidgetKind {

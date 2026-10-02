@@ -242,6 +242,7 @@ function DashboardWidgetSlot({
         title={heading ?? fallbackTitle}
         state="ready"
         tall={layout.tall}
+        fullscreen={layout.fullscreen}
         className={layout.fullRow ? "col-span-full" : undefined}
         onBodyActivate={() => setDrilldown(true)}
         bodyLabel={label}
