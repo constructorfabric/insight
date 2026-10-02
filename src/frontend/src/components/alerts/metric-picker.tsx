@@ -1,5 +1,5 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import {
   Combobox,
@@ -9,6 +9,7 @@ import {
   ComboboxItem,
   ComboboxList,
 } from "@/components/ui/combobox";
+import { useAutoLoadOnScroll } from "@/hooks/use-auto-load-on-scroll";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import type { Describing } from "@/lib/custom/editor/aria";
 import { TEXT_LABEL } from "@/lib/type-scale";
@@ -22,8 +23,8 @@ const SEARCH_DEBOUNCE_MS = 300;
  * Picks one stored metric.
  *
  * The service does the searching — it matches the stored body as well as the
- * name, so a table name finds every metric that reads it — and the list shows
- * its first page of matches, so any number of metrics can be reached by typing.
+ * name, so a table name finds every metric that reads it — and the list reads
+ * its matches a page at a time as it is scrolled.
  */
 export function MetricPicker({
   id,
@@ -39,9 +40,14 @@ export function MetricPicker({
   const [typed, setTyped] = useState("");
   const searching = useDebouncedValue(typed, SEARCH_DEBOUNCE_MS).trim();
   const found = useInfiniteQuery(definitionPagesQuery("metrics", searching));
-  const first = found.data?.pages[0];
-  const names = first?.names ?? [];
-  const more = first ? first.total - names.length : 0;
+  const names = found.data?.pages.flatMap((page) => page.names) ?? [];
+  const list = useRef<HTMLDivElement>(null);
+  const marker = useAutoLoadOnScroll({
+    hasNextPage: found.hasNextPage,
+    isFetchingNextPage: found.isFetchingNextPage,
+    fetchNextPage: () => void found.fetchNextPage(),
+    root: list,
+  });
 
   return (
     <Combobox<string>
@@ -64,18 +70,18 @@ export function MetricPicker({
             {found.isPending ? "Searching…" : "No metric matches."}
           </ComboboxEmpty>
         ) : null}
-        <ComboboxList>
-          {(name: string) => (
+        <ComboboxList ref={list}>
+          {names.map((name) => (
             <ComboboxItem key={name} value={name} className="font-mono">
               {name}
             </ComboboxItem>
-          )}
+          ))}
+          {found.hasNextPage ? (
+            <p ref={marker} className={cn(TEXT_LABEL, "px-3 py-2")}>
+              {found.isFetchingNextPage ? "Loading more…" : "\u00a0"}
+            </p>
+          ) : null}
         </ComboboxList>
-        {more > 0 ? (
-          <p className={cn(TEXT_LABEL, "px-3 py-2")}>
-            {more} more match. Keep typing to narrow the list.
-          </p>
-        ) : null}
       </ComboboxContent>
     </Combobox>
   );

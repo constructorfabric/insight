@@ -21,6 +21,10 @@ import * as alertsClient from "@/api/alerts-client";
 import * as customClient from "@/api/custom-client";
 import { CustomApiError } from "@/api/custom-client";
 import { ALERT, wrapper } from "@/test/alerts";
+import {
+  scrollEndIntoView,
+  scrollEndOutOfView,
+} from "@/test/intersection-observer";
 import { portalRouter } from "@/test/portal-router";
 
 import { EditAlertPage, NewAlertPage } from "./alert-form";
@@ -121,6 +125,29 @@ describe("NewAlertPage", () => {
       expect(customClient.fetchMetricNames).toHaveBeenCalledWith(
         expect.objectContaining({ search: "gold.prs" })
       )
+    );
+  });
+
+  it("reads the next page of metrics when the list is scrolled to its end", async () => {
+    scrollEndOutOfView();
+    const first = Array.from({ length: 50 }, (_, at) => `metric-${at}`);
+    vi.mocked(customClient.fetchMetricNames)
+      .mockResolvedValueOnce({ names: first, total: 51 })
+      .mockResolvedValueOnce({ names: ["metric-50"], total: 51 });
+
+    render(<NewAlertPage />, { wrapper });
+    await userEvent.click(await screen.findByLabelText("Metric"));
+    expect(
+      await screen.findByRole("option", { name: "metric-0" })
+    ).toBeInTheDocument();
+
+    scrollEndIntoView();
+
+    expect(
+      await screen.findByRole("option", { name: "metric-50" })
+    ).toBeInTheDocument();
+    expect(customClient.fetchMetricNames).toHaveBeenLastCalledWith(
+      expect.objectContaining({ offset: 50 })
     );
   });
 
