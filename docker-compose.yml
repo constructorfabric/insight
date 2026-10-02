@@ -104,6 +104,10 @@ services:
     image: clickhouse/clickhouse-server:25.7.5
     container_name: ${COMPOSE_PROJECT_NAME:-insight}-clickhouse
     networks: [insight]
+    # ClickHouse sizes itself from the RAM it can see, and without a limit on an
+    # unconstrained host that is the whole machine. CI lowers this; see
+    # .env.compose.example.
+    mem_limit: ${CLICKHOUSE_MEM_LIMIT:-8g}
     environment:
       CLICKHOUSE_DB: insight
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:-insight}
@@ -124,6 +128,8 @@ services:
       - ./deploy/compose/presentation-user.sql:/docker-entrypoint-initdb.d/02-presentation-user.sql:ro
       # Profile override — see the file for the join_use_nulls rationale.
       - ./deploy/compose/clickhouse-user-defaults.xml:/etc/clickhouse-server/users.d/seed-defaults.xml:ro
+      # Keeps the server's own cap under mem_limit — see the file.
+      - ./deploy/compose/clickhouse-memory.xml:/etc/clickhouse-server/config.d/memory.xml:ro
     healthcheck:
       test: ["CMD", "wget", "-q", "--tries=1", "--spider", "http://localhost:8123/ping"]
       interval: 5s
