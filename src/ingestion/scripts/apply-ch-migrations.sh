@@ -132,6 +132,51 @@ SQL
 heal_github_project_day_keys project_fields
 heal_github_project_day_keys project_items
 
+echo "=== Healing Jira bronze schema ==="
+# A descriptor bump reaches an already-created bronze table only from here: the
+# destination adds missing columns but never retypes one, and the reconciler
+# adds snapshot columns but cannot rewrite a value. Guarded on the table —
+# ClickHouse has no table-level IF EXISTS on ALTER, and a bronze table exists
+# only once that connector has synced. Runs before the identity heals below,
+# which read the column it adds.
+heal_jira_issue_jira_id_type() {
+  ch_table_exists bronze_jira jira_issue || return 0
+  echo "  bronze_jira.jira_issue"
+  run_ch <<SQL
+ALTER TABLE bronze_jira.jira_issue MODIFY COLUMN IF EXISTS jira_id Nullable(String);
+SQL
+}
+
+heal_jira_substream_jira_id_column() {
+  local table="$1"
+  ch_table_exists bronze_jira "${table}" || return 0
+  echo "  bronze_jira.${table}"
+  run_ch <<SQL
+ALTER TABLE bronze_jira.${table} ADD COLUMN IF NOT EXISTS jira_id Nullable(String) AFTER id_readable;
+SQL
+}
+
+# Rows written while the stream declared `items` as anyOf [string, array] hold
+# the render JSON-encoded a second time, and JSONExtractArrayRaw reads such a
+# value as a scalar — the field-history journal silently skips the row.
+# Idempotent: after one pass no value starts with a quote.
+heal_jira_history_items_escaping() {
+  ch_table_exists bronze_jira jira_issue_history || return 0
+  echo "  bronze_jira.jira_issue_history items"
+  run_ch <<SQL
+ALTER TABLE bronze_jira.jira_issue_history
+    UPDATE items = JSONExtractString(items)
+    WHERE startsWith(items, '"')
+    SETTINGS mutations_sync = 1;
+SQL
+}
+
+heal_jira_issue_jira_id_type
+heal_jira_substream_jira_id_column jira_issue_history
+heal_jira_substream_jira_id_column jira_comments
+heal_jira_substream_jira_id_column jira_worklogs
+heal_jira_history_items_escaping
+
 echo "=== Healing Jira bronze issue identity ==="
 # Two heals, in this order, both guarded on the rows they would change so a
 # converged warehouse pays one SELECT per table and nothing else.
