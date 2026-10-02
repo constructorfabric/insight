@@ -143,7 +143,7 @@ export function useCreateAlert() {
     mutationFn: (draft: AlertDraft) => createAlert(draft),
     onSuccess: (alert) => {
       remember(queryClient, alert);
-      return invalidateAlerts(queryClient);
+      void invalidateAlerts(queryClient);
     },
   });
 }
@@ -161,7 +161,7 @@ export function useReplaceAlert() {
     }) => replaceAlert(id, draft),
     onSuccess: (alert) => {
       remember(queryClient, alert);
-      return invalidateAlerts(queryClient);
+      void invalidateAlerts(queryClient);
     },
   });
 }
@@ -191,7 +191,7 @@ export function useSetAlertEnabled() {
     },
     onSuccess: (alert) => {
       remember(queryClient, alert);
-      return invalidateAlerts(queryClient);
+      void invalidateAlerts(queryClient);
     },
     // INVARIANT: after a conflict the cached revision is stale; re-read it so a retry sends the current one.
     onError: (error, { id }) =>
@@ -211,7 +211,7 @@ export function useDeleteAlert() {
       queryClient.removeQueries({
         queryKey: alertNotificationsQuery(id).queryKey,
       });
-      return invalidateAlerts(queryClient);
+      void invalidateAlerts(queryClient);
     },
   });
 }

@@ -120,6 +120,11 @@ describe("thresholdOf", () => {
     ["abc", undefined],
     ["Infinity", undefined],
     ["123456789012345678901", undefined],
+    ["1e3", 1000],
+    [".5", 0.5],
+    ["0x10", undefined],
+    ["0b101", undefined],
+    ["1.2.3", undefined],
   ])("reads '%s' as %s", (typed, value) => {
     expect(thresholdOf(typed), `typed: ${typed}`).toBe(value);
   });

@@ -65,7 +65,7 @@ export function EditAlertPage({ id }: { id: string }) {
     return (
       <Shell title="Edit alert">
         <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
-          {refusal(alert.error, "That alert is not there.")}
+          {refusal(alert.error, "Alert not found.")}
         </p>
       </Shell>
     );

@@ -60,13 +60,16 @@ export function formOf(alert: Alert): AlertForm {
   };
 }
 
+/** A plain decimal number, optionally signed and in exponent form. */
+const DECIMAL = /^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i;
+
 /**
  * The threshold as a number, or nothing while it is not one that can be sent
  * exactly: past 2^53 a JavaScript number no longer holds every integer.
  */
 export function thresholdOf(typed: string): number | undefined {
   const trimmed = typed.trim();
-  if (trimmed === "") return undefined;
+  if (!DECIMAL.test(trimmed)) return undefined;
 
   const value = Number(trimmed);
   if (!Number.isFinite(value)) return undefined;

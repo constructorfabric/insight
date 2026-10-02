@@ -292,6 +292,44 @@ describe("NewAlertPage", () => {
     );
   });
 
+  it("shows a refusal about the whole alert above the form, not as a conflict", async () => {
+    vi.mocked(alertsClient.createAlert).mockRejectedValue(
+      new CustomApiError(409, {
+        context: {
+          violations: [
+            {
+              type: "limit",
+              subject: "alerts",
+              description: "at most 200 alerts",
+            },
+          ],
+        },
+      })
+    );
+
+    render(<NewAlertPage />, { wrapper });
+    await fillNew();
+    await userEvent.click(screen.getByRole("button", { name: "Create alert" }));
+
+    expect(await screen.findByText("at most 200 alerts")).toBeInTheDocument();
+    expect(
+      screen.queryByText(/changed by someone else/)
+    ).not.toBeInTheDocument();
+  });
+
+  it("says when the metrics cannot be listed", async () => {
+    vi.mocked(customClient.fetchMetricNames).mockRejectedValue(
+      new Error("offline")
+    );
+
+    render(<NewAlertPage />, { wrapper });
+    await userEvent.click(await screen.findByLabelText("Metric"));
+
+    expect(
+      await screen.findByText("Couldn't load metrics.")
+    ).toBeInTheDocument();
+  });
+
   it("checks at the interval picked", async () => {
     vi.mocked(alertsClient.createAlert).mockResolvedValue(ALERT);
 
@@ -376,6 +414,28 @@ describe("EditAlertPage", () => {
       expect(alertsClient.replaceAlert).toHaveBeenCalledWith(
         "a1",
         expect.objectContaining({ interval_secs: 90 })
+      )
+    );
+  });
+
+  it("drops a window its metric no longer has a date for", async () => {
+    vi.mocked(alertsClient.fetchAlert).mockResolvedValue({
+      ...ALERT,
+      range: "P7D",
+    });
+    vi.mocked(alertsClient.replaceAlert).mockResolvedValue({
+      ...ALERT,
+      revision: 4,
+    });
+
+    render(<EditAlertPage id="a1" />, { wrapper });
+    await userEvent.type(await screen.findByLabelText("Name"), "!");
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() =>
+      expect(alertsClient.replaceAlert).toHaveBeenCalledWith(
+        "a1",
+        expect.objectContaining({ range: null })
       )
     );
   });

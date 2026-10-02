@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useEffect } from "react";
 
 import type { AlertDestination, AlertOperator } from "@/api/alerts-types";
 import type { StoredMetric } from "@/api/custom-types";
@@ -92,6 +93,12 @@ export function AlertFields({
   const stored = useStoredMetric(form.metric);
   const definition = stored?.definition;
   const window = windowRule(stored, form.column);
+
+  // INVARIANT: a metric that lost its date refuses the window its alert still holds, and the disabled select cannot clear it.
+  useEffect(() => {
+    if (!window.windowed && form.range !== "") onChange({ ...form, range: "" });
+  }, [window.windowed, form, onChange]);
+
   const windowHint = CALENDAR_WINDOWS.has(form.range) ? UTC_NOTE : undefined;
   const metricProblem =
     errors.metric ??

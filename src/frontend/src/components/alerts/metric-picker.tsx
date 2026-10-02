@@ -9,6 +9,7 @@ import {
   ComboboxItem,
   ComboboxList,
 } from "@/components/ui/combobox";
+import { refusal } from "@/components/custom/refusal";
 import { useAutoLoadOnScroll } from "@/hooks/use-auto-load-on-scroll";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import type { Describing } from "@/lib/custom/editor/aria";
@@ -67,7 +68,11 @@ export function MetricPicker({
         {/* WORKAROUND: the kit pads the empty part even while it hides its text, which leaves a gap above a full list. */}
         {names.length === 0 ? (
           <ComboboxEmpty>
-            {found.isPending ? "Searching…" : "No metric matches."}
+            {found.isError
+              ? refusal(found.error, "Couldn't load metrics.")
+              : found.isPending
+                ? "Searching…"
+                : "No metric matches."}
           </ComboboxEmpty>
         ) : null}
         <ComboboxList ref={list}>
@@ -77,7 +82,12 @@ export function MetricPicker({
             </ComboboxItem>
           ))}
           {found.hasNextPage ? (
-            <p ref={marker} className={cn(TEXT_LABEL, "px-3 py-2")}>
+            <p
+              ref={marker}
+              role="presentation"
+              aria-hidden={!found.isFetchingNextPage}
+              className={cn(TEXT_LABEL, "px-3 py-2")}
+            >
               {found.isFetchingNextPage ? "Loading more…" : "\u00a0"}
             </p>
           ) : null}
