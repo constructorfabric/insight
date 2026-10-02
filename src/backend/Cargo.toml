@@ -111,7 +111,7 @@ bullmq = { package = "bullmq-official", version = "=1.3.3" }
 # JWT (gateway-JWT mint/verify, RFC 7523 assertions).
 # One version + one crypto provider (aws_lc_rs) across the workspace: v10 needs
 # exactly one provider process-wide under feature unification, else it panics.
-jsonwebtoken = { version = "10", default-features = false, features = ["aws_lc_rs", "use_pem"] }
+jsonwebtoken = { version = "11", default-features = false, features = ["aws_lc_rs", "use_pem"] }
 
 # YAML (route configs, test fixtures).
 serde_yaml = "0.9"

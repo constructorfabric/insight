@@ -139,7 +139,7 @@ dependencies = [
  "insight-log-context",
  "insight-migration",
  "insight-openapi",
- "jsonwebtoken",
+ "jsonwebtoken 11.1.0",
  "opentelemetry",
  "p256 0.14.0",
  "redis",
@@ -550,7 +550,7 @@ dependencies = [
  "insight-http-metrics",
  "insight-log-context",
  "insight-openapi",
- "jsonwebtoken",
+ "jsonwebtoken 11.1.0",
  "openidconnect",
  "opentelemetry",
  "p256 0.14.0",
@@ -580,7 +580,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "cf-gears-toolkit-canonical-errors",
- "jsonwebtoken",
+ "jsonwebtoken 11.1.0",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -1197,7 +1197,7 @@ dependencies = [
  "httpdate",
  "humantime",
  "inventory",
- "jsonwebtoken",
+ "jsonwebtoken 10.4.0",
  "opentelemetry",
  "parking_lot",
  "regex",
@@ -3912,7 +3912,7 @@ dependencies = [
  "insight-http-metrics",
  "insight-log-context",
  "insight-openapi",
- "jsonwebtoken",
+ "jsonwebtoken 11.1.0",
  "p256 0.14.0",
  "redis",
  "reqwest 0.12.28",
@@ -4139,6 +4139,24 @@ name = "jsonwebtoken"
 version = "10.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eba32bfb4ffdeaca3e34431072faf01745c9b26d25504aa7a6cf5684334fc4fc"
+dependencies = [
+ "aws-lc-rs",
+ "base64 0.22.1",
+ "getrandom 0.2.17",
+ "js-sys",
+ "pem",
+ "serde",
+ "serde_json",
+ "signature 2.2.0",
+ "simple_asn1",
+ "zeroize",
+]
+
+[[package]]
+name = "jsonwebtoken"
+version = "11.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e75fe14a82d81e5f5af639997db37d8b96045938a7ac6ab18cdbe1c7467e05e1"
 dependencies = [
  "aws-lc-rs",
  "base64 0.22.1",
