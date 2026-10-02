@@ -3,52 +3,56 @@
     severity='warn',
     store_failures=true,
     meta={
-        'title': 'every AI staging row reaches its silver class',
-        'domain': 'ai',
+        'title': 'every staging row reaches its silver class',
+        'domain': 'silver',
         'category': 'completeness',
         'tier': 'error',
-        'remediation': 'A staging row a silver class never admitted is lost for good — nothing re-reads it. The usual cause is an incremental boundary that is not scoped to the source instance, so one connector''s run raised the boundary past another connector''s rows: check the class model uses silver_incremental_watermark rather than a table-wide max(_version). The rows are still in staging, so recovery is a re-read of the union — a full refresh of the class, or an anti-join insert from staging.'
+        'remediation': 'A staging row a silver class never admitted is lost for good — nothing re-reads it. The usual cause is an incremental boundary that does not separate the producer: one producer''s run raised it past another producer''s rows. Check the class model passes silver_incremental_watermark keys that tell every producer apart (scripts/ci/incremental_boundary.py checks the keys exist, not that they suffice). The rows are still in staging, so recovery is a re-read of the union — a full refresh of the class, or an anti-join insert from staging.'
     }
 ) }}
 
-{#- One row per (class, source instance) whose staging rows did not arrive.
-    Classes whose contributors are not materialised here are skipped rather than
-    reported empty: this deployment does not run them. -#}
-{%- set ai_classes = [
-    ('silver:class_ai_dev_usage', 'class_ai_dev_usage'),
-    ('silver:class_ai_assistant_usage', 'class_ai_assistant_usage'),
-    ('silver:class_ai_overage', 'class_ai_overage')
-] -%}
+{#- One row per (class, producer) whose staging rows did not arrive. Every
+    incremental model built by union_by_tag is a class; a class or producer this
+    deployment has not materialised is skipped rather than reported empty.
+    Relations, not ref(): the classes are discovered at run time, and a ref()
+    dbt cannot see at parse time fails compilation. Keys are compared as
+    hashes so the anti-join holds 8 bytes per row. -#}
 {%- set branches = [] -%}
-{%- for tag_name, class_model in ai_classes -%}
-  {%- set staged_models = materialised_models_for_tag(tag_name) -%}
-  {%- if staged_models | length > 0 -%}
-    {%- do branches.append((class_model, staged_models)) -%}
-  {%- endif -%}
-{%- endfor -%}
+{%- if execute -%}
+  {%- set models = graph.nodes.values() | selectattr('resource_type', 'equalto', 'model') | list -%}
+  {%- for node in models if node.config.materialized == 'incremental' -%}
+    {%- set found = modules.re.search("union_by_tag\\(\\s*'([^']+)'", node.raw_code) -%}
+    {%- set served = adapter.get_relation(database=none, schema=node.schema, identifier=node.alias or node.name) if found else none -%}
+    {%- if served -%}
+      {%- set staged = [] -%}
+      {%- for producer in models if found.group(1) in producer.tags and producer.unique_id != node.unique_id
+                                    and producer.config.materialized != 'ephemeral' -%}
+        {%- set rel = adapter.get_relation(database=none, schema=producer.schema, identifier=producer.alias or producer.name) -%}
+        {%- if rel -%}{%- do staged.append((producer.name, rel)) -%}{%- endif -%}
+      {%- endfor -%}
+      {%- if staged | length > 0 -%}{%- do branches.append((node.name, served, staged)) -%}{%- endif -%}
+    {%- endif -%}
+  {%- endfor -%}
+{%- endif -%}
 
 {% if branches | length == 0 %}
 SELECT
-    CAST('' AS String)              AS class_name,
-    CAST(NULL AS Nullable(String))  AS source_id,
-    toUInt64(0)                     AS missing_rows
+    CAST('' AS String)  AS class_name,
+    CAST('' AS String)  AS producer,
+    toUInt64(0)         AS missing_rows
 WHERE 1 = 0
 {% else %}
-{% for class_model, staged_models in branches %}
+{% for class_name, served, staged in branches %}
+{% for producer, rel in staged %}
 SELECT
-    '{{ class_model }}'         AS class_name,
-    staged.source_id            AS source_id,
-    count()                     AS missing_rows
-FROM (
-    {% for staged_model in staged_models %}
-    SELECT DISTINCT unique_key, source_id FROM {{ ref(staged_model) }}
-    {%- if not loop.last %}
-    UNION ALL
-    {%- endif %}
-    {% endfor %}
-) AS staged
-LEFT ANTI JOIN {{ ref(class_model) }} AS served USING (unique_key)
-GROUP BY class_name, source_id
+    '{{ class_name }}'  AS class_name,
+    '{{ producer }}'    AS producer,
+    count()             AS missing_rows
+FROM (SELECT DISTINCT cityHash64(unique_key) AS k FROM {{ rel }}) AS staged
+LEFT ANTI JOIN (SELECT cityHash64(unique_key) AS k FROM {{ served }}) AS served USING (k)
+HAVING missing_rows > 0
+{% if not loop.last %}UNION ALL{% endif %}
+{% endfor %}
 {% if not loop.last %}UNION ALL{% endif %}
 {% endfor %}
 {% endif %}
