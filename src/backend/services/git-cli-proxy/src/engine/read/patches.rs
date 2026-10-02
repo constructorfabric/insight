@@ -298,9 +298,8 @@ mod tests {
 
     #[test]
     fn a_diff_header_names_the_file_however_it_is_spelled() {
-        // Exactly the header lines git emits for these paths. Each one used to
-        // key the patch under a truncated or escaped name, which silently
-        // detached it from the row `--numstat` produced.
+        // Exactly the header lines git emits for these paths; a wrong key
+        // silently detaches the patch from the row `--numstat` produced.
         let cases: Vec<(&str, &str, &str)> = vec![
             ("plain", "diff --git a/src/a.rs b/src/a.rs", "src/a.rs"),
             (
@@ -426,8 +425,8 @@ mod tests {
         );
     }
 
-    /// The pre-cap implementation: accumulate the whole diff, then truncate.
-    /// Kept as the oracle so the bounded reader is provably byte-identical.
+    /// Reference reader: accumulate the whole diff, then truncate — the oracle
+    /// the bounded reader must match byte for byte.
     fn unbounded_reference(lines: &[&str], max_bytes: usize) -> (String, bool) {
         let mut buffer = String::new();
         for line in lines {

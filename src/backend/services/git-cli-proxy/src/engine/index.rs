@@ -129,8 +129,7 @@ pub fn read_page(
 
     let trailer_expected = match lines.next() {
         Some(Ok(header)) if header == HEADER => true,
-        // Written before the trailer existed; its tail cannot be verified,
-        // which is exactly what the format bump fixes going forward.
+        // A v1 index carries no trailer, so its tail cannot be verified.
         Some(Ok(header)) if header == HEADER_V1 => false,
         Some(Err(e)) => return Err(e),
         _ => return Err(std::io::Error::other("unrecognised page index header")),
@@ -198,7 +197,7 @@ pub fn read_page(
     Ok(Some((selected, cursor)))
 }
 
-/// The default-branch membership recorded for `shas` in this page.
+/// The shas among `rows` recorded as reachable from the default branch.
 #[must_use]
 pub fn membership_of(rows: &[IndexRow]) -> HashSet<String> {
     rows.iter()

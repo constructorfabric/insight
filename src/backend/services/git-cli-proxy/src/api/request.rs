@@ -23,7 +23,7 @@ pub const SIZE_HINT_HEADER: &str = "x-repo-size-hint";
 
 /// Ceiling and default are the same on purpose. Every memory bound on the
 /// request path scales linearly with the page, so headroom above the default
-/// is pure exposure: nothing has ever needed a larger page, `page_size` is a
+/// is pure exposure: `page_size` is a
 /// service-to-connector knob rather than tenant configuration, and the row
 /// caps cut an oversized page at emit time anyway — after the memory was
 /// already spent reading it. Smaller pages remain available for debugging.
@@ -38,7 +38,7 @@ const MIN_SHA_PREFIX: usize = 7;
 const MAX_SHA_PREFIX: usize = 64;
 
 /// Explicit commit selection: full ids or hex prefixes of at least
-/// [`MIN_SHA_PREFIX`] characters, comma separated (§4.2). A prefix selects
+/// [`MIN_SHA_PREFIX`] characters, comma separated. A prefix selects
 /// every commit it matches — it is not required to be unique, and the service
 /// does not resolve it against the repository. A debugging and incident-review
 /// affordance; the sync path pages by cursor instead.
@@ -418,8 +418,8 @@ mod tests {
             ("not hex", "zzzzzzzz"),
             ("only separators", ",,"),
             ("empty", ""),
-            // Longer than any object id: it can never prefix-match, so it
-            // used to be accepted and then silently return no rows.
+            // Longer than any object id: it can never prefix-match, so
+            // accepting it would silently return no rows.
             ("longer than an object id", long.as_str()),
         ];
         for (name, raw) in cases {

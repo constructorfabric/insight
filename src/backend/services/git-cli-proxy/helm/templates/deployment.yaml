@@ -16,8 +16,8 @@ spec:
   {{- end }}
   replicas: 1
   strategy:
-    # Recreate, not RollingUpdate: the cache PVC is ReadWriteOnce and the LRU /
-    # lock state lives in one process, so the old pod must be gone before the
+    # Recreate, not RollingUpdate: the cache volume admits one pod and the
+    # LRU / lock state lives in one process, so the old pod must be gone before the
     # new one binds the volume.
     type: Recreate
   selector:
@@ -82,7 +82,7 @@ spec:
           envFrom:
             # The umbrella publishes INSIGHT_LOG_LEVEL and, when an OTLP
             # endpoint is configured, the OTEL_* emission contract here.
-            # Without it the §4.3 metrics are computed and exported nowhere.
+            # Without it the service's metrics are computed and exported nowhere.
             # The chart ships only as part of the umbrella, so the ref is
             # hardcoded, as in the sibling services.
             - configMapRef:

@@ -41,7 +41,13 @@ name: bitbucket-cloud
 #   major bump dispatches re-materializes them. Safe: the merge hash and the
 #   commits have been in Bronze all along, and a request the activity does
 #   date is untouched. #3051
-version: "7.0.0"
+# 7.1.0: `branches` is incremental, so its repository listing is bounded by
+#   the cursor it persists and a sync reads heads only for repositories pushed
+#   to since the last one; its rows carry the repository's updated_on as the
+#   cursor. MINOR per ADR-0015: the catalog gains a cursor and bronze a
+#   column, so reconcile must republish the connection; stored rows keep
+#   their meaning.
+version: "7.1.0"
 # Every four hours, off the hours other connectors use: replication pods sharing
 # a slot with other connector syncs can be starved of workers, which surfaces as
 # startup and activity timeouts rather than as a connector error.
