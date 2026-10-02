@@ -113,7 +113,7 @@ def test_an_explicit_budget_overrides_the_derived_one():
 
 
 def test_the_pod_receives_the_platform_emission_contract():
-    """§4.3's metrics are exported only if the OTEL_* env vars reach the pod.
+    """The service's metrics are exported only if the OTEL_* env vars reach the pod.
 
     They live in the umbrella's platform ConfigMap. A deployment that wires
     only its own Secret computes every metric and exports none of them, and

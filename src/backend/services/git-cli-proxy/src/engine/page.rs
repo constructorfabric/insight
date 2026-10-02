@@ -10,8 +10,8 @@ const ENTRY_BINDING_LEN: usize = 16;
 
 /// Position inside one ascending walk, bound to the repository snapshot it was
 /// produced from. The key is two-part because every paginated endpoint orders
-/// by a pair: commits and file changes by `(committed_date, sha)`, branches by
-/// `(name, "")`.
+/// by a pair: commits and file changes by `(ordinal, sha)`, branches by
+/// `(name, "")`, authors by `(author_email, "")`.
 ///
 /// INVARIANT: the token is not an authorization claim — `entry` keeps a cursor
 /// minted for one repository from continuing a different one at the same

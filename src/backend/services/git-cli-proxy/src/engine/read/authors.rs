@@ -49,8 +49,7 @@ pub async fn read(
     // than resting that on git's behaviour.
     let format = format!("--pretty=format:%H{FIELD}%cI{FIELD}%ae{FIELD}%an");
     // `--branches` for the same reason the commit walk uses it: reachability
-    // from a branch is the contract, and tags outlive the branch they were cut
-    // from.
+    // from a branch is the contract.
     let args = vec!["log", "--branches", "--no-color", "-z", &format];
 
     let output = runner.run(Some(git_dir), &args, Some(creds)).await?;
