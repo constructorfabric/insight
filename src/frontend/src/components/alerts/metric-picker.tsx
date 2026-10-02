@@ -58,9 +58,12 @@ export function MetricPicker({
         className="h-9 w-full font-mono"
       />
       <ComboboxContent>
-        <ComboboxEmpty>
-          {found.isPending ? "Searching…" : "No metric matches."}
-        </ComboboxEmpty>
+        {/* WORKAROUND: the kit pads the empty part even while it hides its text, which leaves a gap above a full list. */}
+        {names.length === 0 ? (
+          <ComboboxEmpty>
+            {found.isPending ? "Searching…" : "No metric matches."}
+          </ComboboxEmpty>
+        ) : null}
         <ComboboxList>
           {(name: string) => (
             <ComboboxItem key={name} value={name} className="font-mono">
