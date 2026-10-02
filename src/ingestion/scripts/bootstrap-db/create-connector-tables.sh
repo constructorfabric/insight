@@ -12,6 +12,14 @@ CONFIG_JSON="${2:?usage: create-connector-tables.sh <connector-dir> <config.json
 : "${CLICKHOUSE_DATABASE:?CLICKHOUSE_DATABASE must be set}"
 : "${DESTINATION_CLICKHOUSE_IMAGE:?DESTINATION_CLICKHOUSE_IMAGE must be set}"
 
+# Optional. The destination reaches CLICKHOUSE_HOST from inside a container, so a
+# ClickHouse addressable only on a docker network — a compose stand, whose published
+# port is the host's and not the container's — needs this container on that network.
+DESTINATION_NETWORK=()
+if [[ -n "${DOCKER_NETWORK:-}" ]]; then
+  DESTINATION_NETWORK=(--network "${DOCKER_NETWORK}")
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONNECTOR_DIR="$(cd "${CONNECTOR_DIR}" && pwd)"
 DESCRIPTOR="${CONNECTOR_DIR}/descriptor.yaml"
@@ -132,7 +140,8 @@ echo "[${NAME}] create tables in ${NAMESPACE}"
 # World-readable is deliberate: destination-clickhouse cannot run under our uid
 # (see the WORKDIR comment), and these two files hold no connector secrets.
 chmod 0644 "${WORKDIR}/destination_config.json" "${WORKDIR}/configured_catalog.json"
-docker run --rm -i -v "${WORKDIR}:/work:ro" "${DESTINATION_CLICKHOUSE_IMAGE}" \
+docker run --rm -i ${DESTINATION_NETWORK[@]+"${DESTINATION_NETWORK[@]}"} \
+  -v "${WORKDIR}:/work:ro" "${DESTINATION_CLICKHOUSE_IMAGE}" \
   write --config /work/destination_config.json --catalog /work/configured_catalog.json \
   < "${WORKDIR}/traces.jsonl" \
   > "${WORKDIR}/write.jsonl" \
