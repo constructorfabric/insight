@@ -54,7 +54,6 @@ export function HourColumnsSection({
             >
               <CartesianGrid
                 vertical={false}
-                stroke="var(--grid)"
               />
               <XAxis
                 dataKey="label"

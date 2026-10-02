@@ -4,9 +4,10 @@ import type { LineWidget, MetricResult } from "@/api/custom-client";
 import { unitFor } from "@/components/custom/chart-format";
 
 import { seriesRows } from "../adapters/series";
-import { IsolatedDot, KindChart, KindFigure } from "../chrome";
+import { KindChart, KindFigure } from "../chrome";
 import { colorKeys, seriesColor } from "../palette";
 import type { LegendItem } from "../widget-legend";
+import { CURVE } from "./curve";
 import { SeriesAxes } from "./series-axes";
 
 export function LineKind({
@@ -45,15 +46,11 @@ export function LineKind({
           />
           {colored.map(({ key, label, color }) => (
             <Line
+              {...CURVE}
               key={key}
-              type="monotone"
               dataKey={key}
               name={label}
               stroke={color}
-              strokeWidth={2.5}
-              dot={IsolatedDot}
-              activeDot={{ r: 4 }}
-              isAnimationActive={false}
             />
           ))}
           {widget.target ? (

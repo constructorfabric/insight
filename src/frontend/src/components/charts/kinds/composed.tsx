@@ -4,12 +4,11 @@ import type { ComposedWidget, MetricResult } from "@/api/custom-client";
 import { compactNumber, unitFor } from "@/components/custom/chart-format";
 
 import { pairedRows } from "../adapters/series";
-import { AXIS_TICK, VALUE_LABEL } from "../chart-style";
-import { IsolatedDot, KindChart, KindFigure } from "../chrome";
+import { AXIS_TICK, EVERY_TICK_LIMIT, VALUE_LABEL } from "../chart-style";
+import { KindChart, KindFigure } from "../chrome";
 import { seriesColor } from "../palette";
+import { CURVE } from "./curve";
 import { SeriesAxes } from "./series-axes";
-
-const LINE_KEY = "y2";
 
 export function ComposedKind({
   widget,
@@ -19,9 +18,9 @@ export function ComposedKind({
   result: MetricResult;
 }) {
   const rows = pairedRows(result, widget.x, widget.y, widget.y2);
-  const barKey = "y";
   const barColor = seriesColor(0);
   const lineColor = seriesColor(2);
+  const barUnit = unitFor(result.percents, widget.y);
   const lineUnit = unitFor(result.percents, widget.y2);
 
   return (
@@ -39,11 +38,11 @@ export function ComposedKind({
         >
           <SeriesAxes
             categories={rows.map((row) => row.x)}
-            unit={unitFor(result.percents, widget.y)}
+            unit={barUnit}
             everyTick
           />
           <YAxis
-            yAxisId={LINE_KEY}
+            yAxisId="y2"
             orientation="right"
             tick={AXIS_TICK}
             tickLine={false}
@@ -52,7 +51,7 @@ export function ComposedKind({
             tickFormatter={(value) => compactNumber(value, lineUnit)}
           />
           <Bar
-            dataKey={barKey}
+            dataKey="y"
             name={widget.y}
             fill={barColor}
             fillOpacity={0.82}
@@ -60,23 +59,19 @@ export function ComposedKind({
             maxBarSize={20}
             isAnimationActive={false}
           >
-            <LabelList
-              {...VALUE_LABEL}
-              formatter={(value) =>
-                compactNumber(value, unitFor(result.percents, widget.y))
-              }
-            />
+            {rows.length <= EVERY_TICK_LIMIT ? (
+              <LabelList
+                {...VALUE_LABEL}
+                formatter={(value) => compactNumber(value, barUnit)}
+              />
+            ) : null}
           </Bar>
           <Line
-            yAxisId={LINE_KEY}
-            type="monotone"
-            dataKey={LINE_KEY}
+            {...CURVE}
+            yAxisId="y2"
+            dataKey="y2"
             name={widget.y2}
             stroke={lineColor}
-            strokeWidth={2.5}
-            dot={IsolatedDot}
-            activeDot={{ r: 4 }}
-            isAnimationActive={false}
           />
         </ComposedChart>
       </KindChart>

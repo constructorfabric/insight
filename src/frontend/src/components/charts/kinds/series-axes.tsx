@@ -7,7 +7,12 @@ import {
   spansYears,
 } from "@/components/custom/chart-format";
 
-import { AXIS_TICK, GRID_STROKE, tooltipContent } from "../chart-style";
+import {
+  AXIS_TICK,
+  CHAR_WIDTH,
+  EVERY_TICK_LIMIT,
+  tooltipContent,
+} from "../chart-style";
 import { CategoryTick } from "../chrome";
 
 export function SeriesAxes({
@@ -24,15 +29,15 @@ export function SeriesAxes({
 
   return (
     <>
-      <CartesianGrid stroke={GRID_STROKE} vertical={false} />
-      {everyTick ? (
+      <CartesianGrid vertical={false} />
+      {everyTick && categories.length <= EVERY_TICK_LIMIT ? (
         <XAxis
           dataKey="x"
           interval={0}
           tick={<CategoryTick anchor="end" angle={-90} format={label} />}
           tickLine={false}
           axisLine={false}
-          height={withYear ? 84 : 52}
+          height={Math.ceil((withYear ? 12 : 6) * CHAR_WIDTH) + 12}
         />
       ) : (
         <XAxis

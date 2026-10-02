@@ -51,7 +51,6 @@ export function HistogramSection({
             >
               <CartesianGrid
                 vertical={false}
-                stroke="var(--grid)"
               />
               <XAxis
                 dataKey="label"

@@ -118,7 +118,7 @@ export function MetricTimeseriesChart({
       );
   const chartContent = (
     <>
-      <CartesianGrid stroke="var(--grid)" />
+      <CartesianGrid />
       <YAxis
         tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
         tickFormatter={(value) =>

@@ -35,22 +35,6 @@ describe("<WidgetFrame>", () => {
     expect(screen.queryByText("chart")).not.toBeInTheDocument();
   });
 
-  it("says what empty means here", () => {
-    render(
-      <WidgetFrame
-        title="Traffic"
-        state="empty"
-        emptyLabel="Nothing in this window."
-      >
-        <p>chart</p>
-      </WidgetFrame>
-    );
-
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Nothing in this window."
-    );
-  });
-
   it("offers a retry when the data could not be read", () => {
     const retry = vi.fn();
     render(
@@ -66,7 +50,9 @@ describe("<WidgetFrame>", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
 
-    expect(screen.getByRole("alert")).toHaveTextContent("The metric failed.");
+    expect(
+      screen.getByRole("status", { name: "The metric failed." })
+    ).toBeInTheDocument();
     expect(retry).toHaveBeenCalledOnce();
   });
 
@@ -95,7 +81,7 @@ describe("<WidgetFrame>", () => {
 
   it("lets a long body scroll inside the frame when asked", () => {
     render(
-      <WidgetFrame title="Rows" state="ready" scroll>
+      <WidgetFrame title="Rows" state="ready" tall>
         <p>table</p>
       </WidgetFrame>
     );
@@ -116,11 +102,11 @@ describe("<WidgetFrame>", () => {
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
   it.each([
-    ["standard", "304px"],
-    ["tall", "464px"],
-  ] as const)("stands %s at %s", (size, height) => {
+    [false, "304px"],
+    [true, "464px"],
+  ] as const)("stands tall=%s at %s", (tall, height) => {
     const { container } = render(
-      <WidgetFrame title="Rows" state="ready" size={size}>
+      <WidgetFrame title="Rows" state="ready" tall={tall}>
         <p>table</p>
       </WidgetFrame>
     );

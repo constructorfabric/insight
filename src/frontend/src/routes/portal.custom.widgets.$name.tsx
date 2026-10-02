@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { drawsBucket } from "@/lib/custom/draws-bucket";
+import { widgetLayout } from "@/lib/custom/widget-columns";
 import { metricQuery, metricResultQuery, widgetQuery } from "@/queries/custom";
 import { RANGE_PRESETS } from "@/lib/custom/time-range";
 import { TEXT_BODY, TEXT_HEADING } from "@/lib/type-scale";
@@ -133,8 +134,7 @@ function Drawn({ name, widget }: { name: string; widget: Widget }) {
             : undefined
         }
         state="ready"
-        scroll={widget.type === "table"}
-        size={widget.type === "table" ? "tall" : "standard"}
+        tall={widgetLayout(widget).tall}
       >
         <CustomWidget
           widget={widget}

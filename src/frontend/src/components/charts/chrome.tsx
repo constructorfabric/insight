@@ -40,7 +40,11 @@ export function KindChart({
   children: Parameters<typeof ChartContainer>[0]["children"];
 }) {
   return (
-    <ChartContainer config={{}} style={CONTAINER_STYLE}>
+    <ChartContainer
+      config={{}}
+      style={CONTAINER_STYLE}
+      className="[&_.recharts-cartesian-grid_line[stroke='#ccc']]:stroke-grid [&_.recharts-polar-grid_[stroke='#ccc']]:stroke-grid"
+    >
       {children}
     </ChartContainer>
   );
@@ -95,4 +99,21 @@ export function IsolatedDot({
     points[index - 1]?.value == null && points[index + 1]?.value == null;
 
   return isolated ? <circle cx={cx} cy={cy} r={3} fill={stroke} /> : null;
+}
+
+export function AreaGradient({
+  id,
+  color,
+  opacity,
+}: {
+  id: string;
+  color: string;
+  opacity: number;
+}) {
+  return (
+    <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stopColor={color} stopOpacity={opacity} />
+      <stop offset="95%" stopColor={color} stopOpacity={0.01} />
+    </linearGradient>
+  );
 }

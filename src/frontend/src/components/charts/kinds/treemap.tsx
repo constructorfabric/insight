@@ -6,11 +6,10 @@ import { groupedNumber, unitFor } from "@/components/custom/chart-format";
 
 import { OTHER_LABEL } from "../adapters/cells";
 import { categoryRows, withOther } from "../adapters/category";
-import { tooltipContent } from "../chart-style";
+import { CHAR_WIDTH, cut, tooltipContent } from "../chart-style";
 import { KindChart, KindFigure } from "../chrome";
 import { OTHER_COLOR, seriesColor } from "../palette";
 
-const CHAR_WIDTH = 6.8;
 const TREEMAP_TILES = 12;
 
 export function TreemapKind({
@@ -51,7 +50,7 @@ function tile(node: TreemapNode, unit: string): ReactElement {
   const color = name === OTHER_LABEL ? OTHER_COLOR : seriesColor(node.index);
   const roomy = node.width >= 62 && node.height >= 34;
   const fits = Math.max(3, Math.floor((node.width - 24) / CHAR_WIDTH));
-  const label = name.length > fits ? `${name.slice(0, fits - 1)}…` : name;
+  const label = cut(name, fits - 1);
 
   return (
     <g>

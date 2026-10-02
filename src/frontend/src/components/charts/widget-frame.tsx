@@ -1,36 +1,27 @@
 import type { KeyboardEvent, ReactNode } from "react";
-import { AlertCircle, Grid2X2, RotateCcw } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+import { ComingSoon } from "@/components/widgets/coming-soon";
 import { TEXT_HEADING } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
-export type WidgetState = "ready" | "loading" | "empty" | "error";
-
-export type WidgetSize = "standard" | "tall";
-
-const WIDGET_HEIGHT: Record<WidgetSize, number> = {
-  standard: 304,
-  tall: 464,
-};
-
+const STANDARD_HEIGHT = 304;
+const TALL_HEIGHT = 464;
 const SKELETON_BARS = [40, 65, 45, 80, 55, 90, 70];
 
-export interface WidgetFrameProps {
+interface WidgetFrameProps {
   title: ReactNode;
   subtitle?: ReactNode;
   action?: ReactNode;
-  state: WidgetState;
-  emptyLabel?: string;
+  state: "ready" | "loading" | "error";
   errorLabel?: string;
   onRetry?: () => void;
   onBodyActivate?: () => void;
-  scroll?: boolean;
-  size?: WidgetSize;
   bodyLabel?: string;
+  tall?: boolean;
   className?: string;
-  children: ReactNode;
+  children?: ReactNode;
 }
 
 export function WidgetFrame({
@@ -38,13 +29,11 @@ export function WidgetFrame({
   subtitle,
   action,
   state,
-  emptyLabel = "No data in this window.",
   errorLabel = "Could not load this widget.",
   onRetry,
   onBodyActivate,
-  scroll = false,
-  size = "standard",
   bodyLabel,
+  tall = false,
   className,
   children,
 }: WidgetFrameProps) {
@@ -54,7 +43,7 @@ export function WidgetFrame({
         "min-w-0 gap-0 rounded-[12px] border border-border py-0 shadow-[0_2px_3px_#12204805] ring-0",
         className
       )}
-      style={{ height: WIDGET_HEIGHT[size] }}
+      style={{ height: tall ? TALL_HEIGHT : STANDARD_HEIGHT }}
     >
       <div className="flex min-h-[76px] shrink-0 items-start justify-between gap-2.5 px-6 pt-[23px] pb-3.5">
         <div className="min-w-0">
@@ -71,17 +60,17 @@ export function WidgetFrame({
           <div className="flex shrink-0 items-center gap-1">{action}</div>
         ) : null}
       </div>
-      <Body onActivate={onBodyActivate} label={bodyLabel} scroll={scroll}>
-        {state === "ready" ? (
-          children
-        ) : (
-          <StateBody
-            state={state}
-            emptyLabel={emptyLabel}
-            errorLabel={errorLabel}
+      <Body onActivate={onBodyActivate} label={bodyLabel} tall={tall}>
+        {state === "ready" ? children : null}
+        {state === "loading" ? <Loading /> : null}
+        {state === "error" ? (
+          <ComingSoon
+            variant="card"
+            state="error"
+            label={errorLabel}
             onRetry={onRetry}
           />
-        )}
+        ) : null}
       </Body>
     </Card>
   );
@@ -90,17 +79,17 @@ export function WidgetFrame({
 function Body({
   onActivate,
   label,
-  scroll,
+  tall,
   children,
 }: {
   onActivate?: () => void;
   label?: string;
-  scroll: boolean;
+  tall: boolean;
   children: ReactNode;
 }) {
   const layout = cn(
     "min-h-0 min-w-0 flex-1 overflow-auto px-5 pb-[23px]",
-    scroll
+    tall
       ? "[scrollbar-width:thin] [scrollbar-color:var(--border)_transparent] pt-0"
       : "pt-2"
   );
@@ -131,68 +120,22 @@ function Body({
   );
 }
 
-function StateBody({
-  state,
-  emptyLabel,
-  errorLabel,
-  onRetry,
-}: {
-  state: Exclude<WidgetState, "ready">;
-  emptyLabel: string;
-  errorLabel: string;
-  onRetry?: () => void;
-}) {
-  const layout =
-    "flex h-full flex-col items-center justify-center gap-2 text-center text-xs text-muted-foreground [&>svg]:size-5";
-
-  if (state === "loading") {
-    return (
-      <div role="status" className={layout}>
-        <span className="sr-only">Loading</span>
-        <div
-          aria-hidden="true"
-          className="flex h-24 w-full max-w-60 items-end gap-2"
-        >
-          {SKELETON_BARS.map((height, index) => (
-            <i
-              key={index}
-              className="flex-1 animate-pulse rounded-t-[5px] bg-muted"
-              style={{ height: `${height}%` }}
-            />
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  if (state === "empty") {
-    return (
-      <div role="status" className={layout}>
-        <Grid2X2 aria-hidden="true" />
-        <span>{emptyLabel}</span>
-      </div>
-    );
-  }
-
+function Loading() {
   return (
-    <div className={layout}>
-      <AlertCircle aria-hidden="true" />
-      <span role="alert" className="text-foreground">
-        {errorLabel}
-      </span>
-      {onRetry ? (
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={(event) => {
-            event.stopPropagation();
-            onRetry();
-          }}
-        >
-          <RotateCcw />
-          Retry
-        </Button>
-      ) : null}
+    <div role="status" className="flex h-full items-center justify-center">
+      <span className="sr-only">Loading</span>
+      <div
+        aria-hidden="true"
+        className="flex h-24 w-full max-w-60 items-end gap-2"
+      >
+        {SKELETON_BARS.map((height, index) => (
+          <Skeleton
+            key={index}
+            className="flex-1 rounded-t-[5px] rounded-b-none"
+            style={{ height: `${height}%` }}
+          />
+        ))}
+      </div>
     </div>
   );
 }

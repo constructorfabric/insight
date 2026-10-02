@@ -83,6 +83,15 @@ export function widgetFields(widget: Widget): WidgetField[] {
   }
 }
 
+export function widgetLayout(widget: Widget): {
+  tall: boolean;
+  fullRow: boolean;
+} {
+  const rows = widget.type === "table";
+
+  return { tall: rows, fullRow: rows };
+}
+
 export function isWidgetKind(type: unknown): type is WidgetKind {
   return WIDGET_KINDS.includes(type as WidgetKind);
 }

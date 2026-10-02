@@ -5,8 +5,9 @@ import type { MetricResult, SeriesWidget } from "@/api/custom-client";
 import { unitFor } from "@/components/custom/chart-format";
 
 import { seriesRows } from "../adapters/series";
-import { IsolatedDot, KindChart, KindFigure } from "../chrome";
+import { AreaGradient, KindChart, KindFigure } from "../chrome";
 import { colorKeys } from "../palette";
+import { CURVE } from "./curve";
 import { SeriesAxes } from "./series-axes";
 
 export function AreaKind({
@@ -29,21 +30,12 @@ export function AreaKind({
         >
           <defs>
             {colored.map(({ key, color }, index) => (
-              <linearGradient
+              <AreaGradient
                 key={key}
                 id={`${id}-${key}`}
-                x1="0"
-                y1="0"
-                x2="0"
-                y2="1"
-              >
-                <stop
-                  offset="0%"
-                  stopColor={color}
-                  stopOpacity={index === 0 ? 0.28 : 0.2}
-                />
-                <stop offset="95%" stopColor={color} stopOpacity={0.01} />
-              </linearGradient>
+                color={color}
+                opacity={index === 0 ? 0.28 : 0.2}
+              />
             ))}
           </defs>
           <SeriesAxes
@@ -52,16 +44,12 @@ export function AreaKind({
           />
           {colored.map(({ key, label, color }) => (
             <Area
+              {...CURVE}
               key={key}
-              type="monotone"
               dataKey={key}
               name={label}
               stroke={color}
               fill={`url(#${id}-${key})`}
-              strokeWidth={2.5}
-              dot={IsolatedDot}
-              activeDot={{ r: 4 }}
-              isAnimationActive={false}
             />
           ))}
         </AreaChart>

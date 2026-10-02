@@ -14,12 +14,7 @@ import type { CategoryWidget, MetricResult } from "@/api/custom-client";
 import { compactNumber, unitFor } from "@/components/custom/chart-format";
 
 import { bridgeRows, type BridgeRow } from "../adapters/bridge";
-import {
-  AXIS_TICK,
-  GRID_STROKE,
-  VALUE_LABEL,
-  tooltipContent,
-} from "../chart-style";
+import { AXIS_TICK, VALUE_LABEL, tooltipContent } from "../chart-style";
 import { CategoryTick, KindChart, KindFigure } from "../chrome";
 import { seriesColor } from "../palette";
 
@@ -53,7 +48,7 @@ export function WaterfallKind({
           data={rows}
           margin={{ top: 20, right: 16, bottom: 4, left: 4 }}
         >
-          <CartesianGrid stroke={GRID_STROKE} vertical={false} />
+          <CartesianGrid vertical={false} />
           <XAxis
             dataKey="label"
             interval={0}

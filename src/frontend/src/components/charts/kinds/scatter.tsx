@@ -16,7 +16,7 @@ import type {
 import { compactNumber, unitFor } from "@/components/custom/chart-format";
 
 import { pointGroups } from "../adapters/series";
-import { AXIS_TICK, GRID_STROKE, tooltipContent } from "../chart-style";
+import { AXIS_TICK, tooltipContent } from "../chart-style";
 import { KindChart, KindFigure } from "../chrome";
 import { colorKeys } from "../palette";
 
@@ -43,7 +43,7 @@ export function ScatterKind({
     <KindFigure kind={widget.type} legend={colored}>
       <KindChart>
         <ScatterChart margin={{ top: 12, right: 18, bottom: 8, left: 0 }}>
-          <CartesianGrid stroke={GRID_STROKE} />
+          <CartesianGrid />
           <XAxis
             type="number"
             dataKey="x"

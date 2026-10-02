@@ -15,6 +15,7 @@ import { RangePicker } from "@/components/custom/range-picker";
 import { selectedRange } from "@/lib/custom/board-range";
 import { dashboardNameFromPath } from "@/lib/custom/dashboard-path";
 import { drawsBucket } from "@/lib/custom/draws-bucket";
+import { widgetLayout } from "@/lib/custom/widget-columns";
 import {
   useSetPortalSearch,
   usePortalSearch,
@@ -207,11 +208,7 @@ function DashboardWidgetSlot({
   const fallbackTitle = <span className="font-mono">{name}</span>;
 
   if (widgetState.isPending) {
-    return (
-      <WidgetFrame title={fallbackTitle} state="loading">
-        {null}
-      </WidgetFrame>
-    );
+    return <WidgetFrame title={fallbackTitle} state="loading" />;
   }
   // A definition that cannot be read leaves the card unable to say whether its
   // metric is windowed, so it says that rather than running something.
@@ -222,9 +219,7 @@ function DashboardWidgetSlot({
         state="error"
         errorLabel={`Couldn't read the metric behind ${name}.`}
         onRetry={() => void definitionState.refetch()}
-      >
-        {null}
-      </WidgetFrame>
+      />
     );
   }
   if (widgetState.isError) {
@@ -233,13 +228,12 @@ function DashboardWidgetSlot({
         title={fallbackTitle}
         state="error"
         errorLabel={refusal(widgetState.error, `Couldn't read ${name}.`)}
-      >
-        {null}
-      </WidgetFrame>
+      />
     );
   }
 
   const heading = widgetState.data.title;
+  const layout = widgetLayout(widgetState.data);
   const label = `Show the data behind ${heading ?? name}`;
 
   return (
@@ -247,11 +241,8 @@ function DashboardWidgetSlot({
       <WidgetFrame
         title={heading ?? fallbackTitle}
         state="ready"
-        scroll={widgetState.data.type === "table"}
-        size={widgetState.data.type === "table" ? "tall" : "standard"}
-        className={
-          widgetState.data.type === "table" ? "col-span-full" : undefined
-        }
+        tall={layout.tall}
+        className={layout.fullRow ? "col-span-full" : undefined}
         onBodyActivate={() => setDrilldown(true)}
         bodyLabel={label}
         action={

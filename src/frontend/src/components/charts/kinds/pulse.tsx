@@ -8,11 +8,12 @@ import {
   shortDate,
   unitFor,
 } from "@/components/custom/chart-format";
+import { formatTileDelta } from "@/lib/metrics/delta";
 import { TEXT_FIGURE, TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
 import { pulseSummary } from "../adapters/pulse";
-import { KindChart, KindFigure } from "../chrome";
+import { AreaGradient, KindChart, KindFigure } from "../chrome";
 import { seriesColor } from "../palette";
 
 export function PulseKind({
@@ -22,12 +23,15 @@ export function PulseKind({
   widget: PulseWidget;
   result: MetricResult;
 }) {
-  const id = useId().replace(/:/g, "");
+  const id = `${useId().replace(/:/g, "")}-pulse`;
   const unit = unitFor(result.percents, widget.y);
   const summary = pulseSummary(result, widget.x, widget.y);
   const color = seriesColor(0);
-  const rising = (summary.change ?? 0) >= 0;
-  const Arrow = rising ? ArrowUpRight : ArrowDownRight;
+  const change =
+    summary.change === null
+      ? null
+      : formatTileDelta({ kind: "percent_change", value: summary.change });
+  const Arrow = (summary.change ?? 0) >= 0 ? ArrowUpRight : ArrowDownRight;
 
   return (
     <KindFigure kind="pulse">
@@ -35,12 +39,10 @@ export function PulseKind({
         <strong className={cn(TEXT_FIGURE, "tracking-tight")}>
           {summary.latest === null ? "—" : groupedNumber(summary.latest, unit)}
         </strong>
-        {summary.change === null ? null : (
+        {change === null ? null : (
           <span className={cn(TEXT_LABEL, "flex items-center gap-1")}>
             <Arrow aria-hidden="true" className="size-3.5 text-foreground" />
-            <span className="font-semibold text-foreground">
-              {groupedNumber(Math.abs(summary.change), "%")}
-            </span>
+            <span className="font-semibold text-foreground">{change}</span>
             <span>since {shortDate(summary.since)}</span>
           </span>
         )}
@@ -51,17 +53,14 @@ export function PulseKind({
               margin={{ top: 12, right: 0, bottom: 0, left: 0 }}
             >
               <defs>
-                <linearGradient id={`${id}-pulse`} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={color} stopOpacity={0.24} />
-                  <stop offset="95%" stopColor={color} stopOpacity={0.01} />
-                </linearGradient>
+                <AreaGradient id={id} color={color} opacity={0.24} />
               </defs>
               <Area
                 type="monotone"
                 dataKey="value"
                 stroke={color}
                 strokeWidth={2.5}
-                fill={`url(#${id}-pulse)`}
+                fill={`url(#${id})`}
                 isAnimationActive={false}
               />
             </AreaChart>

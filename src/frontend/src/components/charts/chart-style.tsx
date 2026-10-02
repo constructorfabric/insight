@@ -6,6 +6,8 @@ export const AXIS_TICK = { fill: "var(--muted-foreground)", fontSize: 12 };
 export const GRID_STROKE = "var(--grid)";
 export const LABEL_CHARS = 12;
 export const CATEGORY_AXIS_WIDTH = 112;
+export const CHAR_WIDTH = 6.8;
+export const EVERY_TICK_LIMIT = 31;
 export const VALUE_LABEL = {
   position: "top",
   offset: 6,

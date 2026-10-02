@@ -182,7 +182,6 @@ export function MetricHistogram({ metric, entityId }: MetricHistogramProps) {
           >
             <CartesianGrid
               vertical={false}
-              stroke="var(--grid)"
             />
             <XAxis
               dataKey="label"

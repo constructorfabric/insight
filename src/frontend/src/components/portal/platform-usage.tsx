@@ -166,7 +166,7 @@ function VisitsChart({ days }: { days: UsageDay[] }) {
   return (
     <ChartContainer config={CHART_CONFIG} className="w-full" style={{ height: 160 }}>
       <BarChart data={days} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-        <CartesianGrid stroke="var(--grid)" vertical={false} />
+        <CartesianGrid vertical={false} />
         <XAxis
           dataKey="day"
           tickFormatter={dayTick}

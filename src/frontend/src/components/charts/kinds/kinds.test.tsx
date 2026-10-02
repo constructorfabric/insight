@@ -237,7 +237,7 @@ describe("<ChartKind>", () => {
     );
 
     expect(within(figure).getByText("125")).toBeInTheDocument();
-    expect(within(figure).getByText("25%")).toBeInTheDocument();
+    expect(within(figure).getByText("+25%")).toBeInTheDocument();
   });
 
   it("shows no change for a pulse with a single reading", () => {
@@ -387,5 +387,23 @@ describe("<ChartKind>", () => {
 
     expect(figure).toHaveTextContent("one row per day");
     expect(figure.querySelectorAll("[data-day]")).toHaveLength(0);
+  });
+  it("falls back to spaced ticks and no value labels once bars outnumber the room", () => {
+    const rows = Array.from({ length: 40 }, (_, index) => [
+      new Date(Date.UTC(2026, 6, 1 + index)).toISOString().slice(0, 10),
+      index + 1,
+    ]);
+    const { figure } = drawn(
+      { type: "bar", metric: "m", x: "day", y: "n" },
+      { columns: ["day", "n"], rows }
+    );
+    const rotated = [...figure.querySelectorAll("text")].filter((text) =>
+      text.getAttribute("transform")?.startsWith("rotate(-90")
+    );
+
+    expect(rotated).toHaveLength(0);
+    expect(figure.querySelectorAll(".recharts-label-list text")).toHaveLength(
+      0
+    );
   });
 });

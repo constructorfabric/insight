@@ -1,29 +1,12 @@
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  LabelList,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+import { Bar, BarChart, LabelList } from "recharts";
 
 import type { CategoryWidget, MetricResult } from "@/api/custom-client";
-import {
-  compactNumber,
-  groupedNumber,
-  unitFor,
-} from "@/components/custom/chart-format";
+import { groupedNumber, unitFor } from "@/components/custom/chart-format";
 
 import { categoryRows, ranked } from "../adapters/category";
-import {
-  AXIS_TICK,
-  CATEGORY_AXIS_WIDTH,
-  GRID_STROKE,
-  tooltipContent,
-} from "../chart-style";
-import { CategoryTick, KindChart, KindFigure } from "../chrome";
+import { KindChart, KindFigure } from "../chrome";
 import { seriesColor } from "../palette";
+import { CategoryAxes } from "./category-axes";
 
 const RANKED_LIMIT = 10;
 
@@ -48,24 +31,7 @@ export function RankedKind({
           layout="vertical"
           margin={{ top: 4, right: 40, bottom: 0, left: 8 }}
         >
-          <CartesianGrid stroke={GRID_STROKE} horizontal={false} />
-          <XAxis
-            type="number"
-            tick={AXIS_TICK}
-            tickLine={false}
-            axisLine={false}
-            tickFormatter={(value) => compactNumber(value, unit)}
-          />
-          <YAxis
-            type="category"
-            dataKey="label"
-            interval={0}
-            tick={<CategoryTick />}
-            tickLine={false}
-            axisLine={false}
-            width={CATEGORY_AXIS_WIDTH}
-          />
-          <Tooltip content={tooltipContent({ unit })} />
+          <CategoryAxes dataKey="label" unit={unit} />
           <Bar
             dataKey="value"
             name={widget.value}

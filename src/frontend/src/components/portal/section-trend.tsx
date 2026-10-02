@@ -164,7 +164,7 @@ export function SectionTrend({
                 : undefined
             }
           >
-            <CartesianGrid stroke="var(--grid)" />
+            <CartesianGrid />
             <XAxis
               dataKey="date"
               tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}

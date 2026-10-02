@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import type { Widget } from "@/api/custom-client";
 
-import { isWidgetKind, WIDGET_KINDS, widgetFields } from "./widget-columns";
+import {
+  isWidgetKind,
+  WIDGET_KINDS,
+  widgetFields,
+  widgetLayout,
+} from "./widget-columns";
 
 describe("widgetFields", () => {
   it.each<[Widget, [string, string][]]>([
@@ -130,5 +135,24 @@ describe("isWidgetKind", () => {
 describe("widgetFields over a stored kind this build does not know", () => {
   it("names no columns rather than throwing", () => {
     expect(widgetFields({ type: "sankey", metric: "m" } as never)).toEqual([]);
+  });
+});
+
+describe("widgetLayout", () => {
+  it.each<[Widget, { tall: boolean; fullRow: boolean }]>([
+    [
+      { type: "table", metric: "m", columns: ["a"] },
+      { tall: true, fullRow: true },
+    ],
+    [
+      { type: "bar", metric: "m", x: "day", y: "n" },
+      { tall: false, fullRow: false },
+    ],
+    [
+      { type: "stat", metric: "m", value: "n" },
+      { tall: false, fullRow: false },
+    ],
+  ])("lays out %o", (widget, layout) => {
+    expect(widgetLayout(widget)).toEqual(layout);
   });
 });

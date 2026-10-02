@@ -11,7 +11,7 @@ import type { MetricResult, RadarWidget } from "@/api/custom-client";
 import { unitFor } from "@/components/custom/chart-format";
 
 import { radarRows } from "../adapters/category";
-import { AXIS_TICK, GRID_STROKE, cut, tooltipContent } from "../chart-style";
+import { AXIS_TICK, cut, tooltipContent } from "../chart-style";
 import { KindChart, KindFigure } from "../chrome";
 import { seriesColor } from "../palette";
 import type { LegendItem } from "../widget-legend";
@@ -35,7 +35,7 @@ export function RadarKind({
     <KindFigure kind="radar" legend={legend}>
       <KindChart>
         <RadarChart data={rows} cx="50%" cy="50%" outerRadius="72%">
-          <PolarGrid stroke={GRID_STROKE} />
+          <PolarGrid />
           <PolarAngleAxis
             dataKey="label"
             tick={AXIS_TICK}
