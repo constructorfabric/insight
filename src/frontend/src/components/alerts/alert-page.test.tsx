@@ -107,12 +107,8 @@ describe("AlertPage", () => {
     render(<AlertPage id="a1" />, { wrapper });
 
     expect(await screen.findByText("Unknown")).toBeInTheDocument();
-    expect(
-      screen.getByText(/more than one row; an alert reads exactly one/)
-    ).toBeInTheDocument();
-    expect(
-      await screen.findByText(/Nothing has been owed yet/)
-    ).toBeInTheDocument();
+    expect(screen.getByText("More than one row")).toBeInTheDocument();
+    expect(await screen.findByText("No notifications yet")).toBeInTheDocument();
   });
 
   it("says when an alert has not been checked", async () => {
@@ -124,9 +120,7 @@ describe("AlertPage", () => {
 
     render(<AlertPage id="a1" />, { wrapper });
 
-    expect(
-      await screen.findByText("Not checked. Checks are off.")
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Disabled")).toBeInTheDocument();
   });
 
   it("pages older notifications until a short page ends them", async () => {
@@ -167,9 +161,7 @@ describe("AlertPage", () => {
     await userEvent.click(
       await screen.findByRole("button", { name: "Delete" })
     );
-    await userEvent.click(
-      screen.getByRole("button", { name: "Delete alert and its history" })
-    );
+    await userEvent.click(screen.getByRole("button", { name: "Delete alert" }));
 
     await waitFor(() =>
       expect(portalRouter.navigations).toContainEqual({
@@ -192,7 +184,7 @@ describe("AlertPage", () => {
     const header = await screen.findByRole("banner");
     await userEvent.click(
       within(header).getByRole("switch", {
-        name: "Checks for Too many open PRs",
+        name: "Enable Too many open PRs",
       })
     );
 
@@ -228,12 +220,12 @@ describe("AlertPage", () => {
     const header = await screen.findByRole("banner");
     await userEvent.click(
       within(header).getByRole("switch", {
-        name: "Checks for Too many open PRs",
+        name: "Enable Too many open PRs",
       })
     );
 
     expect(
-      await screen.findByText("It changed elsewhere. Try again.")
+      await screen.findByText("Changed elsewhere. Try again.")
     ).toBeInTheDocument();
     await waitFor(() =>
       expect(alertsClient.fetchAlert).toHaveBeenCalledTimes(2)

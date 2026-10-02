@@ -38,13 +38,7 @@ export function AlertsList() {
   return (
     <div className="flex flex-col gap-4 p-4 md:p-6">
       <header className="flex flex-wrap items-start gap-3">
-        <div className="min-w-0 grow">
-          <h1 className={TEXT_TITLE}>Alerts</h1>
-          <p className={cn(TEXT_BODY, "text-muted-foreground")}>
-            Each alert checks one number a metric produces and sends a
-            notification when it crosses a threshold.
-          </p>
-        </div>
+        <h1 className={cn(TEXT_TITLE, "min-w-0 grow")}>Alerts</h1>
         <Button
           variant="outline"
           size="sm"
@@ -81,11 +75,7 @@ export function AlertsList() {
         <ComingSoon
           variant="card"
           state="empty"
-          label={
-            searching
-              ? "No alert matches that search."
-              : "No alerts yet. Create one to be notified when a metric crosses a threshold."
-          }
+          label={searching ? "No matching alerts" : "No alerts yet"}
         />
       ) : (
         <>
@@ -94,7 +84,7 @@ export function AlertsList() {
               <TableRow>
                 <TableHead>Name</TableHead>
                 <TableHead>Metric</TableHead>
-                <TableHead className="w-28 text-end">Checks</TableHead>
+                <TableHead className="w-28 text-end">Enabled</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

@@ -170,7 +170,7 @@ describe("NewAlertPage", () => {
     );
 
     expect(
-      await screen.findByText(/answers a list, one row per stand/)
+      await screen.findByText(/Returns one row per stand/)
     ).toBeInTheDocument();
     await userEvent.click(screen.getByRole("combobox", { name: "Column" }));
     expect(
@@ -205,7 +205,7 @@ describe("NewAlertPage", () => {
     await pick("Column", "pass_rate");
 
     expect(
-      await screen.findByText(/Nothing to divide by/, {}, { timeout: 3_000 })
+      await screen.findByText(/No data in this window/, {}, { timeout: 3_000 })
     ).toBeInTheDocument();
   });
 
@@ -223,7 +223,7 @@ describe("NewAlertPage", () => {
     await fillNew();
 
     expect(
-      await screen.findByText(/It meets the condition/, {}, { timeout: 3_000 })
+      await screen.findByText(/meets the condition/, {}, { timeout: 3_000 })
     ).toBeInTheDocument();
     expect(customClient.runMetric).toHaveBeenCalledWith("prs-open", {
       bucket: false,
@@ -242,7 +242,7 @@ describe("NewAlertPage", () => {
 
     expect(
       await screen.findByText(
-        /Now: unknown\. The metric answered more than one row/,
+        /Current value: unknown · More than one row/,
         {},
         {
           timeout: 3_000,
@@ -257,10 +257,8 @@ describe("NewAlertPage", () => {
       await screen.findByRole("button", { name: "Create alert" })
     );
 
-    expect(
-      await screen.findByText("Give the alert a name.")
-    ).toBeInTheDocument();
-    expect(screen.getByText("Pick the metric to watch.")).toBeInTheDocument();
+    expect(await screen.findByText("Enter a name.")).toBeInTheDocument();
+    expect(screen.getByText("Pick a metric.")).toBeInTheDocument();
     expect(screen.getByText("Enter a number.")).toBeInTheDocument();
     expect(alertsClient.createAlert).not.toHaveBeenCalled();
   });
@@ -288,7 +286,7 @@ describe("NewAlertPage", () => {
     expect(
       await screen.findByText("interval must be 60 to 604800 seconds")
     ).toBeInTheDocument();
-    expect(screen.getByLabelText("Check")).toHaveAttribute(
+    expect(screen.getByLabelText("Check every")).toHaveAttribute(
       "aria-invalid",
       "true"
     );
@@ -299,8 +297,8 @@ describe("NewAlertPage", () => {
 
     render(<NewAlertPage />, { wrapper });
     await fillNew();
-    await pick("Check", "Custom…");
-    const every = screen.getByLabelText("Check every");
+    await pick("Check every", "Custom…");
+    const every = screen.getByLabelText("Amount");
     await userEvent.clear(every);
     await userEvent.type(every, "2");
     await pick("Unit", "hours");
@@ -411,12 +409,12 @@ describe("EditAlertPage", () => {
     await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
     expect(
-      await screen.findByText(/This alert changed since you opened it/)
+      await screen.findByText(/changed by someone else/)
     ).toBeInTheDocument();
     expect(screen.getByLabelText("Threshold")).toHaveValue("20");
 
     await userEvent.click(
-      screen.getByRole("button", { name: "Load the latest version" })
+      screen.getByRole("button", { name: "Load latest version" })
     );
     await waitFor(() =>
       expect(screen.getByLabelText("Threshold")).toHaveValue("15")

@@ -56,13 +56,11 @@ export function CurrentValue({
   );
 
   function reading() {
-    if (metric === "" || column === "") {
-      return <p>Pick a metric and a column to see what a check reads now.</p>;
-    }
+    if (metric === "" || column === "") return null;
     if (run.isPending || askedMetric !== metric || askedRange !== range) {
       return (
         <p className="flex items-center gap-2">
-          <Spinner className="size-3" /> Running the metric…
+          <Spinner className="size-3" /> Current value…
         </p>
       );
     }
@@ -78,9 +76,9 @@ export function CurrentValue({
     if (preview.kind === "unknown") {
       return (
         <p className="text-destructive">
-          Now: unknown.{" "}
+          Current value: unknown ·{" "}
           {ratio && preview.reason === "null"
-            ? "Nothing to divide by: the window holds no rows to count."
+            ? "No data in this window"
             : reasonText(preview.reason)}
         </p>
       );
@@ -88,12 +86,13 @@ export function CurrentValue({
 
     return (
       <p>
-        Now: <span className="tabular-nums">{numberText(preview.value)}</span>
+        Current value:{" "}
+        <span className="tabular-nums">{numberText(preview.value)}</span>
         {threshold === undefined
           ? ""
           : preview.breached
-            ? ". It meets the condition, so a notification would be sent."
-            : ". It does not meet the condition."}
+            ? " · meets the condition"
+            : " · does not meet the condition"}
       </p>
     );
   }

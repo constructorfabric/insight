@@ -111,7 +111,7 @@ function Header({ alert }: { alert: Alert }) {
               Delete
             </Button>
           )}
-          confirm="Delete alert and its history"
+          confirm="Delete alert"
           pending={remove.isPending}
           error={remove.error}
           onRemove={() =>
@@ -155,7 +155,7 @@ function Rule({ alert }: { alert: Alert }) {
           <Fact term="Column">
             <code className="font-mono">{alert.column}</code>
           </Fact>
-          <Fact term="Notify when the value is">
+          <Fact term="Condition">
             {conditionText(alert.operator, alert.threshold)}
           </Fact>
           <Fact term="Window">
@@ -184,9 +184,7 @@ function LatestCheck({
       <CardContent>
         {!state.last_evaluated_at ? (
           <p className={cn(TEXT_BODY, "text-muted-foreground")}>
-            {enabled
-              ? "Not checked yet. The first check runs shortly."
-              : "Not checked. Checks are off."}
+            {enabled ? "Not checked yet" : "Disabled"}
           </p>
         ) : (
           <dl className="grid gap-3 sm:grid-cols-2">
@@ -207,12 +205,12 @@ function LatestCheck({
               </Fact>
             ) : null}
             {state.breached_since ? (
-              <Fact term="Condition met since">
+              <Fact term="Met since">
                 {formatUtcInstant(state.breached_since, WHEN)}
               </Fact>
             ) : null}
             {state.last_reason ? (
-              <Fact term="Why unknown">{reasonText(state.last_reason)}</Fact>
+              <Fact term="Reason">{reasonText(state.last_reason)}</Fact>
             ) : null}
           </dl>
         )}

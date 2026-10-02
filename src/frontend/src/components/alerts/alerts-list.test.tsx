@@ -74,7 +74,7 @@ describe("AlertsList", () => {
     render(<AlertsList />, { wrapper });
     await userEvent.click(
       await screen.findByRole("switch", {
-        name: "Checks for Too many open PRs",
+        name: "Enable Too many open PRs",
       })
     );
 
@@ -108,12 +108,12 @@ describe("AlertsList", () => {
     render(<AlertsList />, { wrapper });
     await userEvent.click(
       await screen.findByRole("switch", {
-        name: "Checks for Too many open PRs",
+        name: "Enable Too many open PRs",
       })
     );
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "It changed elsewhere. Try again."
+      "Changed elsewhere. Try again."
     );
   });
 
@@ -127,7 +127,7 @@ describe("AlertsList", () => {
 
     render(<AlertsList />, { wrapper });
 
-    expect(await screen.findByText(/No alerts yet/)).toBeInTheDocument();
+    expect(await screen.findByText("No alerts yet")).toBeInTheDocument();
   });
 
   it("shows the service's refusal when alerts are off", async () => {
@@ -174,8 +174,6 @@ describe("AlertsList", () => {
         ),
       { timeout: 2_000 }
     );
-    expect(
-      await screen.findByText("No alert matches that search.")
-    ).toBeInTheDocument();
+    expect(await screen.findByText("No matching alerts")).toBeInTheDocument();
   });
 });

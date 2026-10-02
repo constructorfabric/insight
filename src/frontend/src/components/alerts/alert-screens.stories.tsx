@@ -136,7 +136,7 @@ export const TestAlertHeaderWrapsOnAPhone: Story = {
   play: async ({ canvas, canvasElement }) => {
     const title = await canvas.findByRole("heading", { name: BREACHED.name });
     const actions = [
-      canvas.getByRole("switch", { name: `Checks for ${BREACHED.name}` }),
+      canvas.getByRole("switch", { name: `Enable ${BREACHED.name}` }),
       canvas.getByRole("button", { name: "Edit" }),
       canvas.getByRole("button", { name: "Delete" }),
     ];
@@ -165,10 +165,10 @@ export const TestFormFitsOnAPhone: Story = {
       canvas.getByLabelText("Metric"),
       canvas.getByLabelText("Column"),
       canvas.getByLabelText("Window"),
-      canvas.getByLabelText("The value is"),
+      canvas.getByLabelText("Condition"),
       canvas.getByLabelText("Threshold"),
-      canvas.getByLabelText("Check"),
-      canvas.getByLabelText("Send to"),
+      canvas.getByLabelText("Check every"),
+      canvas.getByLabelText("Destination"),
       canvas.getByRole("button", { name: "Create alert" }),
     ];
 

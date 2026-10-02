@@ -50,6 +50,13 @@ const SINGULAR: Record<IntervalUnit, string> = {
   days: "day",
 };
 
+/** "5 minutes", "1 hour", "7 days": an interval as a choice of how often. */
+export function intervalLabel(secs: number): string {
+  const { amount, unit } = fromSeconds(secs);
+
+  return `${amount} ${amount === 1 ? SINGULAR[unit] : unit}`;
+}
+
 /** "Every 5 minutes", "Every hour", "Every 7 days". */
 export function intervalText(secs: number): string {
   if (secs < UNIT_SECS.minutes) return `Every ${secs} seconds`;

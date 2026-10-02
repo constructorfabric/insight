@@ -18,8 +18,6 @@ export interface WindowRule {
   allTime: boolean;
   /** A window may be chosen. */
   windowed: boolean;
-  /** Why a choice is closed, said beside the control. */
-  why?: string;
 }
 
 export function windowRule(
@@ -31,7 +29,6 @@ export function windowRule(
     return {
       allTime: true,
       windowed: false,
-      why: "This metric has no date, so each check reads all of it.",
     };
   }
 
@@ -40,7 +37,6 @@ export function windowRule(
     return {
       allTime: false,
       windowed: true,
-      why: "A total over all time only grows, so it needs a window.",
     };
   }
 

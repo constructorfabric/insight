@@ -90,7 +90,7 @@ function thresholdError(typed: string): string {
   const value = Number(typed.trim());
 
   return Number.isInteger(value) && !Number.isSafeInteger(value)
-    ? "This number is too large to enter here exactly."
+    ? "Number is too large."
     : "Enter a number.";
 }
 
@@ -124,19 +124,18 @@ export function checkForm(form: AlertForm): Checked {
   const threshold = thresholdOf(form.threshold);
   const amount = form.interval.amount;
 
-  if (name === "") errors.name = "Give the alert a name.";
+  if (name === "") errors.name = "Enter a name.";
   else if (nameLength > NAME_MAX) {
     errors.name = `Keep the name to ${NAME_MAX} characters.`;
   }
-  if (form.metric === "") errors.metric = "Pick the metric to watch.";
-  if (form.column === "")
-    errors.column = "Pick the column that holds the number.";
+  if (form.metric === "") errors.metric = "Pick a metric.";
+  if (form.column === "") errors.column = "Pick a column.";
   if (threshold === undefined)
     errors.threshold = thresholdError(form.threshold);
   if (!Number.isInteger(amount) || amount < 1) {
-    errors.interval_secs = "Enter a whole number, 1 or more.";
+    errors.interval_secs = "Enter a whole number of 1 or more.";
   }
-  if (form.destination === "") errors.destination = "Pick where to send it.";
+  if (form.destination === "") errors.destination = "Pick a destination.";
 
   if (Object.keys(errors).length > 0 || threshold === undefined) {
     return { ok: false, errors };

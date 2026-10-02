@@ -50,8 +50,7 @@ export function NotificationsTable({ id }: { id: string }) {
   if (notifications.length === 0) {
     return (
       <p className={cn(TEXT_BODY, "text-muted-foreground")}>
-        Nothing has been owed yet. A notification is owed on the first check
-        that meets the condition.
+        No notifications yet
       </p>
     );
   }
@@ -101,9 +100,6 @@ function NotificationRow({
       <TableCell className="whitespace-nowrap">
         <span className={TEXT_BODY}>
           {formatUtcInstant(notification.evaluated_at, WHEN)}
-        </span>
-        <span className={cn(TEXT_LABEL, "block")}>
-          rule revision {notification.rule_revision}
         </span>
       </TableCell>
       <TableCell className="text-end tabular-nums">

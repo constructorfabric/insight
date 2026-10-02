@@ -118,7 +118,7 @@ describe("what the form sends back", () => {
     });
 
     expect(!checked.ok && checked.errors.threshold).toBe(
-      "This number is too large to enter here exactly."
+      "Number is too large."
     );
   });
 });

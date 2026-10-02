@@ -45,7 +45,7 @@ describe("describe", () => {
 
   it.each([
     ["pending", "Pending"],
-    ["cancelled", "Withdrawn"],
+    ["cancelled", "Cancelled"],
     ["sent", "Sent"],
     ["failed", "Failed"],
   ])("names status %s as %s", (status, text) => {

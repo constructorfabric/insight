@@ -33,7 +33,7 @@ export function AlertSwitch({
         </span>
         <Switch
           checked={shown}
-          aria-label={`Checks for ${name}`}
+          aria-label={`Enable ${name}`}
           aria-busy={toggle.isPending || undefined}
           // WORKAROUND: not disabled while saving, since a browser drops focus from a disabled control.
           onCheckedChange={(next: boolean) => {
@@ -45,7 +45,7 @@ export function AlertSwitch({
       {toggle.isError ? (
         <span role="alert" className={cn(TEXT_LABEL, "text-destructive")}>
           {isRevisionConflict(toggle.error)
-            ? "It changed elsewhere. Try again."
+            ? "Changed elsewhere. Try again."
             : refusal(toggle.error, "Couldn't change it.")}
         </span>
       ) : null}

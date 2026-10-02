@@ -36,10 +36,7 @@ export function NewAlertPage() {
     return (
       <Shell title="New alert">
         <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
-          {refusal(
-            destinations.error,
-            "Couldn't read where alerts may be sent."
-          )}
+          {refusal(destinations.error, "Couldn't load destinations.")}
         </p>
       </Shell>
     );
@@ -216,8 +213,7 @@ function AlertEditor({
     >
       {destinations.data?.length === 0 ? (
         <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
-          No destinations are configured on this installation, so an alert has
-          nowhere to send its notification.
+          No destinations are configured.
         </p>
       ) : null}
 
@@ -231,8 +227,7 @@ function AlertEditor({
       {conflict ? (
         <div role="alert" className="flex flex-wrap items-center gap-3">
           <p className={cn(TEXT_BODY, "text-destructive")}>
-            This alert changed since you opened it. Your edits are still here;
-            load the latest version to edit that instead.
+            This alert was changed by someone else.
           </p>
           <Button
             type="button"
@@ -249,7 +244,7 @@ function AlertEditor({
               })
             }
           >
-            Load the latest version
+            Load latest version
           </Button>
         </div>
       ) : general ? (
@@ -265,7 +260,7 @@ function AlertEditor({
         </Button>
         {Object.keys(errors).length > 0 ? (
           <span className={cn(TEXT_LABEL, "text-destructive")}>
-            Fix the fields marked above.
+            Fix the highlighted fields.
           </span>
         ) : null}
       </div>

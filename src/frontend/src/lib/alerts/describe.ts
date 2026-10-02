@@ -42,18 +42,16 @@ export function numberText(value: AlertNumber): string {
 }
 
 const REASONS: Record<UnknownReason, string> = {
-  no_rows: "The metric answered no rows.",
-  many_rows:
-    "The metric answered more than one row; an alert reads exactly one.",
-  column_missing: "The metric has no such column.",
-  null: "The value was empty.",
-  non_numeric: "The value is not a number.",
-  incomparable:
-    "The value is too large to compare with a fractional threshold exactly.",
-  metric_missing: "The metric no longer exists.",
-  compile_failed: "The metric could not be compiled.",
-  run_failed: "The metric failed to run.",
-  timeout: "The metric took too long to answer.",
+  no_rows: "No rows",
+  many_rows: "More than one row",
+  column_missing: "Column not found",
+  null: "No value",
+  non_numeric: "Not a number",
+  incomparable: "Too large to compare exactly",
+  metric_missing: "Metric not found",
+  compile_failed: "Metric is invalid",
+  run_failed: "Metric failed to run",
+  timeout: "Metric timed out",
 };
 
 /** Why a check could not decide. A code this build does not know is shown as it came. */
@@ -63,7 +61,7 @@ export function reasonText(reason: string): string {
 
 const STATUSES: Record<NotificationStatus, string> = {
   pending: "Pending",
-  cancelled: "Withdrawn",
+  cancelled: "Cancelled",
   sent: "Sent",
   failed: "Failed",
 };
