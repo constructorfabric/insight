@@ -58,7 +58,7 @@ impl CommitHeader {
 /// and `splitn` hands it whatever remains, so it cannot shift a field either.
 ///
 /// A printable separator cannot do this. `0x1f` survives inside an ident, so
-/// an author named `A<0x1f>B` used to push `B` into the email field and every
+/// an author named `A<0x1f>B` would push `B` into the email field and every
 /// later field one place along, forging a row whose author, email and
 /// committer are attacker-chosen.
 pub(super) const FIELD: char = '\n';
@@ -114,9 +114,18 @@ pub(crate) fn ordinal_of(committed_date: &str) -> String {
     )
 }
 
-/// Every commit reachable from any branch, ascending by `(committed_date,
-/// sha)` — the walk order the page tokens depend on, and the only walk that
-/// touches whole history.
+/// Every commit reachable from any branch, ascending by `(ordinal, sha)` —
+/// the walk order the page tokens depend on, and the only walk that touches
+/// whole history.
+///
+/// The walk is deliberately unfiltered. `git log --since` is a traversal
+/// cutoff, not a predicate: it stops descending a parent chain at the first
+/// commit older than the bound, so a qualifying commit sitting behind an older
+/// parent is never reached at all. Committer dates are not monotonic along
+/// ancestry — merges of long-lived branches, cherry-picks, date-preserving
+/// rebases and clock skew all break it — so the date bound is applied to the
+/// enumerated result instead (see [`retain_keys_since`]), which is what the API
+/// contract promises: every reachable commit at or after `since`.
 ///
 /// # Errors
 ///
@@ -127,10 +136,7 @@ pub async fn enumerate(
     creds: &GitCredentials,
 ) -> Result<Vec<CommitKey>, GitError> {
     let format = format!("--pretty=format:%cI{FIELD}%H{FIELD}%P");
-    // `--branches`, not `--all`: tags are fetched once at clone and never
-    // pruned, so `--all` keeps enumerating commits whose branch was deleted at
-    // origin — and only for entries whose clone happened to pick the tag up.
-    // The contract is reachability from a BRANCH (§4.2).
+    // `--branches`, not `--all`: the contract is reachability from a branch.
     let args = vec!["log", "--branches", "--no-color", "-z", &format];
 
     let output = runner.run(Some(git_dir), &args, Some(creds)).await?;
@@ -173,17 +179,8 @@ pub fn retain_keys_since(keys: Vec<CommitKey>, since: Option<&str>) -> Vec<Commi
         .collect()
 }
 
-/// Every commit reachable from any branch, ordered ascending by
-/// `(committed_date, sha)` — the walk order the page tokens depend on.
-///
-/// The walk is deliberately unfiltered. `git log --since` is a traversal
-/// cutoff, not a predicate: it stops descending a parent chain at the first
-/// commit older than the bound, so a qualifying commit sitting behind an older
-/// parent is never reached at all. Committer dates are not monotonic along
-/// ancestry — merges of long-lived branches, cherry-picks, date-preserving
-/// rebases and clock skew all break it — so the date bound is applied to the
-/// enumerated result instead (see [`retain_keys_since`]), which is what the API
-/// contract promises: every reachable commit at or after `since`.
+/// Headers for `shas`, read without walking: `--no-walk` prints exactly the
+/// commits named.
 ///
 /// # Errors
 ///
@@ -367,8 +364,6 @@ pub async fn patch_ids(
 /// the read budget.
 const PATCH_ID_BATCH: usize = 128;
 
-/// A full 40-character hex object id, and nothing else. The sha is what
-/// anchors a record; a value that is not one means the record is not one.
 /// A full object id: 40 hex characters under SHA-1, 64 under SHA-256. Pinning
 /// only the SHA-1 length silently discards every commit in a SHA-256
 /// repository, because each parsed record fails this check and is dropped.
@@ -383,12 +378,8 @@ fn parse_headers(text: &str) -> Vec<CommitHeader> {
         .collect()
 }
 
-/// Remove control characters from a field an attacker writes.
-///
-/// A pushed ident can carry the field separator, which shifts the remaining
-/// fields of that record. The record still parses and its sha is still its
-/// own, so the blast radius is the attacker's own row — but the value that
-/// reaches bronze should not carry control bytes either way.
+/// Remove control characters from a field an attacker writes, so none reach
+/// bronze.
 pub(super) fn scrub(value: &str) -> String {
     value.chars().filter(|c| !c.is_control()).collect()
 }
@@ -471,10 +462,8 @@ mod tests {
 
     #[test]
     fn an_ident_carrying_the_field_separator_cannot_shift_a_row() {
-        // `0x1f` survives inside a git ident. With it as the separator, an
-        // author named `A<0x1f>B` pushed `B` into the email field and moved
-        // every later field one place along — forging a row whose author,
-        // email and committer the pusher chose.
+        // `0x1f` survives inside a git ident; it must not move any later
+        // field of the row.
         let hostile = "Ali\u{1f}ce\u{1f}victim@example.com";
         let record = format!(
             "{}{FIELD}{}{FIELD}2026-08-01T09:00:00+00:00{FIELD}2026-08-01T10:00:00+00:00\
@@ -518,8 +507,8 @@ mod tests {
 
     #[test]
     fn a_sha256_repository_is_not_silently_empty() {
-        // Pinning the SHA-1 length made every record fail the id check, so a
-        // SHA-256 repository served zero commits and no error.
+        // A SHA-256 repository's 64-hex ids must parse, or it serves zero
+        // commits and no error.
         let long = "b".repeat(64);
         let record = format!(
             "{long}{FIELD}{FIELD}2026-08-01T09:00:00+00:00{FIELD}2026-08-01T10:00:00+00:00\
@@ -636,8 +625,8 @@ mod tests {
     #[test]
     fn a_crafted_commit_message_cannot_forge_a_record() {
         // Anyone who can push writes a commit message, so it is untrusted
-        // input. With a printable record separator this payload closed its own
-        // record and opened one carrying an attacker-chosen sha and identity.
+        // input: a printable separator inside it must not open a forged record
+        // carrying an attacker-chosen sha and identity.
         let legacy_separator = '\u{1e}';
         let forged = format!(
             "legit subject{legacy_separator}{}{FIELD}{FIELD}2026-01-01T00:00:00+00:00{FIELD}2026-01-01T00:00:00+00:00{FIELD}Forged{FIELD}forged@evil.example{FIELD}Forged{FIELD}forged@evil.example{FIELD}owned",

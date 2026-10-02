@@ -496,8 +496,8 @@ mod tests {
         let Some(stats) = parse(&text).get("aaa").cloned() else {
             panic!("commit missing")
         };
-        // Both records name `docs/new.md`; the last status wins, as it did
-        // before `-z`, and the row is not duplicated.
+        // Both records name `docs/new.md`; the last status wins and the row
+        // is not duplicated.
         assert_eq!(stats.len(), 1);
         assert_eq!(stats[0].filename, "docs/new.md");
         assert_eq!(stats[0].previous_filename.as_deref(), Some("docs/old.md"));

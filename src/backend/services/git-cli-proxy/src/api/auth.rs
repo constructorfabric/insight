@@ -1,9 +1,8 @@
 //! Static bearer-token auth for the `/v1` routes.
 //!
 //! The service is cluster-internal: consumers are Airbyte connector pods, not
-//! browser traffic through the platform gateway, so the host runs with
-//! `auth_disabled: true` and this middleware is the entire authentication
-//! surface. The expected token arrives via gear config (`proxy_token`,
+//! browser traffic through the platform gateway, so the host links no gateway
+//! or authn gears and this middleware is the entire authentication surface. The expected token arrives via gear config (`proxy_token`,
 //! provisioned by Helm); callers send `Authorization: Bearer <token>`.
 
 use axum::extract::Request;
@@ -13,7 +12,6 @@ use axum::response::{IntoResponse, Response};
 
 use super::error::ApiError;
 
-/// Shared middleware state: the expected token.
 #[derive(Clone)]
 pub struct ProxyAuth {
     token: String,
