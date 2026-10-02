@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
 
 import type { AlertDestination, AlertOperator } from "@/api/alerts-types";
-import type { MetricDefinition } from "@/api/custom-types";
+import type { StoredMetric } from "@/api/custom-types";
 import { FieldSelect } from "@/components/alerts/field-select";
 import { MetricPicker } from "@/components/alerts/metric-picker";
 import { Row } from "@/components/custom/editor/controls";
@@ -27,6 +27,7 @@ import {
   metricShape,
   type MetricShape,
 } from "@/lib/alerts/shape";
+import { windowFor, windowRule, type WindowRule } from "@/lib/alerts/window";
 import { describing } from "@/lib/custom/editor/aria";
 import { RANGE_PRESETS, rangeLabel } from "@/lib/custom/time-range";
 import { TEXT_HEADING, TEXT_LABEL } from "@/lib/type-scale";
@@ -55,10 +56,10 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 }
 
 /** The columns a metric answers, by the names a rule calls them. */
-function useMetricDefinition(metric: string): MetricDefinition | undefined {
+function useStoredMetric(metric: string): StoredMetric | undefined {
   const read = useQuery({ ...metricQuery(metric), enabled: metric !== "" });
 
-  return read.data?.definition;
+  return read.data;
 }
 
 /** What the picked metric's shape means for an alert, before anything runs. */
@@ -75,17 +76,25 @@ function ShapeNote({ shape }: { shape: MetricShape }) {
 }
 
 /** The windows a rule may name: the presets, and the one it already has. */
-function windowOptions(current: string) {
+function windowOptions(current: string, rule: WindowRule) {
   // INVARIANT: "inf" reads every dated row, which "Every row" already offers.
   const presets = RANGE_PRESETS.filter(({ token }) => token !== "inf").map(
-    ({ token, label }) => ({ value: token, label })
+    ({ token, label }) => ({ value: token, label, disabled: !rule.windowed })
   );
   const known = current === "" || presets.some((one) => one.value === current);
 
   return [
-    { value: EVERY_ROW, label: "Every row" },
+    { value: EVERY_ROW, label: "Every row", disabled: !rule.everyRow },
     ...presets,
-    ...(known ? [] : [{ value: current, label: rangeLabel(current) }]),
+    ...(known
+      ? []
+      : [
+          {
+            value: current,
+            label: rangeLabel(current),
+            disabled: !rule.windowed,
+          },
+        ]),
   ];
 }
 
@@ -100,7 +109,9 @@ export function AlertFields({
   destinations: readonly AlertDestination[];
   onChange: (next: AlertForm) => void;
 }) {
-  const definition = useMetricDefinition(form.metric);
+  const stored = useStoredMetric(form.metric);
+  const definition = stored?.definition;
+  const window = windowRule(stored, form.column);
   const columns = definition
     ? alertColumns(definition).map((field) => field.as_name)
     : [];
@@ -164,15 +175,25 @@ export function AlertFields({
                 required: true,
               })}
               className="font-mono"
-              onChange={(column) => set({ column })}
+              onChange={(column) =>
+                set({ column, range: windowFor(stored, column, form.range) })
+              }
             />
           </Row>
-          <Row id="alert-range" label="Window" said={errors.range}>
+          <Row
+            id="alert-range"
+            label="Window"
+            hint={window.why}
+            said={errors.range}
+          >
             <FieldSelect
               id="alert-range"
               value={form.range === "" ? EVERY_ROW : form.range}
-              options={windowOptions(form.range)}
-              describe={describing("alert-range", { said: errors.range })}
+              options={windowOptions(form.range, window)}
+              describe={describing("alert-range", {
+                hint: window.why,
+                said: errors.range,
+              })}
               onChange={(range) =>
                 set({ range: range === EVERY_ROW ? "" : range })
               }

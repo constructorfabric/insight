@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 export interface Option {
   value: string;
   label: string;
+  disabled?: boolean;
 }
 
 /**
@@ -67,7 +68,11 @@ export function FieldSelect({
       </SelectTrigger>
       <SelectContent align="start">
         {options.map((option) => (
-          <SelectItem key={option.value} value={option.value}>
+          <SelectItem
+            key={option.value}
+            value={option.value}
+            disabled={option.disabled}
+          >
             {option.label}
           </SelectItem>
         ))}
