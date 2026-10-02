@@ -1,40 +1,22 @@
 import type { MetricResult } from "@/api/custom-client";
+import { toNumber } from "@/components/custom/chart-format";
 
-import { columnReader, labelOf, toNumber } from "./cells";
-import { OTHER_LABEL } from "./series";
+import { OTHER_LABEL, columnReader, labelOf, largest } from "./cells";
 
-export interface CategoryRow {
+interface CategoryRow {
   label: string;
   value: number;
 }
 
-export interface RadarRow {
-  label: string;
-  value: number;
+interface RadarRow extends CategoryRow {
   target: number | null;
-}
-
-export interface Progress {
-  percent: number | null;
-  value: number | null;
-  max: number | null;
 }
 
 export function categoryRows(
   result: MetricResult,
   label: string,
   value: string,
-  {
-    positiveOnly = false,
-    order = "first",
-    limit,
-    keep,
-  }: {
-    positiveOnly?: boolean;
-    order?: "first" | "desc";
-    limit?: number;
-    keep?: number;
-  } = {}
+  { positiveOnly = false }: { positiveOnly?: boolean } = {}
 ): CategoryRow[] {
   const readLabel = columnReader(result, label);
   const readValue = columnReader(result, value);
@@ -48,22 +30,26 @@ export function categoryRows(
     totals.set(name, (totals.get(name) ?? 0) + amount);
   }
 
-  const rows = [...totals]
+  return [...totals]
     .map(([name, total]) => ({ label: name, value: total }))
     .filter((row) => !positiveOnly || row.value > 0);
-  if (keep !== undefined && rows.length > keep) return withOther(rows, keep);
-
-  const ordered =
-    order === "desc" ? rows.sort((a, b) => b.value - a.value) : rows;
-
-  return limit === undefined ? ordered : ordered.slice(0, limit);
 }
 
-function withOther(rows: CategoryRow[], keep: number): CategoryRow[] {
-  const ranked = [...rows].sort((a, b) => b.value - a.value);
-  const rest = ranked.slice(keep).reduce((sum, row) => sum + row.value, 0);
+export function ranked(rows: CategoryRow[], limit?: number): CategoryRow[] {
+  const sorted = [...rows].sort((a, b) => b.value - a.value);
 
-  return [...ranked.slice(0, keep), { label: OTHER_LABEL, value: rest }];
+  return limit === undefined ? sorted : sorted.slice(0, limit);
+}
+
+export function withOther(rows: CategoryRow[], keep: number): CategoryRow[] {
+  if (rows.length <= keep) return ranked(rows);
+
+  const kept = largest(rows, (row) => row.value, keep);
+  const rest = rows
+    .filter((row) => !kept.has(row))
+    .reduce((sum, row) => sum + row.value, 0);
+
+  return [...ranked([...kept]), { label: OTHER_LABEL, value: rest }];
 }
 
 export function radarRows(
@@ -90,19 +76,15 @@ export function progress(
   result: MetricResult,
   value: string,
   max?: string
-): Progress {
+): number | null {
   const first = result.rows[0];
-  if (!first) return { percent: null, value: null, max: null };
+  if (!first) return null;
 
   const done = toNumber(columnReader(result, value)(first));
-  const ceiling = max ? toNumber(columnReader(result, max)(first)) : null;
-  if (done === null) return { percent: null, value: null, max: ceiling };
+  if (done === null) return null;
 
+  const ceiling = max ? toNumber(columnReader(result, max)(first)) : null;
   const raw = max ? (ceiling ? (done / ceiling) * 100 : 0) : done;
 
-  return {
-    percent: Math.min(100, Math.max(0, raw)),
-    value: done,
-    max: ceiling,
-  };
+  return Math.min(100, Math.max(0, raw));
 }

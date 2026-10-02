@@ -1,9 +1,11 @@
 import type { MetricResult } from "@/api/custom-client";
+import { toNumber } from "@/components/custom/chart-format";
 
-import { columnReader, toNumber } from "./cells";
+import { columnReader } from "./cells";
 
-export const CALENDAR_WEEKS = 53;
+const CALENDAR_WEEKS = 53;
 const DAY_MS = 86_400_000;
+const WEEK_MS = 7 * DAY_MS;
 
 export interface CalendarCell {
   date: string;
@@ -21,11 +23,11 @@ export function calendarCells(
   const totals = dayTotals(result, x, value);
   if (totals.size === 0) return [];
 
-  const days = [...totals.keys()].sort();
-  const last = utc(days[days.length - 1] ?? "");
+  const days = [...totals.keys()];
+  const last = utc(days.reduce((a, b) => (b > a ? b : a)));
   const earliest =
     last - (CALENDAR_WEEKS * 7 - 1 - new Date(last).getUTCDay()) * DAY_MS;
-  const first = Math.max(utc(days[0] ?? ""), earliest);
+  const first = Math.max(utc(days.reduce((a, b) => (b < a ? b : a))), earliest);
   const firstWeekStart = first - new Date(first).getUTCDay() * DAY_MS;
 
   const busiest = Math.max(0, ...totals.values());
@@ -38,7 +40,7 @@ export function calendarCells(
       date,
       value: amount,
       level: level(amount, busiest),
-      week: Math.floor((at - firstWeekStart) / (7 * DAY_MS)),
+      week: Math.floor((at - firstWeekStart) / WEEK_MS),
       weekday: new Date(at).getUTCDay(),
     });
   }
@@ -50,7 +52,10 @@ export function calendarGrain(
   result: MetricResult,
   x: string
 ): "day" | "week" | "month" {
-  const days = [...dayTotals(result, x, x).keys()].sort();
+  const readDay = columnReader(result, x);
+  const days = [...new Set(result.rows.map((row) => dayOf(readDay(row))))]
+    .filter((day): day is string => day !== undefined)
+    .sort();
   if (days.length < 2) return "day";
 
   if (days.every((day) => day.endsWith("-01"))) return "month";
@@ -58,7 +63,7 @@ export function calendarGrain(
   const gaps = days
     .slice(1)
     .map((day, index) => utc(day) - utc(days[index] ?? ""));
-  if (gaps.every((gap) => gap >= 7 * DAY_MS && gap % (7 * DAY_MS) === 0)) {
+  if (gaps.every((gap) => gap >= WEEK_MS && gap % WEEK_MS === 0)) {
     return "week";
   }
 
@@ -71,13 +76,19 @@ function dayTotals(result: MetricResult, x: string, value: string) {
 
   const totals = new Map<string, number>();
   for (const row of result.rows) {
-    const day = /^(\d{4}-\d{2}-\d{2})/.exec(String(readDay(row) ?? ""))?.[1];
-    if (!day || Number.isNaN(utc(day))) continue;
+    const day = dayOf(readDay(row));
+    if (!day) continue;
 
     totals.set(day, (totals.get(day) ?? 0) + (toNumber(readValue(row)) ?? 0));
   }
 
   return totals;
+}
+
+function dayOf(cell: unknown): string | undefined {
+  const day = /^(\d{4}-\d{2}-\d{2})/.exec(String(cell ?? ""))?.[1];
+
+  return day && !Number.isNaN(utc(day)) ? day : undefined;
 }
 
 function utc(day: string): number {

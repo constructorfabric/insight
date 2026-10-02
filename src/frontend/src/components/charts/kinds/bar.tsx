@@ -1,9 +1,12 @@
 import { Bar, BarChart, LabelList } from "recharts";
 
 import type { MetricResult, SeriesWidget } from "@/api/custom-client";
-import { compactNumber, unitFor } from "@/components/custom/chart-format";
+import {
+  compactNumber,
+  toNumber,
+  unitFor,
+} from "@/components/custom/chart-format";
 
-import { toNumber } from "../adapters/cells";
 import { seriesRows, type SeriesKey, type SeriesRow } from "../adapters/series";
 import { VALUE_LABEL } from "../chart-style";
 import { KindChart, KindFigure } from "../chrome";

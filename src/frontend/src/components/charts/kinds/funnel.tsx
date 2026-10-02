@@ -5,7 +5,7 @@ import { groupedNumber, unitFor } from "@/components/custom/chart-format";
 import { TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
-import { categoryRows } from "../adapters/category";
+import { categoryRows, ranked } from "../adapters/category";
 import { cut, tooltipContent } from "../chart-style";
 import { KindChart, KindFigure } from "../chrome";
 import { seriesColor } from "../palette";
@@ -18,10 +18,9 @@ export function FunnelKind({
   result: MetricResult;
 }) {
   const unit = unitFor(result.percents, widget.value);
-  const stages = categoryRows(result, widget.label, widget.value, {
-    positiveOnly: true,
-    order: "desc",
-  }).map((stage, index) => ({ ...stage, fill: seriesColor(index) }));
+  const stages = ranked(
+    categoryRows(result, widget.label, widget.value, { positiveOnly: true })
+  ).map((stage, index) => ({ ...stage, fill: seriesColor(index) }));
 
   return (
     <KindFigure kind="funnel">

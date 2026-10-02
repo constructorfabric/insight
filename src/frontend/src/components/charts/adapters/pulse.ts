@@ -1,24 +1,40 @@
 import type { MetricResult } from "@/api/custom-client";
+import { toNumber } from "@/components/custom/chart-format";
 
-import { columnReader, toNumber } from "./cells";
+import { columnReader } from "./cells";
 
-export interface PulseSummary {
+interface PulseSummary {
   latest: number | null;
   change: number | null;
   points: (number | null)[];
+  since: unknown;
+  until: unknown;
 }
 
-export function pulseSummary(result: MetricResult, y: string): PulseSummary {
+export function pulseSummary(
+  result: MetricResult,
+  x: string,
+  y: string
+): PulseSummary {
+  const readX = columnReader(result, x);
   const readY = columnReader(result, y);
   const points = result.rows.map((row) => toNumber(readY(row)));
-  const readings = points.filter((point): point is number => point !== null);
 
-  const first = readings[0];
-  const latest = readings.at(-1) ?? null;
+  const read = points.flatMap((point, index) =>
+    point === null ? [] : [{ value: point, at: index }]
+  );
+  const first = read[0];
+  const latest = read.at(-1);
   const change =
-    readings.length > 1 && first !== undefined && first !== 0 && latest !== null
-      ? ((latest - first) / Math.abs(first)) * 100
+    read.length > 1 && first && latest && first.value !== 0
+      ? ((latest.value - first.value) / Math.abs(first.value)) * 100
       : null;
 
-  return { latest, change, points };
+  return {
+    latest: latest?.value ?? null,
+    change,
+    points,
+    since: first ? readX(result.rows[first.at] ?? []) : undefined,
+    until: readX(result.rows.at(-1) ?? []),
+  };
 }

@@ -4,8 +4,8 @@ import { Tooltip, Treemap, type TreemapNode } from "recharts";
 import type { CategoryWidget, MetricResult } from "@/api/custom-client";
 import { groupedNumber, unitFor } from "@/components/custom/chart-format";
 
-import { categoryRows } from "../adapters/category";
-import { OTHER_LABEL } from "../adapters/series";
+import { OTHER_LABEL } from "../adapters/cells";
+import { categoryRows, withOther } from "../adapters/category";
 import { tooltipContent } from "../chart-style";
 import { KindChart, KindFigure } from "../chrome";
 import { OTHER_COLOR, seriesColor } from "../palette";
@@ -21,11 +21,10 @@ export function TreemapKind({
   result: MetricResult;
 }) {
   const unit = unitFor(result.percents, widget.value);
-  const tiles = categoryRows(result, widget.label, widget.value, {
-    positiveOnly: true,
-    order: "desc",
-    keep: TREEMAP_TILES,
-  }).map(({ label, value }) => ({ name: label, value }));
+  const tiles = withOther(
+    categoryRows(result, widget.label, widget.value, { positiveOnly: true }),
+    TREEMAP_TILES
+  ).map(({ label, value }) => ({ name: label, value }));
 
   return (
     <KindFigure kind="treemap">

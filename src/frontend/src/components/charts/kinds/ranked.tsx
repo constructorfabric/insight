@@ -15,7 +15,7 @@ import {
   unitFor,
 } from "@/components/custom/chart-format";
 
-import { categoryRows } from "../adapters/category";
+import { categoryRows, ranked } from "../adapters/category";
 import {
   AXIS_TICK,
   CATEGORY_AXIS_WIDTH,
@@ -25,7 +25,7 @@ import {
 import { CategoryTick, KindChart, KindFigure } from "../chrome";
 import { seriesColor } from "../palette";
 
-export const RANKED_LIMIT = 10;
+const RANKED_LIMIT = 10;
 
 export function RankedKind({
   widget,
@@ -34,10 +34,10 @@ export function RankedKind({
   widget: CategoryWidget;
   result: MetricResult;
 }) {
-  const rows = categoryRows(result, widget.label, widget.value, {
-    order: "desc",
-    limit: RANKED_LIMIT,
-  });
+  const rows = ranked(
+    categoryRows(result, widget.label, widget.value),
+    RANKED_LIMIT
+  );
   const unit = unitFor(result.percents, widget.value);
 
   return (

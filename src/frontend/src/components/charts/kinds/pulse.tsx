@@ -24,11 +24,8 @@ export function PulseKind({
 }) {
   const id = useId().replace(/:/g, "");
   const unit = unitFor(result.percents, widget.y);
-  const summary = pulseSummary(result, widget.y);
+  const summary = pulseSummary(result, widget.x, widget.y);
   const color = seriesColor(0);
-  const at = result.columns.indexOf(widget.x);
-  const first = result.rows[0]?.[at];
-  const last = result.rows.at(-1)?.[at];
   const rising = (summary.change ?? 0) >= 0;
   const Arrow = rising ? ArrowUpRight : ArrowDownRight;
 
@@ -44,7 +41,7 @@ export function PulseKind({
             <span className="font-semibold text-foreground">
               {groupedNumber(Math.abs(summary.change), "%")}
             </span>
-            <span>since {shortDate(first)}</span>
+            <span>since {shortDate(summary.since)}</span>
           </span>
         )}
         <div className="flex min-h-0 flex-1 flex-col">
@@ -70,8 +67,8 @@ export function PulseKind({
             </AreaChart>
           </KindChart>
           <div className={cn(TEXT_LABEL, "flex justify-between font-normal")}>
-            <span>{shortDate(first)}</span>
-            <span>{shortDate(last)}</span>
+            <span>{shortDate(summary.since)}</span>
+            <span>{shortDate(summary.until)}</span>
           </div>
         </div>
       </div>

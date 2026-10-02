@@ -2,7 +2,7 @@ import type { MetricResult } from "@/api/custom-client";
 
 import { categoryRows } from "./category";
 
-export const TOTAL_LABEL = "Total";
+const TOTAL_LABEL = "Total";
 
 export interface BridgeRow {
   label: string;

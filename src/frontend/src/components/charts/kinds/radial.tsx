@@ -14,8 +14,7 @@ export function RadialKind({
   widget: RadialWidget;
   result: MetricResult;
 }) {
-  const read = progress(result, widget.value, widget.max);
-  const percent = read.percent ?? 0;
+  const percent = progress(result, widget.value, widget.max);
   const color = seriesColor(0);
 
   return (
@@ -28,7 +27,7 @@ export function RadialKind({
     >
       <KindChart>
         <RadialBarChart
-          data={[{ name: widget.value, value: percent }]}
+          data={[{ name: widget.value, value: percent ?? 0 }]}
           innerRadius="72%"
           outerRadius="94%"
           startAngle={90}
@@ -44,7 +43,7 @@ export function RadialKind({
             isAnimationActive={false}
           >
             <Label
-              value={read.percent === null ? "—" : `${Math.round(percent)}%`}
+              value={percent === null ? "—" : `${Math.round(percent)}%`}
               position="center"
               fill="var(--foreground)"
               fontSize={28}

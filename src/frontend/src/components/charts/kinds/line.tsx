@@ -9,8 +9,6 @@ import { colorKeys, seriesColor } from "../palette";
 import type { LegendItem } from "../widget-legend";
 import { SeriesAxes } from "./series-axes";
 
-const TARGET_KEY = "target";
-
 export function LineKind({
   widget,
   result,
@@ -23,7 +21,7 @@ export function LineKind({
     widget.x,
     widget.y,
     widget.series,
-    widget.target ? { [TARGET_KEY]: widget.target } : {}
+    widget.target
   );
   const colored = colorKeys(keys);
   const targetColor = seriesColor(colored.length);
@@ -61,7 +59,7 @@ export function LineKind({
           {widget.target ? (
             <Line
               type="monotone"
-              dataKey={TARGET_KEY}
+              dataKey="target"
               name={widget.target}
               stroke={targetColor}
               strokeWidth={2}

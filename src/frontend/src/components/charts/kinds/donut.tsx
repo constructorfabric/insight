@@ -3,8 +3,9 @@ import { Label, Pie, PieChart, Tooltip } from "recharts";
 import type { CategoryWidget, MetricResult } from "@/api/custom-client";
 import { compactNumber, unitFor } from "@/components/custom/chart-format";
 
-import { categoryRows } from "../adapters/category";
-import { OTHER_LABEL, SERIES_LIMIT } from "../adapters/series";
+import { categoryRows, withOther } from "../adapters/category";
+import { OTHER_LABEL } from "../adapters/cells";
+import { SERIES_LIMIT } from "../adapters/series";
 import { tooltipContent } from "../chart-style";
 import { KindChart, KindFigure } from "../chrome";
 import { OTHER_COLOR, seriesColor } from "../palette";
@@ -18,10 +19,10 @@ export function DonutKind({
 }) {
   const donut = widget.type === "donut";
   const unit = unitFor(result.percents, widget.value);
-  const slices = categoryRows(result, widget.label, widget.value, {
-    positiveOnly: true,
-    keep: SERIES_LIMIT,
-  }).map((slice, index) => ({
+  const slices = withOther(
+    categoryRows(result, widget.label, widget.value, { positiveOnly: true }),
+    SERIES_LIMIT
+  ).map((slice, index) => ({
     ...slice,
     fill: slice.label === OTHER_LABEL ? OTHER_COLOR : seriesColor(index),
   }));

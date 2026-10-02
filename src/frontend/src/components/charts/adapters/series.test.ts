@@ -118,7 +118,7 @@ describe("seriesRows", () => {
       "day",
       "n",
       undefined,
-      { target: "goal" }
+      "goal"
     );
 
     expect(drawn.rows).toEqual([

@@ -2,7 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import type { MetricResult } from "@/api/custom-client";
 
-import { categoryRows, progress, radarRows } from "./category";
+import {
+  categoryRows,
+  progress,
+  radarRows,
+  ranked,
+  withOther,
+} from "./category";
 
 function result(columns: string[], rows: unknown[][]): MetricResult {
   return { columns, rows };
@@ -65,18 +71,20 @@ describe("categoryRows", () => {
   });
 
   it("ranks largest first and cuts to the limit", () => {
-    const rows = categoryRows(
-      result(
-        ["who", "n"],
-        [
-          ["a", 1],
-          ["b", 3],
-          ["c", 2],
-        ]
+    const rows = ranked(
+      categoryRows(
+        result(
+          ["who", "n"],
+          [
+            ["a", 1],
+            ["b", 3],
+            ["c", 2],
+          ]
+        ),
+        "who",
+        "n"
       ),
-      "who",
-      "n",
-      { order: "desc", limit: 2 }
+      2
     );
 
     expect(rows).toEqual([
@@ -86,19 +94,21 @@ describe("categoryRows", () => {
   });
 
   it("keeps the largest shares and sums the rest into Other", () => {
-    const rows = categoryRows(
-      result(
-        ["repo", "n"],
-        [
-          ["a", 1],
-          ["b", 5],
-          ["c", 2],
-          ["d", 4],
-        ]
+    const rows = withOther(
+      categoryRows(
+        result(
+          ["repo", "n"],
+          [
+            ["a", 1],
+            ["b", 5],
+            ["c", 2],
+            ["d", 4],
+          ]
+        ),
+        "repo",
+        "n"
       ),
-      "repo",
-      "n",
-      { keep: 2 }
+      2
     );
 
     expect(rows).toEqual([
@@ -145,12 +155,10 @@ describe("progress", () => {
     ["a negative value, floored", [[-5, 10]], "goal", 0],
     ["a zero maximum as nothing done", [[5, 0]], "goal", 0],
   ])("reads %s", (_name, rows, max, percent) => {
-    const read = progress(result(["done", "goal"], rows), "done", max);
-
-    expect(read.percent).toBe(percent);
+    expect(progress(result(["done", "goal"], rows), "done", max)).toBe(percent);
   });
 
   it("has no percentage when there is no row", () => {
-    expect(progress(result(["done"], []), "done").percent).toBeNull();
+    expect(progress(result(["done"], []), "done")).toBeNull();
   });
 });

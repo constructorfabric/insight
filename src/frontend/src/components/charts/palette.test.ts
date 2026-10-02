@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { OTHER_COLOR, keyColor, seriesColor } from "./palette";
+import { OTHER_COLOR, colorKeys, seriesColor } from "./palette";
 
 describe("palette", () => {
   it.each([
@@ -16,8 +16,13 @@ describe("palette", () => {
   );
 
   it("paints Other in its own muted colour whatever its position", () => {
-    expect(keyColor({ key: "other", label: "Other" }, 0)).toBe(OTHER_COLOR);
-    expect(keyColor({ key: "s0", label: "api" }, 0)).toBe("var(--chart-1)");
+    const [other, api] = colorKeys([
+      { key: "other", label: "Other" },
+      { key: "s0", label: "api" },
+    ]);
+
+    expect(other?.color).toBe(OTHER_COLOR);
+    expect(api?.color).toBe("var(--chart-2)");
   });
   it("keeps Other apart from every series colour", () => {
     const series = Array.from({ length: 12 }, (_, index) => seriesColor(index));

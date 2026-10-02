@@ -1,3 +1,4 @@
+import { OTHER_KEY } from "./adapters/cells";
 import type { SeriesKey } from "./adapters/series";
 
 const CHART_TOKENS = 12;
@@ -9,8 +10,8 @@ export function seriesColor(index: number): string {
   return `var(--chart-${(index % CHART_TOKENS) + 1})`;
 }
 
-export function keyColor(key: SeriesKey, index: number): string {
-  return key.key === "other" ? OTHER_COLOR : seriesColor(index);
+function keyColor(key: SeriesKey, index: number): string {
+  return key.key === OTHER_KEY ? OTHER_COLOR : seriesColor(index);
 }
 
 export function colorKeys<K extends SeriesKey>(

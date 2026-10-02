@@ -1,10 +1,15 @@
 import type { MetricResult } from "@/api/custom-client";
+import { toNumber } from "@/components/custom/chart-format";
 
-import { columnReader, labelOf, toNumber } from "./cells";
+import {
+  OTHER_KEY,
+  OTHER_LABEL,
+  columnReader,
+  labelOf,
+  largest,
+} from "./cells";
 
 export const SERIES_LIMIT = 6;
-export const OTHER_LABEL = "Other";
-const OTHER_KEY = "other";
 
 export interface SeriesKey {
   key: string;
@@ -13,15 +18,21 @@ export interface SeriesKey {
 
 export type SeriesRow = { x: unknown } & Record<string, unknown>;
 
-export interface SeriesData {
+interface SeriesData {
   rows: SeriesRow[];
   keys: SeriesKey[];
 }
 
-export interface PointGroup {
+interface PointGroup {
   key: string;
   label: string;
   points: { x: number; y: number; size?: number }[];
+}
+
+interface PairedRow {
+  x: unknown;
+  y: number | null;
+  y2: number | null;
 }
 
 export function seriesRows(
@@ -29,14 +40,12 @@ export function seriesRows(
   x: string,
   y: string,
   series?: string,
-  carry: Record<string, string> = {}
+  target?: string
 ): SeriesData {
   const readX = columnReader(result, x);
   const readY = columnReader(result, y);
   const readSeries = series ? columnReader(result, series) : () => y;
-  const carried = Object.entries(carry).map(
-    ([key, column]) => [key, columnReader(result, column)] as const
-  );
+  const readTarget = target ? columnReader(result, target) : undefined;
 
   const kept = keptSeries(
     result.rows.map((row) => [labelOf(readSeries(row)), toNumber(readY(row))])
@@ -45,24 +54,19 @@ export function seriesRows(
 
   for (const row of result.rows) {
     const at = readX(row);
-    const point = byX.get(at) ?? blankRow(at, kept.keys, carried);
+    const point = byX.get(at) ?? blankRow(at, kept.keys, Boolean(readTarget));
     byX.set(at, point);
 
     const key = kept.keyOf(labelOf(readSeries(row)));
     point[key] = add(point[key], toNumber(readY(row)));
-
-    for (const [carriedKey, read] of carried) {
-      point[carriedKey] ??= toNumber(read(row));
-    }
+    if (readTarget) point.target ??= toNumber(readTarget(row));
   }
 
   return { rows: [...byX.values()], keys: kept.keys };
 }
 
-export interface PairedRow {
-  x: unknown;
-  y: number | null;
-  y2: number | null;
+export function rowTotal(row: SeriesRow, keys: SeriesKey[]): number {
+  return keys.reduce((sum, { key }) => sum + (toNumber(row[key]) ?? 0), 0);
 }
 
 export function shareRows(
@@ -78,10 +82,7 @@ export function shareRows(
   );
 
   const rows = drawn.rows.map((row) => {
-    const total = drawn.keys.reduce(
-      (sum, { key }) => sum + (toNumber(row[key]) ?? 0),
-      0
-    );
+    const total = rowTotal(row, drawn.keys);
     const shares = drawn.keys.map(({ key }) => [
       key,
       total > 0 ? ((toNumber(row[key]) ?? 0) / total) * 100 : 0,
@@ -99,16 +100,21 @@ export function pairedRows(
   y: string,
   y2: string
 ): PairedRow[] {
-  const bars = seriesRows(result, x, y);
-  const line = new Map(
-    seriesRows(result, x, y2).rows.map((row) => [row.x, toNumber(row.s0)])
-  );
+  const readX = columnReader(result, x);
+  const readY = columnReader(result, y);
+  const readY2 = columnReader(result, y2);
 
-  return bars.rows.map((row) => ({
-    x: row.x,
-    y: toNumber(row.s0),
-    y2: line.get(row.x) ?? null,
-  }));
+  const byX = new Map<unknown, PairedRow>();
+  for (const row of result.rows) {
+    const at = readX(row);
+    const point = byX.get(at) ?? { x: at, y: null, y2: null };
+    byX.set(at, point);
+
+    point.y = add(point.y, toNumber(readY(row)));
+    point.y2 = add(point.y2, toNumber(readY2(row)));
+  }
+
+  return [...byX.values()];
 }
 
 export function pointGroups(
@@ -146,17 +152,19 @@ export function pointGroups(
 function keptLabels(drawn: SeriesData, limit: number | undefined): SeriesData {
   if (limit === undefined || drawn.rows.length <= limit) return drawn;
 
-  const total = (row: SeriesRow) =>
-    drawn.keys.reduce((sum, { key }) => sum + (toNumber(row[key]) ?? 0), 0);
-  const kept = new Set(
-    [...drawn.rows].sort((a, b) => total(b) - total(a)).slice(0, limit)
+  const totals = new Map(
+    drawn.rows.map((row) => [row, rowTotal(row, drawn.keys)])
   );
+  const kept = largest(drawn.rows, (row) => totals.get(row) ?? 0, limit);
 
   const other: SeriesRow = { x: OTHER_LABEL };
-  for (const { key } of drawn.keys) {
-    other[key] = drawn.rows
-      .filter((row) => !kept.has(row))
-      .reduce((sum, row) => sum + (toNumber(row[key]) ?? 0), 0);
+  for (const { key } of drawn.keys) other[key] = 0;
+  for (const row of drawn.rows) {
+    if (kept.has(row)) continue;
+
+    for (const { key } of drawn.keys) {
+      other[key] = (other[key] as number) + (toNumber(row[key]) ?? 0);
+    }
   }
 
   return {
@@ -172,21 +180,17 @@ function keptSeries(readings: [string, number | null][]) {
   }
 
   const labels = [...totals.keys()];
-  const largest = new Set(
-    [...labels]
-      .sort((a, b) => (totals.get(b) ?? 0) - (totals.get(a) ?? 0))
-      .slice(0, SERIES_LIMIT)
-  );
+  const kept = largest(labels, (label) => totals.get(label) ?? 0, SERIES_LIMIT);
   const keys: SeriesKey[] = labels
-    .filter((label) => largest.has(label))
+    .filter((label) => kept.has(label))
     .map((label, index) => ({ key: `s${index}`, label }));
-  if (labels.length > largest.size) {
+  if (labels.length > kept.size) {
     keys.push({ key: OTHER_KEY, label: OTHER_LABEL });
   }
 
   const byLabel = new Map(keys.map(({ key, label }) => [label, key]));
   const keyOf = (label: string) =>
-    largest.has(label) ? (byLabel.get(label) ?? OTHER_KEY) : OTHER_KEY;
+    kept.has(label) ? (byLabel.get(label) ?? OTHER_KEY) : OTHER_KEY;
 
   return { keys, keyOf };
 }
@@ -194,12 +198,12 @@ function keptSeries(readings: [string, number | null][]) {
 function blankRow(
   x: unknown,
   keys: SeriesKey[],
-  carried: readonly (readonly [string, unknown])[]
+  withTarget: boolean
 ): SeriesRow {
   return {
     x,
     ...Object.fromEntries(keys.map(({ key }) => [key, null])),
-    ...Object.fromEntries(carried.map(([key]) => [key, null])),
+    ...(withTarget ? { target: null } : {}),
   };
 }
 

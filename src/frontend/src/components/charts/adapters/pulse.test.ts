@@ -16,6 +16,7 @@ describe("pulseSummary", () => {
         ["d2", null],
         ["d3", 125],
       ]),
+      "day",
       "n"
     );
 
@@ -23,14 +24,18 @@ describe("pulseSummary", () => {
       latest: 125,
       change: 25,
       points: [100, null, 125],
+      since: "d1",
+      until: "d3",
     });
   });
 
   it("has no change from a single reading", () => {
-    expect(pulseSummary(result([["d1", 7]]), "n")).toEqual({
+    expect(pulseSummary(result([["d1", 7]]), "day", "n")).toEqual({
       latest: 7,
       change: null,
       points: [7],
+      since: "d1",
+      until: "d1",
     });
   });
 
@@ -41,12 +46,13 @@ describe("pulseSummary", () => {
           ["d1", 0],
           ["d2", 5],
         ]),
+        "day",
         "n"
       ).change
     ).toBeNull();
   });
 
   it("has no latest value when nothing was read", () => {
-    expect(pulseSummary(result([["d1", null]]), "n").latest).toBeNull();
+    expect(pulseSummary(result([["d1", null]]), "day", "n").latest).toBeNull();
   });
 });
