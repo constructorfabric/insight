@@ -41,6 +41,9 @@ const CUSTOM = "custom";
 /** The window value meaning no window, since a kit select takes no empty value. */
 const ALL_TIME = "all-time";
 
+/** The service resolves every calendar window against a UTC clock. */
+const UTC_NOTE = "Days, months and quarters end at midnight UTC.";
+
 const UNITS: readonly IntervalUnit[] = ["minutes", "hours", "days"];
 
 const METRIC_HINT =
@@ -112,6 +115,7 @@ export function AlertFields({
   const stored = useStoredMetric(form.metric);
   const definition = stored?.definition;
   const window = windowRule(stored, form.column);
+  const windowHint = window.why ? `${window.why} ${UTC_NOTE}` : UTC_NOTE;
   const columns = definition
     ? alertColumns(definition).map((field) => field.as_name)
     : [];
@@ -184,7 +188,7 @@ export function AlertFields({
             <Row
               id="alert-range"
               label="Window"
-              hint={window.why}
+              hint={windowHint}
               said={errors.range}
             >
               <FieldSelect
@@ -192,7 +196,7 @@ export function AlertFields({
                 value={form.range === "" ? ALL_TIME : form.range}
                 options={windowOptions(form.range, window)}
                 describe={describing("alert-range", {
-                  hint: window.why,
+                  hint: windowHint,
                   said: errors.range,
                 })}
                 onChange={(range) =>
