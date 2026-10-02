@@ -43,7 +43,7 @@ export function WidgetFrame({
   className,
   children,
 }: WidgetFrameProps) {
-  const screen = useFullscreen<HTMLDivElement>();
+  const { ref, active, toggle, exit } = useFullscreen<HTMLDivElement>();
 
   return (
     <Card
@@ -54,7 +54,7 @@ export function WidgetFrame({
       style={{ height: tall ? TALL_HEIGHT : STANDARD_HEIGHT }}
     >
       <div
-        ref={screen.ref}
+        ref={ref}
         data-fullscreen=""
         className="flex h-full min-h-0 flex-col bg-card [&:fullscreen]:p-6"
       >
@@ -76,13 +76,11 @@ export function WidgetFrame({
                 <Button
                   variant="ghost"
                   size="icon-sm"
-                  aria-label={
-                    screen.active ? "Exit full screen" : "Full screen"
-                  }
+                  aria-label={active ? "Exit full screen" : "Full screen"}
                   className="text-muted-foreground"
-                  onClick={screen.toggle}
+                  onClick={toggle}
                 >
-                  {screen.active ? <Minimize2 /> : <Maximize2 />}
+                  {active ? <Minimize2 /> : <Maximize2 />}
                 </Button>
               ) : null}
             </div>
@@ -92,7 +90,7 @@ export function WidgetFrame({
           onActivate={
             onBodyActivate
               ? () => {
-                  screen.exit();
+                  exit();
                   onBodyActivate();
                 }
               : undefined
