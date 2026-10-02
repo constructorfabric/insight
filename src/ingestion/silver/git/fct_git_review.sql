@@ -26,6 +26,5 @@ SELECT
     r._version,
     r._airbyte_extracted_at
 FROM {{ ref('class_git_pull_requests_reviewers') }} AS r FINAL
-{% if is_incremental() %}
-WHERE r._version > (SELECT max(_version) FROM {{ this }})
-{% endif %}
+-- INVARIANT: the class mixes connectors with independent `_version` clocks, so the boundary is per source.
+{{ silver_incremental_watermark(['tenant_id', 'source_id', 'data_source'], alias='r') }}

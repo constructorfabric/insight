@@ -16,9 +16,7 @@
 -- retain runs for a bounded window (GitHub: ~90 days), so a --full-refresh
 -- destroys everything older than that window with nothing to rebuild from.
 -- Never full-refresh it; heal schema drift with ALTER migrations instead.
-SELECT * FROM (
+SELECT candidate.* FROM (
     {{ union_by_tag('silver:class_git_ci_runs') }}
-)
-{% if is_incremental() %}
-WHERE _version > (SELECT max(_version) FROM {{ this }})
-{% endif %}
+) AS candidate
+{{ silver_incremental_watermark(['tenant_id', 'source_id', 'data_source']) }}
