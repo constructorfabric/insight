@@ -1,5 +1,6 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import {
+  Bell,
   Database,
   LayoutDashboard,
   LayoutGrid,
@@ -25,13 +26,18 @@ import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import { definitionPagesQuery } from "@/queries/custom";
 
 const CATALOGUES: readonly {
-  to: "/portal/custom/metrics" | "/portal/custom/widgets" | "/portal/custom/datasets";
+  to:
+    | "/portal/custom/metrics"
+    | "/portal/custom/widgets"
+    | "/portal/custom/datasets"
+    | "/portal/custom/alerts";
   label: string;
   icon: LucideIcon;
 }[] = [
   { to: "/portal/custom/metrics", label: "Metrics", icon: Sigma },
   { to: "/portal/custom/widgets", label: "Widgets", icon: LayoutDashboard },
   { to: "/portal/custom/datasets", label: "Datasets", icon: Database },
+  { to: "/portal/custom/alerts", label: "Alerts", icon: Bell },
 ];
 
 const DASHBOARD_ROUTES = new Set(["/portal/custom/", "/portal/custom/$name"]);

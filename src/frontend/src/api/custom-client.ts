@@ -1,6 +1,6 @@
 import { fetchWithAuth } from "@/api/fetch-with-auth";
 
-const BASE =
+export const BASE =
   (import.meta.env.VITE_API_BASE_V3 as string | undefined) ?? "/api/v3/v1";
 
 export type * from "@/api/custom-types";
@@ -29,7 +29,7 @@ import type {
   TagList,
 } from "@/api/custom-types";
 
-const JSON_HEADERS = { "Content-Type": "application/json" };
+export const JSON_HEADERS = { "Content-Type": "application/json" };
 
 export class CustomApiError extends Error {
   status: number;
@@ -44,13 +44,13 @@ export class CustomApiError extends Error {
 }
 
 /** Refuses with what the service said, or with nothing when it said nothing. */
-async function ensureOk(res: Response): Promise<void> {
+export async function ensureOk(res: Response): Promise<void> {
   if (!res.ok) {
     throw new CustomApiError(res.status, await res.json().catch(() => null));
   }
 }
 
-async function readJson<T>(res: Response): Promise<T> {
+export async function readJson<T>(res: Response): Promise<T> {
   await ensureOk(res);
   return (await res.json()) as T;
 }

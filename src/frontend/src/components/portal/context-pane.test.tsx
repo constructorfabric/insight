@@ -547,6 +547,10 @@ describe("Dashboards pane", () => {
       "href",
       "/portal/custom/datasets",
     );
+    expect(screen.getByRole("link", { name: "Alerts" })).toHaveAttribute(
+      "href",
+      "/portal/custom/alerts",
+    );
   });
 
   it("no longer lists each saved dashboard", async () => {
