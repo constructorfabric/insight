@@ -200,4 +200,31 @@ describe("<WidgetFrame> full screen", () => {
     expect(exit).toHaveBeenCalledOnce();
     expect(open).toHaveBeenCalledOnce();
   });
+  it("leaves full screen before running a header action", () => {
+    const exit = vi.fn().mockResolvedValue(undefined);
+    document.exitFullscreen = exit;
+    const open = vi.fn();
+    render(
+      <WidgetFrame
+        title="Traffic"
+        state="ready"
+        fullscreen
+        action={
+          <button type="button" onClick={open}>
+            Data
+          </button>
+        }
+      >
+        <p>chart</p>
+      </WidgetFrame>
+    );
+
+    enterFullscreen(
+      screen.getByText("chart").closest("[data-fullscreen]") as Element
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Data" }));
+
+    expect(exit).toHaveBeenCalledOnce();
+    expect(open).toHaveBeenCalledOnce();
+  });
 });

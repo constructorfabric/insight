@@ -71,7 +71,11 @@ export function WidgetFrame({
           </div>
           {action || fullscreen ? (
             <div className="flex shrink-0 items-center gap-1">
-              {action}
+              {action ? (
+                <div onClickCapture={exit} className="contents">
+                  {action}
+                </div>
+              ) : null}
               {fullscreen ? (
                 <Button
                   variant="ghost"
