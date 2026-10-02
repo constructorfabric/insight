@@ -53,18 +53,31 @@ def _connector_dir(root: Path) -> Path:
     return connector
 
 
-def _docker_stub(root: Path) -> tuple[Path, Path]:
+#: One stream, keyed the way every bronze table is, so the script's own
+#: unique_key gate lets a stubbed discover through to the destination.
+STUB_CATALOG = (
+    '{"type":"CATALOG","catalog":{"streams":[{"name":"probe",'
+    '"json_schema":{"properties":{"unique_key":{"type":"string"}}}}]}}'
+)
+
+
+def _docker_stub(root: Path, *, answer_discover: bool = False) -> tuple[Path, Path]:
     """A `docker` that records its arguments instead of running anything.
 
     Exits non-zero so the script stops at the first `docker run`, which is the
-    only invocation these tests care about.
+    only invocation most of these tests care about. `answer_discover` hands back a
+    catalog instead, for the two that need the destination invocation to happen.
     """
     stub_dir = root / "stub-bin"
     stub_dir.mkdir()
     argv_log = root / "docker-argv.log"
+    discover = f"if [[ \"$*\" == *' discover '* ]]; then\n  echo '{STUB_CATALOG}'\n  exit 0\nfi\n"
     stub = stub_dir / "docker"
     stub.write_text(
-        f'#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "{argv_log}"\n[[ "$1" == "build" ]] && exit 0\nexit 1\n'
+        f'#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "{argv_log}"\n'
+        f'[[ "$1" == "build" ]] && exit 0\n'
+        f"{discover if answer_discover else ''}"
+        f"exit 1\n"
     )
     stub.chmod(0o755)
 
@@ -82,18 +95,30 @@ def _bind_mount_source(argv_log: Path, target: str) -> str:
     raise AssertionError(f"no bind mount onto {target} in:\n{argv_log.read_text()}")
 
 
-def _run_create_connector_tables(root: Path, runner_temp: str | None) -> Path:
-    """Drive the script up to its first `docker run`; return the argv log."""
+def _destination_invocation(argv_log: Path) -> str:
+    """The recorded `docker run` that hands the catalogue to destination-clickhouse."""
+    for invocation in argv_log.read_text().splitlines():
+        if " write " in invocation:
+            return invocation
+
+    raise AssertionError(f"the destination was never run:\n{argv_log.read_text()}")
+
+
+def _run_create_connector_tables(
+    root: Path, runner_temp: str | None, *, overrides: dict[str, str] | None = None, answer_discover: bool = False
+) -> Path:
+    """Drive the script over its `docker run`s; return the argv log."""
     root.mkdir(parents=True, exist_ok=True)
     connector = _connector_dir(root)
     config = root / "config.json"
     config.write_text('{"token": "fake"}\n')
-    stub_dir, argv_log = _docker_stub(root)
+    stub_dir, argv_log = _docker_stub(root, answer_discover=answer_discover)
 
     env = {**os.environ, **CLICKHOUSE_ENV, "PATH": f"{stub_dir}{os.pathsep}{os.environ['PATH']}"}
     env.pop("RUNNER_TEMP", None)
     if runner_temp is not None:
         env["RUNNER_TEMP"] = runner_temp
+    env.update(overrides or {})
 
     subprocess.run(
         ["bash", str(CREATE_CONNECTOR_TABLES), str(connector), str(config)],
@@ -178,3 +203,32 @@ def test_a_failing_connector_fails_the_seed_run_but_only_after_all_are_tried(tmp
             f"{name} was never attempted — the loop stopped early:\n{result.stderr}"
         )
     assert f"failed connectors: {' '.join(names)}" in result.stderr, result.stderr
+
+
+@requires_shell_tooling
+def test_the_destination_joins_the_network_it_is_told_to(tmp_path: Path) -> None:
+    """A ClickHouse addressable only inside a docker network needs the container on it.
+
+    The destination is the one container that talks to ClickHouse, and the rig that
+    needs this (a compose stand) publishes a port no container of ours shares.
+    """
+    argv_log = _run_create_connector_tables(
+        tmp_path, None, overrides={"DOCKER_NETWORK": "network-under-test"}, answer_discover=True
+    )
+
+    invocation = _destination_invocation(argv_log)
+
+    assert "--network network-under-test" in invocation, (
+        f"the destination did not join the network it was given: {invocation}"
+    )
+
+
+@requires_shell_tooling
+def test_the_destination_joins_no_network_unless_told_to(tmp_path: Path) -> None:
+    """Every other caller reaches ClickHouse on the host, where an empty --network
+    would be an argument Docker rejects rather than a default."""
+    argv_log = _run_create_connector_tables(tmp_path, None, answer_discover=True)
+
+    invocation = _destination_invocation(argv_log)
+
+    assert "--network" not in invocation, f"an unasked-for network reached Docker: {invocation}"
