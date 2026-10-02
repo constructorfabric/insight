@@ -76,8 +76,8 @@ mod log_leak_tests;
 /// Every wait a handler can make is individually bounded (git budgets, the
 /// in-connection preparation wait, the read-lock wait), but a hold that is
 /// never released — a leaked guard, a wedged permit holder — turns the NEXT
-/// request's wait into forever: the connector has no client timeout, so one
-/// such request froze a multi-day sync invisibly. This ceiling converts that
+/// request's wait into forever, and the connector has no client timeout to
+/// cut it off. This ceiling converts that
 /// class into a bounded, retryable answer. It must stay above every legal
 /// inline duration; the longest is [`crate::engine::store::PREPARATION_WAIT`].
 const HANDLER_BUDGET: Duration = Duration::from_hours(1);
@@ -107,7 +107,7 @@ async fn answer_within(budget: Duration, request: Request, next: Next) -> Respon
     error::handler_timed_out()
 }
 
-/// Record §4.3's per-endpoint histograms for every request that reached a
+/// Record the per-endpoint request histograms for every request that reached a
 /// route, and log the request line.
 ///
 /// The metric label is the matched ROUTE, not the request path: a path would
@@ -151,7 +151,6 @@ async fn observe(request: Request, next: Next) -> Response {
     response
 }
 
-/// Title/version/description of the emitted document.
 fn openapi_info() -> OpenApiInfo {
     OpenApiInfo {
         title: "Insight Git CLI Proxy API".to_owned(),
@@ -549,9 +548,9 @@ mod tests {
 
     #[tokio::test]
     async fn every_rejection_carries_the_problem_envelope() {
-        // §4.4 promises one envelope for every failure. Two paths used to
-        // escape it: the bearer layer answered with an empty body, and axum
-        // rejected a bad query string as text/plain before any handler ran.
+        // Every failure carries the problem envelope, including the bearer
+        // layer's rejection and axum's query-string rejection, which both
+        // answer before any handler runs.
         let cases: Vec<(&str, &str, Option<&str>, bool)> = vec![
             ("no bearer", "/v1/commits?repo=x", None, true),
             ("wrong bearer", "/v1/commits?repo=x", Some("wrong"), true),

@@ -175,7 +175,7 @@
         "type": "object"
       },
       "CommitsPage": {
-        "description": "Concrete page wrappers, one per endpoint: `Page<T>` cannot be a schema\nbecause the registry keys components on the type's own name, so all three\ninstantiations would collide on one component.",
+        "description": "Concrete page wrappers, one per endpoint: `Page<T>` cannot be a schema\nbecause the registry keys components on the type's own name, so every\ninstantiation would collide on one component.",
         "properties": {
           "items": {
             "items": {
