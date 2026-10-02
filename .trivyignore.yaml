@@ -3,7 +3,7 @@
 # that has not been looked at yet.
 #
 # Trivy reads this file relative to its working directory; the security workflows
-# pass `-w /src`, so it is picked up from the repository root.
+# run it in the workspace, so it is picked up from the repository root.
 
 misconfigurations:
   - id: AVD-DS-0026
