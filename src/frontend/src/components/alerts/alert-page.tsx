@@ -159,7 +159,7 @@ function Rule({ alert }: { alert: Alert }) {
             {conditionText(alert.operator, alert.threshold)}
           </Fact>
           <Fact term="Window">
-            {alert.range ? rangeLabel(alert.range) : "Every row"}
+            {alert.range ? rangeLabel(alert.range) : "All time"}
           </Fact>
           <Fact term="Checked">{intervalText(alert.interval_secs)}</Fact>
           <Fact term="Destination">{alert.destination}</Fact>

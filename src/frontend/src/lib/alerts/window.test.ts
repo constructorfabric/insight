@@ -29,42 +29,42 @@ describe("windowRule", () => {
       "a sum on a dated metric",
       DATED,
       "runs",
-      { everyRow: false, windowed: true },
+      { allTime: false, windowed: true },
     ],
     [
       "a count on a dated metric",
       DATED,
       "cases",
-      { everyRow: false, windowed: true },
+      { allTime: false, windowed: true },
     ],
     [
       "a maximum on a dated metric",
       DATED,
       "slowest",
-      { everyRow: true, windowed: true },
+      { allTime: true, windowed: true },
     ],
     [
       "a ratio on a dated metric",
       DATED,
       "rate",
-      { everyRow: true, windowed: true },
+      { allTime: true, windowed: true },
     ],
     [
       "any column of an undated metric",
       UNDATED,
       "runs",
-      { everyRow: true, windowed: false },
+      { allTime: true, windowed: false },
     ],
     [
       "a metric not read yet",
       undefined,
       "runs",
-      { everyRow: true, windowed: true },
+      { allTime: true, windowed: true },
     ],
   ])("for %s", (_case, stored, column, open) => {
     const rule = windowRule(stored, column);
 
-    expect({ everyRow: rule.everyRow, windowed: rule.windowed }).toEqual(open);
+    expect({ allTime: rule.allTime, windowed: rule.windowed }).toEqual(open);
   });
 });
 

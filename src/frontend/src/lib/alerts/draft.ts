@@ -17,7 +17,7 @@ export interface AlertForm {
   operator: AlertOperator;
   /** As typed, so a half-written number is not lost while the reader types. */
   threshold: string;
-  /** A window token, or "" to run the metric over every row. */
+  /** A window token, or "" to run the metric over all time. */
   range: string;
   interval: IntervalInput;
   /**

@@ -1,9 +1,9 @@
 /**
  * Which windows make sense for the column an alert watches.
  *
- * A metric with no date answers every row and refuses a window. A metric with
- * a date can be read over every row, but a total or a count read that way only
- * ever grows, so the threshold it crosses once it crosses forever.
+ * A metric with no date answers all of its rows and refuses a window. A
+ * metric with a date can be read over all time, but a total or a count read
+ * that way only ever grows, so the threshold it crosses once it crosses forever.
  */
 
 import type { StoredMetric } from "@/api/custom-types";
@@ -14,8 +14,8 @@ export const DEFAULT_WINDOW = "P7D";
 const GROWING = new Set(["sum", "count"]);
 
 export interface WindowRule {
-  /** Every row may be chosen. */
-  everyRow: boolean;
+  /** All time may be chosen. */
+  allTime: boolean;
   /** A window may be chosen. */
   windowed: boolean;
   /** Why a choice is closed, said beside the control. */
@@ -26,25 +26,25 @@ export function windowRule(
   stored: StoredMetric | undefined,
   column: string
 ): WindowRule {
-  if (!stored) return { everyRow: true, windowed: true };
+  if (!stored) return { allTime: true, windowed: true };
   if (!stored.clock) {
     return {
-      everyRow: true,
+      allTime: true,
       windowed: false,
-      why: "This metric has no date, so it is always read over every row.",
+      why: "This metric has no date, so each check reads all of it.",
     };
   }
 
   const field = stored.definition.fields.find((one) => one.as_name === column);
   if (field?.agg && GROWING.has(field.agg)) {
     return {
-      everyRow: false,
+      allTime: false,
       windowed: true,
-      why: "A total over every row only grows, so it needs a window.",
+      why: "A total over all time only grows, so it needs a window.",
     };
   }
 
-  return { everyRow: true, windowed: true };
+  return { allTime: true, windowed: true };
 }
 
 /**

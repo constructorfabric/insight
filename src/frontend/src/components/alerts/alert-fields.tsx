@@ -39,7 +39,7 @@ import { CurrentValue } from "./current-value";
 const CUSTOM = "custom";
 
 /** The window value meaning no window, since a kit select takes no empty value. */
-const EVERY_ROW = "every-row";
+const ALL_TIME = "all-time";
 
 const UNITS: readonly IntervalUnit[] = ["minutes", "hours", "days"];
 
@@ -77,14 +77,14 @@ function ShapeNote({ shape }: { shape: MetricShape }) {
 
 /** The windows a rule may name: the presets, and the one it already has. */
 function windowOptions(current: string, rule: WindowRule) {
-  // INVARIANT: "inf" reads every dated row, which "Every row" already offers.
+  // INVARIANT: "inf" reads every dated row, which "All time" already offers.
   const presets = RANGE_PRESETS.filter(({ token }) => token !== "inf").map(
     ({ token, label }) => ({ value: token, label, disabled: !rule.windowed })
   );
   const known = current === "" || presets.some((one) => one.value === current);
 
   return [
-    { value: EVERY_ROW, label: "Every row", disabled: !rule.everyRow },
+    { value: ALL_TIME, label: "All time", disabled: !rule.allTime },
     ...presets,
     ...(known
       ? []
@@ -180,25 +180,34 @@ export function AlertFields({
               }
             />
           </Row>
-          <Row
-            id="alert-range"
-            label="Window"
-            hint={window.why}
-            said={errors.range}
-          >
-            <FieldSelect
+          {window.windowed ? (
+            <Row
               id="alert-range"
-              value={form.range === "" ? EVERY_ROW : form.range}
-              options={windowOptions(form.range, window)}
-              describe={describing("alert-range", {
-                hint: window.why,
-                said: errors.range,
-              })}
-              onChange={(range) =>
-                set({ range: range === EVERY_ROW ? "" : range })
-              }
-            />
-          </Row>
+              label="Window"
+              hint={window.why}
+              said={errors.range}
+            >
+              <FieldSelect
+                id="alert-range"
+                value={form.range === "" ? ALL_TIME : form.range}
+                options={windowOptions(form.range, window)}
+                describe={describing("alert-range", {
+                  hint: window.why,
+                  said: errors.range,
+                })}
+                onChange={(range) =>
+                  set({ range: range === ALL_TIME ? "" : range })
+                }
+              />
+            </Row>
+          ) : (
+            <div className="flex flex-col gap-1">
+              <span className={cn(TEXT_LABEL, "font-medium")}>Window</span>
+              <p className={cn(TEXT_LABEL, "text-muted-foreground")}>
+                {window.why}
+              </p>
+            </div>
+          )}
         </div>
       </Section>
 
