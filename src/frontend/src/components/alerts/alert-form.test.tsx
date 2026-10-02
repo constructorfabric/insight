@@ -59,16 +59,22 @@ beforeEach(() => {
   );
 });
 
+/** Opens a kit select by its label and picks one of its options. */
+async function pick(label: string, option: string) {
+  await userEvent.click(screen.getByRole("combobox", { name: label }));
+  await userEvent.click(await screen.findByRole("option", { name: option }));
+}
+
 async function fillNew() {
   await userEvent.type(
     await screen.findByLabelText("Name"),
     "Too many open PRs"
   );
-  await userEvent.type(screen.getByLabelText("Metric"), "prs-open");
-  await userEvent.selectOptions(
-    await screen.findByLabelText("Column"),
-    await screen.findByRole("option", { name: "total" })
+  await userEvent.type(screen.getByLabelText("Metric"), "prs");
+  await userEvent.click(
+    await screen.findByRole("option", { name: "prs-open" })
   );
+  await pick("Column", "total");
   await userEvent.type(screen.getByLabelText("Threshold"), "10");
 }
 
@@ -99,12 +105,23 @@ describe("NewAlertPage", () => {
     });
   });
 
-  it("looks a metric up once typing pauses, not per keystroke", async () => {
+  it("reads only the metric picked, not each one typed", async () => {
     render(<NewAlertPage />, { wrapper });
     await fillNew();
 
     expect(customClient.fetchMetric).toHaveBeenCalledTimes(1);
     expect(customClient.fetchMetric).toHaveBeenCalledWith("prs-open");
+  });
+
+  it("asks the service for the metrics matching what is typed", async () => {
+    render(<NewAlertPage />, { wrapper });
+    await userEvent.type(await screen.findByLabelText("Metric"), "gold.prs");
+
+    await waitFor(() =>
+      expect(customClient.fetchMetricNames).toHaveBeenCalledWith(
+        expect.objectContaining({ search: "gold.prs" })
+      )
+    );
   });
 
   it("moves to the first field that needs fixing", async () => {
@@ -197,11 +214,11 @@ describe("NewAlertPage", () => {
 
     render(<NewAlertPage />, { wrapper });
     await fillNew();
-    await userEvent.selectOptions(screen.getByLabelText("Check"), "custom");
+    await pick("Check", "Custom…");
     const every = screen.getByLabelText("Check every");
     await userEvent.clear(every);
     await userEvent.type(every, "2");
-    await userEvent.selectOptions(screen.getByLabelText("Unit"), "hours");
+    await pick("Unit", "hours");
     await userEvent.click(screen.getByRole("button", { name: "Create alert" }));
 
     await waitFor(() =>

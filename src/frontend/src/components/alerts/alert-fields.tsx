@@ -2,10 +2,11 @@ import { useQuery } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
 
 import type { AlertDestination, AlertOperator } from "@/api/alerts-types";
-import { ReferenceControl, Row } from "@/components/custom/editor/controls";
+import { FieldSelect } from "@/components/alerts/field-select";
+import { MetricPicker } from "@/components/alerts/metric-picker";
+import { Row } from "@/components/custom/editor/controls";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { OPERATORS } from "@/lib/alerts/describe";
 import {
   thresholdOf,
@@ -23,56 +24,19 @@ import { describing } from "@/lib/custom/editor/aria";
 import { RANGE_PRESETS, rangeLabel } from "@/lib/custom/time-range";
 import { TEXT_HEADING, TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
-import { catalogueNamesQuery, metricQuery } from "@/queries/custom";
+import { metricQuery } from "@/queries/custom";
 
 import { CurrentValue } from "./current-value";
 
-const SELECT =
-  "h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm";
-
 const CUSTOM = "custom";
+
+/** The window value meaning no window, since a kit select takes no empty value. */
+const EVERY_ROW = "every-row";
 
 const UNITS: readonly IntervalUnit[] = ["minutes", "hours", "days"];
 
-const METRIC_HINT = "A stored metric. The check reads one row of it.";
-
-// Native rather than the kit's Select, as the definition editor does: a test
-// drives it with `selectOptions`, and the platform owns its keyboard handling.
-function Choice({
-  id,
-  label,
-  value,
-  options,
-  describe,
-  onChange,
-  className,
-}: {
-  id: string;
-  /** Names the control when no visible label does. */
-  label?: string;
-  value: string;
-  options: readonly { value: string; label: string }[];
-  describe?: ReturnType<typeof describing>;
-  onChange: (value: string) => void;
-  className?: string;
-}) {
-  return (
-    <select
-      id={id}
-      aria-label={label}
-      {...describe}
-      value={value}
-      className={cn(SELECT, className)}
-      onChange={(event) => onChange(event.target.value)}
-    >
-      {options.map((option) => (
-        <option key={option.value} value={option.value}>
-          {option.label}
-        </option>
-      ))}
-    </select>
-  );
-}
+const METRIC_HINT =
+  "Search by name, or by a table or column the metric reads. The check reads one row of it.";
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -84,17 +48,8 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 }
 
 /** The columns a metric answers, by the names a rule calls them. */
-/** Long enough that a metric's name is typed before it is looked up. */
-const LOOKUP_DEBOUNCE_MS = 400;
-
 function useMetricColumns(metric: string): string[] {
-  const settled = useDebouncedValue(metric, LOOKUP_DEBOUNCE_MS);
-  // INVARIANT: the catalogue list stops at 200 names, so it cannot gate this lookup; a pause in typing does.
-  const read = useQuery({
-    ...metricQuery(settled),
-    enabled: settled !== "" && settled === metric,
-    retry: false,
-  });
+  const read = useQuery({ ...metricQuery(metric), enabled: metric !== "" });
 
   return read.data?.definition.fields.map((field) => field.as_name) ?? [];
 }
@@ -108,7 +63,7 @@ function windowOptions(current: string) {
   const known = current === "" || presets.some((one) => one.value === current);
 
   return [
-    { value: "", label: "Every row" },
+    { value: EVERY_ROW, label: "Every row" },
     ...presets,
     ...(known ? [] : [{ value: current, label: rangeLabel(current) }]),
   ];
@@ -125,7 +80,6 @@ export function AlertFields({
   destinations: readonly AlertDestination[];
   onChange: (next: AlertForm) => void;
 }) {
-  const metrics = useQuery(catalogueNamesQuery("metrics"));
   const columns = useMetricColumns(form.metric);
   const set = (patch: Partial<AlertForm>) => onChange({ ...form, ...patch });
 
@@ -155,10 +109,9 @@ export function AlertFields({
           hint={METRIC_HINT}
           said={errors.metric}
         >
-          <ReferenceControl
+          <MetricPicker
             id="alert-metric"
             value={form.metric}
-            names={metrics.data ?? []}
             describe={describing("alert-metric", {
               hint: METRIC_HINT,
               said: errors.metric,
@@ -169,14 +122,14 @@ export function AlertFields({
         </Row>
         <div className="grid gap-4 sm:grid-cols-2">
           <Row id="alert-column" label="Column" required said={errors.column}>
-            <Choice
+            <FieldSelect
               id="alert-column"
               value={form.column}
+              placeholder={
+                form.metric ? "Pick a column" : "Pick a metric first"
+              }
+              disabled={form.metric === ""}
               options={[
-                {
-                  value: "",
-                  label: form.metric ? "Pick a column" : "Pick a metric first",
-                },
                 ...columns.map((name) => ({ value: name, label: name })),
                 ...(form.column && !columns.includes(form.column)
                   ? [{ value: form.column, label: form.column }]
@@ -191,12 +144,14 @@ export function AlertFields({
             />
           </Row>
           <Row id="alert-range" label="Window" said={errors.range}>
-            <Choice
+            <FieldSelect
               id="alert-range"
-              value={form.range}
+              value={form.range === "" ? EVERY_ROW : form.range}
               options={windowOptions(form.range)}
               describe={describing("alert-range", { said: errors.range })}
-              onChange={(range) => set({ range })}
+              onChange={(range) =>
+                set({ range: range === EVERY_ROW ? "" : range })
+              }
             />
           </Row>
         </div>
@@ -205,7 +160,7 @@ export function AlertFields({
       <Section title="When to notify">
         <div className="grid gap-4 sm:grid-cols-[minmax(0,12rem)_minmax(0,1fr)]">
           <Row id="alert-operator" label="The value is">
-            <Choice
+            <FieldSelect
               id="alert-operator"
               value={form.operator}
               options={OPERATORS}
@@ -243,7 +198,7 @@ export function AlertFields({
 
         <div className="grid gap-4 sm:grid-cols-2">
           <Row id="alert-interval" label="Check" said={errors.interval_secs}>
-            <Choice
+            <FieldSelect
               id="alert-interval"
               value={preset}
               options={[
@@ -290,7 +245,7 @@ export function AlertFields({
                     })
                   }
                 />
-                <Choice
+                <FieldSelect
                   id="alert-interval-unit"
                   label="Unit"
                   value={form.interval.unit}
@@ -314,13 +269,11 @@ export function AlertFields({
             required
             said={errors.destination}
           >
-            <Choice
+            <FieldSelect
               id="alert-destination"
               value={form.destination}
+              placeholder="Pick a destination"
               options={[
-                ...(form.destination === ""
-                  ? [{ value: "", label: "Pick a destination" }]
-                  : []),
                 ...destinations.map(({ name, provider }) => ({
                   value: name,
                   label: `${name} (${provider})`,
