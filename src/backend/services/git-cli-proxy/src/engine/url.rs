@@ -1,10 +1,10 @@
 /// A clone URL that has been proved safe to hand to `git` as an argument.
 ///
-/// INVARIANT: only `http://` and `https://` origins are constructible outside
-/// tests. `git` treats the URL as a transport selector, and `ext::` runs an
-/// arbitrary shell command; a raw path reaches the local filesystem. Neither is
-/// reachable through the API, so the boundary is parsed once, here, and the
-/// rest of the service carries the proof rather than the string.
+/// INVARIANT: only `http://` and `https://` origins are constructible, unless
+/// `allow_file_repos` admits `file://` for the test harness. `git` treats the
+/// URL as a transport selector, and `ext::` runs an arbitrary shell command;
+/// a raw path reaches the local filesystem. The boundary is parsed once, here,
+/// and the rest of the service carries the proof rather than the string.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CloneUrl(String);
 

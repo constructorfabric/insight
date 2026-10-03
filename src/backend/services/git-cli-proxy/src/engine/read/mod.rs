@@ -19,8 +19,8 @@ pub struct Page<T> {
 /// Cut `headers`-ordered rows down to one page, starting strictly after
 /// `after` and yielding at most `page_size` rows.
 ///
-/// INVARIANT: rows arrive ordered ascending by `(committed_date, sha)`, which
-/// is what makes the cursor stable across evictions and re-clones.
+/// INVARIANT: rows arrive ascending by `key`; the cursor resumes strictly
+/// after the last emitted key.
 pub fn slice_page<T, K>(
     rows: Vec<T>,
     after: Option<&PageToken>,
@@ -702,8 +702,8 @@ mod live_tests {
         let recent = commits::retain_keys_since(all.clone(), Some("2026-08-02T00:00:00Z"));
         assert_eq!(recent.len(), 1, "only the newer commit survives the bound");
 
-        // The bound is an instant, not a string: an offset timestamp before
-        // the bound must be dropped even though it sorts after it as text.
+        // The bound is an instant, not a string: an equivalent offset spelling
+        // bounds the same.
         let all_utc = commits::retain_keys_since(all.clone(), Some("2026-08-02T00:00:00+00:00"));
         assert_eq!(
             all_utc.len(),
