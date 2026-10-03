@@ -180,6 +180,12 @@ jobs:
         if: ${{ !cancelled() }}
         run: python3 -m pytest src/ingestion/reconcile-connectors/tests -q
 
+      # A table-wide max(_version) boundary lets one producer's newest row hide
+      # another producer's rows from a silver class for good (#2927).
+      - name: Incremental boundaries are scoped per source
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/incremental_boundary.py
+
       # The per-service logging bar (#2488 AC-6): every Rust service is judged
       # against shape / level / fields / leaks and one below the bar is reported,
       # not skipped.

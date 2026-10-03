@@ -21,6 +21,8 @@ on:
     paths:
       - src/ingestion/connectors/task-tracking/jira/dbt/**
       - src/ingestion/dbt/macros/jira/**
+      - src/ingestion/dbt/macros/silver_incremental_watermark.sql
+      - src/ingestion/silver/task-tracking/class_task_field_history.sql
       - src/ingestion/dbt/tests/jira/**
       - src/ingestion/dbt/dbt_project.yml
       - src/ingestion/scripts/connectors-ddl/jira.sql
@@ -32,6 +34,8 @@ on:
     paths:
       - src/ingestion/connectors/task-tracking/jira/dbt/**
       - src/ingestion/dbt/macros/jira/**
+      - src/ingestion/dbt/macros/silver_incremental_watermark.sql
+      - src/ingestion/silver/task-tracking/class_task_field_history.sql
       - src/ingestion/dbt/tests/jira/**
       - src/ingestion/dbt/dbt_project.yml
       - src/ingestion/scripts/connectors-ddl/jira.sql
