@@ -266,7 +266,11 @@ events AS (
         {{ jira_delta_element('ci.value_from', 'ci.value_from_string',
                               'ci.value_to', 'ci.value_to_string') }}  AS element,
         {{ jira_item_is_live('k.field_kind', 'ci.value_from', 'ci.value_from_string',
-                             'ci.value_to', 'ci.value_to_string') }}   AS is_live
+                             'ci.value_to', 'ci.value_to_string') }}   AS is_live,
+        -- The item's identity within its entry: the four sides as written,
+        -- which `jira__changelog_items` already keeps unique per entry.
+        cityHash64(COALESCE(ci.value_from, ''), COALESCE(ci.value_from_string, ''),
+                   COALESCE(ci.value_to, ''), COALESCE(ci.value_to_string, ''))  AS item_digest
     FROM changelog_items AS ci
     INNER JOIN kinds AS k
         ON k.insight_source_id = ci.insight_source_id
@@ -307,9 +311,83 @@ ranked_events AS (
        AND r.changelog_id = e.changelog_id
 ),
 
-ordered_events AS (
-    SELECT * FROM ranked_events
+-- ── one event per entry and field for the self-describing kinds (§5) ───────
+-- INVARIANT: the items of one such field in one entry are one event, from the
+-- head of their from→to chain to its tail, or one item standing for all of
+-- them (`jira_entry_item_ends`). Kept apart they share every sort key and the
+-- journal key, and leave the event to the planner.
+-- MEMORY (§13): only this narrow aggregation touches every event; arrays are
+-- gathered for the entries carrying several items alone.
+entry_split_keys AS (
+    SELECT
+        insight_source_id,
+        issue_id,
+        field_id,
+        changelog_id
+    FROM live_events
     WHERE field_kind NOT IN {{ jira_element_wise_kinds() }}
+    GROUP BY insight_source_id, issue_id, field_id, changelog_id
+    HAVING count() > 1
+),
+
+entry_split_items AS (
+    SELECT
+        insight_source_id,
+        issue_id,
+        field_id,
+        changelog_id,
+        {{ jira_entry_items_ordered('groupArray((sides.1, sides.2, sides.3, sides.4, item_digest))') }} AS items
+    FROM live_events
+    WHERE field_kind NOT IN {{ jira_element_wise_kinds() }}
+      AND (insight_source_id, issue_id, field_id, changelog_id)
+          IN (SELECT insight_source_id, issue_id, field_id, changelog_id FROM entry_split_keys)
+    GROUP BY insight_source_id, issue_id, field_id, changelog_id
+),
+
+entry_split_ends AS (
+    SELECT
+        insight_source_id,
+        issue_id,
+        field_id,
+        changelog_id,
+        items,
+        {{ jira_entry_item_ends('items') }}               AS ends
+    FROM entry_split_items
+),
+
+-- The item whose row the entry keeps, and the `from` side that row takes over.
+-- INVARIANT: a scalar, not a CTE: evaluated once per query, while a CTE is
+-- recomputed at every reference of `ordered_events`.
+(SELECT groupArray((insight_source_id, issue_id, field_id, changelog_id,
+                    items[ends.2].5, items[ends.1].1, items[ends.1].2))
+ FROM entry_split_ends) AS entry_split_choices,
+
+ordered_events AS (
+    SELECT
+        e.* REPLACE (if(c.collapsed = 1, (c.from_ids, c.from_displays, e.sides.3, e.sides.4), e.sides) AS sides)
+    FROM ranked_events AS e
+    LEFT JOIN (
+        SELECT
+            choice.1                                      AS insight_source_id,
+            choice.2                                      AS issue_id,
+            choice.3                                      AS field_id,
+            choice.4                                      AS changelog_id,
+            choice.5                                      AS kept_digest,
+            choice.6                                      AS from_ids,
+            choice.7                                      AS from_displays,
+            toUInt8(1)                                    AS collapsed
+        FROM (
+            -- INVARIANT: the arrayJoin stays alone in its own SELECT list. Reading
+            -- its elements beside it re-evaluates it per reference.
+            SELECT arrayJoin(entry_split_choices) AS choice
+        )
+    ) AS c
+        ON c.insight_source_id = e.insight_source_id
+       AND c.issue_id = e.issue_id
+       AND c.field_id = e.field_id
+       AND c.changelog_id = e.changelog_id
+    WHERE e.field_kind NOT IN {{ jira_element_wise_kinds() }}
+      AND (c.collapsed = 0 OR e.item_digest = c.kept_digest)
 ),
 
 -- ── fields the catalogue does not contain ───────────────────────────────────
@@ -931,7 +1009,7 @@ FROM issues
 UNION ALL
 
 -- ── row 2: changelog rows for the self-describing kinds ─────────────────────
--- The state after the event is the item's own `to` side; nothing accumulates.
+-- The state after the event is the entry's `to` side; nothing accumulates.
 SELECT
     CAST({{ jira_history_key('e.insight_source_id', 'e.issue_id', 'e.field_id', 'e.changelog_id') }} AS String) AS unique_key,
     e.insight_source_id,
