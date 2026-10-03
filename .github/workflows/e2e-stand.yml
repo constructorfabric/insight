@@ -71,6 +71,10 @@ permissions:
 
 env:
   UI_TESTS_IMAGE: mcr.microsoft.com/playwright/python@sha256:aa81288e738725378becba5b3e06cb0f3a7f012a610e87e8d767a090ea3f740d
+  # The compose stand shares a runner with whatever else is on it, so its
+  # ClickHouse gets a share rather than the machine. Raise it here if a lane
+  # starts failing with MEMORY_LIMIT_EXCEEDED.
+  CLICKHOUSE_MEM_LIMIT: 3g
 
 # Routing, stated once in .github/runners/insight-vhc/README.md: a pull request
 # from a branch of this repository takes the ephemeral ARC scale set, a fork's
