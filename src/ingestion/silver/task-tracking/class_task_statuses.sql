@@ -21,13 +21,8 @@
 -- union there is no cross-source divergence. Gold detects a closed task with
 -- `status_category = 'done'`, never a localized status name. See issue #1541.
 
-SELECT * FROM (
+SELECT candidate.* FROM (
     {{ union_by_tag('silver:class_task_statuses') }}
-)
-{% if is_incremental() %}
--- YouTrack is reconciled whole by the pre_hook. The watermark is every other
--- vendor's own: YouTrack rows are versioned at build time, so a max over the
--- whole class would run ahead of a vendor's pending, older evidence.
-WHERE data_source = 'youtrack'
-   OR _version > (SELECT max(_version) FROM {{ this }} WHERE data_source != 'youtrack')
-{% endif %}
+) AS candidate
+-- YouTrack is reconciled whole by the pre_hook, so its rows bypass the boundary.
+{{ silver_incremental_watermark(['insight_source_id', 'data_source'], always_reread="candidate.data_source = 'youtrack'") }}

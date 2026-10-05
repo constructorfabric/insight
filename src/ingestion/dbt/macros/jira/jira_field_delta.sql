@@ -292,3 +292,31 @@
         {{ jira_distinct_pairs_by_id(
              "arrayMap(j -> concat(" ~ ids ~ "[j], '\x1f', " ~ displays ~ "[j]), range(1, length(" ~ ids ~ ") + 1))") }})
 {% endmacro %}
+
+
+{#- ---------- one event per entry and self-describing field (§5) ----------
+
+  An entry can carry several items of one self-describing field, each stating
+  the field's whole value, and the entry is still one event. The journal and
+  `jira__changelog_entry_ranks` both collapse it through these two macros, so
+  the event the ranks order is the event the journal emits.
+-#}
+
+{#- The items, as tuples opening with (from ids, from displays, to ids, to
+    displays), in the order the fallback reads: those whose `to` holds a value
+    first, then by content. -#}
+{% macro jira_entry_items_ordered(items) %}
+    arraySort(x -> (empty(x.3) AND empty(x.4), x), {{ items }})
+{% endmacro %}
+
+
+{#- (head, tail): the 1-based positions in `ordered` of the item whose `from`
+    and of the item whose `to` the entry's event carries. They are the ends of
+    the unique from→to chain through the items, or the first item for both when
+    the items form none. -#}
+{% macro jira_entry_item_ends(ordered) %}
+    {{ _task_let('entry_items', ordered,
+         _task_let('entry_walk',
+                   task_chain_walk('arrayMap(x -> x.1, entry_items)', 'arrayMap(x -> x.3, entry_items)', 'false'),
+                   'if(empty(entry_walk), (toUInt64(1), toUInt64(1)), (entry_walk[1], entry_walk[-1]))')) }}
+{% endmacro %}

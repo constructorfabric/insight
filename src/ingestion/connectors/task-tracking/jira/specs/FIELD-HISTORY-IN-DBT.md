@@ -650,8 +650,8 @@ ranked as a whole, not per field (`task_instant_order`, computed once in
 - each self-describing field links the entries that touched it at that instant
   where its from→to chain is unique — one event follows another when its
   `before` side is the other's `after` side (`task_chain_walk`). A fork, a
-  cycle, a repeated side or an entry carrying two items of the field links
-  nothing;
+  cycle or a repeated side links nothing, and an entry carrying several items
+  of the field takes part as the one event they collapse into (below);
 - the links of all fields together order the entries. Links that contradict
   each other — one field puts A first, another B — lie on a cycle, and only
   those are dropped: the entries on it fall back to the id while every other
@@ -670,6 +670,37 @@ which inverts a pair of events every time the id crosses a digit-count
 boundary. For an element-wise field an inverted add/remove pair changes the
 resulting set, so the comparison is numeric wherever it orders and stays a
 string wherever it identifies (the event id and the unique key).
+
+**An entry is one event per field, however many items it carries.** An entry can
+hold two or more items of one self-describing field — `Y → ∅` and `∅ → X`
+under one changelog id, say. Those items share every key the journal orders
+and identifies by: the instant, the entry's rank, the changelog id, and the
+`unique_key` built from them. Kept apart, they left the ReplacingMergeTree to
+keep an arbitrary row, `initial_state` and the newest state to an arbitrary
+argMin / argMax, and therefore whether a `snapshot_diff` followed — two
+rebuilds over the same bronze could differ. So the items collapse into one
+event before any ordering (`jira_entry_item_ends`), in the journal and in
+`jira__changelog_entry_ranks` alike, so the ranks order the events the journal
+emits:
+
+- **They chain.** Each item states the whole value, so a unique from→to chain
+  through them (`task_chain_walk`, the same rule as across entries) is the
+  order the field went through. The event runs from the chain head's `from` to
+  its tail's `to`: `Y → ∅` and `∅ → X` are `Y → X`, whichever order the items
+  array lists them in. The intermediate empty state is not recorded: it lasts
+  no time at all.
+- **They do not.** A fork, a cycle or a repeated side orders nothing, so one
+  item stands for the entry with both its sides: the first whose `to` holds a
+  value, then by the items' content. The choice is arbitrary but a function of
+  the items alone. The item's position in Jira's array is not used: nothing
+  documents it as meaningful, and the content order is equally reproducible.
+
+Several items of one full-value field in one entry are not the shape §3 expects,
+and the second case is a best effort: when the items each add or remove one
+element, the field changes element-wise and is classified as a full-list kind.
+The history between events is then wrong, and only its final state is repaired,
+by `snapshot_diff` (§6.1). `assert_jira_entry_items_one_per_field` warns on
+every such field so the classification can be checked rather than absorbed.
 
 Two properties of the changelog constrain the handlers, both found by measuring:
 
@@ -773,6 +804,14 @@ whichever reporting period the run falls in. A `differs` row is dated:
 A `cleared` row keeps the observation stamp. The row stands in for an event only
 until one exists: once the changelog reaches the value, the recomputed issue no
 longer disagrees and `delete+insert` removes it.
+
+A status with **no** recorded event disagrees with nothing: its one row is the
+`synthetic_initial` the snapshot seeds at creation, so a done status there would
+read as a closure on the day the issue was created. When that status is in the
+`done` category and the issue's `resolutiondate` is later than its creation, a
+`snapshot_diff` row carrying the same status is dated by the resolution, and
+the close lands there. The value at creation stays the snapshot's, since
+nothing records an earlier one.
 
 The round trip excludes `snapshot_diff`, since counting it would compare the
 snapshot with itself; the pair keeps failing there, which is what keeps the
@@ -967,6 +1006,40 @@ Two limits of the composition, stated rather than solved here:
   also carries how far into bronze the last run whose replacement **completed**
   had read, and everything delivered since is in scope again. A failed run
   therefore repairs itself on the next one rather than waiting for a rebuild.
+
+### 7.3 A large scope is derived in batches
+
+The issue-grain scope keeps a nightly run proportional to the churn, but a
+rebuild — `--full-refresh`, a catalogue shift, a table with no record — and a
+sync that re-delivers most of bronze put every issue in scope again, and one
+statement over all of them needs memory proportional to the whole history.
+
+A scope larger than `jira_journal_issues_per_batch` issues (a dbt var) is
+therefore split by a hash of `(insight_source_id, issue_id)`. The pre-hook
+(`jira_journal_prepare_scope`) writes the run's scope once, as a table, and
+each batch's issues are a stage of their own that every issue-scoped read
+filters by; a batch reads only its own issues, and no batch needs another's
+rows: nothing in the derivation reads across issues (§7.2). The model's own
+statement derives batch 0; the post-hook
+(`jira_journal_derive_remaining_batches`) writes the next batch's stages
+(§13.1), replays the statement, and replaces those issues' rows the way the
+materialization replaced batch 0's. The scope is fixed before batch 0 is
+written, because the touched set reads the journal and shrinks once it is, and
+the batch count follows from the scope table alone, so every hook reads the
+same count.
+
+The peak is the heaviest batch, not the average. One issue is one batch at
+least, so an issue whose own output is large — a list field with many elements
+and many events, whose state after each event is a row — sets a floor no split
+lowers. Each batch also reads every input again, because the inputs are sorted
+by `unique_key` and the bucket predicate filters rather than prunes; a rebuild
+therefore trades memory for time, and a larger batch is faster.
+
+Failure is recoverable. A batch that fails fails the model before the
+catalogue is recorded: the previous record stays, or — after a full refresh
+swapped in a new table — there is none, and either way the next ordinary run
+rebuilds. dbt skips the class when this model fails, so a partially written
+journal never reaches it.
 
 ## 8. Long text in a side table
 
@@ -1199,6 +1272,31 @@ below the hashing one. The disagreement it probes for is found the same way
 round: the snapshot streams on the left carrying its arrays, and the right side
 holds one digest of the ids and one of the displays per pair, never the arrays.
 
+None of this bounds a statement whose scope is every issue: the join build
+sides and aggregation states still grow with the history, and the spill
+settings do not cap the joins. What bounds a rebuild is deriving it in batches
+of issues (§7.3).
+
+### 13.1 Planning: the stages
+
+ClickHouse expands a CTE afresh at every reference, and the analyzer resolves
+each copy on its own. The journal's arms reference the event chains between
+them dozens of times — `ranked_events` through `element_wise_items`, the entry
+collapse through `ordered_events`, the element-wise fold through
+`element_wise_state` — so one statement spent seconds in analysis whatever its
+batch held, and the legacy analyzer rejects it outright as an AST too large
+after alias expansion.
+
+Those relations are therefore stages: written once per batch into tables
+beside the journal (`jira__field_history_derived__<stage>`), in dependency
+order, and read back by every arm (`jira_journal_derive_stages`). The batch's
+issues and the modelled kinds are stages too, so every statement of one batch
+reads the same scope. The hooks own them; a run that dies leaves them behind,
+and the next run replaces them before reading.
+
+`EXPLAIN PLAN` measures the analysis alone. A relation the arms reference more
+than once that `EXPLAIN PLAN` finds costly belongs in a stage, not in a CTE.
+
 ## 14. Tests
 
 Three layers.
@@ -1245,6 +1343,8 @@ cheap and it fails loudly the first time someone reaches for a field id.
   matches none of them is a defect in this model, and lumping it in with the
   irreconcilable ones is how the previous shape of this document mis-scoped the
   work.
+- *one item per field and entry*: a self-describing field whose entries carry
+  several items is reported, at warn, with sample changelog ids (§5).
 - the existing singular tests on ordering, cardinality and event-id conventions
   are retained.
 
@@ -1273,6 +1373,8 @@ Shapes covered, one test each:
 - a labels-type field changed several times, never present in any snapshot list
 - an element-wise multi-value field with interleaved adds and removes
 - a bracketed-id multi-select field
+- one entry carrying two items of a multi-select field, chained and forked,
+  each built twice from scratch to an identical journal (§5)
 - a field set at creation and never changed
 - a field absent from the issue's field context entirely — asserting **no** row
 - a multi-value field cleared to empty

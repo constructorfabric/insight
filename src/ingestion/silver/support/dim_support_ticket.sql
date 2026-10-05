@@ -14,9 +14,7 @@
 -- type, group). Union of per-source staging tagged `silver:dim_support_ticket`.
 -- `assignee_person_key` is a current snapshot and MUST NOT be used to
 -- attribute activity (activity lives in class_support_activity, by actor).
-SELECT * FROM (
+SELECT candidate.* FROM (
     {{ union_by_tag('silver:dim_support_ticket') }}
-)
-{% if is_incremental() %}
-WHERE _version > (SELECT max(_version) FROM {{ this }})
-{% endif %}
+) AS candidate
+{{ silver_incremental_watermark(['tenant_id', 'insight_source_id', 'data_source']) }}

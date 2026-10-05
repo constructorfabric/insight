@@ -24,9 +24,7 @@
 --   • Authoring: kb_articles_created.
 --   • Quality (assignee-attributed, NOT activity): csat_good / csat_total —
 --     a ratio metric (Σgood / Σtotal), do not add to the activity counts.
-SELECT * FROM (
+SELECT candidate.* FROM (
     {{ union_by_tag('silver:class_support_activity') }}
-)
-{% if is_incremental() %}
-WHERE _version > (SELECT max(_version) FROM {{ this }})
-{% endif %}
+) AS candidate
+{{ silver_incremental_watermark(['tenant_id', 'insight_source_id', 'data_source']) }}
