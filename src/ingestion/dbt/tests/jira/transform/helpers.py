@@ -5,8 +5,8 @@ current JSON, and the changelog items. Everything Airbyte adds — raw ids,
 extraction stamps, the columns no Jira model reads — is filled in here, so a
 scenario stays readable as a table.
 
-Column sets mirror `scripts/connectors-ddl/jira.sql`, the snapshot CI keeps in
-lock-step with the real connectors.
+Column sets mirror the bronze tables destination-clickhouse creates from the
+connector's own catalogue, which the session fixture runs before any test.
 """
 
 from __future__ import annotations

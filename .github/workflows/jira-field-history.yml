@@ -22,9 +22,13 @@ on:
       - src/ingestion/connectors/task-tracking/jira/dbt/**
       - src/ingestion/dbt/macros/jira/**
       - src/ingestion/dbt/tests/jira/**
+      - src/ingestion/dbt/tests/bronze.py
       - src/ingestion/dbt/dbt_project.yml
-      - src/ingestion/scripts/connectors-ddl/jira.sql
-      - src/ingestion/scripts/bootstrap-db/pins.env
+      # The suite's bronze is this connector's catalogue, run through the
+      # destination by these scripts — which is where its shape now moves.
+      - src/ingestion/connectors/task-tracking/jira/connector.yaml
+      - src/ingestion/connectors/task-tracking/jira/descriptor.yaml
+      - src/ingestion/scripts/bootstrap-db/**
       - .github/workflows/jira-field-history.yml
       - .github/workflows/scripts/start-clickhouse.sh
   push:
@@ -33,9 +37,13 @@ on:
       - src/ingestion/connectors/task-tracking/jira/dbt/**
       - src/ingestion/dbt/macros/jira/**
       - src/ingestion/dbt/tests/jira/**
+      - src/ingestion/dbt/tests/bronze.py
       - src/ingestion/dbt/dbt_project.yml
-      - src/ingestion/scripts/connectors-ddl/jira.sql
-      - src/ingestion/scripts/bootstrap-db/pins.env
+      # The suite's bronze is this connector's catalogue, run through the
+      # destination by these scripts — which is where its shape now moves.
+      - src/ingestion/connectors/task-tracking/jira/connector.yaml
+      - src/ingestion/connectors/task-tracking/jira/descriptor.yaml
+      - src/ingestion/scripts/bootstrap-db/**
       - .github/workflows/jira-field-history.yml
       - .github/workflows/scripts/start-clickhouse.sh
   workflow_dispatch:
@@ -87,11 +95,14 @@ jobs:
           . src/ingestion/scripts/bootstrap-db/pins.env
           export CLICKHOUSE_SERVER_IMAGE
           .github/workflows/scripts/start-clickhouse.sh "${CLICKHOUSE_CONTAINER}"
+          # The suite creates bronze by running the connector and the Airbyte
+          # destination in containers, which do not share this job's loopback.
+          # The bridge gateway is the runner host as seen from inside a
+          # container; `host.docker.internal` does not resolve on Linux.
+          echo "CLICKHOUSE_CONTAINER_HOST=$(docker network inspect bridge -f '{{ (index .IPAM.Config 0).Gateway }}')" >> "$GITHUB_ENV"
           # The dbt project's on-run-start hooks write into `staging`, so the
           # databases have to exist before the first dbt invocation — including
           # the unit-test step, which otherwise fails before reading a fixture.
-          # Bronze tables themselves are created by the suite, from the
-          # connectors-ddl snapshot.
           for db in staging silver config insight; do
             curl -sSf "http://${CLICKHOUSE_HOST}:${CLICKHOUSE_HTTP_PORT}/" \
               -u "${CLICKHOUSE_USER}:${CLICKHOUSE_PASSWORD}" \

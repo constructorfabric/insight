@@ -5,8 +5,14 @@ Bronze tables and observation models. Never point them at a shared database.
 
 Use the versions in `scripts/bootstrap-db/pins.env`. Install `dbt-core`,
 `dbt-clickhouse`, `clickhouse-connect`, `pytest` and `pyyaml` in a test environment.
+Bronze is created by the real connector and the real destination, so `docker`,
+mikefarah `yq` v4 and `jq` have to be on `PATH` too.
+
 Set `CLICKHOUSE_HOST`, `CLICKHOUSE_HTTP_PORT`, `CLICKHOUSE_USER`,
-`CLICKHOUSE_PASSWORD` and `YOUTRACK_TEST_DISPOSABLE=yes`, then run:
+`CLICKHOUSE_PASSWORD` and `YOUTRACK_TEST_DISPOSABLE=yes`. The destination runs in
+a container, so if `CLICKHOUSE_HOST` is a loopback address it cannot reach the
+server: set `CLICKHOUSE_CONTAINER_HOST` to one the container shares
+(`host.docker.internal` on Docker Desktop, the bridge gateway on Linux). Then run:
 
 ```sh
 pytest src/ingestion/dbt/tests/youtrack/transform
