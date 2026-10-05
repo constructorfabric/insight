@@ -14,9 +14,7 @@
 -- INVARIANT: like class_git_ci_runs, this accumulates past the source API's
 -- retention window — never full-refresh it. Readers fold the latest event per
 -- deployment_id (argMax on created_at) into class_git_deployments.
-SELECT * FROM (
+SELECT candidate.* FROM (
     {{ union_by_tag('silver:class_git_deployment_events') }}
-)
-{% if is_incremental() %}
-WHERE _version > (SELECT max(_version) FROM {{ this }})
-{% endif %}
+) AS candidate
+{{ silver_incremental_watermark(['tenant_id', 'source_id', 'data_source']) }}

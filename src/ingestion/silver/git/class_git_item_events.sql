@@ -28,9 +28,7 @@
 -- and reaches `class_task_field_history`; carrying it in both places would be
 -- two records of the same facts, only one of which feeds a metric.
 
-SELECT * FROM (
+SELECT candidate.* FROM (
     {{ union_by_tag('silver:class_git_item_events') }}
-)
-{% if is_incremental() %}
-WHERE _version > (SELECT max(_version) FROM {{ this }})
-{% endif %}
+) AS candidate
+{{ silver_incremental_watermark(['tenant_id', 'source_id', 'data_source']) }}

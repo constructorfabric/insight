@@ -17,9 +17,7 @@
 -- an issue kind is NOT here — gold resolves it from `config.field_value_map`
 -- at its own build, so a mapping change never requires a silver rebuild.
 
-SELECT * FROM (
+SELECT candidate.* FROM (
     {{ union_by_tag('silver:class_task_issuetypes') }}
-)
-{% if is_incremental() %}
-WHERE _version > (SELECT max(_version) FROM {{ this }})
-{% endif %}
+) AS candidate
+{{ silver_incremental_watermark(['insight_source_id', 'data_source']) }}

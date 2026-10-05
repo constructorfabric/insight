@@ -35,7 +35,7 @@ import { cn } from "@/lib/utils";
 
 function columnLayout(column: MetricEvidenceColumn) {
   if (column.key === "person") return { basisRem: 11, grow: 0.5 };
-  if (column.key === "ref") return { basisRem: 9, grow: 0 };
+  if (column.key === "ref") return { basisRem: 12, grow: 0.5 };
   if (column.key === "title") return { basisRem: 24, grow: 4 };
   if (column.key === "type") return { basisRem: 8, grow: 0 };
   if (column.key === "repository") return { basisRem: 12, grow: 0.5 };

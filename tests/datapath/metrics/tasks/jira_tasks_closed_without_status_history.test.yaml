@@ -1,0 +1,53 @@
+spec_version: 1
+description: >
+  Metric: tasks.closed and tasks.resolution_time — a Jira issue closed with no
+  status entry in its changelog, #3486.
+  How it's computed (bronze → silver → gold):
+    • bronze: the issue's current state says Closed and carries Jira's
+      resolution date; its changelog records no status change at all.
+    • silver: the field history seeds the done status at creation (the value
+      the issue holds, with no event to roll it back) and records a closure at
+      the resolution date, since no entry ever dated one.
+    • gold:   the close is the last move into a done status, so it lands on the
+      resolution date, and the resolution time runs from creation to it.
+
+  Cases: carol's issue is created on 2 November and resolved on 25 December —
+  counted closed in December, not in November, with a 53-day resolution time.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/carol
+
+  bronze_jira.jira_user:
+    - $ref: ../templates/jira_task.yaml#/templates/carol_user
+
+  bronze_jira.jira_statuses:
+    - $ref: ../templates/jira_task.yaml#/templates/status_open
+    - $ref: ../templates/jira_task.yaml#/templates/status_in_progress
+    - $ref: ../templates/jira_task.yaml#/templates/status_closed
+
+  bronze_jira.jira_fields:
+    - $ref: ../templates/jira_task.yaml#/templates/field_status
+    - $ref: ../templates/jira_task.yaml#/templates/field_assignee
+    - $ref: ../templates/jira_task.yaml#/templates/field_issuetype
+
+  bronze_jira.jira_issuetypes:
+    - $ref: ../templates/jira_task.yaml#/templates/issuetype_task
+
+  config.field_value_map:
+    - $ref: ../templates/jira_task.yaml#/templates/value_type_task
+
+  config.field_value_defaults:
+    - $ref: ../templates/jira_task.yaml#/templates/jira_issue_type_default_unknown
+    - $ref: ../templates/jira_task.yaml#/templates/jira_resolution_default_unknown
+
+  bronze_jira.jira_issue:
+    - $ref: ../templates/jira_task.yaml#/templates/jira_issue
+      tenant_id: "{{ tenant }}"
+      id: "10601"
+      jira_id: "10601"
+      unique_key: jira-test-NSH-1
+      id_readable: NSH-1
+      created: "2026-11-02T14:00:00"
+      _airbyte_extracted_at: "2026-12-26T00:00:00"
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"},"resolutiondate":"2026-12-25T14:00:00.000+0000"}'

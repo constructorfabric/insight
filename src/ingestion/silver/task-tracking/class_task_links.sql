@@ -35,9 +35,7 @@
 -- Filtering it out silently drops the oldest links, which are exactly the ones
 -- a long window asks about.
 
-SELECT * FROM (
+SELECT candidate.* FROM (
     {{ union_by_tag('silver:class_task_links') }}
-)
-{% if is_incremental() %}
-WHERE _version > (SELECT max(_version) FROM {{ this }})
-{% endif %}
+) AS candidate
+{{ silver_incremental_watermark(['insight_source_id', 'data_source']) }}

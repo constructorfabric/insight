@@ -39,9 +39,9 @@
 -- source's arm to the values of all the others. The accepted values are data
 -- tests in schema.yml.
 
-SELECT * FROM (
+SELECT candidate.* FROM (
     {{ union_by_tag('silver:class_task_field_history') }}
-)
-{% if is_incremental() %}
-WHERE _version > (SELECT max(_version) FROM {{ this }})
-{% endif %}
+) AS candidate
+-- INVARIANT: the Jira journal, its availability arm and the comment and worklog lifecycle arms share one
+-- connection and each stamps `_version` on its own clock; event_kind + field_id keep them apart.
+{{ silver_incremental_watermark(['insight_source_id', 'data_source', 'event_kind', 'field_id']) }}

@@ -195,7 +195,10 @@ issue_pivot AS (
         -- INVARIANT: argMax, never any() — a renamed repository or an issue moved
         -- between projects carries the OLD key on its older rows, and rows written
         -- before the key moved to `issue_id` exist under both. The latest event wins.
-        argMax(id_readable, event_order)                            AS id_readable,
+        -- INVARIANT: among rows that name a key. A producer that cannot resolve
+        -- one writes '' (a census-only availability row), and as the newest row
+        -- that would blank a key every other row carries.
+        argMaxIf(id_readable, event_order, id_readable != '')       AS id_readable,
         -- The title is an ordinary field read through its role, so a source
         -- that renames an issue has rename history. `nullIf` keeps the result
         -- `Nullable(String)`: `argMaxIf` returns '' when nothing matches, and
