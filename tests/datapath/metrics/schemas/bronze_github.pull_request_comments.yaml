@@ -1,5 +1,5 @@
-# Mirrors the columns of bronze_github.pull_request_comments in
-# scripts/connectors-ddl/github.sql that the staging models read.
+# Mirrors the columns of the bronze_github.pull_request_comments table
+# destination-clickhouse creates that the staging models read.
 schemas:
   bronze_github.pull_request_comments:
     $schema: http://json-schema.org/draft-07/schema#

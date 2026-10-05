@@ -1,4 +1,5 @@
-# Mirrors the bronze_github.issue_links DDL in scripts/connectors-ddl/github.sql.
+# Mirrors the bronze_github.issue_links table destination-clickhouse creates
+# from the connector's catalogue.
 schemas:
   bronze_github.issue_links:
     $schema: http://json-schema.org/draft-07/schema#
