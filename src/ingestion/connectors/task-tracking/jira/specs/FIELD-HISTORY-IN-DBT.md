@@ -996,6 +996,36 @@ Two limits of the composition, stated rather than solved here:
   had read, and everything delivered since is in scope again. A failed run
   therefore repairs itself on the next one rather than waiting for a rebuild.
 
+### 7.3 A large scope is derived in batches
+
+The issue-grain scope keeps a nightly run proportional to the churn, but a
+rebuild — `--full-refresh`, a catalogue shift, a table with no record — and a
+sync that re-delivers most of bronze put every issue in scope again, and one
+statement over all of them needs memory proportional to the whole history.
+
+A scope larger than `jira_journal_issues_per_batch` issues (a dbt var) is
+therefore split by a hash of `(insight_source_id, issue_id)`. Every
+issue-scoped read carries the same bucket predicate, so a batch reads only its
+own issues, and no batch needs another's rows: nothing in the derivation reads
+across issues (§7.2). The model's own statement derives batch 0; the post-hook
+(`jira_journal_derive_remaining_batches`) replays the compiled statement for
+every other batch and replaces those issues' rows the way the materialization
+replaced batch 0's. The batch count is decided once, when the model compiles,
+and travels in the statement text, so the replays cannot disagree with it.
+
+The peak is the heaviest batch, not the average. One issue is one batch at
+least, so an issue whose own output is large — a list field with many elements
+and many events, whose state after each event is a row — sets a floor no split
+lowers. Each batch also reads every input again, because the inputs are sorted
+by `unique_key` and the bucket predicate filters rather than prunes; a rebuild
+therefore trades memory for time, and a larger batch is faster.
+
+Failure is recoverable. A batch that fails fails the model before the
+catalogue is recorded: the previous record stays, or — after a full refresh
+swapped in a new table — there is none, and either way the next ordinary run
+rebuilds. dbt skips the class when this model fails, so a partially written
+journal never reaches it.
+
 ## 8. Long text in a side table
 
 Status: implemented (`jira__task_field_text`). §5's normalizers
@@ -1226,6 +1256,11 @@ built this way; probed over a full-size dataset, the streaming form peaks well
 below the hashing one. The disagreement it probes for is found the same way
 round: the snapshot streams on the left carrying its arrays, and the right side
 holds one digest of the ids and one of the displays per pair, never the arrays.
+
+None of this bounds a statement whose scope is every issue: the join build
+sides and aggregation states still grow with the history, and the spill
+settings do not cap the joins. What bounds a rebuild is deriving it in batches
+of issues (§7.3).
 
 ## 14. Tests
 
