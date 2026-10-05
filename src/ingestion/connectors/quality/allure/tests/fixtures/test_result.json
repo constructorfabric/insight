@@ -1,0 +1,71 @@
+{
+  "id": 5001,
+  "launchId": 101,
+  "projectId": 7,
+  "testCaseId": 3001,
+  "name": "Login succeeds",
+  "fullName": "com.example.auth.LoginTest.loginSucceeds",
+  "status": "passed",
+  "duration": 1500,
+  "start": 1781517900000,
+  "stop": 1781517901500,
+  "createdBy": "ci-bot",
+  "createdDate": 1781518800000,
+  "lastModifiedBy": "ci-bot",
+  "lastModifiedDate": 1781519100000,
+  "external": true,
+  "flaky": false,
+  "hidden": false,
+  "known": false,
+  "manual": false,
+  "muted": false,
+  "historyKey": "0f0e0d0c0b0a09080706050403020100",
+  "hostId": "runner-1",
+  "threadId": "runner-1.main(1)",
+  "message": null,
+  "trace": null,
+  "description": "Synthetic test",
+  "descriptionHtml": "<p>Synthetic test</p>",
+  "statusTransition": "fixed",
+  "layer": {
+    "id": 2,
+    "name": "API",
+    "createdBy": "admin",
+    "createdDate": 1767225600000,
+    "lastModifiedBy": "admin",
+    "lastModifiedDate": 1767225600000
+  },
+  "jobRun": {
+    "id": 4001,
+    "launchId": 101,
+    "name": "nightly-regression",
+    "externalId": "9001",
+    "stage": "FINISHED",
+    "status": "SUCCESS",
+    "url": "https://ci.example.test/job/nightly-regression/9001",
+    "createdBy": "ci-bot",
+    "createdDate": 1781517600000,
+    "lastModifiedBy": "ci-bot",
+    "lastModifiedDate": 1781519400000
+  },
+  "tags": [
+    {
+      "id": 11,
+      "name": "smoke"
+    }
+  ],
+  "links": [
+    {
+      "name": "EXP-1",
+      "url": "https://tracker.example.test/EXP-1"
+    }
+  ],
+  "parameters": [
+    {
+      "name": "browser",
+      "value": "chromium",
+      "hidden": false,
+      "excluded": false
+    }
+  ]
+}

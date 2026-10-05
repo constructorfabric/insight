@@ -279,6 +279,7 @@ COMPONENTS = [
             "src/ingestion/connectors/git/github-directory",
             "src/ingestion/connectors/collaboration/zoom",
             "src/ingestion/connectors/dev-portal/compass",
+            "src/ingestion/connectors/quality/allure",
         ],
     },
     # The sample-data seeder. Its pytest suite otherwise runs only inside the

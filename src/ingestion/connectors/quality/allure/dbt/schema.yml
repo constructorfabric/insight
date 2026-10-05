@@ -1,0 +1,58 @@
+version: 2
+
+sources:
+  - name: bronze_allure
+    freshness:
+      warn_after: {count: 36, period: hour}
+      error_after: {count: 72, period: hour}
+    loaded_at_field: _airbyte_extracted_at
+    schema: bronze_allure
+    tables:
+      - name: projects
+      - name: launches
+      - name: test_results
+
+models:
+  - name: allure__launches
+    description: "Allure TestOps launches -> staging, one row per launch"
+    columns:
+      - name: tenant_id
+        data_tests:
+          - not_null
+      - name: source_id
+        data_tests:
+          - not_null
+      - name: unique_key
+        description: "{tenant}-{source}-{launch id}"
+        data_tests:
+          - not_null
+          - unique
+      - name: created_by
+        description: "Allure login of the launch creator, not a person id"
+      - name: created_at
+        description: "createdDate (epoch ms) as UTC DateTime64(3)"
+      - name: last_modified_at
+        description: "lastModifiedDate (epoch ms) as UTC DateTime64(3), the connector's incremental cursor"
+
+  - name: allure__test_results
+    description: "Allure TestOps test results -> staging, one row per result, read per launch"
+    columns:
+      - name: tenant_id
+        data_tests:
+          - not_null
+      - name: source_id
+        data_tests:
+          - not_null
+      - name: unique_key
+        description: "{tenant}-{source}-{test result id}"
+        data_tests:
+          - not_null
+          - unique
+      - name: status
+        description: "Allure status as sent: passed, failed, broken, skipped or unknown"
+      - name: is_hidden
+        description: "True when a retry superseded this result"
+      - name: started_at
+        description: "start (epoch ms) as UTC DateTime64(3)"
+      - name: stopped_at
+        description: "stop (epoch ms) as UTC DateTime64(3)"
