@@ -12,6 +12,7 @@ Run: pytest src/ingestion/reconcile-connectors/tests
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -19,6 +20,9 @@ from pathlib import Path
 import pytest
 
 COMPOSER = Path(__file__).resolve().parents[1] / "python" / "compose_destination_config.py"
+
+#: Covers the composer's own RECONCILE_DEST_CLICKHOUSE_ prefix.
+_READS = "RECONCILE_DEST_"
 
 STANDALONE_ENV = {
     "RECONCILE_DEST_CLICKHOUSE_HOST": "clickhouse.example.test",
@@ -40,8 +44,20 @@ STANDALONE_JSON = (
 
 
 def _compose(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    """Inherits the environment rather than replacing it, minus every key the
+    composer reads, so "missing" still means missing.
+
+    A CI interpreter links libpython dynamically and needs the loader variables
+    its installer set; a replaced env cannot start it at all.
+    """
+    inherited = {k: v for k, v in os.environ.items() if not k.startswith(_READS)}
     return subprocess.run(
-        [sys.executable, str(COMPOSER)], env=env, capture_output=True, text=True, encoding="utf-8", check=False
+        [sys.executable, str(COMPOSER)],
+        env=inherited | env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
     )
 
 

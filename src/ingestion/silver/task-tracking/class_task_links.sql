@@ -1,6 +1,9 @@
+-- depends_on: {{ ref('youtrack__task_links') }}
 -- depends_on: {{ ref('github__task_links') }}
 {{ config(
     materialized='incremental',
+    on_schema_change='append_new_columns',
+    pre_hook="{{ youtrack_reconcile_class() }}",
     incremental_strategy='delete+insert',
     unique_key='unique_key',
     schema='silver',
@@ -35,9 +38,8 @@
 -- Filtering it out silently drops the oldest links, which are exactly the ones
 -- a long window asks about.
 
-SELECT * FROM (
+SELECT candidate.* FROM (
     {{ union_by_tag('silver:class_task_links') }}
-)
-{% if is_incremental() %}
-WHERE _version > (SELECT max(_version) FROM {{ this }})
-{% endif %}
+) AS candidate
+-- YouTrack is reconciled whole by the pre_hook, so its rows bypass the boundary.
+{{ silver_incremental_watermark(['insight_source_id', 'data_source'], always_reread="candidate.data_source = 'youtrack'") }}

@@ -1,6 +1,9 @@
+-- depends_on: {{ ref('youtrack__task_comments') }}
 -- depends_on: {{ ref('jira__task_comments') }}
 {{ config(
     materialized='incremental',
+    on_schema_change='append_new_columns',
+    pre_hook="{{ youtrack_reconcile_class() }}",
     incremental_strategy='delete+insert',
     unique_key='unique_key',
     schema='silver',
@@ -10,9 +13,8 @@
     tags=['silver']
 ) }}
 
-SELECT * FROM (
+SELECT candidate.* FROM (
     {{ union_by_tag('silver:class_task_comments') }}
-)
-{% if is_incremental() %}
-WHERE _version > (SELECT max(_version) FROM {{ this }})
-{% endif %}
+) AS candidate
+-- YouTrack is reconciled whole by the pre_hook, so its rows bypass the boundary.
+{{ silver_incremental_watermark(['insight_source_id', 'data_source'], always_reread="candidate.data_source = 'youtrack'") }}

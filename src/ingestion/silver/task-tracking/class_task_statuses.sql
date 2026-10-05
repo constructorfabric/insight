@@ -1,7 +1,9 @@
+-- depends_on: {{ ref('youtrack__task_statuses') }}
 -- depends_on: {{ ref('jira__task_statuses') }}
 -- depends_on: {{ ref('github__task_statuses') }}
 {{ config(
     materialized='incremental',
+    pre_hook="{{ youtrack_reconcile_class() }}",
     incremental_strategy='delete+insert',
     unique_key='unique_key',
     schema='silver',
@@ -19,9 +21,8 @@
 -- union there is no cross-source divergence. Gold detects a closed task with
 -- `status_category = 'done'`, never a localized status name. See issue #1541.
 
-SELECT * FROM (
+SELECT candidate.* FROM (
     {{ union_by_tag('silver:class_task_statuses') }}
-)
-{% if is_incremental() %}
-WHERE _version > (SELECT max(_version) FROM {{ this }})
-{% endif %}
+) AS candidate
+-- YouTrack is reconciled whole by the pre_hook, so its rows bypass the boundary.
+{{ silver_incremental_watermark(['insight_source_id', 'data_source'], always_reread="candidate.data_source = 'youtrack'") }}

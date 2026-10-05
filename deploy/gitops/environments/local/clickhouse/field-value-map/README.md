@@ -63,11 +63,42 @@ four columns are required; `default_value` obeys the same per-field domain as
 tenant_id  insight_source_id  field  default_value
 ```
 
+## Field roles and status categories
+
+Two more reserved files configure a source whose vendor states neither which
+field plays which metric role nor what its statuses mean (GitHub, YouTrack).
+Same conventions; only `note` may be omitted.
+
+`roles.tsv` lands in `config.task_field_roles`:
+
+```
+tenant_id  insight_source_id  data_source  field_id  role  precedence  value_unit  unit_multiplier  note
+```
+
+`role` is one of `status`, `assignee`, `issuetype`, `resolution`, `duedate`,
+`estimate`, `spent`, `title`, or `ignored` (retracts a built-in default).
+`value_unit` is `none` or a time unit gold converts (`seconds`, `minutes`,
+`hours`, `days`, `man_days`); `unit_multiplier` turns one stated unit into
+seconds — a YouTrack period field is `minutes` / `60`. `precedence` (0-255)
+orders several fields bound to one role.
+
+`task-values.tsv` lands in `config.task_value_map`, the lifecycle category of
+one value of a status field:
+
+```
+tenant_id  insight_source_id  data_source  field_id  value_id  value_display  canonical_value  note
+```
+
+`canonical_value` is `new`, `in_progress`, `done` or `undefined`.
+
 ## Insert-only
 
 The loader anti-joins each line against the live table on the business key —
 `(tenant_id, insight_source_id, data_source, field, source_key)` for the map,
-`(tenant_id, insight_source_id, field)` for the defaults — and writes only the
+`(tenant_id, insight_source_id, field)` for the defaults,
+`(tenant_id, insight_source_id, data_source, field_id)` for roles and
+`(tenant_id, insight_source_id, data_source, field_id, value_id)` for task
+values — and writes only the
 keys with no stored decision. A key that already carries one — including a
 retraction (`is_deleted = 1`) — is left untouched, so editing a line here does
 NOT change a decision that is already loaded, and re-deploying is a no-op.

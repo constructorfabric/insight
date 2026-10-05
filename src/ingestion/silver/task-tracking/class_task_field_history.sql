@@ -1,3 +1,4 @@
+-- depends_on: {{ ref('youtrack__task_field_history') }}
 -- depends_on: {{ ref('jira__field_history_derived') }}
 -- depends_on: {{ ref('jira__availability_events') }}
 -- depends_on: {{ ref('jira__comment_lifecycle_events') }}
@@ -5,6 +6,7 @@
 -- depends_on: {{ ref('github__task_field_history') }}
 {{ config(
     materialized='incremental',
+    pre_hook="{{ youtrack_reconcile_class() }}",
     incremental_strategy='delete+insert',
     unique_key='unique_key',
     schema='silver',
@@ -39,9 +41,10 @@
 -- source's arm to the values of all the others. The accepted values are data
 -- tests in schema.yml.
 
-SELECT * FROM (
+SELECT candidate.* FROM (
     {{ union_by_tag('silver:class_task_field_history') }}
-)
-{% if is_incremental() %}
-WHERE _version > (SELECT max(_version) FROM {{ this }})
-{% endif %}
+) AS candidate
+-- YouTrack is reconciled whole by the pre_hook, so its rows bypass the boundary.
+-- INVARIANT: the Jira journal, its availability arm and the comment and worklog lifecycle arms share one
+-- connection and each stamps `_version` on its own clock; event_kind + field_id keep them apart.
+{{ silver_incremental_watermark(['insight_source_id', 'data_source', 'event_kind', 'field_id'], always_reread="candidate.data_source = 'youtrack'") }}
