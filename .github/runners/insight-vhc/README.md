@@ -83,8 +83,10 @@ The jobs under this rule:
 - `jira-field-history.yml`: `transformations`
 - `connectors-ddl.yml`: `connectors-ddl`
 - `warm-upgrade.yml`: `warm-upgrade`
-- `ci.yml`: `rust`, only the matrix legs whose entry sets `live_db` or `live_ch`
-  in `scripts/ci/components.py`; the other legs keep the general rule.
+- `ci.yml`: `rust`, only the matrix legs that start a database: the entry sets
+  `live_db` or `live_ch` in `scripts/ci/components.py` **and** runs tests
+  (`cover` or `test`), the same condition as the "Start MariaDB" and "Start
+  ClickHouse" steps. Lint-only legs and all other legs keep the general rule.
 
 ## The kill switch
 
