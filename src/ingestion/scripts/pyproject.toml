@@ -29,5 +29,4 @@ py-modules = [
     "dbt_profiles",
     "insight_logging",
     "load_field_value_map",
-    "reconcile_bronze_schema",
 ]
