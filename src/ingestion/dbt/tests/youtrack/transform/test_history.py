@@ -136,6 +136,23 @@ def test_link_removal_and_readdition_are_separate_intervals(case: Warehouse) -> 
     assert all(r['valid_from_known'] == 0 and r['evidence'] == 'observation' for r in rows)
 
 
+def test_link_preview_alongside_the_full_set_still_yields_intervals(case: Warehouse) -> None:
+    target = {'id': 'issue-2', 'idReadable': 'EX-2'}
+    case.issue([], links=[{'linkType': {'id': 'depends'}, 'direction': 'OUTWARD', 'issues': [target], 'trimmedIssues': [target]}])
+    case.build()
+    assert list(case.rows("SELECT target_id FROM staging.youtrack__task_links")) == [{'target_id': 'issue-2'}]
+
+
+def test_trimmed_link_set_does_not_close_an_interval(case: Warehouse) -> None:
+    target = {'id': 'issue-2', 'idReadable': 'EX-2'}
+    case.issue([], links=[{'linkType': {'id': 'depends'}, 'direction': 'OUTWARD', 'issues': [target]}])
+    case.build()
+    trimmed = {'linkType': {'id': 'depends'}, 'direction': 'OUTWARD', 'issues': [], 'trimmedIssues': [target]}
+    case.issue([], observed='2026-01-11T00:00:00', links=[trimmed])
+    case.build()
+    assert list(case.rows("SELECT valid_to FROM staging.youtrack__task_links")) == [{'valid_to': None}]
+
+
 def test_all_task_classes_match_shared_contract_and_units(case: Warehouse) -> None:
     case.issue([])
     case.insert('youtrack_users', {'unique_key': 'synthetic-user', 'id': 'user-1', 'email': 'user@example.com', 'fullName': 'Example User', 'login': 'example.user', 'banned': False})

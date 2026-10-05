@@ -7,7 +7,11 @@ WITH observations AS (
             JSONExtractString(t, 'id'), JSONExtractString(t, 'idReadable')),
             JSONExtractArrayRaw(l, 'issues')), JSONExtractArrayRaw(payload, 'links'))) AS links
     FROM {{ ref('youtrack__issue_observations') }} FINAL
-    WHERE JSONHas(payload, 'links') AND NOT arrayExists(l -> length(JSONExtractArrayRaw(l, 'trimmedIssues')) > 0, JSONExtractArrayRaw(payload, 'links'))
+    -- trimmedIssues is a preview that YouTrack fills alongside the full `issues`;
+    -- a set is trimmed only when the preview names more issues than the set holds.
+    WHERE JSONHas(payload, 'links') AND NOT arrayExists(
+        l -> length(JSONExtractArrayRaw(l, 'trimmedIssues')) > length(JSONExtractArrayRaw(l, 'issues')),
+        JSONExtractArrayRaw(payload, 'links'))
 ), timelines AS (
     SELECT insight_source_id, issue_id,
         argMax(id_readable, observed_at) AS id_readable,
