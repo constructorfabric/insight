@@ -74,7 +74,7 @@ class CHSeeder:
         """Seed every `<db>.<table>: [records]` entry of a TestYaml."""
         for table_fqn, rows in bronze.items():
             schema, _, table = table_fqn.partition(".")
-            self._ensure_table(schema, table, schemas[table_fqn])
+            self._require_table(schema, table, schemas[table_fqn])
             self.ledger.record(schema, table)
             self.seed_records(schema, table, rows)
 
@@ -88,7 +88,8 @@ class CHSeeder:
         if not column_types:
             raise SeederError(
                 f"table {schema}.{table} not found in system.columns "
-                f"(bronze: check the placeholder; silver: ensure migrations + dbt ran)"
+                f"(bronze: check the connector still emits that stream; "
+                f"silver: ensure migrations + dbt ran)"
             )
         if not rows:
             return
@@ -118,41 +119,39 @@ class CHSeeder:
         )
         return dict(rows)  # type: ignore[arg-type]
 
-    def _ensure_table(self, database: str, table: str, schema: dict[str, Any]) -> None:
+    def _require_table(self, database: str, table: str, schema: dict[str, Any]) -> None:
+        """Check the live table carries what the fixture declares, or refuse it.
+
+        The connectors create bronze, so a table a fixture names and the warehouse
+        lacks is a stream that was renamed or dropped — never one to invent here,
+        which would give the spec a shape and an engine no deployment has.
+        """
         expected = {
             name: _clickhouse_type(definition)
             for name, definition in schema.get("properties", {}).items()
         }
         existing = self._fetch_column_types(database, table)
-        if existing:
-            # The real table (connectors-ddl snapshot / dbt) may carry MORE
-            # columns than the fixture declares: connectors emit raw API columns
-            # the dbt models never read (e.g. jira_issue.self/expand/fields),
-            # and a fixture only describes the columns a test seeds. Require the
-            # fixture's columns to all exist with a compatible type — seed_records
-            # leaves the extra real columns at their ClickHouse defaults. A column
-            # the fixture needs but the real table lacks (missing), or a type that
-            # no longer matches (mismatched), is still a hard error: that is
-            # genuine drift the snapshot regeneration is meant to surface.
-            missing = sorted(expected.keys() - existing.keys())
-            mismatched = sorted(
-                name
-                for name in expected.keys() & existing.keys()
-                if not _types_compatible(expected[name], existing[name])
+        if not existing:
+            raise SeederError(
+                f"table {database}.{table} does not exist — bronze comes from the "
+                f"connectors themselves, so no stream declares it any more"
             )
-            if missing or mismatched:
-                raise SeederError(
-                    f"table {database}.{table} does not match its fixture schema "
-                    f"(missing={missing}, type_mismatches="
-                    f"{[(name, expected[name], existing[name]) for name in mismatched]})"
-                )
-            return
-        columns = ", ".join(f"`{name}` {column_type}" for name, column_type in expected.items())
-        ch.execute(self.cfg, f"CREATE DATABASE IF NOT EXISTS `{database}`")
-        ch.execute(
-            self.cfg,
-            f"CREATE TABLE `{database}`.`{table}` ({columns}) ENGINE = MergeTree ORDER BY tuple()",
+
+        # The real table carries more columns than a fixture declares: a connector
+        # emits raw API columns no dbt model reads, and seed_records leaves those at
+        # their ClickHouse defaults. Only the fixture's own columns must match.
+        missing = sorted(expected.keys() - existing.keys())
+        mismatched = sorted(
+            name
+            for name in expected.keys() & existing.keys()
+            if not _types_compatible(expected[name], existing[name])
         )
+        if missing or mismatched:
+            raise SeederError(
+                f"table {database}.{table} does not match its fixture schema "
+                f"(missing={missing}, type_mismatches="
+                f"{[(name, expected[name], existing[name]) for name in mismatched]})"
+            )
 
     @staticmethod
     def _coerce(value: Any, ch_type: str, col: str) -> Any:

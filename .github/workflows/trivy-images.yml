@@ -59,41 +59,39 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Install Trivy
+        uses: ./.github/actions/install-scanners
+        with:
+          trivy: "true"
+
       - name: Trivy image scan (CRITICAL/HIGH)
-        # Pulls from the registry directly, so no docker daemon is needed. CRITICAL/HIGH only:
-        # everything here comes from a base layer and the remedy is the same at any severity.
         env:
-          TRIVY_IMAGE: aquasec/trivy:0.72.0@sha256:cffe3f5161a47a6823fbd23d985795b3ed72a4c806da4c4df16266c02accdd6f
           IMAGE_REF: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:${{ inputs.tag || 'latest' }}
           TRIVY_USERNAME: ${{ github.actor }}
           TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
         # CRITICAL/HIGH only: everything here comes from a base layer, and the remedy is the same
         # at any severity — refresh the base image.
         # One pull and one analysis per image: `trivy convert` derives the SARIF from the JSON
-        # rather than rescanning, which for a 14-image matrix saves 14 redundant registry pulls
-        # and layer analyses. `-w /work` so a repo-root `.trivyignore` is resolved — Trivy reads
-        # the default ignore file relative to the working directory.
+        # rather than rescanning, which over the matrix saves one redundant registry pull and
+        # layer analysis per image. `--image-src remote` reads the image out of GHCR, so the job
+        # needs no Docker daemon and never lands a copy on the runner. The step runs in the
+        # workspace, so a repo-root `.trivyignore` is resolved — Trivy reads the default ignore
+        # file relative to the working directory.
         run: |
           set -euo pipefail
           echo "Scanning ${IMAGE_REF}"
-          docker run --rm \
-            -v "${{ github.workspace }}:/work" \
-            -v /tmp/trivy-cache:/root/.cache \
-            -w /work \
-            -e TRIVY_USERNAME -e TRIVY_PASSWORD \
-            "$TRIVY_IMAGE" image \
-              --severity CRITICAL,HIGH \
-              --pkg-types os,library \
-              --ignore-unfixed \
-              --exit-code 0 \
-              --no-progress \
-              --format json --output /work/trivy-image.json \
-              "$IMAGE_REF"
-          docker run --rm \
-            -v "${{ github.workspace }}:/work" \
-            "$TRIVY_IMAGE" convert \
-              --format sarif --output /work/trivy-image.sarif \
-              /work/trivy-image.json
+          trivy image \
+            --image-src remote \
+            --severity CRITICAL,HIGH \
+            --pkg-types os,library \
+            --ignore-unfixed \
+            --exit-code 0 \
+            --no-progress \
+            --format json --output trivy-image.json \
+            "$IMAGE_REF"
+          trivy convert \
+            --format sarif --output trivy-image.sarif \
+            trivy-image.json
 
       - name: Summarize findings in the job summary
         if: always()
@@ -153,9 +151,6 @@ jobs:
 
       - name: Fail on a fixable critical
         # Last, and reusing the scan's JSON, so the summary and the SARIF upload still run.
-        env:
-          TRIVY_IMAGE: aquasec/trivy:0.72.0@sha256:cffe3f5161a47a6823fbd23d985795b3ed72a4c806da4c4df16266c02accdd6f
         run: |
           set -euo pipefail
-          docker run --rm -v "${{ github.workspace }}:/work" "$TRIVY_IMAGE" convert \
-            --severity CRITICAL --exit-code 1 --format table /work/trivy-image.json
+          trivy convert --severity CRITICAL --exit-code 1 --format table trivy-image.json
