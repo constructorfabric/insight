@@ -31,23 +31,24 @@ WITH custom AS (
                 endsWith(observed_field_type, '[*]'), 'multi',
                 'single') AS field_cardinality,
         {{ youtrack_values("JSONExtractRaw(f, 'value')") }} AS pairs,
-        {{ youtrack_value_types("JSONExtractRaw(f, 'value')") }} AS value_types
+        {{ youtrack_value_types("JSONExtractRaw(f, 'value')") }} AS value_types,
+        toUInt8(JSONExtractBool(f, 'value', 'isResolved')) AS value_is_resolved
     FROM custom_fields
     UNION ALL
     SELECT insight_source_id, issue_id, id_readable, created_at, reporter_id, observed_at,
-        'summary', 'Summary', 'single', {{ youtrack_values("JSONExtractRaw(payload, 'summary')") }}, ['string_literal']
+        'summary', 'Summary', 'single', {{ youtrack_values("JSONExtractRaw(payload, 'summary')") }}, ['string_literal'], toUInt8(0)
     FROM {{ ref('youtrack__issue_observations') }} FINAL
     UNION ALL
     SELECT insight_source_id, issue_id, id_readable, created_at, reporter_id, observed_at,
-        'description', 'Description', 'single', {{ youtrack_values("JSONExtractRaw(payload, 'description')") }}, ['string_literal']
+        'description', 'Description', 'single', {{ youtrack_values("JSONExtractRaw(payload, 'description')") }}, ['string_literal'], toUInt8(0)
     FROM {{ ref('youtrack__issue_observations') }} FINAL
     UNION ALL
     SELECT insight_source_id, issue_id, id_readable, created_at, reporter_id, observed_at,
-        'tags', 'Tags', 'multi', {{ youtrack_values("JSONExtractRaw(payload, 'tags')") }}, ['opaque_id']
+        'tags', 'Tags', 'multi', {{ youtrack_values("JSONExtractRaw(payload, 'tags')") }}, ['opaque_id'], toUInt8(0)
     FROM {{ ref('youtrack__issue_observations') }} FINAL
     UNION ALL
     SELECT insight_source_id, issue_id, id_readable, created_at, reporter_id, observed_at,
-        'project', 'Project', 'single', {{ youtrack_values("JSONExtractRaw(payload, 'project')") }}, ['opaque_id']
+        'project', 'Project', 'single', {{ youtrack_values("JSONExtractRaw(payload, 'project')") }}, ['opaque_id'], toUInt8(0)
     FROM {{ ref('youtrack__issue_observations') }} FINAL
 )
 SELECT * FROM fields WHERE field_id != ''

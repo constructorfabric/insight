@@ -82,16 +82,71 @@ def test_opaque_ids_follow_same_instant_value_chain(case: Warehouse) -> None:
     assert rows[1]['event_order'] - rows[0]['event_order'] == 1
 
 
-def test_partial_history_keeps_snapshot_at_observation_time(case: Warehouse) -> None:
+def field_dates(case: Warehouse, field_id: str = 'field-1') -> list[str]:
+    return [r['event_at'] for r in case.rows(
+        f"SELECT toString(event_at) AS event_at FROM staging.youtrack__task_field_history WHERE field_id='{field_id}' ORDER BY event_order")]
+
+
+def test_a_value_without_history_is_dated_at_creation_not_at_the_sync(case: Warehouse) -> None:
     case.issue([value('a')])
     case.build()
     initial = list(case.rows("SELECT field_id FROM staging.youtrack__task_field_history WHERE event_kind='synthetic_initial'"))
     assert initial == [{'field_id': 'created'}]
-    observed = list(case.rows("SELECT event_at,value_ids FROM staging.youtrack__task_field_history WHERE field_id='field-1'"))
-    assert len(observed) == 1 and str(observed[0]['event_at']).startswith('2026-01-10')
+    assert field_dates(case) == ['2026-01-01 00:00:00.000']
+
+
+def test_the_date_does_not_move_when_the_issue_is_synced_again(case: Warehouse) -> None:
+    case.issue([value('a')])
+    case.build()
     case.issue([value('a')], observed='2026-01-11T00:00:00')
     case.build()
-    assert len(list(case.rows("SELECT * FROM staging.youtrack__task_field_history WHERE field_id='field-1'"))) == 1
+    assert field_dates(case) == ['2026-01-01 00:00:00.000']
+
+
+def test_a_change_the_feed_missed_sorts_just_after_the_last_event(case: Warehouse) -> None:
+    case.issue([value('b')])
+    case.event('e1', [], [value('a')])
+    case.build()
+    assert field_dates(case) == ['2026-01-02 00:00:00.000', '2026-01-02 00:00:00.001']
+
+
+def test_a_change_between_two_snapshots_sorts_just_after_the_earlier_one(case: Warehouse) -> None:
+    case.issue([value('a')])
+    case.build()
+    case.issue([value('b')], observed='2026-01-11T00:00:00')
+    case.build()
+    assert field_dates(case) == ['2026-01-01 00:00:00.000', '2026-01-10 00:00:00.001']
+
+
+def resolved_issue(case: Warehouse, resolved: int | None, is_resolved: bool = True, observed: str = '2026-01-10T00:00:00') -> None:
+    state = {'id': 'issue-field', 'name': 'State', '$type': 'StateIssueCustomField',
+             'projectCustomField': {'id': 'project-field', 'field': {'id': 'field-1'}},
+             'value': {'id': 'fixed', 'name': 'Fixed', 'isResolved': is_resolved, '$type': 'StateBundleElement'}}
+    case.insert('youtrack_issues', {
+        'id': 'issue-1', 'idReadable': 'EX-1', 'created': 1767225600000,
+        'unique_key': TENANT + '-' + SOURCE + '-issue-1', 'reporter_id': 'user-1', 'project_id': 'project-1',
+        'custom_fields_json': json.dumps([state]),
+        'issue_json': json.dumps({'summary': 'Synthetic issue', 'description': '', 'links': [], 'resolved': resolved}),
+    }, observed)
+
+
+def test_a_closure_with_no_status_history_is_dated_by_the_resolution(case: Warehouse) -> None:
+    resolved_issue(case, 1767571200000)
+    case.build()
+    assert field_dates(case) == ['2026-01-05 00:00:00.000']
+
+
+def test_a_resolution_before_the_last_event_does_not_date_the_closure(case: Warehouse) -> None:
+    resolved_issue(case, 1767225600000)
+    case.event('e1', [], [value('open')])
+    case.build()
+    assert field_dates(case) == ['2026-01-02 00:00:00.000', '2026-01-02 00:00:00.001']
+
+
+def test_a_resolution_dates_only_a_value_that_is_resolved(case: Warehouse) -> None:
+    resolved_issue(case, 1767571200000, is_resolved=False)
+    case.build()
+    assert field_dates(case) == ['2026-01-01 00:00:00.000']
 
 
 def test_null_empty_and_comma_values_are_not_split(case: Warehouse) -> None:

@@ -11,7 +11,15 @@ name: youtrack
 #   — the updated: search plus the SprintCategory activity feed — instead of
 #   every accessible issue. MAJOR per ADR-0015: the staging models are new
 #   tables that the scoped full refresh a major dispatches builds from Bronze.
-version: "2.0.0"
+# 2.0.1: activities drop ArticleCommentAttachmentsCategory and
+#   ArticleTagsCategory. The server can fail while serializing an article
+#   attachment after it has started a 200 response, so the page body is cut off;
+#   the paginator read the empty decode as the last page and the rest of the
+#   slice was skipped. Silver reads Issue targets only, so nothing it uses is
+#   lost. An activitiesPage response without `hasAfter` now fails the read.
+#   PATCH per ADR-0015: a manifest fix; already-synced slices need a re-read of
+#   youtrack_activities to recover the skipped events.
+version: "2.0.1"
 schedule: 0 2 * * *
 workflow: sync
 dbt_select: tag:youtrack+

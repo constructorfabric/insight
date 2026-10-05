@@ -10,15 +10,41 @@ WITH changes AS (
     INNER JOIN {{ ref('youtrack__issues') }} AS i USING (insight_source_id, issue_id)
     INNER JOIN {{ ref('youtrack__activity_order') }} AS r USING (insight_source_id, issue_id, event_id)
     INNER JOIN {{ ref('youtrack__field_states') }} AS fs USING (insight_source_id, issue_id, field_id, event_id)
+), field_events AS (
+    SELECT insight_source_id, issue_id, field_id, event_at FROM {{ ref('youtrack__activities') }}
+), snapshots AS (
+    SELECT *, lagInFrame(toNullable(observed_at)) OVER (PARTITION BY insight_source_id, issue_id, field_id ORDER BY observed_at
+        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS previous_observed_at
+    FROM {{ ref('youtrack__issue_field_snapshot') }}
+), resolutions AS (
+    SELECT insight_source_id, issue_id, observed_at,
+        {{ youtrack_timestamp("JSONExtractRaw(payload, 'resolved')") }} AS resolved_at
+    FROM {{ ref('youtrack__issue_observations') }} FINAL
+), bounded_snapshots AS (
+    -- known_at: the field's last event before the snapshot, or its previous snapshot.
+    SELECT s.*, r.resolved_at AS resolved_at, nullIf(e.event_at, toDateTime64(0, 3)) AS last_event_at,
+        multiIf(last_event_at IS NULL, s.previous_observed_at,
+                s.previous_observed_at IS NULL, last_event_at,
+                greatest(assumeNotNull(last_event_at), assumeNotNull(s.previous_observed_at))) AS known_at
+    FROM snapshots AS s
+    ASOF LEFT JOIN field_events AS e
+        ON e.insight_source_id = s.insight_source_id AND e.issue_id = s.issue_id
+        AND e.field_id = s.field_id AND s.observed_at >= e.event_at
+    LEFT JOIN resolutions AS r
+        ON r.insight_source_id = s.insight_source_id AND r.issue_id = s.issue_id AND r.observed_at = s.observed_at
 ), observations AS (
+    -- INVARIANT: dated by source facts, never by collection time, so a re-sync cannot move a close time.
     SELECT s.insight_source_id, s.issue_id, s.id_readable,
         concat('snapshot_diff:', s.issue_id, ':', toString(toUnixTimestamp64Milli(s.observed_at))) AS event_id,
-        s.observed_at AS event_at, 'snapshot_diff' AS event_kind,
+        multiIf(s.value_is_resolved = 1 AND s.resolved_at IS NOT NULL AND s.resolved_at <= s.observed_at
+                    AND (s.known_at IS NULL OR s.resolved_at > s.known_at), assumeNotNull(s.resolved_at),
+                s.known_at IS NULL, s.created_at,
+                assumeNotNull(s.known_at) + toIntervalMillisecond(1)) AS event_at,
+        'snapshot_diff' AS event_kind,
         toUInt32(row_number() OVER (PARTITION BY s.insight_source_id, s.issue_id, s.observed_at ORDER BY s.field_id)) AS _seq,
         CAST(NULL AS Nullable(String)) AS author_id, s.field_id, s.field_name,
         s.field_cardinality, s.pairs, s.observed_at AS collected_at, 'set' AS delta_action
-    FROM {{ ref('youtrack__issue_field_snapshot') }} AS s
-
+    FROM bounded_snapshots AS s
 ), retired AS (
     SELECT insight_source_id, issue_id, id_readable,
         concat('retired:', issue_id, ':', toString(toUnixTimestamp64Milli(observed_at))) AS event_id,
