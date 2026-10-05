@@ -42,6 +42,8 @@ class TableWideBoundary(unittest.TestCase):
             TABLE_WIDE,
             "WHERE _version > (select MAX( _version ) from {{this}})",
             "WHERE c._version > (SELECT max(_version)\n FROM {{ this }})",
+            "WHERE c._version > (SELECT max(t._version) FROM {{ this }} AS t)",
+            "WHERE c._version > (SELECT max(`t`.`_version`) FROM {{ this }} AS t)",
         ]
         for sql in cases:
             with self.subTest(sql=sql):

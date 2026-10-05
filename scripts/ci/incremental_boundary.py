@@ -35,7 +35,7 @@ SKIPPED_DIRS = ("dbt/macros", "dbt/tests", "dbt/target", "scripts")
 
 LINE_COMMENT = re.compile(r"--[^\n]*")
 JINJA_COMMENT = re.compile(r"\{#.*?#\}", re.DOTALL)
-TABLE_WIDE = re.compile(r"max\(\s*_version\s*\)\s+FROM\s+\{\{\s*this\s*\}\}", re.IGNORECASE)
+TABLE_WIDE = re.compile(r"max\(\s*(?:`?\w+`?\.)?`?_version`?\s*\)\s+FROM\s+\{\{\s*this\s*\}\}", re.IGNORECASE)
 WATERMARK_KEYS = re.compile(r"silver_incremental_watermark\(\s*\[([^\]]*)\]")
 QUOTED = re.compile(r"'([^']+)'|\"([^\"]+)\"")
 SCHEMA = re.compile(r"\bschema\s*=\s*'([^']+)'")

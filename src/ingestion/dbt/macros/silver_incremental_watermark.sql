@@ -23,8 +23,9 @@
 
   `source_keys` must separate every producer that stamps `_version` on its own
   clock — a key finer than that only re-reads rows, a coarser one loses them.
-  Keys are compared NULL-safely: a NULL key would otherwise never meet its own
-  watermark and be re-read on every run. `always_reread` is a predicate whose
+  Keys are compared NULL-safely, with NULL kept apart from '' — a NULL key would
+  otherwise never meet its own watermark, and folding it into '' would let one
+  group's boundary hide the other's rows. `always_reread` is a predicate whose
   rows pass regardless of the boundary, for a vendor the model reconciles whole.
 -#}
 {% macro silver_incremental_watermark(source_keys, alias='candidate', always_reread=none) %}
@@ -37,9 +38,15 @@ LEFT JOIN (
     GROUP BY
         {{ source_keys | join(',\n        ') }}
 ) AS watermarks
-    ON {% for key in source_keys %}{% if not loop.first %}   AND {% endif %}ifNull(toString({{ alias }}.{{ key }}), '') = ifNull(toString(watermarks.{{ key }}), '')
+    ON {% for key in source_keys %}{% if not loop.first %}   AND {% endif %}{{ silver_watermark_key_matches(alias ~ '.' ~ key, 'watermarks.' ~ key) }}
     {% endfor %}
 WHERE {% if always_reread %}({{ always_reread }})
    OR {% endif %}{{ alias }}._version > coalesce(watermarks.max_version, 0)
 {%- endif %}
 {% endmacro %}
+
+{#- Equal keys, NULL equal to NULL and to nothing else.
+    INVARIANT: both conjuncts are equalities across the two sides, so the join keeps hash keys. -#}
+{% macro silver_watermark_key_matches(left, right) -%}
+    (isNull({{ left }}) = isNull({{ right }}) AND ifNull(toString({{ left }}), '') = ifNull(toString({{ right }}), ''))
+{%- endmacro %}

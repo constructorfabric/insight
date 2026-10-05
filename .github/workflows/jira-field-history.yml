@@ -22,6 +22,7 @@ on:
       - src/ingestion/connectors/task-tracking/jira/dbt/**
       - src/ingestion/dbt/macros/jira/**
       - src/ingestion/dbt/macros/silver_incremental_watermark.sql
+      - src/ingestion/dbt/tests/assert_silver_watermark_key_matches_fixtures.sql
       - src/ingestion/silver/task-tracking/class_task_field_history.sql
       - src/ingestion/dbt/tests/jira/**
       - src/ingestion/dbt/dbt_project.yml
@@ -35,6 +36,7 @@ on:
       - src/ingestion/connectors/task-tracking/jira/dbt/**
       - src/ingestion/dbt/macros/jira/**
       - src/ingestion/dbt/macros/silver_incremental_watermark.sql
+      - src/ingestion/dbt/tests/assert_silver_watermark_key_matches_fixtures.sql
       - src/ingestion/silver/task-tracking/class_task_field_history.sql
       - src/ingestion/dbt/tests/jira/**
       - src/ingestion/dbt/dbt_project.yml
@@ -144,7 +146,8 @@ jobs:
             --select assert_jira_field_kind_fixtures \
                      assert_jira_field_value_fixtures \
                      assert_jira_field_delta_fixtures \
-                     assert_jira_field_delta_element_fixtures
+                     assert_jira_field_delta_element_fixtures \
+                     assert_silver_watermark_key_matches_fixtures
 
       - name: Transformation tests
         working-directory: src/ingestion/dbt/tests/jira/transform
