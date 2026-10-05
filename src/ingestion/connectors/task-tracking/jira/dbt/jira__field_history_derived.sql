@@ -364,7 +364,7 @@ entry_split_ends AS (
 
 ordered_events AS (
     SELECT
-        e.* REPLACE (if(c.collapsed = 1, (c.from_ids, c.from_displays, e.sides.3, e.sides.4), e.sides) AS sides)
+        e.* REPLACE (if(COALESCE(c.collapsed, 0) = 1, (c.from_ids, c.from_displays, e.sides.3, e.sides.4), e.sides) AS sides)
     FROM ranked_events AS e
     LEFT JOIN (
         SELECT
@@ -386,8 +386,10 @@ ordered_events AS (
        AND c.issue_id = e.issue_id
        AND c.field_id = e.field_id
        AND c.changelog_id = e.changelog_id
+    -- INVARIANT: COALESCE, not `c.collapsed = 0`: under join_use_nulls=1 an
+    -- unmatched event reads NULL there, and the bare comparison drops it.
     WHERE e.field_kind NOT IN {{ jira_element_wise_kinds() }}
-      AND (c.collapsed = 0 OR e.item_digest = c.kept_digest)
+      AND (COALESCE(c.collapsed, 0) = 0 OR e.item_digest = c.kept_digest)
 ),
 
 -- ── fields the catalogue does not contain ───────────────────────────────────
