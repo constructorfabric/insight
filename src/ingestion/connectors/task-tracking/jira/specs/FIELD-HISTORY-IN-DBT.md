@@ -805,6 +805,14 @@ A `cleared` row keeps the observation stamp. The row stands in for an event only
 until one exists: once the changelog reaches the value, the recomputed issue no
 longer disagrees and `delete+insert` removes it.
 
+A status with **no** recorded event disagrees with nothing: its one row is the
+`synthetic_initial` the snapshot seeds at creation, so a done status there would
+read as a closure on the day the issue was created. When that status is in the
+`done` category and the issue's `resolutiondate` is later than its creation, a
+`snapshot_diff` row carrying the same status is dated by the resolution, and
+the close lands there. The value at creation stays the snapshot's, since
+nothing records an earlier one.
+
 The round trip excludes `snapshot_diff`, since counting it would compare the
 snapshot with itself; the pair keeps failing there, which is what keeps the
 source condition visible.

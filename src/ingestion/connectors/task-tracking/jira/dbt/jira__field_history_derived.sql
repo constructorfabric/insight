@@ -409,6 +409,48 @@ snapshot_diff_pairs AS (
        AND m.issue_id = p.issue_id
        AND m.field_id = p.field_id
     WHERE m.last_event_at <= p.observed_at
+
+    UNION ALL
+
+    -- A done status with no status entry at all (§6.1). Its only row would be
+    -- the `synthetic_initial` the snapshot seeds, so the issue would read as
+    -- closed the moment it was created; the resolution dates the close instead.
+    SELECT
+        j.insight_source_id,
+        j.issue_id,
+        d.field_id,
+        d.value_ids,
+        d.value_displays,
+        assumeNotNull(j.resolved_at)
+    FROM issue_json AS j
+    INNER JOIN (
+        SELECT
+            s.insight_source_id,
+            s.issue_id,
+            s.field_id,
+            s.value_ids,
+            s.value_displays
+        FROM snapshot AS s
+        LEFT ANTI JOIN (
+            SELECT DISTINCT insight_source_id, issue_id
+            FROM live_events
+            WHERE field_id = 'status'
+        ) AS ev
+            ON ev.insight_source_id = s.insight_source_id
+           AND ev.issue_id = s.issue_id
+        WHERE s.field_id = 'status'
+          AND (s.insight_source_id, s.value_ids[1]) IN (
+                  SELECT insight_source_id, status_id
+                  FROM {{ ref('jira__task_statuses') }}
+                  WHERE status_category = 'done'
+              )
+    ) AS d
+        ON d.insight_source_id = j.insight_source_id
+       AND d.issue_id = j.issue_id
+    INNER JOIN issues AS i
+        ON i.insight_source_id = j.insight_source_id
+       AND i.issue_id = j.issue_id
+    WHERE ifNull(j.resolved_at > i.created_at, 0)
 ),
 
 -- ── the value of every modelled field at issue creation ─────────────────────
