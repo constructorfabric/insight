@@ -1,0 +1,23 @@
+# Mirrors the bronze_zendesk.support_agents DDL in scripts/connectors-ddl/zendesk.sql.
+schemas:
+  bronze_zendesk.support_agents:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      _airbyte_raw_id: { type: string }
+      _airbyte_extracted_at: { type: string, format: date-time }
+      _airbyte_meta: { type: string }
+      _airbyte_generation_id: { type: integer }
+      tenant_id: { type: [string, "null"] }
+      source_id: { type: [string, "null"] }
+      unique_key: { type: [string, "null"] }
+      collected_at: { type: [string, "null"] }
+      data_source: { type: [string, "null"] }
+      agent_id: { type: [string, "null"] }
+      email: { type: [string, "null"] }
+      display_name: { type: [string, "null"] }
+      role: { type: [string, "null"] }
+      group_id: { type: [string, "null"] }
+      group_name: { type: [string, "null"] }
+      is_active: { type: [integer, "null"] }

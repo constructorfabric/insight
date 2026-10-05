@@ -121,14 +121,21 @@ FROM merged
 -- rather than on bronze's newest extract keeps the window honest when dbt
 -- skips a few nightly runs. Every selected date is rebuilt from ALL of its
 -- contributions, so a partial row is impossible.
-WHERE date IN (
-    SELECT toDate(parseDateTimeBestEffortOrNull(created_at))
-    FROM {{ source('bronze_zendesk', 'support_ticket_events') }}
-    WHERE _airbyte_extracted_at > (SELECT max(collected_at) FROM {{ this }}) - INTERVAL 3 DAY
-    UNION DISTINCT
-    SELECT toDate(parseDateTimeBestEffortOrNull(created_at))
-    FROM {{ source('bronze_zendesk', 'zendesk_satisfaction_ratings') }}
-    WHERE _airbyte_extracted_at > (SELECT max(collected_at) FROM {{ this }}) - INTERVAL 3 DAY
+-- SAFETY: the count() guard is load-bearing. The target exists but is empty
+-- on every fresh install (the snapshot creates it as a placeholder before the
+-- first sync); max() over it is 1970-01-01, and DateTime minus an interval
+-- wraps past 2106, which would select no date and keep the table empty forever.
+WHERE (
+    (SELECT count() FROM {{ this }}) = 0
+    OR date IN (
+        SELECT toDate(parseDateTimeBestEffortOrNull(created_at))
+        FROM {{ source('bronze_zendesk', 'support_ticket_events') }}
+        WHERE _airbyte_extracted_at > (SELECT max(collected_at) FROM {{ this }}) - INTERVAL 3 DAY
+        UNION DISTINCT
+        SELECT toDate(parseDateTimeBestEffortOrNull(created_at))
+        FROM {{ source('bronze_zendesk', 'zendesk_satisfaction_ratings') }}
+        WHERE _airbyte_extracted_at > (SELECT max(collected_at) FROM {{ this }}) - INTERVAL 3 DAY
+    )
 )
 {% endif %}
 GROUP BY tenant_id, source_id, person_key, date
