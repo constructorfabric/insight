@@ -86,9 +86,9 @@ describe("MetricEvidenceTable", () => {
     renderTable();
     const header = screen.getAllByRole("row")[0]!;
 
-    expect(header.style.gridTemplateColumns.split(/\s+(?![^(]*\))/)).toHaveLength(
-      columns.length + 1
-    );
+    expect(
+      header.style.gridTemplateColumns.split(/\s+(?![^(]*\))/)
+    ).toHaveLength(columns.length + 1);
   });
 
   it("numbers the rows in the order they are drawn when asked to", () => {
@@ -125,12 +125,16 @@ describe("MetricEvidenceTable", () => {
     renderTable({
       columns: [
         { key: "ref", label: "Ref", type: "string" as const },
-        { key: "destination_branch", label: "Target branch", type: "string" as const },
+        {
+          key: "destination_branch",
+          label: "Target branch",
+          type: "string" as const,
+        },
       ],
       rows: [{ values: { ref: "42", destination_branch: "release/1.4" } }],
     });
     expect(
-      screen.getByRole("columnheader", { name: /Target branch/ }),
+      screen.getByRole("columnheader", { name: /Target branch/ })
     ).toBeInTheDocument();
     expect(screen.getByText("release/1.4")).toBeInTheDocument();
   });
@@ -384,6 +388,33 @@ describe("MetricEvidenceTable", () => {
     await waitFor(() =>
       expect(mocks.toastError).toHaveBeenCalledWith("Unable to copy ref")
     );
+  });
+
+  it("sizes the ref column to fit a twelve-character key beside its copy button", () => {
+    const issueKey = "ABCDE-123456";
+    const textSizeRem = 0.875;
+    const widestKeyGlyphEm = 0.66;
+    const cellPaddingRem = 1.5;
+    const copyButtonWithGapRem = 1.75;
+    const requiredRem =
+      issueKey.length * textSizeRem * widestKeyGlyphEm +
+      copyButtonWithGapRem +
+      cellPaddingRem;
+
+    renderTable({ rows: [{ values: { ref: issueKey } }] });
+
+    const header = screen.getAllByRole("row")[0]!;
+    const refTrack =
+      header.style.gridTemplateColumns.split(/\s+(?![^(]*\))/)[1] ?? "";
+    const [basis, grow] = /^minmax\(([\d.]+)rem, ([\d.]+)fr\)$/
+      .exec(refTrack)
+      ?.slice(1)
+      .map(Number) ?? [Number.NaN, Number.NaN];
+    expect(
+      basis,
+      `ref track ${refTrack} should fit ${requiredRem.toFixed(2)}rem`
+    ).toBeGreaterThanOrEqual(requiredRem);
+    expect(grow, "ref column should widen with the window").toBeGreaterThan(0);
   });
 
   it("loads the next page near the end and renders progress states", async () => {
