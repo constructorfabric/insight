@@ -228,6 +228,21 @@ def test_activity_cursor_paginates_and_preserves_polymorphic_values(http_mocker:
 
 
 @freezegun.freeze_time(_NOW)
+def test_a_cut_off_activities_page_fails_the_read_instead_of_ending_the_slice(http_mocker: HttpMocker) -> None:
+    config = YouTrackConfigBuilder().build()
+    first = load_fixture(__file__, "activity_page.json")
+    cut_off = json.dumps({**first, "hasAfter": True})[:-40]
+    http_mocker.get(
+        HttpRequest(f"{API_URL}/activitiesPage", query_params=ANY_QUERY_PARAMS),
+        [HttpResponse(body=json.dumps({**first, "hasAfter": True}), status_code=200), HttpResponse(body=cut_off, status_code=200)],
+    )
+
+    output = read_stream(_CONNECTOR, "youtrack_activities", config, expecting_exception=True)
+
+    assert output.errors
+
+
+@freezegun.freeze_time(_NOW)
 def test_issue_sprints_paginate_the_issue_membership_endpoint(http_mocker: HttpMocker) -> None:
     config = YouTrackConfigBuilder().with_field("youtrack_page_size", "1").build()
     issue = load_fixture(__file__, "issue.json")
