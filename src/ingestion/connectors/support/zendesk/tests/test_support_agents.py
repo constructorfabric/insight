@@ -21,6 +21,7 @@ across plan tiers, see the manifest comment).
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import freezegun
 from config import BASE_URL, NOW, ZendeskConfigBuilder
@@ -41,18 +42,22 @@ _ROLE_QS = "role%5B%5D=agent&role%5B%5D=admin"
 
 
 def _page_url(*, after: str | None = None) -> str:
-    url = f"{_URL}?{_ROLE_QS}&page%5Bsize%5D=100"
+    url = f"{_URL}?{_ROLE_QS}&page%5Bsize%5D=100&include_boundary_indicators=true"
     if after:
         url += f"&page%5Bafter%5D={after}"
     return url
 
 
-def _response(users: list[dict], *, after_cursor: str | None = None) -> HttpResponse:
-    meta = {"has_more": after_cursor is not None, "after_cursor": after_cursor or "end"}
+def _response(
+    users: list[dict[str, Any]], *, after_cursor: str | None = None, boundary_indicator: bool = True
+) -> HttpResponse:
+    meta: dict[str, object] = {"after_cursor": after_cursor or "end"}
+    if boundary_indicator:
+        meta["has_more"] = after_cursor is not None
     return HttpResponse(body=json.dumps({"users": users, "meta": meta}), status_code=200)
 
 
-def _agent(agent_id: int, email: str, **overrides) -> dict:
+def _agent(agent_id: int, email: str, **overrides: Any) -> dict[str, Any]:
     return load_fixture(__file__, "agent.json", id=agent_id, email=email, **overrides)
 
 
@@ -135,9 +140,28 @@ def test_pagination_multi_page(http_mocker: HttpMocker) -> None:
 
 
 @freezegun.freeze_time(NOW)
+def test_pagination_survives_an_absent_has_more(http_mocker: HttpMocker) -> None:
+    """has_more is included on request on this endpoint. A page that carries
+    after_cursor but no indicator must read as "more to come", not as the end:
+    only an explicit has_more=false (or an empty page) stops the read."""
+    config = ZendeskConfigBuilder().build()
+    http_mocker.get(
+        HttpRequest(_page_url()),
+        _response([_agent(3001, "sam.rivera@example.com")], after_cursor="cur-2", boundary_indicator=False),
+    )
+    http_mocker.get(HttpRequest(_page_url(after="cur-2")), _response([_agent(3002, "lee.chan@example.com")]))
+
+    output = read_stream(_CONNECTOR, _STREAM, config)
+
+    assert not output.errors
+    assert [r.record.data["agent_id"] for r in output.records] == ["3001", "3002"]
+
+
+@freezegun.freeze_time(NOW)
 def test_deactivated_agent_is_not_active(http_mocker: HttpMocker) -> None:
-    """A deactivated Zendesk user is active=false, suspended=false. Reading
-    `suspended` alone reported them active forever."""
+    """active=false (a deactivated user, should one still be listed) or
+    suspended=true must not read as active; reading `suspended` alone kept the
+    former active forever."""
     config = ZendeskConfigBuilder().build()
     http_mocker.get(
         HttpRequest(_URL, query_params=ANY_QUERY_PARAMS),

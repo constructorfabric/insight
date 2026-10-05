@@ -19,6 +19,7 @@ pagination_multi_page, substream_partition, incremental_state, transformations.
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import freezegun
 from config import BASE_URL, NOW, ZendeskConfigBuilder
@@ -54,11 +55,11 @@ def _parent_response(ticket_ids: list[int]) -> HttpResponse:
     return HttpResponse(body=json.dumps(body), status_code=200)
 
 
-def _audits_response(audits: list[dict], *, next_page: str | None = None) -> HttpResponse:
+def _audits_response(audits: list[dict[str, Any]], *, next_page: str | None = None) -> HttpResponse:
     return HttpResponse(body=json.dumps({"audits": audits, "next_page": next_page}), status_code=200)
 
 
-def _audit(audit_id: int, ticket_id: int, **overrides) -> dict:
+def _audit(audit_id: int, ticket_id: int, **overrides: Any) -> dict[str, Any]:
     return load_fixture(__file__, "audit.json", id=audit_id, ticket_id=ticket_id, **overrides)
 
 
@@ -224,6 +225,24 @@ def test_error_retry_on_429(http_mocker: HttpMocker) -> None:
 
     assert not output.errors
     assert len(output.records) == 1
+
+
+@freezegun.freeze_time(NOW)
+def test_audits_older_than_the_window_are_not_filtered(http_mocker: HttpMocker) -> None:
+    """The created_at cursor is formal: it injects no request option and must
+    drop nothing client-side. A ticket touched today carries audits from months
+    ago, and every one of them is the actor-attributed activity we are after."""
+    config = ZendeskConfigBuilder().build()
+    _mock_parent(http_mocker, [1001])
+    http_mocker.get(
+        HttpRequest(_audits_url(1001), query_params=ANY_QUERY_PARAMS),
+        _audits_response([_audit(9001, 1001, created_at="2026-03-01T10:00:00Z"), _audit(9002, 1001)]),
+    )
+
+    output = read_stream(_CONNECTOR, _STREAM, config)
+
+    assert not output.errors
+    assert sorted(r.record.data["audit_id"] for r in output.records) == ["9001", "9002"]
 
 
 @freezegun.freeze_time(NOW)

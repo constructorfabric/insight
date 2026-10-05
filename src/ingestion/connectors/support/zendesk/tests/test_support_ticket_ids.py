@@ -13,6 +13,7 @@ incremental_state, transformations.
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import freezegun
 from config import BASE_URL, NOW, START_EPOCH, ZendeskConfigBuilder
@@ -39,7 +40,7 @@ def _next_page_url(cursor: str) -> str:
     return f"{_URL}?cursor={cursor}&per_page=1000"
 
 
-def _response(tickets: list[dict], *, after_cursor: str = "cur-end", end: bool = True) -> HttpResponse:
+def _response(tickets: list[dict[str, Any]], *, after_cursor: str = "cur-end", end: bool = True) -> HttpResponse:
     body = {
         "tickets": tickets,
         "after_cursor": after_cursor,
@@ -49,7 +50,7 @@ def _response(tickets: list[dict], *, after_cursor: str = "cur-end", end: bool =
     return HttpResponse(body=json.dumps(body), status_code=200)
 
 
-def _ticket(ticket_id: int, updated_at: str) -> dict:
+def _ticket(ticket_id: int, updated_at: str) -> dict[str, Any]:
     return load_fixture(__file__, "ticket.json", id=ticket_id, updated_at=updated_at)
 
 

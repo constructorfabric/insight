@@ -85,19 +85,16 @@ INNER JOIN {{ ref('zendesk__support_agent') }} ag
        AND ag.insight_source_id = e.source_id
        AND ag.source_agent_id = e.author_id
 WHERE ag.person_key != ''
+  AND parseDateTimeBestEffortOrNull(e.created_at) IS NOT NULL
 {% if is_incremental() %}
-  -- SAFETY: the bronze reads below need no read-time dedup — a duplicate
-  -- row cannot change a max(), which is all they compute.
-  -- Watermark on the source EXTRACT time, not the business date. Audits are
+  -- Watermark on the source EXTRACT time, not the business date: audits are
   -- fanned out per ticket off the parent's updated_at cursor, so a ticket
-  -- created months ago and touched today yields audits with an OLD created_at.
-  -- A business-date boundary only ever rises, so those audits fall below it and
-  -- are stranded permanently — the same failure the slack and zoom models fixed.
-  AND (
-    (SELECT count() FROM {{ this }}) = 0
-    OR e._airbyte_extracted_at > (
-        SELECT max(_airbyte_extracted_at) - INTERVAL 3 DAY
-        FROM {{ source('bronze_zendesk', 'support_ticket_events') }}
-    )
-  )
+  -- created months ago and touched today yields audits with an OLD created_at,
+  -- and a business-date boundary that only rises would strand them. Anchored
+  -- on this model's last BUILD (collected_at = now() at build), not on
+  -- bronze's newest extract: a build at time T consumed every row extracted
+  -- before T, so the boundary holds whatever the sync/dbt cadence, where a
+  -- bronze anchor strands rows extracted more than 3 days before the newest
+  -- extract whenever dbt skipped a few nightly runs.
+  AND e._airbyte_extracted_at > (SELECT max(collected_at) FROM {{ this }}) - INTERVAL 3 DAY
 {% endif %}

@@ -18,8 +18,7 @@
 # use Zendesk cursor pagination (page[size] + page[after] + meta.after_cursor).
 # Mixing the two protocols — an offset-paginated request read with a
 # cursor-shaped paginator — yields an empty token and ends pagination after one
-# page, silently, which is how this manifest used to truncate at 1000 tickets
-# and 100 agents.
+# page, silently.
 #
 # Not yet implemented (schema locked in zendesk.md):
 #   5. zendesk_ticket_ext           — custom field key-value pairs
@@ -32,12 +31,14 @@ version: "7.0.4"
 type: DeclarativeSource
 
 definitions:
-  # Zendesk caps the incremental-export endpoints at 10 requests/minute,
-  # separately from the account-wide limit, and answers with Retry-After. The
-  # CDK default (exponential backoff, no header) can retry inside the reset
-  # window and burn all 5 attempts, so every stream shares this handler.
-  # 401/403 FAIL rather than retry: an expired token is not a transient error,
-  # and retrying it hides the cause behind retry exhaustion.
+  # Zendesk caps the incremental-export endpoints at 10 requests/minute — one
+  # budget shared by every /incremental/* call, so both ticket streams draw on
+  # it — separately from the account-wide limit, and answers 429 with
+  # Retry-After. The CDK default (exponential backoff, no header) can retry
+  # inside the reset window and burn all 5 attempts, so every stream shares
+  # this handler. 401/403 FAIL rather than retry: an expired token or a
+  # non-admin email is not a transient error, and retrying hides the cause
+  # behind retry exhaustion.
   base_error_handler: &base_error_handler
     type: DefaultErrorHandler
     backoff_strategies:
@@ -50,7 +51,7 @@ definitions:
       - type: HttpResponseFilter
         action: FAIL
         http_codes: [401, 403]
-        error_message: "Zendesk rejected the credentials (check zendesk_email, zendesk_api_token and that Token Access is enabled)."
+        error_message: "Zendesk rejected the request (check zendesk_email, zendesk_api_token, that Token Access is enabled, and that the email belongs to an administrator: the incremental ticket export and satisfaction ratings are admin-only)."
 
   base_requester: &base_requester
     type: HttpRequester
@@ -75,13 +76,17 @@ definitions:
       path: [data_source]
       value: insight_zendesk
 
-# `check` runs a CheckStream against support_agents: the CDK fetches the first
-# page of GET /api/v2/users?role[]=agent&role[]=admin and reports SUCCEEDED if
-# credentials are valid. (There is no dedicated /users/me stream to point at.)
+# `check` reads the first page of two streams: support_agents (any agent's
+# token can list users) and zendesk_satisfaction_ratings (admin-only, like the
+# ticket export), so a token paired with a non-admin email fails here instead
+# of three streams into the first sync. An account without CSAT answers 200
+# and an empty page, which still passes. (There is no dedicated /users/me
+# stream to point at.)
 check:
   type: CheckStream
   stream_names:
     - support_agents
+    - zendesk_satisfaction_ratings
 
 streams:
   # ── Stream 1: support_tickets ──────────────────────────────────────
@@ -379,6 +384,9 @@ streams:
           # the cursor paginator below would read an empty token and stop after
           # one page, truncating the roster at 100 agents.
           page[size]: "100"
+          # Zendesk lists meta.has_more as included on request for this
+          # endpoint; ask for it so the stop condition reads a real boundary.
+          include_boundary_indicators: "true"
       record_selector:
         type: RecordSelector
         extractor:
@@ -389,7 +397,10 @@ streams:
         pagination_strategy:
           type: CursorPagination
           cursor_value: "{{ response.get('meta', {}).get('after_cursor', '') }}"
-          stop_condition: "{{ response.get('meta', {}).get('has_more', False) == False }}"
+          # Stop on an explicit has_more=false, an empty page, or no cursor —
+          # never on a merely ABSENT has_more, which reads as "no more pages"
+          # and ends the read at one page.
+          stop_condition: "{{ response.get('meta', {}).get('has_more') == False or last_page_size == 0 or not response.get('meta', {}).get('after_cursor') }}"
         page_token_option:
           type: RequestOption
           field_name: "page[after]"
@@ -422,10 +433,12 @@ streams:
             path: [group_name]
             value: "{{ none }}"
           - type: AddedFieldDefinition
-            # A Zendesk user carries BOTH flags: a deactivated agent is
-            # active=false, suspended=false, so reading `suspended` alone keeps
-            # them flagged active forever (bronze is append-only, so the stale
-            # row never leaves dim_support_agent).
+            # A Zendesk user carries BOTH flags. Suspended agents are listed
+            # with suspended=true; deactivated ones (active=false) drop out of
+            # the listing altogether, so this flag can only ever report
+            # suspension — a deactivated agent's last bronze row keeps
+            # is_active=1 (bronze is append-only). Marking agents absent from
+            # the latest extract is a silver-side follow-up.
             # emit an integer (schema/Bronze DDL is Int64) — don't rely on the
             # destination coercing the string '0'/'1'.
             path: [is_active]
@@ -473,7 +486,7 @@ streams:
           # Cursor pagination, not offset: Zendesk caps offset paging at 10,000
           # records (page 100) and answers 400 beyond it, which would abort any
           # backfill wider than that. sort_by/sort_order are not parameters this
-          # endpoint accepts (it takes `sort`) and were silently ignored.
+          # endpoint accepts (it takes `sort`).
           page[size]: "100"
       record_selector:
         type: RecordSelector
@@ -485,14 +498,20 @@ streams:
         pagination_strategy:
           type: CursorPagination
           cursor_value: "{{ response.get('meta', {}).get('after_cursor', '') }}"
-          stop_condition: "{{ response.get('meta', {}).get('has_more', False) == False }}"
+          # Stop on an explicit has_more=false, an empty page, or no cursor —
+          # never on a merely ABSENT has_more, which reads as "no more pages"
+          # and ends the read at one page.
+          stop_condition: "{{ response.get('meta', {}).get('has_more') == False or last_page_size == 0 or not response.get('meta', {}).get('after_cursor') }}"
         page_token_option:
           type: RequestOption
           field_name: "page[after]"
           inject_into: request_parameter
     incremental_sync:
       type: DatetimeBasedCursor
-      cursor_field: updated_at
+      # created_at, not updated_at: the start_time this cursor injects bounds
+      # ratings by creation time, so the state must advance on the same axis.
+      # A rating edited after it left the P1D lookback is not re-fetched.
+      cursor_field: created_at
       cursor_datetime_formats:
         - "%Y-%m-%dT%H:%M:%SZ"
         - "%Y-%m-%dT%H:%M:%S.%fZ"
@@ -543,7 +562,8 @@ streams:
             # `| string` is load-bearing: reason_code is numeric and the CDK
             # literal-evals a bare rendered value, so without it an int lands
             # in a column the schema declares as a string.
-            value: "{% set v = record.get('reason') or record.get('reason_code') %}{{ v | string if v is not none else none }}"
+            # `or none` also turns reason_code 0 ("no reason") into NULL.
+            value: "{% set v = record.get('reason') or record.get('reason_code') or none %}{{ v | string if v is not none else none }}"
           - type: AddedFieldDefinition
             path: [unique_key]
             value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
@@ -599,22 +619,17 @@ streams:
         # deleted ticket fails the entire sync. 429/503 → RATE_LIMITED with
         # Retry-After backoff: this substream issues one request per ticket, so
         # it is the most rate-limit-prone stream.
+        # The shared handler first (429/503 retry on Retry-After, 401/403
+        # fail); the 404 rule is this stream's only addition.
         error_handler:
-          type: DefaultErrorHandler
-          backoff_strategies:
-            - type: WaitTimeFromHeader
-              header: Retry-After
-          response_filters:
-            - type: HttpResponseFilter
-              action: RATE_LIMITED
-              http_codes: [429, 503]
-            - type: HttpResponseFilter
-              action: FAIL
-              http_codes: [401, 403]
-              error_message: "Zendesk rejected the credentials (check zendesk_email, zendesk_api_token and that Token Access is enabled)."
-            - type: HttpResponseFilter
-              action: IGNORE
-              http_codes: [404]
+          type: CompositeErrorHandler
+          error_handlers:
+            - *base_error_handler
+            - type: DefaultErrorHandler
+              response_filters:
+                - type: HttpResponseFilter
+                  action: IGNORE
+                  http_codes: [404]
       record_selector:
         type: RecordSelector
         extractor:
@@ -645,7 +660,7 @@ streams:
     # Without it the CDK reports full_refresh only, reconcile assigns
     # full_refresh, no state survives the run, and every sync re-enumerates the
     # whole start_date window — one audits request per ticket in it, nightly,
-    # against an endpoint capped at 10 requests/minute. (Same idiom as zoom
+    # out of the account-wide rate budget. (Same idiom as zoom
     # meeting_participants and github issue_comments.)
     incremental_sync:
       type: DatetimeBasedCursor

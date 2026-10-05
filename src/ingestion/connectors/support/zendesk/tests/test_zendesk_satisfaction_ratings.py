@@ -13,6 +13,7 @@ incremental_state, transformations.
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import freezegun
 from config import BASE_URL, NOW, START_EPOCH, ZendeskConfigBuilder
@@ -31,21 +32,27 @@ _CONNECTOR = "support/zendesk"
 _URL = f"{BASE_URL}/satisfaction_ratings"
 
 
-def _params(*, start_time: str = START_EPOCH, after: str | None = None) -> dict:
+def _params(*, start_time: str = START_EPOCH, after: str | None = None) -> dict[str, Any]:
     params = {"page[size]": "100", "start_time": start_time}
     if after:
         params["page[after]"] = after
     return params
 
 
-def _response(ratings: list[dict], *, after_cursor: str | None = None) -> HttpResponse:
-    meta = {"has_more": after_cursor is not None, "after_cursor": after_cursor or "end"}
+def _response(
+    ratings: list[dict[str, Any]], *, after_cursor: str | None = None, boundary_indicator: bool = True
+) -> HttpResponse:
+    meta: dict[str, object] = {"after_cursor": after_cursor or "end"}
+    if boundary_indicator:
+        meta["has_more"] = after_cursor is not None
     body = {"satisfaction_ratings": ratings, "meta": meta}
     return HttpResponse(body=json.dumps(body), status_code=200)
 
 
-def _rating(rating_id: int, updated_at: str, **overrides) -> dict:
-    return load_fixture(__file__, "rating.json", id=rating_id, updated_at=updated_at, **overrides)
+def _rating(rating_id: int, created_at: str, **overrides: Any) -> dict[str, Any]:
+    return load_fixture(
+        __file__, "rating.json", id=rating_id, created_at=created_at, updated_at=created_at, **overrides
+    )
 
 
 @freezegun.freeze_time(NOW)
@@ -128,6 +135,25 @@ def test_pagination_multi_page(http_mocker: HttpMocker) -> None:
 
 
 @freezegun.freeze_time(NOW)
+def test_pagination_survives_an_absent_has_more(http_mocker: HttpMocker) -> None:
+    """Same contract as support_agents: a page carrying after_cursor but no
+    has_more is not the end of the read."""
+    config = ZendeskConfigBuilder().build()
+    http_mocker.get(
+        HttpRequest(_URL, query_params=_params()),
+        _response([_rating(7001, "2026-06-16T08:00:00Z")], after_cursor="cur-2", boundary_indicator=False),
+    )
+    http_mocker.get(
+        HttpRequest(_URL, query_params=_params(after="cur-2")), _response([_rating(7002, "2026-06-17T08:00:00Z")])
+    )
+
+    output = read_stream(_CONNECTOR, _STREAM, config)
+
+    assert not output.errors
+    assert len(output.records) == 2
+
+
+@freezegun.freeze_time(NOW)
 def test_error_retry_on_429(http_mocker: HttpMocker) -> None:
     """429 is retried, not fatal."""
     config = ZendeskConfigBuilder().build()
@@ -147,7 +173,7 @@ def test_error_retry_on_429(http_mocker: HttpMocker) -> None:
 
 @freezegun.freeze_time(NOW)
 def test_incremental_state_emitted_and_resume_filters(http_mocker: HttpMocker) -> None:
-    """State at the max observed updated_at; the resume read starts from the
+    """State at the max observed created_at; the resume read starts from the
     cursor minus the P1D lookback."""
     config = ZendeskConfigBuilder().build()
     http_mocker.get(HttpRequest(_URL, query_params=_params()), _response([_rating(7001, "2026-06-16T08:00:00Z")]))

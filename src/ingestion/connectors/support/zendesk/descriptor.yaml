@@ -48,19 +48,25 @@ name: zendesk
 #   shape and the RMT promotion step is gone (#2877). MINOR per ADR-0015:
 #   reconcile must republish this connector so the connection catalog is
 #   refreshed; nothing already stored changes meaning.
-# 2.0.0: pagination and grain corrections found by an audit of the manifest
-#   against the Zendesk API. The ticket streams read the TIME-based incremental
-#   export with a CURSOR-based paginator, so the token was always empty and the
-#   sync stopped after one page (1000 tickets) and advanced its cursor past the
-#   rest; support_agents mixed offset paging with a cursor paginator the same
-#   way (100 agents). Both now speak one protocol. support_ticket_events gains a
-#   formal cursor so the stream is stateful and incremental_dependency can
-#   actually persist parent state. Ids are emitted as real strings, satisfaction
-#   ratings move off offset paging (400 past 10k records), every stream inherits
-#   a Retry-After error handler, and zendesk__support_event keys on
-#   tenant+source (an id-only key deleted the other instance's rows) and
-#   materialises in `staging`. MAJOR: the bronze key set and the silver grain
-#   both change, so reconcile must dispatch a dbt --full-refresh.
+# 2.0.0: pagination and grain corrections. The ticket streams read the
+#   TIME-based incremental export with a CURSOR-shaped paginator, so the token
+#   was always empty and a sync stopped after one page (1000 tickets);
+#   support_agents mixed offset paging with a cursor stop condition the same
+#   way (100 agents); satisfaction ratings used offset paging (400 past 10k
+#   records). Every stream now speaks one protocol, and the list streams stop
+#   only on an explicit has_more=false, an empty page or a missing cursor.
+#   support_ticket_events gains a formal cursor so the stream is stateful and
+#   incremental_dependency can persist parent state; satisfaction ratings
+#   cursor on created_at, the axis their start_time filter bounds; `check`
+#   also reads the admin-only ratings endpoint; every stream shares a
+#   Retry-After error handler that fails fast on 401/403; is_active requires
+#   active and not suspended; a null tags/events/reason_code no longer fails a
+#   stream or changes a column's type. Bronze keys and columns are unchanged.
+#   Silver: zendesk__support_event moves to `staging` keyed on tenant+source
+#   (an id-only key let one instance delete another's rows), `updates` counts
+#   distinct audits, and both staging models watermark on their own last
+#   build. MAJOR: the silver grain and keys change, so reconcile dispatches a
+#   dbt --full-refresh; bronze needs nothing.
 # `nocode` = declarative-manifest connector (connector.yaml published to the
 # Airbyte builder), as opposed to `cdk` (a pre-built Python image registered
 # from images.cdk.image). MUST be `nocode`/absent for declarative connectors:

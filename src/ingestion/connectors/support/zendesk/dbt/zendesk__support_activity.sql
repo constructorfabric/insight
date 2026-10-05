@@ -77,6 +77,7 @@ csat AS (
            AND a.insight_source_id = r.source_id
            AND a.source_agent_id = r.assignee_id
     WHERE a.person_key != ''
+      AND parseDateTimeBestEffortOrNull(r.created_at) IS NOT NULL
     GROUP BY r.tenant_id, r.source_id, a.person_key, date
 ),
 merged AS (
@@ -111,28 +112,23 @@ SELECT
     toUnixTimestamp64Milli(now64()) AS _version
 FROM merged
 {% if is_incremental() %}
--- SAFETY: the bronze reads below need no read-time dedup — they compute a
--- max() and a set of dates tested with IN; duplicates change neither.
--- Recompute the person-dates touched by a recent EXTRACT, not the trailing
--- window of business dates: a late-arriving audit or rating carries an old
--- business date, and a boundary that only rises would strand it forever.
-WHERE (
-    (SELECT count() FROM {{ this }}) = 0
-    OR date IN (
-        SELECT toDate(parseDateTimeBestEffortOrNull(created_at))
-        FROM {{ source('bronze_zendesk', 'support_ticket_events') }}
-        WHERE _airbyte_extracted_at > (
-            SELECT max(_airbyte_extracted_at) - INTERVAL 3 DAY
-            FROM {{ source('bronze_zendesk', 'support_ticket_events') }}
-        )
-        UNION DISTINCT
-        SELECT toDate(parseDateTimeBestEffortOrNull(created_at))
-        FROM {{ source('bronze_zendesk', 'zendesk_satisfaction_ratings') }}
-        WHERE _airbyte_extracted_at > (
-            SELECT max(_airbyte_extracted_at) - INTERVAL 3 DAY
-            FROM {{ source('bronze_zendesk', 'zendesk_satisfaction_ratings') }}
-        )
-    )
+-- SAFETY: the bronze reads below need no read-time dedup — they only feed a
+-- set of dates tested with IN, and duplicates do not change the set.
+-- Recompute the person-dates touched by an extract since this model's last
+-- BUILD (collected_at = now() at build), not the trailing window of business
+-- dates: a late-arriving audit or rating carries an old business date, and a
+-- boundary that only rises would strand it forever. Anchoring on the build
+-- rather than on bronze's newest extract keeps the window honest when dbt
+-- skips a few nightly runs. Every selected date is rebuilt from ALL of its
+-- contributions, so a partial row is impossible.
+WHERE date IN (
+    SELECT toDate(parseDateTimeBestEffortOrNull(created_at))
+    FROM {{ source('bronze_zendesk', 'support_ticket_events') }}
+    WHERE _airbyte_extracted_at > (SELECT max(collected_at) FROM {{ this }}) - INTERVAL 3 DAY
+    UNION DISTINCT
+    SELECT toDate(parseDateTimeBestEffortOrNull(created_at))
+    FROM {{ source('bronze_zendesk', 'zendesk_satisfaction_ratings') }}
+    WHERE _airbyte_extracted_at > (SELECT max(collected_at) FROM {{ this }}) - INTERVAL 3 DAY
 )
 {% endif %}
 GROUP BY tenant_id, source_id, person_key, date
