@@ -179,11 +179,3 @@
     {%- endif -%}
 {% endmacro %}
 
-
-{#- The issue-scope predicate of an incremental run: every input read narrows
-    to the touched issues through this one expression. `touched_set` is the
-    scalar the model computes once; unpacking it here costs the size of the
-    set, not a scan. -#}
-{% macro jira_journal_issue_in_scope(source_expr, issue_expr) -%}
-({{ source_expr }}, {{ issue_expr }}) IN (SELECT arrayJoin(touched_set))
-{%- endmacro %}

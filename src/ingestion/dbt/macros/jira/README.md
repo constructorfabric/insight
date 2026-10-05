@@ -7,7 +7,7 @@ The SQL that turns Jira's field catalogue, issue JSON and changelog into the
 |---|---|
 | `jira_field_kind.sql` | which of the closed `field_kind` values a field is, from its catalogue row |
 | `jira_field_value.sql` | how a field's value in the issue JSON becomes `(value_ids, value_displays)` |
-| `jira_field_delta.sql` | how one changelog item becomes the state before and after that event |
+| `jira_field_delta.sql` | how one changelog item becomes the state before and after that event, and several items of one field in one entry become one event |
 | `jira_field_id_type.sql` | the contract's `value_id_type` and `field_cardinality` for a kind |
 | `jira_field_history_key.sql` | the journal's `unique_key`: the issue by its immutable id, the readable key only where no id exists |
 

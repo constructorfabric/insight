@@ -20,8 +20,14 @@
 
   Emits nothing on a full refresh or a first run, so the model reads its whole
   union. Re-reading a row is safe: silver is delete+insert on `unique_key`.
+
+  `source_keys` must separate every producer that stamps `_version` on its own
+  clock — a key finer than that only re-reads rows, a coarser one loses them.
+  Keys are compared NULL-safely: a NULL key would otherwise never meet its own
+  watermark and be re-read on every run. `always_reread` is a predicate whose
+  rows pass regardless of the boundary, for a vendor the model reconciles whole.
 -#}
-{% macro silver_incremental_watermark(source_keys, alias='candidate') %}
+{% macro silver_incremental_watermark(source_keys, alias='candidate', always_reread=none) %}
 {%- if is_incremental() %}
 LEFT JOIN (
     SELECT
@@ -31,8 +37,9 @@ LEFT JOIN (
     GROUP BY
         {{ source_keys | join(',\n        ') }}
 ) AS watermarks
-    ON {% for key in source_keys %}{% if not loop.first %}   AND {% endif %}{{ alias }}.{{ key }} = watermarks.{{ key }}
+    ON {% for key in source_keys %}{% if not loop.first %}   AND {% endif %}ifNull(toString({{ alias }}.{{ key }}), '') = ifNull(toString(watermarks.{{ key }}), '')
     {% endfor %}
-WHERE {{ alias }}._version > coalesce(watermarks.max_version, 0)
+WHERE {% if always_reread %}({{ always_reread }})
+   OR {% endif %}{{ alias }}._version > coalesce(watermarks.max_version, 0)
 {%- endif %}
 {% endmacro %}

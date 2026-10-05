@@ -236,6 +236,33 @@ def test_activity_issue_snapshot_backs_history_the_search_missed(case: Warehouse
     assert list(case.rows("SELECT id_readable FROM staging.youtrack__issues")) == [{'id_readable': 'EX-12'}]
 
 
+def test_search_snapshot_wins_a_tie_with_the_activity_stream(case: Warehouse) -> None:
+    case.issue([], id_readable='EX-SEARCH')
+    activity_issue(case, '2026-01-10T00:00:00', 'EX-ACTIVITY')
+    case.build()
+    assert list(case.rows("SELECT id_readable FROM staging.youtrack__issues")) == [{'id_readable': 'EX-SEARCH'}]
+
+
+def test_issue_observation_watermark_is_scoped_to_the_source(case: Warehouse) -> None:
+    case.issue([], observed='2026-01-12T00:00:00')
+    case.build()
+    # A second source whose sync ran earlier must not fall below the first one's watermark.
+    case.insert('youtrack_issues', {
+        'id': 'issue-1', 'idReadable': 'OT-1', 'created': 1767225600000,
+        'unique_key': TENANT + '-other-source-issue-1', 'source_id': 'other-source',
+        'project_id': 'project-1', 'custom_fields_json': '[]', 'issue_json': '{}',
+    }, '2026-01-11T00:00:00')
+    case.issue([], observed='2026-01-13T00:00:00')
+    case.build()
+    rows = case.rows("SELECT insight_source_id, toString(observed_at) AS observed_at FROM staging.youtrack__issue_observations FINAL"
+                     " ORDER BY insight_source_id, observed_at")
+    assert list(rows) == [
+        {'insight_source_id': 'other-source', 'observed_at': '2026-01-11 00:00:00.000'},
+        {'insight_source_id': SOURCE, 'observed_at': '2026-01-12 00:00:00.000'},
+        {'insight_source_id': SOURCE, 'observed_at': '2026-01-13 00:00:00.000'},
+    ]
+
+
 def test_single_value_field_is_replaced_not_merged(case: Warehouse) -> None:
     # The replaced text differs from the snapshot's by a trailing space; an
     # id-merge keeps both and the summary would hold two values.
