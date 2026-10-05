@@ -7,8 +7,7 @@ WITH observations AS (
             JSONExtractString(t, 'id'), JSONExtractString(t, 'idReadable')),
             JSONExtractArrayRaw(l, 'issues')), JSONExtractArrayRaw(payload, 'links'))) AS links
     FROM {{ ref('youtrack__issue_observations') }} FINAL
-    -- trimmedIssues is a preview that YouTrack fills alongside the full `issues`;
-    -- a set is trimmed only when the preview names more issues than the set holds.
+    -- WORKAROUND: YouTrack fills trimmedIssues as a preview beside the full `issues`; only a longer preview means a trimmed set.
     WHERE JSONHas(payload, 'links') AND NOT arrayExists(
         l -> length(JSONExtractArrayRaw(l, 'trimmedIssues')) > length(JSONExtractArrayRaw(l, 'issues')),
         JSONExtractArrayRaw(payload, 'links'))
