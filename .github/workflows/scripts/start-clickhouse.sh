@@ -11,11 +11,18 @@
 #     the read-only `presentation_ro` role (#1963/#1964). The official image
 #     disables it; both compose stacks and the bitnami prod admin have it.
 #
+# Plus what only a shared runner needs: a memory limit. ClickHouse sizes itself
+# from the RAM it can see, which for an unbounded container is the whole
+# machine, and several of these can be running on one. CLICKHOUSE_MEM_LIMIT
+# raises it for a lane that reports MEMORY_LIMIT_EXCEEDED; the config.d file
+# keeps the server's own cap under whatever that limit is.
+#
 # Called once per phase: the lane deliberately builds each phase on a virgin
 # cluster (see the workflow header).
 set -euo pipefail
 
 NAME="${1:?usage: start-clickhouse.sh <container-name>}"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 
 : "${CLICKHOUSE_SERVER_IMAGE:?CLICKHOUSE_SERVER_IMAGE must be set (from pins.env)}"
 : "${CLICKHOUSE_USER:?CLICKHOUSE_USER must be set}"
@@ -29,6 +36,8 @@ docker ps -q --filter "publish=8123" | xargs -r docker rm -f >/dev/null 2>&1 || 
 docker rm -f "${NAME}" >/dev/null 2>&1 || true
 
 docker run -d --name "${NAME}" -p 8123:8123 \
+  --memory "${CLICKHOUSE_MEM_LIMIT:-3g}" \
+  -v "${REPO_ROOT}/deploy/compose/clickhouse-memory.xml:/etc/clickhouse-server/config.d/memory.xml:ro" \
   -e CLICKHOUSE_USER \
   -e CLICKHOUSE_PASSWORD \
   -e "CLICKHOUSE_DB=${CLICKHOUSE_DATABASE}" \
@@ -40,7 +49,12 @@ for _ in $(seq 1 60); do
       -H "X-ClickHouse-User: ${CLICKHOUSE_USER}" \
       -H "X-ClickHouse-Key: ${CLICKHOUSE_PASSWORD}" \
       --data-binary 'SELECT 1' >/dev/null 2>&1; then
-    echo "${NAME}: ready"
+    echo -n "${NAME}: ready, memory budget "
+    curl -sS --fail-with-body "http://localhost:8123/" \
+      -H "X-ClickHouse-User: ${CLICKHOUSE_USER}" \
+      -H "X-ClickHouse-Key: ${CLICKHOUSE_PASSWORD}" \
+      --data-binary "SELECT formatReadableSize(toUInt64(value)) FROM system.server_settings WHERE name = 'max_server_memory_usage'" \
+      || echo "unknown"
     exit 0
   fi
   sleep 1
