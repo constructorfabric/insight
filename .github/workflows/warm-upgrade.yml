@@ -14,8 +14,9 @@ name: Warm upgrade
 #
 # The simulation runs the base commit's own deploy hook first (placeholders,
 # migrations, heals, base gold build — what an existing installation's last
-# deploy left behind), then this branch's apply-ch-migrations.sh end to end,
-# exactly like the Helm clickhouse-migrate hook.
+# deploy left behind), adds the bronze a connector would have synced into it,
+# then this branch's apply-ch-migrations.sh end to end, exactly like the Helm
+# clickhouse-migrate hook.
 #
 # Not a required check: on pull requests an `on: paths` filter scopes it to
 # the warehouse path, so an unrelated change gets no run at all.

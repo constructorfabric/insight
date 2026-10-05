@@ -3,7 +3,7 @@
    ---------------------------------------------------------------------------
    Project-level `on-run-start` hook. Iterates every silver target in
    the dbt graph and drops the placeholder created by
-   `scripts/create-bronze-placeholders.sh` when a two-factor
+   `scripts/create-warehouse-placeholders.sh` when a two-factor
    signature matches.
 
    Why on-run-start (not per-model pre-hook):
@@ -23,7 +23,7 @@
    Detection — two-factor signature, BOTH must hold:
 
      1. `system.tables.comment` matches the literal marker
-        `INSIGHT_PLACEHOLDER_v1` set by `create-bronze-placeholders.sh`
+        `INSIGHT_PLACEHOLDER_v1` set by `create-warehouse-placeholders.sh`
         on every silver placeholder it creates. dbt never attaches this
         comment to tables it creates, so a POPULATED table carrying the
         marker is still a placeholder. (Populated placeholders happen:
@@ -49,7 +49,7 @@
    phase (Variant A in ADR-0007), silver tables will only be created
    by dbt itself — placeholders disappear, this macro becomes dead
    code, and both this macro and the COMMENT clauses in
-   `create-bronze-placeholders.sh` can be deleted.
+   `create-warehouse-placeholders.sh` can be deleted.
    --------------------------------------------------------------------------- #}
 {%- macro drop_silver_placeholders_at_start() -%}
     {%- if execute -%}
