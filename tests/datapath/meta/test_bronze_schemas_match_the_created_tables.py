@@ -11,8 +11,10 @@ created from each connector's own catalogue. It used to be a committed DDL snaps
 that snapshot no longer carries bronze, because a file it carried would have been
 applied first and decided the shape before the destination ever ran.
 
-Two rules, and deliberately not a third:
+Three rules, and deliberately not a fourth:
 
+* a schema file naming a bronze table no connector creates is a stream that was
+  renamed or dropped; the six `config.*` fixtures have no connector and are skipped;
 * a column no bronze table has is always a mistake, so that is checked everywhere;
 * exact column parity is a RATCHET over `PARITY_TABLES` — those hold it today and
   must keep it. Most schemas are partial by choice and bringing them in is separate
@@ -35,6 +37,7 @@ from insight_datapath.instance import InstanceConfig
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCHEMA_DIR = REPO_ROOT / "tests/datapath/metrics/schemas"
 
+BRONZE_DATABASE_PREFIX = "bronze_"
 BRONZE_DATABASE_PATTERN = "bronze\\_%"
 
 #: Tables whose test schema mirrors the real table column for column. A table joins
@@ -83,8 +86,12 @@ def test_a_schema_declares_no_column_the_table_lacks(
     table: str, created: dict[str, set[str]]
 ) -> None:
     """A column outside the real table cannot be seeded and is a typo or a rename."""
-    if table not in created:
-        pytest.skip(f"{table} was not created by any connector")
+    if not table.startswith(BRONZE_DATABASE_PREFIX):
+        pytest.skip(f"{table} is not bronze; no connector creates it")
+    assert table in created, (
+        f"{table} has a schema file but no connector creates it — the stream was "
+        f"renamed or dropped, and every spec seeding it fails at insert time"
+    )
     unknown = sorted(DECLARED[table] - created[table])
     assert not unknown, f"{table}: declared but absent from the created table: {unknown}"
 
