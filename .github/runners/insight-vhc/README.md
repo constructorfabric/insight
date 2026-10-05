@@ -10,7 +10,8 @@ it changes whether those lanes pass, which is why it is versioned beside them.
 
 ## Which runs land here
 
-Every x64 `runs-on` in `.github/workflows` carries one rule:
+Every x64 `runs-on` in `.github/workflows` carries one rule, except the heavy
+jobs described under [The persistent class](#the-persistent-class):
 
 ```yaml
 runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
@@ -53,6 +54,37 @@ Left on hosted runners deliberately:
   embeds the namespace helm resolved, and a runner pod supplies its own, so the
   lane renders `arc-runners` where the test expects `default`. Pinning the
   namespace in the test is the fix.
+
+### The persistent class
+
+A job that starts ClickHouse, a database stack, a full compose stack or a k3d
+cluster needs a whole machine, and the scale set's shared node is too small to
+hold several of them at once. Those jobs take a rule of their own:
+
+```yaml
+runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","persistent"]') }}
+```
+
+| Event | Runner |
+|---|---|
+| any pull request, from a branch or a fork | `ubuntu-latest` |
+| `push`, `merge_group`, `schedule`, `workflow_dispatch`, `workflow_call` | `[self-hosted, persistent]` — one of these five machines, never the scale set |
+| any of the above with the kill switch on | `ubuntu-latest` |
+
+The `persistent` label is carried by these five machines only; the scale set
+must never register with it. Pull-request code stays off these machines, as
+above, and goes to a fresh hosted VM instead of the scale set.
+
+The jobs under this rule:
+
+- `e2e-bronze-to-api.yml`: `build-backend`, `e2e-datapath`
+- `e2e-stand.yml`: `stand-runner`
+- `functional-k3s.yml`: `cluster-smoke`
+- `jira-field-history.yml`: `transformations`
+- `connectors-ddl.yml`: `connectors-ddl`
+- `warm-upgrade.yml`: `warm-upgrade`
+- `ci.yml`: `rust`, only the matrix legs whose entry sets `live_db` or `live_ch`
+  in `scripts/ci/components.py`; the other legs keep the general rule.
 
 ## The kill switch
 
