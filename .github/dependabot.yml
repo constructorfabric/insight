@@ -2,10 +2,11 @@
 # risk of a moving tag being repointed, but a digest never ages out on its own —
 # this file is the other half of that trade.
 #
-# Scanner images are NOT covered: they are invoked as `docker run <image>@sha256:…`
-# inside workflow shell steps rather than as `FROM` lines, which the docker
-# ecosystem cannot see. They are refreshed by hand — see
-# the scanner-image refresh SOP.
+# Scanners are NOT covered. Trivy and TruffleHog are release tarballs pinned by
+# version and sha256 in .github/actions/install-scanners/action.yml, and Semgrep
+# by the hash lock .github/semgrep-requirements.txt, which no pip entry below
+# points at. Dependabot has no manager that reads a version/digest pair out of a
+# shell step, so all three are refreshed by hand.
 version: 2
 updates:
   - package-ecosystem: github-actions

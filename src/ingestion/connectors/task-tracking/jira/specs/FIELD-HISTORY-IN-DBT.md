@@ -776,11 +776,14 @@ events' final state and the snapshot disagree in one of two ways:
 
 | disagreement | condition | row |
 |---|---|---|
-| cleared | the snapshot holds nothing and the key is still present in the issue JSON | empty arrays; `remove` on a multi field, `set` otherwise |
+| cleared | the snapshot holds nothing — no row, or a row whose value normalizes to empty (a `duration` of `0`, §3.5) — and the key is still present in the issue JSON | empty arrays; `remove` on a multi field, `set` otherwise |
 | differs | the snapshot holds a value, and its ids **and** its displays both differ from the events' final state | the snapshot's value, `set` |
 
 Ids alone differing is an id space replaced by a migration (§3.4); displays
-alone differing is a rename. Neither changes the value, and treating either as
+alone differing is a rename. Both sides are compared as multisets after the
+same deduplication by id the journal rows get: two attachments sharing a
+filename are two values, so removing one of them is a change rather than a
+migration. Neither changes the value, and treating either as
 one would write an event for every issue that ever held a recreated option.
 `long_text` is excluded from `differs`: its two sides never share a content
 address (§8). A pair whose last event is newer than the issue row is skipped —

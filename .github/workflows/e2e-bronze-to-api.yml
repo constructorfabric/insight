@@ -63,6 +63,10 @@ env:
   CI: "true"
   # Same cache image and tag scheme build-images.yml writes; read-only here.
   BUILDCACHE: ghcr.io/constructorfabric/insight-buildcache
+  # The compose stand shares a runner with whatever else is on it, so its
+  # ClickHouse gets a share rather than the machine. Raise it here if a lane
+  # starts failing with MEMORY_LIMIT_EXCEEDED.
+  CLICKHOUSE_MEM_LIMIT: 3g
 
 permissions:
   contents: read

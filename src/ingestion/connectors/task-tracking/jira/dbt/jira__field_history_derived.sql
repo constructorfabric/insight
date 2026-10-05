@@ -731,8 +731,8 @@ newest_from_events AS (
             e.field_id                                     AS fid,
             (e.event_at, e.entry_rank, e.event_ord)         AS ord,
             length(e.sides.3) > 0                          AS holds,
-            {{ jira_value_set_digest('e.sides.3') }}       AS ids_d,
-            {{ jira_value_set_digest('e.sides.4') }}       AS displays_d
+            {{ jira_value_multiset_digest(jira_distinct_arrays_by_id('e.sides.3', 'e.sides.4', 'ids')) }}       AS ids_d,
+            {{ jira_value_multiset_digest(jira_distinct_arrays_by_id('e.sides.3', 'e.sides.4', 'displays')) }}  AS displays_d
         FROM ordered_events AS e
 
         UNION ALL
@@ -743,8 +743,8 @@ newest_from_events AS (
             a.field_id,
             (a.event_at, toUInt32(0), toUInt64(a.ops_seq)),
             length(a.state_pairs) > 0,
-            {{ jira_value_set_digest("arrayMap(x -> splitByChar('\\x1f', x)[1], a.state_pairs)") }},
-            {{ jira_value_set_digest("arrayMap(x -> splitByChar('\\x1f', x)[2], a.state_pairs)") }}
+            {{ jira_value_multiset_digest("arrayMap(x -> splitByChar('\\x1f', x)[1], a.state_pairs)") }},
+            {{ jira_value_multiset_digest("arrayMap(x -> splitByChar('\\x1f', x)[2], a.state_pairs)") }}
         FROM element_wise_state AS a
     )
     GROUP BY src, iss, fid
@@ -758,7 +758,8 @@ newest_from_events AS (
 -- row this feeds does not pretend otherwise: it records the state observed,
 -- not an event that happened.
 --
--- Two disagreements qualify. `cleared`: the snapshot holds nothing, so the key
+-- Two disagreements qualify. `cleared`: the snapshot holds nothing — no row, or
+-- a row whose value normalizes to empty (a `duration` of 0, §3.5) — so the key
 -- must still be present in the issue JSON — an ABSENT key belongs to
 -- `retired_pairs`, the field having left the issue's context. `differs`: the
 -- snapshot holds another value, and ids AND displays both disagree. Ids alone
@@ -772,7 +773,8 @@ snapshot_disagreements AS (
         n.insight_source_id                               AS insight_source_id,
         n.issue_id                                        AS issue_id,
         n.field_id                                        AS field_id,
-        if(ifNull(s.in_snapshot, 0) = 1, 'differs', 'cleared')  AS disagreement,
+        if(ifNull(s.in_snapshot, 0) = 1 AND length(s.value_ids) > 0,
+           'differs', 'cleared')                          AS disagreement,
         n.last_event_at                                   AS last_event_at,
         s.value_ids                                       AS snapshot_ids,
         s.value_displays                                  AS snapshot_displays
@@ -790,11 +792,11 @@ snapshot_disagreements AS (
         ON s.insight_source_id = n.insight_source_id
        AND s.issue_id = n.issue_id
        AND s.field_id = n.field_id
-    WHERE (ifNull(s.in_snapshot, 0) = 0 AND n.holds_value)
+    WHERE ((ifNull(s.in_snapshot, 0) = 0 OR length(s.value_ids) = 0) AND n.holds_value)
        OR (ifNull(s.in_snapshot, 0) = 1
            AND length(s.value_ids) > 0
-           AND {{ jira_value_set_digest('s.value_ids') }} != n.ids_digest
-           AND {{ jira_value_set_digest('s.value_displays') }} != n.displays_digest)
+           AND {{ jira_value_multiset_digest(jira_distinct_arrays_by_id('s.value_ids', 's.value_displays', 'ids')) }} != n.ids_digest
+           AND {{ jira_value_multiset_digest(jira_distinct_arrays_by_id('s.value_ids', 's.value_displays', 'displays')) }} != n.displays_digest)
 ),
 
 -- Every key the issue JSON carries, one row each, streamed out of the JSON
@@ -814,9 +816,10 @@ present_keys AS (
     ARRAY JOIN JSONExtractKeys(j.custom_fields_json) AS k
 ),
 
--- A `differs` pair whose events are newer than the issue row is excluded: the
--- issue stream and its changelog substream are read at different moments of one
--- sync, and a snapshot that has not caught up is not a disagreement (§7).
+-- A pair whose events are newer than the issue row is excluded, `cleared` as
+-- much as `differs`: the issue stream and its changelog substream are read at
+-- different moments of one sync, and a snapshot that has not caught up is not a
+-- disagreement (§7).
 --
 -- The date of a `differs` row must be stable across syncs, or a closure it
 -- records slides forward every time the issue is recomputed. A status the issue
@@ -849,8 +852,7 @@ snapshot_diff_pairs AS (
         ON m.insight_source_id = p.insight_source_id
        AND m.issue_id = p.issue_id
        AND m.field_id = p.field_id
-    WHERE m.disagreement = 'cleared'
-       OR m.last_event_at <= p.observed_at
+    WHERE m.last_event_at <= p.observed_at
 ),
 
 -- ── the value of every modelled field at issue creation ─────────────────────
