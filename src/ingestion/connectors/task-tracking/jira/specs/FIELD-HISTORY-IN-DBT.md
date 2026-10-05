@@ -1007,14 +1007,18 @@ sync that re-delivers most of bronze put every issue in scope again, and one
 statement over all of them needs memory proportional to the whole history.
 
 A scope larger than `jira_journal_issues_per_batch` issues (a dbt var) is
-therefore split by a hash of `(insight_source_id, issue_id)`. Every
-issue-scoped read carries the same bucket predicate, so a batch reads only its
-own issues, and no batch needs another's rows: nothing in the derivation reads
-across issues (§7.2). The model's own statement derives batch 0; the post-hook
-(`jira_journal_derive_remaining_batches`) replays the compiled statement for
-every other batch and replaces those issues' rows the way the materialization
-replaced batch 0's. The batch count is decided once, when the model compiles,
-and travels in the statement text, so the replays cannot disagree with it.
+therefore split by a hash of `(insight_source_id, issue_id)`. The pre-hook
+(`jira_journal_prepare_scope`) writes the run's scope once, as a table, and
+each batch's issues are a stage of their own that every issue-scoped read
+filters by; a batch reads only its own issues, and no batch needs another's
+rows: nothing in the derivation reads across issues (§7.2). The model's own
+statement derives batch 0; the post-hook
+(`jira_journal_derive_remaining_batches`) writes the next batch's stages
+(§13.1), replays the statement, and replaces those issues' rows the way the
+materialization replaced batch 0's. The scope is fixed before batch 0 is
+written, because the touched set reads the journal and shrinks once it is, and
+the batch count follows from the scope table alone, so every hook reads the
+same count.
 
 The peak is the heaviest batch, not the average. One issue is one batch at
 least, so an issue whose own output is large — a list field with many elements
@@ -1264,6 +1268,26 @@ None of this bounds a statement whose scope is every issue: the join build
 sides and aggregation states still grow with the history, and the spill
 settings do not cap the joins. What bounds a rebuild is deriving it in batches
 of issues (§7.3).
+
+### 13.1 Planning: the stages
+
+ClickHouse expands a CTE afresh at every reference, and the analyzer resolves
+each copy on its own. The journal's arms reference the event chains between
+them dozens of times — `ranked_events` through `element_wise_items`, the entry
+collapse through `ordered_events`, the element-wise fold through
+`element_wise_state` — so one statement spent seconds in analysis whatever its
+batch held, and the legacy analyzer rejects it outright as an AST too large
+after alias expansion.
+
+Those relations are therefore stages: written once per batch into tables
+beside the journal (`jira__field_history_derived__<stage>`), in dependency
+order, and read back by every arm (`jira_journal_derive_stages`). The batch's
+issues and the modelled kinds are stages too, so every statement of one batch
+reads the same scope. The hooks own them; a run that dies leaves them behind,
+and the next run replaces them before reading.
+
+`EXPLAIN PLAN` measures the analysis alone. A relation the arms reference more
+than once that `EXPLAIN PLAN` finds costly belongs in a stage, not in a CTE.
 
 ## 14. Tests
 
