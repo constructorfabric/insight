@@ -77,9 +77,9 @@ env:
   CLICKHOUSE_MEM_LIMIT: 3g
 
 # Routing, stated once in .github/runners/insight-vhc/README.md: a pull request
-# from a branch of this repository takes the ephemeral ARC scale set, a fork's
-# takes a GitHub-hosted runner, everything else takes the shared self-hosted
-# pool, and INSIGHT_FORCE_GITHUB_HOSTED returns all of it to hosted.
+# takes a GitHub-hosted runner; otherwise stand-runner takes a whole
+# `persistent` machine and the rest the shared self-hosted pool.
+# INSIGHT_FORCE_GITHUB_HOSTED returns all of it to hosted.
 jobs:
   # Stages 2 (CI stand) and 3 (E2E stand) are meant to add a target to
   # `resolve-target` below rather than copy this file.
@@ -271,7 +271,7 @@ jobs:
       && needs.resolve-target.result == 'success'
       && needs.resolve-target.outputs.target == 'compose'
       && (needs.build-pr-images.result == 'success' || needs.build-pr-images.result == 'skipped')
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","persistent"]') }}
     outputs:
       api: ${{ steps.results.outputs.api }}
       ui: ${{ steps.results.outputs.ui }}
