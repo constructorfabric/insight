@@ -327,8 +327,11 @@ impl<'a> Deliverer<'a> {
 
     /// Sends the notification once and records what happened.
     ///
-    /// A destination that is no longer configured is a rejection: the
-    /// operator removed it, and no attempt can change that.
+    /// The attempt counted is the row's own, never below the job's: a job
+    /// that repair created anew starts counting again, the notification does
+    /// not, so the cap holds per notification. A destination that is no
+    /// longer configured is a rejection: the operator removed it, and no
+    /// attempt can change that.
     pub(crate) async fn deliver(
         &self,
         job: DeliveryJob,
@@ -349,11 +352,32 @@ impl<'a> Deliverer<'a> {
                 notification.destination
             ))),
         };
+        let attempt = attempt.max(notification.attempts.saturating_add(1));
         let outcome = attempted(sent, attempt, max_attempts);
 
-        match self.store.record_attempt(notification.id, &outcome).await? {
-            Some(_) => Ok(Delivered::Attempted(outcome)),
-            None => Ok(Delivered::Skipped),
+        let recorded = self.store.record_attempt(notification.id, &outcome).await?;
+        if recorded.is_none() {
+            landed_after_withdrawal(&notification, &outcome);
+            return Ok(Delivered::Skipped);
         }
+
+        Ok(Delivered::Attempted(outcome))
     }
+}
+
+/// The one outcome a row no longer pending cannot show: the message was
+/// confirmed while the notification was being withdrawn, so it exists at the
+/// destination and the row says cancelled. The receipt goes to the log, the
+/// only place left for it.
+fn landed_after_withdrawal(notification: &Notification, outcome: &Attempted) {
+    let Attempted::Sent(receipt) = outcome else {
+        return;
+    };
+
+    tracing::warn!(
+        notification_id = %notification.id,
+        rule_id = %notification.rule_id,
+        receipt = receipt.0,
+        "a notification was confirmed after it was withdrawn; the row does not carry its receipt"
+    );
 }

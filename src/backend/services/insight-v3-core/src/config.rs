@@ -27,6 +27,7 @@ const DEFAULT_DELIVERY_ATTEMPTS: u32 = 5;
 const DEFAULT_DELIVERY_BACKOFF_SECS: u64 = 30;
 const DEFAULT_DELIVERY_TIMEOUT_SECS: u64 = 10;
 const DEFAULT_DELIVERY_CONCURRENCY: usize = 4;
+const MAX_DESTINATION_NAME_CHARS: usize = 128;
 
 /// The MCP server's own listener, off unless a deployment asks for it.
 ///
@@ -167,7 +168,12 @@ fn is_https_url(value: &str) -> bool {
     let Ok(url) = url::Url::parse(value) else {
         return false;
     };
-    let loopback = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "::1"));
+    let loopback = match url.host() {
+        Some(url::Host::Domain(host)) => host == "localhost",
+        Some(url::Host::Ipv4(address)) => address.is_loopback(),
+        Some(url::Host::Ipv6(address)) => address.is_loopback(),
+        None => false,
+    };
 
     url.scheme() == "https" || (url.scheme() == "http" && loopback)
 }
@@ -198,6 +204,10 @@ pub(crate) struct AlertsConfig {
     pub(crate) enabled: bool,
     /// The Redis the check schedule and its workers coordinate through.
     pub(crate) redis_url: String,
+    /// Its password, when kept apart from the URL: joined to it
+    /// percent-encoded at start-up, so whoever assembles the environment never
+    /// encodes it by hand. Refused when the URL already carries credentials.
+    pub(crate) redis_password: Option<SecretString>,
     pub(crate) destinations: BTreeMap<String, DestinationConfig>,
     pub(crate) min_interval_secs: u32,
     pub(crate) max_interval_secs: u32,
@@ -224,6 +234,7 @@ impl Default for AlertsConfig {
         Self {
             enabled: false,
             redis_url: String::new(),
+            redis_password: None,
             destinations: BTreeMap::new(),
             min_interval_secs: crate::domain::alerts::rule::DEFAULT_MIN_INTERVAL_SECS,
             max_interval_secs: crate::domain::alerts::rule::DEFAULT_MAX_INTERVAL_SECS,
@@ -392,7 +403,8 @@ impl fmt::Debug for GearConfig {
     }
 }
 
-/// The alerts section without its Redis URL, which may carry a password.
+/// The alerts section with its Redis credentials redacted: the URL may carry
+/// a password, and the password is one.
 struct RedactedAlerts<'a>(&'a AlertsConfig);
 
 impl fmt::Debug for RedactedAlerts<'_> {
@@ -400,6 +412,7 @@ impl fmt::Debug for RedactedAlerts<'_> {
         f.debug_struct("AlertsConfig")
             .field("enabled", &self.0.enabled)
             .field("redis_url", &"<redacted>")
+            .field("redis_password", &"<redacted>")
             .field("destinations", &self.0.destinations)
             .field("min_interval_secs", &self.0.min_interval_secs)
             .field("max_interval_secs", &self.0.max_interval_secs)
@@ -410,6 +423,10 @@ impl fmt::Debug for RedactedAlerts<'_> {
                 "notifications_kept_per_rule",
                 &self.0.notifications_kept_per_rule,
             )
+            .field("delivery_attempts", &self.0.delivery_attempts)
+            .field("delivery_backoff_secs", &self.0.delivery_backoff_secs)
+            .field("delivery_timeout_secs", &self.0.delivery_timeout_secs)
+            .field("delivery_concurrency", &self.0.delivery_concurrency)
             .finish()
     }
 }
@@ -638,7 +655,7 @@ impl GearConfig {
             return Err(ConfigError::IncompleteQueryCredentials);
         }
         validate_mcp(&self.mcp)?;
-        validate_alerts(&self.alerts)?;
+        let alerts = validate_alerts(self.alerts)?;
 
         Ok(ValidatedConfig {
             clickhouse_url: self.clickhouse_url,
@@ -658,7 +675,7 @@ impl GearConfig {
             database_url: self.database_url,
             identity_url: self.identity_url,
             mcp: self.mcp,
-            alerts: self.alerts,
+            alerts,
         })
     }
 }
@@ -727,12 +744,16 @@ fn validate_mcp(mcp: &McpConfig) -> Result<(), ConfigError> {
     Ok(())
 }
 
-fn validate_alerts(alerts: &AlertsConfig) -> Result<(), ConfigError> {
+/// The section as the service runs with it: a password kept apart from the
+/// Redis URL has joined it, and a section that validates but cannot notify
+/// anyone has said so.
+fn validate_alerts(mut alerts: AlertsConfig) -> Result<AlertsConfig, ConfigError> {
     if !alerts.enabled {
-        return Ok(());
+        return Ok(alerts);
     }
 
     require_non_empty("alerts.redis_url", &alerts.redis_url)?;
+    alerts.redis_url = redis_url_with_password(&alerts.redis_url, alerts.redis_password.take())?;
     if alerts.min_interval_secs == 0 || alerts.min_interval_secs > alerts.max_interval_secs {
         return Err(ConfigError::AlertIntervals);
     }
@@ -755,17 +776,52 @@ fn validate_alerts(alerts: &AlertsConfig) -> Result<(), ConfigError> {
         }
         destination.check(name)?;
     }
+    if alerts.destinations.is_empty() {
+        tracing::warn!(
+            "alerts are enabled with no destinations: no rule can be created until alerts.destinations names one"
+        );
+    }
 
-    Ok(())
+    Ok(alerts)
+}
+
+/// The URL the schedule connects with. A password kept apart from it joins it
+/// percent-encoded, which the client decodes again, so no character of the
+/// password is read as URL syntax on the way.
+fn redis_url_with_password(
+    url: &str,
+    password: Option<SecretString>,
+) -> Result<String, ConfigError> {
+    let Some(password) = password.filter(|password| !password.expose_secret().is_empty()) else {
+        return Ok(url.to_owned());
+    };
+
+    let mut parsed = url::Url::parse(url).map_err(|_| ConfigError::AlertRedisUrl)?;
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(ConfigError::AlertRedisCredentialsTwice);
+    }
+    // WORKAROUND: `set_password` encodes every reserved byte but `%` (the
+    // WHATWG userinfo set keeps it), while the client decodes every `%XX`.
+    let escaped = password.expose_secret().replace('%', "%25");
+    parsed
+        .set_password(Some(&escaped))
+        .map_err(|()| ConfigError::AlertRedisUrl)?;
+
+    Ok(parsed.into())
 }
 
 /// A destination is named in rules and in a queue key, so it is a plain
-/// identifier.
+/// identifier. Lowercase, because every environment key is lowercased before
+/// this configuration is read, and a name written otherwise would be served
+/// under a spelling nobody configured.
 fn is_destination_name(name: &str) -> bool {
     !name.is_empty()
-        && name.chars().count() <= 128
+        && name.chars().count() <= MAX_DESTINATION_NAME_CHARS
         && name.chars().all(|character| {
-            character.is_ascii_alphanumeric() || character == '_' || character == '-'
+            character.is_ascii_lowercase()
+                || character.is_ascii_digit()
+                || character == '_'
+                || character == '-'
         })
 }
 
@@ -815,8 +871,18 @@ pub(crate) enum ConfigError {
     AlertIntervals,
     #[error("gears.insight-v3-core.config.alerts capacity settings must be positive")]
     AlertCapacity,
-    #[error("gears.insight-v3-core.config.alerts.destinations.{0} is not a plain name")]
+    #[error(
+        "gears.insight-v3-core.config.alerts.destinations.{0} must be a lowercase name of letters, digits, _ or -"
+    )]
     AlertDestinationName(String),
+    #[error(
+        "gears.insight-v3-core.config.alerts.redis_url must be a URL with a host to carry redis_password"
+    )]
+    AlertRedisUrl,
+    #[error(
+        "gears.insight-v3-core.config.alerts.redis_url already carries credentials; set them there or in redis_password, not both"
+    )]
+    AlertRedisCredentialsTwice,
     #[error(
         "gears.insight-v3-core.config.alerts.destinations.{name}.{field} is missing or not usable"
     )]

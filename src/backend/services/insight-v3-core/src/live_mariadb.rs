@@ -7,6 +7,10 @@ const URL_VAR: &str = "INTEGRATION_TESTS_MARIADB_URL";
 
 static MIGRATED: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
 
+/// Live tests that write shared tables take turns, so one test's rows never
+/// change what another counts or lists.
+pub(crate) static TURN: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 async fn connect(url: &str) -> sea_orm::DatabaseConnection {
     sea_orm::Database::connect(url)
         .await

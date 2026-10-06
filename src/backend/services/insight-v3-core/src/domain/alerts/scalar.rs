@@ -9,8 +9,11 @@ use serde::Serialize;
 use super::rule::Condition;
 use crate::domain::query::metric_query::RunResult;
 
-/// Integers this large and larger are no longer exact as `f64`, so comparing
-/// one with a float would be comparing a rounded value.
+/// Integers past this magnitude are no longer exact as `f64`, so comparing
+/// one with a float would be comparing a rounded value. The bound itself
+/// converts exactly. A JavaScript reader has the same limit one short of
+/// it: `JSON.parse` rounds any integer past ±(2^53 − 1), so that is where a
+/// JSON number stops and a digit string begins.
 const EXACT_FLOAT_BOUND: u128 = 1 << 53;
 
 /// A number a metric produced or a threshold names, kept as what it is: an
@@ -41,6 +44,20 @@ impl Number {
             .map(Self::Float)
     }
 
+    /// A number as a draft writes it: a JSON number, or the digit string
+    /// [`Number::to_json`] shows a wide integer as, so what a reader was
+    /// shown can be written back as it was. Any other string is refused.
+    pub(crate) fn parse_written(value: &serde_json::Value) -> Option<Self> {
+        match value {
+            serde_json::Value::String(text) => integer_literal(text).map(Self::Int),
+            serde_json::Value::Null
+            | serde_json::Value::Bool(_)
+            | serde_json::Value::Number(_)
+            | serde_json::Value::Array(_)
+            | serde_json::Value::Object(_) => Self::parse(value),
+        }
+    }
+
     /// How this compares with `other`, or nothing where the comparison would
     /// be between a rounded value and an exact one.
     pub(crate) fn compare(self, other: Self) -> Option<Ordering> {
@@ -52,13 +69,17 @@ impl Number {
         }
     }
 
-    /// The number as JSON carries it.
+    /// The number as JSON carries it: a JSON number while every reader,
+    /// JavaScript included, holds it exactly, and a digit string past that.
     pub(crate) fn to_json(self) -> serde_json::Value {
         match self {
-            Self::Int(int) => i64::try_from(int).map_or_else(
-                |_| serde_json::Value::String(int.to_string()),
-                serde_json::Value::from,
-            ),
+            Self::Int(int) => i64::try_from(int)
+                .ok()
+                .filter(|_| is_safe_integer(int))
+                .map_or_else(
+                    || serde_json::Value::String(int.to_string()),
+                    serde_json::Value::from,
+                ),
             Self::Float(float) => serde_json::Number::from_f64(float)
                 .map_or(serde_json::Value::Null, serde_json::Value::Number),
         }
@@ -87,13 +108,29 @@ impl Number {
 }
 
 fn as_exact_float(int: i128) -> Option<f64> {
-    if int.unsigned_abs() >= EXACT_FLOAT_BOUND {
+    if int.unsigned_abs() > EXACT_FLOAT_BOUND {
         return None;
     }
 
-    // SAFETY: bounded above by 2^53, so the conversion is exact.
+    // SAFETY: a magnitude of at most 2^53 converts exactly.
     #[expect(clippy::cast_precision_loss, reason = "guarded by EXACT_FLOAT_BOUND")]
     Some(int as f64)
+}
+
+/// Whether `JSON.parse` keeps the integer as it is: `Number.isSafeInteger`.
+fn is_safe_integer(int: i128) -> bool {
+    int.unsigned_abs() < EXACT_FLOAT_BOUND
+}
+
+/// An integer written as text and nothing else: an optional minus and
+/// digits, as [`Number::to_stored`] and [`Number::to_json`] write one.
+fn integer_literal(text: &str) -> Option<i128> {
+    let digits = text.strip_prefix('-').unwrap_or(text);
+    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+
+    text.parse().ok()
 }
 
 impl fmt::Display for Number {

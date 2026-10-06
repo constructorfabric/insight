@@ -1,13 +1,16 @@
 //! The alert tools: the same operations the API has, for a client that
-//! speaks MCP.
+//! speaks MCP. A write is logged with the subject the token names; the
+//! store records no author for it, since the server resolves no person.
 
+use axum::http::request::Parts;
 use rmcp::model::CallToolResult;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
 
+use super::auth::McpCaller;
 use super::tools::{CustomSurfaces, refuse};
-use crate::api::alerts::{notification_response, rule_response, summary_response};
+use crate::api::alerts::{notification_response, rule_response, shown, summary_response};
 use crate::domain::alerts::RuleDraft;
 use crate::domain::alerts::rules::{AlertRules, AlertsError};
 use crate::domain::definition::Page;
@@ -121,21 +124,40 @@ impl CustomSurfaces {
         }
     }
 
-    pub(crate) async fn alerts_create(&self, request: CreateAlertRequest) -> CallToolResult {
+    pub(crate) async fn alerts_create(
+        &self,
+        parts: &Parts,
+        request: CreateAlertRequest,
+    ) -> CallToolResult {
         let alerts = match self.alerts() {
             Ok(alerts) => alerts,
             Err(refusal) => return refusal,
         };
+        let caller = match caller(parts) {
+            Ok(caller) => caller,
+            Err(refusal) => return refusal,
+        };
 
         match alerts.create(&request.rule, None).await {
-            Ok(rule) => structured(&rule_response(&rule)),
+            Ok(rule) => {
+                tracing::info!(%caller, alert_id = %shown(rule.id), "alert created over MCP");
+                structured(&rule_response(&rule))
+            }
             Err(error) => alerts_error(&error),
         }
     }
 
-    pub(crate) async fn alerts_update(&self, request: UpdateAlertRequest) -> CallToolResult {
+    pub(crate) async fn alerts_update(
+        &self,
+        parts: &Parts,
+        request: UpdateAlertRequest,
+    ) -> CallToolResult {
         let alerts = match self.alerts() {
             Ok(alerts) => alerts,
+            Err(refusal) => return refusal,
+        };
+        let caller = match caller(parts) {
+            Ok(caller) => caller,
             Err(refusal) => return refusal,
         };
         let id = match parse_id(&request.id) {
@@ -144,17 +166,25 @@ impl CustomSurfaces {
         };
 
         match alerts.replace(id, &request.rule, None).await {
-            Ok(rule) => structured(&rule_response(&rule)),
+            Ok(rule) => {
+                tracing::info!(%caller, alert_id = %shown(rule.id), revision = rule.revision, "alert replaced over MCP");
+                structured(&rule_response(&rule))
+            }
             Err(error) => alerts_error(&error),
         }
     }
 
     pub(crate) async fn alerts_set_enabled(
         &self,
+        parts: &Parts,
         request: SetAlertEnabledRequest,
     ) -> CallToolResult {
         let alerts = match self.alerts() {
             Ok(alerts) => alerts,
+            Err(refusal) => return refusal,
+        };
+        let caller = match caller(parts) {
+            Ok(caller) => caller,
             Err(refusal) => return refusal,
         };
         let id = match parse_id(&request.id) {
@@ -166,14 +196,25 @@ impl CustomSurfaces {
             .set_enabled(id, request.expected_revision, request.enabled)
             .await
         {
-            Ok(rule) => structured(&rule_response(&rule)),
+            Ok(rule) => {
+                tracing::info!(%caller, alert_id = %shown(rule.id), enabled = rule.enabled, "alert enabled state set over MCP");
+                structured(&rule_response(&rule))
+            }
             Err(error) => alerts_error(&error),
         }
     }
 
-    pub(crate) async fn alerts_delete(&self, request: AlertIdRequest) -> CallToolResult {
+    pub(crate) async fn alerts_delete(
+        &self,
+        parts: &Parts,
+        request: AlertIdRequest,
+    ) -> CallToolResult {
         let alerts = match self.alerts() {
             Ok(alerts) => alerts,
+            Err(refusal) => return refusal,
+        };
+        let caller = match caller(parts) {
+            Ok(caller) => caller,
             Err(refusal) => return refusal,
         };
         let id = match parse_id(&request.id) {
@@ -182,7 +223,10 @@ impl CustomSurfaces {
         };
 
         match alerts.delete(id).await {
-            Ok(()) => CallToolResult::structured(json!({"deleted": request.id})),
+            Ok(()) => {
+                tracing::info!(%caller, alert_id = %shown(id), "alert deleted over MCP");
+                CallToolResult::structured(json!({"deleted": request.id}))
+            }
             Err(error) => alerts_error(&error),
         }
     }
@@ -238,6 +282,16 @@ impl CustomSurfaces {
 
         CallToolResult::structured(json!({ "destinations": destinations }))
     }
+}
+
+/// Who is writing, as the token names them. Every call reaches a tool
+/// authenticated, so a request without a caller is refused, not guessed at.
+fn caller(parts: &Parts) -> Result<&str, CallToolResult> {
+    parts
+        .extensions
+        .get::<McpCaller>()
+        .map(|McpCaller(subject)| subject.as_str())
+        .ok_or_else(|| refuse("only an administrator writes alerts"))
 }
 
 /// An id as a tool takes it. Anything else names no alert.

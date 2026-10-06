@@ -229,8 +229,12 @@
             "description": "`pending`, `cancelled`, `sent` or `failed`.",
             "type": "string"
           },
-          "threshold": {},
-          "value": {}
+          "threshold": {
+            "description": "A JSON number, or a digit string for an integer past ±(2^53 − 1)."
+          },
+          "value": {
+            "description": "A JSON number, or a digit string for an integer past ±(2^53 − 1)."
+          }
         },
         "required": [
           "id",
@@ -360,11 +364,14 @@
             "type": "string"
           },
           "enabled": {
-            "description": "Whether checks run. `true` by default.",
-            "type": "boolean"
+            "description": "Whether checks run. Left out, a new alert is enabled and a replaced\none keeps what it had.",
+            "type": [
+              "boolean",
+              "null"
+            ]
           },
           "expected_revision": {
-            "description": "The revision this write expects to replace. Required to change an\nalert that exists; not sent when creating one.",
+            "description": "The revision this write expects to replace. Required to change an\nalert that exists; refused when creating one.",
             "format": "int32",
             "minimum": 0,
             "type": [
@@ -398,7 +405,7 @@
             ]
           },
           "threshold": {
-            "description": "The number the value is compared with."
+            "description": "The number the value is compared with: a JSON number, or the digit\nstring a read shows an integer past ±(2^53 − 1) as."
           }
         },
         "required": [
@@ -459,7 +466,9 @@
           "state": {
             "$ref": "#/components/schemas/StateResponse"
           },
-          "threshold": {},
+          "threshold": {
+            "description": "A JSON number, or a digit string for an integer past ±(2^53 − 1),\nwhich a JavaScript reader would otherwise round. A draft takes the\nstring back as it is."
+          },
           "updated_at": {
             "type": "string"
           }
@@ -530,7 +539,9 @@
               "null"
             ]
           },
-          "last_value": {}
+          "last_value": {
+            "description": "A JSON number, or a digit string for an integer past ±(2^53 − 1)."
+          }
         },
         "type": "object"
       },

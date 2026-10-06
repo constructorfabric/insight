@@ -674,17 +674,26 @@ insightV3Core:
   mcp:
     port: 8087
     allowInsecurePrivateNetwork: false
-  # Metric alerts. Checks are scheduled through Redis, so Redis must
-  # persist (the umbrella-managed one does: AOF on a PVC). The pod
-  # assembles the URL from `alerts.redis.host`/`port` and the password
-  # read from `alerts.redis.passwordSecret`.
+  # Metric alerts. Checks are scheduled through Redis, so the Redis named
+  # here must persist (AOF or RDB on a volume): one run as a plain cache
+  # loses every scheduled check and queued notification on restart. This
+  # chart bundles no Redis; the system-layer release the gitops overlays
+  # deploy keeps its data on a PersistentVolumeClaim. A subchart sees none
+  # of `redis.host` above, so name the same host again here. The pod reads
+  # the password from `alerts.redis.passwordSecret` as its own setting and
+  # joins it to the URL itself, so it may hold any character.
   # Destinations are named and referenced by rules. Each names its provider
   # and carries what that provider needs. Discord: webhook_url. Telegram:
   # bot_token, chat_id. Zulip: site_url, bot_email, api_key, stream, topic.
+  # Names are lowercase (a-z, 0-9, _ and -): the service lowercases every
+  # environment key before it reads it, and the render refuses a name that
+  # would come out different.
   # Either list them under `destinations` (rendered into the config Secret
   # when credentials.autoGenerate is on), or seal a Secret carrying
   # APP__gears__insight_v3_core__config__alerts__destinations__<name>__<field>
-  # keys and name it in `existingSecret` (the gitops path).
+  # keys and name it in `existingSecret` (the gitops path). Listing them
+  # here with credentials.autoGenerate off and no `existingSecret` refuses
+  # to render rather than start the service with nowhere to notify.
   alerts:
     enabled: false
     redis:
@@ -692,6 +701,8 @@ insightV3Core:
       port: 6379
       passwordSecret: insight-db-creds
       passwordKey: redis-password
+    # Under credentials.autoGenerate=false this Secret is the only source of
+    # destinations: a `destinations` map listed beside it is not rendered.
     existingSecret: ""
     destinations: {}
     #  ops:

@@ -8,24 +8,43 @@ use async_trait::async_trait;
 use chrono::Utc;
 use uuid::Uuid;
 
+use super::attempt_columns;
 use crate::domain::alerts::delivery::Attempted;
 use crate::domain::alerts::rule::{
-    Accepted, AlertPage, AlertRule, AlertStore, AlertStoreError, AlertSummary, EvaluationState,
-    Notification, NotificationStatus, Recorded, Recording, Write,
+    Accepted, AlertPage, AlertRule, AlertStore, AlertStoreError, AlertSummary,
+    DEFAULT_NOTIFICATIONS_KEPT_PER_RULE, EvaluationState, Notification, NotificationStatus,
+    Recorded, Recording, Write,
 };
 use crate::domain::alerts::{Transition, last_valid_breached, transition};
 use crate::domain::definition::Page;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct MemoryAlerts {
     rules: Mutex<BTreeMap<Uuid, AlertRule>>,
     notifications: Mutex<Vec<Notification>>,
+    notifications_kept_per_rule: u64,
     failing: bool,
+}
+
+impl Default for MemoryAlerts {
+    fn default() -> Self {
+        Self::keeping(DEFAULT_NOTIFICATIONS_KEPT_PER_RULE)
+    }
 }
 
 impl MemoryAlerts {
     pub(crate) fn new() -> Self {
         Self::default()
+    }
+
+    /// A store that keeps this many settled notifications per rule.
+    pub(crate) fn keeping(notifications_kept_per_rule: u64) -> Self {
+        Self {
+            rules: Mutex::default(),
+            notifications: Mutex::default(),
+            notifications_kept_per_rule,
+            failing: false,
+        }
     }
 
     /// A store that refuses everything, for the cases about one that is down.
@@ -66,11 +85,34 @@ impl MemoryAlerts {
             }
         }
     }
+
+    /// Drops the rule's settled notifications past the newest kept count, as
+    /// the SQL store's trim does; one still owed stays.
+    fn trim(&self, rule_id: Uuid) {
+        let mut held = self.held();
+        let mut newest_first: Vec<(chrono::DateTime<Utc>, Uuid)> = held
+            .iter()
+            .filter(|notification| notification.rule_id == rule_id)
+            .map(|notification| (notification.created_at, notification.id))
+            .collect();
+        newest_first.sort_by(|left, right| right.cmp(left));
+
+        let kept: Vec<Uuid> = newest_first
+            .into_iter()
+            .take(usize::try_from(self.notifications_kept_per_rule).unwrap_or(usize::MAX))
+            .map(|(_, id)| id)
+            .collect();
+        held.retain(|notification| {
+            notification.rule_id != rule_id
+                || notification.status == NotificationStatus::Pending
+                || kept.contains(&notification.id)
+        });
+    }
 }
 
 #[async_trait]
 impl AlertStore for MemoryAlerts {
-    async fn create(&self, write: Write) -> Result<AlertRule, AlertStoreError> {
+    async fn create(&self, write: Write, max_rules: u64) -> Result<AlertRule, AlertStoreError> {
         self.check()?;
         let now = Utc::now();
         let rule = AlertRule {
@@ -83,7 +125,12 @@ impl AlertStore for MemoryAlerts {
             created_at: now,
             updated_at: now,
         };
-        self.rules().insert(rule.id, rule.clone());
+
+        let mut rules = self.rules();
+        if rules.len() as u64 >= max_rules {
+            return Err(AlertStoreError::TooMany(max_rules));
+        }
+        rules.insert(rule.id, rule.clone());
 
         Ok(rule)
     }
@@ -127,12 +174,13 @@ impl AlertStore for MemoryAlerts {
 
     async fn page(&self, needle: &str, page: Page) -> Result<AlertPage, AlertStoreError> {
         self.check()?;
+        let needle = needle.to_lowercase();
         let mut matching: Vec<AlertSummary> = self
             .rules()
             .values()
             .filter(|rule| {
-                rule.spec.name.as_str().contains(needle)
-                    || rule.spec.metric.as_str().contains(needle)
+                rule.spec.name.as_str().to_lowercase().contains(&needle)
+                    || rule.spec.metric.as_str().to_lowercase().contains(&needle)
             })
             .map(|rule| AlertSummary {
                 id: rule.id,
@@ -155,12 +203,6 @@ impl AlertStore for MemoryAlerts {
             .collect();
 
         Ok(AlertPage { alerts, total })
-    }
-
-    async fn count(&self) -> Result<u64, AlertStoreError> {
-        self.check()?;
-
-        Ok(self.rules().len() as u64)
     }
 
     async fn enabled(&self) -> Result<Vec<AlertRule>, AlertStoreError> {
@@ -263,6 +305,7 @@ impl AlertStore for MemoryAlerts {
         drop(rules);
         if let Some(notification) = &notification {
             self.held().push(notification.clone());
+            self.trim(rule.id);
         }
 
         Ok(Recorded::Accepted(Box::new(Accepted {
@@ -323,21 +366,11 @@ impl AlertStore for MemoryAlerts {
             return Ok(None);
         };
 
+        let columns = attempt_columns(attempted);
         current.attempts += 1;
-        match attempted {
-            Attempted::Sent(receipt) => {
-                current.status = NotificationStatus::Sent;
-                current.last_error = None;
-                current.provider_receipt = Some(receipt.0.clone());
-            }
-            Attempted::Retry(error) => {
-                current.last_error = Some(error.clone());
-            }
-            Attempted::Failed(error) => {
-                current.status = NotificationStatus::Failed;
-                current.last_error = Some(error.clone());
-            }
-        }
+        current.status = columns.status;
+        current.last_error = columns.last_error;
+        current.provider_receipt = columns.provider_receipt;
 
         Ok(Some(current.clone()))
     }

@@ -121,6 +121,9 @@ pub(crate) struct RuleResponse {
     metric: String,
     column: String,
     operator: String,
+    /// A JSON number, or a digit string for an integer past ±(2^53 − 1),
+    /// which a JavaScript reader would otherwise round. A draft takes the
+    /// string back as it is.
     threshold: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     range: Option<String>,
@@ -144,6 +147,7 @@ pub(crate) struct StateResponse {
     last_outcome: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     last_reason: Option<&'static str>,
+    /// A JSON number, or a digit string for an integer past ±(2^53 − 1).
     #[serde(skip_serializing_if = "Option::is_none")]
     last_value: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -159,7 +163,9 @@ pub(crate) struct NotificationResponse {
     metric: String,
     column: String,
     operator: String,
+    /// A JSON number, or a digit string for an integer past ±(2^53 − 1).
     threshold: serde_json::Value,
+    /// A JSON number, or a digit string for an integer past ±(2^53 − 1).
     value: serde_json::Value,
     evaluated_at: String,
     destination: String,
@@ -503,10 +509,9 @@ pub(crate) fn alerts_error(error: AlertsError) -> CanonicalError {
             let id = shown(id);
             AlertApiError::missing(&id, format!("alert {id} was not found"))
         }
-        AlertsError::RevisionRequired => AlertApiError::invalid_field(
-            "expected_revision",
-            "expected_revision is required to replace an alert".to_owned(),
-        ),
+        AlertsError::RevisionRequired | AlertsError::RevisionOnCreate => {
+            AlertApiError::invalid_field("expected_revision", error.to_string())
+        }
         AlertsError::Conflict {
             id,
             current,
@@ -524,7 +529,7 @@ pub(crate) fn alerts_error(error: AlertsError) -> CanonicalError {
             .create(),
         AlertsError::TooMany(limit) => AlertApiError::failed_precondition()
             .with_precondition_violation(
-                "name",
+                "alerts",
                 format!("this installation allows at most {limit} alerts"),
                 "limit",
             )
@@ -558,8 +563,9 @@ fn page_error(error: crate::domain::definition::PageError) -> CanonicalError {
 
 /// An id as a path carries it. Anything else is a missing alert, not a
 /// malformed request: the caller named something that does not exist.
-fn parse_id(raw: &str) -> Option<uuid::Uuid> {
-    uuid::Uuid::parse_str(raw).ok()
+fn parse_id(raw: &str) -> Result<uuid::Uuid, CanonicalError> {
+    uuid::Uuid::parse_str(raw)
+        .map_err(|_| AlertApiError::missing(raw, format!("alert {raw} was not found")))
 }
 
 async fn list_alerts(
@@ -612,17 +618,16 @@ async fn put_alert(
     let alerts = alerts(&state)?;
     let Json(body) = body.map_err(|error| AlertApiError::unreadable_body(&error))?;
 
-    let Some(id) = parse_id(&id) else {
-        return Ok(StatusCode::NOT_FOUND.into_response());
-    };
+    let id = parse_id(&id)?;
     let draft: RuleDraft = serde_json::from_value(body)
         .map_err(|error| AlertApiError::invalid_field("body", error.to_string()))?;
 
-    match alerts.replace(id, &draft, Some(actor)).await {
-        Ok(rule) => Ok(Json(rule_response(&rule)).into_response()),
-        Err(AlertsError::NotFound(_)) => Ok(StatusCode::NOT_FOUND.into_response()),
-        Err(other) => Err(alerts_error(other)),
-    }
+    let rule = alerts
+        .replace(id, &draft, Some(actor))
+        .await
+        .map_err(alerts_error)?;
+
+    Ok(Json(rule_response(&rule)).into_response())
 }
 
 async fn get_alert(
@@ -633,15 +638,10 @@ async fn get_alert(
     crate::api::require_admin(&state, &headers, denied).await?;
     let alerts = alerts(&state)?;
 
-    let Some(id) = parse_id(&id) else {
-        return Ok(StatusCode::NOT_FOUND.into_response());
-    };
+    let id = parse_id(&id)?;
+    let rule = alerts.get(id).await.map_err(alerts_error)?;
 
-    match alerts.get(id).await {
-        Ok(rule) => Ok(Json(rule_response(&rule)).into_response()),
-        Err(AlertsError::NotFound(_)) => Ok(StatusCode::NOT_FOUND.into_response()),
-        Err(other) => Err(alerts_error(other)),
-    }
+    Ok(Json(rule_response(&rule)).into_response())
 }
 
 async fn delete_alert(
@@ -652,15 +652,10 @@ async fn delete_alert(
     crate::api::require_admin(&state, &headers, denied).await?;
     let alerts = alerts(&state)?;
 
-    let Some(id) = parse_id(&id) else {
-        return Ok(StatusCode::NOT_FOUND.into_response());
-    };
+    let id = parse_id(&id)?;
+    alerts.delete(id).await.map_err(alerts_error)?;
 
-    match alerts.delete(id).await {
-        Ok(()) => Ok(StatusCode::NO_CONTENT.into_response()),
-        Err(AlertsError::NotFound(_)) => Ok(StatusCode::NOT_FOUND.into_response()),
-        Err(other) => Err(alerts_error(other)),
-    }
+    Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 async fn enable_alert(
@@ -692,18 +687,13 @@ async fn set_enabled(
     let alerts = alerts(state)?;
     let Json(request) = body.map_err(|error| AlertApiError::unreadable_body(&error))?;
 
-    let Some(id) = parse_id(id) else {
-        return Ok(StatusCode::NOT_FOUND.into_response());
-    };
-
-    match alerts
+    let id = parse_id(id)?;
+    let rule = alerts
         .set_enabled(id, request.expected_revision, enabled)
         .await
-    {
-        Ok(rule) => Ok(Json(rule_response(&rule)).into_response()),
-        Err(AlertsError::NotFound(_)) => Ok(StatusCode::NOT_FOUND.into_response()),
-        Err(other) => Err(alerts_error(other)),
-    }
+        .map_err(alerts_error)?;
+
+    Ok(Json(rule_response(&rule)).into_response())
 }
 
 async fn list_notifications(
@@ -716,15 +706,9 @@ async fn list_notifications(
     let alerts = alerts(&state)?;
 
     let page = Page::parse(paged.limit, paged.offset).map_err(page_error)?;
-    let Some(id) = parse_id(&id) else {
-        return Ok(StatusCode::NOT_FOUND.into_response());
-    };
+    let id = parse_id(&id)?;
 
-    let listed = match alerts.notifications(id, page).await {
-        Ok(listed) => listed,
-        Err(AlertsError::NotFound(_)) => return Ok(StatusCode::NOT_FOUND.into_response()),
-        Err(other) => return Err(alerts_error(other)),
-    };
+    let listed = alerts.notifications(id, page).await.map_err(alerts_error)?;
     let notifications: Vec<NotificationResponse> =
         listed.iter().map(notification_response).collect();
 

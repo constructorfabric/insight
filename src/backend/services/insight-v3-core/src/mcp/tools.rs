@@ -699,31 +699,34 @@ impl CustomSurfaces {
     )]
     async fn create_alert(
         &self,
+        Extension(parts): Extension<Parts>,
         Parameters(request): Parameters<super::alerts::CreateAlertRequest>,
     ) -> CallToolResult {
-        self.alerts_create(request).await
+        self.alerts_create(&parts, request).await
     }
 
     #[tool(
         name = "update_alert",
-        description = "Replaces an alert's whole rule at the revision get_alert answered; a rule that has moved on is refused. Replacing resets what its checks found, so the next breach is notified again."
+        description = "Replaces an alert's whole rule at the revision get_alert answered; a rule that has moved on is refused. Replacing resets what its checks found, so the next breach is notified again. Leave `enabled` out to keep it as it is."
     )]
     async fn update_alert(
         &self,
+        Extension(parts): Extension<Parts>,
         Parameters(request): Parameters<super::alerts::UpdateAlertRequest>,
     ) -> CallToolResult {
-        self.alerts_update(request).await
+        self.alerts_update(&parts, request).await
     }
 
     #[tool(
         name = "set_alert_enabled",
-        description = "Turns an alert's checks on or off at the revision it is at. Turning it off withdraws the notifications it has not sent; either resets what its checks found."
+        description = "Turns an alert's checks on or off at the revision it is at. Turning it off withdraws the notifications it has not sent; either resets what its checks found. Turning on is refused while the alert's destination is no longer configured."
     )]
     async fn set_alert_enabled(
         &self,
+        Extension(parts): Extension<Parts>,
         Parameters(request): Parameters<super::alerts::SetAlertEnabledRequest>,
     ) -> CallToolResult {
-        self.alerts_set_enabled(request).await
+        self.alerts_set_enabled(&parts, request).await
     }
 
     #[tool(
@@ -732,9 +735,10 @@ impl CustomSurfaces {
     )]
     async fn delete_alert(
         &self,
+        Extension(parts): Extension<Parts>,
         Parameters(request): Parameters<super::alerts::AlertIdRequest>,
     ) -> CallToolResult {
-        self.alerts_delete(request).await
+        self.alerts_delete(&parts, request).await
     }
 
     #[tool(

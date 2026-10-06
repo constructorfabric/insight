@@ -63,10 +63,7 @@ async fn provider_at(
 }
 
 fn http() -> reqwest::Client {
-    reqwest::Client::builder()
-        .timeout(Duration::from_millis(300))
-        .build()
-        .unwrap_or_else(|error| panic!("a client builds: {error}"))
+    client(Duration::from_millis(300)).unwrap_or_else(|error| panic!("a client builds: {error}"))
 }
 
 fn message() -> Message {
@@ -184,6 +181,45 @@ async fn an_answer_streamed_past_the_bound_is_given_up_on_as_unconfirmed() {
         matches!(&result, Err(SendError::Unconfirmed(reason)) if reason == "answer too large"),
         "{result:?}"
     );
+}
+
+#[tokio::test]
+async fn a_redirected_post_is_a_rejection_and_the_target_is_never_called() {
+    let moved_hits = Arc::new(AtomicUsize::new(0));
+    let counted = moved_hits.clone();
+    let router = Router::new()
+        .route(
+            "/webhook",
+            post(|| async { (StatusCode::FOUND, [("location", "/moved")]) }),
+        )
+        .route(
+            "/moved",
+            post(move || {
+                counted.fetch_add(1, Ordering::SeqCst);
+                async { axum::Json(json!({"id": "1"})) }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .unwrap_or_else(|error| panic!("the provider must bind: {error}"));
+    let url = format!(
+        "http://{}/webhook",
+        listener
+            .local_addr()
+            .unwrap_or_else(|error| panic!("the provider must have an address: {error}"))
+    );
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+    let discord = Discord::new(http(), SecretString::from(url));
+
+    let result = discord.send(&message()).await;
+
+    assert!(
+        matches!(&result, Err(SendError::Rejected(reason)) if reason.contains("302")),
+        "{result:?}"
+    );
+    assert_eq!(moved_hits.load(Ordering::SeqCst), 0, "nothing follows");
 }
 
 #[tokio::test]

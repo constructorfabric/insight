@@ -169,7 +169,8 @@ pub(crate) struct RuleDraft {
     pub(crate) column: String,
     /// One of `>`, `>=`, `<`, `<=`.
     pub(crate) operator: Operator,
-    /// The number the value is compared with.
+    /// The number the value is compared with: a JSON number, or the digit
+    /// string a read shows an integer past ±(2^53 − 1) as.
     pub(crate) threshold: serde_json::Value,
     /// The window the metric is run over, as `run_metric` takes it. Omit it
     /// to run the metric unbounded.
@@ -179,17 +180,14 @@ pub(crate) struct RuleDraft {
     pub(crate) interval_secs: u32,
     /// The configured destination the notification goes to.
     pub(crate) destination: String,
-    /// Whether checks run. `true` by default.
-    #[serde(default = "enabled_by_default")]
-    pub(crate) enabled: bool,
+    /// Whether checks run. Left out, a new alert is enabled and a replaced
+    /// one keeps what it had.
+    #[serde(default)]
+    pub(crate) enabled: Option<bool>,
     /// The revision this write expects to replace. Required to change an
-    /// alert that exists; not sent when creating one.
+    /// alert that exists; refused when creating one.
     #[serde(default)]
     pub(crate) expected_revision: Option<u32>,
-}
-
-fn enabled_by_default() -> bool {
-    true
 }
 
 impl toolkit::api::api_dto::RequestApiDto for RuleDraft {}
@@ -226,7 +224,7 @@ impl RuleSpec {
             return Err(RuleError::Column);
         }
 
-        let threshold = Number::parse(&draft.threshold).ok_or(RuleError::Threshold)?;
+        let threshold = Number::parse_written(&draft.threshold).ok_or(RuleError::Threshold)?;
 
         if let Some(range) = draft.range.as_deref() {
             WindowRequest::parse(Some(range), Some(false)).map_err(RuleError::Range)?;
@@ -274,7 +272,7 @@ pub(crate) enum RuleError {
     Metric,
     #[error("column must be a result column name: letters, digits or underscore")]
     Column,
-    #[error("threshold must be a finite JSON number")]
+    #[error("threshold must be a finite JSON number, or an integer written as digits")]
     Threshold,
     #[error("range: {0}")]
     Range(WindowError),
@@ -425,8 +423,10 @@ pub(crate) struct AlertPage {
 
 #[async_trait]
 pub(crate) trait AlertStore: Send + Sync + fmt::Debug {
-    /// Creates a rule at revision 1 under a fresh id.
-    async fn create(&self, write: Write) -> Result<AlertRule, AlertStoreError>;
+    /// Creates a rule at revision 1 under a fresh id, unless the installation
+    /// already holds `max_rules`. The count and the insert are one serialised
+    /// step, so two creates at the bound cannot both land.
+    async fn create(&self, write: Write, max_rules: u64) -> Result<AlertRule, AlertStoreError>;
 
     /// Replaces the rule at the revision it is expected to be at, bumping it
     /// and forgetting what its checks found.
@@ -441,8 +441,6 @@ pub(crate) trait AlertStore: Send + Sync + fmt::Debug {
 
     /// Rules whose name or metric holds `needle`, by name.
     async fn page(&self, needle: &str, page: Page) -> Result<AlertPage, AlertStoreError>;
-
-    async fn count(&self) -> Result<u64, AlertStoreError>;
 
     /// Every rule whose checks should be scheduled.
     async fn enabled(&self) -> Result<Vec<AlertRule>, AlertStoreError>;
@@ -494,6 +492,8 @@ pub(crate) enum AlertStoreError {
         current: u32,
         expected: u32,
     },
+    #[error("this installation allows at most {0} alerts")]
+    TooMany(u64),
     #[error(transparent)]
     Database(#[from] sea_orm::DbErr),
     #[error("an alert row holds `{0}`, which this service never wrote")]
