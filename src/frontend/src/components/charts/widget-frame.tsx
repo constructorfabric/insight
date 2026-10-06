@@ -1,9 +1,4 @@
-import {
-  useState,
-  type KeyboardEvent,
-  type MouseEvent,
-  type ReactNode,
-} from "react";
+import { useState, type MouseEvent, type ReactNode } from "react";
 import { Maximize2, Minimize2, Table2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -95,7 +90,7 @@ export function WidgetFrame({
           {toggle}
         </div>
       </div>
-      <Body onActivate={activate} label={bodyLabel} tall={tall}>
+      <Body onActivate={activate} tall={tall}>
         {body}
       </Body>
     </>
@@ -166,12 +161,10 @@ function HeaderButton({
 
 function Body({
   onActivate,
-  label,
   tall,
   children,
 }: {
   onActivate?: () => void;
-  label?: string;
   tall: boolean;
   children: ReactNode;
 }) {
@@ -186,31 +179,13 @@ function Body({
 
   const onClick = (event: MouseEvent<HTMLElement>) => {
     const control = (event.target as Element).closest(CONTROLS);
-    if (control !== event.currentTarget) return;
+    if (control && event.currentTarget.contains(control)) return;
 
-    onActivate();
-  };
-
-  const onKeyDown = (event: KeyboardEvent) => {
-    if (event.target !== event.currentTarget) return;
-    if (event.key !== "Enter" && event.key !== " ") return;
-
-    event.preventDefault();
     onActivate();
   };
 
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      aria-label={label}
-      className={cn(
-        layout,
-        "cursor-pointer rounded-b-[12px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      )}
-      onClick={onClick}
-      onKeyDown={onKeyDown}
-    >
+    <div className={cn(layout, "cursor-pointer")} onClick={onClick}>
       {children}
     </div>
   );

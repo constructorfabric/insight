@@ -62,30 +62,49 @@ describe("<WidgetFrame>", () => {
     expect(retry).toHaveBeenCalledOnce();
   });
 
-  it.each(["Enter", " "])(
-    "opens its body with %j as well as a click",
-    (key) => {
-      const open = vi.fn();
-      render(
-        <WidgetFrame
-          title="Traffic"
-          state="ready"
-          onBodyActivate={open}
-          bodyLabel="Show the data"
-        >
-          <p>chart</p>
-        </WidgetFrame>
-      );
-      const body = screen.getByText("chart").closest("[role=button]")!;
+  it("opens what the body opens on a click anywhere in it", () => {
+    const open = vi.fn();
+    render(
+      <WidgetFrame
+        title="Traffic"
+        state="ready"
+        onBodyActivate={open}
+        bodyLabel="Show the data"
+      >
+        <p>chart</p>
+      </WidgetFrame>
+    );
 
-      fireEvent.keyDown(body, { key });
-      fireEvent.click(body);
+    fireEvent.click(screen.getByText("chart"));
 
-      expect(open).toHaveBeenCalledTimes(2);
-    }
-  );
+    expect(open).toHaveBeenCalledOnce();
+  });
 
-  it("leaves a click or a key on a control inside the body to that control", () => {
+  it("keeps the body's own semantics, leaving keyboard users the header button", () => {
+    render(
+      <WidgetFrame
+        title="Rows"
+        state="ready"
+        onBodyActivate={vi.fn()}
+        bodyLabel="Show the data"
+      >
+        <table>
+          <tbody>
+            <tr>
+              <td>cell</td>
+            </tr>
+          </tbody>
+        </table>
+      </WidgetFrame>
+    );
+
+    expect(screen.getByRole("cell", { name: "cell" })).toBeInTheDocument();
+    expect(
+      screen.getAllByRole("button", { name: "Show the data" })
+    ).toHaveLength(1);
+  });
+
+  it("leaves a click on a control inside the body to that control", () => {
     const open = vi.fn();
     const retry = vi.fn();
     render(
@@ -100,7 +119,6 @@ describe("<WidgetFrame>", () => {
     const control = screen.getByRole("button", { name: "Retry" });
 
     fireEvent.click(control);
-    fireEvent.keyDown(control, { key: "Enter" });
 
     expect(retry).toHaveBeenCalledOnce();
     expect(open).not.toHaveBeenCalled();
@@ -119,7 +137,7 @@ describe("<WidgetFrame>", () => {
       </WidgetFrame>
     );
 
-    fireEvent.click(headerButton(document.body, "Show the data"));
+    fireEvent.click(screen.getByRole("button", { name: "Show the data" }));
 
     expect(open).toHaveBeenCalledOnce();
   });
@@ -170,12 +188,6 @@ describe("<WidgetFrame>", () => {
     );
   });
 });
-
-function headerButton(scope: HTMLElement, name: string) {
-  return within(scope)
-    .getAllByRole("button", { name })
-    .find((button) => button.tagName === "BUTTON")!;
-}
 
 describe("<WidgetFrame> full screen", () => {
   function openFullScreen() {
@@ -234,9 +246,7 @@ describe("<WidgetFrame> full screen", () => {
     );
 
     const dialog = openFullScreen();
-    fireEvent.click(
-      within(dialog).getByText("chart").closest("[role=button]")!
-    );
+    fireEvent.click(within(dialog).getByText("chart"));
 
     expect(open).toHaveBeenCalledOnce();
     await waitFor(() =>
@@ -259,7 +269,9 @@ describe("<WidgetFrame> full screen", () => {
     );
 
     const dialog = openFullScreen();
-    fireEvent.click(headerButton(dialog, "Show the data"));
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Show the data" })
+    );
 
     expect(open).toHaveBeenCalledOnce();
     await waitFor(() =>
