@@ -18,23 +18,29 @@ import type { MetricResult } from "@/api/custom-types";
 
 export type Preview =
   | { kind: "value"; value: number; breached: boolean | undefined }
+  /** A whole number past what JSON parsing holds exactly: shown about, never judged. */
+  | { kind: "wide"; value: number }
   | { kind: "unknown"; reason: UnknownReason };
 
 /** A number as the check holds it: whole numbers exactly, fractions as floats. */
 type Exact = { whole: bigint } | { fraction: number };
 
 const WHOLE = /^-?\d+$/;
-const EXACT_FLOAT_BOUND = BigInt(Number.MAX_SAFE_INTEGER);
+/** The widest whole number a float still holds exactly: the service's own bound, 2^53. */
+const EXACT_FLOAT_BOUND = 2n ** 53n;
 
 function exactOf(number: AlertNumber): Exact | undefined {
   if (typeof number === "string") {
     return WHOLE.test(number) ? { whole: BigInt(number) } : undefined;
   }
   if (!Number.isFinite(number)) return undefined;
+  if (Number.isInteger(number)) {
+    // INVARIANT: a whole number past 2^53 was rounded on the way in, so its
+    // digits are not the service's; only a digit string carries those.
+    return Number.isSafeInteger(number) ? { whole: BigInt(number) } : undefined;
+  }
 
-  return Number.isInteger(number)
-    ? { whole: BigInt(number) }
-    : { fraction: number };
+  return { fraction: number };
 }
 
 /** Both sides as one kind, or nothing where a whole number is past what a float holds. */
@@ -90,6 +96,9 @@ export function previewCheck(
   }
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return { kind: "unknown", reason: "non_numeric" };
+  }
+  if (Number.isInteger(value) && !Number.isSafeInteger(value)) {
+    return { kind: "wide", value };
   }
   if (threshold === undefined) return { kind: "value", value, breached: undefined };
 

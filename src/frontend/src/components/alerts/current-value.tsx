@@ -74,6 +74,15 @@ export function CurrentValue({
     }
 
     const preview = previewCheck(run.data, column, operator, threshold);
+    if (preview.kind === "wide") {
+      return (
+        <p>
+          Current value: about{" "}
+          <span className="tabular-nums">{numberText(preview.value)}</span>
+          {" · too wide to compare here; the check compares it exactly"}
+        </p>
+      );
+    }
     if (preview.kind === "unknown") {
       return (
         <p className="text-destructive">
