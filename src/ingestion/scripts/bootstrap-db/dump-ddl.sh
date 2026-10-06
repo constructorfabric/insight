@@ -8,25 +8,20 @@ set -euo pipefail
 : "${CLICKHOUSE_PASSWORD:?CLICKHOUSE_PASSWORD must be set}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONNECTORS_DIR="$(cd "${SCRIPT_DIR}/../../connectors" && pwd)"
 DDL_DIR="${SCRIPT_DIR}/../connectors-ddl"
+
+# Reads merge(REGEXP('^bronze_')). The dump always runs against a warehouse that has
+# bronze, so the snapshot could only ever carry that form — and on a cluster that has
+# not synced, every read of it fails with CANNOT_EXTRACT_TABLE_STRUCTURE. The gold
+# model answers that case with a typed empty relation and the deploy builds tag:gold
+# on every run (src/ingestion/gold/bronze_insert_events.sql).
+EXCLUDED_RELATION="insight.bronze_insert_events"
 
 ch() {
   curl -sS --fail-with-body "${CLICKHOUSE_PROTOCOL}://${CLICKHOUSE_HOST}:${CLICKHOUSE_PORT}/" \
     -H "X-ClickHouse-User: ${CLICKHOUSE_USER}" \
     -H @<(printf 'X-ClickHouse-Key: %s' "${CLICKHOUSE_PASSWORD}") \
     --data-binary "$1"
-}
-
-connector_for_namespace() {
-  local namespace="$1" descriptor
-  for descriptor in "${CONNECTORS_DIR}"/*/*/descriptor.yaml; do
-    if [[ "$(yq -r '.connection.namespace' "${descriptor}")" == "${namespace}" ]]; then
-      yq -r '.name' "${descriptor}"
-      return
-    fi
-  done
-  echo "${namespace}"
 }
 
 dump_tables() {
@@ -55,6 +50,7 @@ dump_views() {
                ORDER BY name FORMAT TSVRaw")"
   while IFS= read -r view; do
     [[ -n "${view}" ]] || continue
+    [[ "${database}.${view}" == "${EXCLUDED_RELATION}" ]] && continue
     ch "SHOW CREATE TABLE \`${database}\`.\`${view}\` FORMAT TSVRaw" \
       | sed -e '1s/^CREATE VIEW /CREATE OR REPLACE VIEW /' \
             -e '1s/^CREATE MATERIALIZED VIEW /CREATE MATERIALIZED VIEW IF NOT EXISTS /' >> "${outfile}"
@@ -64,18 +60,6 @@ dump_views() {
 
 mkdir -p "${DDL_DIR}"
 rm -f "${DDL_DIR}"/*.sql
-
-# Capture first so a ch() failure aborts under `set -e` (see dump_tables).
-bronze_databases="$(ch "SELECT DISTINCT database FROM system.tables
-             WHERE database LIKE 'bronze\\_%' ORDER BY database FORMAT TSVRaw")"
-while IFS= read -r database; do
-  [[ -n "${database}" ]] || continue
-  connector="$(connector_for_namespace "${database}")"
-  outfile="${DDL_DIR}/${connector}.sql"
-  echo "dumping ${database} -> $(basename "${outfile}")"
-  printf 'CREATE DATABASE IF NOT EXISTS `%s`;\n\n' "${database}" > "${outfile}"
-  dump_tables "${database}" "${outfile}"
-done <<< "${bronze_databases}"
 
 # Dump one relation (table or view) with the right CREATE prefix.
 dump_relation() {
@@ -96,10 +80,10 @@ dump_relation() {
 
 # identity precedes silver/insight: gold reads identity_inputs and the
 # identity_persons mirror through resolve_person_id, so keeping them in the
-# snapshot lets create-bronze-placeholders.sh satisfy those on a fresh cluster
-# (#1763). Both are safe to pre-create empty — the resolver degrades to NULL
-# person_id. create-bronze-placeholders applies them in its first batch (before
-# silver at 900, insight at 950), resolving order via its retry loop.
+# snapshot lets create-warehouse-placeholders.sh satisfy those on a fresh
+# cluster (#1763). Both are safe to pre-create empty — the resolver degrades to
+# NULL person_id. The applicator applies identity and staging before silver and
+# insight, resolving order within a file via its retry loop.
 for database in identity silver insight; do
   outfile="${DDL_DIR}/${database}.sql"
   echo "dumping ${database} -> $(basename "${outfile}")"

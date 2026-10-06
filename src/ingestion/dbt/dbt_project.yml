@@ -138,7 +138,7 @@ on-run-start:
   # so builds don't fail before the first sync — see the macro's schema
   # contract with infra/identity_persons.rs.
   - "{{ create_identity_persons() }}"
-  # Drop the silver placeholders (created by create-bronze-placeholders.sh,
+  # Drop the silver placeholders (created by create-warehouse-placeholders.sh,
   # run from the clickhouse-migrate Hook Job) BEFORE any model
   # materialization starts. Two-factor detection (placeholder marker +
   # at least one staging model materialised for the matching

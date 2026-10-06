@@ -1,3 +1,14 @@
+{{ config(
+    tags=['connector_quality', 'youtrack'],
+    meta={
+        'title': 'A single-valued role holds at most one value per event',
+        'domain': 'task-tracking',
+        'category': 'integrity',
+        'tier': 'error',
+        'remediation': 'A field bound to a single-valued role carried several values. Check the field binding in roles.tsv and the field type history for that field.'
+    }
+) }}
+
 SELECT h.insight_source_id, h.issue_id, h.field_id, h.event_id
 FROM {{ ref('youtrack__task_field_history') }} AS h FINAL
 INNER JOIN {{ ref('task_field_roles_current') }} AS r

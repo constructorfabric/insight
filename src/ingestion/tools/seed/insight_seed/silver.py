@@ -6,10 +6,17 @@ the seed does not reimplement any DDL. It runs the exact two scripts the
 k8s clickhouse-migrate Hook Job runs, from the ingestion tree bind-mounted
 at /ingestion (docker-compose.yml `seed-sample.volumes`):
 
-1. `create-bronze-placeholders.sh` — applies the CI-generated DDL snapshot
-   from scripts/connectors-ddl/*.sql (CREATE DATABASE + every bronze/silver/
-   insight relation, all IF NOT EXISTS / OR REPLACE). This gives the
-   generators the real production schemas to write into.
+1. `create-warehouse-placeholders.sh` — applies the CI-generated DDL
+   snapshot from scripts/connectors-ddl/*.sql (CREATE DATABASE + every
+   identity/staging/silver/insight relation, all IF NOT EXISTS / OR REPLACE).
+   This gives the generators the real production schemas to write into.
+
+   Bronze is NOT in that snapshot: `destination-clickhouse` is its only
+   creator. Some generators write bronze (see RESET_TARGETS in
+   generators/insert.py), so `dev-compose.sh seed` runs those connectors
+   through the destination before this container starts — it cannot do that
+   itself, having no Docker. A missing table surfaces here as "has no
+   columns".
 
 2. Generate per-team activity rows via `generators/*.py` INTO those silver
    tables. Volumes scale by team profile + persona; per-day caps live in
@@ -21,7 +28,7 @@ at /ingestion (docker-compose.yml `seed-sample.volumes`):
    AFTER seeding so the materialized gold models are built over real seeded
    silver instead of empty placeholders.
 
-   Re-running create-bronze-placeholders.sh from inside this script is a
+   Re-running create-warehouse-placeholders.sh from inside this script is a
    no-op on the seeded tables (IF NOT EXISTS, no DROP/TRUNCATE), and the
    dbt on-run-start `drop_silver_placeholders_at_start` hook does NOT fire
    because `--select tag:gold` never materializes a staging model (the
@@ -80,7 +87,7 @@ def _ingestion_scripts_dir() -> Path:
 
 
 def _script_env() -> dict[str, str]:
-    """Env for the ingestion shell scripts (create-bronze-placeholders.sh,
+    """Env for the ingestion shell scripts (create-warehouse-placeholders.sh,
     apply-ch-migrations.sh) — CLICKHOUSE_URL/USER/PASSWORD/DATABASE per
     lib/ch-exec.sh + apply-ch-migrations.sh's own asserts."""
     target = config.parse_clickhouse(os.environ)
@@ -107,14 +114,14 @@ def _ch_client() -> clickhouse_connect.driver.client.Client:
     )
 
 
-def apply_create_bronze_placeholders() -> None:
-    """CREATE DATABASE + bronze/silver placeholder tables.
+def apply_create_warehouse_placeholders() -> None:
+    """CREATE DATABASE + identity/staging/silver/insight placeholder tables.
 
-    Runs the ingestion repo's create-bronze-placeholders.sh — the exact
+    Runs the ingestion repo's create-warehouse-placeholders.sh — the exact
     script the k8s clickhouse-migrate Hook Job runs — so placeholder DDL
     has a single source of truth and cannot drift.
     """
-    script = _ingestion_scripts_dir() / "create-bronze-placeholders.sh"
+    script = _ingestion_scripts_dir() / "create-warehouse-placeholders.sh"
     if not script.is_file():
         raise FileNotFoundError(
             f"placeholders script not found at {script}. In compose, the "
@@ -280,7 +287,7 @@ def run() -> None:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     # 1. Real deploy mechanism: create the placeholder tables.
-    apply_create_bronze_placeholders()
+    apply_create_warehouse_placeholders()
     # config.* tables are dbt-owned (on-run-start macro) but the generators
     # write config.field_value_map before dbt's first run on a fresh stand.
     ensure_task_config_tables()

@@ -30,10 +30,11 @@ nothing. `test_invariants.py` pays for the full pipeline selector once — that
 is what would catch a field-history model which works alone but breaks the
 chain.
 
-Bronze is created from [`scripts/connectors-ddl/jira.sql`](../../../../scripts/connectors-ddl/jira.sql),
-the snapshot the connectors-ddl gate keeps byte-identical to what the real
-connectors write — so the tables carry production's engines and types,
-including the ReplacingMergeTree shape the Airbyte destination creates.
+Bronze is created by the Airbyte destination from the Jira connector's own
+catalogue, through the same scripts `bootstrap-db.sh` uses — so the tables carry
+production's engines and types, including the ReplacingMergeTree shape, because
+they are what a first sync would leave. `docker`, mikefarah `yq` v4 and `jq`
+have to be on `PATH`; the connector is declarative, so nothing is built.
 
 ## Run it
 
@@ -57,9 +58,15 @@ python3.12 -m venv /tmp/jira-dbt-venv
 ```bash
 cd src/ingestion/dbt/tests/jira/transform
 CLICKHOUSE_HOST=127.0.0.1 CLICKHOUSE_HTTP_PORT=18124 \
+CLICKHOUSE_CONTAINER_HOST=host.docker.internal \
 CLICKHOUSE_USER=insight CLICKHOUSE_PASSWORD=insight \
 /tmp/jira-dbt-venv/bin/pytest -q
 ```
+
+`CLICKHOUSE_CONTAINER_HOST` is how the destination's container reaches the same
+server: a loopback address is the host's, not the container's. The value above is
+Docker Desktop's; on Linux use the bridge gateway
+(`docker network inspect bridge -f '{{ (index .IPAM.Config 0).Gateway }}'`).
 
 There are no connection defaults. A suite that falls back to localhost either
 tests nothing or writes into somebody's warehouse, and both look like a pass.

@@ -1,8 +1,8 @@
 """Writing generated rows into the warehouse.
 
 The generators hardcode their column lists; the schema they write into is built
-by `create-bronze-placeholders.sh` from the connectors-ddl snapshot and healed by
-the migrations. The two drift, so what a generator wrote is reconciled against
+by `create-warehouse-placeholders.sh` from the connectors-ddl snapshot and healed
+by the migrations. The two drift, so what a generator wrote is reconciled against
 what the target can hold before anything is sent — `plan_insert` decides that
 over values, `bulk_insert` is the shell that reads the shape and sends the rows.
 """

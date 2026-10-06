@@ -1,4 +1,4 @@
-{{ config(materialized='view', schema='staging', tags=['youtrack', 'staging']) }}
+{{ config(materialized='table', schema='staging', engine='MergeTree', order_by=['insight_source_id', 'issue_id', 'event_id'], tags=['youtrack', 'staging']) }}
 
 WITH groups AS (
     SELECT insight_source_id, issue_id, event_at,

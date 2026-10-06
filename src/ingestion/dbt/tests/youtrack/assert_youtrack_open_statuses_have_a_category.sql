@@ -1,4 +1,15 @@
-{{ config(severity='warn', tags=['youtrack']) }}
+{{ config(
+    severity='warn',
+    tags=['connector_quality', 'youtrack'],
+    meta={
+        'title': 'Open YouTrack statuses in use have a category',
+        'domain': 'task-tracking',
+        'category': 'configuration',
+        'tier': 'warn',
+        'remediation': 'An open status some issue sits in has no operator decision between `new` and `in_progress`. Decide it in the environment\'s clickhouse/field-value-map/task-values.tsv.'
+    }
+) }}
+
 -- An open status value that some issue sits in, with no operator decision
 -- between `new` and `in_progress`. `done` comes from YouTrack's own isResolved;
 -- the open split does not, and until it is decided the value is `undefined`,
