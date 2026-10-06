@@ -28,7 +28,7 @@ POOL_WORKSPACE = "/srv/gha/work/insight/insight"
 
 #: Where the real producers put a module, and what they call it there.
 PY_COMPONENT = "src/ingestion/scripts"
-PY_FILENAME = "reconcile_bronze_schema.py"
+PY_FILENAME = "load_field_value_map.py"
 RUST_COMPONENT = "src/backend"
 RUST_FILENAME = "services/analytics/src/lib.rs"
 JS_COMPONENT = "src/frontend"

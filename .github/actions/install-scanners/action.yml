@@ -22,8 +22,8 @@ runs:
         # INVARIANT: version and digest are one pin — bump both together, taking the
         # digest from the line for this asset in the release's own checksums.txt.
         # Dependabot cannot see these (see .github/dependabot.yml).
-        TRIVY_VERSION: 0.72.0
-        TRIVY_SHA256: bbb64b9695866ce4a7a8f5c9592002c5961cab378577fa3f8a040df362b9b2ea
+        TRIVY_VERSION: 0.75.0
+        TRIVY_SHA256: c6e65abddb348e25f10549df887045629cf28cc72453cd1c63acb717316b3f3f
         TRUFFLEHOG_VERSION: 3.96.0
         TRUFFLEHOG_SHA256: 7105f1cd6577f058a9e39d0578f1a99c8a1e481e4d3512cd8a09acfe22a0fdc0
         WANT_TRIVY: ${{ inputs.trivy }}

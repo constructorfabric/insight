@@ -298,7 +298,7 @@ else
   note "    does not create the analytics database and the operator's Database CR"
   note "    is cleanupPolicy: Skip)"
   note "   drop ClickHouse every database except system/INFORMATION_SCHEMA/default,"
-  note "   whatever it is currently named (the seed's create-bronze-placeholders.sh"
+  note "   whatever it is currently named (the seed's create-warehouse-placeholders.sh"
   note "   and the chart's migrate hook rebuild them)"
   note "   RISK: on a shared ClickHouse host this drops every non-system database"
   note "   ${CH_USER} can see, not just this stand's"

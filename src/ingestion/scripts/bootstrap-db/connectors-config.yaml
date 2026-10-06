@@ -232,6 +232,20 @@ connectors:
         value: fake
       insight_tenant_id:
         value: fake
+  allure:
+    path: quality/allure
+    config:
+      allure_api_token:
+        value: fake
+      allure_project_ids:
+        value:
+          - 1
+      allure_url:
+        value: https://allure.example.test
+      insight_source_id:
+        value: fake
+      insight_tenant_id:
+        value: fake
   zendesk:
     path: support/zendesk
     config:

@@ -1,0 +1,14 @@
+name: allure
+type: nocode
+version: "1.0.0"
+schedule: "0 4 * * *"
+workflow: sync
+dbt_select: "tag:allure+"
+
+connection:
+  namespace: "bronze_allure"
+
+secret:
+  required_fields:
+    - allure_url
+    - allure_api_token

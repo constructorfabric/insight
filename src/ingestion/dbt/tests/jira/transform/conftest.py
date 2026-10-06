@@ -7,10 +7,10 @@ tables the chain reads, builds it, and reads the journal back:
         -> dbt build --select tag:jira,tag:staging
         -> staging.jira__field_history_derived
 
-Nothing is stubbed. Bronze is created from `scripts/connectors-ddl/jira.sql` —
-the snapshot the connectors-ddl gate keeps byte-identical to what the real
-connectors produce — so the tables have production's engines and column types,
-including the ReplacingMergeTree shape the Airbyte destination creates.
+Nothing is stubbed. Bronze is created by the Airbyte destination from the Jira
+connector's own catalogue (`tests/bronze.py`), the one creator a deployment has,
+so the tables have production's engines and column types — including the
+ReplacingMergeTree shape — because they ARE what a first sync would leave.
 
 Deliberately independent of `tests/e2e`: that rig boots MariaDB, Keycloak stubs
 and the analytics binary to assert an HTTP response, none of which says anything
@@ -27,6 +27,7 @@ import functools
 import json
 import os
 import re
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,7 +41,12 @@ from helpers import SOURCE_ID
 # tests/jira/transform -> tests/jira -> tests -> dbt
 DBT_DIR = Path(__file__).resolve().parents[3]
 INGESTION_DIR = DBT_DIR.parent
-JIRA_BRONZE_DDL = INGESTION_DIR / "scripts" / "connectors-ddl" / "jira.sql"
+# This suite's rootdir is its own directory, so the shared helper beside the other
+# transform suites is not importable without saying where it is.
+sys.path.insert(0, str(DBT_DIR / "tests"))
+
+from bronze import create_bronze  # noqa: E402
+
 # The class tables gold reads. `test_title_role.py` seeds them directly, and
 # the union models that normally create them need every source's staging arm.
 SILVER_DDL = INGESTION_DIR / "scripts" / "connectors-ddl" / "silver.sql"
@@ -230,7 +236,7 @@ def warehouse() -> Warehouse:
         wh.execute("CREATE DATABASE IF NOT EXISTS silver")
         wh.execute("CREATE DATABASE IF NOT EXISTS config")
         wh.execute("CREATE DATABASE IF NOT EXISTS insight")
-        _apply_sql_file(wh, JIRA_BRONZE_DDL)
+        create_bronze("jira", port=wh.port, user=wh.user, password=wh.password, database="default")
         _apply_sql_file(wh, SILVER_DDL)
         # Parse here rather than inside whichever test runs first, so a broken
         # project reads as a setup error and costs one test no seconds.

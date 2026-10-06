@@ -1,7 +1,6 @@
 # Reusable JSON schema for the table (all real fields). Resolved by table name.
-# Mirrors the bronze_m365.onedrive_activity placeholder DDL in
-# src/ingestion/scripts/connectors-ddl/ (CI-generated DDL snapshot). NOTE: onedrive has NO
-# visitedPageCount column (sharepoint does).
+# Mirrors the bronze_m365.onedrive_activity table destination-clickhouse creates.
+# NOTE: onedrive has NO visitedPageCount column (sharepoint does).
 schemas:
   bronze_m365.onedrive_activity:
     $schema: http://json-schema.org/draft-07/schema#

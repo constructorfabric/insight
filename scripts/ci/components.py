@@ -220,16 +220,14 @@ COMPONENTS = [
         "cov_package": "source_claude_team_invoices",
         "paths": ["src/ingestion/connectors/ai/claude-team-invoices"],
     },
-    # Deploy-time ClickHouse schema tooling (the migration Job's Python half:
-    # reconcile_bronze_schema, which heals warm-cluster bronze drift — #1991).
-    # Owning the whole scripts/ tree means a connectors-ddl snapshot regen also
-    # re-runs these tests, which is the point: the reconciler's contract is with
-    # that snapshot. Shell scripts in the same tree have no measured lines.
+    # Deploy-time ClickHouse schema tooling (the migration Job's Python half).
+    # Owning the whole scripts/ tree means a change anywhere in it re-runs these
+    # tests. Shell scripts in the same tree have no measured lines.
     {
         "name": "ingestion-scripts",
         "lang": "python",
         "root": "src/ingestion/scripts",
-        "cov_package": "reconcile_bronze_schema",
+        "cov_package": "load_field_value_map",
         "paths": ["src/ingestion/scripts"],
     },
     # Mock-server test rig for NOCODE connectors (feature-connector-mock-tests),
@@ -279,6 +277,7 @@ COMPONENTS = [
             "src/ingestion/connectors/git/github-directory",
             "src/ingestion/connectors/collaboration/zoom",
             "src/ingestion/connectors/dev-portal/compass",
+            "src/ingestion/connectors/quality/allure",
         ],
     },
     # The sample-data seeder. Its pytest suite otherwise runs only inside the

@@ -1,5 +1,5 @@
-# Mirrors the bronze_github_directory.org_members DDL in
-# scripts/connectors-ddl/github-directory.sql.
+# Mirrors the bronze_github_directory.org_members table destination-clickhouse creates
+# from the connector's catalogue.
 schemas:
   bronze_github_directory.org_members:
     $schema: http://json-schema.org/draft-07/schema#

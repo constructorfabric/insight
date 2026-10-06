@@ -1,0 +1,13 @@
+{
+  "id": 7,
+  "name": "Example Project",
+  "abbr": "EXP",
+  "description": "Synthetic project",
+  "descriptionHtml": "<p>Synthetic project</p>",
+  "isPublic": false,
+  "favorite": false,
+  "createdBy": "test-user",
+  "createdDate": 1767225600000,
+  "lastModifiedBy": "test-user",
+  "lastModifiedDate": 1772323200000
+}

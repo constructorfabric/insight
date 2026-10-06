@@ -31,11 +31,10 @@
 # they are genuinely fractional.
 #
 # The leaderboard's counters keep `number`, and that is not an oversight. Its
-# tables exist wherever the connector has run, and reconcile_bronze_schema.py
-# only ADDs columns — a type differing from the snapshot is reported and left
-# alone, since MODIFY COLUMN rewrites data and is an operator's decision.
-# Redeclaring them would hand a fresh install Int64 and leave every existing one
-# on Decimal, with no deploy able to close the gap. They are read through
+# tables exist wherever the connector has run, and nothing retypes a bronze
+# column that already exists — MODIFY COLUMN rewrites data and is an operator's
+# decision. Redeclaring them would hand a fresh install Int64 and leave every
+# existing one on Decimal, with no deploy able to close the gap. They are read through
 # toUInt32OrNull(toString(...)) instead, which is exact here: toString of a
 # Decimal trims trailing zeros, so a whole reading converts to itself and a
 # fractional or negative one yields NULL.

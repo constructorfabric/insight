@@ -5,7 +5,8 @@ import {
   type DayButton,
   type Locale,
 } from "react-day-picker"
-import { type VariantProps } from "class-variance-authority"
+
+import type { VariantProps } from "class-variance-authority"
 
 import { cn } from "@/lib/utils"
 import { Button, buttonVariants } from "@/components/ui/button"

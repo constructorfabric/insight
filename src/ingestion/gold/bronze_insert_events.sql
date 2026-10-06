@@ -6,27 +6,26 @@
 ) }}
 
 {#-
-  merge(REGEXP(...)) resolves its STRUCTURE at CREATE time: with no matching
-  table, `CREATE VIEW` fails outright with CANNOT_EXTRACT_TABLE_STRUCTURE
-  ("there are no tables satisfied provided regexp") — a hard error, not an empty
-  relation.
+  merge(REGEXP(...)) has no structure to resolve when no table matches: a read
+  fails with CANNOT_EXTRACT_TABLE_STRUCTURE ("there are no tables satisfied
+  provided regexp") — a hard error, not an empty relation. Declaring the column
+  list makes the CREATE succeed and moves the failure to every SELECT, which is
+  worse, not better.
 
-  The ordinary paths do not hit this: apply-ch-migrations.sh runs
-  create-bronze-placeholders.sh (the committed connectors-ddl snapshot, every
-  bronze database and table) before it builds tag:gold, and the compose seed
-  runs that same script. This guard is for the paths that skip it — a bare
-  `dbt run --select tag:gold` against a cluster with no bronze, and the
-  bootstrap-db snapshot regeneration, where BOOTSTRAP_SKIP_SNAPSHOT=1 makes the
-  placeholder applicator a no-op.
-
-  There, emitting a correctly-typed empty relation keeps a tag:gold failure from
-  taking the rest of the gold build with it. `dbt run --select tag:gold` runs on
-  every deploy, so the real view replaces the stub on the next one — the same
-  cadence the bronze SELECT grants in provision-presentation-access.sh follow.
+  Nothing pre-creates bronze any more — the Airbyte destination creates it on a
+  connector's first sync — so a deploy onto a cluster that has never synced
+  reaches this model with zero bronze tables. Emitting a correctly-typed empty
+  relation keeps that from taking the rest of the gold build with it.
+  `dbt run --select tag:gold` runs on every deploy, so the real view replaces
+  the stub on the next one — the same cadence the bronze SELECT grants in
+  provision-presentation-access.sh follow. For the same reason the view is kept
+  out of the committed DDL snapshot (bootstrap-db/dump-ddl.sh): that snapshot is
+  dumped from a warehouse that has bronze, so it could only ever carry the
+  unguarded form.
 
   Counted over TABLES, not databases: merge() needs a matching table, and an
   empty bronze database would satisfy a database-level probe while still
-  failing the CREATE.
+  failing the read.
 -#}
 {%- set bronze_tables = 0 -%}
 {%- if execute -%}
