@@ -17,8 +17,6 @@ function DialogContent({ className, ...props }: DialogContentProps) {
   return <KitDialogContent className={cn("[&>*]:min-w-0", className)} {...props} />;
 }
 
-const DIALOG_FILL_WINDOW = "h-[96vh] w-[98vw] max-w-[98vw]";
-
 export {
   Dialog,
   DialogDescription,
@@ -27,4 +25,4 @@ export {
   DialogTitle,
   DialogTrigger,
 } from "@gears-frontx/ui-kit";
-export { DIALOG_FILL_WINDOW, DialogClose, DialogContent };
+export { DialogClose, DialogContent };

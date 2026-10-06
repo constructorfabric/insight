@@ -1,23 +1,25 @@
-import { useState, type KeyboardEvent, type ReactNode } from "react";
+import {
+  useState,
+  type KeyboardEvent,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 import { Maximize2, Minimize2, Table2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import {
-  DIALOG_FILL_WINDOW,
-  Dialog,
-  DialogContent,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { TEXT_HEADING } from "@/lib/type-scale";
+import { DIALOG_FILL_WINDOW } from "@/lib/dialog-size";
 import { cn } from "@/lib/utils";
 
 const STANDARD_HEIGHT = 304;
 const TALL_HEIGHT = 464;
 const SKELETON_BARS = [40, 65, 45, 80, 55, 90, 70];
 const HEADING = cn(TEXT_HEADING, "truncate leading-tight");
+const CONTROLS = "button, a, input, select, textarea, [role=button]";
 
 interface WidgetFrameProps {
   title: ReactNode;
@@ -182,7 +184,15 @@ function Body({
 
   if (!onActivate) return <div className={layout}>{children}</div>;
 
+  const onClick = (event: MouseEvent<HTMLElement>) => {
+    const control = (event.target as Element).closest(CONTROLS);
+    if (control !== event.currentTarget) return;
+
+    onActivate();
+  };
+
   const onKeyDown = (event: KeyboardEvent) => {
+    if (event.target !== event.currentTarget) return;
     if (event.key !== "Enter" && event.key !== " ") return;
 
     event.preventDefault();
@@ -198,7 +208,7 @@ function Body({
         layout,
         "cursor-pointer rounded-b-[12px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
       )}
-      onClick={onActivate}
+      onClick={onClick}
       onKeyDown={onKeyDown}
     >
       {children}

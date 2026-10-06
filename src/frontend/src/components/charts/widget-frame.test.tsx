@@ -85,6 +85,27 @@ describe("<WidgetFrame>", () => {
     }
   );
 
+  it("leaves a click or a key on a control inside the body to that control", () => {
+    const open = vi.fn();
+    const retry = vi.fn();
+    render(
+      <WidgetFrame
+        title="Traffic"
+        state="error"
+        onRetry={retry}
+        onBodyActivate={open}
+        bodyLabel="Show the data"
+      />
+    );
+    const control = screen.getByRole("button", { name: "Retry" });
+
+    fireEvent.click(control);
+    fireEvent.keyDown(control, { key: "Enter" });
+
+    expect(retry).toHaveBeenCalledOnce();
+    expect(open).not.toHaveBeenCalled();
+  });
+
   it("puts a button beside the title that opens what the body opens", () => {
     const open = vi.fn();
     render(

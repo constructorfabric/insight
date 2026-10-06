@@ -11,7 +11,6 @@ import {
 } from "@/components/custom/definition-summary";
 import { Button } from "@/components/ui/button";
 import {
-  DIALOG_FILL_WINDOW,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -24,6 +23,7 @@ import { nextSort } from "@/lib/metrics/evidence-rows";
 import { drilldownPagesQuery, metricQuery } from "@/queries/custom";
 import type { RunOptions } from "@/api/custom-client";
 import { TEXT_BODY, TEXT_LABEL } from "@/lib/type-scale";
+import { DIALOG_FILL_WINDOW } from "@/lib/dialog-size";
 import { cn } from "@/lib/utils";
 
 /** Which of the dialog's three views is showing. */
