@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import Any
 
 from conftest import Scenario, case
-from helpers import LATER_SYNC, event, field, issue, item, status
+from helpers import LATER_SYNC, OBSERVED_AT, event, field, issue, item, status
 
 SEVERITY = "customfield_10003"
 PRODUCTS = "customfield_10004"
@@ -29,6 +29,11 @@ SEVERITY_FIELD = field(
     schema_type="option",
     schema_custom="com.atlassian.jira.plugin.system.customfieldtypes:select",
 )
+REMAINING = "timeestimate"
+ATTACHMENTS = "attachment"
+
+REMAINING_FIELD = field(REMAINING, name="Remaining Estimate", schema_type="number")
+ATTACHMENTS_FIELD = field(ATTACHMENTS, name="Attachment", schema_type="array", schema_items="attachment")
 PRODUCTS_FIELD = field(
     PRODUCTS,
     name="Products",
@@ -47,6 +52,7 @@ LAST_EVENT_AT = "2026-01-06T10:00:00"
 ONE_MS_AFTER_LAST_EVENT = "2026-01-06 10:00:00.001"
 RESOLVED_AT = "2026-02-10T15:30:00.000+0000"
 RESOLVED_BEFORE_LAST_EVENT = "2026-01-05T12:00:00.000+0000"
+RESOLVED_BEFORE_CREATION = "2026-01-01T00:00:00.000+0000"
 
 
 def _started() -> list[dict[str, Any]]:
@@ -126,6 +132,37 @@ def test_a_resolution_before_the_last_event_does_not_date_the_closure(scenario: 
 
 
 @case(
+    fields=[STATUS_FIELD],
+    issues=[issue("TST-1", fields={"status": {"id": "6", "name": "Closed"}, "resolutiondate": RESOLVED_AT})],
+    statuses=STATUSES,
+)
+def test_a_closure_with_no_status_history_is_dated_by_the_resolution(scenario: Scenario) -> None:
+    """The changelog holds no status entry at all, so the snapshot seeds the
+    done status at creation. Without a closure dated by the resolution the
+    issue would read as closed the moment it was created."""
+    rows = scenario.journal(field="status")
+    assert [(r["event_kind"], r["value_ids"], r["event_at"]) for r in rows] == [
+        ("synthetic_initial", ["6"], "2026-01-05 09:00:00.000"),
+        ("snapshot_diff", ["6"], "2026-02-10 15:30:00.000"),
+    ]
+
+
+@case(
+    fields=[STATUS_FIELD],
+    issues=[
+        issue("TST-1", fields={"status": {"id": "6", "name": "Closed"}}),
+        issue("TST-2", fields={"status": {"id": "1", "name": "Open"}, "resolutiondate": RESOLVED_AT}),
+        issue("TST-3", fields={"status": {"id": "6", "name": "Closed"}, "resolutiondate": RESOLVED_BEFORE_CREATION}),
+    ],
+    statuses=STATUSES,
+)
+def test_a_status_with_no_history_is_dated_only_by_a_resolution_after_creation(scenario: Scenario) -> None:
+    """No resolution, a status that is not done, or a resolution before the
+    creation says nothing about when the issue closed."""
+    assert _diff_rows(scenario, "status") == []
+
+
+@case(
     fields=[SEVERITY_FIELD],
     issues=[issue("TST-1", fields={SEVERITY: {"id": "9002", "value": "Low"}})],
     events=_severity_set_high(),
@@ -186,6 +223,54 @@ def test_a_multi_value_field_is_replaced_by_the_observed_set(scenario: Scenario)
     assert [(r["value_ids"], r["value_displays"], r["delta_action"]) for r in rows] == [
         (["7001", "7002"], ["Storage", "Network"], "set")
     ]
+
+
+@case(
+    fields=[REMAINING_FIELD],
+    issues=[issue("TST-1", fields={REMAINING: 0})],
+    events=[event("TST-1", 101, LAST_EVENT_AT, [item(REMAINING, frm=None, frm_str=None, to="86400", to_str="86400")])],
+)
+def test_an_estimate_zeroed_without_an_event_is_observed_as_cleared(scenario: Scenario) -> None:
+    """The issue reports a remaining estimate of `0` and its history stops at a
+    day. A zero estimate is the empty state (§3.5), so the snapshot holds a row
+    with nothing in it — which is still "the issue holds nothing", and the
+    journal must not keep serving the day."""
+    rows = _diff_rows(scenario, REMAINING)
+    observed = OBSERVED_AT.replace("T", " ") + ".000"
+    assert [(r["value_ids"], r["delta_action"], r["event_at"]) for r in rows] == [([], "set", observed)]
+
+
+@case(
+    fields=[ATTACHMENTS_FIELD],
+    issues=[issue("TST-1", fields={ATTACHMENTS: [{"id": "9002", "filename": "shot.png"}]})],
+    events=[
+        event("TST-1", 101, "2026-01-06T09:00:00", [item(ATTACHMENTS, to="9001", to_str="shot.png")]),
+        event("TST-1", 102, LAST_EVENT_AT, [item(ATTACHMENTS, to="9002", to_str="shot.png")]),
+    ],
+)
+def test_an_attachment_removed_beside_a_same_named_one_is_observed(scenario: Scenario) -> None:
+    """Two uploads share a filename and one was deleted without an entry. As
+    sets the displays still agree, which reads like a migrated option (§3.4);
+    counted with multiplicity they do not, and the removal is recorded."""
+    rows = _diff_rows(scenario, ATTACHMENTS)
+    assert [(r["value_ids"], r["value_displays"], r["delta_action"], r["event_at"]) for r in rows] == [
+        (["9002"], ["shot.png"], "set", ONE_MS_AFTER_LAST_EVENT)
+    ]
+
+
+@case(
+    fields=[REMAINING_FIELD],
+    issues=[issue("TST-1", fields={REMAINING: 0})],
+    events=[
+        event(
+            "TST-1", 101, "2026-03-05T10:00:00", [item(REMAINING, frm=None, frm_str=None, to="86400", to_str="86400")]
+        )
+    ],
+)
+def test_a_clearing_older_than_the_newest_event_is_not_recorded(scenario: Scenario) -> None:
+    """The issue row predates the changelog entry that set the estimate, so the
+    empty value it shows is the stale side, as for `differs` (§7)."""
+    assert _diff_rows(scenario, REMAINING) == []
 
 
 DESCRIPTION_ADF = {

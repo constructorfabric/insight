@@ -1,3 +1,4 @@
+-- depends_on: {{ ref('youtrack__identity_inputs') }}
 -- depends_on: {{ ref('active_directory__identity_inputs') }}
 -- depends_on: {{ ref('active_directory__manager_identity_inputs') }}
 -- depends_on: {{ ref('seed_identity_inputs_from_cursor') }}
@@ -32,20 +33,20 @@
 -- producers' values. Selecting by name here makes that a build failure instead.
 -- check-field-parity.py audits the contributors against this shape.
 SELECT
-    unique_key,
-    insight_tenant_id,
-    insight_source_id,
-    insight_source_type,
-    source_account_id,
-    value_type,
-    value,
-    value_field_name,
-    operation_type,
-    _synced_at,
-    _version
+    candidate.unique_key,
+    candidate.insight_tenant_id,
+    candidate.insight_source_id,
+    candidate.insight_source_type,
+    candidate.source_account_id,
+    candidate.value_type,
+    candidate.value,
+    candidate.value_field_name,
+    candidate.operation_type,
+    candidate._synced_at,
+    candidate._version
 FROM (
     {{ union_by_tag('silver:identity_inputs') }}
-)
-{% if is_incremental() %}
-WHERE _version > (SELECT max(_version) FROM {{ this }})
-{% endif %}
+) AS candidate
+-- INVARIANT: one connection can carry several producers (`bitbucket` and `bitbucket-commit-email`), each on
+-- its own clock, so the boundary is scoped to the producer as well as to the source instance.
+{{ silver_incremental_watermark(['insight_tenant_id', 'insight_source_id', 'insight_source_type']) }}

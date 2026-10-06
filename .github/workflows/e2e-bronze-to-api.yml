@@ -63,6 +63,10 @@ env:
   CI: "true"
   # Same cache image and tag scheme build-images.yml writes; read-only here.
   BUILDCACHE: ghcr.io/constructorfabric/insight-buildcache
+  # The compose stand shares a runner with whatever else is on it, so its
+  # ClickHouse gets a share rather than the machine. Raise it here if a lane
+  # starts failing with MEMORY_LIMIT_EXCEEDED.
+  CLICKHOUSE_MEM_LIMIT: 3g
 
 permissions:
   contents: read
@@ -70,9 +74,9 @@ permissions:
   actions: read
 
 # Routing, stated once in .github/runners/insight-vhc/README.md: a pull request
-# from a branch of this repository takes the ephemeral ARC scale set, a fork's
-# takes a GitHub-hosted runner, everything else takes the shared self-hosted
-# pool, and INSIGHT_FORCE_GITHUB_HOSTED returns all of it to hosted.
+# takes a GitHub-hosted runner; otherwise build-backend and e2e-datapath take
+# a whole `persistent` machine and the rest the shared self-hosted pool.
+# INSIGHT_FORCE_GITHUB_HOSTED returns all of it to hosted.
 jobs:
   # `e2e-suite` is the aggregate that emits the stable "Run E2E suite" check.
   #
@@ -192,7 +196,7 @@ jobs:
     name: Build backend
     needs: changes
     if: ${{ needs.changes.outputs.relevant == 'true' && needs.changes.outputs.backend == 'true' }}
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","persistent"]') }}
     timeout-minutes: 80
     permissions:
       contents: read
@@ -303,7 +307,7 @@ jobs:
     # images) does not skip the shards along with it; the result check keeps a
     # FAILED build from letting them run against stale binaries.
     if: ${{ !cancelled() && github.event_name != 'push' && needs.changes.outputs.relevant == 'true' && (needs.build-backend.result == 'success' || needs.build-backend.result == 'skipped') }}
-    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","linux","x64","insight-vhc"]') }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","persistent"]') }}
     timeout-minutes: 80
     permissions:
       contents: read
@@ -416,6 +420,10 @@ jobs:
         id: suite
         env:
           SHARD: ${{ matrix.shard }}
+          # pytest block-buffers its output when stdout is a pipe, so a shard
+          # killed by the job timeout flushes nothing and leaves no trace of how
+          # far it got.
+          PYTHONUNBUFFERED: "1"
         run: |
           set -euo pipefail
           trees=()
@@ -433,7 +441,10 @@ jobs:
           esac
           [ "${#trees[@]}" -gt 0 ] || { echo "::error::shard ${SHARD} selected no trees"; exit 1; }
           printf 'shard %s → %s\n' "$SHARD" "${trees[*]}"
-          ./dev-compose.sh test-stand test "${trees[@]}" --tb=short -q
+          # -v names each spec as it starts, --log-cli-level surfaces the dbt
+          # invocation behind it, and --durations ranks them once the run ends:
+          # between them a shard that runs long says where the time went.
+          ./dev-compose.sh test-stand test "${trees[@]}" --tb=short -v --durations=25 --log-cli-level=INFO
 
       # The shards' ledgers merge into one directory, which keeps one file per
       # name — so each carries its own or the gate sees a quarter of the coverage.

@@ -15,6 +15,7 @@ _EXPECTED = {
     "youtrack_sprints",
     "youtrack_issue_keys",
     "youtrack_issues",
+    "youtrack_activity_issues",
     "youtrack_activities",
     "youtrack_work_items",
     "youtrack_comments",
@@ -69,6 +70,9 @@ def test_incremental_issue_queries_keep_youtrack_datetime_syntax() -> None:
     manifest = load_manifest(_CONNECTOR)
     queries = []
     for stream in manifest["streams"]:
+        # youtrack_activity_issues searches by issue id, not by a time window.
+        if stream.get("incremental_sync", {}).get("cursor_field") != "updated":
+            continue
         requester = stream["retriever"]["requester"]
         query = requester.get("request_parameters", {}).get("query")
         if query:
@@ -123,6 +127,44 @@ def test_issue_sprint_membership_is_paginated_from_issues() -> None:
 
     assert stream["retriever"]["requester"]["url"].endswith("/api/issues/{{ stream_partition.issue_id }}/sprints")
     assert stream["retriever"]["paginator"]["page_token_option"]["field_name"] == "$skip"
+    # Only issues whose membership may have changed are read: the changed-issue
+    # search plus the sprint activity feed, since an assignment leaves `updated`
+    # untouched. Never the whole issue list.
+    changed, sprint_activity = stream["retriever"]["partition_router"]["parent_stream_configs"]
+    assert changed["stream"]["retriever"]["requester"]["request_parameters"]["query"].startswith("updated: ")
+    assert sprint_activity["stream"]["retriever"]["requester"]["url"].endswith("/api/activitiesPage")
+    assert sprint_activity["stream"]["retriever"]["requester"]["request_parameters"]["categories"] == "SprintCategory"
+    assert changed["incremental_dependency"] and sprint_activity["incremental_dependency"]
+    assert stream["incremental_sync"]["cursor_field"] == "issue_updated"
+
+
+def test_activity_issues_snapshot_what_the_feed_names_in_the_issues_shape() -> None:
+    manifest = load_manifest(_CONNECTOR)
+    streams = {stream["name"]: stream for stream in manifest["streams"]}
+    issues, activity_issues = streams["youtrack_issues"], streams["youtrack_activity_issues"]
+
+    # Same payload and stamps, so youtrack__issues can take the latest of either.
+    assert activity_issues["retriever"]["requester"]["request_parameters"]["fields"] == (
+        issues["retriever"]["requester"]["request_parameters"]["fields"]
+    )
+    assert activity_issues["transformations"] == issues["transformations"]
+    assert activity_issues["schema_loader"] == issues["schema_loader"]
+    # Batched by idReadable — the search does not accept database ids.
+    query = activity_issues["retriever"]["requester"]["request_parameters"]["query"]
+    assert query == "issue id: {{ stream_partition.issue_id_readable | join(', ') }}"
+    router = activity_issues["retriever"]["partition_router"]
+    assert router["type"] == "GroupingPartitionRouter" and router["deduplicate"]
+    # One batch fits the default page, so a batch is one request.
+    assert router["group_size"] <= 100
+    (parent,) = router["underlying_partition_router"]["parent_stream_configs"]
+    assert parent["incremental_dependency"]
+    parent_request = parent["stream"]["retriever"]["requester"]
+    assert parent_request["url"].endswith("/api/activitiesPage")
+    assert parent_request["request_parameters"]["categories"] == (
+        streams["youtrack_activities"]["retriever"]["requester"]["request_parameters"]["categories"]
+    )
+    # The cursor cannot be `updated`: these issues are the ones it predates.
+    assert activity_issues["incremental_sync"]["cursor_field"] == "observed_at"
 
 
 def test_work_items_are_full_refresh_and_allow_null_updated() -> None:
@@ -165,3 +207,12 @@ def test_sprint_requests_exclude_embedded_issues() -> None:
 
     assert "issues(" not in fields
     assert "unresolvedIssuesCount" in fields
+
+
+def test_activity_feeds_leave_out_article_categories() -> None:
+    """Silver reads Issue targets only, and the server can cut off a page that
+    holds an article attachment after the response has started."""
+    streams = {stream["name"]: stream for stream in load_manifest(_CONNECTOR)["streams"]}
+    categories = streams["youtrack_activities"]["retriever"]["requester"]["request_parameters"]["categories"]
+
+    assert not [c for c in categories.split(",") if c.startswith("Article")]

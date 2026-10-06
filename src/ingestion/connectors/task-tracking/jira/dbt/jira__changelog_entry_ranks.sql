@@ -69,6 +69,36 @@ tied_items AS (
                                'ci.value_to', 'ci.value_to_string') }}
 ),
 
+-- One event per (entry, field), collapsed exactly as the journal collapses it
+-- (`jira_entry_item_ends`), so the chains below link the events it emits.
+tied_entry_items AS (
+    SELECT
+        insight_source_id,
+        issue_id,
+        event_at,
+        field_id,
+        event_ord,
+        changelog_id,
+        any(self_describing)                              AS self_describing,
+        {{ jira_entry_items_ordered('groupArray((sides.1, sides.2, sides.3, sides.4))') }} AS items
+    FROM tied_items
+    GROUP BY insight_source_id, issue_id, event_at, field_id, event_ord, changelog_id
+),
+
+tied_entry_events AS (
+    SELECT
+        insight_source_id,
+        issue_id,
+        event_at,
+        field_id,
+        event_ord,
+        changelog_id,
+        self_describing,
+        items,
+        {{ jira_entry_item_ends('items') }}               AS ends
+    FROM tied_entry_items
+),
+
 tied_fields AS (
     SELECT
         insight_source_id,
@@ -76,9 +106,10 @@ tied_fields AS (
         event_at,
         field_id,
         any(self_describing)                              AS self_describing,
-        arraySort(x -> (x.1, x.2), groupUniqArray((event_ord, changelog_id, sides.1, sides.3))) AS evs,
+        arraySort(x -> (x.1, x.2),
+                  groupUniqArray((event_ord, changelog_id, items[ends.1].1, items[ends.2].3))) AS evs,
         uniqExact(changelog_id)                           AS distinct_changelog_ids
-    FROM tied_items
+    FROM tied_entry_events
     GROUP BY insight_source_id, issue_id, event_at, field_id
 ),
 

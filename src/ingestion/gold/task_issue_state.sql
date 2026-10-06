@@ -154,8 +154,14 @@ history AS (
         fh.event_at                                                           AS event_at,
         fh.event_kind                                                         AS event_kind,
         fh.delta_action                                                       AS delta_action,
-        fh.value_ids                                                          AS value_ids,
-        fh.value_displays                                                     AS value_displays,
+        if(fh.data_source = 'youtrack' AND length(fh.value_ids) > 1,
+           CAST([] AS Array(String)), fh.value_ids)                           AS value_ids,
+        multiIf(
+            fh.data_source = 'youtrack' AND length(fh.value_ids) > 1, CAST([] AS Array(String)),
+            fh.data_source = 'youtrack' AND r.role = 'duedate',
+                arrayMap(v -> if(isNotNull(toInt64OrNull(v)),
+                    toString(fromUnixTimestamp64Milli(toInt64OrZero(v))), v), fh.value_displays),
+            fh.value_displays)                                               AS value_displays,
         fh._version                                                           AS _version,
         -- The one ordering key of the class (`task_event_order`).
         fh.event_order                                                        AS event_order,
@@ -212,7 +218,10 @@ issue_pivot AS (
         -- INVARIANT: argMax, never any() — a renamed repository or an issue moved
         -- between projects carries the OLD key on its older rows, and rows written
         -- before the key moved to `issue_id` exist under both. The latest event wins.
-        argMax(id_readable, event_order)                            AS id_readable,
+        -- INVARIANT: among rows that name a key. A producer that cannot resolve
+        -- one writes '' (a census-only availability row), and as the newest row
+        -- that would blank a key every other row carries.
+        argMaxIf(id_readable, event_order, id_readable != '')       AS id_readable,
         -- The title is an ordinary field read through its role, so a source
         -- that renames an issue has rename history. `nullIf` keeps the result
         -- `Nullable(String)`: `argMaxIf` returns '' when nothing matches, and

@@ -1,16 +1,19 @@
 """Give an instance the warehouse schema a connector's first sync would have left.
 
 A stand raised with `test-stand minimal` has identity and nothing else, so the
-databases a spec seeds do not exist yet. This applies what a deployment applies, in
-the deployment's order (`src/ingestion/scripts/apply-ch-migrations.sh`):
+databases a spec seeds do not exist yet. This builds them in the order
+`bootstrap-db.sh` converges a fresh cluster in:
 
-    1. CREATE DATABASE staging | silver | insight
-    2. Apply the scripts/connectors-ddl/*.sql snapshot
-       (what create-bronze-placeholders.sh does in prod)
-    3. Run scripts/migrations/*.sql
+    1. CREATE DATABASE staging | insight
+    2. Run the real connectors into the real destination (`bronze.create_bronze`)
+    3. Apply the warehouse half of the scripts/connectors-ddl snapshot
+    4. Run scripts/migrations/*.sql
 
-The connectors-ddl snapshot is generated from the real connectors and dbt models and
-validated on every PR, so this stays in lock-step with the schema a deployment gets.
+Bronze is created by the destination rather than from the snapshot so that the rig
+has the same single creator a deployment has: a table a spec seeds is the shape this
+tree's connectors and the pinned destination produce, not the shape the snapshot
+carried when it was last dumped. The snapshot's four non-connector files still stand
+in for relations a deployment gets from dbt (T23 retires them).
 
 Idempotent: every statement uses CREATE OR REPLACE / IF NOT EXISTS / DROP IF
 EXISTS. We split multi-statement files on `;` because clickhouse-connect's
@@ -30,21 +33,28 @@ from pathlib import Path
 from types import ModuleType
 
 from insight_datapath import clickhouse as ch
+from insight_datapath.bronze import create_bronze
 from insight_datapath.instance import InstanceConfig
 from insight_datapath.process import tail
 
 LOG = logging.getLogger("datapath.schema")
 
+#: The snapshot files that are not a connector's bronze, applied in dependency
+#: order: `insight`'s views read `silver` and every `bronze_*` database.
+WAREHOUSE_SNAPSHOT = ("identity", "staging", "silver", "insight")
 
-def apply_all(cfg: InstanceConfig, *, repo_root: Path) -> int:
-    """Bootstrap databases + placeholders, then apply every *.sql migration."""
+
+def apply_all(cfg: InstanceConfig, *, repo_root: Path, project: str) -> int:
+    """Bootstrap the warehouse, then apply every *.sql migration."""
     # 1. App DB exists (some migrations DROP VIEW insight.* before recreating).
     ch.ensure_database(cfg, cfg.ch_database)
     # 2. staging DB — dbt models live here in prod
     ch.ensure_database(cfg, "staging")
-    # 3. Bronze placeholders (creates silver DB + all class_* placeholder tables)
-    bronze_count = apply_bronze_placeholders(cfg, repo_root=repo_root)
-    LOG.info("applied %d bronze-placeholder statements", bronze_count)
+    # 3. Bronze, from the connectors themselves
+    create_bronze(cfg, repo_root=repo_root, project=project)
+    # 4. identity/staging/silver/insight, which a deployment gets from dbt
+    applied = apply_warehouse_snapshot(cfg, repo_root=repo_root)
+    LOG.info("applied %d warehouse-snapshot statements", applied)
 
     migrations_dir = repo_root / "src/ingestion/scripts/migrations"
     files = sorted(migrations_dir.glob("*.sql"))
@@ -59,23 +69,19 @@ def apply_all(cfg: InstanceConfig, *, repo_root: Path) -> int:
     return total
 
 
-def apply_bronze_placeholders(cfg: InstanceConfig, *, repo_root: Path) -> int:
-    """Apply the scripts/connectors-ddl/*.sql snapshot.
+def apply_warehouse_snapshot(cfg: InstanceConfig, *, repo_root: Path) -> int:
+    """Apply the non-connector half of the scripts/connectors-ddl snapshot.
 
-    Same order and retry semantics as prod's create-bronze-placeholders.sh:
-    per-connector bronze files first, then silver.sql, then insight.sql.
-    Views may reference other views, so failed statements are retried in
-    additional passes until a pass makes no progress.
+    Same retry semantics as prod's create-bronze-placeholders.sh: views may
+    reference other views, so failed statements are retried in additional passes
+    until a pass makes no progress.
     """
     ddl_dir = repo_root / "src/ingestion/scripts/connectors-ddl"
-    files = sorted(ddl_dir.glob("*.sql"))
-    if not files:
-        raise RuntimeError(f"no DDL snapshot files under {ddl_dir}")
+    ordered = [ddl_dir / f"{stem}.sql" for stem in WAREHOUSE_SNAPSHOT]
+    absent = [f.name for f in ordered if not f.is_file()]
+    if absent:
+        raise RuntimeError(f"missing DDL snapshot file(s) under {ddl_dir}: {', '.join(absent)}")
 
-    ordered = [f for f in files if f.stem not in ("silver", "insight")] + [
-        ddl_dir / "silver.sql",
-        ddl_dir / "insight.sql",
-    ]
     pending: list[str] = []
     for f in ordered:
         pending.extend(_split_statements(f.read_text(encoding="utf-8")))

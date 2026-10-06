@@ -170,6 +170,44 @@ def test_issue_payload_keeps_custom_fields_as_json(http_mocker: HttpMocker) -> N
 
 
 @freezegun.freeze_time(_NOW)
+def test_activity_issues_batch_the_feed_targets_into_one_search(http_mocker: HttpMocker) -> None:
+    # The feed names EX-1 twice (one search term), an article and an idReadable-
+    # less draft (no term); the issue's `updated` predates the window and the
+    # snapshot is taken anyway.
+    config = YouTrackConfigBuilder().build()
+    issue = {**load_fixture(__file__, "issue.json"), "updated": 1782691200000}
+    feed = {
+        "afterCursor": None,
+        "hasAfter": False,
+        "activities": [
+            {"id": "2-1.0-1", "timestamp": 1782820800000, "target": {"id": "2-1", "idReadable": "EX-1", "$type": "Issue"}},
+            {"id": "2-1.0-2", "timestamp": 1782824400000, "target": {"id": "2-1", "idReadable": "EX-1", "$type": "Issue"}},
+            {"id": "9-1.0-1", "timestamp": 1782824400000, "target": {"id": "9-1", "$type": "Article"}},
+            {"id": "2-9.0-1", "timestamp": 1782824400000, "target": {"id": "2-9", "$type": "Issue"}},
+        ],
+    }
+    http_mocker.get(
+        HttpRequest(f"{API_URL}/activitiesPage", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps(feed), status_code=200),
+    )
+    streams = {stream["name"]: stream for stream in load_manifest(_CONNECTOR)["streams"]}
+    fields = streams["youtrack_activity_issues"]["retriever"]["requester"]["request_parameters"]["fields"]
+    http_mocker.get(
+        HttpRequest(f"{API_URL}/issues", query_params={"fields": fields, "query": "issue id: EX-1", "$top": "100"}),
+        HttpResponse(body=json.dumps([issue]), status_code=200),
+    )
+
+    output = read_stream(_CONNECTOR, "youtrack_activity_issues", config)
+
+    assert not output.errors
+    assert [item.record.data["id"] for item in output.records] == ["2-1"]
+    record = output.records[0].record.data
+    assert record["unique_key"] == "test-tenant-test-source-2-1"
+    assert json.loads(record["issue_json"])["idReadable"] == "EX-1"
+    assert_records_conform(output.records, _CONNECTOR, "youtrack_activity_issues")
+
+
+@freezegun.freeze_time(_NOW)
 def test_activity_cursor_paginates_and_preserves_polymorphic_values(http_mocker: HttpMocker) -> None:
     config = YouTrackConfigBuilder().build()
     first = load_fixture(__file__, "activity_page.json")
@@ -190,17 +228,33 @@ def test_activity_cursor_paginates_and_preserves_polymorphic_values(http_mocker:
 
 
 @freezegun.freeze_time(_NOW)
+def test_a_cut_off_activities_page_fails_the_read_instead_of_ending_the_slice(http_mocker: HttpMocker) -> None:
+    config = YouTrackConfigBuilder().build()
+    first = load_fixture(__file__, "activity_page.json")
+    cut_off = json.dumps({**first, "hasAfter": True})[:-40]
+    http_mocker.get(
+        HttpRequest(f"{API_URL}/activitiesPage", query_params=ANY_QUERY_PARAMS),
+        [HttpResponse(body=json.dumps({**first, "hasAfter": True}), status_code=200), HttpResponse(body=cut_off, status_code=200)],
+    )
+
+    output = read_stream(_CONNECTOR, "youtrack_activities", config, expecting_exception=True)
+
+    assert output.errors
+
+
+@freezegun.freeze_time(_NOW)
 def test_issue_sprints_paginate_the_issue_membership_endpoint(http_mocker: HttpMocker) -> None:
     config = YouTrackConfigBuilder().with_field("youtrack_page_size", "1").build()
     issue = load_fixture(__file__, "issue.json")
     sprint = load_fixture(__file__, "sprint.json")
+    # The changed-issue parent yields the issue once; every later window page is empty.
     http_mocker.get(
-        HttpRequest(f"{API_URL}/issues", query_params={"fields": "id,idReadable,updated", "$top": "1"}),
-        HttpResponse(body=json.dumps([issue]), status_code=200),
+        HttpRequest(f"{API_URL}/issues", query_params=ANY_QUERY_PARAMS),
+        [HttpResponse(body=json.dumps([issue]), status_code=200), HttpResponse(body=json.dumps([]), status_code=200)],
     )
     http_mocker.get(
-        HttpRequest(f"{API_URL}/issues", query_params={"fields": "id,idReadable,updated", "$top": "1", "$skip": "1"}),
-        HttpResponse(body=json.dumps([]), status_code=200),
+        HttpRequest(f"{API_URL}/activitiesPage", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps({"afterCursor": None, "hasAfter": False, "activities": []}), status_code=200),
     )
     next_sprint = {**sprint, "id": "120-2", "name": "Next Sprint"}
     http_mocker.get(
@@ -253,6 +307,54 @@ def test_issue_sprints_paginate_the_issue_membership_endpoint(http_mocker: HttpM
         "unique_key",
     }
     assert json.loads(first_record["sprint_json"])["goal"] == "Synthetic sprint goal"
+    assert_records_conform(output.records, _CONNECTOR, "youtrack_issue_sprints")
+
+
+@freezegun.freeze_time(_NOW)
+def test_issue_sprints_follow_sprint_activity_without_an_updated_bump(http_mocker: HttpMocker) -> None:
+    # A sprint assignment leaves the issue's `updated` untouched, so only the
+    # sprint activity feed names the issue; non-issue targets yield no partition.
+    config = YouTrackConfigBuilder().build()
+    sprint = load_fixture(__file__, "sprint.json")
+    http_mocker.get(
+        HttpRequest(f"{API_URL}/issues", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps([]), status_code=200),
+    )
+    activities = {
+        "afterCursor": None,
+        "hasAfter": False,
+        "activities": [
+            {
+                "id": "2-7.0-1",
+                "$type": "SprintActivityItem",
+                "timestamp": 1782820800000,
+                "target": {"id": "2-7", "idReadable": "EX-7", "$type": "Issue"},
+            },
+            {
+                "id": "9-1.0-1",
+                "$type": "SprintActivityItem",
+                "timestamp": 1782820800000,
+                "target": {"id": "9-1", "$type": "Article"},
+            },
+        ],
+    }
+    http_mocker.get(
+        HttpRequest(f"{API_URL}/activitiesPage", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps(activities), status_code=200),
+    )
+    http_mocker.get(
+        HttpRequest(f"{API_URL}/issues/2-7/sprints", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps([sprint]), status_code=200),
+    )
+
+    output = read_stream(_CONNECTOR, "youtrack_issue_sprints", config)
+
+    assert not output.errors
+    records = {(item.record.data["issue_id"], item.record.data["sprint_id"]) for item in output.records}
+    assert records == {("2-7", "120-1")}
+    record = output.records[0].record.data
+    assert record["issue_id_readable"] == "EX-7"
+    assert str(record["issue_updated"]) == "1782820800000"
     assert_records_conform(output.records, _CONNECTOR, "youtrack_issue_sprints")
 
 

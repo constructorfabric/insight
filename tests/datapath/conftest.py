@@ -116,7 +116,7 @@ def warehouse_schema(instance_cfg: InstanceConfig, warehouse_is_ours: None) -> i
     A stand raised with `test-stand minimal` carries identity and nothing else, so
     the databases a spec seeds have to be created before anything can write them.
     """
-    applied = apply_all(instance_cfg, repo_root=REPO_ROOT)
+    applied = apply_all(instance_cfg, repo_root=REPO_ROOT, project=_instance_name())
     restart_analytics(repo_root=REPO_ROOT, project=_instance_name(), env_file=_env_file())
     return applied
 

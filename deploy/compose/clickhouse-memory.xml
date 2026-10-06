@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<!--
+  ClickHouse server override mounted into /etc/clickhouse-server/config.d/, by
+  the compose `clickhouse` service and by
+  .github/workflows/scripts/start-clickhouse.sh alike, so a lane that runs out
+  of memory in CI runs out of memory the same way on a laptop.
+
+  What actually bounds the server is its container's cgroup limit
+  (CLICKHOUSE_MEM_LIMIT): ClickHouse reads it and sizes both its memory cap and
+  its caches from that. This file only moves the cap further under it, which is
+  why it holds a ratio and no absolute size — the limit differs per caller.
+
+  INVARIANT: this ratio must leave room for what the server does not track.
+  Allocator overhead and mmap'd mark files sit outside its accounting, so at the
+  0.9 default a container can reach its cgroup limit while ClickHouse still
+  believes it is within budget — and then the kernel kills the server rather
+  than ClickHouse rejecting one query with MEMORY_LIMIT_EXCEEDED. A killed
+  server surfaces as a connection error in whichever test was running.
+-->
+<clickhouse>
+  <max_server_memory_usage_to_ram_ratio>0.8</max_server_memory_usage_to_ram_ratio>
+</clickhouse>

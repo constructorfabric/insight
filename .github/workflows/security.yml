@@ -24,6 +24,10 @@ name: Security scans
 #   - the Trivy report pass must not run the secret scanner: its SARIF is
 #     world-readable here.
 #   - Semgrep excludes secrets — TruffleHog owns them.
+#   - Semgrep installs from `.github/semgrep-requirements.txt` with
+#     `--require-hashes`, so that lock — not a version string — is the pin, and
+#     both `trivy fs` passes skip it: a CI tool's dependencies are not product
+#     dependencies and must not move the finding counts.
 #   - TruffleHog `--results=verified,unknown,unverified,filtered_unverified`:
 #     the default hides findings whose verification failed, which on a public
 #     repository is still a leak. No `--filter-entropy` — it suppresses AWS
@@ -62,9 +66,6 @@ concurrency:
 permissions:
   contents: read
 
-env:
-  TRIVY_IMAGE: aquasec/trivy:0.72.0@sha256:cffe3f5161a47a6823fbd23d985795b3ed72a4c806da4c4df16266c02accdd6f
-
 # Routing, stated once in .github/runners/insight-vhc/README.md: a pull request
 # from a branch of this repository takes the ephemeral ARC scale set, a fork's
 # takes a GitHub-hosted runner, everything else takes the shared self-hosted
@@ -83,6 +84,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Install TruffleHog
+        uses: ./.github/actions/install-scanners
+        with:
+          trufflehog: "true"
+
       - name: TruffleHog scan (commits added by this PR)
         # `pull_request.base.sha` lags main, so it pulls unrelated commits into range (#2025).
         # The merge ref's first parent is the current base tip — that is the PR's own range.
@@ -100,17 +106,13 @@ jobs:
           fi
           HEAD_SHA="$(git rev-parse HEAD)"
           echo "Scanning ${SINCE}..HEAD"
-          docker run --rm \
-            -v "${{ github.workspace }}:/src:ro" \
-            -e SINCE \
-            trufflesecurity/trufflehog:3.96.0@sha256:aa821cf4ace8861c7d096d83818cdf7bb9719028a52d37a52eaad44086a52577 \
-            git file:///src \
-              --json \
-              --no-update \
-              --exclude-detectors=lob \
-              --since-commit "$SINCE" \
-              --branch "$HEAD_SHA" \
-              --results=verified,unknown,unverified,filtered_unverified \
+          trufflehog git "file://${GITHUB_WORKSPACE}" \
+            --json \
+            --no-update \
+            --exclude-detectors=lob \
+            --since-commit "$SINCE" \
+            --branch "$HEAD_SHA" \
+            --results=verified,unknown,unverified,filtered_unverified \
             > trufflehog-findings.jsonl
 
       - name: Summarize (redacted)
@@ -139,20 +141,32 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Install Trivy
+        uses: ./.github/actions/install-scanners
+        with:
+          trivy: "true"
+
       - name: Trivy fs scan — CRITICAL only (blocking)
         # Waivers: `.trivyignore.yaml` at the repo root, passed explicitly — the YAML form is not auto-detected.
         run: |
-          docker run --rm \
-            -v "${{ github.workspace }}:/src:ro" \
-            -w /src \
-            "$TRIVY_IMAGE" fs \
-              --ignorefile /src/.trivyignore.yaml \
-              --scanners vuln,secret,misconfig \
-              --severity CRITICAL \
-              --ignore-unfixed \
-              --exit-code 1 \
-              --no-progress \
-              /src
+          trivy fs \
+            --ignorefile .trivyignore.yaml \
+            --scanners vuln,secret,misconfig \
+            --severity CRITICAL \
+            --ignore-unfixed \
+            --exit-code 1 \
+            --no-progress \
+            --skip-files .github/semgrep-requirements.txt \
+            .
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        with:
+          # INVARIANT: only a version the pinned action already ships a checksum for —
+          # that is what hash-checks the download, with no per-arch `checksum:` here.
+          # uv is pinned in this lane alone: its toolchain must be reproducible end to end.
+          version: "0.12.17"
 
       - name: Semgrep scan — findings added by this pull request (BLOCKING)
         # Scoped to the PR's own findings; plain `--error` would fail on the existing baseline.
@@ -161,17 +175,16 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          docker run --rm \
-            -v "${{ github.workspace }}:/src" \
-            -w /src \
-            -e BASE_SHA \
-            semgrep/semgrep:1.170.0@sha256:c98f8829eea377274ee4b10656458b078b88232469b2ff913f091c2317347c9d \
-            semgrep scan \
-              --config auto \
-              --config p/rust \
-              --exclude-rule generic.secrets.security.detected-generic-secret \
-              --error \
-              --baseline-commit "$BASE_SHA"
+          set -euo pipefail
+          uv venv --python 3.12 "$RUNNER_TEMP/semgrep"
+          uv pip install --python "$RUNNER_TEMP/semgrep" \
+            --require-hashes -r .github/semgrep-requirements.txt
+          "$RUNNER_TEMP/semgrep/bin/semgrep" scan \
+            --config auto \
+            --config p/rust \
+            --exclude-rule generic.secrets.security.detected-generic-secret \
+            --error \
+            --baseline-commit "$BASE_SHA"
 
 
   report:
@@ -187,20 +200,33 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Install Trivy
+        uses: ./.github/actions/install-scanners
+        with:
+          trivy: "true"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.17"
+
+      - name: Install Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          # The version `publish-chart` packages with and `deploy-test-stand` installs
+          # with, so what this scans is what ships. The runner image carries a newer
+          # helm; rendering with that would report on output nothing deploys.
+          version: "3.14.0"
+
       - name: Resolve Python dependencies
         # Locks are generated in the workspace and discarded with the runner. Best-effort: one
         # unresolvable project must not cost the rest.
         continue-on-error: true
-        env:
-          UV_IMAGE: ghcr.io/astral-sh/uv:python3.12-bookworm-slim@sha256:e5b65587bce7de595f299855d7385fe7fca39b8a74baa261ba1b7147afa78e58
         run: |
           set -uo pipefail
           git ls-files '**/pyproject.toml' | while read -r manifest; do
             project="$(dirname "$manifest")"
-            docker run --rm \
-              -v "${{ github.workspace }}:/repo" \
-              -w "/repo/${project}" \
-              "$UV_IMAGE" uv lock \
+            uv lock --directory "$project" \
               || echo "uv lock failed — skipped ${project}"
           done
           echo "Lock files now present:"
@@ -210,24 +236,19 @@ jobs:
         # `trivy convert` derives the SARIF instead of rescanning.
         run: |
           set -euo pipefail
-          docker run --rm \
-            -v "${{ github.workspace }}:/src" \
-            -v /tmp/trivy-cache:/root/.cache \
-            -w /src \
-            "$TRIVY_IMAGE" fs \
-              --ignorefile /src/.trivyignore.yaml \
-              --scanners vuln,misconfig \
-              --severity CRITICAL,HIGH,MEDIUM,LOW \
-              --include-dev-deps \
-              --exit-code 0 \
-              --no-progress \
-              --format json --output /src/trivy-fs.json \
-              /src
-          docker run --rm \
-            -v "${{ github.workspace }}:/src" \
-            "$TRIVY_IMAGE" convert \
-              --format sarif --output /src/trivy-fs.sarif \
-              /src/trivy-fs.json
+          trivy fs \
+            --ignorefile .trivyignore.yaml \
+            --scanners vuln,misconfig \
+            --severity CRITICAL,HIGH,MEDIUM,LOW \
+            --include-dev-deps \
+            --exit-code 0 \
+            --no-progress \
+            --skip-files .github/semgrep-requirements.txt \
+            --format json --output trivy-fs.json \
+            .
+          trivy convert \
+            --format sarif --output trivy-fs.sarif \
+            trivy-fs.json
 
       - name: Summarize findings in the job summary
         if: always()
@@ -285,7 +306,7 @@ jobs:
         # The hashFiles guard keeps a failed scan from producing a second, misleading error that
         # points at Code Scanning rather than at the scan that actually broke.
         if: ${{ always() && hashFiles('trivy-fs.sarif') != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
           sarif_file: trivy-fs.sarif
           category: trivy-fs
@@ -295,26 +316,21 @@ jobs:
       # throwaway and only satisfy the `required` guards.
       - name: Render Helm charts
         continue-on-error: true
-        env:
-          HELM_IMAGE: alpine/helm:3.16.3@sha256:ed9dfc49d43d034df3f9880eb777caf0183e5156508672478b80412c63f3db4f
         run: |
           set -uo pipefail
           mkdir -p .helm-rendered
           for chart in src/backend/services/*/helm src/frontend/helm; do
             [ -f "$chart/Chart.yaml" ] || continue
             name="$(printf '%s' "$chart" | sed -E 's#^src/(backend/services|)/?##; s#/helm$##; s#/#-#g')"
-            docker run --rm \
-              -v "${{ github.workspace }}:/repo" \
-              -w /repo \
-              "$HELM_IMAGE" template scan "$chart" \
-                --set existingSecret=dummy \
-                --set signingKeysSecret=dummy \
-                --set tlsDiscovery.issuerRef.name=dummy \
-                --set issuer=http://idp.invalid \
-                --set hostname=http://kc.invalid \
-                --set image.repository=ghcr.io/example/image \
-                --set image.tag=scan \
-                --set oidc.scopes=openid \
+            helm template scan "$chart" \
+              --set existingSecret=dummy \
+              --set signingKeysSecret=dummy \
+              --set tlsDiscovery.issuerRef.name=dummy \
+              --set issuer=http://idp.invalid \
+              --set hostname=http://kc.invalid \
+              --set image.repository=ghcr.io/example/image \
+              --set image.tag=scan \
+              --set oidc.scopes=openid \
               > ".helm-rendered/${name}.yaml" \
               || { echo "render failed — skipped ${chart}"; rm -f ".helm-rendered/${name}.yaml"; }
           done
@@ -327,23 +343,17 @@ jobs:
           set -euo pipefail
           find .helm-rendered -name '*.yaml' -print -quit 2>/dev/null | grep -q . \
             || { echo "nothing rendered — skipping"; exit 0; }
-          docker run --rm \
-            -v "${{ github.workspace }}:/src" \
-            -v /tmp/trivy-cache:/root/.cache \
-            -w /src \
-            "$TRIVY_IMAGE" fs \
-              --ignorefile /src/.trivyignore.yaml \
-              --scanners misconfig \
-              --severity CRITICAL,HIGH,MEDIUM,LOW \
-              --exit-code 0 \
-              --no-progress \
-              --format json --output /src/trivy-helm.json \
-              /src/.helm-rendered
-          docker run --rm \
-            -v "${{ github.workspace }}:/src" \
-            "$TRIVY_IMAGE" convert \
-              --format sarif --output /src/trivy-helm.sarif \
-              /src/trivy-helm.json
+          trivy fs \
+            --ignorefile .trivyignore.yaml \
+            --scanners misconfig \
+            --severity CRITICAL,HIGH,MEDIUM,LOW \
+            --exit-code 0 \
+            --no-progress \
+            --format json --output trivy-helm.json \
+            .helm-rendered
+          trivy convert \
+            --format sarif --output trivy-helm.sarif \
+            trivy-helm.json
 
       - name: Summarize rendered-chart findings
         if: always()
@@ -390,25 +400,24 @@ jobs:
       - name: Upload rendered-chart SARIF
         # Own category: `.helm-rendered/*` paths do not exist in the tree.
         if: ${{ always() && hashFiles('trivy-helm.sarif') != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
           sarif_file: trivy-helm.sarif
           category: trivy-helm
 
       - name: Semgrep scan (full tree — owns the SARIF upload, never blocks)
-        # `docker run` rather than a `container:` job so the JS actions keep the runner's Node.
         # `--config auto` needs metrics on to select rules, so `--metrics off` is omitted.
         if: ${{ !cancelled() }}
         run: |
-          docker run --rm \
-            -v "${{ github.workspace }}:/src" \
-            -w /src \
-            semgrep/semgrep:1.170.0@sha256:c98f8829eea377274ee4b10656458b078b88232469b2ff913f091c2317347c9d \
-            semgrep scan \
-              --config auto \
-              --config p/rust \
-              --exclude-rule generic.secrets.security.detected-generic-secret \
-              --sarif --output semgrep.sarif
+          set -euo pipefail
+          uv venv --python 3.12 "$RUNNER_TEMP/semgrep"
+          uv pip install --python "$RUNNER_TEMP/semgrep" \
+            --require-hashes -r .github/semgrep-requirements.txt
+          "$RUNNER_TEMP/semgrep/bin/semgrep" scan \
+            --config auto \
+            --config p/rust \
+            --exclude-rule generic.secrets.security.detected-generic-secret \
+            --sarif --output semgrep.sarif
 
 
       - name: Summarize findings in the job summary
@@ -451,7 +460,7 @@ jobs:
 
       - name: Upload SARIF to GitHub Code Scanning
         if: ${{ always() && hashFiles('semgrep.sarif') != '' }}
-        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
           sarif_file: semgrep.sarif
           category: semgrep
@@ -470,6 +479,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Install TruffleHog
+        uses: ./.github/actions/install-scanners
+        with:
+          trufflehog: "true"
+
       - name: Fetch every branch
         # The sweep covers all live branches, so a secret parked on a long-lived feature
         # branch is visible before it reaches main. Explicit authenticated URL because
@@ -486,14 +500,11 @@ jobs:
       - name: TruffleHog scan (all refs, all result kinds)
         run: |
           set -euo pipefail
-          docker run --rm \
-            -v "${{ github.workspace }}:/src:ro" \
-            trufflesecurity/trufflehog:3.96.0@sha256:aa821cf4ace8861c7d096d83818cdf7bb9719028a52d37a52eaad44086a52577 \
-            git file:///src \
-              --json \
-              --no-update \
-              --exclude-detectors=lob \
-              --results=verified,unknown,unverified,filtered_unverified \
+          trufflehog git "file://${GITHUB_WORKSPACE}" \
+            --json \
+            --no-update \
+            --exclude-detectors=lob \
+            --results=verified,unknown,unverified,filtered_unverified \
             > trufflehog-findings.jsonl
 
       - name: Summarize (redacted) — report only
@@ -538,6 +549,11 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Install TruffleHog
+        uses: ./.github/actions/install-scanners
+        with:
+          trufflehog: "true"
+
       - name: TruffleHog scan (GitHub API — comments, wikis, unreachable objects)
         # Deliberately unauthenticated. `GITHUB_TOKEN` cannot be used here: the GitHub source
         # calls `GET /user` to identify the token owner, and an installation token gets
@@ -552,17 +568,15 @@ jobs:
         # green with the error visible in the log.
         run: |
           set -euo pipefail
-          docker run --rm \
-            trufflesecurity/trufflehog:3.96.0@sha256:aa821cf4ace8861c7d096d83818cdf7bb9719028a52d37a52eaad44086a52577 \
-            github \
-              --repo "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
-              --issue-comments \
-              --pr-comments \
-              --include-wikis \
-              --json \
-              --no-update \
-              --exclude-detectors=lob \
-              --results=verified,unknown,unverified,filtered_unverified \
+          trufflehog github \
+            --repo "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --issue-comments \
+            --pr-comments \
+            --include-wikis \
+            --json \
+            --no-update \
+            --exclude-detectors=lob \
+            --results=verified,unknown,unverified,filtered_unverified \
             > trufflehog-api-findings.jsonl
 
       - name: Summarize (redacted) — report only

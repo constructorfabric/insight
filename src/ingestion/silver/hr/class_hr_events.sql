@@ -11,9 +11,7 @@
     tags=['silver']
 ) }}
 
-SELECT * FROM (
+SELECT candidate.* FROM (
     {{ union_by_tag('silver:class_hr_events') }}
-)
-{% if is_incremental() %}
-WHERE _version > (SELECT max(_version) FROM {{ this }})
-{% endif %}
+) AS candidate
+{{ silver_incremental_watermark(['insight_tenant_id', 'source_id', 'source']) }}

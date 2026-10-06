@@ -39,7 +39,13 @@ SELECT
     fc.data_source,
     fc._version,
     fc._airbyte_extracted_at
-FROM {{ ref('class_git_file_changes') }} AS fc FINAL
+FROM (
+    SELECT fc.*
+    FROM {{ ref('class_git_file_changes') }} AS fc FINAL
+    -- INVARIANT: the class mixes connectors with independent `_version` clocks, so the boundary is per source.
+    -- Applied before the commit join: a third relation in the outer join renames its columns `fc.*`.
+    {{ silver_incremental_watermark(['tenant_id', 'source_id', 'data_source'], alias='fc') }}
+) AS fc
 -- INNER JOIN: a file change without a matching commit cannot be attributed
 -- to a person/week and has no usable downstream role. Enforcing correspondence
 -- here avoids silent NULL-propagation through WHERE filters in metric models.
@@ -49,6 +55,3 @@ INNER JOIN {{ ref('fct_git_commit') }} AS c FINAL
     AND c.project_key = fc.project_key
     AND c.repo_slug   = fc.repo_slug
     AND c.commit_hash = fc.commit_hash
-{% if is_incremental() %}
-WHERE fc._version > (SELECT max(_version) FROM {{ this }})
-{% endif %}

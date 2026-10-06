@@ -157,7 +157,7 @@ def drilldown_capabilities(
     assert response.status_code == 200, f"definitions: {response.status_code}"
     metrics = response.parse(MetricDefinitionListResponse).metrics
     assert metrics, "no metric definitions — did the migrations run?"
-    return {metric.metric_key: metric.drilldown for metric in metrics}
+    return {metric.metric_key: metric.drilldown for metric in metrics if metric.is_enabled}
 
 
 _EVIDENCE_BLOCKED_REASON = (
