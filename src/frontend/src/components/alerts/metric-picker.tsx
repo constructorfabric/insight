@@ -73,11 +73,22 @@ export function MetricPicker({
             text, which leaves a gap above a full list. */}
         {names.length === 0 ? (
           <ComboboxEmpty>
-            {found.isError
-              ? refusal(found.error, "Couldn't load metrics.")
-              : found.isPending
-                ? "Searching…"
-                : "No metric matches."}
+            {found.isError ? (
+              <>
+                {refusal(found.error, "Couldn't load metrics.")}{" "}
+                <button
+                  type="button"
+                  className="underline"
+                  onClick={() => void found.refetch()}
+                >
+                  Retry
+                </button>
+              </>
+            ) : found.isPending ? (
+              "Searching…"
+            ) : (
+              "No metric matches."
+            )}
           </ComboboxEmpty>
         ) : null}
         <ComboboxList ref={list}>
@@ -86,7 +97,18 @@ export function MetricPicker({
               {name}
             </ComboboxItem>
           ))}
-          {found.hasNextPage ? (
+          {found.isFetchNextPageError ? (
+            <p role="alert" className={cn(TEXT_LABEL, "px-3 py-2 text-destructive")}>
+              {refusal(found.error, "Couldn't load more metrics.")}{" "}
+              <button
+                type="button"
+                className="underline"
+                onClick={() => void found.fetchNextPage()}
+              >
+                Retry
+              </button>
+            </p>
+          ) : found.hasNextPage ? (
             <p
               ref={marker}
               role="presentation"

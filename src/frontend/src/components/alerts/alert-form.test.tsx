@@ -201,6 +201,29 @@ describe("NewAlertPage", () => {
     expect(customClient.fetchMetric).toHaveBeenCalledWith("prs-open");
   });
 
+  it("says when the picked metric cannot be read, and reads it again on request", async () => {
+    vi.mocked(customClient.fetchMetric)
+      .mockRejectedValueOnce(new CustomApiError(500, null))
+      .mockResolvedValueOnce(storedMetric(PRS_OPEN));
+
+    render(<NewAlertPage />, { wrapper });
+    await userEvent.type(await screen.findByLabelText("Metric"), "prs");
+    await userEvent.click(
+      await screen.findByRole("option", { name: "prs-open" })
+    );
+
+    expect(
+      await screen.findByText("Couldn't read the metric.")
+    ).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    await pick("Column", "total");
+    expect(
+      screen.queryByText("Couldn't read the metric.")
+    ).not.toBeInTheDocument();
+    expect(customClient.fetchMetric).toHaveBeenCalledTimes(2);
+  });
+
   it("asks the service for the metrics matching what is typed", async () => {
     render(<NewAlertPage />, { wrapper });
     await userEvent.type(await screen.findByLabelText("Metric"), "gold.prs");
@@ -233,6 +256,31 @@ describe("NewAlertPage", () => {
     expect(customClient.fetchMetricNames).toHaveBeenLastCalledWith(
       expect.objectContaining({ offset: 50 })
     );
+  });
+
+  it("says when the next page of metrics cannot be read, and reads it again on request", async () => {
+    scrollEndOutOfView();
+    const first = Array.from({ length: 50 }, (_, at) => `metric-${at}`);
+    vi.mocked(customClient.fetchMetricNames)
+      .mockResolvedValueOnce({ names: first, total: 51 })
+      .mockRejectedValueOnce(new CustomApiError(500, null))
+      .mockResolvedValueOnce({ names: ["metric-50"], total: 51 });
+
+    render(<NewAlertPage />, { wrapper });
+    await userEvent.click(await screen.findByLabelText("Metric"));
+    await screen.findByRole("option", { name: "metric-0" });
+
+    scrollEndIntoView();
+
+    expect(
+      await screen.findByText("Couldn't load more metrics.")
+    ).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "metric-0" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    expect(
+      await screen.findByRole("option", { name: "metric-50" })
+    ).toBeInTheDocument();
   });
 
   it("offers a metric once when a later page repeats it", async () => {
@@ -575,6 +623,9 @@ describe("EditAlertPage", () => {
       )
     );
     expect(screen.queryByText("Number is too large.")).not.toBeInTheDocument();
+    expect(
+      await screen.findByText(/does not meet the condition/, {}, { timeout: 3_000 })
+    ).toBeInTheDocument();
   });
 
   it("drops a window its metric no longer has a date for", async () => {

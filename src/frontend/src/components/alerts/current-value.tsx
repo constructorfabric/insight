@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 
-import type { AlertOperator } from "@/api/alerts-types";
+import type { AlertNumber, AlertOperator } from "@/api/alerts-types";
 import { refusal } from "@/components/custom/refusal";
 import { Spinner } from "@/components/ui/spinner";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
@@ -31,7 +31,8 @@ export function CurrentValue({
   column: string;
   range: string;
   operator: AlertOperator;
-  threshold: number | undefined;
+  /** As the service holds it, so a wide stored number is read exactly. */
+  threshold: AlertNumber | undefined;
   /** The column divides one total by another, so an empty value means nothing to divide by. */
   ratio: boolean;
 }) {
@@ -72,7 +73,7 @@ export function CurrentValue({
       );
     }
 
-    const preview = previewCheck(run.data, column, operator, threshold ?? 0);
+    const preview = previewCheck(run.data, column, operator, threshold);
     if (preview.kind === "unknown") {
       return (
         <p className="text-destructive">
@@ -88,7 +89,7 @@ export function CurrentValue({
       <p>
         Current value:{" "}
         <span className="tabular-nums">{numberText(preview.value)}</span>
-        {threshold === undefined
+        {preview.breached === undefined
           ? ""
           : preview.breached
             ? " · meets the condition"

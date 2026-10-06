@@ -91,7 +91,7 @@ export function thresholdOf(typed: string): number | undefined {
 }
 
 /** What the service sent, while the field still reads so; otherwise what was typed. */
-function thresholdSent(form: AlertForm): AlertNumber | undefined {
+export function thresholdSent(form: AlertForm): AlertNumber | undefined {
   const stored = form.storedThreshold;
   if (stored !== undefined && form.threshold.trim() === String(stored)) {
     return stored;

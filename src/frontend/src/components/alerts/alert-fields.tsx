@@ -6,11 +6,13 @@ import type { StoredMetric } from "@/api/custom-types";
 import { FieldSelect } from "@/components/alerts/field-select";
 import { MetricPicker } from "@/components/alerts/metric-picker";
 import { Row } from "@/components/custom/editor/controls";
+import { refusal } from "@/components/custom/refusal";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { OPERATORS } from "@/lib/alerts/describe";
 import {
-  thresholdOf,
+  thresholdSent,
   type AlertForm,
   type FieldErrors,
 } from "@/lib/alerts/draft";
@@ -37,11 +39,9 @@ const UTC_NOTE = "Days, months and quarters end at midnight UTC.";
 /** The windows bounded by calendar days rather than counted back from now. */
 const CALENDAR_WINDOWS = new Set(["PDC", "PMC", "PQC"]);
 
-/** The columns a metric answers, by the names a rule calls them. */
-function useStoredMetric(metric: string): StoredMetric | undefined {
-  const read = useQuery({ ...metricQuery(metric), enabled: metric !== "" });
-
-  return read.data;
+/** The stored metric a rule reads, with how the read went. */
+function useStoredMetric(metric: string) {
+  return useQuery({ ...metricQuery(metric), enabled: metric !== "" });
 }
 
 /** Why the picked metric cannot be alerted on, or nothing when it can. */
@@ -84,7 +84,8 @@ export function AlertFields({
   destinations: readonly AlertDestination[];
   onChange: (next: AlertForm) => void;
 }) {
-  const stored = useStoredMetric(form.metric);
+  const read = useStoredMetric(form.metric);
+  const stored: StoredMetric | undefined = read.data;
   const definition = stored?.definition;
   const windowed = takesWindow(stored);
 
@@ -97,7 +98,11 @@ export function AlertFields({
   const windowHint = CALENDAR_WINDOWS.has(form.range) ? UTC_NOTE : undefined;
   const metricProblem =
     errors.metric ??
-    (definition ? shapeProblem(metricShape(definition)) : undefined);
+    (read.isError
+      ? refusal(read.error, "Couldn't read the metric.")
+      : definition
+        ? shapeProblem(metricShape(definition))
+        : undefined);
   const columns = definition
     ? alertColumns(definition).map((field) => field.as_name)
     : [];
@@ -120,15 +125,27 @@ export function AlertFields({
       </Row>
 
       <Row id="alert-metric" label="Metric" required said={metricProblem}>
-        <MetricPicker
-          id="alert-metric"
-          value={form.metric}
-          describe={describing("alert-metric", {
-            said: metricProblem,
-            required: true,
-          })}
-          onChange={(metric) => set({ metric, column: "" })}
-        />
+        <div className="flex flex-col items-start gap-1">
+          <MetricPicker
+            id="alert-metric"
+            value={form.metric}
+            describe={describing("alert-metric", {
+              said: metricProblem,
+              required: true,
+            })}
+            onChange={(metric) => set({ metric, column: "" })}
+          />
+          {read.isError ? (
+            <Button
+              type="button"
+              variant="link"
+              className="h-auto px-0 py-1"
+              onClick={() => void read.refetch()}
+            >
+              Retry
+            </Button>
+          ) : null}
+        </div>
       </Row>
       <div className="grid gap-4 sm:grid-cols-2">
         <Row id="alert-column" label="Column" required said={errors.column}>
@@ -210,7 +227,7 @@ export function AlertFields({
         column={form.column}
         range={form.range}
         operator={form.operator}
-        threshold={thresholdOf(form.threshold)}
+        threshold={thresholdSent(form)}
         ratio={isRatio(definition, form.column)}
       />
 

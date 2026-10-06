@@ -57,4 +57,36 @@ describe("previewCheck", () => {
       previewCheck(answer(["total"], [[2 ** 60]]), "total", ">", 1)
     ).toEqual({ kind: "value", value: 2 ** 60, breached: true });
   });
+
+  it.each([
+    [">", 12, "9007199254740993", false],
+    ["<", 12, "9007199254740993", true],
+    [">=", 9007199254740992, "9007199254740992", true],
+    [">", 9007199254740992, "9007199254740993", false],
+    ["<", -5, "-9007199254740993", false],
+  ] as const)(
+    "reads %s with value %s against the stored digits %s exactly as breached: %s",
+    (operator, value, threshold, breached) => {
+      expect(
+        previewCheck(answer(["total"], [[value]]), "total", operator, threshold),
+        `${value} ${operator} ${threshold}`
+      ).toEqual({ kind: "value", value, breached });
+    }
+  );
+
+  it.each([
+    ["a fraction against stored digits a float cannot hold", 0.5, "9007199254740993"],
+    ["stored digits against a fraction", 2 ** 60, "0.5"],
+  ])("is unknown for %s", (_case, value, threshold) => {
+    expect(previewCheck(answer(["total"], [[value]]), "total", ">", threshold)).toEqual({
+      kind: "unknown",
+      reason: "incomparable",
+    });
+  });
+
+  it("reads the value alone while no threshold is typed", () => {
+    expect(
+      previewCheck(answer(["total"], [[12]]), "total", ">", undefined)
+    ).toEqual({ kind: "value", value: 12, breached: undefined });
+  });
 });
