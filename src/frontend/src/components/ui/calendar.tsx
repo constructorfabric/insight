@@ -6,6 +6,8 @@ import {
   type Locale,
 } from "react-day-picker"
 
+import type { VariantProps } from "class-variance-authority"
+
 import { cn } from "@/lib/utils"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { ChevronLeftIcon, ChevronRightIcon, ChevronDownIcon } from "lucide-react"
@@ -21,7 +23,7 @@ function Calendar({
   components,
   ...props
 }: React.ComponentProps<typeof DayPicker> & {
-  buttonVariant?: React.ComponentProps<typeof Button>["variant"]
+  buttonVariant?: VariantProps<typeof buttonVariants>["variant"]
 }) {
   const defaultClassNames = getDefaultClassNames()
 
