@@ -10,9 +10,10 @@
 # migration or a guarded heal. This script reproduces that warm deploy:
 #
 #   1. Install BASE_SHA: run the base tree's own deploy hook
-#      (create-bronze-placeholders + migrations + heals + base gold build,
+#      (create-warehouse-placeholders + migrations + heals + base gold build,
 #      with dbt pinned from the base tree's pins.env) — what an existing
-#      installation's last deploy left behind.
+#      installation's last deploy left behind, plus the bronze a connector
+#      would have synced into it (seed_warm_bronze below).
 #   2. Deploy the working tree: run this branch's apply-ch-migrations.sh
 #      end to end with dbt pinned from this tree's pins.env — exactly what
 #      the Helm clickhouse-migrate hook runs.
@@ -76,6 +77,36 @@ fi
 # reported close from the SOURCE rather than copying the settled one — the
 # difference between a 10-hour merge and a 2-hour one, on data no resync has
 # touched. #3362
+# No deploy creates bronze — destination-clickhouse does, on a connector's first
+# sync — so the warm state a connector would have left is a fixture here. Shape
+# follows the destination's append_dedup output (ReplacingMergeTree versioned by
+# the extraction stamp, sorted by a non-nullable unique_key); columns are the
+# ones the backfill reads, not the connector's full stream.
+seed_warm_bronze() {
+  echo "=== Creating the bronze a synced warm installation would hold ==="
+  source "$REPO_ROOT/src/ingestion/scripts/lib/ch-exec.sh"
+  run_ch <<'SQL'
+CREATE DATABASE IF NOT EXISTS bronze_github;
+CREATE DATABASE IF NOT EXISTS bronze_gitlab;
+CREATE TABLE IF NOT EXISTS bronze_github.pull_requests
+(
+    unique_key String, tenant_id Nullable(String), source_id Nullable(String),
+    state Nullable(String), created_at Nullable(String), closed_at Nullable(String),
+    merged_at Nullable(String), _airbyte_raw_id String,
+    _airbyte_extracted_at DateTime64(3), _airbyte_meta String, _airbyte_generation_id UInt32
+)
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key;
+CREATE TABLE IF NOT EXISTS bronze_gitlab.pull_requests
+(
+    unique_key String, tenant_id Nullable(String), source_id Nullable(String),
+    state Nullable(String), created_at Nullable(String), closed_at Nullable(String),
+    merged_at Nullable(String), _airbyte_raw_id String,
+    _airbyte_extracted_at DateTime64(3), _airbyte_meta String, _airbyte_generation_id UInt32
+)
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key;
+SQL
+}
+
 seed_git_close_time_warm_state() {
   echo "=== Seeding the pre-contract git pull-request state ==="
   source "$REPO_ROOT/src/ingestion/scripts/lib/ch-exec.sh"
@@ -156,6 +187,7 @@ assert_git_close_time_recovered() {
   echo "=== Reported close recovered from the source, newest generation and current stream ==="
 }
 
+seed_warm_bronze
 seed_git_close_time_warm_state
 
 echo "=== Step 2: deploy the working tree onto the warm state ==="

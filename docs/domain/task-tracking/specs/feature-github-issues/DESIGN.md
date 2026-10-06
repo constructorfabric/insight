@@ -173,8 +173,9 @@ silently orphans every mapping. The catalogue supplies a stable key.
 
 ### 2.5 Descriptor and Bronze Schema
 
-New streams need their bronze DDL added to the connectors-ddl snapshot and the
-connector descriptor version bumped. The descriptor bump lands post-merge, so a
+New streams need the connector descriptor version bumped. Their bronze DDL is
+not committed anywhere: `destination-clickhouse` creates the tables from the
+connector's own catalogue on the next sync. The descriptor bump lands post-merge, so a
 green pull request does not prove the deployed descriptor moved — verify after
 merge.
 

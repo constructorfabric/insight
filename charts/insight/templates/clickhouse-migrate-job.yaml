@@ -12,7 +12,7 @@ bundled L2 subcharts (CH is now always external), so that path can no
 longer reach ClickHouse and nothing else applied the migrations — the
 `clickhouse-init-svcdbs` Hook only runs `CREATE DATABASE`. This Job closes
 that gap: it runs the toolbox image (which bundles the migrations,
-`create-bronze-placeholders.sh`, and `lib/ch-exec.sh`) and dials
+`create-warehouse-placeholders.sh`, and `lib/ch-exec.sh`) and dials
 `clickhouse.host` directly over the HTTP interface (CLICKHOUSE_URL selects
 the HTTP backend in lib/ch-exec.sh).
 

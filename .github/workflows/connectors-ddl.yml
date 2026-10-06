@@ -3,19 +3,25 @@ name: connectors-ddl
 # Validates the two contracts no other lane can see, against a ClickHouse built
 # from scratch by the real pipeline:
 #
-#   1. the committed connectors-ddl snapshot still matches what the current
-#      connectors + dbt + migrations actually produce;
+#   1. the committed connectors-ddl snapshot (identity, staging, silver,
+#      insight) still matches what the current dbt + migrations actually
+#      produce;
 #   2. every staging contributor still lines up field-for-field with its silver
 #      union target (check-field-parity.py).
 #
 # One empty ClickHouse, then straight into bootstrap-db.sh: real connector
 # `discover`, the real destination-clickhouse connector, real dbt, real
 # migrations. The committed snapshot is deliberately NOT applied first —
-# create-bronze-placeholders.sh issues `CREATE ... IF NOT EXISTS`, so a relation
-# the snapshot still carries but the current code no longer produces would
-# survive into the fresh dump, hide its own deletion from the diff and break
-# convergence. That is the same reason bootstrap-db.sh sets
+# create-warehouse-placeholders.sh issues `CREATE ... IF NOT EXISTS`, so a
+# relation the snapshot still carries but the current code no longer produces
+# would survive into the fresh dump, hide its own deletion from the diff and
+# break convergence. That is the same reason bootstrap-db.sh sets
 # BOOTSTRAP_SKIP_SNAPSHOT=1 during generation.
+#
+# The snapshot covers identity, staging, silver and insight only. Bronze has one
+# creator, destination-clickhouse, so dumping it would re-create the very
+# first-creator race the layer was freed from; the bootstrap still builds real
+# bronze here, which is what the field-parity gate below reads.
 #
 # Runs on PRs against main and on every commit that lands on main. The push run
 # is not redundant: a PR is validated against its own merge-base, so two PRs that

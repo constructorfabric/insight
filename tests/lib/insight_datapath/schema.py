@@ -6,14 +6,14 @@ databases a spec seeds do not exist yet. This builds them in the order
 
     1. CREATE DATABASE staging | insight
     2. Run the real connectors into the real destination (`bronze.create_bronze`)
-    3. Apply the warehouse half of the scripts/connectors-ddl snapshot
+    3. Apply the scripts/connectors-ddl snapshot (identity, staging, silver, insight)
     4. Run scripts/migrations/*.sql
 
 Bronze is created by the destination rather than from the snapshot so that the rig
 has the same single creator a deployment has: a table a spec seeds is the shape this
-tree's connectors and the pinned destination produce, not the shape the snapshot
-carried when it was last dumped. The snapshot's four non-connector files still stand
-in for relations a deployment gets from dbt (T23 retires them).
+tree's connectors and the pinned destination produce. The snapshot holds no bronze
+at all; its four files stand in for relations a deployment gets from dbt (T23
+retires them).
 
 Idempotent: every statement uses CREATE OR REPLACE / IF NOT EXISTS / DROP IF
 EXISTS. We split multi-statement files on `;` because clickhouse-connect's
@@ -22,15 +22,11 @@ HTTP endpoint accepts only one statement per request.
 
 from __future__ import annotations
 
-import importlib.util
 import logging
 import os
 import re
 import subprocess
-import sys
-from functools import lru_cache
 from pathlib import Path
-from types import ModuleType
 
 from insight_datapath import clickhouse as ch
 from insight_datapath.bronze import create_bronze
@@ -39,8 +35,9 @@ from insight_datapath.process import tail
 
 LOG = logging.getLogger("datapath.schema")
 
-#: The snapshot files that are not a connector's bronze, applied in dependency
-#: order: `insight`'s views read `silver` and every `bronze_*` database.
+#: Every file the snapshot holds, applied in dependency order: `insight`'s views
+#: read `silver`. No connector is among them — bronze has one creator, and a
+#: file applied here would pre-empt it.
 WAREHOUSE_SNAPSHOT = ("identity", "staging", "silver", "insight")
 
 
@@ -70,9 +67,9 @@ def apply_all(cfg: InstanceConfig, *, repo_root: Path, project: str) -> int:
 
 
 def apply_warehouse_snapshot(cfg: InstanceConfig, *, repo_root: Path) -> int:
-    """Apply the non-connector half of the scripts/connectors-ddl snapshot.
+    """Apply the scripts/connectors-ddl snapshot.
 
-    Same retry semantics as prod's create-bronze-placeholders.sh: views may
+    Same retry semantics as prod's create-warehouse-placeholders.sh: views may
     reference other views, so failed statements are retried in additional passes
     until a pass makes no progress.
     """
@@ -102,58 +99,7 @@ def apply_warehouse_snapshot(cfg: InstanceConfig, *, repo_root: Path) -> int:
             )
         pending = [s for s, _ in failed]
 
-    reconcile_bronze_schema(cfg, ddl_dir, repo_root=repo_root)
     return applied
-
-
-def reconcile_bronze_schema(cfg: InstanceConfig, ddl_dir: Path, *, repo_root: Path) -> int:
-    """Add snapshot columns missing from pre-existing bronze tables.
-
-    Mirrors the phase prod runs at the end of create-bronze-placeholders.sh, by
-    importing the same module rather than reimplementing it — the rig's
-    ClickHouse outlives a single run (compose volume, and CI reuses the service
-    across fixtures), so it accumulates exactly the schema drift #1991 is about.
-    """
-    reconciler = _reconciler(repo_root / "src/ingestion/scripts/reconcile_bronze_schema.py")
-    result = reconciler.reconcile(
-        reconciler.load_snapshot_tables(ddl_dir),
-        execute=lambda sql: ch.execute(cfg, sql),
-        fetch_rows=lambda sql: [[str(cell) for cell in row] for row in ch.query(cfg, sql)],
-    )
-    if result.columns_added:
-        LOG.info(
-            "reconciled %d bronze column(s) across %d table(s)",
-            result.columns_added,
-            result.tables_reconciled,
-        )
-    for qualified, name, snapshot_type, live_type in result.type_drift:
-        LOG.warning(
-            "%s.%s type differs — snapshot=%s live=%s (left unchanged)",
-            qualified,
-            name,
-            snapshot_type,
-            live_type,
-        )
-    return result.columns_added
-
-
-@lru_cache(maxsize=1)
-def _reconciler(path: Path) -> ModuleType:
-    """Load scripts/reconcile_bronze_schema.py, which lives outside the rig's package root.
-
-    The module must be registered in sys.modules BEFORE exec_module: dataclass
-    resolves its own module via `sys.modules[cls.__module__]`, so executing an
-    unregistered module raises AttributeError on the first @dataclass. Loading
-    the file by path (rather than putting scripts/ on sys.path) keeps the rig's
-    own `tests` package from being shadowed by the one next to the script.
-    """
-    spec = importlib.util.spec_from_file_location("reconcile_bronze_schema", path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"cannot load the bronze reconciler from {path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
 
 
 def _apply_file(cfg: InstanceConfig, path: Path) -> int:

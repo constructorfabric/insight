@@ -38,7 +38,6 @@ ee8d1fe3c4f9e4e5  Gitlab             src/ingestion/connectors/git/gitlab/dbt/git
 065b5e46fa7954a8  Gitlab             src/ingestion/connectors/git/gitlab/dbt/gitlab__pull_requests_commits.sql  # code identifier / constant name
 30b51188bf3e2a87  Gitlab             src/ingestion/connectors/git/gitlab/dbt/gitlab__unowned_commit_emails.sql  # code identifier / constant name
 136fc1e55088a7de  Gitlab             src/ingestion/connectors/git/gitlab/tests/test_gitlab_proxy_streams.py  # code identifier / constant name
-7a55702f5399e506  Gitlab             src/ingestion/scripts/connectors-ddl/gitlab.sql  # a bronze relation name in the DDL snapshot, not a token
 db81f4ceb1b447a8  Gitlab             .github/trufflehog-allowlist.txt  # this file's own entries name the identifier, not a token
 001ef6ca495466c2  Gitlab             .github/trufflehog-allowlist.txt  # this file's own entries name the identifier, not a token
 93b61de828413759  Gitlab             .github/trufflehog-allowlist.txt  # this file's own entries name the identifier, not a token
@@ -95,7 +94,6 @@ f805794a8092a445  Gitlab             docs/connectors/gitlab.md  # anchor slug fr
 5804c17e4c07e9bb  Gitlab             src/ingestion/connectors/git/gitlab/source_gitlab/streams/merge_requests.py  # stream class name, not a token
 cd968567652ff20b  Gitlab             src/ingestion/connectors/git/gitlab/source_gitlab/streams/project_incremental.py  # module constant name, not a token
 d1c1dd2c5248b565  Gitlab             src/ingestion/connectors/git/gitlab/tests/test_source.py  # test function name, not a token
-079c134aaca8eb24  Gitlab             src/ingestion/scripts/connectors-ddl/gitlab-nocode.sql  # a bronze relation name in the DDL snapshot, not a token
 fdd801f84b096f9b  HubSpotApiKey      src/ingestion/tests/e2e/lib/metric_coverage.py  # synthetic UUID fixture
 93192185cb9d3fc6  HubSpotApiKey      src/ingestion/tests/e2e/lib/metric_coverage.py  # synthetic UUID fixture
 175ae9997104cde3  HubSpotApiKey      src/ingestion/tests/e2e/lib/metric_coverage.py  # synthetic UUID fixture

@@ -10,9 +10,10 @@
 #
 # Steps (same order and contract as init.sh):
 #   1. Create the core databases (staging, silver, app db).
-#   2. Run create-bronze-placeholders.sh — minimum-viable bronze/silver
-#      stubs so gold-view CREATE VIEW type-checks on a fresh cluster
-#      (CH validates referenced tables at parse time). See ADR-0007.
+#   2. Run create-warehouse-placeholders.sh — minimum-viable identity/
+#      staging/silver/insight stubs so gold-view CREATE VIEW type-checks on a
+#      fresh cluster (CH validates referenced tables at parse time). Bronze is
+#      not among them: the Airbyte destination is its only creator.
 #   3. Apply migrations/*.sql in lexicographic order.
 #   4. Build the dbt gold models (tag:gold) so dbt-owned views exist at
 #      deploy time instead of after the first connector sync.
@@ -89,8 +90,8 @@ fi
 echo "=== Provisioning grafana access (SELECT-only role + grant-less user) (#2888) ==="
 bash "$SCRIPT_DIR/bootstrap-db/provision-grafana-access.sh"
 
-echo "=== Creating bronze/silver placeholders (ADR-0007) ==="
-bash "$SCRIPT_DIR/create-bronze-placeholders.sh"
+echo "=== Creating warehouse placeholders (ADR-0007) ==="
+bash "$SCRIPT_DIR/create-warehouse-placeholders.sh"
 
 echo "=== Applying ClickHouse migrations ==="
 shopt -s nullglob
@@ -608,12 +609,10 @@ echo "=== Healing git file-change object id columns ==="
 # here because these tables exist only after a connector has run.
 #
 # bronze_github.file_changes is healed for a different reason: the GitHub
-# staging model READS the two columns, and nothing else adds them in time.
-# create-bronze-placeholders.sh is IF NOT EXISTS so a warm bronze table is
-# never altered, and the destination only widens it on the connector's next
-# sync — which lands after this deploy's dbt run, leaving the staging model
-# (and every git model downstream of it) failing on an unknown identifier
-# until then.
+# staging model READS the two columns, and the destination only widens the table
+# on the connector's next sync — which lands after this deploy's dbt run,
+# leaving the staging model (and every git model downstream of it) failing on an
+# unknown identifier until then.
 #
 # Existing rows heal to NULL and carry an oid from the first sync that
 # re-collects them. Idempotent.
