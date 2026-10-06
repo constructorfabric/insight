@@ -1,9 +1,14 @@
 import { useState, type KeyboardEvent, type ReactNode } from "react";
-import { Maximize2, Minimize2 } from "lucide-react";
+import { Maximize2, Minimize2, Table2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import {
+  DIALOG_FILL_WINDOW,
+  Dialog,
+  DialogContent,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { TEXT_HEADING } from "@/lib/type-scale";
@@ -12,6 +17,7 @@ import { cn } from "@/lib/utils";
 const STANDARD_HEIGHT = 304;
 const TALL_HEIGHT = 464;
 const SKELETON_BARS = [40, 65, 45, 80, 55, 90, 70];
+const HEADING = cn(TEXT_HEADING, "truncate leading-tight");
 
 interface WidgetFrameProps {
   title: ReactNode;
@@ -44,6 +50,13 @@ export function WidgetFrame({
 }: WidgetFrameProps) {
   const [expanded, setExpanded] = useState(false);
 
+  const activate = onBodyActivate
+    ? () => {
+        setExpanded(false);
+        onBodyActivate();
+      }
+    : undefined;
+
   const content = (
     <>
       {state === "ready" ? children : null}
@@ -59,6 +72,33 @@ export function WidgetFrame({
     </>
   );
 
+  const frame = (heading: ReactNode, toggle: ReactNode, body: ReactNode) => (
+    <>
+      <div className="flex min-h-[76px] shrink-0 items-start justify-between gap-2.5 px-6 pt-[23px] pb-3.5">
+        <div className="min-w-0">
+          {heading}
+          {subtitle ? (
+            <p className="mt-1.5 line-clamp-2 max-w-[440px] text-xs leading-normal text-muted-foreground">
+              {subtitle}
+            </p>
+          ) : null}
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          {action}
+          {activate ? (
+            <HeaderButton label={bodyLabel} onClick={activate}>
+              <Table2 />
+            </HeaderButton>
+          ) : null}
+          {toggle}
+        </div>
+      </div>
+      <Body onActivate={activate} label={bodyLabel} tall={tall}>
+        {body}
+      </Body>
+    </>
+  );
+
   return (
     <Card
       className={cn(
@@ -67,76 +107,32 @@ export function WidgetFrame({
       )}
       style={{ height: tall ? TALL_HEIGHT : STANDARD_HEIGHT }}
     >
-      <Header
-        title={<h3 className={HEADING}>{title}</h3>}
-        subtitle={subtitle}
-        action={action}
-        toggle={
-          fullscreen ? (
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label="Full screen"
-              className="text-muted-foreground"
-              onClick={() => setExpanded(true)}
-            >
-              <Maximize2 />
-            </Button>
-          ) : null
-        }
-      />
-      <Body onActivate={onBodyActivate} label={bodyLabel} tall={tall}>
-        {expanded ? null : content}
-      </Body>
+      {frame(
+        <h3 className={HEADING}>{title}</h3>,
+        fullscreen ? (
+          <HeaderButton label="Full screen" onClick={() => setExpanded(true)}>
+            <Maximize2 />
+          </HeaderButton>
+        ) : null,
+        expanded ? null : content
+      )}
 
       {fullscreen ? (
         <Dialog open={expanded} onOpenChange={setExpanded}>
-          <DialogContent className="flex h-[96vh] w-[98vw] max-w-[98vw] flex-col gap-0 p-0">
-            <Header
-              title={
-                <DialogTitle className={cn(HEADING, "pt-3")}>
-                  {title}
-                </DialogTitle>
-              }
-              subtitle={subtitle}
-              action={
-                action ? (
-                  <div
-                    onClickCapture={() => setExpanded(false)}
-                    className="contents"
-                  >
-                    {action}
-                  </div>
-                ) : null
-              }
-              toggle={
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="w-9 text-muted-foreground"
-                  aria-label="Exit full screen"
-                  onClick={() => setExpanded(false)}
-                >
-                  <Minimize2 />
-                </Button>
-              }
-              className="min-h-0 pe-14 pt-4"
-              controlsClassName="h-9"
-            />
-            <Body
-              onActivate={
-                onBodyActivate
-                  ? () => {
-                      setExpanded(false);
-                      onBodyActivate();
-                    }
-                  : undefined
-              }
-              label={bodyLabel}
-              tall={tall}
-            >
-              {content}
-            </Body>
+          <DialogContent
+            showCloseButton={false}
+            className={cn(DIALOG_FILL_WINDOW, "flex flex-col gap-0 p-0")}
+          >
+            {frame(
+              <DialogTitle className={HEADING}>{title}</DialogTitle>,
+              <HeaderButton
+                label="Exit full screen"
+                onClick={() => setExpanded(false)}
+              >
+                <Minimize2 />
+              </HeaderButton>,
+              content
+            )}
           </DialogContent>
         </Dialog>
       ) : null}
@@ -144,47 +140,25 @@ export function WidgetFrame({
   );
 }
 
-const HEADING = cn(TEXT_HEADING, "truncate leading-tight");
-
-function Header({
-  title,
-  subtitle,
-  action,
-  toggle,
-  className,
-  controlsClassName,
+function HeaderButton({
+  label,
+  onClick,
+  children,
 }: {
-  title: ReactNode;
-  subtitle?: ReactNode;
-  action?: ReactNode;
-  toggle?: ReactNode;
-  className?: string;
-  controlsClassName?: string;
+  label?: string;
+  onClick: () => void;
+  children: ReactNode;
 }) {
   return (
-    <div
-      className={cn(
-        "flex min-h-[76px] shrink-0 items-start justify-between gap-2.5 px-6 pt-[23px] pb-3.5",
-        className
-      )}
+    <Button
+      variant="ghost"
+      size="icon-sm"
+      aria-label={label}
+      className="text-muted-foreground"
+      onClick={onClick}
     >
-      <div className="min-w-0">
-        {title}
-        {subtitle ? (
-          <p className="mt-1.5 line-clamp-2 max-w-[440px] text-xs leading-normal text-muted-foreground">
-            {subtitle}
-          </p>
-        ) : null}
-      </div>
-      {action || toggle ? (
-        <div
-          className={cn("flex shrink-0 items-center gap-1", controlsClassName)}
-        >
-          {action}
-          {toggle}
-        </div>
-      ) : null}
-    </div>
+      {children}
+    </Button>
   );
 }
 

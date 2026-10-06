@@ -133,6 +133,23 @@ describe("MetricEvidenceTable", () => {
     expect(heading.querySelectorAll("wbr")).toHaveLength(2);
   });
 
+  it("lets a long number heading with no underscore break anywhere rather than spill", () => {
+    renderTable({
+      columns: [
+        {
+          key: "long",
+          label: "invoicedSubscriptionInvoices",
+          type: "number" as const,
+        },
+      ],
+      rows: [{ values: { long: 2 } }],
+    });
+
+    expect(screen.getByTitle("invoicedSubscriptionInvoices")).toHaveClass(
+      "wrap-anywhere"
+    );
+  });
+
   it("numbers the rows in the order they are drawn when asked to", () => {
     renderTable({ numbered: true });
     const [header, ...body] = screen.getAllByRole("row");

@@ -76,7 +76,7 @@ describe("<WidgetFrame>", () => {
           <p>chart</p>
         </WidgetFrame>
       );
-      const body = screen.getByRole("button", { name: "Show the data" });
+      const body = screen.getByText("chart").closest("[role=button]")!;
 
       fireEvent.keyDown(body, { key });
       fireEvent.click(body);
@@ -84,6 +84,24 @@ describe("<WidgetFrame>", () => {
       expect(open).toHaveBeenCalledTimes(2);
     }
   );
+
+  it("puts a button beside the title that opens what the body opens", () => {
+    const open = vi.fn();
+    render(
+      <WidgetFrame
+        title="Traffic"
+        state="ready"
+        onBodyActivate={open}
+        bodyLabel="Show the data"
+      >
+        <p>chart</p>
+      </WidgetFrame>
+    );
+
+    fireEvent.click(headerButton(document.body, "Show the data"));
+
+    expect(open).toHaveBeenCalledOnce();
+  });
 
   it("lets a long body scroll inside the frame when asked", () => {
     render(
@@ -132,6 +150,12 @@ describe("<WidgetFrame>", () => {
   });
 });
 
+function headerButton(scope: HTMLElement, name: string) {
+  return within(scope)
+    .getAllByRole("button", { name })
+    .find((button) => button.tagName === "BUTTON")!;
+}
+
 describe("<WidgetFrame> full screen", () => {
   function openFullScreen() {
     fireEvent.click(screen.getByRole("button", { name: "Full screen" }));
@@ -160,6 +184,9 @@ describe("<WidgetFrame> full screen", () => {
 
     const dialog = openFullScreen();
     expect(within(dialog).getByText("chart")).toBeInTheDocument();
+    expect(
+      within(dialog).queryByRole("button", { name: "Close" })
+    ).not.toBeInTheDocument();
 
     fireEvent.click(
       within(dialog).getByRole("button", { name: "Exit full screen" })
@@ -187,7 +214,7 @@ describe("<WidgetFrame> full screen", () => {
 
     const dialog = openFullScreen();
     fireEvent.click(
-      within(dialog).getByRole("button", { name: "Show the data" })
+      within(dialog).getByText("chart").closest("[role=button]")!
     );
 
     expect(open).toHaveBeenCalledOnce();
@@ -196,29 +223,44 @@ describe("<WidgetFrame> full screen", () => {
     );
   });
 
-  it("closes the dialog before running a header action", async () => {
+  it("closes the dialog before opening the data from its header", async () => {
     const open = vi.fn();
     render(
       <WidgetFrame
         title="Traffic"
         state="ready"
         fullscreen
-        action={
-          <button type="button" onClick={open}>
-            Data
-          </button>
-        }
+        onBodyActivate={open}
+        bodyLabel="Show the data"
       >
         <p>chart</p>
       </WidgetFrame>
     );
 
     const dialog = openFullScreen();
-    fireEvent.click(within(dialog).getByRole("button", { name: "Data" }));
+    fireEvent.click(headerButton(dialog, "Show the data"));
 
     expect(open).toHaveBeenCalledOnce();
     await waitFor(() =>
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
     );
+  });
+
+  it("stays open when the rest of the header is clicked", () => {
+    render(
+      <WidgetFrame
+        title="Traffic"
+        state="ready"
+        fullscreen
+        action={<span>All time</span>}
+      >
+        <p>chart</p>
+      </WidgetFrame>
+    );
+
+    const dialog = openFullScreen();
+    fireEvent.click(within(dialog).getByText("All time"));
+
+    expect(screen.getByRole("dialog", { name: "Traffic" })).toBeInTheDocument();
   });
 });

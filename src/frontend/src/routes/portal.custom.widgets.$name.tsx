@@ -108,6 +108,7 @@ function Drawn({ name, widget }: { name: string; widget: Widget }) {
     ...metricResultQuery(widget.metric, options),
     enabled: metric.isSuccess,
   });
+  const layout = widgetLayout(widget);
 
   return (
     <div className="flex flex-col gap-2">
@@ -134,8 +135,8 @@ function Drawn({ name, widget }: { name: string; widget: Widget }) {
             : undefined
         }
         state="ready"
-        tall={widgetLayout(widget).tall}
-        fullscreen={widgetLayout(widget).fullscreen}
+        tall={layout.tall}
+        fullscreen={layout.fullscreen}
       >
         <CustomWidget
           widget={widget}

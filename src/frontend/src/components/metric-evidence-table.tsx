@@ -242,7 +242,7 @@ export function MetricEvidenceTable({
                   className={cn(
                     "min-w-0",
                     numeric
-                      ? "line-clamp-2 text-right leading-tight whitespace-normal"
+                      ? "line-clamp-2 text-right leading-tight wrap-anywhere whitespace-normal"
                       : "truncate"
                   )}
                 >

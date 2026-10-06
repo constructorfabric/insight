@@ -152,6 +152,10 @@ describe("widgetLayout", () => {
       { type: "stat", metric: "m", value: "n" },
       { tall: false, fullRow: false, fullscreen: false },
     ],
+    [
+      { type: "gauge", metric: "m" } as unknown as Widget,
+      { tall: false, fullRow: false, fullscreen: false },
+    ],
   ])("lays out %o", (widget, layout) => {
     expect(widgetLayout(widget)).toEqual(layout);
   });

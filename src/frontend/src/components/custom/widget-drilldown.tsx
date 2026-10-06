@@ -11,6 +11,7 @@ import {
 } from "@/components/custom/definition-summary";
 import { Button } from "@/components/ui/button";
 import {
+  DIALOG_FILL_WINDOW,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -74,7 +75,7 @@ export function WidgetDrilldown({
       <DialogContent
         className={cn(
           filling
-            ? "h-[96vh] w-[98vw] max-w-[98vw] content-start"
+            ? cn(DIALOG_FILL_WINDOW, "content-start")
             : "w-[min(96vw,80rem)] max-w-[min(96vw,80rem)]"
         )}
       >

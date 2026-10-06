@@ -1,9 +1,6 @@
 import { createFileRoute, useRouterState } from "@tanstack/react-router";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Table2 } from "lucide-react";
-
-import { Button } from "@/components/ui/button";
 
 import {
   CustomApiError,
@@ -247,22 +244,11 @@ function DashboardWidgetSlot({
         onBodyActivate={() => setDrilldown(true)}
         bodyLabel={label}
         action={
-          <>
-            {range && definitionState.isSuccess && !clocked ? (
-              <Badge variant="secondary" className="shrink-0">
-                All time
-              </Badge>
-            ) : null}
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label={label}
-              className="text-muted-foreground"
-              onClick={() => setDrilldown(true)}
-            >
-              <Table2 />
-            </Button>
-          </>
+          range && definitionState.isSuccess && !clocked ? (
+            <Badge variant="secondary" className="shrink-0">
+              All time
+            </Badge>
+          ) : null
         }
       >
         <CustomWidget
