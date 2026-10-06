@@ -11,7 +11,8 @@ it changes whether those lanes pass, which is why it is versioned beside them.
 ## Which runs land here
 
 Every x64 `runs-on` in `.github/workflows` carries one rule, except the heavy
-jobs described under [The persistent class](#the-persistent-class):
+jobs under [The persistent class](#the-persistent-class) and the one waiting
+job under [The idling class](#the-idling-class):
 
 ```yaml
 runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
@@ -87,6 +88,22 @@ The jobs under this rule:
   `live_db` or `live_ch` in `scripts/ci/components.py` **and** runs tests
   (`cover` or `test`), the same condition as the "Start MariaDB" and "Start
   ClickHouse" steps. Lint-only legs and all other legs keep the general rule.
+
+### The idling class
+
+`build-images.yml`'s `queue-gate` does nothing but poll the merge queue until
+it drains, for up to 45 minutes, so that the release commit does not land
+mid-queue and reset it. Holding one of the five machines that long would
+starve the merge-group checks the job is waiting on, so it names the scale set
+directly under every event:
+
+```yaml
+runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || 'insight-vhc-arc' }}
+```
+
+An idle pod is the cheapest place to wait. Nothing else belongs under this
+rule: a job that uses a runner rather than waiting on one takes the general
+rule above.
 
 ## The kill switch
 

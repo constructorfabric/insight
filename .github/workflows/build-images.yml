@@ -49,6 +49,10 @@ on:
 # the auto-commit-back step. PR builds have no publish to protect, and a new
 # push obsoletes the matrix in flight — cancel it rather than let a stale
 # build keep burning runners next to the fresh one it queues behind.
+#
+# INVARIANT: at most one run is pending here, so a third push cancels the
+# waiting one and nothing ever diffs the merges it carried. Safe only while
+# `changes` diffs the last pinned commit rather than the previous push.
 concurrency:
   group: build-images-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -110,9 +114,19 @@ jobs:
       # package fixed in the distribution archive never reaches an image whose
       # apt layer still hits cache. This is the only way to re-run those layers.
       no_cache: ${{ github.event_name == 'workflow_dispatch' && inputs.no_cache || false }}
+      # Commits the diffs are taken against. Services use pin_base;
+      # connectors need their own, narrower one — see the step that sets them.
+      pin_base: ${{ steps.pinbase.outputs.pin_base }}
+      connector_base: ${{ steps.pinbase.outputs.connector_base }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history where a baseline is resolved: it walks back to the
+          # last release commit, and a fixed depth would silently degrade to a
+          # per-push diff once that commit sat past it. Quoted because a bare
+          # 0 is falsy in an Actions expression.
+          fetch-depth: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && '0' || '1' }}
       - name: Select build architectures
         id: arches
         env:
@@ -123,17 +137,53 @@ jobs:
           else
             echo 'arches=["amd64","arm64"]' >> "$GITHUB_OUTPUT"
           fi
+      # INVARIANT: services diff the last PINNED commit, never the previous
+      # push. A per-push diff drops whatever a cancelled pending run carried
+      # (see the concurrency block) and ships a chart still pinned to those
+      # services' previous tags; diffing the pin covers everything unpinned,
+      # whichever run gets there. The release commit is the baseline itself,
+      # so its own subchart Chart.yaml edits stay out of the range.
+      - name: Resolve change-detection baseline
+        id: pinbase
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        env:
+          EVENT_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          # WORKAROUND: HEAD, not origin/<branch> — a persistent runner's
+          # refs/remotes hold whatever an earlier job left behind
+          # (.github/runners/insight-vhc/README.md).
+          PIN="$(git log -1 --format=%H --grep='^chore(release): umbrella' HEAD)"
+          # No pin yet: a freshly cut release-** branch.
+          BASE="${PIN:-${EVENT_BEFORE:-}}"
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+            BASE="$(git rev-parse HEAD~1)"
+          fi
+          echo "baseline: $BASE ($(git log -1 --format=%s "$BASE"))"
+          echo "pin_base=$BASE" >> "$GITHUB_OUTPUT"
+
+          # INVARIANT: connectors start at the most recent descriptor bump,
+          # never at the pin. discover-image-matrix.py breaks the
+          # descriptor-commit recursion by ignoring descriptor.yaml alone, so
+          # a baseline reaching past that commit leaves the connector's source
+          # change in range: it rebuilds, is repatched to the new build tag,
+          # and pushes again, with publish-chart held off by `committed`.
+          CONNECTOR_BASE="$BASE"
+          if [ -n "$PIN" ]; then
+            DESC="$(git log -1 --format=%H --grep='^chore(descriptors): bump' "$PIN..HEAD")"
+            CONNECTOR_BASE="${DESC:-$PIN}"
+          fi
+          echo "connector baseline: $CONNECTOR_BASE"
+          echo "connector_base=$CONNECTOR_BASE" >> "$GITHUB_OUTPUT"
+
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
         with:
-          # Diff against the pushed-to branch itself, NOT the repo default
-          # branch (dorny's default base). On a release-** push the default
-          # would diff the whole branch against main and mark every service
-          # changed on every push; base=ref_name keeps the per-push diff
-          # semantics main has always had. Pull requests ignore this input;
-          # merge groups use the event's base SHA so the queue result is diffed
-          # against the exact main commit it includes.
-          base: ${{ github.event.merge_group.base_sha || github.ref_name }}
+          # Merge groups diff the event's base SHA — the exact main commit
+          # the queue result includes. Pull requests ignore this input;
+          # ref_name only keeps dorny off its own default, the repo default
+          # branch, which on a release-** push marks every service changed.
+          base: ${{ github.event.merge_group.base_sha || steps.pinbase.outputs.pin_base || github.ref_name }}
           filters: |
             analytics:
               - '.github/workflows/build-images.yml'
@@ -304,6 +354,7 @@ jobs:
   # entirely — build-image, merge-image and bump-descriptors all key off
   # `outputs.any`, so they cascade-skip with it.
   discover-images:
+    needs: changes
     if: github.event_name != 'merge_group' && (github.event_name != 'workflow_dispatch' || !inputs.frontend_only)
     runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
     outputs:
@@ -326,17 +377,21 @@ jobs:
         id: scan
         env:
           EVENT_BEFORE: ${{ github.event.before }}
+          CONNECTOR_BASE: ${{ needs.changes.outputs.connector_base }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
           # Determine base for the changed-paths diff:
-          # - push: github.event.before (parent before the push)
+          # - push / workflow_dispatch: the connector baseline resolved in
+          #   `changes` — the last descriptor bump, else the last pin
           # - pull_request: base sha of the PR
-          # - workflow_dispatch: HEAD~1 (single-commit lookback fallback)
+          # - anything else: github.event.before, then a HEAD~1 fallback
           if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
             BASE="$PR_BASE_SHA"
-          elif [ "$GITHUB_EVENT_NAME" = "push" ] && [ -n "$EVENT_BEFORE" ] \
+          elif [ -n "$CONNECTOR_BASE" ]; then
+            BASE="$CONNECTOR_BASE"
+          elif [ -n "$EVENT_BEFORE" ] \
                && [ "$EVENT_BEFORE" != "0000000000000000000000000000000000000000" ]; then
             BASE="$EVENT_BEFORE"
           else
@@ -1846,6 +1901,66 @@ jobs:
         run: |
           echo '- `${{ env.IMAGE_PREFIX }}/${{ matrix.entry.name }}:${{ needs.changes.outputs.build_tag }}`' >> "$GITHUB_STEP_SUMMARY"
 
+  # ─── Merge-queue drain gate ────────────────────────────────────────────────
+  # bump-descriptors and publish-chart push to the branch, and a push from
+  # outside the branch's own merge queue invalidates every queued merge group:
+  # GitHub rebuilds the queue from position 1, discarding up to
+  # `max_entries_to_build` image matrices, compose stands and e2e runs.
+  #
+  # INVARIANT: the gate may delay a release, never block one. The script
+  # fails open and both pushing jobs keep `always()` in their own `if`, so a
+  # failed or cancelled gate still lets the push through.
+  #
+  # It idles, so it names the ARC scale set under every event rather than
+  # holding a persistent machine the checks it waits on need. See
+  # .github/runners/insight-vhc.
+  queue-gate:
+    needs:
+      - changes
+      - discover-images
+      - merge-analytics
+      - merge-authenticator
+      - merge-gateway
+      - merge-identity-resolution
+      - merge-git-cli-proxy
+      - merge-insight-v3-core
+      - merge-previews
+      - merge-frontend
+      - merge-toolbox
+      - merge-seed
+      - merge-image
+    if: |
+      always()
+      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release-'))
+      && (
+        github.event_name == 'workflow_dispatch'
+        || needs.discover-images.outputs.any == 'true'
+        || needs.changes.outputs.analytics == 'true'
+        || needs.changes.outputs.authenticator == 'true'
+        || needs.changes.outputs.gateway      == 'true'
+        || needs.changes.outputs.identity_resolution == 'true'
+        || needs.changes.outputs.insight_v3_core == 'true'
+        || needs.changes.outputs.git_cli_proxy == 'true'
+        || needs.changes.outputs.previews     == 'true'
+        || needs.changes.outputs.frontend     == 'true'
+        || needs.changes.outputs.toolbox      == 'true'
+        || needs.changes.outputs.seed         == 'true'
+        || needs.changes.outputs.umbrella     == 'true'
+      )
+    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || 'insight-vhc-arc' }}
+    permissions:
+      contents: read
+    # Above the script's own budget, so the budget ends the wait and the job
+    # reports success rather than a cancellation.
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Wait for the merge queue to drain
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: .github/workflows/scripts/wait-for-empty-merge-queue.sh 45
+
   # ─── Connector descriptor bump ─────────────────────────────────────────────
   # After build-image succeeds on every matrix leg, patch each connector's
   # `descriptor.yaml.images.<key>.image` with the freshly pushed tag, then
@@ -1874,6 +1989,7 @@ jobs:
       - merge-frontend
       - merge-toolbox
       - merge-image
+      - queue-gate
     # All siblings must finish first — bump-descriptors auto-commits to main
     # and that push retriggers the workflow, so we must NOT pin descriptors
     # while a backend service or toolbox is still building or has just failed
@@ -1985,6 +2101,14 @@ jobs:
           FRONTEND: ${{ needs.changes.outputs.frontend }}
         run: .github/workflows/scripts/bump-service-appversions.sh
 
+      # queue-gate drained the queue before this job started, and the steps
+      # since took minutes. A short budget suffices: an entry that joined
+      # within it cannot be far enough into its checks for a reset to cost.
+      - name: Re-check the merge queue before pushing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: .github/workflows/scripts/wait-for-empty-merge-queue.sh 10
+
       - name: Commit descriptor patches (no [skip ci])
         id: commit
         env:
@@ -2081,6 +2205,7 @@ jobs:
       - merge-seed
       - merge-image
       - bump-descriptors
+      - queue-gate
     if: |
       always()
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
@@ -2323,6 +2448,14 @@ jobs:
           subject-name: ghcr.io/constructorfabric/charts/insight
           subject-digest: ${{ steps.helm_push.outputs.digest }}
           push-to-registry: true
+
+      # queue-gate drained the queue before this job started, and the steps
+      # since took minutes. A short budget suffices: an entry that joined
+      # within it cannot be far enough into its checks for a reset to cost.
+      - name: Re-check the merge queue before pushing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: .github/workflows/scripts/wait-for-empty-merge-queue.sh 10
 
       - name: Commit version bumps back to the branch
         env:
