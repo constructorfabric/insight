@@ -1245,43 +1245,54 @@ seed_identity_projection() {
   }
 }
 
-# The connectors whose bronze the seed writes into. The destination creates those
-# tables — nothing else does since the DDL snapshot lost its bronze half — so they
-# have to exist before the seed container runs. Keep in step with RESET_TARGETS in
-# src/ingestion/tools/seed/insight_seed/generators/insert.py; test_seed_bronze.py
-# fails when the two diverge.
-SEED_BRONZE_CONNECTORS=(bamboohr bitbucket-cloud claude-team-invoices github gitlab)
-
-# Create those tables by running each connector's own `discover` into
-# destination-clickhouse, the way a first sync does. The destination runs in a
-# container, so it joins the stand's network and is handed ClickHouse's address on
-# it — a published port is the host's, not the container's.
+# Every connector's bronze, created the way a first sync does: its own `discover`
+# into destination-clickhouse. The DDL snapshot used to pre-create all of it; it
+# no longer carries bronze, and the seed needs the lot — not just the relations
+# its generators write, because the dbt run that follows builds EVERY connector's
+# staging model and each reads its own `bronze_<connector>` database.
+#
+# The destination runs in a container, so it joins the stand's network and is
+# handed ClickHouse's address on it: a published port is the host's, not the
+# container's.
 seed_bronze_tables() {
   local env_file="$1"
   local bootstrap="$ROOT_DIR/src/ingestion/scripts/bootstrap-db"
-  local address
+  local container="${COMPOSE_PROJECT_NAME}-clickhouse"
+  local user password expected present address
+
+  user="$(env_file_value "$env_file" CLICKHOUSE_USER)"
+  password="$(env_file_value "$env_file" CLICKHOUSE_PASSWORD)"
+
+  # `up` auto-seeds and `test-stand up` re-seeds straight after, so this runs
+  # twice per stand. The second pass must not pay for every connector again.
+  expected="$(yq -r '.connectors | keys | length' "$bootstrap/connectors-config.yaml" 2>/dev/null)" || expected=""
+  present="$(docker exec "$container" clickhouse-client -u "$user" --password "$password" \
+      -q "SELECT count() FROM system.databases WHERE name LIKE 'bronze\\_%'" 2>/dev/null)" || present=""
+  if [[ "$expected" =~ ^[0-9]+$ && "$present" =~ ^[0-9]+$ ]] && (( present >= expected )); then
+    echo "=== bronze is already present (${present} databases) — skipping the connector run ==="
+    return 0
+  fi
 
   address="$(docker inspect --format \
     "{{ (index .NetworkSettings.Networks \"${COMPOSE_PROJECT_NAME}\").IPAddress }}" \
-    "${COMPOSE_PROJECT_NAME}-clickhouse" 2>/dev/null)" || true
+    "$container" 2>/dev/null)" || true
   if [[ -z "$address" ]]; then
-    echo "ERROR: cannot find ${COMPOSE_PROJECT_NAME}-clickhouse on the ${COMPOSE_PROJECT_NAME} network," >&2
-    echo "       so the connectors have no ClickHouse to create bronze in. Is the stack up?" >&2
+    echo "ERROR: cannot find ${container} on the ${COMPOSE_PROJECT_NAME} network, so the" >&2
+    echo "       connectors have no ClickHouse to create bronze in. Is the stack up?" >&2
     return 1
   fi
 
-  echo "=== creating the bronze the seed writes into (destination-clickhouse) ==="
+  echo "=== creating bronze from every connector's catalogue (destination-clickhouse) ==="
   # shellcheck disable=SC1091
   set -a; . "$bootstrap/pins.env"; set +a
   CLICKHOUSE_HOST="$address" \
   CLICKHOUSE_PORT=8123 \
   CLICKHOUSE_PROTOCOL=http \
-  CLICKHOUSE_USER="$(env_file_value "$env_file" CLICKHOUSE_USER)" \
-  CLICKHOUSE_PASSWORD="$(env_file_value "$env_file" CLICKHOUSE_PASSWORD)" \
+  CLICKHOUSE_USER="$user" \
+  CLICKHOUSE_PASSWORD="$password" \
   CLICKHOUSE_DATABASE="$(env_file_value "$env_file" CLICKHOUSE_DATABASE)" \
   DOCKER_NETWORK="$COMPOSE_PROJECT_NAME" \
-    "$bootstrap/seed-connectors.sh" "$bootstrap/connectors-config.yaml" \
-    "${SEED_BRONZE_CONNECTORS[@]}"
+    "$bootstrap/seed-connectors.sh" "$bootstrap/connectors-config.yaml"
 }
 
 cmd_seed() {
