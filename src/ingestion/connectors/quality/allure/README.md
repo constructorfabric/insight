@@ -30,7 +30,7 @@ stringData:
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `allure_url` | Yes | Base URL of the instance. The spec rejects a trailing slash. |
+| `allure_url` | Yes | HTTPS base URL of the instance. The spec rejects `http://` and a trailing slash. |
 | `allure_api_token` | Yes | API token (sensitive). Sent on every request as `Authorization: Api-Token <token>`. |
 | `allure_project_ids` | Yes | JSON array of numeric project ids, at least one. Launches and test results are read for these projects only. |
 | `allure_page_size` | No | Page size on every endpoint: default `100`, range `1`–`1000`. |

@@ -852,10 +852,10 @@ spec:
       allure_url:
         type: string
         description: >-
-          Base URL of the Allure TestOps instance without a trailing slash, e.g.
-          https://allure.example.com.
+          HTTPS base URL of the Allure TestOps instance without a trailing slash,
+          e.g. https://allure.example.com.
         title: Allure TestOps URL
-        pattern: "^https?://\\S+[^/]$"
+        pattern: "^https://\\S+[^/]$"
         examples:
           - https://allure.example.test
         order: 2

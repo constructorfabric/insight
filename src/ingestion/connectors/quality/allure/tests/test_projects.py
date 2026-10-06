@@ -154,3 +154,10 @@ def test_allure_url_with_trailing_slash_is_rejected() -> None:
 
     with pytest.raises(ValueError, match="does not match"):
         get_source(_CONNECTOR, config)
+
+
+def test_plain_http_allure_url_is_rejected() -> None:
+    config = AllureConfigBuilder().with_field("allure_url", "http://allure.example.test").build()
+
+    with pytest.raises(ValueError, match="does not match"):
+        get_source(_CONNECTOR, config)
