@@ -92,6 +92,25 @@ impl Field {
         })
     }
 
+    /// What the selected column holds, which an aggregate or a ratio decides
+    /// rather than the field it read: a count is a whole number of anything,
+    /// a sum or an average a number of whatever it summed.
+    pub(super) fn result_type(&self) -> FieldType {
+        if self.divide.is_some() {
+            return FieldType::Float;
+        }
+
+        match (self.agg, self.r#type) {
+            (Some(Agg::Count), _) | (Some(Agg::Sum), FieldType::Int | FieldType::String) => {
+                FieldType::Int
+            }
+
+            (Some(Agg::Avg), _) | (Some(Agg::Sum), FieldType::Float) => FieldType::Float,
+
+            (Some(Agg::Min | Agg::Max) | None, declared) => declared,
+        }
+    }
+
     /// The conditions this aggregate alone keeps rows by.
     pub(super) fn conditions(&self) -> &[Filter] {
         &self.when
@@ -409,7 +428,7 @@ fn json_key_literal(key: &str) -> String {
 }
 
 /// `ClickHouse`'s `JSON` format serialises wide integers as JSON strings;
-/// parse declared `int`/`float` columns back into numbers.
+/// parse the columns typed `int`/`float` back into numbers.
 pub(super) fn coerce_value(value: serde_json::Value, field_type: FieldType) -> serde_json::Value {
     let serde_json::Value::String(text) = value else {
         return value;
@@ -419,6 +438,9 @@ pub(super) fn coerce_value(value: serde_json::Value, field_type: FieldType) -> s
         FieldType::String => {}
         FieldType::Int => {
             if let Ok(number) = text.parse::<i64>() {
+                return serde_json::Value::Number(number.into());
+            }
+            if let Ok(number) = text.parse::<u64>() {
                 return serde_json::Value::Number(number.into());
             }
         }

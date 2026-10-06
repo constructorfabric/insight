@@ -7,7 +7,10 @@ Per component: name, lang, root (collection cwd), paths (repo-relative prefixes
 for bucketing), plus per-language extras consumed by the CI producer jobs:
   rust   -> package (cargo package name); all_features (default True);
             drift_test (the crate pins a committed OpenAPI document, so its
-            tests also run on a shared backend change)
+            tests also run on a shared backend change);
+            include_ignored (the crate keeps its live-database suites
+            `#[ignore]`d so a plain local `cargo test` stays offline; the CI
+            test step passes `--include-ignored` once the containers are up)
   python -> cov_package (the source_* package to measure); collect (False ⇒
             plain pytest, no Cobertura produced or uploaded)
   js     -> none (the package.json scripts under `root` carry the collection)
@@ -96,6 +99,11 @@ COMPONENTS = [
         # without it — the live test boots the real binary, so it needs one.
         "live_db": True,
         "live_db_name": "insight_v3",
+        # The alert store and schedule suites are `#[ignore]`d on
+        # INTEGRATION_TESTS_MARIADB_URL / INTEGRATION_TESTS_REDIS_URL, which
+        # the job exports after starting both containers; without this flag a
+        # plain `cargo test` would never run them.
+        "include_ignored": True,
         "live_test": "services/insight-v3-core/tests/ci.sh",
         "paths": ["src/backend/services/insight-v3-core", "docs/components/backend/insight-v3-core/openapi.json"],
         "drift_test": True,

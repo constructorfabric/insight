@@ -352,6 +352,9 @@ jobs:
       # run plain `cargo test`: a failure fails this job; only the Cobertura
       # collection and the coverage gates are skipped. Lint-only fanout entries
       # (test=false) skip this too — coverage/tests stay per-changed-crate.
+      # include_ignored entries (insight-v3-core) keep their live MariaDB and
+      # Redis suites #[ignore]d so a plain local `cargo test` stays offline; the
+      # containers are up and the URLs exported here, so they run.
       - name: Test (${{ matrix.entry.name }}, no coverage)
         if: ${{ matrix.entry.test && !matrix.entry.cover }}
         working-directory: ${{ matrix.entry.root }}
@@ -382,7 +385,11 @@ jobs:
               cargo run -p ${{ matrix.entry.package }} $feats -- \
                 -c "services/${{ matrix.entry.name }}/config/insight.yaml" migrate
           fi
-          cargo test -p ${{ matrix.entry.package }} $feats
+          if [ "${{ matrix.entry.include_ignored }}" = "true" ]; then
+            cargo test -p ${{ matrix.entry.package }} $feats -- --include-ignored
+          else
+            cargo test -p ${{ matrix.entry.package }} $feats
+          fi
 
       - name: Live integration test (${{ matrix.entry.name }})
         if: ${{ matrix.entry.test && matrix.entry.live_test != '' }}
