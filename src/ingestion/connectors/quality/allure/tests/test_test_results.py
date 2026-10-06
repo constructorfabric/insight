@@ -83,6 +83,20 @@ def test_one_request_per_parent_launch_with_launch_id(http_mocker: HttpMocker) -
 
 
 @freezegun.freeze_time(FROZEN_NOW)
+def test_configured_start_date_applies_to_parent_launches(http_mocker: HttpMocker) -> None:
+    config = AllureConfigBuilder().with_field("allure_start_date", "2025-01-01").build()
+    parent = api_request(LAUNCHES_URL, launch_params(7, 1735689600000))
+    http_mocker.get(parent, page([_launch(101, 7, 1781519400123)]))
+    _mock_results(http_mocker, 101, page([_result(5001, 101)]))
+
+    output = _read(config)
+
+    assert not output.errors
+    assert [r.record.data["id"] for r in output.records] == [5001]
+    http_mocker.assert_number_of_calls(parent, 1)
+
+
+@freezegun.freeze_time(FROZEN_NOW)
 def test_records_stamped_with_tenant_source_and_unique_key(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().build()
     mock_launch_window(http_mocker, 7, page([_launch(101, 7, 1781519400123)]))

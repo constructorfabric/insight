@@ -77,6 +77,18 @@ def test_first_sync_searches_every_test_case_since_2000(http_mocker: HttpMocker)
 
 
 @freezegun.freeze_time(FROZEN_NOW)
+def test_start_date_does_not_narrow_the_test_case_catalog(http_mocker: HttpMocker) -> None:
+    config = AllureConfigBuilder().with_field("allure_start_date", "2025-01-01").build()
+    search = mock_case_search(http_mocker, 7, page([_found(9001, 7, 1781519400123)]))
+    _mock_overview(http_mocker, 9001, _overview(9001))
+
+    output = _read(config)
+
+    assert not output.errors
+    http_mocker.assert_number_of_calls(search, 1)
+
+
+@freezegun.freeze_time(FROZEN_NOW)
 def test_one_overview_request_per_test_case_found(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().with_field("allure_project_ids", [7, 12]).build()
     mock_case_search(http_mocker, 7, page([_found(9001, 7, 1781519400123), _found(9002, 7, 1781942400456)]))

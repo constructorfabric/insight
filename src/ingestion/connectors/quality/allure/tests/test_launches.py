@@ -49,6 +49,27 @@ def test_first_sync_requests_one_open_ended_window_from_ninety_days_back(http_mo
 
 
 @freezegun.freeze_time(FROZEN_NOW)
+def test_configured_start_date_starts_the_first_sync_there(http_mocker: HttpMocker) -> None:
+    config = AllureConfigBuilder().with_field("allure_start_date", "2025-01-01").build()
+    window = api_request(LAUNCHES_URL, launch_params(7, 1735689600000))
+    http_mocker.get(window, page([_launch(101, 7, 1781519400123)]))
+
+    output = _read(config)
+
+    assert not output.errors
+    assert [r.record.data["id"] for r in output.records] == [101]
+    http_mocker.assert_number_of_calls(window, 1)
+
+
+@pytest.mark.parametrize("start_date", ["2025/01/01", "01-01-2025", "2025-1-1"])
+def test_malformed_start_date_is_rejected(start_date: str) -> None:
+    config = AllureConfigBuilder().with_field("allure_start_date", start_date).build()
+
+    with pytest.raises(ValueError, match="does not match"):
+        get_source(_CONNECTOR, config)
+
+
+@freezegun.freeze_time(FROZEN_NOW)
 def test_one_request_set_per_configured_project(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().with_field("allure_project_ids", [7, 12]).build()
     requests = [

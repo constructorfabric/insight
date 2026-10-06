@@ -24,6 +24,7 @@ stringData:
   allure_url: "https://allure.example.com"
   allure_api_token: "CHANGE_ME"
   allure_project_ids: '[7, 12]'
+  # allure_start_date: "2025-01-01"
 ```
 
 ### Fields
@@ -32,12 +33,13 @@ stringData:
 |-------|----------|-------------|
 | `allure_url` | Yes | HTTPS base URL of the instance. The spec rejects `http://` and a trailing slash. |
 | `allure_api_token` | Yes | API token (sensitive). Sent on every request as `Authorization: Api-Token <token>`. |
-| `allure_project_ids` | Yes | JSON array of numeric project ids, at least one. Launches and test results are read for these projects only. |
+| `allure_project_ids` | Yes | JSON array of numeric project ids, at least one. Launches, test results, test cases and custom fields are read for these projects only. |
 | `allure_page_size` | No | Page size on every endpoint: default `100`, range `1`–`1000`. |
+| `allure_start_date` | No | `YYYY-MM-DD` (UTC) the first sync of `launches` and `test_results` starts from. Empty means 90 days back. |
 
-The first sync reads launches modified in the last 90 days. Later syncs resume from the saved cursor minus a 2-day lookback.
+The first sync reads launches modified since `allure_start_date`, or in the last 90 days. Later syncs resume from the saved cursor minus a 2-day lookback, so changing `allure_start_date` after the first sync has no effect until `launches` and `test_results` are reset.
 
-A project id added after the first sync does not start 90 days back. It starts from the newest launch already synced across all projects, minus the lookback. To backfill it, reset `launches` and `test_results`.
+A project id added after the first sync does not start from `allure_start_date`. It starts from the newest launch already synced across all projects, minus the lookback. To backfill it, reset `launches` and `test_results`.
 
 ### Automatically injected
 
