@@ -161,3 +161,45 @@ def test_contradicting_links_fall_back_only_where_they_contradict(scenario: Scen
     assert scenario.states(ASSIGNEE) == [["alice-acct"], ["bob-acct"], ["carol-acct"]]
     assert scenario.states(POINTS) == [["3"], ["5"], ["8"]]
     assert not scenario.invariants_hold("assert_jira_same_instant_events_chain")
+
+
+def test_identical_entries_of_one_instant_are_one_step_of_the_chain(scenario: Scenario) -> None:
+    """Entries 200 and 201 record the same `1 -> 3` at one instant. Neither
+    follows the other, but either order passes through the same states, so the
+    chain holds."""
+    scenario.seed(
+        fields=CATALOGUE,
+        issues=[issue("TST-1", fields=_values("5"))],
+        events=[
+            event("TST-1", 200, SAME_INSTANT, [_status("1", "3")]),
+            event("TST-1", 201, SAME_INSTANT, [_status("1", "3")]),
+            event("TST-1", 202, SAME_INSTANT, [_status("3", "5")]),
+        ],
+    )
+    scenario.build()
+
+    assert scenario.round_trip_holds()
+    assert scenario.invariants_hold("assert_jira_same_instant_events_chain")
+
+
+def test_an_entry_collapsed_to_one_event_is_one_step_of_the_chain(scenario: Scenario) -> None:
+    """Entry 300 carries `3 -> ''` and `'' -> 5` of one field, which the
+    journal collapses to `3 -> 5`; entry 301 continues `5 -> 8` at the same
+    instant. The chain is read over the collapsed event, not its items."""
+    scenario.seed(
+        fields=CATALOGUE,
+        issues=[issue("TST-1", fields=_values("1", points=8))],
+        events=[
+            event(
+                "TST-1",
+                300,
+                SAME_INSTANT,
+                [item(POINTS, frm="3", frm_str="3"), item(POINTS, to="5", to_str="5")],
+            ),
+            event("TST-1", 301, SAME_INSTANT, [_points("5", "8")]),
+        ],
+    )
+    scenario.build()
+
+    assert scenario.states(POINTS) == [["3"], ["5"], ["8"]]
+    assert scenario.invariants_hold("assert_jira_same_instant_events_chain")
