@@ -1,6 +1,6 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
 
-import type { AlertNotification } from "@/api/alerts-client";
+import type { Alert, AlertNotification } from "@/api/alerts-client";
 import { refusal } from "@/components/custom/refusal";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,13 +13,16 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
-import { numberText, statusText } from "@/lib/alerts/describe";
+import { conditionText, numberText, statusText } from "@/lib/alerts/describe";
 import { formatUtcInstant } from "@/lib/format";
 import { TEXT_BODY, TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 import { alertNotificationsQuery } from "@/queries/alerts";
 
-const WHEN = "d MMM yyyy, HH:mm";
+const DAY = "d MMM yyyy";
+const CLOCK = "HH:mm zzz";
+
+type Rule = Pick<Alert, "metric" | "column">;
 
 /**
  * Each notification once. Pages are read by offset, so one owed between two
@@ -32,8 +35,8 @@ function distinct(notifications: AlertNotification[]): AlertNotification[] {
 }
 
 /** Every notification an alert's checks have owed, newest first. */
-export function NotificationsTable({ id }: { id: string }) {
-  const history = useInfiniteQuery(alertNotificationsQuery(id));
+export function NotificationsTable({ alert }: { alert: Alert }) {
+  const history = useInfiniteQuery(alertNotificationsQuery(alert.id));
 
   if (history.isPending) return <CenteredSpinner className="min-h-24" />;
   if (history.isError) {
@@ -71,6 +74,7 @@ export function NotificationsTable({ id }: { id: string }) {
             <NotificationRow
               key={notification.id}
               notification={notification}
+              rule={alert}
             />
           ))}
         </TableBody>
@@ -92,18 +96,23 @@ export function NotificationsTable({ id }: { id: string }) {
 
 function NotificationRow({
   notification,
+  rule,
 }: {
   notification: AlertNotification;
+  rule: Rule;
 }) {
   return (
     <TableRow className="align-top">
-      <TableCell className="whitespace-nowrap">
-        <span className={TEXT_BODY}>
-          {formatUtcInstant(notification.evaluated_at, WHEN)}
+      <TableCell>
+        <span className={cn(TEXT_BODY, "block whitespace-nowrap")}>
+          {formatUtcInstant(notification.evaluated_at, DAY)}
+        </span>
+        <span className={cn(TEXT_BODY, "block whitespace-nowrap")}>
+          {formatUtcInstant(notification.evaluated_at, CLOCK)}
         </span>
       </TableCell>
       <TableCell className="text-end tabular-nums">
-        {numberText(notification.value)}
+        <Reading notification={notification} rule={rule} />
       </TableCell>
       <TableCell>
         <Badge
@@ -116,6 +125,32 @@ function NotificationRow({
         <Delivery notification={notification} />
       </TableCell>
     </TableRow>
+  );
+}
+
+/** The value a check found, against the condition it was held to then. */
+function Reading({
+  notification,
+  rule,
+}: {
+  notification: AlertNotification;
+  rule: Rule;
+}) {
+  const owedElsewhere =
+    notification.metric !== rule.metric || notification.column !== rule.column;
+
+  return (
+    <span className="flex flex-col gap-0.5">
+      <span className={TEXT_BODY}>{numberText(notification.value)}</span>
+      <span className={cn(TEXT_LABEL, "whitespace-nowrap")}>
+        {conditionText(notification.operator, notification.threshold)}
+      </span>
+      {owedElsewhere ? (
+        <span className={cn(TEXT_LABEL, "break-words font-mono")}>
+          {notification.metric} · {notification.column}
+        </span>
+      ) : null}
+    </span>
   );
 }
 

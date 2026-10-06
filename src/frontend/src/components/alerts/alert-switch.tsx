@@ -10,17 +10,20 @@ import { useSetAlertEnabled } from "@/queries/alerts";
  *
  * `revision` is passed where the caller holds the alert; the list holds only a
  * summary, and the alert is then read before the change is sent.
+ * `describedBy` names the element that says what the change does.
  */
 export function AlertSwitch({
   id,
   name,
   enabled,
   revision,
+  describedBy,
 }: {
   id: string;
   name: string;
   enabled: boolean;
   revision?: number;
+  describedBy?: string;
 }) {
   const toggle = useSetAlertEnabled();
   const shown = toggle.isPending ? toggle.variables.enabled : enabled;
@@ -34,8 +37,10 @@ export function AlertSwitch({
         <Switch
           checked={shown}
           aria-label={`Enable ${name}`}
+          aria-describedby={describedBy}
           aria-busy={toggle.isPending || undefined}
-          // WORKAROUND: not disabled while saving, since a browser drops focus from a disabled control.
+          // WORKAROUND: not disabled while saving, since a browser drops focus
+          // from a disabled control.
           onCheckedChange={(next: boolean) => {
             if (!toggle.isPending)
               toggle.mutate({ id, enabled: next, revision });

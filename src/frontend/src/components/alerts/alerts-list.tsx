@@ -34,6 +34,7 @@ export function AlertsList() {
   const searching = useDebouncedValue(needle, SEARCH_DEBOUNCE_MS).trim();
   const pages = useInfiniteQuery(alertPagesQuery(searching));
   const alerts = pages.data?.pages.flatMap((page) => page.alerts);
+  const total = pages.data?.pages.at(-1)?.total;
 
   return (
     <div className="flex flex-col gap-4 p-4 md:p-6">
@@ -56,8 +57,8 @@ export function AlertsList() {
           onChange={setNeedle}
         />
         <DefinitionCount
-          total={pages.data?.pages.at(-1)?.total}
-          noun="alerts"
+          total={total}
+          noun={total === 1 ? "alert" : "alerts"}
           searching={searching !== ""}
         />
       </div>

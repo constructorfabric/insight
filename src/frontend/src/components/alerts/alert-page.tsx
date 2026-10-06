@@ -1,6 +1,6 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 
 import type { Alert, AlertState } from "@/api/alerts-client";
 import { AlertSwitch } from "@/components/alerts/alert-switch";
@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { conditionText, numberText, reasonText } from "@/lib/alerts/describe";
-import { intervalText } from "@/lib/alerts/interval";
+import { intervalLabel } from "@/lib/alerts/interval";
 import { rangeLabel } from "@/lib/custom/time-range";
 import { formatUtcAge, formatUtcInstant } from "@/lib/format";
 import {
@@ -24,7 +24,9 @@ import {
 import { cn } from "@/lib/utils";
 import { alertQuery, useDeleteAlert } from "@/queries/alerts";
 
-const WHEN = "d MMM yyyy, HH:mm";
+const WHEN = "d MMM yyyy, HH:mm zzz";
+
+const OFF_HINT = "Turning it off withdraws notifications not yet sent.";
 
 function BackToAlerts() {
   return (
@@ -68,7 +70,7 @@ export function AlertPage({ id }: { id: string }) {
           <CardTitle className={TEXT_HEADING}>Notifications</CardTitle>
         </CardHeader>
         <CardContent>
-          <NotificationsTable id={alert.data.id} />
+          <NotificationsTable alert={alert.data} />
         </CardContent>
       </Card>
     </div>
@@ -78,6 +80,7 @@ export function AlertPage({ id }: { id: string }) {
 function Header({ alert }: { alert: Alert }) {
   const remove = useDeleteAlert();
   const navigate = useNavigate();
+  const hintId = useId();
 
   return (
     <header className="flex flex-wrap items-start gap-3">
@@ -85,42 +88,50 @@ function Header({ alert }: { alert: Alert }) {
         <h1 className={cn(TEXT_TITLE, "break-words")}>{alert.name}</h1>
         <BackToAlerts />
       </div>
-      <div className="flex shrink-0 items-start gap-2">
-        <AlertSwitch
-          id={alert.id}
-          name={alert.name}
-          enabled={alert.enabled}
-          revision={alert.revision}
-        />
-        <Button
-          variant="outline"
-          size="sm"
-          nativeButton={false}
-          render={
-            <Link
-              to="/portal/custom/alerts/$id/edit"
-              params={{ id: alert.id }}
-            />
-          }
-        >
-          Edit
-        </Button>
-        <ConfirmRemove
-          ask={(open) => (
-            <Button variant="ghost" size="sm" onClick={open}>
-              Delete
-            </Button>
-          )}
-          confirm="Delete alert"
-          pending={remove.isPending}
-          error={remove.error}
-          onRemove={() =>
-            remove.mutate(alert.id, {
-              onSuccess: () => void navigate({ to: "/portal/custom/alerts" }),
-            })
-          }
-          onKeep={() => remove.reset()}
-        />
+      <div className="flex shrink-0 flex-col items-end gap-1">
+        <div className="flex flex-wrap items-start justify-end gap-2">
+          <AlertSwitch
+            id={alert.id}
+            name={alert.name}
+            enabled={alert.enabled}
+            revision={alert.revision}
+            describedBy={alert.enabled ? hintId : undefined}
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            nativeButton={false}
+            render={
+              <Link
+                to="/portal/custom/alerts/$id/edit"
+                params={{ id: alert.id }}
+              />
+            }
+          >
+            Edit
+          </Button>
+          <ConfirmRemove
+            ask={(open) => (
+              <Button variant="ghost" size="sm" onClick={open}>
+                Delete
+              </Button>
+            )}
+            confirm="Delete it, with its notifications"
+            pending={remove.isPending}
+            error={remove.error}
+            onRemove={() =>
+              remove.mutate(alert.id, {
+                onSuccess: () => void navigate({ to: "/portal/custom/alerts" }),
+              })
+            }
+            onKeep={() => remove.reset()}
+          />
+        </div>
+        {alert.enabled ? (
+          <p id={hintId} className={cn(TEXT_LABEL, "max-w-64 text-end")}>
+            {OFF_HINT}
+          </p>
+        ) : null}
       </div>
     </header>
   );
@@ -161,7 +172,7 @@ function Rule({ alert }: { alert: Alert }) {
           <Fact term="Window">
             {alert.range ? rangeLabel(alert.range) : "All time"}
           </Fact>
-          <Fact term="Checked">{intervalText(alert.interval_secs)}</Fact>
+          <Fact term="Check every">{intervalLabel(alert.interval_secs)}</Fact>
           <Fact term="Destination">{alert.destination}</Fact>
         </dl>
       </CardContent>
