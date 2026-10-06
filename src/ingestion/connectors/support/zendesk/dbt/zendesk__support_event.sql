@@ -35,8 +35,10 @@ SELECT
     -- are sequential PER INSTANCE, so an id-only key collides across tenants
     -- and across two Zendesk instances in one install — and since this model
     -- is delete+insert on unique_key, the collision DELETES the other row.
+    -- JSONExtractRaw, not JSONExtractString: the event id is a JSON number, and
+    -- Raw keeps its text whatever the type instead of relying on a conversion.
     MD5(concat(e.tenant_id, '-', e.source_id, '-', toString(e.audit_id),
-               '-', JSONExtractString(e.ev, 'id'))) AS unique_key,
+               '-', JSONExtractRaw(e.ev, 'id'))) AS unique_key,
     'zendesk'                                     AS data_source,
     -- same formula as zendesk__support_ticket.unique_key, so the two join
     MD5(concat(e.tenant_id, '-', e.source_id, '-', toString(e.ticket_id))) AS ticket_key,

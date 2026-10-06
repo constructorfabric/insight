@@ -399,7 +399,9 @@ streams:
           cursor_value: "{{ response.get('meta', {}).get('after_cursor', '') }}"
           # Stop on an explicit has_more=false, an empty page, or no cursor —
           # never on a merely ABSENT has_more, which reads as "no more pages"
-          # and ends the read at one page.
+          # and ends the read at one page. The CDK exposes no previous token to
+          # compare against, so a cursor Zendesk repeats is ended by the empty
+          # page a past-the-end cursor returns.
           stop_condition: "{{ response.get('meta', {}).get('has_more') == False or last_page_size == 0 or not response.get('meta', {}).get('after_cursor') }}"
         page_token_option:
           type: RequestOption
@@ -488,6 +490,10 @@ streams:
           # backfill wider than that. sort_by/sort_order are not parameters this
           # endpoint accepts (it takes `sort`).
           page[size]: "100"
+          # Ask for meta.has_more explicitly, as support_agents does, so the
+          # stop condition reads a boundary rather than falling through to the
+          # cursor clauses.
+          include_boundary_indicators: "true"
       record_selector:
         type: RecordSelector
         extractor:
@@ -500,7 +506,9 @@ streams:
           cursor_value: "{{ response.get('meta', {}).get('after_cursor', '') }}"
           # Stop on an explicit has_more=false, an empty page, or no cursor —
           # never on a merely ABSENT has_more, which reads as "no more pages"
-          # and ends the read at one page.
+          # and ends the read at one page. The CDK exposes no previous token to
+          # compare against, so a cursor Zendesk repeats is ended by the empty
+          # page a past-the-end cursor returns.
           stop_condition: "{{ response.get('meta', {}).get('has_more') == False or last_page_size == 0 or not response.get('meta', {}).get('after_cursor') }}"
         page_token_option:
           type: RequestOption

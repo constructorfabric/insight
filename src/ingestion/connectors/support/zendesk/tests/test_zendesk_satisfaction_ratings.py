@@ -33,7 +33,7 @@ _URL = f"{BASE_URL}/satisfaction_ratings"
 
 
 def _params(*, start_time: str = START_EPOCH, after: str | None = None) -> dict[str, Any]:
-    params = {"page[size]": "100", "start_time": start_time}
+    params = {"page[size]": "100", "include_boundary_indicators": "true", "start_time": start_time}
     if after:
         params["page[after]"] = after
     return params
