@@ -40,8 +40,9 @@ function Button({ variant = "default", size = "default", ...props }: ButtonProps
   );
 }
 
-// Calendar styles react-day-picker's nav slots with class strings; the kit
-// exports no class factory.
+// Calendar styles react-day-picker's nav slots with class strings it then
+// overrides via tailwind-merge; the kit's own buttonVariants emits CSS-module
+// classes, which tailwind-merge cannot reconcile.
 const buttonVariants = cva("", {
   variants: {
     variant: {
