@@ -8,10 +8,12 @@ ALLURE_URL = "https://allure.example.test"
 PROJECTS_URL = f"{ALLURE_URL}/api/project"
 LAUNCHES_URL = f"{ALLURE_URL}/api/launch/__search"
 TEST_RESULTS_URL = f"{ALLURE_URL}/api/testresult"
+TEST_CASE_SEARCH_URL = f"{ALLURE_URL}/api/testcase/__search"
 
 FROZEN_NOW = "2026-07-01T00:00:00Z"
 NOW_MS = 1782864000000
 START_MS = 1775088000000
+TEST_CASE_START_MS = 946684800000
 
 _AUTH_HEADER = {"Authorization": "Api-Token test-api-token"}
 
@@ -68,6 +70,27 @@ def mock_launch_window(
     http_mocker: HttpMocker, project_id: int, response: HttpResponse | list[HttpResponse] | None = None
 ) -> HttpRequest:
     request = api_request(LAUNCHES_URL, launch_params(project_id))
+    http_mocker.get(request, response or page([]))
+
+    return request
+
+
+def case_search_params(project_id: int, start_ms: int = TEST_CASE_START_MS, page_index: int | None = None) -> dict:
+    return paged({"projectId": str(project_id), "rql": f"lastModifiedDate >= {start_ms}"}, page_index)
+
+
+def case_overview_url(test_case_id: int) -> str:
+    return f"{ALLURE_URL}/api/testcase/{test_case_id}/overview"
+
+
+def custom_fields_url(project_id: int) -> str:
+    return f"{ALLURE_URL}/api/project/{project_id}/cf"
+
+
+def mock_case_search(
+    http_mocker: HttpMocker, project_id: int, response: HttpResponse | list[HttpResponse] | None = None
+) -> HttpRequest:
+    request = api_request(TEST_CASE_SEARCH_URL, case_search_params(project_id))
     http_mocker.get(request, response or page([]))
 
     return request

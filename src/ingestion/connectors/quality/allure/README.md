@@ -65,8 +65,12 @@ Each Allure TestOps instance needs its own Secret with a different `insight.cybe
 | `projects` | `GET /api/project`: every project the token can see, not only `allure_project_ids`. Also the connection check. | Full refresh |
 | `launches` | `GET /api/launch/__search` per configured project, filtered by RQL `lastModifiedDate >= <cursor>` with no upper bound | Incremental (`lastModifiedDate`) |
 | `test_results` | `GET /api/testresult?launchId=` per launch | Incremental (`lastModifiedDate`, through the launch cursor) |
+| `test_cases` | `GET /api/testcase/{id}/overview` per test case that `GET /api/testcase/__search` finds per configured project. One record per test case, with its full `customFields` list | Incremental (`lastModifiedDate`, through the search cursor) |
+| `custom_fields` | `GET /api/project/{id}/cf` per configured project: every custom field the project defines | Full refresh |
 
 `test_results` reads its launches from an inline `_launches` parent, identical to `launches`, and persists that parent's cursor (`incremental_dependency`). A sync therefore requests results only for launches whose `lastModifiedDate` is inside the window. The child's own `lastModifiedDate` cursor filters nothing: every result of a selected launch is emitted.
+
+`test_cases` works the same way over an inline `_test_cases` search parent, but its first sync starts at 2000-01-01, so it reads the whole catalog. Later syncs re-read only test cases modified since the saved cursor minus 2 days. Custom field names are not fixed anywhere: each record carries whatever fields its project defines.
 
 Every endpoint pages with `page` and `size`, sorted `id,ASC`, until a response has `last: true`.
 
@@ -76,10 +80,21 @@ Every request retries `429`, `500`, `502`, `503` and `504` up to 5 times. It wai
 
 - A launch deleted mid-sync from a page already read moves the launches after it up one row, so the first launch of the next page is never returned. The 2-day lookback re-reads that launch only if its `lastModifiedDate` is within 2 days of the new cursor.
 - `launches` and the `_launches` parent page separately, so such a skip can hit one stream and not the other. Two `connector_quality` checks report it: `assert_allure_launches_reach_test_results` and `assert_allure_test_results_name_a_synced_launch`.
+- A custom field edit reaches `test_cases` only if Allure bumps the test case's `lastModifiedDate`. If it does not, the edit lands with the test case's next change.
 
 ## Silver Targets
 
-None. `dbt/` holds two staging models, `allure__launches` and `allure__test_results`, tagged `allure` and nothing else. No silver class or gold model reads them.
+None. `dbt/` holds five staging models tagged `allure` and nothing else. No silver class or gold model reads them.
+
+| Model | Grain |
+|-------|-------|
+| `allure__launches` | One row per launch |
+| `allure__test_results` | One row per test result |
+| `allure__test_cases` | One row per test case; `custom_fields` maps each field name to its values |
+| `allure__test_case_custom_fields` | One row per test case × custom field value, rebuilt each run so removed values drop out |
+| `allure__custom_fields` | One row per custom field a project defines |
+
+`allure__test_results.test_case_id` joins `allure__test_cases.test_case_id`.
 
 No identity inputs: the connector syncs no user directory. `createdBy` and `lastModifiedBy` are Allure logins, and nothing resolves them to a person.
 

@@ -1,5 +1,31 @@
 CREATE DATABASE IF NOT EXISTS `bronze_allure`;
 
+CREATE TABLE IF NOT EXISTS bronze_allure.custom_fields
+(
+    `_airbyte_raw_id` String,
+    `_airbyte_extracted_at` DateTime64(3),
+    `_airbyte_meta` String,
+    `_airbyte_generation_id` UInt32,
+    `id` Nullable(Int64),
+    `projectId` Nullable(Int64),
+    `name` Nullable(String),
+    `required` Nullable(Bool),
+    `singleSelect` Nullable(Bool),
+    `locked` Nullable(Bool),
+    `createdBy` Nullable(String),
+    `createdDate` Nullable(Int64),
+    `lastModifiedBy` Nullable(String),
+    `lastModifiedDate` Nullable(Int64),
+    `customField` Nullable(String),
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `unique_key` String
+)
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
+SETTINGS index_granularity = 8192
+;
+
 CREATE TABLE IF NOT EXISTS bronze_allure.launches
 (
     `_airbyte_raw_id` String,
@@ -43,6 +69,50 @@ CREATE TABLE IF NOT EXISTS bronze_allure.projects
     `createdDate` Nullable(Int64),
     `lastModifiedBy` Nullable(String),
     `lastModifiedDate` Nullable(Int64),
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `unique_key` String
+)
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
+SETTINGS index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS bronze_allure.test_cases
+(
+    `_airbyte_raw_id` String,
+    `_airbyte_extracted_at` DateTime64(3),
+    `_airbyte_meta` String,
+    `_airbyte_generation_id` UInt32,
+    `id` Nullable(Int64),
+    `projectId` Nullable(Int64),
+    `name` Nullable(String),
+    `fullName` Nullable(String),
+    `hash` Nullable(String),
+    `style` Nullable(String),
+    `automated` Nullable(Bool),
+    `deleted` Nullable(Bool),
+    `editable` Nullable(Bool),
+    `external` Nullable(Bool),
+    `flaky` Nullable(Bool),
+    `hasManualScenario` Nullable(Bool),
+    `description` Nullable(String),
+    `descriptionHtml` Nullable(String),
+    `createdBy` Nullable(String),
+    `createdDate` Nullable(Int64),
+    `lastModifiedBy` Nullable(String),
+    `lastModifiedDate` Nullable(Int64),
+    `customFields` Nullable(String),
+    `tags` Nullable(String),
+    `links` Nullable(String),
+    `issues` Nullable(String),
+    `members` Nullable(String),
+    `parameters` Nullable(String),
+    `examples` Nullable(String),
+    `testKeys` Nullable(String),
+    `layer` Nullable(String),
+    `status` Nullable(String),
+    `workflow` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `unique_key` String

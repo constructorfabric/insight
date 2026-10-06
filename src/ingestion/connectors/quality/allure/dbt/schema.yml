@@ -11,6 +11,9 @@ sources:
       - name: projects
       - name: launches
       - name: test_results
+      - name: custom_fields
+      - name: test_cases
+        freshness: null
 
 models:
   - name: allure__launches
@@ -56,3 +59,56 @@ models:
         description: "start (epoch ms) as UTC DateTime64(3)"
       - name: stopped_at
         description: "stop (epoch ms) as UTC DateTime64(3)"
+
+  - name: allure__test_cases
+    description: "Allure TestOps test cases -> staging, one row per test case"
+    columns:
+      - name: tenant_id
+        data_tests:
+          - not_null
+      - name: source_id
+        data_tests:
+          - not_null
+      - name: unique_key
+        description: "{tenant}-{source}-{test case id}"
+        data_tests:
+          - not_null
+          - unique
+      - name: custom_fields
+        description: "Every custom field the test case carries: field name -> its values. Field names come from the project, none are fixed here"
+      - name: last_modified_at
+        description: "lastModifiedDate (epoch ms) as UTC DateTime64(3), the connector's incremental cursor"
+
+  - name: allure__test_case_custom_fields
+    description: "One row per test case x custom field value, rebuilt from bronze each run so removed values drop out"
+    columns:
+      - name: tenant_id
+        data_tests:
+          - not_null
+      - name: source_id
+        data_tests:
+          - not_null
+      - name: unique_key
+        description: "{test case unique_key}-{custom field value id}"
+        data_tests:
+          - not_null
+          - unique
+      - name: field_name
+        description: "Custom field name as the project defines it, e.g. Epic, Feature, Story, SubProject"
+        data_tests:
+          - not_null
+
+  - name: allure__custom_fields
+    description: "Custom fields each configured project defines, including ones no test case uses yet"
+    columns:
+      - name: tenant_id
+        data_tests:
+          - not_null
+      - name: source_id
+        data_tests:
+          - not_null
+      - name: unique_key
+        description: "{tenant}-{source}-{project id}-{field id}; built-in fields share negative ids across projects"
+        data_tests:
+          - not_null
+          - unique
