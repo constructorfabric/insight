@@ -35,11 +35,14 @@ removed, and each change sets it to what the change added — an id-merge would
 keep the old value whenever the replaced text differs from it by a byte.
 Missing source changes cannot be recovered by either rule.
 
-Only the creation marker is synthesized at issue creation. Field values without
-creation-time evidence are observations at collection time, not historical
-initial values. A snapshot disagreement is `snapshot_diff`; a field absent from
-a subsequent complete issue snapshot is `retired_field`. Identical observations
-are suppressed so repeated syncs cannot move a close time forward. Comment and
+Only the creation marker is synthesized at issue creation. A snapshot
+disagreement is `snapshot_diff`; a field absent from a subsequent complete issue
+snapshot is `retired_field`. A `snapshot_diff` is dated by source facts, never
+by when it was collected, so a re-sync cannot move it: a resolved state at the
+issue's `resolved` time when that is later than anything already known about
+the field; a value with no earlier event or snapshot at issue creation; any
+other disagreement 1 ms after the field's last event or previous snapshot,
+whichever is later. Identical observations are suppressed. Comment and
 work-item lifecycle events are one per observed state — a comment's
 `(deleted, updated)`, a work item's `updated` — keyed and dated by that state's
 first observation, so re-reading an unchanged record adds nothing.

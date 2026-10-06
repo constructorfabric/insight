@@ -207,3 +207,12 @@ def test_sprint_requests_exclude_embedded_issues() -> None:
 
     assert "issues(" not in fields
     assert "unresolvedIssuesCount" in fields
+
+
+def test_activity_feeds_leave_out_article_categories() -> None:
+    """Silver reads Issue targets only, and the server can cut off a page that
+    holds an article attachment after the response has started."""
+    streams = {stream["name"]: stream for stream in load_manifest(_CONNECTOR)["streams"]}
+    categories = streams["youtrack_activities"]["retriever"]["requester"]["request_parameters"]["categories"]
+
+    assert not [c for c in categories.split(",") if c.startswith("Article")]

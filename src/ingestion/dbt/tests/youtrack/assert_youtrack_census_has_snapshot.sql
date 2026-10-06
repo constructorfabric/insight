@@ -1,3 +1,14 @@
+{{ config(
+    tags=['connector_quality', 'youtrack'],
+    meta={
+        'title': 'A censused issue of the collection window has a snapshot',
+        'domain': 'task-tracking',
+        'category': 'completeness',
+        'tier': 'error',
+        'remediation': 'The census saw an issue inside the window the `updated:` search covers, yet no snapshot exists. Check the search slices and the stream state for youtrack_issues.'
+    }
+) }}
+
 -- Every census issue the snapshot streams are meant to cover has a snapshot.
 -- They cover the collection window: an issue last updated before
 -- youtrack_start_date is in the census and deliberately never snapshotted, and
