@@ -1,0 +1,7 @@
+{
+  "timestamp": 1782864000000,
+  "status": 500,
+  "error": "Internal Server Error",
+  "message": "Synthetic failure",
+  "path": "/api/project"
+}

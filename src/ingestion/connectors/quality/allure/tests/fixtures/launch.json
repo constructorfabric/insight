@@ -1,0 +1,18 @@
+{
+  "id": 101,
+  "projectId": 7,
+  "name": "Nightly regression",
+  "closed": true,
+  "autoclose": true,
+  "external": false,
+  "createdBy": "ci-bot",
+  "createdDate": 1781517600000,
+  "lastModifiedBy": "ci-bot",
+  "lastModifiedDate": 1781519400123,
+  "tags": [
+    {
+      "id": 1,
+      "name": "nightly"
+    }
+  ]
+}

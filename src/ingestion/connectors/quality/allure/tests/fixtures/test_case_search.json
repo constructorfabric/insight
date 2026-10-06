@@ -1,0 +1,19 @@
+{
+  "id": 9001,
+  "projectId": 7,
+  "name": "Student can start an exam",
+  "automated": true,
+  "deleted": false,
+  "external": false,
+  "flaky": false,
+  "createdBy": "author@example.test",
+  "createdDate": 1767225600000,
+  "lastModifiedBy": "editor@example.test",
+  "lastModifiedDate": 1781519400123,
+  "description": "",
+  "descriptionHtml": "",
+  "links": [],
+  "status": {"id": 1, "name": "Active", "color": "#00a000", "createdBy": "system", "createdDate": 1600000000000, "lastModifiedBy": "system", "lastModifiedDate": 1600000000000},
+  "tags": [{"id": 31, "name": "smoke"}],
+  "workflow": {"id": 2, "name": "Automated"}
+}

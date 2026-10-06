@@ -1,0 +1,13 @@
+{
+  "id": 5,
+  "projectId": 7,
+  "name": "SubProject",
+  "required": false,
+  "singleSelect": true,
+  "locked": false,
+  "createdBy": "admin@example.test",
+  "createdDate": 1700000000000,
+  "lastModifiedBy": "admin@example.test",
+  "lastModifiedDate": 1700000000000,
+  "customField": {"id": 5, "name": "SubProject", "archived": false, "locked": false, "required": false, "singleSelect": true, "createdBy": "admin@example.test", "createdDate": 1700000000000, "lastModifiedBy": "admin@example.test", "lastModifiedDate": 1700000000000}
+}

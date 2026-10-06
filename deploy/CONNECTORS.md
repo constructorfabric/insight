@@ -23,6 +23,7 @@ Connectors pull data from your tools — Jira issues, Slack messages, GitHub pul
   - [Communication & meetings](#communication--meetings)
   - [HR & identity](#hr--identity)
   - [CRM & support](#crm--support)
+  - [Quality & testing](#quality--testing)
 - [Troubleshooting](#troubleshooting)
 
 <!-- /toc -->
@@ -56,7 +57,7 @@ stringData:
 
 The canonical list is the descriptors in `src/ingestion/connectors/*/*/descriptor.yaml`; this document carries example Secrets for the common ones. Replace `CHANGE_ME` (and any other placeholder) values in whichever connector files you need, under `connectors/`:
 
-`jira`, `slack`, `github`, `gitlab`, `m365`, `zoom`, `confluence`, `zendesk`, `bamboohr`, `ms-entra`, `outline`, `hubspot`, `cursor`, `chatgpt-team`, `claude-team`, `claude-enterprise`, `bitbucket-cloud`, `zulip-proxy`, `github-directory`.
+`jira`, `slack`, `github`, `gitlab`, `m365`, `zoom`, `confluence`, `zendesk`, `bamboohr`, `ms-entra`, `outline`, `hubspot`, `cursor`, `chatgpt-team`, `claude-team`, `claude-enterprise`, `bitbucket-cloud`, `zulip-proxy`, `github-directory`, `allure`.
 
 Apply all of them at once, or one at a time:
 
@@ -389,6 +390,23 @@ stringData:
   zendesk_email:     "agent@your-org.com"
   zendesk_api_token: "CHANGE_ME"
   # start_date:      "2026-01-01"            # optional
+```
+
+### Quality & testing
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: insight-allure-main
+  namespace: insight
+  labels: { app.kubernetes.io/part-of: insight }
+  annotations: { insight.cyberfabric.com/connector: allure, insight.cyberfabric.com/source-id: allure-main }
+type: Opaque
+stringData:
+  allure_url:         "https://allure.example.com"
+  allure_api_token:   "CHANGE_ME"
+  # allure_project_ids: '[7, 12]'
 ```
 
 ## Troubleshooting
