@@ -87,6 +87,14 @@ def custom_fields_url(project_id: int) -> str:
     return f"{ALLURE_URL}/api/project/{project_id}/cf"
 
 
+def mock_projects(http_mocker: HttpMocker, project_ids: tuple[int, ...] = (7, 12)) -> HttpRequest:
+    request = api_request(PROJECTS_URL, paged({}))
+    projects = [load_fixture(__file__, "project.json", id=project_id) for project_id in project_ids]
+    http_mocker.get(request, page(projects))
+
+    return request
+
+
 def mock_case_search(
     http_mocker: HttpMocker, project_id: int, response: HttpResponse | list[HttpResponse] | None = None
 ) -> HttpRequest:

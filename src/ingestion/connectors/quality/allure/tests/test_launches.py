@@ -12,6 +12,7 @@ from config import (
     error,
     launch_params,
     mock_launch_window,
+    mock_projects,
     page,
 )
 from connector_tests import HttpMocker, assert_records_conform, get_source, load_fixture, read_stream
@@ -39,6 +40,7 @@ def _cursors_by_project(state: dict) -> dict:
 @freezegun.freeze_time(FROZEN_NOW)
 def test_first_sync_requests_one_open_ended_window_from_ninety_days_back(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().build()
+    mock_projects(http_mocker)
     window = mock_launch_window(http_mocker, 7, page([_launch(101, 7, 1781519400123)]))
 
     output = _read(config)
@@ -51,6 +53,7 @@ def test_first_sync_requests_one_open_ended_window_from_ninety_days_back(http_mo
 @freezegun.freeze_time(FROZEN_NOW)
 def test_configured_start_date_starts_the_first_sync_there(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().with_field("allure_start_date", "2025-01-01").build()
+    mock_projects(http_mocker)
     window = api_request(LAUNCHES_URL, launch_params(7, 1735689600000))
     http_mocker.get(window, page([_launch(101, 7, 1781519400123)]))
 
@@ -72,6 +75,7 @@ def test_malformed_start_date_is_rejected(start_date: str) -> None:
 @freezegun.freeze_time(FROZEN_NOW)
 def test_one_request_set_per_configured_project(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().with_field("allure_project_ids", [7, 12]).build()
+    mock_projects(http_mocker)
     requests = [
         mock_launch_window(http_mocker, 7, page([_launch(101, 7, 1781519400123)])),
         mock_launch_window(http_mocker, 12, page([_launch(201, 12, 1778403600000)])),
@@ -88,6 +92,7 @@ def test_one_request_set_per_configured_project(http_mocker: HttpMocker) -> None
 @freezegun.freeze_time(FROZEN_NOW)
 def test_records_stamped_with_tenant_source_and_unique_key(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().build()
+    mock_projects(http_mocker)
     mock_launch_window(http_mocker, 7, page([_launch(101, 7, 1781519400123)]))
 
     output = _read(config)
@@ -101,6 +106,7 @@ def test_records_stamped_with_tenant_source_and_unique_key(http_mocker: HttpMock
 @freezegun.freeze_time(FROZEN_NOW)
 def test_records_conform_to_schema(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().build()
+    mock_projects(http_mocker)
     mock_launch_window(http_mocker, 7, page([_launch(101, 7, 1781519400123)]))
 
     output = _read(config)
@@ -111,6 +117,7 @@ def test_records_conform_to_schema(http_mocker: HttpMocker) -> None:
 @freezegun.freeze_time(FROZEN_NOW)
 def test_empty_windows_emit_nothing(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().build()
+    mock_projects(http_mocker)
     mock_launch_window(http_mocker, 7)
 
     output = _read(config)
@@ -122,6 +129,7 @@ def test_empty_windows_emit_nothing(http_mocker: HttpMocker) -> None:
 @freezegun.freeze_time(FROZEN_NOW)
 def test_pagination_within_window_follows_page_index_until_last_page(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().build()
+    mock_projects(http_mocker)
     mock_launch_window(http_mocker, 7, page([_launch(101, 7, 1781519400123)], number=0, last=False))
     http_mocker.get(
         api_request(LAUNCHES_URL, launch_params(7, page_index=1)),
@@ -137,6 +145,7 @@ def test_pagination_within_window_follows_page_index_until_last_page(http_mocker
 @freezegun.freeze_time(FROZEN_NOW)
 def test_launch_modified_after_sync_start_stays_in_window_and_becomes_cursor(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().build()
+    mock_projects(http_mocker)
     modified_mid_read_ms = NOW_MS + 60000
     mock_launch_window(
         http_mocker, 7, page([_launch(101, 7, 1781519400123), _launch(102, 7, 1781942400456)], number=0, last=False)
@@ -156,6 +165,7 @@ def test_launch_modified_after_sync_start_stays_in_window_and_becomes_cursor(htt
 @freezegun.freeze_time(FROZEN_NOW)
 def test_state_tracks_latest_modified_launch_per_project(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().with_field("allure_project_ids", [7, 12]).build()
+    mock_projects(http_mocker)
     mock_launch_window(http_mocker, 7, page([_launch(101, 7, 1781519400123), _launch(102, 7, 1781346600123)]))
     mock_launch_window(http_mocker, 12, page([_launch(201, 12, 1778403600000)]))
 
@@ -167,6 +177,7 @@ def test_state_tracks_latest_modified_launch_per_project(http_mocker: HttpMocker
 @freezegun.freeze_time(FROZEN_NOW)
 def test_resumed_sync_starts_each_project_from_its_cursor_minus_two_day_lookback(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().with_field("allure_project_ids", [7, 12]).build()
+    mock_projects(http_mocker)
     mock_launch_window(http_mocker, 7, page([_launch(101, 7, 1781519400123)]))
     mock_launch_window(http_mocker, 12, page([_launch(201, 12, 1781942400456)]))
 
@@ -176,6 +187,7 @@ def test_resumed_sync_starts_each_project_from_its_cursor_minus_two_day_lookback
 
     resume_mocker = HttpMocker()
     with resume_mocker:
+        mock_projects(resume_mocker)
         project_7 = api_request(LAUNCHES_URL, launch_params(7, 1781346600123))
         project_12 = api_request(LAUNCHES_URL, launch_params(12, 1781769600456))
         resume_mocker.get(project_7, page([]))
@@ -191,6 +203,7 @@ def test_resumed_sync_starts_each_project_from_its_cursor_minus_two_day_lookback
 @freezegun.freeze_time(FROZEN_NOW)
 def test_rate_limited_request_is_retried(http_mocker: HttpMocker, slept: list) -> None:
     config = AllureConfigBuilder().build()
+    mock_projects(http_mocker)
     mock_launch_window(http_mocker, 7, [error(429, {"Retry-After": "5"}), page([_launch(101, 7, 1781519400123)])])
 
     output = _read(config)
@@ -204,6 +217,7 @@ def test_rate_limited_request_is_retried(http_mocker: HttpMocker, slept: list) -
 @freezegun.freeze_time(FROZEN_NOW)
 def test_server_error_is_retried(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().build()
+    mock_projects(http_mocker)
     mock_launch_window(http_mocker, 7, [error(502), page([_launch(101, 7, 1781519400123)])])
 
     output = _read(config)
@@ -212,8 +226,45 @@ def test_server_error_is_retried(http_mocker: HttpMocker) -> None:
     assert [r.record.data["id"] for r in output.records] == [101]
 
 
-def test_empty_project_list_is_rejected() -> None:
-    config = AllureConfigBuilder().with_field("allure_project_ids", []).build()
+@freezegun.freeze_time(FROZEN_NOW)
+def test_every_visible_project_is_read_when_no_ids_are_configured(http_mocker: HttpMocker) -> None:
+    config = AllureConfigBuilder().build()
+    config.pop("allure_project_ids")
+    mock_projects(http_mocker, (7, 12))
+    requests = [
+        mock_launch_window(http_mocker, 7, page([_launch(101, 7, 1781519400123)])),
+        mock_launch_window(http_mocker, 12, page([_launch(201, 12, 1778403600000)])),
+    ]
 
-    with pytest.raises(ValueError, match="should be non-empty"):
-        get_source(_CONNECTOR, config)
+    output = _read(config)
+
+    assert not output.errors
+    assert sorted(r.record.data["id"] for r in output.records) == [101, 201]
+    for request in requests:
+        http_mocker.assert_number_of_calls(request, 1)
+
+
+@freezegun.freeze_time(FROZEN_NOW)
+def test_empty_id_list_reads_every_visible_project(http_mocker: HttpMocker) -> None:
+    config = AllureConfigBuilder().with_field("allure_project_ids", []).build()
+    mock_projects(http_mocker, (7, 12))
+    mock_launch_window(http_mocker, 7, page([_launch(101, 7, 1781519400123)]))
+    mock_launch_window(http_mocker, 12, page([_launch(201, 12, 1778403600000)]))
+
+    output = _read(config)
+
+    assert not output.errors
+    assert sorted(r.record.data["id"] for r in output.records) == [101, 201]
+
+
+@freezegun.freeze_time(FROZEN_NOW)
+def test_configured_ids_narrow_the_visible_projects(http_mocker: HttpMocker) -> None:
+    config = AllureConfigBuilder().with_field("allure_project_ids", [12]).build()
+    mock_projects(http_mocker, (7, 12))
+    window = mock_launch_window(http_mocker, 12, page([_launch(201, 12, 1778403600000)]))
+
+    output = _read(config)
+
+    assert not output.errors
+    assert [r.record.data["id"] for r in output.records] == [201]
+    http_mocker.assert_number_of_calls(window, 1)

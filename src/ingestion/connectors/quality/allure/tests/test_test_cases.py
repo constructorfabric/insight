@@ -14,6 +14,7 @@ from config import (
     case_search_params,
     error,
     mock_case_search,
+    mock_projects,
     page,
 )
 from connector_tests import HttpMocker, HttpRequest, HttpResponse, assert_records_conform, load_fixture, read_stream
@@ -67,6 +68,7 @@ def _first_sync_state(http_mocker: HttpMocker, config: dict) -> list:
 @freezegun.freeze_time(FROZEN_NOW)
 def test_first_sync_searches_every_test_case_since_2000(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().build()
+    mock_projects(http_mocker)
     search = mock_case_search(http_mocker, 7, page([_found(9001, 7, 1781519400123)]))
     _mock_overview(http_mocker, 9001, _overview(9001))
 
@@ -79,6 +81,7 @@ def test_first_sync_searches_every_test_case_since_2000(http_mocker: HttpMocker)
 @freezegun.freeze_time(FROZEN_NOW)
 def test_start_date_does_not_narrow_the_test_case_catalog(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().with_field("allure_start_date", "2025-01-01").build()
+    mock_projects(http_mocker)
     search = mock_case_search(http_mocker, 7, page([_found(9001, 7, 1781519400123)]))
     _mock_overview(http_mocker, 9001, _overview(9001))
 
@@ -91,6 +94,7 @@ def test_start_date_does_not_narrow_the_test_case_catalog(http_mocker: HttpMocke
 @freezegun.freeze_time(FROZEN_NOW)
 def test_one_overview_request_per_test_case_found(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().with_field("allure_project_ids", [7, 12]).build()
+    mock_projects(http_mocker)
     mock_case_search(http_mocker, 7, page([_found(9001, 7, 1781519400123), _found(9002, 7, 1781942400456)]))
     mock_case_search(http_mocker, 12, page([_found(9101, 12, 1778403600000)]))
     overviews = [
@@ -114,6 +118,7 @@ def test_one_overview_request_per_test_case_found(http_mocker: HttpMocker) -> No
 @freezegun.freeze_time(FROZEN_NOW)
 def test_record_keeps_every_custom_field_value(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().build()
+    mock_projects(http_mocker)
     mock_case_search(http_mocker, 7, page([_found(9001, 7, 1781519400123)]))
     _mock_overview(http_mocker, 9001, _overview(9001))
 
@@ -132,6 +137,7 @@ def test_record_keeps_every_custom_field_value(http_mocker: HttpMocker) -> None:
 @freezegun.freeze_time(FROZEN_NOW)
 def test_records_stamped_with_tenant_source_and_unique_key(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().build()
+    mock_projects(http_mocker)
     mock_case_search(http_mocker, 7, page([_found(9001, 7, 1781519400123)]))
     _mock_overview(http_mocker, 9001, _overview(9001))
 
@@ -146,6 +152,7 @@ def test_records_stamped_with_tenant_source_and_unique_key(http_mocker: HttpMock
 @freezegun.freeze_time(FROZEN_NOW)
 def test_records_conform_to_schema(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().build()
+    mock_projects(http_mocker)
     mock_case_search(http_mocker, 7, page([_found(9001, 7, 1781519400123)]))
     _mock_overview(http_mocker, 9001, _overview(9001))
 
@@ -157,6 +164,7 @@ def test_records_conform_to_schema(http_mocker: HttpMocker) -> None:
 @freezegun.freeze_time(FROZEN_NOW)
 def test_project_without_test_cases_emits_nothing(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().build()
+    mock_projects(http_mocker)
     mock_case_search(http_mocker, 7, page([]))
 
     output = _read(config)
@@ -168,6 +176,7 @@ def test_project_without_test_cases_emits_nothing(http_mocker: HttpMocker) -> No
 @freezegun.freeze_time(FROZEN_NOW)
 def test_search_pages_until_last_page(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().build()
+    mock_projects(http_mocker)
     mock_case_search(http_mocker, 7, page([_found(9001, 7, 1781519400123)], number=0, last=False))
     http_mocker.get(
         api_request(TEST_CASE_SEARCH_URL, case_search_params(7, page_index=1)),
@@ -185,6 +194,7 @@ def test_search_pages_until_last_page(http_mocker: HttpMocker) -> None:
 @freezegun.freeze_time(FROZEN_NOW)
 def test_search_cursor_persisted_per_project(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().build()
+    mock_projects(http_mocker)
     mock_case_search(http_mocker, 7, page([_found(9001, 7, 1781519400123)]))
     _mock_overview(http_mocker, 9001, _overview(9001))
 
@@ -198,10 +208,12 @@ def test_search_cursor_persisted_per_project(http_mocker: HttpMocker) -> None:
 @freezegun.freeze_time(FROZEN_NOW)
 def test_resumed_sync_fetches_only_test_cases_modified_since_cursor_minus_two_days(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().build()
+    mock_projects(http_mocker)
     state = _first_sync_state(http_mocker, config)
 
     resume_mocker = HttpMocker()
     with resume_mocker:
+        mock_projects(resume_mocker)
         search = api_request(TEST_CASE_SEARCH_URL, case_search_params(7, 1781346600123))
         resume_mocker.get(search, page([_found(9002, 7, 1782388800789)]))
         overview = _mock_overview(resume_mocker, 9002, _overview(9002, modified_ms=1782388800789))
@@ -218,6 +230,7 @@ def test_resumed_sync_fetches_only_test_cases_modified_since_cursor_minus_two_da
 @freezegun.freeze_time(FROZEN_NOW)
 def test_rate_limited_overview_is_retried(http_mocker: HttpMocker, slept: list) -> None:
     config = AllureConfigBuilder().build()
+    mock_projects(http_mocker)
     mock_case_search(http_mocker, 7, page([_found(9001, 7, 1781519400123)]))
     _mock_overview(http_mocker, 9001, [error(429, {"Retry-After": "5"}), _overview(9001)])
 
@@ -232,6 +245,7 @@ def test_rate_limited_overview_is_retried(http_mocker: HttpMocker, slept: list) 
 @freezegun.freeze_time(FROZEN_NOW)
 def test_search_server_error_is_retried(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().build()
+    mock_projects(http_mocker)
     mock_case_search(http_mocker, 7, [error(504), page([_found(9001, 7, 1781519400123)])])
     _mock_overview(http_mocker, 9001, _overview(9001))
 
@@ -239,3 +253,19 @@ def test_search_server_error_is_retried(http_mocker: HttpMocker) -> None:
 
     assert not output.errors
     assert [r.record.data["id"] for r in output.records] == [9001]
+
+
+@freezegun.freeze_time(FROZEN_NOW)
+def test_every_visible_project_is_searched_when_no_ids_are_configured(http_mocker: HttpMocker) -> None:
+    config = AllureConfigBuilder().build()
+    config.pop("allure_project_ids")
+    mock_projects(http_mocker, (7, 12))
+    mock_case_search(http_mocker, 7, page([_found(9001, 7, 1781519400123)]))
+    mock_case_search(http_mocker, 12, page([_found(9101, 12, 1778403600000)]))
+    _mock_overview(http_mocker, 9001, _overview(9001))
+    _mock_overview(http_mocker, 9101, _overview(9101, project_id=12))
+
+    output = _read(config)
+
+    assert not output.errors
+    assert sorted(r.record.data["id"] for r in output.records) == [9001, 9101]

@@ -406,7 +406,7 @@ type: Opaque
 stringData:
   allure_url:         "https://allure.example.com"
   allure_api_token:   "CHANGE_ME"
-  allure_project_ids: '[7, 12]'
+  # allure_project_ids: '[7, 12]'
 ```
 
 ## Troubleshooting

@@ -12,4 +12,3 @@ secret:
   required_fields:
     - allure_url
     - allure_api_token
-    - allure_project_ids

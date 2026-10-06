@@ -4,8 +4,8 @@ Allure TestOps projects, launches, test results, test cases and project custom f
 
 ## Prerequisites
 
-1. An Allure TestOps API token, created under your profile → API tokens. The token acts as its user, so that user needs access to every project in `allure_project_ids`.
-2. The numeric id of each project to sync. It is the `<id>` in `https://<host>/project/<id>/...`, and the `id` column of the `projects` stream.
+1. An Allure TestOps API token, created under your profile → API tokens. The token acts as its user: the connector syncs every project that user can see.
+2. Only to sync a subset: the numeric id of each project to keep. It is the `<id>` in `https://<host>/project/<id>/...`, and the `id` column of the `projects` stream.
 
 ## K8s Secret
 
@@ -23,7 +23,7 @@ type: Opaque
 stringData:
   allure_url: "https://allure.example.com"
   allure_api_token: "CHANGE_ME"
-  allure_project_ids: '[7, 12]'
+  # allure_project_ids: '[7, 12]'
   # allure_start_date: "2025-01-01"
 ```
 
@@ -33,13 +33,13 @@ stringData:
 |-------|----------|-------------|
 | `allure_url` | Yes | HTTPS base URL of the instance. The spec rejects `http://` and a trailing slash. |
 | `allure_api_token` | Yes | API token (sensitive). Sent on every request as `Authorization: Api-Token <token>`. |
-| `allure_project_ids` | Yes | JSON array of numeric project ids, at least one. Launches, test results, test cases and custom fields are read for these projects only. |
+| `allure_project_ids` | No | JSON array of numeric project ids, e.g. `'[7, 12]'`. Empty or unset: every project the token can see, discovered through `GET /api/project` on each sync, so projects created later are picked up. Set: only these projects. |
 | `allure_page_size` | No | Page size on every endpoint: default `100`, range `1`–`1000`. |
 | `allure_start_date` | No | `YYYY-MM-DD` (UTC) the first sync of `launches` and `test_results` starts from. Empty means 90 days back. |
 
 The first sync reads launches modified since `allure_start_date`, or in the last 90 days. Later syncs resume from the saved cursor minus a 2-day lookback, so changing `allure_start_date` after the first sync has no effect until `launches` and `test_results` are reset.
 
-A project id added after the first sync does not start from `allure_start_date`. It starts from the newest launch already synced across all projects, minus the lookback. To backfill it, reset `launches` and `test_results`.
+A project that joins after the first sync (a new project in Allure, or a new id in the list) does not start from `allure_start_date`. It starts from the newest launch already synced across all projects, minus the lookback. To backfill it, reset `launches` and `test_results`.
 
 ### Automatically injected
 
@@ -58,17 +58,19 @@ kubectl apply -f src/ingestion/secrets/connectors/allure.yaml
 
 ### Multi-instance
 
-Each Allure TestOps instance needs its own Secret with a different `insight.cyberfabric.com/source-id`. Several projects on one instance go into one `allure_project_ids` list.
+Each Allure TestOps instance needs its own Secret with a different `insight.cyberfabric.com/source-id`. All projects of one instance come through one Secret.
 
 ## Streams
 
 | Stream | Upstream | Sync Mode |
 |--------|----------|-----------|
-| `projects` | `GET /api/project`: every project the token can see, not only `allure_project_ids`. Also the connection check. | Full refresh |
-| `launches` | `GET /api/launch/__search` per configured project, filtered by RQL `lastModifiedDate >= <cursor>` with no upper bound | Incremental (`lastModifiedDate`) |
+| `projects` | `GET /api/project`: every project the token can see, whatever `allure_project_ids` says. Also the connection check. | Full refresh |
+| `launches` | `GET /api/launch/__search` per synced project, filtered by RQL `lastModifiedDate >= <cursor>` with no upper bound | Incremental (`lastModifiedDate`) |
 | `test_results` | `GET /api/testresult?launchId=` per launch | Incremental (`lastModifiedDate`, through the launch cursor) |
-| `test_cases` | `GET /api/testcase/{id}/overview` per test case that `GET /api/testcase/__search` finds per configured project. One record per test case, with its full `customFields` list | Incremental (`lastModifiedDate`, through the search cursor) |
-| `custom_fields` | `GET /api/project/{id}/cf` per configured project: every custom field the project defines | Full refresh |
+| `test_cases` | `GET /api/testcase/{id}/overview` per test case that `GET /api/testcase/__search` finds per synced project. One record per test case, with its full `customFields` list | Incremental (`lastModifiedDate`, through the search cursor) |
+| `custom_fields` | `GET /api/project/{id}/cf` per synced project: every custom field the project defines | Full refresh |
+
+The synced projects come from an inline `_projects` parent: `GET /api/project` on every sync, kept whole when `allure_project_ids` is empty or unset, filtered to those ids otherwise.
 
 `test_results` reads its launches from an inline `_launches` parent, identical to `launches`, and persists that parent's cursor (`incremental_dependency`). A sync therefore requests results only for launches whose `lastModifiedDate` is inside the window. The child's own `lastModifiedDate` cursor filters nothing: every result of a selected launch is emitted.
 
