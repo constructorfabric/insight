@@ -52,6 +52,7 @@ LAST_EVENT_AT = "2026-01-06T10:00:00"
 ONE_MS_AFTER_LAST_EVENT = "2026-01-06 10:00:00.001"
 RESOLVED_AT = "2026-02-10T15:30:00.000+0000"
 RESOLVED_BEFORE_LAST_EVENT = "2026-01-05T12:00:00.000+0000"
+RESOLVED_BEFORE_CREATION = "2026-01-01T00:00:00.000+0000"
 
 
 def _started() -> list[dict[str, Any]]:
@@ -128,6 +129,37 @@ def test_a_resolution_before_the_last_event_does_not_date_the_closure(scenario: 
     closure: the earliest moment it can have happened is right after that event."""
     rows = _diff_rows(scenario, "status")
     assert [(r["value_ids"], r["event_at"]) for r in rows] == [(["6"], ONE_MS_AFTER_LAST_EVENT)]
+
+
+@case(
+    fields=[STATUS_FIELD],
+    issues=[issue("TST-1", fields={"status": {"id": "6", "name": "Closed"}, "resolutiondate": RESOLVED_AT})],
+    statuses=STATUSES,
+)
+def test_a_closure_with_no_status_history_is_dated_by_the_resolution(scenario: Scenario) -> None:
+    """The changelog holds no status entry at all, so the snapshot seeds the
+    done status at creation. Without a closure dated by the resolution the
+    issue would read as closed the moment it was created."""
+    rows = scenario.journal(field="status")
+    assert [(r["event_kind"], r["value_ids"], r["event_at"]) for r in rows] == [
+        ("synthetic_initial", ["6"], "2026-01-05 09:00:00.000"),
+        ("snapshot_diff", ["6"], "2026-02-10 15:30:00.000"),
+    ]
+
+
+@case(
+    fields=[STATUS_FIELD],
+    issues=[
+        issue("TST-1", fields={"status": {"id": "6", "name": "Closed"}}),
+        issue("TST-2", fields={"status": {"id": "1", "name": "Open"}, "resolutiondate": RESOLVED_AT}),
+        issue("TST-3", fields={"status": {"id": "6", "name": "Closed"}, "resolutiondate": RESOLVED_BEFORE_CREATION}),
+    ],
+    statuses=STATUSES,
+)
+def test_a_status_with_no_history_is_dated_only_by_a_resolution_after_creation(scenario: Scenario) -> None:
+    """No resolution, a status that is not done, or a resolution before the
+    creation says nothing about when the issue closed."""
+    assert _diff_rows(scenario, "status") == []
 
 
 @case(

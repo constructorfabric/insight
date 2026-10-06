@@ -15,13 +15,19 @@
         'max_bytes_before_external_group_by': 2000000000,
         'max_bytes_before_external_sort': 2000000000,
     },
-    pre_hook="{{ jira_journal_drop_rows_bronze_cannot_account_for() }}",
-    post_hook="{{ jira_journal_record_catalogue() }}",
+    pre_hook=[
+        "{{ jira_journal_drop_rows_bronze_cannot_account_for() }}",
+        "{{ jira_journal_prepare_scope() }}",
+    ],
+    post_hook=[
+        "{{ jira_journal_derive_remaining_batches() }}",
+        "{{ jira_journal_drop_stages() }}",
+        "{{ jira_journal_record_catalogue() }}",
+    ],
     tags=['staging', 'jira', 'silver:class_task_field_history']
 ) }}
 
 {%- set catalogue = jira_journal_catalogue_state() -%}
-{%- set touched_only = is_incremental() and not catalogue.rebuild -%}
 
 -- The per-(issue x field x event) journal, derived in dbt. The Jira producer of
 -- `silver.class_task_field_history`, joined there by the availability and
@@ -35,7 +41,11 @@
 -- are not read. A field catalogue that differs from the one the last build
 -- used rebuilds the whole table, because `retired_field`,
 -- `unclassified_field` and `synthetic_initial` rows depend on it
--- (`jira_journal_catalogue_state`).
+-- (`jira_journal_catalogue_state`). A scope larger than one batch of issues is
+-- derived one batch per statement, this one and the post-hook's replays of it
+-- (`jira_journal_prepare_scope`), so a rebuild needs the memory of a batch.
+-- The relations read most are the batch's stages, written by those hooks
+-- (`jira_journal_derive_stages`): the arms read them instead of re-deriving.
 --
 -- INVARIANT: `delete+insert` alongside ReplacingMergeTree is deliberate, not
 -- two dedup mechanisms stacked. The engine collapses a key re-emitted with a
@@ -58,95 +68,8 @@
 -- item alone (§2.1). That is why there is no general fold here.
 
 WITH kinds AS (
-    SELECT
-        insight_source_id,
-        field_id,
-        field_name,
-        field_kind
-    FROM {{ ref('jira__task_field_kind') }}
-    -- `long_text` IS modelled: its body is content-addressed into
-    -- `jira__task_field_text` and the journal carries the hash plus a prefix.
-    WHERE field_kind NOT IN ('ignored', 'UNKNOWN')
-      -- The catalogue contains a real `created` field, but `created` is also the
-      -- contract's creation-marker sentinel (§10). Emitting both produces two
-      -- rows with the SAME unique_key, and ReplacingMergeTree then keeps one and
-      -- drops the other. The marker wins: its timestamp is the same value, and
-      -- `task_issue_current_state.created_at` reads it by `event_kind`.
-      AND field_id != 'created'
+    SELECT * FROM {{ jira_journal_stage('kinds') }}
 ),
-
-{% if touched_only %}
--- ── the issues this run recomputes ──────────────────────────────────────────
--- When bronze last delivered anything about an issue — its own row or one of
--- its changelog entries. Narrow columns only: this reads every issue in bronze
--- and every row of the journal, and neither the JSON nor the value arrays.
-input_freshness AS (
-    SELECT
-        insight_source_id,
-        issue_id,
-        max(extracted_at)                                 AS fresh_at
-    FROM (
-        SELECT
-            COALESCE(source_id, '')                       AS insight_source_id,
-            COALESCE(toString(jira_id), '')               AS issue_id,
-            toDateTime64(_airbyte_extracted_at, 3)        AS extracted_at
-        FROM {{ source('bronze_jira', 'jira_issue') }}
-        WHERE jira_id IS NOT NULL
-
-        UNION ALL
-
-        SELECT
-            insight_source_id,
-            assumeNotNull(jira_id)                        AS issue_id,
-            extracted_at
-        FROM {{ ref('jira__changelog_items') }}
-        WHERE jira_id IS NOT NULL
-    )
-    GROUP BY insight_source_id, issue_id
-),
-
-journal_versions AS (
-    SELECT
-        insight_source_id,
-        issue_id,
-        max(_version)                                     AS journal_version
-    FROM {{ this }}
-    GROUP BY insight_source_id, issue_id
-),
-
--- Two ways of knowing an issue is stale, and the union of them is the scope.
---
--- The issue's own rows are one: bronze holds an extraction the version those
--- rows carry does not cover. This is what catches an issue whose rows a run
--- never wrote at all, including one bronze re-delivered under an OLDER
--- extraction stamp than the journal already held — a restore does that.
---
--- How far the last COMPLETED run had read is the other, and it is what makes a
--- failed run recoverable. `delete+insert` is two statements: an insert that
--- dies partway leaves an issue holding some of its rows, and those rows carry
--- the version the complete set would have carried, so the issue reads as
--- current and the first test alone would skip it forever. `processed_ms` is
--- written only after a replacement completed, so everything bronze delivered
--- since then is in scope again, the half-written issue with it.
-touched AS (
-    SELECT
-        f.insight_source_id                               AS insight_source_id,
-        f.issue_id                                        AS issue_id
-    FROM input_freshness AS f
-    LEFT JOIN journal_versions AS v
-        ON v.insight_source_id = f.insight_source_id
-       AND v.issue_id = f.issue_id
-    WHERE toUnixTimestamp64Milli(f.fresh_at) > toInt64(COALESCE(v.journal_version, 0))
-       OR toUnixTimestamp64Milli(f.fresh_at) > toInt64({{ catalogue.processed_ms }})
-),
-
--- The set as ONE scalar, computed once for the whole statement. A CTE named in
--- an `IN` is inlined at every reference, and the reads below reference the
--- scope dozens of times once their own CTEs are expanded — each copy would
--- scan the journal again. A scalar subquery is evaluated once and cached, and
--- every predicate unpacks the same array (`jira_journal_issue_in_scope`).
-(SELECT groupArray((insight_source_id, issue_id)) FROM touched) AS touched_set,
-{% endif %}
 
 -- One row per issue: identity, creation time, reporter. Same two-pass dedup as
 -- the snapshot model — the aggregation carries only a raw id, never the JSON.
@@ -157,9 +80,7 @@ issue_winner AS (
     SELECT source_id, jira_id, argMax(_airbyte_raw_id, _airbyte_extracted_at) AS raw_id
     FROM {{ source('bronze_jira', 'jira_issue') }}
     WHERE jira_id IS NOT NULL
-    {% if touched_only -%}
-      AND {{ jira_journal_issue_in_scope("COALESCE(source_id, '')", "COALESCE(toString(jira_id), '')") }}
-    {%- endif %}
+      AND {{ jira_journal_in_batch("COALESCE(source_id, '')", "COALESCE(toString(jira_id), '')") }}
     GROUP BY source_id, jira_id
 ),
 
@@ -177,9 +98,7 @@ issues AS (
         toDateTime64(i._airbyte_extracted_at, 3)          AS observed_at
     FROM {{ source('bronze_jira', 'jira_issue') }} AS i
     INNER JOIN issue_winner AS w ON i._airbyte_raw_id = w.raw_id
-    {% if touched_only -%}
-    WHERE {{ jira_journal_issue_in_scope("COALESCE(i.source_id, '')", "COALESCE(toString(i.jira_id), '')") }}
-    {%- endif %}
+    WHERE {{ jira_journal_in_batch("COALESCE(i.source_id, '')", "COALESCE(toString(i.jira_id), '')") }}
 ),
 
 -- The same winning bronze row, carrying the payload and the moment it was
@@ -196,27 +115,11 @@ issue_json AS (
                                                           AS resolved_at
     FROM {{ source('bronze_jira', 'jira_issue') }} AS i
     INNER JOIN issue_winner AS w ON i._airbyte_raw_id = w.raw_id
-    {% if touched_only -%}
-    WHERE {{ jira_journal_issue_in_scope("COALESCE(i.source_id, '')", "COALESCE(toString(i.jira_id), '')") }}
-    {%- endif %}
+    WHERE {{ jira_journal_in_batch("COALESCE(i.source_id, '')", "COALESCE(toString(i.jira_id), '')") }}
 ),
 
--- Every changelog item, attributed to its issue by the issue's immutable id.
--- The changelog stream stamps `id_readable` as the key at fetch time, which a
--- move between projects invalidates; `jira_id` (connector 6.1.0, filled on
--- older rows by the deploy heal) is the only identity used here. An item
--- without one names an issue the issue stream never delivered — nothing to
--- attribute it to, so it is not in the journal;
--- `assert_jira_substream_rows_without_issue_id` reports how many there are.
 changelog_items AS (
-    SELECT
-        ci.* EXCEPT (id_readable, jira_id),
-        assumeNotNull(ci.jira_id)                         AS issue_id
-    FROM {{ ref('jira__changelog_items') }} AS ci
-    WHERE ci.jira_id IS NOT NULL
-    {% if touched_only -%}
-      AND {{ jira_journal_issue_in_scope('ci.insight_source_id', 'assumeNotNull(ci.jira_id)') }}
-    {%- endif %}
+{{- jira_journal_changelog_items_sql() -}}
 ),
 
 -- The newest moment bronze received anything about an issue: its own row or
@@ -243,73 +146,14 @@ issue_freshness AS (
     GROUP BY insight_source_id, issue_id
 ),
 
--- Every changelog item that belongs to a field we model, with its delta already
--- resolved by the field's kind.
-events AS (
-    SELECT
-        ci.insight_source_id                              AS insight_source_id,
-        ci.issue_id                                       AS issue_id,
-        ci.changelog_id                                   AS changelog_id,
-        -- INVARIANT: the changelog id orders two events of one instant only after
-        -- the entry's rank, and only as a NUMBER — as text '101' sorts before
-        -- '99'. The string form stays the event id, an identifier, not an order.
-        toUInt64OrZero(ci.changelog_id)                   AS event_ord,
-        ci.created_at                                     AS event_at,
-        ci.author_account_id                              AS author_id,
-        ci.field_id                                       AS field_id,
-        k.field_name                                      AS field_name,
-        k.field_kind                                      AS field_kind,
-        {{ jira_delta_action('k.field_kind', 'ci.value_from', 'ci.value_from_string',
-                             'ci.value_to', 'ci.value_to_string') }}   AS delta_action,
-        {{ jira_delta_sides('k.field_kind', 'ci.value_from', 'ci.value_from_string',
-                            'ci.value_to', 'ci.value_to_string') }}    AS sides,
-        {{ jira_delta_element('ci.value_from', 'ci.value_from_string',
-                              'ci.value_to', 'ci.value_to_string') }}  AS element,
-        {{ jira_item_is_live('k.field_kind', 'ci.value_from', 'ci.value_from_string',
-                             'ci.value_to', 'ci.value_to_string') }}   AS is_live
-    FROM changelog_items AS ci
-    INNER JOIN kinds AS k
-        ON k.insight_source_id = ci.insight_source_id
-       AND k.field_id = ci.field_id
-),
-
--- An item with nothing on either side carries no information (§6). Neither does
--- one whose two sides are spelled identically: Jira writes those as a
--- by-product of recalculating a field it did not change — a remaining estimate
--- re-stamped while an issue is closed is the common shape.
---
--- Dropping them is not merely tidiness. `initial_state` takes the `before` side
--- of the EARLIEST event, and items of one entry share (event_at, event_ord), so
--- a real change paired with a no-op left that choice to the planner: the same
--- data yielded either value from one run to the next.
---
--- Element-wise kinds are exempt, and must be: their sides carry ONE element,
--- absent on the side it is not on, so a no-op cannot arise — while an item
--- naming the same element on both sides is the RENAME of that element, whose
--- whole purpose is to carry the new display.
+-- `jira_journal_ranked_events_sql`: the modelled, live items, ranked.
 live_events AS (
-    SELECT * FROM events
-    WHERE is_live
+    SELECT * FROM {{ jira_journal_stage('ranked_events') }}
 ),
 
--- ── the order of the entries that share an instant (§5) ────────────────────
--- An entry's rank among the issue's entries of its instant, shared by every
--- field it changed (`jira__changelog_entry_ranks`). An entry sharing its
--- instant with none has no row there and ranks 0.
-ranked_events AS (
-    SELECT
-        e.*,
-        COALESCE(r.entry_rank, toUInt32(0))               AS entry_rank
-    FROM live_events AS e
-    LEFT JOIN {{ ref('jira__changelog_entry_ranks') }} AS r FINAL
-        ON r.insight_source_id = e.insight_source_id
-       AND r.issue_id = e.issue_id
-       AND r.changelog_id = e.changelog_id
-),
-
+-- `jira_journal_ordered_events_sql`: one event per entry and self-describing field.
 ordered_events AS (
-    SELECT * FROM ranked_events
-    WHERE field_kind NOT IN {{ jira_element_wise_kinds() }}
+    SELECT * FROM {{ jira_journal_stage('ordered_events') }}
 ),
 
 -- ── fields the catalogue does not contain ───────────────────────────────────
@@ -350,29 +194,6 @@ unclassified_events AS (
     GROUP BY ci.insight_source_id, ci.issue_id, ci.field_id
 ),
 
--- Current value per (issue, field), the seed for the backward reconstruction.
---
--- Two projections of the same relation on purpose. Only the element-wise kinds need
--- the seed at all (§2.1), and that subset is a small fraction of the snapshot —
--- joining the whole thing builds a hash table over every field of every issue
--- for no benefit.
-snapshot_element_wise AS (
-    SELECT
-        s.insight_source_id                               AS insight_source_id,
-        s.issue_id                                        AS issue_id,
-        s.field_id                                        AS field_id,
-        s.value_ids                                       AS value_ids,
-        s.value_displays                                  AS value_displays
-    FROM {{ ref('jira__issue_field_snapshot') }} AS s FINAL
-    INNER JOIN kinds AS k
-        ON k.insight_source_id = s.insight_source_id
-       AND k.field_id = s.field_id
-    WHERE k.field_kind IN {{ jira_element_wise_kinds() }}
-    {% if touched_only -%}
-      AND {{ jira_journal_issue_in_scope('s.insight_source_id', 's.issue_id') }}
-    {%- endif %}
-),
-
 snapshot AS (
     SELECT
         s.insight_source_id                               AS insight_source_id,
@@ -381,9 +202,7 @@ snapshot AS (
         s.value_ids                                       AS value_ids,
         s.value_displays                                  AS value_displays
     FROM {{ ref('jira__issue_field_snapshot') }} AS s FINAL
-    {% if touched_only -%}
-    WHERE {{ jira_journal_issue_in_scope('s.insight_source_id', 's.issue_id') }}
-    {%- endif %}
+    WHERE {{ jira_journal_in_batch('s.insight_source_id', 's.issue_id') }}
 ),
 
 -- ── fields the issue stopped carrying ───────────────────────────────────────
@@ -437,249 +256,12 @@ retired_pairs AS (
        AND c.issue_id = j.issue_id
 ),
 
--- ── the element-wise kinds, whose state accumulates ────────────────────────
--- Elements are carried as one string per element so ids and displays cannot
--- drift apart; they are split back into the parallel arrays at the end.
---
--- The state is derived PER ELEMENT, never by carrying a running list. An
--- element belongs to the state after event k exactly when its own latest
--- operation at or before k was an `add`; with no operation of its own by then,
--- it belongs there exactly when it belonged at creation. Each element's
--- ordered operations therefore become the SPANS of events over which it is
--- present, and the state after event k is every element whose span covers k.
---
--- Why per element and not the set arithmetic this replaced. The closed form
--- `(initial ∪ additions up to k) \ removals up to k` is wrong for an element
--- added, removed and ADDED AGAIN: it stays subtracted forever, because it is
--- in "every removal". Reading the element's LATEST operation is correct for
--- any cycle — which is what a sequential fold bought, without its cost.
---
--- COST (§13): a running list costs O(n^2) in the number of operations on one
--- (issue, field), either by replaying the list per row or by appending to an
--- accumulator — `arrayPushBack` copies the whole accumulator, so appending n
--- states copies n^2/2 of them. A long-lived list field can accumulate enough
--- events on a single issue to exhaust any memory limit that way, and no
--- partitioning of the input helps: one (issue, field) is one sequence and
--- cannot be split. Spans cost the size of the output and nothing beyond it.
---
--- Presence at creation needs no snapshot: an element whose FIRST operation
--- removed it was there, one whose first operation added it was not. The
--- snapshot supplies only the elements no operation ever touched.
-element_wise_items AS (
-    SELECT
-        e.insight_source_id                               AS insight_source_id,
-        e.issue_id                                        AS issue_id,
-        e.field_id                                        AS field_id,
-        e.field_name                                      AS field_name,
-        e.field_kind                                      AS field_kind,
-        e.changelog_id                                    AS changelog_id,
-        e.event_at                                        AS event_at,
-        e.author_id                                       AS author_id,
-        e.delta_action                                    AS delta_action,
-        e.entry_rank                                      AS entry_rank,
-        e.element.1                                       AS element_id,
-        concat(e.element.1, '\x1f', e.element.2)           AS pair,
-        -- The event's position in this (issue, field)'s sequence, entries in
-        -- the order of their instant. Items of one ENTRY share (event_at,
-        -- entry_rank, event_ord); the element id breaks that tie so
-        -- the numbering is reproducible where the window's order among them was
-        -- arbitrary. Items of one entry name distinct elements, so no element's
-        -- own order depends on the tiebreak.
-        row_number() OVER (PARTITION BY e.insight_source_id, e.issue_id, e.field_id
-                           ORDER BY e.event_at, e.entry_rank, e.event_ord, e.element.1) AS seq
-    FROM ranked_events AS e
-    WHERE e.field_kind IN {{ jira_element_wise_kinds() }}
-),
-
-element_wise_extent AS (
-    SELECT
-        insight_source_id                                 AS insight_source_id,
-        issue_id                                          AS issue_id,
-        field_id                                          AS field_id,
-        max(seq)                                          AS last_seq
-    FROM element_wise_items
-    GROUP BY insight_source_id, issue_id, field_id
-),
-
--- One row per (issue, field, element), carrying that element's own operations.
-element_wise_element AS (
-    SELECT
-        i.insight_source_id                               AS insight_source_id,
-        i.issue_id                                        AS issue_id,
-        i.field_id                                        AS field_id,
-        i.element_id                                      AS element_id,
-        argMin(i.pair, i.seq)                             AS first_pair,
-        argMin(i.delta_action, i.seq)                     AS first_action,
-        min(i.seq)                                        AS first_seq,
-        arraySort(x -> x.1,
-                  groupArray((i.seq, i.delta_action, i.pair)))  AS ops
-    FROM element_wise_items AS i
-    GROUP BY i.insight_source_id, i.issue_id, i.field_id, i.element_id
-),
-
--- The snapshot's elements, deduplicated by id exactly as the pairs were.
-element_wise_snapshot_pairs AS (
-    SELECT
-        s.insight_source_id                               AS insight_source_id,
-        s.issue_id                                        AS issue_id,
-        s.field_id                                        AS field_id,
-        splitByChar('\x1f', s.pair)[1]                    AS element_id,
-        s.pair                                            AS pair
-    FROM (
-        SELECT
-            insight_source_id,
-            issue_id,
-            field_id,
-            arrayJoin({{ jira_distinct_pairs_by_id("arrayMap(j -> concat(value_ids[j], '\x1f', value_displays[j]), range(1, length(value_ids) + 1))") }}) AS pair
-        FROM snapshot_element_wise
-    ) AS s
-),
-
--- Elements the log never touched. They are present throughout, so they belong
--- to the state after every event as well as to the state at creation.
-element_wise_untouched AS (
-    SELECT
-        p.insight_source_id                               AS insight_source_id,
-        p.issue_id                                        AS issue_id,
-        p.field_id                                        AS field_id,
-        p.pair                                            AS pair
-    FROM element_wise_snapshot_pairs AS p
-    LEFT ANTI JOIN element_wise_element AS e
-        ON e.insight_source_id = p.insight_source_id
-       AND e.issue_id = p.issue_id
-       AND e.field_id = p.field_id
-       AND e.element_id = p.element_id
-),
-
--- (first event of the span, last event of the span, the pair to carry). An
--- `add` opens a span that runs until this element's NEXT operation; presence at
--- creation opens one that runs until its FIRST. A `remove` opens nothing.
-element_wise_spans AS (
-    SELECT
-        e.insight_source_id                               AS insight_source_id,
-        e.issue_id                                        AS issue_id,
-        e.field_id                                        AS field_id,
-        arrayJoin(arrayConcat(
-            if(e.first_action = 'remove' AND e.first_seq > 1,
-               [(toUInt64(0), toUInt64(e.first_seq - 1), e.first_pair)],
-               CAST([] AS Array(Tuple(UInt64, UInt64, String)))),
-            arrayMap(k -> (e.ops[k].1,
-                           if(k = length(e.ops), x.last_seq, toUInt64(e.ops[k + 1].1 - 1)),
-                           e.ops[k].3),
-                     arrayFilter(k -> e.ops[k].2 = 'add', arrayEnumerate(e.ops)))
-        ))                                                AS span
-    FROM element_wise_element AS e
-    INNER JOIN element_wise_extent AS x
-        ON x.insight_source_id = e.insight_source_id
-       AND x.issue_id = e.issue_id
-       AND x.field_id = e.field_id
-
-    UNION ALL
-
-    SELECT
-        u.insight_source_id                               AS insight_source_id,
-        u.issue_id                                        AS issue_id,
-        u.field_id                                        AS field_id,
-        -- 0, not 1: an element the log never touched was in the list before any
-        -- event, so it orders ahead of one added by the first event.
-        (toUInt64(0), x.last_seq, u.pair)                 AS span
-    FROM element_wise_untouched AS u
-    INNER JOIN element_wise_extent AS x
-        ON x.insight_source_id = u.insight_source_id
-       AND x.issue_id = u.issue_id
-       AND x.field_id = u.field_id
-),
-
--- The state after each event, as the elements whose span covers it, ordered by
--- when each element ENTERED the list: elements present at creation first, then
--- each addition in event order, and a re-added element at the back because its
--- new span starts later. That is the order a running list produced, and
--- `test_multi_elementwise` asserts it.
---
--- WITHIN the creation-time group the order is by element id. A running list
--- left that group in the reverse order of its first operations — an artefact of
--- rewinding the snapshot rather than a property of the data — so this group is
--- where the two differ; membership is the same either way, and the class
--- contract reads these arrays as a set.
-element_wise_states AS (
-    SELECT
-        insight_source_id                                 AS insight_source_id,
-        issue_id                                          AS issue_id,
-        field_id                                          AS field_id,
-        seq                                               AS seq,
-        arrayMap(x -> x.2,
-                 arraySort(x -> (x.1, x.2),
-                           groupArray((span_start, pair)))) AS state_pairs
-    FROM (
-        SELECT
-            insight_source_id,
-            issue_id,
-            field_id,
-            arrayJoin(range(greatest(span.1, toUInt64(1)),
-                            toUInt64(span.2 + 1)))        AS seq,
-            span.1                                        AS span_start,
-            span.3                                        AS pair
-        FROM element_wise_spans
-    )
-    GROUP BY insight_source_id, issue_id, field_id, seq
-),
-
-element_wise_initial AS (
-    SELECT
-        insight_source_id                                 AS insight_source_id,
-        issue_id                                          AS issue_id,
-        field_id                                          AS field_id,
-        arrayMap(x -> x.2,
-                 arraySort(x -> (x.1, x.2),
-                           groupArray((entered, pair))))  AS initial_pairs
-    FROM (
-        -- Same rule as the states: untouched elements were there before any
-        -- event, an element whose first operation removed it was there too but
-        -- is named by that operation.
-        SELECT
-            insight_source_id, issue_id, field_id,
-            toUInt8(1)                                    AS entered,
-            first_pair                                    AS pair
-        FROM element_wise_element
-        WHERE first_action = 'remove'
-
-        UNION ALL
-
-        SELECT insight_source_id, issue_id, field_id, toUInt8(0) AS entered, pair
-        FROM element_wise_untouched
-    )
-    GROUP BY insight_source_id, issue_id, field_id
-),
-
--- One row per operation again, with the state that operation produced.
--- `ops_seq` is its position in the pair's sequence, which is what the changelog
--- rows use to pick the state after the last item of an entry.
+-- `jira_journal_element_wise_state_sql`: one row per element-wise operation,
+-- with the state it produced and the field's initial set.
 element_wise_state AS (
-    SELECT
-        i.insight_source_id                               AS insight_source_id,
-        i.issue_id                                        AS issue_id,
-        i.field_id                                        AS field_id,
-        i.field_name                                      AS field_name,
-        i.field_kind                                      AS field_kind,
-        COALESCE(ini.initial_pairs, CAST([] AS Array(String)))  AS initial_pairs,
-        i.changelog_id                                    AS changelog_id,
-        i.event_at                                        AS event_at,
-        i.author_id                                       AS author_id,
-        i.delta_action                                    AS delta_action,
-        i.entry_rank                                      AS entry_rank,
-        COALESCE(st.state_pairs, CAST([] AS Array(String)))     AS state_pairs,
-        i.seq                                             AS ops_seq
-    FROM element_wise_items AS i
-    LEFT JOIN element_wise_states AS st
-        ON st.insight_source_id = i.insight_source_id
-       AND st.issue_id = i.issue_id
-       AND st.field_id = i.field_id
-       AND st.seq = i.seq
-    LEFT JOIN element_wise_initial AS ini
-        ON ini.insight_source_id = i.insight_source_id
-       AND ini.issue_id = i.issue_id
-       AND ini.field_id = i.field_id
+    SELECT * FROM {{ jira_journal_stage('element_wise_state') }}
 ),
+
 
 -- ── the state the journal's own events arrive at ────────────────────────────
 -- Needed to tell a field the issue changed without recording it from one whose
@@ -827,6 +409,48 @@ snapshot_diff_pairs AS (
        AND m.issue_id = p.issue_id
        AND m.field_id = p.field_id
     WHERE m.last_event_at <= p.observed_at
+
+    UNION ALL
+
+    -- A done status with no status entry at all (§6.1). Its only row would be
+    -- the `synthetic_initial` the snapshot seeds, so the issue would read as
+    -- closed the moment it was created; the resolution dates the close instead.
+    SELECT
+        j.insight_source_id,
+        j.issue_id,
+        d.field_id,
+        d.value_ids,
+        d.value_displays,
+        assumeNotNull(j.resolved_at)
+    FROM issue_json AS j
+    INNER JOIN (
+        SELECT
+            s.insight_source_id,
+            s.issue_id,
+            s.field_id,
+            s.value_ids,
+            s.value_displays
+        FROM snapshot AS s
+        LEFT ANTI JOIN (
+            SELECT DISTINCT insight_source_id, issue_id
+            FROM live_events
+            WHERE field_id = 'status'
+        ) AS ev
+            ON ev.insight_source_id = s.insight_source_id
+           AND ev.issue_id = s.issue_id
+        WHERE s.field_id = 'status'
+          AND (s.insight_source_id, s.value_ids[1]) IN (
+                  SELECT insight_source_id, status_id
+                  FROM {{ ref('jira__task_statuses') }}
+                  WHERE status_category = 'done'
+              )
+    ) AS d
+        ON d.insight_source_id = j.insight_source_id
+       AND d.issue_id = j.issue_id
+    INNER JOIN issues AS i
+        ON i.insight_source_id = j.insight_source_id
+       AND i.issue_id = j.issue_id
+    WHERE ifNull(j.resolved_at > i.created_at, 0)
 ),
 
 -- ── the value of every modelled field at issue creation ─────────────────────
@@ -931,7 +555,7 @@ FROM issues
 UNION ALL
 
 -- ── row 2: changelog rows for the self-describing kinds ─────────────────────
--- The state after the event is the item's own `to` side; nothing accumulates.
+-- The state after the event is the entry's `to` side; nothing accumulates.
 SELECT
     CAST({{ jira_history_key('e.insight_source_id', 'e.issue_id', 'e.field_id', 'e.changelog_id') }} AS String) AS unique_key,
     e.insight_source_id,

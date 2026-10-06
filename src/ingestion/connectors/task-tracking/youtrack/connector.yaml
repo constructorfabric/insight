@@ -1209,10 +1209,19 @@ streams:
                       type: BearerAuthenticator
                       api_token: "{{ config['youtrack_token'] }}"
                     request_parameters:
-                      categories: ArticleCommentAttachmentsCategory,ArticleTagsCategory,AttachmentRenameCategory,AttachmentVisibilityCategory,AttachmentsCategory,CommentAttachmentsCategory,CommentTextCategory,CommentVisibilityCategory,CommentsCategory,CustomFieldCategory,DescriptionCategory,IssueCreatedCategory,IssueResolvedCategory,IssueVisibilityCategory,LinksCategory,ProjectCategory,PullRequestChangeCategory,SprintCategory,SummaryCategory,TagsCategory,TotalVotesCategory,VcsChangeCategory,VcsChangeStateCategory,VotersCategory
+                      categories: AttachmentRenameCategory,AttachmentVisibilityCategory,AttachmentsCategory,CommentAttachmentsCategory,CommentTextCategory,CommentVisibilityCategory,CommentsCategory,CustomFieldCategory,DescriptionCategory,IssueCreatedCategory,IssueResolvedCategory,IssueVisibilityCategory,LinksCategory,ProjectCategory,PullRequestChangeCategory,SprintCategory,SummaryCategory,TagsCategory,TotalVotesCategory,VcsChangeCategory,VcsChangeStateCategory,VotersCategory
                       fields: afterCursor,hasAfter,activities(id,timestamp,target(id,idReadable))
                       $top: "{{ config.get('youtrack_activities_page_size', 200) }}"
                     url: "{{ config['youtrack_base_url'].rstrip('/') }}/api/activitiesPage"
+                    # WORKAROUND: a body the server cuts off decodes to {}; fail instead of reading it as the last page.
+                    error_handler:
+                      type: DefaultErrorHandler
+                      response_filters:
+                        - type: HttpResponseFilter
+                          action: FAIL
+                          failure_type: system_error
+                          predicate: "{{ 'hasAfter' not in response }}"
+                          error_message: YouTrack returned an activitiesPage response without hasAfter; the body was truncated or not JSON.
                   paginator:
                     type: DefaultPaginator
                     page_token_option:
@@ -1380,10 +1389,19 @@ streams:
         request_headers:
           Accept: application/json
         request_parameters:
-          categories: ArticleCommentAttachmentsCategory,ArticleTagsCategory,AttachmentRenameCategory,AttachmentVisibilityCategory,AttachmentsCategory,CommentAttachmentsCategory,CommentTextCategory,CommentVisibilityCategory,CommentsCategory,CustomFieldCategory,DescriptionCategory,IssueCreatedCategory,IssueResolvedCategory,IssueVisibilityCategory,LinksCategory,ProjectCategory,PullRequestChangeCategory,SprintCategory,SummaryCategory,TagsCategory,TotalVotesCategory,VcsChangeCategory,VcsChangeStateCategory,VotersCategory
+          categories: AttachmentRenameCategory,AttachmentVisibilityCategory,AttachmentsCategory,CommentAttachmentsCategory,CommentTextCategory,CommentVisibilityCategory,CommentsCategory,CustomFieldCategory,DescriptionCategory,IssueCreatedCategory,IssueResolvedCategory,IssueVisibilityCategory,LinksCategory,ProjectCategory,PullRequestChangeCategory,SprintCategory,SummaryCategory,TagsCategory,TotalVotesCategory,VcsChangeCategory,VcsChangeStateCategory,VotersCategory
           fields: afterCursor,hasAfter,activities(id,$type,timestamp,targetMember,category(id),author(id,login,fullName,email),field(id,name,presentation,$type,customField(id)),added(id,name,login,fullName,text,markdownText,minutes,presentation,description,archived,ordinal,isResolved,released,releaseDate,project(id,name,shortName),numberInProject,$type),removed(id,name,login,fullName,text,markdownText,minutes,presentation,description,archived,ordinal,isResolved,released,releaseDate,project(id,name,shortName),numberInProject,$type),target(id,idReadable,name,text,summary,$type))
           $top: "{{ config.get('youtrack_activities_page_size', 200) }}"
         url: "{{ config['youtrack_base_url'].rstrip('/') }}/api/activitiesPage"
+        # WORKAROUND: a body the server cuts off decodes to {}; fail instead of reading it as the last page.
+        error_handler:
+          type: DefaultErrorHandler
+          response_filters:
+            - type: HttpResponseFilter
+              action: FAIL
+              failure_type: system_error
+              predicate: "{{ 'hasAfter' not in response }}"
+              error_message: YouTrack returned an activitiesPage response without hasAfter; the body was truncated or not JSON.
       paginator:
         type: DefaultPaginator
         page_token_option:
@@ -2047,6 +2065,15 @@ streams:
                     fields: afterCursor,hasAfter,activities(id,timestamp,target(id,idReadable))
                     $top: "{{ config.get('youtrack_activities_page_size', 200) }}"
                   url: "{{ config['youtrack_base_url'].rstrip('/') }}/api/activitiesPage"
+                  # WORKAROUND: a body the server cuts off decodes to {}; fail instead of reading it as the last page.
+                  error_handler:
+                    type: DefaultErrorHandler
+                    response_filters:
+                      - type: HttpResponseFilter
+                        action: FAIL
+                        failure_type: system_error
+                        predicate: "{{ 'hasAfter' not in response }}"
+                        error_message: YouTrack returned an activitiesPage response without hasAfter; the body was truncated or not JSON.
                 paginator:
                   type: DefaultPaginator
                   page_token_option:

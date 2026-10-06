@@ -12,9 +12,7 @@
 -- depends_on: {{ ref('confluence__wiki_engagement') }}
 -- depends_on: {{ ref('outline__wiki_engagement') }}
 
-SELECT * FROM (
+SELECT candidate.* FROM (
     {{ union_by_tag('silver:class_wiki_engagement') }}
-)
-{% if is_incremental() %}
-WHERE _version > (SELECT max(_version) FROM {{ this }})
-{% endif %}
+) AS candidate
+{{ silver_incremental_watermark(['tenant_id', 'source_id', 'data_source']) }}

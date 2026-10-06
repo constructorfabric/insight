@@ -14,9 +14,7 @@
 -- lower(email)). Union of per-source staging models tagged
 -- `silver:dim_support_agent`. Joined to fct/activity by (data_source,
 -- source_agent_id) to resolve the actor of an event to a person.
-SELECT * FROM (
+SELECT candidate.* FROM (
     {{ union_by_tag('silver:dim_support_agent') }}
-)
-{% if is_incremental() %}
-WHERE _version > (SELECT max(_version) FROM {{ this }})
-{% endif %}
+) AS candidate
+{{ silver_incremental_watermark(['tenant_id', 'insight_source_id', 'data_source']) }}

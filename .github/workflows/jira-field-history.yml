@@ -21,6 +21,8 @@ on:
     paths:
       - src/ingestion/connectors/task-tracking/jira/dbt/**
       - src/ingestion/dbt/macros/jira/**
+      - src/ingestion/dbt/macros/silver_incremental_watermark.sql
+      - src/ingestion/silver/task-tracking/class_task_field_history.sql
       - src/ingestion/dbt/tests/jira/**
       - src/ingestion/dbt/tests/bronze.py
       - src/ingestion/dbt/dbt_project.yml
@@ -36,6 +38,8 @@ on:
     paths:
       - src/ingestion/connectors/task-tracking/jira/dbt/**
       - src/ingestion/dbt/macros/jira/**
+      - src/ingestion/dbt/macros/silver_incremental_watermark.sql
+      - src/ingestion/silver/task-tracking/class_task_field_history.sql
       - src/ingestion/dbt/tests/jira/**
       - src/ingestion/dbt/tests/bronze.py
       - src/ingestion/dbt/dbt_project.yml
@@ -56,13 +60,12 @@ permissions:
   contents: read
 
 # Routing, stated once in .github/runners/insight-vhc/README.md: a pull request
-# from a branch of this repository takes the ephemeral ARC scale set, a fork's
-# takes a GitHub-hosted runner, everything else takes the shared self-hosted
-# pool, and INSIGHT_FORCE_GITHUB_HOSTED returns all of it to hosted.
+# takes a GitHub-hosted runner, everything else a whole `persistent` machine,
+# and INSIGHT_FORCE_GITHUB_HOSTED returns all of it to hosted.
 jobs:
   transformations:
     name: transformations + dbt tests
-    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","persistent"]') }}
     # The lane grows by a scenario with most changes and a runner varies by a
     # third between runs; 74 scenarios took 31 to 42 minutes, so 45 was the
     # edge, and a timeout reads as `cancelled` rather than as a failing test.

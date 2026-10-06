@@ -267,15 +267,13 @@ def test_a_fork_within_one_instant_falls_back_to_the_changelog_id(scenario: Scen
     assert scenario.round_trip_holds()
 
 
-def test_one_changelog_id_naming_two_items_makes_its_group_ambiguous(scenario: Scenario) -> None:
+def test_one_changelog_id_naming_two_unchained_items_keeps_one_of_them(scenario: Scenario) -> None:
     """A malformed entry can carry two items of the same field under one
-    changelog id (as a duplicate entry can carry the same item twice). That id
-    can no longer anchor a single position in any chain, so the fix is not to
-    let `max()` hand it one anyway: the whole instant falls back to the
-    changelog id, and the two items sharing id 100 collapse into the one
-    journal row `unique_key` gives them — this scenario deliberately leaves the
-    source's own events contradicting its current value, so it keeps its own
-    warehouse rather than sharing the module's build."""
+    changelog id that no from→to chain joins. The entry is still one event, so
+    one item stands for it — the first by content — and that event takes its
+    place in the instant's chain like any other. This scenario deliberately
+    leaves the source's own events contradicting its current value, so it keeps
+    its own warehouse rather than sharing the module's build."""
     scenario.seed(
         fields=[STATUS_FIELD],
         issues=[_status_now("6")],
@@ -294,4 +292,9 @@ def test_one_changelog_id_naming_two_items_makes_its_group_ambiguous(scenario: S
     )
     scenario.build()
     assert _entry_rank(scenario) == {"100": 0, "200": 1}
-    assert {r["event_id"] for r in scenario.journal(field=STATUS) if r["event_kind"] == "changelog"} == {"100", "200"}
+    assert [(r["event_kind"], r["value_ids"]) for r in scenario.journal(field=STATUS)] == [
+        ("synthetic_initial", ["1"]),
+        ("changelog", ["3"]),
+        ("changelog", ["5"]),
+        ("snapshot_diff", ["6"]),
+    ]

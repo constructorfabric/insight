@@ -66,9 +66,9 @@ permissions:
 jobs:
   connectors-ddl:
     name: connectors-ddl snapshot + field parity
-    # The routing rule is the same in every workflow; it lives in
+    # A job that starts ClickHouse takes the heavy-job rule from
     # .github/runners/insight-vhc/README.md.
-    runs-on: ${{ vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' && 'ubuntu-latest' || (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || 'insight-vhc-arc') || fromJSON('["self-hosted","linux","x64","insight-vhc"]')) }}
+    runs-on: ${{ (vars.INSIGHT_FORCE_GITHUB_HOSTED == 'true' || github.event_name == 'pull_request') && 'ubuntu-latest' || fromJSON('["self-hosted","persistent"]') }}
     timeout-minutes: 60
     env:
       BOOTSTRAP_DIR: src/ingestion/scripts/bootstrap-db
