@@ -52,7 +52,7 @@ COPY . .
 RUN cargo build --release --locked --bin previews
 
 # ─── watchexec, the compose auto-reload wrapper ─────────────────────────────
-FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251 AS watchexec
+FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587 AS watchexec
 
 ARG TARGETARCH
 ARG WATCHEXEC_VERSION=2.3.2
@@ -73,7 +73,7 @@ RUN set -eux; \
     install -m 0755 "/tmp/watchexec-${WATCHEXEC_VERSION}-${WX_ARCH}/watchexec" /usr/local/bin/watchexec
 
 # ─── runtime bases ──────────────────────────────────────────────────────────
-FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251 AS runtime
+FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587 AS runtime
 
 # The base digest is pinned, so the security pocket is only picked up if this
 # stage upgrades explicitly; without it the image ships whatever the pin froze.
@@ -94,7 +94,7 @@ ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 # WORKAROUND: git-cli-proxy's blob purge needs `git repack --filter --filter-to`
 # (git >= 2.43); bookworm ships 2.39 with no backport, trixie ships 2.47. A
 # binary built against bookworm's glibc runs on trixie's newer one.
-FROM debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a AS runtime-git
+FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f AS runtime-git
 
 RUN apt-get update && \
     apt-get upgrade -y --no-install-recommends && \
