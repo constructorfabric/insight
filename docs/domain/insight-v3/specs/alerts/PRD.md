@@ -1,14 +1,14 @@
 ---
 status: draft
-version: "0.6"
-date: 2026-09-28
+version: "0.7"
+date: 2026-10-06
 ---
 
 # PRD — Insight v3 Metric Alerts
 
-**Status:** Alert behavior, scheduling, the numeric contract, edit semantics, limits, destination provisioning and delivery are approved. The first providers are Discord, Telegram and Zulip.
+**Status:** Alert behavior, scheduling, the numeric contract, edit semantics, limits, destination provisioning, delivery and the administrator screens in the portal are approved. The first providers are Discord, Telegram and Zulip.
 
-**Revision 0.6:** Approve delivery and resolve D3. Revision 0.5 resolved D4–D8; 0.4 made notification requirements destination-neutral.
+**Revision 0.7:** Move the administrator screens into scope: alerts are managed from the portal's Custom zone as well as through API and MCP. Revision 0.6 approved delivery and resolved D3; 0.5 resolved D4–D8; 0.4 made notification requirements destination-neutral.
 
 <!-- toc -->
 
@@ -47,7 +47,7 @@ date: 2026-09-28
 
 ### 1.1 Purpose
 
-Send a notification when an Insight v3 custom metric meets a threshold condition. Administrators configure alerts through the API or Model Context Protocol (MCP). Alerts run without a dashboard open.
+Send a notification when an Insight v3 custom metric meets a threshold condition. Administrators configure alerts in the portal's Custom zone, through the API or through the Model Context Protocol (MCP). Alerts run without a dashboard open.
 
 This expands [the parent alert requirement](../PRD.md#58-alerts), `cpt-insightspec-v3-fr-create-alerts`. Rules take effect without a service release. Checks run on a schedule, so detection is not instantaneous.
 
@@ -57,7 +57,7 @@ On-demand metrics need someone to run them. Alerts check metrics automatically a
 
 ### 1.3 Goals (Business Outcomes)
 
-- Configure and inspect alerts through either API or MCP.
+- Configure and inspect alerts in the portal, through the API or through MCP, with one set of rules behind all three.
 - Detect breaches automatically and show the value that triggered them.
 - Keep pending work through restarts and show failures. Report delivery only when confirmed.
 
@@ -82,7 +82,7 @@ Verify these goals with synthetic metrics before release. Capacity and timing ta
 
 **ID**: `cpt-insightspec-v3-alerts-actor-admin`
 
-**Role**: Manages rules and inspects destination details through API or MCP. Must be an authenticated Insight v3 administrator.
+**Role**: Manages rules and inspects destination details in the portal's Custom zone, through API or through MCP. Must be an authenticated Insight v3 administrator.
 
 **Needs**: Clear validation, understandable results and delivery errors, with credentials hidden.
 
@@ -116,9 +116,11 @@ Checks and delivery run without an active API client. [DESIGN](./DESIGN.md) reco
 
 **Approved, delivery:** the owed notification is sent to its destination through the configured provider, retried while the outcome is unknown, and shown with its delivery status.
 
+**Approved, administrator screens:** an Alerts entry in the portal's Custom zone lists the rules with a switch for their checks, opens each rule with its latest check and its notifications, and creates or edits a rule on a page of its own. The form runs the metric once to show the value a check would read. The screens call the administrator API and add no behaviour of their own; the list shows name, metric and whether checks are on, and the latest check appears on the rule's page.
+
 ### 4.2 Out of Scope
 
-Excluded: web administration UI, legacy analytics alerts and separate alerts per result group.
+Excluded: legacy analytics alerts and separate alerts per result group.
 
 First release excludes reminder and recovery messages, cron schedules, replaying missed checks, and administrator-managed destinations.
 
@@ -134,7 +136,7 @@ Every requirement below is approved for this release.
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-fr-manage` (approved)
 
-The system **MUST** let administrators create, read, list, update, enable, disable and delete rules through API and MCP, using the same validation.
+The system **MUST** let administrators create, read, list, update, enable, disable and delete rules through API and MCP, using the same validation. The portal's screens perform these operations through the API and surface its refusals on the field they concern.
 
 Each rule has a name administrators read and a generated identity every operation takes; names need not be unique. A rule selects one existing custom metric, one result column, a threshold condition, an interval and one destination. Every write bumps the rule's revision; an update names the revision it replaces and is refused when the rule has moved on. Deleting a rule removes it and everything recorded for it.
 
@@ -144,7 +146,7 @@ Each rule has a name administrators read and a generated identity every operatio
 
 - [ ] `p1` - **ID**: `cpt-insightspec-v3-alerts-fr-authorize` (approved)
 
-The system **MUST** restrict rule management, destinations, check results and notifications to authenticated administrators on both API and MCP. Checks continue while no administrator is signed in.
+The system **MUST** restrict rule management, destinations, check results and notifications to authenticated administrators on both API and MCP. The portal's screens sit behind the Custom zone's administrator gate and inherit the API's refusals. Checks continue while no administrator is signed in.
 
 **Actors**: `cpt-insightspec-v3-alerts-actor-admin`
 
@@ -263,7 +265,7 @@ Dashboard targets still apply while alerts run; they are not delivery deadlines.
 
 ### 6.3 NFR Exclusions
 
-No parent NFR is excluded. A new visual UI and its browser accessibility measurements are not applicable because no UI is included; API/MCP documentation and readable notification content still apply. External sharing and retention responsibilities require D8.
+No parent NFR is excluded. The administrator screens inherit the parent's dashboard and accessibility targets; their component and story tests check validation, conflict handling, paging and phone-width layout, and browser measurements are pending. API/MCP documentation and readable notification content still apply. External sharing and retention responsibilities require D8.
 
 ## 7. Public Library Interfaces
 
@@ -314,6 +316,7 @@ No parent NFR is excluded. A new visual UI and its browser accessibility measure
 All evidence is pending. Engineering verifies these against synthetic inputs after the referenced decisions are approved.
 
 - [ ] API and MCP both support the approved rule lifecycle and reject non-administrators.
+- [ ] The portal's screens create, edit, enable, disable and delete a rule through the API, keep the input and offer the latest version when a save lost a race, and show the latest check and the notifications with their delivery status.
 - [ ] Alert evaluation agrees with on-demand execution of the same metric definition and rejects ambiguous scalar output.
 - [ ] First-breach notification, suppression during a breach, return below threshold, invalid-result and approved edit behavior are demonstrated.
 - [ ] Per-rule interval checks resume with one current check after downtime, without replaying missed intervals.
@@ -327,7 +330,7 @@ All evidence is pending. Engineering verifies these against synthetic inputs aft
 | Dependency | Description | Criticality |
 |------------|-------------|-------------|
 | Insight v3 custom metrics | Saved definitions and consistent on-demand evaluation | p1 |
-| Insight administrator identity | Authority for API and MCP management | p1 |
+| Insight administrator identity | Authority for API and MCP management, and the Custom zone's administrator gate in the portal | p1 |
 | Durable jobs and state | Unattended evaluation and delivery recovery; see DESIGN | p1 |
 | Selected notification providers | External delivery and acceptance | p1 |
 
