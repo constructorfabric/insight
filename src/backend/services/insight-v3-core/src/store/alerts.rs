@@ -27,6 +27,12 @@ use crate::store::like_escaped;
 const LAST_ERROR_CHARS: usize = 1000;
 const PROVIDER_RECEIPT_CHARS: usize = 256;
 
+/// A create that lost a deadlock on the locking count goes again this often.
+const CREATE_ATTEMPTS: usize = 3;
+/// `SQLSTATE` of a deadlock: two creates both held the gap after the last
+/// rule, which an empty table makes certain, and both went to insert.
+const DEADLOCK_SQLSTATE: &str = "40001";
+
 const RULE_COLUMNS: &str = "id, name, metric, column_name, operator, threshold, range_code, interval_secs, destination, enabled, revision, last_evaluated_at, last_outcome, last_reason, last_value, last_valid_breached, breached_since, created_by, created_at, updated_at";
 
 const SELECT_BY_ID: &str = "SELECT {columns} FROM alert_rules WHERE id = ?";
@@ -122,6 +128,23 @@ fn fitted(value: &str, chars: usize) -> String {
     value.chars().take(chars).collect()
 }
 
+fn is_deadlock(error: &AlertStoreError) -> bool {
+    let AlertStoreError::Database(
+        sea_orm::DbErr::Exec(sea_orm::RuntimeErr::SqlxError(sqlx))
+        | sea_orm::DbErr::Query(sea_orm::RuntimeErr::SqlxError(sqlx)),
+    ) = error
+    else {
+        return false;
+    };
+    let sea_orm::sqlx::Error::Database(database) = sqlx.as_ref() else {
+        return false;
+    };
+
+    database
+        .code()
+        .is_some_and(|code| code == DEADLOCK_SQLSTATE)
+}
+
 pub(crate) struct MariaAlerts {
     db: DatabaseConnection,
     notifications_kept_per_rule: u64,
@@ -156,6 +179,20 @@ impl MariaAlerts {
             .await?
             .map(RuleRow::into_rule)
             .transpose()
+    }
+
+    async fn create_once(
+        &self,
+        write: &Write,
+        max_rules: u64,
+    ) -> Result<AlertRule, AlertStoreError> {
+        let transaction = self.db.begin().await?;
+        let now = Self::now(&transaction).await?;
+
+        let rule = Self::insert_within(&transaction, write, max_rules, now).await?;
+        transaction.commit().await?;
+
+        Ok(rule)
     }
 
     /// The insert, once the locking count says there is room.
@@ -340,18 +377,19 @@ impl MariaAlerts {
 
 #[async_trait]
 impl AlertStore for MariaAlerts {
-    /// INVARIANT: the bound is held by the locking count inside this
+    /// INVARIANT: the bound is held by the locking count inside the
     /// transaction and nothing session-scoped, so a request dropped midway
     /// releases it with the rollback instead of leaving it on the pooled
-    /// connection.
+    /// connection. Two creates meeting on an empty table both lock the gap
+    /// and deadlock on the insert; the one rolled back goes again.
     async fn create(&self, write: Write, max_rules: u64) -> Result<AlertRule, AlertStoreError> {
-        let transaction = self.db.begin().await?;
-        let now = Self::now(&transaction).await?;
-
-        let rule = Self::insert_within(&transaction, &write, max_rules, now).await?;
-        transaction.commit().await?;
-
-        Ok(rule)
+        let mut attempt = 1;
+        loop {
+            match self.create_once(&write, max_rules).await {
+                Err(error) if attempt < CREATE_ATTEMPTS && is_deadlock(&error) => attempt += 1,
+                outcome => return outcome,
+            }
+        }
     }
 
     async fn replace(

@@ -257,6 +257,65 @@ fn recording(rule: &AlertRule, outcome: Outcome) -> Recording {
     }
 }
 
+#[test]
+fn only_a_deadlock_sends_a_create_round_again() {
+    #[derive(Debug)]
+    struct Answered(&'static str);
+
+    impl std::fmt::Display for Answered {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(self.0)
+        }
+    }
+
+    impl Error for Answered {}
+
+    impl sea_orm::sqlx::error::DatabaseError for Answered {
+        fn message(&self) -> &str {
+            self.0
+        }
+
+        fn code(&self) -> Option<std::borrow::Cow<'_, str>> {
+            Some(self.0.into())
+        }
+
+        fn kind(&self) -> sea_orm::sqlx::error::ErrorKind {
+            sea_orm::sqlx::error::ErrorKind::Other
+        }
+
+        fn as_error(&self) -> &(dyn Error + Send + Sync + 'static) {
+            self
+        }
+
+        fn as_error_mut(&mut self) -> &mut (dyn Error + Send + Sync + 'static) {
+            self
+        }
+
+        fn into_error(self: Box<Self>) -> Box<dyn Error + Send + Sync + 'static> {
+            self
+        }
+    }
+
+    let answered = |code| {
+        AlertStoreError::Database(sea_orm::DbErr::Exec(sea_orm::RuntimeErr::SqlxError(
+            std::sync::Arc::new(sea_orm::sqlx::Error::Database(Box::new(Answered(code)))),
+        )))
+    };
+    let cases = [("40001", true), ("23000", false), ("HY000", false)];
+
+    for (code, again) in cases {
+        assert_eq!(
+            is_deadlock(&answered(code)),
+            again,
+            "should go again: {code}"
+        );
+    }
+    assert!(
+        !is_deadlock(&AlertStoreError::TooMany(3)),
+        "a refusal is final"
+    );
+}
+
 #[tokio::test]
 #[ignore = "needs INTEGRATION_TESTS_MARIADB_URL"]
 async fn a_rule_round_trips_and_every_write_bumps_its_revision() -> R {
