@@ -1,6 +1,6 @@
 # Allure TestOps Connector
 
-Allure TestOps projects, launches and test results, read with an API token.
+Allure TestOps projects, launches, test results, test cases and project custom fields, read with an API token.
 
 ## Prerequisites
 
