@@ -13,13 +13,17 @@ vi.mock("@/api/custom-client", async (importOriginal) => {
   };
 });
 
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as alertsClient from "@/api/alerts-client";
+import type { Alert } from "@/api/alerts-client";
 import * as customClient from "@/api/custom-client";
 import { CustomApiError } from "@/api/custom-client";
+import { alertQuery } from "@/queries/alerts";
 import { ALERT, wrapper } from "@/test/alerts";
 import {
   scrollEndIntoView,
@@ -39,8 +43,45 @@ const PRS_OPEN = {
   },
 };
 
+/** The same metric with a date, so it can be read over a window. */
+const DATED_PRS_OPEN = {
+  ...PRS_OPEN,
+  clock: { field: "created_at", from: "metric" },
+};
+
+/** What the service says when the alert moved on since the form was opened. */
+const MOVED_ON = new CustomApiError(409, {
+  context: {
+    violations: [
+      {
+        type: "revision",
+        subject: "expected_revision",
+        description: "alert a1 is at revision 4, not 3",
+      },
+    ],
+  },
+});
+
 function answer(rows: unknown[][], columns = ["total"]) {
   return { columns, rows, percents: [] };
+}
+
+function storedMetric(metric: unknown) {
+  return metric as Awaited<ReturnType<typeof customClient.fetchMetric>>;
+}
+
+/** A client holding what the alert page cached before Edit was clicked. */
+function cachedWrapper(stale: Alert) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  queryClient.setQueryData(alertQuery(stale.id).queryKey, stale);
+
+  return function Cached({ children }: { children: ReactNode }) {
+    return (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+  };
 }
 
 beforeEach(() => {
@@ -53,9 +94,7 @@ beforeEach(() => {
     names: ["prs-open"],
     total: 1,
   });
-  vi.mocked(customClient.fetchMetric).mockResolvedValue(
-    PRS_OPEN as unknown as Awaited<ReturnType<typeof customClient.fetchMetric>>
-  );
+  vi.mocked(customClient.fetchMetric).mockResolvedValue(storedMetric(PRS_OPEN));
   vi.mocked(customClient.runMetric).mockResolvedValue(
     answer([[12]]) as unknown as Awaited<
       ReturnType<typeof customClient.runMetric>
@@ -109,6 +148,51 @@ describe("NewAlertPage", () => {
     });
   });
 
+  it.each([
+    ["Last 30 days", "P30D"],
+    ["All time", null],
+  ])(
+    "sends the condition, destination and switch as set, with the window %s",
+    async (window, range) => {
+      vi.mocked(alertsClient.fetchAlertDestinations).mockResolvedValue([
+        { name: "ops", provider: "zulip" },
+        { name: "dev", provider: "zulip" },
+      ]);
+      vi.mocked(customClient.fetchMetric).mockResolvedValue(
+        storedMetric(DATED_PRS_OPEN)
+      );
+      vi.mocked(alertsClient.createAlert).mockResolvedValue(ALERT);
+
+      render(<NewAlertPage />, { wrapper });
+      await fillNew();
+      for (const [label, option] of [
+        ["Condition", "below"],
+        ["Window", window],
+        ["Destination", "dev (zulip)"],
+      ]) {
+        await pick(label, option);
+      }
+      await userEvent.click(screen.getByRole("switch"));
+      await userEvent.click(
+        screen.getByRole("button", { name: "Create alert" })
+      );
+
+      await waitFor(() =>
+        expect(alertsClient.createAlert).toHaveBeenCalledWith({
+          name: "Too many open PRs",
+          metric: "prs-open",
+          column: "total",
+          operator: "<",
+          threshold: 10,
+          range,
+          interval_secs: 300,
+          destination: "dev",
+          enabled: false,
+        })
+      );
+    }
+  );
+
   it("reads only the metric picked, not each one typed", async () => {
     render(<NewAlertPage />, { wrapper });
     await fillNew();
@@ -151,17 +235,36 @@ describe("NewAlertPage", () => {
     );
   });
 
+  it("offers a metric once when a later page repeats it", async () => {
+    scrollEndOutOfView();
+    const first = Array.from({ length: 50 }, (_, at) => `metric-${at}`);
+    vi.mocked(customClient.fetchMetricNames)
+      .mockResolvedValueOnce({ names: first, total: 51 })
+      .mockResolvedValueOnce({ names: ["metric-49", "metric-50"], total: 52 });
+
+    render(<NewAlertPage />, { wrapper });
+    await userEvent.click(await screen.findByLabelText("Metric"));
+    await screen.findByRole("option", { name: "metric-0" });
+
+    scrollEndIntoView();
+
+    await screen.findByRole("option", { name: "metric-50" });
+    expect(screen.getAllByRole("option", { name: "metric-49" })).toHaveLength(1);
+  });
+
   it("says a grouped metric cannot be alerted on and offers only its numbers", async () => {
-    vi.mocked(customClient.fetchMetric).mockResolvedValue({
-      definition: {
-        dataset: "runs",
-        fields: [
-          { field: "stand", type: "string", as_name: "stand" },
-          { field: "runs", type: "int", agg: "sum", as_name: "runs" },
-        ],
-        group_by: ["stand"],
-      },
-    } as unknown as Awaited<ReturnType<typeof customClient.fetchMetric>>);
+    vi.mocked(customClient.fetchMetric).mockResolvedValue(
+      storedMetric({
+        definition: {
+          dataset: "runs",
+          fields: [
+            { field: "stand", type: "string", as_name: "stand" },
+            { field: "runs", type: "int", agg: "sum", as_name: "runs" },
+          ],
+          group_by: ["stand"],
+        },
+      })
+    );
 
     render(<NewAlertPage />, { wrapper });
     await userEvent.type(await screen.findByLabelText("Metric"), "prs");
@@ -180,16 +283,18 @@ describe("NewAlertPage", () => {
   });
 
   it("explains an empty ratio as nothing to divide by", async () => {
-    vi.mocked(customClient.fetchMetric).mockResolvedValue({
-      definition: {
-        dataset: "runs",
-        fields: [
-          { field: "passed", type: "int", agg: "sum", as_name: "passed" },
-          { field: "runs", type: "int", agg: "sum", as_name: "runs" },
-          { type: "float", as_name: "pass_rate", divide: ["passed", "runs"] },
-        ],
-      },
-    } as unknown as Awaited<ReturnType<typeof customClient.fetchMetric>>);
+    vi.mocked(customClient.fetchMetric).mockResolvedValue(
+      storedMetric({
+        definition: {
+          dataset: "runs",
+          fields: [
+            { field: "passed", type: "int", agg: "sum", as_name: "passed" },
+            { field: "runs", type: "int", agg: "sum", as_name: "runs" },
+            { type: "float", as_name: "pass_rate", divide: ["passed", "runs"] },
+          ],
+        },
+      })
+    );
     vi.mocked(customClient.runMetric).mockResolvedValue(
       answer(
         [[0, 0, null]],
@@ -396,6 +501,31 @@ describe("EditAlertPage", () => {
     );
   });
 
+  it("seeds the form from a read made now, not from the copy the alert page cached", async () => {
+    vi.mocked(alertsClient.fetchAlert).mockResolvedValue({
+      ...ALERT,
+      threshold: 15,
+      revision: 4,
+    });
+    vi.mocked(alertsClient.replaceAlert).mockResolvedValue({
+      ...ALERT,
+      threshold: 15,
+      revision: 5,
+    });
+
+    render(<EditAlertPage id="a1" />, { wrapper: cachedWrapper(ALERT) });
+
+    expect(await screen.findByLabelText("Threshold")).toHaveValue("15");
+    await userEvent.type(screen.getByLabelText("Name"), "!");
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() =>
+      expect(alertsClient.replaceAlert).toHaveBeenCalledWith(
+        "a1",
+        expect.objectContaining({ threshold: 15, expected_revision: 4 })
+      )
+    );
+  });
+
   it("sends a stored interval back unchanged when only the name changed", async () => {
     vi.mocked(alertsClient.fetchAlert).mockResolvedValue({
       ...ALERT,
@@ -416,6 +546,35 @@ describe("EditAlertPage", () => {
         expect.objectContaining({ interval_secs: 90 })
       )
     );
+  });
+
+  it("sends back a threshold wider than it can hold, as it came, with a rename", async () => {
+    vi.mocked(alertsClient.fetchAlert).mockResolvedValue({
+      ...ALERT,
+      threshold: "12345678901234567890",
+    });
+    vi.mocked(alertsClient.replaceAlert).mockResolvedValue({
+      ...ALERT,
+      revision: 4,
+    });
+
+    render(<EditAlertPage id="a1" />, { wrapper });
+    expect(await screen.findByLabelText("Threshold")).toHaveValue(
+      "12345678901234567890"
+    );
+    await userEvent.type(screen.getByLabelText("Name"), "!");
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() =>
+      expect(alertsClient.replaceAlert).toHaveBeenCalledWith(
+        "a1",
+        expect.objectContaining({
+          name: "Too many open PRs!",
+          threshold: "12345678901234567890",
+        })
+      )
+    );
+    expect(screen.queryByText("Number is too large.")).not.toBeInTheDocument();
   });
 
   it("drops a window its metric no longer has a date for", async () => {
@@ -444,19 +603,7 @@ describe("EditAlertPage", () => {
     vi.mocked(alertsClient.fetchAlert)
       .mockResolvedValueOnce(ALERT)
       .mockResolvedValue({ ...ALERT, threshold: 15, revision: 4 });
-    vi.mocked(alertsClient.replaceAlert).mockRejectedValue(
-      new CustomApiError(409, {
-        context: {
-          violations: [
-            {
-              type: "revision",
-              subject: "expected_revision",
-              description: "alert a1 is at revision 4, not 3",
-            },
-          ],
-        },
-      })
-    );
+    vi.mocked(alertsClient.replaceAlert).mockRejectedValue(MOVED_ON);
 
     render(<EditAlertPage id="a1" />, { wrapper });
     const threshold = await screen.findByLabelText("Threshold");
@@ -470,10 +617,41 @@ describe("EditAlertPage", () => {
     expect(screen.getByLabelText("Threshold")).toHaveValue("20");
 
     await userEvent.click(
-      screen.getByRole("button", { name: "Load latest version" })
+      screen.getByRole("button", {
+        name: "Discard my edits and load the latest version",
+      })
     );
     await waitFor(() =>
       expect(screen.getByLabelText("Threshold")).toHaveValue("15")
     );
+    expect(
+      screen.queryByText(/changed by someone else/)
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the edits and the notice when the latest version cannot be read", async () => {
+    vi.mocked(alertsClient.fetchAlert)
+      .mockResolvedValueOnce(ALERT)
+      .mockRejectedValue(
+        new CustomApiError(404, { detail: "alert a1 is not there" })
+      );
+    vi.mocked(alertsClient.replaceAlert).mockRejectedValue(MOVED_ON);
+
+    render(<EditAlertPage id="a1" />, { wrapper });
+    const threshold = await screen.findByLabelText("Threshold");
+    await userEvent.clear(threshold);
+    await userEvent.type(threshold, "20");
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: "Discard my edits and load the latest version",
+      })
+    );
+
+    expect(
+      await screen.findByText("alert a1 is not there")
+    ).toBeInTheDocument();
+    expect(screen.getByText(/changed by someone else/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Threshold")).toHaveValue("20");
   });
 });

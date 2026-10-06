@@ -41,7 +41,11 @@ export function MetricPicker({
   const [typed, setTyped] = useState("");
   const searching = useDebouncedValue(typed, SEARCH_DEBOUNCE_MS).trim();
   const found = useInfiniteQuery(definitionPagesQuery("metrics", searching));
-  const names = found.data?.pages.flatMap((page) => page.names) ?? [];
+  // INVARIANT: pages are read by offset, so a metric saved between two reads
+  // shifts the next page and repeats a name; each name is one option.
+  const names = Array.from(
+    new Set(found.data?.pages.flatMap((page) => page.names))
+  );
   const list = useRef<HTMLDivElement>(null);
   const marker = useAutoLoadOnScroll({
     hasNextPage: found.hasNextPage,
@@ -65,7 +69,8 @@ export function MetricPicker({
         className="h-9 w-full font-mono"
       />
       <ComboboxContent>
-        {/* WORKAROUND: the kit pads the empty part even while it hides its text, which leaves a gap above a full list. */}
+        {/* WORKAROUND: the kit pads the empty part even while it hides its
+            text, which leaves a gap above a full list. */}
         {names.length === 0 ? (
           <ComboboxEmpty>
             {found.isError

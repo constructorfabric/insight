@@ -1,9 +1,14 @@
 /** An alert as the form holds it, and the rule it sends. */
 
-import type { Alert, AlertDraft, AlertOperator } from "@/api/alerts-types";
+import type {
+  Alert,
+  AlertDraft,
+  AlertNumber,
+  AlertOperator,
+} from "@/api/alerts-types";
 
 /** The longest name the service accepts. */
-export const NAME_MAX = 200;
+const NAME_MAX = 200;
 
 export interface AlertForm {
   name: string;
@@ -12,6 +17,12 @@ export interface AlertForm {
   operator: AlertOperator;
   /** As typed, so a half-written number is not lost while the reader types. */
   threshold: string;
+  /**
+   * The threshold as the service sent it, which goes back as it came while
+   * the field still reads so: a number wider than the form can hold exactly
+   * survives a rename that way.
+   */
+  storedThreshold?: AlertNumber;
   /** A window token, or "" to run the metric over all time. */
   range: string;
   /** How often to check, in seconds. */
@@ -53,6 +64,7 @@ export function formOf(alert: Alert): AlertForm {
     column: alert.column,
     operator: alert.operator,
     threshold: String(alert.threshold),
+    storedThreshold: alert.threshold,
     range: alert.range ?? "",
     intervalSecs: alert.interval_secs,
     destination: alert.destination,
@@ -78,6 +90,16 @@ export function thresholdOf(typed: string): number | undefined {
   return value;
 }
 
+/** What the service sent, while the field still reads so; otherwise what was typed. */
+function thresholdSent(form: AlertForm): AlertNumber | undefined {
+  const stored = form.storedThreshold;
+  if (stored !== undefined && form.threshold.trim() === String(stored)) {
+    return stored;
+  }
+
+  return thresholdOf(form.threshold);
+}
+
 function thresholdError(typed: string): string {
   const value = Number(typed.trim());
 
@@ -101,7 +123,7 @@ export function checkForm(form: AlertForm): Checked {
   const name = form.name.trim();
   // INVARIANT: the service counts characters, and `length` counts UTF-16 units.
   const nameLength = [...name].length;
-  const threshold = thresholdOf(form.threshold);
+  const threshold = thresholdSent(form);
 
   if (name === "") errors.name = "Enter a name.";
   else if (nameLength > NAME_MAX) {

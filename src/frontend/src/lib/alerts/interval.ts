@@ -25,10 +25,3 @@ export function intervalLabel(secs: number): string {
 
   return `${amount} ${amount === 1 ? one : many}`;
 }
-
-/** "Every 5 minutes", "Every hour". */
-export function intervalText(secs: number): string {
-  const { amount, one } = parts(secs);
-
-  return amount === 1 ? `Every ${one}` : `Every ${intervalLabel(secs)}`;
-}

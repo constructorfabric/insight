@@ -21,7 +21,7 @@ import {
   metricShape,
   type MetricShape,
 } from "@/lib/alerts/shape";
-import { windowFor, windowRule, type WindowRule } from "@/lib/alerts/window";
+import { takesWindow, windowFor } from "@/lib/alerts/window";
 import { describing } from "@/lib/custom/editor/aria";
 import { RANGE_PRESETS, rangeLabel } from "@/lib/custom/time-range";
 import { metricQuery } from "@/queries/custom";
@@ -57,25 +57,19 @@ function shapeProblem(shape: MetricShape): string | undefined {
 }
 
 /** The windows a rule may name: the presets, and the one it already has. */
-function windowOptions(current: string, rule: WindowRule) {
+function windowOptions(current: string, windowed: boolean) {
   // INVARIANT: "inf" reads every dated row, which "All time" already offers.
   const presets = RANGE_PRESETS.filter(({ token }) => token !== "inf").map(
-    ({ token, label }) => ({ value: token, label, disabled: !rule.windowed })
+    ({ token, label }) => ({ value: token, label, disabled: !windowed })
   );
   const known = current === "" || presets.some((one) => one.value === current);
 
   return [
-    { value: ALL_TIME, label: "All time", disabled: !rule.allTime },
+    { value: ALL_TIME, label: "All time" },
     ...presets,
     ...(known
       ? []
-      : [
-          {
-            value: current,
-            label: rangeLabel(current),
-            disabled: !rule.windowed,
-          },
-        ]),
+      : [{ value: current, label: rangeLabel(current), disabled: !windowed }]),
   ];
 }
 
@@ -92,12 +86,13 @@ export function AlertFields({
 }) {
   const stored = useStoredMetric(form.metric);
   const definition = stored?.definition;
-  const window = windowRule(stored, form.column);
+  const windowed = takesWindow(stored);
 
-  // INVARIANT: a metric that lost its date refuses the window its alert still holds, and the disabled select cannot clear it.
+  // INVARIANT: a metric that lost its date refuses the window its alert still
+  // holds, and the disabled select cannot clear it.
   useEffect(() => {
-    if (!window.windowed && form.range !== "") onChange({ ...form, range: "" });
-  }, [window.windowed, form, onChange]);
+    if (!windowed && form.range !== "") onChange({ ...form, range: "" });
+  }, [windowed, form, onChange]);
 
   const windowHint = CALENDAR_WINDOWS.has(form.range) ? UTC_NOTE : undefined;
   const metricProblem =
@@ -154,7 +149,7 @@ export function AlertFields({
             })}
             className="font-mono"
             onChange={(column) =>
-              set({ column, range: windowFor(stored, column, form.range) })
+              set({ column, range: windowFor(stored, form.range) })
             }
           />
         </Row>
@@ -167,8 +162,8 @@ export function AlertFields({
           <FieldSelect
             id="alert-range"
             value={form.range === "" ? ALL_TIME : form.range}
-            options={windowOptions(form.range, window)}
-            disabled={!window.windowed}
+            options={windowOptions(form.range, windowed)}
+            disabled={!windowed}
             describe={describing("alert-range", {
               hint: windowHint,
               said: errors.range,

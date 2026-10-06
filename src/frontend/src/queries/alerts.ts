@@ -31,7 +31,7 @@ const ALERTS_PREFIX = ["alerts"] as const;
 const PAGE_SIZE = 50;
 
 /** How many notifications the history asks for at a time. */
-export const NOTIFICATION_PAGE_SIZE = 20;
+const NOTIFICATION_PAGE_SIZE = 20;
 
 /**
  * How often an open alert re-reads what its checks found. Checks run at most
@@ -80,7 +80,12 @@ export function alertQuery(id: string) {
 export function alertNotificationsQuery(id: string) {
   return infiniteQueryOptions({
     ...LIVE,
-    refetchInterval: LIVE_REFRESH_MS,
+    // WORKAROUND: TanStack Query refreshes an infinite query by re-reading
+    // every page shown, one request after another, and cannot re-read the
+    // first page alone; growing the interval with the pages keeps the clock at
+    // one page a refresh however far back the history is read.
+    refetchInterval: (query) =>
+      LIVE_REFRESH_MS * (query.state.data?.pages.length ?? 1),
     queryKey: [...ALERTS_PREFIX, "notifications", id],
     queryFn: ({ pageParam }) =>
       fetchAlertNotifications(id, {
@@ -167,6 +172,20 @@ export function useReplaceAlert() {
 }
 
 /**
+ * Reads an alert again on request, as its own action rather than through the
+ * cached read the pages are gated on: a refusal here is answered to the caller
+ * and does not take a form it was asked from down with it.
+ */
+export function useReadAlert() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: string) => fetchAlert(id),
+    onSuccess: (alert) => remember(queryClient, alert),
+  });
+}
+
+/**
  * Turns an alert's checks on or off.
  *
  * A caller that holds the alert passes its revision. One that holds only the
@@ -193,7 +212,8 @@ export function useSetAlertEnabled() {
       remember(queryClient, alert);
       void invalidateAlerts(queryClient);
     },
-    // INVARIANT: after a conflict the cached revision is stale; re-read it so a retry sends the current one.
+    // INVARIANT: after a conflict the cached revision is stale; re-read it so a
+    // retry sends the current one.
     onError: (error, { id }) =>
       isRevisionConflict(error)
         ? queryClient.invalidateQueries({ queryKey: alertQuery(id).queryKey })

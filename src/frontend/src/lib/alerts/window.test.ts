@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { StoredMetric } from "@/api/custom-types";
 
-import { DEFAULT_WINDOW, windowFor, windowRule } from "./window";
+import { takesWindow, windowFor } from "./window";
 
 const FIELDS = [
   { field: "runs", type: "int", agg: "sum", as_name: "runs" },
@@ -23,58 +23,24 @@ const UNDATED: StoredMetric = {
   definition: { dataset: "runs", fields: FIELDS },
 };
 
-describe("windowRule", () => {
+describe("takesWindow", () => {
   it.each([
-    [
-      "a sum on a dated metric",
-      DATED,
-      "runs",
-      { allTime: false, windowed: true },
-    ],
-    [
-      "a count on a dated metric",
-      DATED,
-      "cases",
-      { allTime: false, windowed: true },
-    ],
-    [
-      "a maximum on a dated metric",
-      DATED,
-      "slowest",
-      { allTime: true, windowed: true },
-    ],
-    [
-      "a ratio on a dated metric",
-      DATED,
-      "rate",
-      { allTime: true, windowed: true },
-    ],
-    [
-      "any column of an undated metric",
-      UNDATED,
-      "runs",
-      { allTime: true, windowed: false },
-    ],
-    [
-      "a metric not read yet",
-      undefined,
-      "runs",
-      { allTime: true, windowed: true },
-    ],
-  ])("for %s", (_case, stored, column, open) => {
-    const rule = windowRule(stored, column);
-
-    expect({ allTime: rule.allTime, windowed: rule.windowed }).toEqual(open);
+    ["a dated metric", DATED, true],
+    ["an undated metric", UNDATED, false],
+    ["a metric not read yet", undefined, true],
+  ])("for %s", (_case, stored, open) => {
+    expect(takesWindow(stored), _case).toBe(open);
   });
 });
 
 describe("windowFor", () => {
   it.each([
-    ["a dated metric with no window yet", DATED, "slowest", "", DEFAULT_WINDOW],
-    ["a dated metric with a window chosen", DATED, "runs", "P30D", "P30D"],
-    ["an undated metric", UNDATED, "runs", "P7D", ""],
-    ["a metric not read yet", undefined, "runs", "", ""],
-  ])("moves %s to the right window", (_case, stored, column, current, next) => {
-    expect(windowFor(stored, column, current)).toBe(next);
+    ["a dated metric with no window yet", DATED, "", "P7D"],
+    ["a dated metric with a window chosen", DATED, "P30D", "P30D"],
+    ["an undated metric", UNDATED, "P7D", ""],
+    ["a metric not read yet", undefined, "", ""],
+    ["a metric not read yet, with a window chosen", undefined, "P30D", "P30D"],
+  ])("moves %s to the right window", (_case, stored, current, next) => {
+    expect(windowFor(stored, current), _case).toBe(next);
   });
 });

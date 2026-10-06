@@ -20,19 +20,22 @@ export type UnknownReason =
 export type NotificationStatus = "pending" | "cancelled" | "sent" | "failed";
 
 /**
- * A number as the service answers it. An integer wider than 64 bits arrives as
- * its decimal digits; one between 2^53 and 2^63 arrives as a JSON number, which
- * JSON parsing rounds.
+ * A number as the service answers it: a JSON number while an integer is within
+ * ±(2^53 − 1), its decimal digits as a string beyond that, and a draft sends
+ * such a string back as it came.
  */
 export type AlertNumber = number | string;
 
-/** A rule as an administrator writes it. */
+/**
+ * A rule as an administrator writes it. A threshold the service sent goes
+ * back in the form it came.
+ */
 export interface AlertDraft {
   name: string;
   metric: string;
   column: string;
   operator: AlertOperator;
-  threshold: number;
+  threshold: AlertNumber;
   range?: string | null;
   interval_secs: number;
   destination: string;

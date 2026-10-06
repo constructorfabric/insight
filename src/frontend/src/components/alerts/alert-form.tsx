@@ -24,6 +24,7 @@ import {
   alertDestinationsQuery,
   alertQuery,
   useCreateAlert,
+  useReadAlert,
   useReplaceAlert,
 } from "@/queries/alerts";
 
@@ -60,7 +61,6 @@ export function EditAlertPage({ id }: { id: string }) {
     refetchOnWindowFocus: false,
   });
 
-  if (alert.isPending) return <CenteredSpinner className="min-h-40" />;
   if (alert.isError) {
     return (
       <Shell title="Edit alert">
@@ -69,6 +69,11 @@ export function EditAlertPage({ id }: { id: string }) {
         </p>
       </Shell>
     );
+  }
+  // INVARIANT: the form seeds once, from what this page read now, never from
+  // the copy the alert page cached, or a save would overwrite what changed since.
+  if (!alert.isFetchedAfterMount || !alert.isSuccess) {
+    return <CenteredSpinner className="min-h-40" />;
   }
 
   return (
@@ -151,16 +156,15 @@ function AlertEditor({
   const [form, setForm] = useState<Form>(() =>
     existing ? formOf(existing) : (initial ?? blankForm())
   );
-  // INVARIANT: a save expects the revision the form was filled from; keying the form on the cache's revision remounts it mid-save and the navigation is lost.
+  // INVARIANT: a save expects the revision the form was filled from; keying
+  // the form on the cache's revision remounts it mid-save and the navigation
+  // is lost.
   const [base, setBase] = useState<Alert | undefined>(existing);
   const [errors, setErrors] = useState<FieldErrors>({});
   const destinations = useQuery(alertDestinationsQuery());
   const create = useCreateAlert();
   const replace = useReplaceAlert();
-  const latest = useQuery({
-    ...alertQuery(existing?.id ?? ""),
-    enabled: false,
-  });
+  const reload = useReadAlert();
   const navigate = useNavigate();
 
   const saving = create.isPending || replace.isPending;
@@ -177,6 +181,7 @@ function AlertEditor({
       return;
     }
     setErrors({});
+    reload.reset();
 
     const saved = (alert: Alert) =>
       void navigate({
@@ -224,7 +229,7 @@ function AlertEditor({
         onChange={setForm}
       />
 
-      {conflict ? (
+      {conflict && base ? (
         <div role="alert" className="flex flex-wrap items-center gap-3">
           <p className={cn(TEXT_BODY, "text-destructive")}>
             This alert was changed by someone else.
@@ -233,19 +238,25 @@ function AlertEditor({
             type="button"
             variant="outline"
             size="sm"
-            disabled={latest.isFetching}
+            disabled={reload.isPending}
             onClick={() =>
-              void latest.refetch().then(({ data }) => {
-                if (!data) return;
-                setBase(data);
-                setForm(formOf(data));
-                setErrors({});
-                replace.reset();
+              reload.mutate(base.id, {
+                onSuccess: (data) => {
+                  setBase(data);
+                  setForm(formOf(data));
+                  setErrors({});
+                  replace.reset();
+                },
               })
             }
           >
-            Load latest version
+            Discard my edits and load the latest version
           </Button>
+          {reload.isError ? (
+            <p className={cn(TEXT_BODY, "text-destructive")}>
+              {refusal(reload.error, "Couldn't load the latest version.")}
+            </p>
+          ) : null}
         </div>
       ) : general ? (
         <p role="alert" className={cn(TEXT_BODY, "text-destructive")}>
