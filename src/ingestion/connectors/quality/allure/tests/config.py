@@ -5,7 +5,6 @@ import json
 from connector_tests import ConfigBuilder, HttpMocker, HttpRequest, HttpResponse, load_fixture
 
 ALLURE_URL = "https://allure.example.test"
-TOKEN_URL = f"{ALLURE_URL}/api/uaa/oauth/token"
 PROJECTS_URL = f"{ALLURE_URL}/api/project"
 LAUNCHES_URL = f"{ALLURE_URL}/api/launch/__search"
 TEST_RESULTS_URL = f"{ALLURE_URL}/api/testresult"
@@ -14,21 +13,13 @@ FROZEN_NOW = "2026-07-01T00:00:00Z"
 NOW_MS = 1782864000000
 START_MS = 1775088000000
 
-_AUTH_HEADER = {"Authorization": "Bearer test-access-token"}
+_AUTH_HEADER = {"Authorization": "Api-Token test-api-token"}
 
 
 class AllureConfigBuilder(ConfigBuilder):
     def __init__(self) -> None:
         super().__init__()
         self._config.update({"allure_url": ALLURE_URL, "allure_api_token": "test-api-token", "allure_project_ids": [7]})
-
-
-def mock_token(http_mocker: HttpMocker) -> HttpRequest:
-    request = HttpRequest(TOKEN_URL, body="grant_type=apitoken&scope=openid&token=test-api-token")
-    response = HttpResponse(body=json.dumps(load_fixture(__file__, "token.json")), status_code=200)
-    http_mocker.post(request, response)
-
-    return request
 
 
 def api_request(url: str, params: dict) -> HttpRequest:

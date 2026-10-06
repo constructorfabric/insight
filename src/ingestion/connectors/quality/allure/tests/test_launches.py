@@ -12,7 +12,6 @@ from config import (
     error,
     launch_params,
     mock_launch_window,
-    mock_token,
     page,
 )
 from connector_tests import HttpMocker, assert_records_conform, get_source, load_fixture, read_stream
@@ -40,7 +39,6 @@ def _cursors_by_project(state: dict) -> dict:
 @freezegun.freeze_time(FROZEN_NOW)
 def test_first_sync_requests_one_open_ended_window_from_ninety_days_back(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().build()
-    mock_token(http_mocker)
     window = mock_launch_window(http_mocker, 7, page([_launch(101, 7, 1781519400123)]))
 
     output = _read(config)
@@ -53,7 +51,6 @@ def test_first_sync_requests_one_open_ended_window_from_ninety_days_back(http_mo
 @freezegun.freeze_time(FROZEN_NOW)
 def test_one_request_set_per_configured_project(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().with_field("allure_project_ids", [7, 12]).build()
-    mock_token(http_mocker)
     requests = [
         mock_launch_window(http_mocker, 7, page([_launch(101, 7, 1781519400123)])),
         mock_launch_window(http_mocker, 12, page([_launch(201, 12, 1778403600000)])),
@@ -70,7 +67,6 @@ def test_one_request_set_per_configured_project(http_mocker: HttpMocker) -> None
 @freezegun.freeze_time(FROZEN_NOW)
 def test_records_stamped_with_tenant_source_and_unique_key(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().build()
-    mock_token(http_mocker)
     mock_launch_window(http_mocker, 7, page([_launch(101, 7, 1781519400123)]))
 
     output = _read(config)
@@ -84,7 +80,6 @@ def test_records_stamped_with_tenant_source_and_unique_key(http_mocker: HttpMock
 @freezegun.freeze_time(FROZEN_NOW)
 def test_records_conform_to_schema(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().build()
-    mock_token(http_mocker)
     mock_launch_window(http_mocker, 7, page([_launch(101, 7, 1781519400123)]))
 
     output = _read(config)
@@ -95,7 +90,6 @@ def test_records_conform_to_schema(http_mocker: HttpMocker) -> None:
 @freezegun.freeze_time(FROZEN_NOW)
 def test_empty_windows_emit_nothing(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().build()
-    mock_token(http_mocker)
     mock_launch_window(http_mocker, 7)
 
     output = _read(config)
@@ -107,7 +101,6 @@ def test_empty_windows_emit_nothing(http_mocker: HttpMocker) -> None:
 @freezegun.freeze_time(FROZEN_NOW)
 def test_pagination_within_window_follows_page_index_until_last_page(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().build()
-    mock_token(http_mocker)
     mock_launch_window(http_mocker, 7, page([_launch(101, 7, 1781519400123)], number=0, last=False))
     http_mocker.get(
         api_request(LAUNCHES_URL, launch_params(7, page_index=1)),
@@ -123,7 +116,6 @@ def test_pagination_within_window_follows_page_index_until_last_page(http_mocker
 @freezegun.freeze_time(FROZEN_NOW)
 def test_launch_modified_after_sync_start_stays_in_window_and_becomes_cursor(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().build()
-    mock_token(http_mocker)
     modified_mid_read_ms = NOW_MS + 60000
     mock_launch_window(
         http_mocker, 7, page([_launch(101, 7, 1781519400123), _launch(102, 7, 1781942400456)], number=0, last=False)
@@ -143,7 +135,6 @@ def test_launch_modified_after_sync_start_stays_in_window_and_becomes_cursor(htt
 @freezegun.freeze_time(FROZEN_NOW)
 def test_state_tracks_latest_modified_launch_per_project(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().with_field("allure_project_ids", [7, 12]).build()
-    mock_token(http_mocker)
     mock_launch_window(http_mocker, 7, page([_launch(101, 7, 1781519400123), _launch(102, 7, 1781346600123)]))
     mock_launch_window(http_mocker, 12, page([_launch(201, 12, 1778403600000)]))
 
@@ -155,7 +146,6 @@ def test_state_tracks_latest_modified_launch_per_project(http_mocker: HttpMocker
 @freezegun.freeze_time(FROZEN_NOW)
 def test_resumed_sync_starts_each_project_from_its_cursor_minus_two_day_lookback(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().with_field("allure_project_ids", [7, 12]).build()
-    mock_token(http_mocker)
     mock_launch_window(http_mocker, 7, page([_launch(101, 7, 1781519400123)]))
     mock_launch_window(http_mocker, 12, page([_launch(201, 12, 1781942400456)]))
 
@@ -165,7 +155,6 @@ def test_resumed_sync_starts_each_project_from_its_cursor_minus_two_day_lookback
 
     resume_mocker = HttpMocker()
     with resume_mocker:
-        mock_token(resume_mocker)
         project_7 = api_request(LAUNCHES_URL, launch_params(7, 1781346600123))
         project_12 = api_request(LAUNCHES_URL, launch_params(12, 1781769600456))
         resume_mocker.get(project_7, page([]))
@@ -181,7 +170,6 @@ def test_resumed_sync_starts_each_project_from_its_cursor_minus_two_day_lookback
 @freezegun.freeze_time(FROZEN_NOW)
 def test_rate_limited_request_is_retried(http_mocker: HttpMocker, slept: list) -> None:
     config = AllureConfigBuilder().build()
-    mock_token(http_mocker)
     mock_launch_window(http_mocker, 7, [error(429, {"Retry-After": "5"}), page([_launch(101, 7, 1781519400123)])])
 
     output = _read(config)
@@ -195,7 +183,6 @@ def test_rate_limited_request_is_retried(http_mocker: HttpMocker, slept: list) -
 @freezegun.freeze_time(FROZEN_NOW)
 def test_server_error_is_retried(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().build()
-    mock_token(http_mocker)
     mock_launch_window(http_mocker, 7, [error(502), page([_launch(101, 7, 1781519400123)])])
 
     output = _read(config)

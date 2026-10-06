@@ -11,22 +11,12 @@ definitions:
   linked:
     HttpRequester:
       authenticator:
-        type: SessionTokenAuthenticator
-        login_requester:
-          type: HttpRequester
-          url: "{{ config['allure_url'] }}/api/uaa/oauth/token"
-          http_method: POST
-          request_body:
-            type: RequestBodyUrlEncodedForm
-            value:
-              grant_type: apitoken
-              scope: openid
-              token: "{{ config['allure_api_token'] }}"
-        session_token_path:
-          - access_token
-        expiration_duration: PT1H
-        request_authentication:
-          type: Bearer
+        type: ApiKeyAuthenticator
+        api_token: "Api-Token {{ config['allure_api_token'] }}"
+        inject_into:
+          type: RequestOption
+          inject_into: header
+          field_name: Authorization
     SimpleRetriever:
       paginator:
         type: DefaultPaginator
@@ -58,22 +48,12 @@ streams:
         url: "{{ config['allure_url'] }}/api/project"
         http_method: GET
         authenticator:
-          type: SessionTokenAuthenticator
-          login_requester:
-            type: HttpRequester
-            url: "{{ config['allure_url'] }}/api/uaa/oauth/token"
-            http_method: POST
-            request_body:
-              type: RequestBodyUrlEncodedForm
-              value:
-                grant_type: apitoken
-                scope: openid
-                token: "{{ config['allure_api_token'] }}"
-          session_token_path:
-            - access_token
-          expiration_duration: PT1H
-          request_authentication:
-            type: Bearer
+          type: ApiKeyAuthenticator
+          api_token: "Api-Token {{ config['allure_api_token'] }}"
+          inject_into:
+            type: RequestOption
+            inject_into: header
+            field_name: Authorization
         request_parameters:
           sort: id,ASC
         error_handler:
@@ -217,22 +197,12 @@ streams:
         url: "{{ config['allure_url'] }}/api/launch/__search"
         http_method: GET
         authenticator:
-          type: SessionTokenAuthenticator
-          login_requester:
-            type: HttpRequester
-            url: "{{ config['allure_url'] }}/api/uaa/oauth/token"
-            http_method: POST
-            request_body:
-              type: RequestBodyUrlEncodedForm
-              value:
-                grant_type: apitoken
-                scope: openid
-                token: "{{ config['allure_api_token'] }}"
-          session_token_path:
-            - access_token
-          expiration_duration: PT1H
-          request_authentication:
-            type: Bearer
+          type: ApiKeyAuthenticator
+          api_token: "Api-Token {{ config['allure_api_token'] }}"
+          inject_into:
+            type: RequestOption
+            inject_into: header
+            field_name: Authorization
         request_parameters:
           rql: >-
             lastModifiedDate >= {{ stream_interval.start_time }}
@@ -422,22 +392,12 @@ streams:
                   url: "{{ config['allure_url'] }}/api/launch/__search"
                   http_method: GET
                   authenticator:
-                    type: SessionTokenAuthenticator
-                    login_requester:
-                      type: HttpRequester
-                      url: "{{ config['allure_url'] }}/api/uaa/oauth/token"
-                      http_method: POST
-                      request_body:
-                        type: RequestBodyUrlEncodedForm
-                        value:
-                          grant_type: apitoken
-                          scope: openid
-                          token: "{{ config['allure_api_token'] }}"
-                    session_token_path:
-                      - access_token
-                    expiration_duration: PT1H
-                    request_authentication:
-                      type: Bearer
+                    type: ApiKeyAuthenticator
+                    api_token: "Api-Token {{ config['allure_api_token'] }}"
+                    inject_into:
+                      type: RequestOption
+                      inject_into: header
+                      field_name: Authorization
                   request_parameters:
                     rql: >-
                       lastModifiedDate >= {{ stream_interval.start_time }}
@@ -518,22 +478,12 @@ streams:
         url: "{{ config['allure_url'] }}/api/testresult"
         http_method: GET
         authenticator:
-          type: SessionTokenAuthenticator
-          login_requester:
-            type: HttpRequester
-            url: "{{ config['allure_url'] }}/api/uaa/oauth/token"
-            http_method: POST
-            request_body:
-              type: RequestBodyUrlEncodedForm
-              value:
-                grant_type: apitoken
-                scope: openid
-                token: "{{ config['allure_api_token'] }}"
-          session_token_path:
-            - access_token
-          expiration_duration: PT1H
-          request_authentication:
-            type: Bearer
+          type: ApiKeyAuthenticator
+          api_token: "Api-Token {{ config['allure_api_token'] }}"
+          inject_into:
+            type: RequestOption
+            inject_into: header
+            field_name: Authorization
         request_parameters:
           launchId: "{{ stream_partition.launch_id }}"
           sort: id,ASC
@@ -911,7 +861,7 @@ spec:
         order: 2
       allure_api_token:
         type: string
-        description: Allure TestOps API token, exchanged for a bearer token at /api/uaa/oauth/token.
+        description: Allure TestOps API token, sent on every request as the header Authorization "Api-Token <token>".
         title: Allure TestOps API Token
         airbyte_secret: true
         order: 3

@@ -4,7 +4,7 @@ import logging
 
 import pytest
 from airbyte_cdk.models import Status
-from config import PROJECTS_URL, AllureConfigBuilder, api_request, error, mock_token, page, paged
+from config import PROJECTS_URL, AllureConfigBuilder, api_request, error, page, paged
 from connector_tests import HttpMocker, assert_records_conform, get_source, load_fixture, read_stream
 
 _CONNECTOR = "quality/allure"
@@ -17,7 +17,6 @@ def _project(project_id: int, name: str) -> dict:
 
 def test_full_refresh_single_page_emits_every_project(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().build()
-    mock_token(http_mocker)
     http_mocker.get(api_request(PROJECTS_URL, paged({})), page([_project(7, "Alpha"), _project(12, "Beta")]))
 
     output = read_stream(_CONNECTOR, _STREAM, config)
@@ -28,7 +27,6 @@ def test_full_refresh_single_page_emits_every_project(http_mocker: HttpMocker) -
 
 def test_records_stamped_with_tenant_source_and_unique_key(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().build()
-    mock_token(http_mocker)
     http_mocker.get(api_request(PROJECTS_URL, paged({})), page([_project(7, "Alpha")]))
 
     output = read_stream(_CONNECTOR, _STREAM, config)
@@ -41,7 +39,6 @@ def test_records_stamped_with_tenant_source_and_unique_key(http_mocker: HttpMock
 
 def test_records_conform_to_schema(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().build()
-    mock_token(http_mocker)
     http_mocker.get(api_request(PROJECTS_URL, paged({})), page([_project(7, "Alpha")]))
 
     output = read_stream(_CONNECTOR, _STREAM, config)
@@ -51,7 +48,6 @@ def test_records_conform_to_schema(http_mocker: HttpMocker) -> None:
 
 def test_empty_page_emits_nothing(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().build()
-    mock_token(http_mocker)
     http_mocker.get(api_request(PROJECTS_URL, paged({})), page([]))
 
     output = read_stream(_CONNECTOR, _STREAM, config)
@@ -62,7 +58,6 @@ def test_empty_page_emits_nothing(http_mocker: HttpMocker) -> None:
 
 def test_pagination_follows_page_index_until_last_page(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().build()
-    mock_token(http_mocker)
     http_mocker.get(api_request(PROJECTS_URL, paged({})), page([_project(7, "Alpha")], number=0, last=False))
     http_mocker.get(
         api_request(PROJECTS_URL, paged({}, page_index=1)), page([_project(12, "Beta")], number=1, last=True)
@@ -74,22 +69,22 @@ def test_pagination_follows_page_index_until_last_page(http_mocker: HttpMocker) 
     assert [r.record.data["id"] for r in output.records] == [7, 12]
 
 
-def test_token_is_exchanged_once_and_reused_across_pages(http_mocker: HttpMocker) -> None:
+def test_every_request_authenticates_with_the_api_token_header(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().build()
-    token = mock_token(http_mocker)
-    http_mocker.get(api_request(PROJECTS_URL, paged({})), page([_project(7, "Alpha")], number=0, last=False))
-    http_mocker.get(
-        api_request(PROJECTS_URL, paged({}, page_index=1)), page([_project(12, "Beta")], number=1, last=True)
-    )
+    first = api_request(PROJECTS_URL, paged({}))
+    second = api_request(PROJECTS_URL, paged({}, page_index=1))
+    http_mocker.get(first, page([_project(7, "Alpha")], number=0, last=False))
+    http_mocker.get(second, page([_project(12, "Beta")], number=1, last=True))
 
-    read_stream(_CONNECTOR, _STREAM, config)
+    output = read_stream(_CONNECTOR, _STREAM, config)
 
-    http_mocker.assert_number_of_calls(token, 1)
+    assert not output.errors
+    http_mocker.assert_number_of_calls(first, 1)
+    http_mocker.assert_number_of_calls(second, 1)
 
 
 def test_configured_page_size_is_requested(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().with_field("allure_page_size", "250").build()
-    mock_token(http_mocker)
     http_mocker.get(api_request(PROJECTS_URL, paged({}, size=250)), page([_project(7, "Alpha")]))
 
     output = read_stream(_CONNECTOR, _STREAM, config)
@@ -108,7 +103,6 @@ def test_page_size_outside_one_to_thousand_is_rejected(page_size: str) -> None:
 
 def test_rate_limited_request_waits_for_retry_after_then_succeeds(http_mocker: HttpMocker, slept: list) -> None:
     config = AllureConfigBuilder().build()
-    mock_token(http_mocker)
     http_mocker.get(
         api_request(PROJECTS_URL, paged({})), [error(429, {"Retry-After": "30"}), page([_project(7, "Alpha")])]
     )
@@ -125,7 +119,6 @@ def test_rate_limited_request_waits_for_retry_after_then_succeeds(http_mocker: H
 @pytest.mark.parametrize("status", [500, 502, 503, 504])
 def test_server_error_is_retried_then_succeeds(http_mocker: HttpMocker, status: int) -> None:
     config = AllureConfigBuilder().build()
-    mock_token(http_mocker)
     http_mocker.get(api_request(PROJECTS_URL, paged({})), [error(status), page([_project(7, "Alpha")])])
 
     output = read_stream(_CONNECTOR, _STREAM, config)
@@ -137,7 +130,6 @@ def test_server_error_is_retried_then_succeeds(http_mocker: HttpMocker, status: 
 @pytest.mark.usefixtures("slept")
 def test_server_error_gives_up_after_five_retries(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().build()
-    mock_token(http_mocker)
     request = api_request(PROJECTS_URL, paged({}))
     http_mocker.get(request, error(503))
 
@@ -150,7 +142,6 @@ def test_server_error_gives_up_after_five_retries(http_mocker: HttpMocker) -> No
 
 def test_check_reads_projects(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().build()
-    mock_token(http_mocker)
     http_mocker.get(api_request(PROJECTS_URL, paged({})), page([_project(7, "Alpha")]))
 
     status = get_source(_CONNECTOR, config).check(logging.getLogger("airbyte"), config)
