@@ -1245,6 +1245,45 @@ seed_identity_projection() {
   }
 }
 
+# The connectors whose bronze the seed writes into. The destination creates those
+# tables — nothing else does since the DDL snapshot lost its bronze half — so they
+# have to exist before the seed container runs. Keep in step with RESET_TARGETS in
+# src/ingestion/tools/seed/insight_seed/generators/insert.py; test_seed_bronze.py
+# fails when the two diverge.
+SEED_BRONZE_CONNECTORS=(bamboohr bitbucket-cloud claude-team-invoices github gitlab)
+
+# Create those tables by running each connector's own `discover` into
+# destination-clickhouse, the way a first sync does. The destination runs in a
+# container, so it joins the stand's network and is handed ClickHouse's address on
+# it — a published port is the host's, not the container's.
+seed_bronze_tables() {
+  local env_file="$1"
+  local bootstrap="$ROOT_DIR/src/ingestion/scripts/bootstrap-db"
+  local address
+
+  address="$(docker inspect --format \
+    "{{ (index .NetworkSettings.Networks \"${COMPOSE_PROJECT_NAME}\").IPAddress }}" \
+    "${COMPOSE_PROJECT_NAME}-clickhouse" 2>/dev/null)" || true
+  if [[ -z "$address" ]]; then
+    echo "ERROR: cannot find ${COMPOSE_PROJECT_NAME}-clickhouse on the ${COMPOSE_PROJECT_NAME} network," >&2
+    echo "       so the connectors have no ClickHouse to create bronze in. Is the stack up?" >&2
+    return 1
+  fi
+
+  echo "=== creating the bronze the seed writes into (destination-clickhouse) ==="
+  # shellcheck disable=SC1091
+  set -a; . "$bootstrap/pins.env"; set +a
+  CLICKHOUSE_HOST="$address" \
+  CLICKHOUSE_PORT=8123 \
+  CLICKHOUSE_PROTOCOL=http \
+  CLICKHOUSE_USER="$(env_file_value "$env_file" CLICKHOUSE_USER)" \
+  CLICKHOUSE_PASSWORD="$(env_file_value "$env_file" CLICKHOUSE_PASSWORD)" \
+  CLICKHOUSE_DATABASE="$(env_file_value "$env_file" CLICKHOUSE_DATABASE)" \
+  DOCKER_NETWORK="$COMPOSE_PROJECT_NAME" \
+    "$bootstrap/seed-connectors.sh" "$bootstrap/connectors-config.yaml" \
+    "${SEED_BRONZE_CONNECTORS[@]}"
+}
+
 cmd_seed() {
   local env_file=".env.compose"
   local instance="$COMPOSE_INSTANCE"
@@ -1266,6 +1305,11 @@ cmd_seed() {
 
   local args=("$@")
   [[ ${#args[@]} -eq 0 ]] && args=("all")
+
+  # Only the row-generating targets need it; `identity` writes MariaDB alone.
+  case "${args[0]}" in
+    silver|all) seed_bronze_tables "$env_file" || return $? ;;
+  esac
 
   # Run the seed step itself. NOT `exec` — we still want to bounce
   # analytics after silver/all completes (see cf/insight#1307).

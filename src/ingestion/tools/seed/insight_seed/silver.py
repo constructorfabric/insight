@@ -9,9 +9,14 @@ at /ingestion (docker-compose.yml `seed-sample.volumes`):
 1. `create-warehouse-placeholders.sh` — applies the CI-generated DDL
    snapshot from scripts/connectors-ddl/*.sql (CREATE DATABASE + every
    identity/staging/silver/insight relation, all IF NOT EXISTS / OR REPLACE).
-   This gives the generators the real production schemas to write into. Bronze
-   is not in the snapshot — the Airbyte destination is its only creator — and
-   the seed writes silver directly, so it needs none.
+   This gives the generators the real production schemas to write into.
+
+   Bronze is NOT in that snapshot: `destination-clickhouse` is its only
+   creator. Some generators write bronze (see RESET_TARGETS in
+   generators/insert.py), so `dev-compose.sh seed` runs those connectors
+   through the destination before this container starts — it cannot do that
+   itself, having no Docker. A missing table surfaces here as "has no
+   columns".
 
 2. Generate per-team activity rows via `generators/*.py` INTO those silver
    tables. Volumes scale by team profile + persona; per-day caps live in
