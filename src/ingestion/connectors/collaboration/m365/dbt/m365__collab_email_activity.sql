@@ -30,6 +30,7 @@ SELECT
 FROM {{ source('bronze_m365', 'email_activity') }}
 WHERE userPrincipalName IS NOT NULL
   AND userPrincipalName != ''
+  AND {{ m365_day_was_reported('email_activity') }}
   -- Drop unlicensed users (see #736 / teams feeder). This MS Graph report
   -- (getEmailActivityUserDetail) exposes no `isLicensed`; the only license signal
   -- is `assignedProducts` — the products assigned to the user, empty for unlicensed

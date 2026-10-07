@@ -1,0 +1,51 @@
+spec_version: 1
+description: >
+  Metrics: collab.emails_sent, collab.emails_received, collab.emails_read,
+  collab.messages_sent — a Microsoft 365 report day the source never computed is
+  not counted, #3673.
+  How it's computed (bronze → silver → gold):
+    • bronze: the daily M365 email-activity and Teams-activity reports per person.
+      When Microsoft has no report for a day, Graph answers with a copy of the last
+      computed day stamped with the requested date, so a copy holds rows with
+      activity whose lastActivityDate is earlier than the report day.
+    • staging (before silver): a report day holding any such row is a
+      carried-forward copy and is dropped whole, for every M365 report alike. A
+      quiet day (no activity, older lastActivityDate) and a day without
+      lastActivityDate at all are real and kept.
+    • gold:   per-person sums over the kept days only.
+
+  Cast (Engineering): alice has a real day on Dec 24 (10 sent / 30 received / 5
+  read, 4 chat messages), on Dec 26 (3 / 9 / 2), on Dec 27 (1 / 1 / 1, no
+  lastActivityDate in the report) and a quiet Dec 28 (0 / 2 / 0, last activity
+  Dec 27). Dec 25 repeats Dec 24 with lastActivityDate still Dec 24 → dropped.
+  bob only receives mail (7 on Dec 24, last activity Dec 20): receiving does not
+  move lastActivityDate, so his row stays on the real day and goes with the copy.
+  Cases: emails sent / received / read over the window exclude the copy and keep
+  the unknown and quiet days · a receive-only mailbox keeps its real day · Teams
+  chat excludes the copy · the daily series has no value on the dropped day and a
+  zero on the quiet one.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/alice
+    - $ref: ../templates/people.yaml#/templates/bob
+
+  bronze_m365.email_activity:
+    # Dec 24 — a real day: alice sent and read, so her lastActivityDate is the day.
+    - { $ref: ../templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-12-24", lastActivityDate: "2026-12-24", unique_key: rep-alice-20261224, sendCount: 10, receiveCount: 30, readCount: 5 }
+    # bob received only; receiving does not move lastActivityDate, so an older date on a row without sends or reads is no evidence of a copy → kept.
+    - { $ref: ../templates/m365_email.yaml#/templates/bob_email,   reportRefreshDate: "2026-12-24", lastActivityDate: "2026-12-20", unique_key: rep-bob-20261224,   sendCount: 0,  receiveCount: 7,  readCount: 0 }
+    # Dec 25 — the carried-forward copy of Dec 24: same counts, lastActivityDate still Dec 24 → dropped whole.
+    - { $ref: ../templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-12-25", lastActivityDate: "2026-12-24", unique_key: rep-alice-20261225, sendCount: 10, receiveCount: 30, readCount: 5 }
+    - { $ref: ../templates/m365_email.yaml#/templates/bob_email,   reportRefreshDate: "2026-12-25", lastActivityDate: "2026-12-20", unique_key: rep-bob-20261225,   sendCount: 0,  receiveCount: 7,  readCount: 0 }
+    # Dec 26 — a real day again.
+    - { $ref: ../templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-12-26", lastActivityDate: "2026-12-26", unique_key: rep-alice-20261226, sendCount: 3,  receiveCount: 9,  readCount: 2 }
+    # Dec 27 — the report carries no lastActivityDate at all: unknown, not a copy → kept.
+    - { $ref: ../templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-12-27", unique_key: rep-alice-20261227, sendCount: 1,  receiveCount: 1,  readCount: 1 }
+    # Dec 28 — a quiet real day: nobody sent or read, so every lastActivityDate is older → kept.
+    - { $ref: ../templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-12-28", lastActivityDate: "2026-12-27", unique_key: rep-alice-20261228, sendCount: 0,  receiveCount: 2,  readCount: 0 }
+
+  bronze_m365.teams_activity:
+    # The same copy pattern in the Teams report: Dec 25 repeats Dec 24 → only Dec 24 counts.
+    - { $ref: ../templates/m365_teams.yaml#/templates/alice_teams, reportRefreshDate: "2026-12-24", lastActivityDate: "2026-12-24", unique_key: rep-teams-alice-20261224, privateChatMessageCount: 4, teamChatMessageCount: 0 }
+    - { $ref: ../templates/m365_teams.yaml#/templates/alice_teams, reportRefreshDate: "2026-12-25", lastActivityDate: "2026-12-24", unique_key: rep-teams-alice-20261225, privateChatMessageCount: 4, teamChatMessageCount: 0 }

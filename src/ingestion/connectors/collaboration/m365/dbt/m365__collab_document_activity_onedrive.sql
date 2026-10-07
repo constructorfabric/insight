@@ -35,6 +35,7 @@ SELECT
 FROM {{ source('bronze_m365', 'onedrive_activity') }}
 WHERE userPrincipalName IS NOT NULL
   AND userPrincipalName != ''
+  AND {{ m365_day_was_reported('onedrive_activity') }}
   -- Drop unlicensed users (see #736 / teams feeder). This MS Graph report
   -- (getOneDriveActivityUserDetail) exposes no `isLicensed`; the only license signal
   -- is `assignedProducts` — the products assigned to the user, empty for unlicensed
