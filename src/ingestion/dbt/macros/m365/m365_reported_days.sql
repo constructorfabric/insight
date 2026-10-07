@@ -4,6 +4,12 @@
    a copy holds such rows for every active user. A quiet day, or a day without
    lastActivityDate at all, has none and is kept. #}
 
+{#- The calendar date prefix, so a timestamp form keeps its day without a
+    timezone shift; anything else is NULL and kept, never read as a copy. -#}
+{% macro m365_last_activity_day() -%}
+toDateOrNull(left(lastActivityDate, 10))
+{%- endmacro %}
+
 {% macro m365_activity_expr(stream) %}
 {%- set columns = {
     'email_activity': ['sendCount', 'readCount'],
@@ -36,7 +42,7 @@ SELECT
 FROM {{ source('bronze_m365', stream) }} FINAL
 GROUP BY tenant_id, insight_source_id, report_day
 HAVING countIf(
-    toDateOrNull(lastActivityDate) < report_day
+    {{ m365_last_activity_day() }} < report_day
     AND {{ m365_activity_expr(stream) }}
 ) = 0
 {%- endmacro %}

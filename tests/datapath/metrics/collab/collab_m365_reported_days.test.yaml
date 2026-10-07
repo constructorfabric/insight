@@ -36,7 +36,8 @@ bronze:
     # bob received only; receiving does not move lastActivityDate, so an older date on a row without sends or reads is no evidence of a copy → kept.
     - { $ref: ../templates/m365_email.yaml#/templates/bob_email,   reportRefreshDate: "2026-12-24", lastActivityDate: "2026-12-20", unique_key: rep-bob-20261224,   sendCount: 0,  receiveCount: 7,  readCount: 0 }
     # Dec 25 — the carried-forward copy of Dec 24: same counts, lastActivityDate still Dec 24 → dropped whole.
-    - { $ref: ../templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-12-25", lastActivityDate: "2026-12-24", unique_key: rep-alice-20261225, sendCount: 10, receiveCount: 30, readCount: 5 }
+    # alice's copied row carries lastActivityDate as a timestamp: its calendar day is still Dec 24.
+    - { $ref: ../templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-12-25", lastActivityDate: "2026-12-24T08:00:00Z", unique_key: rep-alice-20261225, sendCount: 10, receiveCount: 30, readCount: 5 }
     - { $ref: ../templates/m365_email.yaml#/templates/bob_email,   reportRefreshDate: "2026-12-25", lastActivityDate: "2026-12-20", unique_key: rep-bob-20261225,   sendCount: 0,  receiveCount: 7,  readCount: 0 }
     # Dec 26 — a real day again.
     - { $ref: ../templates/m365_email.yaml#/templates/alice_email, reportRefreshDate: "2026-12-26", lastActivityDate: "2026-12-26", unique_key: rep-alice-20261226, sendCount: 3,  receiveCount: 9,  readCount: 2 }

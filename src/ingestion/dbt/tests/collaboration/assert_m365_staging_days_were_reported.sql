@@ -6,7 +6,7 @@
         'domain': 'collab',
         'category': 'source_integrity',
         'tier': 'error',
-        'remediation': 'A staging day whose bronze report holds a row with activity while its lastActivityDate is earlier is a carried-forward copy Microsoft served for a day it never computed. The m365 staging feeders drop such days on build, so a stored failure means the rows predate the filter: a `dbt --full-refresh` over tag:m365+ (a MAJOR descriptor bump dispatches one) rebuilds staging, silver and gold without them.'
+        'remediation': 'problem=carried_forward_copy: a staging day whose bronze report holds a row with activity while its lastActivityDate is earlier is a copy Microsoft served for a day it never computed. The m365 staging feeders drop such days on build, so the rows predate the filter: a `dbt --full-refresh` over tag:m365+ (a MAJOR descriptor bump dispatches one) rebuilds staging, silver and gold without them. problem=unparseable_last_activity: the report sent lastActivityDate in a form whose first ten characters are not a date, so copies on that day cannot be detected and are kept; extend m365_last_activity_day for the new form.'
     }
 ) }}
 {#- Relations are optional: an install that never synced M365 has neither the
@@ -29,7 +29,7 @@
     {%- endif -%}
 {%- endfor -%}
 {%- if present | length == 0 %}
-SELECT '' AS feeder, '' AS tenant_id, '' AS insight_source_id, toDate('1970-01-01') AS date
+SELECT '' AS problem, '' AS feeder, '' AS tenant_id, '' AS insight_source_id, toDate('1970-01-01') AS date
 WHERE 0
 {%- else %}
 WITH staged AS (
@@ -59,9 +59,23 @@ reported AS (
     {%- endif %}
     {%- endfor %}
 )
-SELECT feeder, tenant_id, insight_source_id, date
+SELECT 'carried_forward_copy' AS problem, feeder, tenant_id, insight_source_id, date
 FROM staged
 WHERE (stream, tenant_id, insight_source_id, date) NOT IN (
     SELECT stream, tenant_id, insight_source_id, date FROM reported
 )
+{%- for stream in streams %}
+
+UNION ALL
+
+SELECT DISTINCT
+    'unparseable_last_activity' AS problem,
+    '{{ stream }}' AS feeder,
+    ifNull(tenant_id, '') AS tenant_id,
+    ifNull(source_id, '') AS insight_source_id,
+    toDate(reportRefreshDate) AS date
+FROM {{ source('bronze_m365', stream) }} FINAL
+WHERE ifNull(lastActivityDate, '') != ''
+  AND {{ m365_last_activity_day() }} IS NULL
+{%- endfor %}
 {%- endif %}
