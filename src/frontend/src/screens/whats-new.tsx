@@ -193,7 +193,7 @@ export function WhatsNewBody() {
                   render={
                     <button
                       type="button"
-                      className="group flex w-full cursor-pointer items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-accent/40"
+                      className="group flex w-full cursor-pointer items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-muted"
                     />
                   }
                 >
