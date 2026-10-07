@@ -9,14 +9,15 @@
     tags=['allure']
 ) }}
 
+-- Object columns land as String or JSON depending on the installation; toString reads both.
 WITH bronze AS (
     SELECT
         b.*,
         if(JSONType(coalesce(customFields, 'null')) = 'String', JSONExtractString(coalesce(customFields, 'null')), coalesce(customFields, 'null')) AS custom_fields_json,
         if(JSONType(coalesce(tags, 'null')) = 'String', JSONExtractString(coalesce(tags, 'null')), coalesce(tags, 'null')) AS tags_json,
-        if(JSONType(coalesce(status, 'null')) = 'String', JSONExtractString(coalesce(status, 'null')), coalesce(status, 'null')) AS status_json,
-        if(JSONType(coalesce(workflow, 'null')) = 'String', JSONExtractString(coalesce(workflow, 'null')), coalesce(workflow, 'null')) AS workflow_json,
-        if(JSONType(coalesce(layer, 'null')) = 'String', JSONExtractString(coalesce(layer, 'null')), coalesce(layer, 'null')) AS layer_json
+        if(JSONType(coalesce(toString(status), 'null')) = 'String', JSONExtractString(coalesce(toString(status), 'null')), coalesce(toString(status), 'null')) AS status_json,
+        if(JSONType(coalesce(toString(workflow), 'null')) = 'String', JSONExtractString(coalesce(toString(workflow), 'null')), coalesce(toString(workflow), 'null')) AS workflow_json,
+        if(JSONType(coalesce(toString(layer), 'null')) = 'String', JSONExtractString(coalesce(toString(layer), 'null')), coalesce(toString(layer), 'null')) AS layer_json
     FROM {{ source('bronze_allure', 'test_cases') }} AS b FINAL
     {% if is_incremental() %}
     LEFT JOIN (
