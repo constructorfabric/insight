@@ -1,4 +1,4 @@
-{{ config(materialized='table', engine='ReplacingMergeTree(_version)', order_by=['unique_key'], settings={'allow_nullable_key': 1}, schema='staging', tags=['youtrack', 'staging', 'silver:class_task_worklogs']) }}
+{{ config(materialized='table', engine=insight_engine('ReplacingMergeTree', '_version'), order_by=['unique_key'], settings={'allow_nullable_key': 1}, schema='staging', tags=['youtrack', 'staging', 'silver:class_task_worklogs']) }}
 
 SELECT w.unique_key AS unique_key, w.source_id AS insight_source_id, 'youtrack' AS data_source,
     w.id AS worklog_id, i.id_readable AS id_readable, w.author_id AS author_id,

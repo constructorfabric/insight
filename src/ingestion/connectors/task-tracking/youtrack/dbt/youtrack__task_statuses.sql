@@ -1,4 +1,4 @@
-{{ config(materialized='table', engine='ReplacingMergeTree(_version)', order_by=['unique_key'], settings={'allow_nullable_key': 1}, schema='staging', tags=['youtrack', 'staging', 'silver:class_task_statuses']) }}
+{{ config(materialized='table', engine=insight_engine('ReplacingMergeTree', '_version'), order_by=['unique_key'], settings={'allow_nullable_key': 1}, schema='staging', tags=['youtrack', 'staging', 'silver:class_task_statuses']) }}
 
 -- The status dimension: every value of a field bound to the `status` role.
 -- YouTrack states whether a state value resolves an issue (`isResolved`), so

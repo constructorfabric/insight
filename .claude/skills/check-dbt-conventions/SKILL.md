@@ -24,7 +24,7 @@ Where that file and the checks below disagree, the rules file wins — update th
 
 For every `.sql` file under `src/ingestion/silver/` (excluding `crm.disabled`):
 
-- `engine` must be `'ReplacingMergeTree(_version)'` OR `'ReplacingMergeTree'` (versionless, only for `materialized='table'`)
+- `engine` must be `insight_engine('ReplacingMergeTree', '_version')` OR `insight_engine('ReplacingMergeTree')` (versionless, only for `materialized='table'`). A literal engine string is a violation whatever family it names — it cannot follow the install's topology.
 - `order_by` must be `['unique_key']`
 - `materialized` must NOT be `'view'` (views are forbidden for silver)
 - If `materialized='incremental'` → `incremental_strategy='delete+insert'` AND `unique_key='unique_key'`
@@ -43,7 +43,7 @@ For each file: read the `{{ config(...) }}` block. Report violations with file p
 
 For every `.sql` file under `src/ingestion/connectors/*/dbt/`:
 
-- If `materialized` is `incremental` or `table` → `engine='ReplacingMergeTree(_version)'` + `order_by=['unique_key']`
+- If `materialized` is `incremental` or `table` → `engine=insight_engine('ReplacingMergeTree', '_version')` + `order_by=['unique_key']`
 - If `materialized` is `view` → confirm it's a thin pass-through (no GROUP BY / window)
 - If `materialized` is `ephemeral` → confirm it's a pass-through over a staging table dbt does not own (none exist today; the Jira field history is derived in dbt)
 - The SELECT body MUST project a `unique_key` column (either propagated from bronze: `u.unique_key AS unique_key`, or computed: `CAST(concat(...) AS String) AS unique_key`)

@@ -1,7 +1,7 @@
 {{ config(
     materialized='table',
     schema='silver',
-    engine='ReplacingMergeTree',
+    engine=insight_engine('ReplacingMergeTree'),
     order_by=['unique_key'],
     tags=['silver']
 ) }}

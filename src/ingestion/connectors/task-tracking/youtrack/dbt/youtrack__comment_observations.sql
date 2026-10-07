@@ -1,5 +1,5 @@
 {{ config(materialized='incremental', full_refresh=false, incremental_strategy='append', schema='staging',
-          engine='ReplacingMergeTree(_version)', order_by=['unique_key'],
+          engine=insight_engine('ReplacingMergeTree', '_version'), order_by=['unique_key'],
           settings={'allow_nullable_key': 1}, tags=['youtrack', 'staging']) }}
 
 -- Columns by name: the append inserts by position, and the destination owns

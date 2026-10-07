@@ -3,7 +3,7 @@
 {{ config(
     materialized='table',
     schema='silver',
-    engine='ReplacingMergeTree',
+    engine=insight_engine('ReplacingMergeTree'),
     order_by=['unique_key'],
     settings={'allow_nullable_key': 1},
     tags=['silver']

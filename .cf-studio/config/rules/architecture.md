@@ -81,7 +81,7 @@ Evidence: `docs/CONNECTORS_REFERENCE.md:333–347` — `github_collection_runs`.
 
 **Hard rules** every dbt model under `src/ingestion/silver/` and `src/ingestion/connectors/*/dbt/` MUST follow:
 
-1. **`engine='ReplacingMergeTree(_version)'`** for incremental models. Versionless `ReplacingMergeTree` only for `materialized='table'` with no `_version` column upstream. **Never** plain MergeTree.
+1. **`engine=insight_engine('ReplacingMergeTree', '_version')`** for incremental models. Versionless `insight_engine('ReplacingMergeTree')` only for `materialized='table'` with no `_version` column upstream. **Never** plain MergeTree, and never a literal: the macro is what prefixes the family with `Replicated` on a clustered install.
 2. **`order_by=['unique_key']`** — single column, never composite. Encode the natural key into `unique_key` in staging if needed.
 3. **`unique_key` formula** — `{insight_tenant_id}-{insight_source_id}-{natural_key_parts}` everywhere (Airbyte AddFields, Python CDK helpers, SQL concat in explode models, Rust `format!`). Every natural key part MUST be an identifier the source never reissues. A renameable display value (an issue's `owner/repo#7` or `PROJ-12`, a repository path, a login) is an attribute, never a key part: when it changes, the record keeps its `unique_key` and the new value is written under it, so RMT collapses the versions. A key built from such a value would write the record again under the new key, and RMT would collapse neither copy.
 4. **Bronze tables are ReplacingMergeTree by construction** — the Airbyte destination creates them as `ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key` (append_dedup, primary key `unique_key`). No promotion step exists; a plain-MergeTree bronze table is a defect.

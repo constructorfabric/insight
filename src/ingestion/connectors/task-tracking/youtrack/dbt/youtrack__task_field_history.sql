@@ -1,4 +1,4 @@
-{{ config(materialized='table', schema='staging', tags=['youtrack', 'staging', 'silver:class_task_field_history'], engine='ReplacingMergeTree(_version)', order_by=['unique_key'], settings={'allow_nullable_key': 1}) }}
+{{ config(materialized='table', schema='staging', tags=['youtrack', 'staging', 'silver:class_task_field_history'], engine=insight_engine('ReplacingMergeTree', '_version'), order_by=['unique_key'], settings={'allow_nullable_key': 1}) }}
 
 WITH changes AS (
     SELECT a.insight_source_id AS insight_source_id, a.issue_id AS issue_id,

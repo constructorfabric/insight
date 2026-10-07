@@ -4,7 +4,7 @@
     incremental_strategy='append',
     on_schema_change='append_new_columns',
     schema='staging',
-    engine='ReplacingMergeTree(_version)',
+    engine=insight_engine('ReplacingMergeTree', '_version'),
     order_by=['unique_key'],
     settings={'allow_nullable_key': 1},
     tags=['jira', 'staging', 'silver:class_task_comments']

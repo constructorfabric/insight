@@ -4,7 +4,7 @@
     materialized='table',
     alias='jira__task_field_text',
     schema='staging',
-    engine='ReplacingMergeTree(_version)',
+    engine=insight_engine('ReplacingMergeTree', '_version'),
     order_by=['text_id'],
     query_settings={
         'max_bytes_before_external_group_by': 2000000000,

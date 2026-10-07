@@ -1,6 +1,6 @@
 {{ config(
     materialized='table',
-    engine='MergeTree',
+    engine=insight_engine('MergeTree'),
     order_by=['tenant_id', 'entity_id', 'metric_date'],
     schema=var('gold_database'),
     alias='task_worklog_flow',

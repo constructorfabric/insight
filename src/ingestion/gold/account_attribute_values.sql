@@ -1,6 +1,6 @@
 {{ config(
     materialized='table',
-    engine='MergeTree',
+    engine=insight_engine('MergeTree'),
     order_by=['insight_tenant_id', 'insight_source_type', 'insight_source_id', 'source_account_id', 'field_id', 'valid_from'],
     schema=var('gold_database'),
     alias='account_attribute_values',
