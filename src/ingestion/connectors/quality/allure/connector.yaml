@@ -1418,6 +1418,10 @@ streams:
           max_retries: 5
           response_filters:
             - type: HttpResponseFilter
+              action: IGNORE
+              http_codes:
+                - 404
+            - type: HttpResponseFilter
               action: RATE_LIMITED
               http_codes:
                 - 429
@@ -1769,6 +1773,10 @@ streams:
           type: DefaultErrorHandler
           max_retries: 5
           response_filters:
+            - type: HttpResponseFilter
+              action: IGNORE
+              http_codes:
+                - 404
             - type: HttpResponseFilter
               action: RATE_LIMITED
               http_codes:

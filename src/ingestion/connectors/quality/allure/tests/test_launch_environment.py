@@ -102,6 +102,20 @@ def test_two_values_of_one_variable_give_two_records(http_mocker: HttpMocker) ->
 
 
 @freezegun.freeze_time(FROZEN_NOW)
+def test_launch_deleted_between_list_and_read_is_skipped(http_mocker: HttpMocker) -> None:
+    config = AllureConfigBuilder().build()
+    mock_projects(http_mocker)
+    mock_launch_window(http_mocker, 7, page([_launch(101, 7), _launch(102, 7)]))
+    _mock_env(http_mocker, 101, error(404))
+    _mock_env(http_mocker, 102, _env([_value(61, "dev", 71, "Backend Stand")]))
+
+    output = _read(config)
+
+    assert not output.errors
+    assert [r.record.data["launch_id"] for r in output.records] == [102]
+
+
+@freezegun.freeze_time(FROZEN_NOW)
 def test_launch_without_environment_emits_nothing(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().build()
     mock_projects(http_mocker)

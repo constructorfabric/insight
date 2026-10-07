@@ -94,6 +94,20 @@ def test_pagination_within_launch_follows_page_index_until_last_page(http_mocker
 
 
 @freezegun.freeze_time(FROZEN_NOW)
+def test_launch_deleted_between_list_and_read_is_skipped(http_mocker: HttpMocker) -> None:
+    config = AllureConfigBuilder().build()
+    mock_projects(http_mocker)
+    mock_launch_window(http_mocker, 7, page([_launch(101, 7), _launch(102, 7)]))
+    _mock_errors(http_mocker, 101, error(404))
+    _mock_errors(http_mocker, 102, page([_launch_error(82, 102)]))
+
+    output = _read(config)
+
+    assert not output.errors
+    assert [r.record.data["launch_id"] for r in output.records] == [102]
+
+
+@freezegun.freeze_time(FROZEN_NOW)
 def test_launch_without_errors_emits_nothing(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().build()
     mock_projects(http_mocker)
