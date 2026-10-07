@@ -115,6 +115,26 @@ def test_ai_seat_cost_for_a_seat_with_no_tier(spec: SpecRun) -> None:
     r.row("ai.seat_cost", "period", entity_id=FRANK).equals(value=None)
 
 
+def test_the_seat_fee_billed_usage_and_priced_usage_are_three_figures(spec: SpecRun) -> None:
+    """#2479 scenario 6: one person-month holding all three, each on its own key."""
+    keys = ["ai.seat_cost", "ai.extra_usage_cost", "ai.cost"]
+    r = spec.call(
+        {
+            "url": "/v1/metric-results",
+            "method": "POST",
+            "body": {
+                "entity": {"type": "person", "ids": [DAVE]},
+                "period": {"from": "2026-12-01", "to": "2026-12-31"},
+                "metrics": [{"metric_key": key, "views": [{"view": "period"}]} for key in keys],
+            },
+        }
+    )
+    assert r.status == 200
+    r.row("ai.seat_cost", "period", entity_id=DAVE).equals(value=25.0)
+    r.row("ai.extra_usage_cost", "period", entity_id=DAVE).equals(value=2.0)
+    r.row("ai.cost", "period", entity_id=DAVE).equals(value=4.4)
+
+
 def test_ai_seat_cost_empty_window(spec: SpecRun) -> None:
     """The invoice month sits outside the window, so the seat cost is null."""
     r = spec.call(
