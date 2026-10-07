@@ -41,7 +41,7 @@ def test_one_detail_record_per_listed_defect_across_projects(http_mocker: HttpMo
     mock_defect_list(http_mocker, 12, page([_row(1301)]))
     _mock_detail(http_mocker, 1201, _detail(1201, 7, "Login page times out"))
     _mock_detail(http_mocker, 1202, _detail(1202, 7, "Report export hangs"))
-    _mock_detail(http_mocker, 1301, _detail(1301, 12, "Camera check fails"))
+    _mock_detail(http_mocker, 1301, _detail(1301, 12, "Search returns stale results"))
 
     output = read_stream(_CONNECTOR, _STREAM, config)
 
@@ -49,7 +49,7 @@ def test_one_detail_record_per_listed_defect_across_projects(http_mocker: HttpMo
     assert sorted((r.record.data["projectId"], r.record.data["name"]) for r in output.records) == [
         (7, "Login page times out"),
         (7, "Report export hangs"),
-        (12, "Camera check fails"),
+        (12, "Search returns stale results"),
     ]
 
 

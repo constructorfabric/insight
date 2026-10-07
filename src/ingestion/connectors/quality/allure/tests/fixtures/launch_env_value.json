@@ -3,7 +3,7 @@
   "name": "dev",
   "variable": {
     "id": 71,
-    "name": "Backend Stand",
+    "name": "Target Env",
     "createdBy": "admin",
     "createdDate": 1767225600000,
     "lastModifiedBy": "admin",

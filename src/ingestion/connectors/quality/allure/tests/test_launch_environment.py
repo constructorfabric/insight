@@ -62,12 +62,12 @@ def test_one_record_per_value_carrying_launch_project_and_variable(http_mocker: 
     config = AllureConfigBuilder().build()
     mock_projects(http_mocker)
     mock_launch_window(http_mocker, 7, page([_launch(101, 7)]))
-    _mock_env(http_mocker, 101, _env([_value(61, "dev", 71, "Backend Stand"), _value(62, "chromium", 72, "Browser")]))
+    _mock_env(http_mocker, 101, _env([_value(61, "dev", 71, "Target Env"), _value(62, "chromium", 72, "Browser")]))
 
     output = _read(config)
 
     records = [r.record.data for r in output.records]
-    assert [(r["variable"]["name"], r["name"]) for r in records] == [("Backend Stand", "dev"), ("Browser", "chromium")]
+    assert [(r["variable"]["name"], r["name"]) for r in records] == [("Target Env", "dev"), ("Browser", "chromium")]
     assert {r["launch_id"] for r in records} == {101}
     assert {r["project_id"] for r in records} == {7}
     assert {r["lastModifiedDate"] for r in records} == {_LAUNCH_MODIFIED_MS}
@@ -78,7 +78,7 @@ def test_records_stamped_with_tenant_source_and_launch_value_key(http_mocker: Ht
     config = AllureConfigBuilder().build()
     mock_projects(http_mocker)
     mock_launch_window(http_mocker, 7, page([_launch(101, 7)]))
-    _mock_env(http_mocker, 101, _env([_value(61, "dev", 71, "Backend Stand")]))
+    _mock_env(http_mocker, 101, _env([_value(61, "dev", 71, "Target Env")]))
 
     output = _read(config)
 
@@ -93,7 +93,7 @@ def test_two_values_of_one_variable_give_two_records(http_mocker: HttpMocker) ->
     config = AllureConfigBuilder().build()
     mock_projects(http_mocker)
     mock_launch_window(http_mocker, 7, page([_launch(101, 7)]))
-    _mock_env(http_mocker, 101, _env([_value(61, "dev", 71, "Backend Stand"), _value(63, "test", 71, "Backend Stand")]))
+    _mock_env(http_mocker, 101, _env([_value(61, "dev", 71, "Target Env"), _value(63, "test", 71, "Target Env")]))
 
     output = _read(config)
 
@@ -107,7 +107,7 @@ def test_launch_deleted_between_list_and_read_is_skipped(http_mocker: HttpMocker
     mock_projects(http_mocker)
     mock_launch_window(http_mocker, 7, page([_launch(101, 7), _launch(102, 7)]))
     _mock_env(http_mocker, 101, error(404))
-    _mock_env(http_mocker, 102, _env([_value(61, "dev", 71, "Backend Stand")]))
+    _mock_env(http_mocker, 102, _env([_value(61, "dev", 71, "Target Env")]))
 
     output = _read(config)
 
@@ -133,7 +133,7 @@ def test_records_conform_to_schema(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().build()
     mock_projects(http_mocker)
     mock_launch_window(http_mocker, 7, page([_launch(101, 7)]))
-    _mock_env(http_mocker, 101, _env([_value(61, "dev", 71, "Backend Stand")]))
+    _mock_env(http_mocker, 101, _env([_value(61, "dev", 71, "Target Env")]))
 
     output = _read(config)
 
@@ -145,7 +145,7 @@ def test_parent_launch_cursor_persisted_in_state(http_mocker: HttpMocker) -> Non
     config = AllureConfigBuilder().build()
     mock_projects(http_mocker)
     mock_launch_window(http_mocker, 7, page([_launch(101, 7)]))
-    _mock_env(http_mocker, 101, _env([_value(61, "dev", 71, "Backend Stand")]))
+    _mock_env(http_mocker, 101, _env([_value(61, "dev", 71, "Target Env")]))
 
     output = _read(config)
 
@@ -160,7 +160,7 @@ def test_server_error_is_retried(http_mocker: HttpMocker) -> None:
     config = AllureConfigBuilder().build()
     mock_projects(http_mocker)
     mock_launch_window(http_mocker, 7, page([_launch(101, 7)]))
-    _mock_env(http_mocker, 101, [error(500), _env([_value(61, "dev", 71, "Backend Stand")])])
+    _mock_env(http_mocker, 101, [error(500), _env([_value(61, "dev", 71, "Target Env")])])
 
     output = _read(config)
 
