@@ -1,4 +1,7 @@
-version: 6.60.9
+# Airbyte runs a manifest on the declarative runtime it pins for its major. On
+# 6.x a substream's parent capped end_datetime at the clock, so the issue
+# substreams lost the +14h JQL ceiling of jira_issue_keys (#3653).
+version: 7.0.4
 
 type: DeclarativeSource
 

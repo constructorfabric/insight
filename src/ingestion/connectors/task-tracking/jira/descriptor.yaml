@@ -100,7 +100,13 @@ name: jira
 # could otherwise keep different rows, initial states and `snapshot_diff` rows.
 # MAJOR because rows already written change, and only the full refresh a major
 # dispatches (ADR-0015) re-derives them.
-version: "11.0.0"
+# 11.1.0: the manifest declares the 7.x declarative runtime. On 6.x the
+# issue-key query feeding jira_issue_history, jira_comments and jira_worklogs
+# kept a ceiling at the bare UTC clock, so on a positive-offset instance an
+# issue changed within that offset reached jira_issue but not its substreams
+# until a later sync. MINOR per ADR-0015: reconcile republishes the manifest,
+# the saved state carries over, and nothing already stored changes meaning.
+version: "11.1.0"
 schedule: "0 3 * * *"
 workflow: sync
 # CI build metadata + runtime image refs (ADR-0016). The `images:` block is
