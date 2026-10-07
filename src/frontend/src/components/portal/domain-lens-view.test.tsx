@@ -830,7 +830,12 @@ describe("composition (rule 7: only real server dimensions)", () => {
       } as Partial<NormalizedMetricResult>);
     }
 
-    function openBarOf(dimension: string, value: string, label: string) {
+    function openBarOf(
+      dimension: string,
+      value: string,
+      label: string,
+      { commitsReadable = true } = {},
+    ) {
       const openEvidenceTargets = vi.fn();
       const comp = emptyCollection();
       comp.byKey.set("git.lines_added", {
@@ -846,7 +851,9 @@ describe("composition (rule 7: only real server dimensions)", () => {
       mocks.collections = [emptyCollection(), comp, emptyCollection()];
       mocks.grid.byKey = new Map([
         ["git.lines_added", drillable("git.lines_added", "Lines added")],
-        ["git.commits", drillable("git.commits", "Commits")],
+        ...(commitsReadable
+          ? [["git.commits", drillable("git.commits", "Commits")] as const]
+          : []),
       ]);
       mocks.definitions = [
         {
@@ -895,6 +902,21 @@ describe("composition (rule 7: only real server dimensions)", () => {
       expect(targets[0].selection.filters).toEqual([
         { dimension: "category", values: ["docs"] },
       ]);
+    });
+
+    it("opens a category bar when only its own records can be read", async () => {
+      const user = userEvent.setup();
+      const openEvidenceTargets = openBarOf("category", "docs", "Documentation", {
+        commitsReadable: false,
+      });
+
+      await user.click(
+        screen.getByRole("button", { name: "Open the records behind Documentation" }),
+      );
+
+      expect(openEvidenceTargets).toHaveBeenCalledTimes(1);
+      const [targets] = openEvidenceTargets.mock.calls[0]!;
+      expect(targets[0].selection.metric_key).toBe("git.lines_added");
     });
 
     it("opens the commits behind it when they carry the clicked dimension", async () => {

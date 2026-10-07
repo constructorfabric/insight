@@ -2033,9 +2033,16 @@ function CompositionSection({
         declared
       )
     );
-  const carrier = grid.byKey.get(evidenceMetricFor(spec.metric));
+  const canOpen = (row: BarRow, segment?: BarSegment) =>
+    segment?.seed !== UNSPLIT_SEGMENT &&
+    Boolean(recordsBehind(clicked(row, segment))?.drilldown);
+  const anyOpens = rows.some((row) =>
+    row.segments?.length
+      ? row.segments.some((segment) => canOpen(row, segment))
+      : canOpen(row)
+  );
   const openBar =
-    evidence && carrier?.drilldown
+    evidence && anyOpens
       ? (row: BarRow, segment?: BarSegment) => {
           const filters = clicked(row, segment);
           const records = recordsBehind(filters);
@@ -2059,10 +2066,7 @@ function CompositionSection({
       unit={r?.unit ?? null}
       notes={spec.notes}
       onOpen={openBar}
-      canOpen={(row, segment) =>
-        segment?.seed !== UNSPLIT_SEGMENT &&
-        Boolean(recordsBehind(clicked(row, segment))?.drilldown)
-      }
+      canOpen={canOpen}
     />
   );
 }
