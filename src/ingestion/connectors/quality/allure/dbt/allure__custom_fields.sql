@@ -7,6 +7,7 @@
     tags=['allure']
 ) }}
 
+-- Object columns land as String or JSON depending on the installation; toString reads both.
 SELECT
     tenant_id,
     source_id,
@@ -18,7 +19,7 @@ SELECT
     COALESCE(singleSelect, false) AS is_single_select,
     COALESCE(locked, false) AS is_locked,
     toBool(JSONExtractBool(
-        if(JSONType(coalesce(customField, 'null')) = 'String', JSONExtractString(coalesce(customField, 'null')), coalesce(customField, 'null')),
+        if(JSONType(coalesce(toString(customField), 'null')) = 'String', JSONExtractString(coalesce(toString(customField), 'null')), coalesce(toString(customField), 'null')),
         'archived'
     )) AS is_archived,
     'insight_allure' AS data_source

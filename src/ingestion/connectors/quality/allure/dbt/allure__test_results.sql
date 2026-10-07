@@ -9,12 +9,13 @@
     tags=['allure']
 ) }}
 
+-- Object columns land as String or JSON depending on the installation; toString reads both.
 WITH bronze AS (
     SELECT
         b.*,
         if(JSONType(coalesce(tags, 'null')) = 'String', JSONExtractString(coalesce(tags, 'null')), coalesce(tags, 'null')) AS tags_json,
-        if(JSONType(coalesce(layer, 'null')) = 'String', JSONExtractString(coalesce(layer, 'null')), coalesce(layer, 'null')) AS layer_json,
-        if(JSONType(coalesce(jobRun, 'null')) = 'String', JSONExtractString(coalesce(jobRun, 'null')), coalesce(jobRun, 'null')) AS job_run_json
+        if(JSONType(coalesce(toString(layer), 'null')) = 'String', JSONExtractString(coalesce(toString(layer), 'null')), coalesce(toString(layer), 'null')) AS layer_json,
+        if(JSONType(coalesce(toString(jobRun), 'null')) = 'String', JSONExtractString(coalesce(toString(jobRun), 'null')), coalesce(toString(jobRun), 'null')) AS job_run_json
     FROM {{ source('bronze_allure', 'test_results') }} AS b FINAL
     {% if is_incremental() %}
     LEFT JOIN (
