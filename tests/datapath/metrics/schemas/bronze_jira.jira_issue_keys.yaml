@@ -1,0 +1,22 @@
+# Reusable JSON schema for the table (all real fields). Resolved by table name.
+# Mirrors the jira_issue_keys stream schema (connector.yaml): the lightweight
+# issue-key list, one row per issue.
+schemas:
+  bronze_jira.jira_issue_keys:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      id: {type: [string, "null"]}
+      key: {type: [string, "null"]}
+      tenant_id: {type: [string, "null"]}
+      source_id: {type: [string, "null"]}
+      unique_key: {type: string}
+      id_readable: {type: [string, "null"]}
+      jira_id: {type: [string, "null"]}
+      updated: {type: [string, "null"]}
+      collected_at: {type: [string, "null"]}
+      _airbyte_raw_id: {type: string}
+      _airbyte_extracted_at: {type: string, format: date-time}
+      _airbyte_meta: {type: string}
+      _airbyte_generation_id: {type: integer}

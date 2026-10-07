@@ -9,10 +9,8 @@
 ) }}
 
 -- Current state per worklog, deletion included (specs/DELETION-AND-VISIBILITY.md).
--- is_deleted, three signals OR-ed: an authoritative /worklog/deleted tombstone;
--- the re-fetch generation diff (editing/deleting a worklog bumps the issue's
--- `updated`, re-syncing its full worklog list); a deleted/trashed parent
--- issue. Feeds both the class projection (jira__task_worklogs) and the
+-- is_deleted: an authoritative /worklog/deleted tombstone, or a deleted/trashed
+-- parent issue. Feeds both the class projection (jira__task_worklogs) and the
 -- lifecycle snapshot chain.
 
 WITH worklogs AS (
@@ -32,25 +30,15 @@ tombstones AS (
     GROUP BY tenant_id, source_id, worklog_id
 ),
 
-issue_fetch AS (
+issues AS (
     SELECT
         tenant_id,
         source_id,
         jira_id,
-        max(_airbyte_extracted_at)                      AS last_fetched_at
-    FROM {{ source('bronze_jira', 'jira_issue_keys') }} FINAL
-    WHERE jira_id IS NOT NULL
-    GROUP BY tenant_id, source_id, jira_id
-),
-
-unavailable_issues AS (
-    SELECT
-        tenant_id,
-        source_id,
-        jira_id
+        id_readable,
+        availability
     FROM {{ ref('jira__issue_availability_state') }} FINAL
-    WHERE availability IN ('deleted', 'trashed')
-      AND jira_id IS NOT NULL
+    WHERE jira_id IS NOT NULL
 )
 
 SELECT
@@ -58,7 +46,7 @@ SELECT
     w.tenant_id                                         AS tenant_id,
     w.source_id                                         AS source_id,
     toString(w.worklog_id)                              AS worklog_id,
-    w.id_readable                                       AS id_readable,
+    i.id_readable                                       AS id_readable,
     w.author_account_id                                 AS author_id,
     parseDateTime64BestEffortOrNull(w.started, 3)       AS work_date,
     toFloat64OrNull(toString(w.time_spent_seconds))     AS duration_seconds,
@@ -68,24 +56,17 @@ SELECT
     parseDateTime64BestEffortOrNull(w.collected_at, 3)  AS collected_at,
     toUInt8(
         ts.worklog_id IS NOT NULL
-        OR (f.last_fetched_at IS NOT NULL
-            AND w._airbyte_extracted_at < f.last_fetched_at
-                - INTERVAL {{ var('jira_comment_refetch_tolerance_hours', 6) }} HOUR)
-        OR ui.jira_id IS NOT NULL
+        OR i.availability IN ('deleted', 'trashed')
     )                                                   AS is_deleted,
     -- Real deletion time when the tombstone carries it; NULL otherwise
-    -- (generation-diff / parent-issue deletions are dated at detection).
+    -- (parent-issue deletions are dated at detection).
     ts.deleted_at_ms                                    AS deleted_at_ms
 FROM worklogs AS w
 LEFT JOIN tombstones AS ts
     ON ts.tenant_id = w.tenant_id
     AND ts.source_id = w.source_id
     AND ts.worklog_id = toString(w.worklog_id)
-LEFT JOIN issue_fetch AS f
-    ON f.tenant_id = w.tenant_id
-    AND f.source_id = w.source_id
-    AND f.jira_id = w.jira_id
-LEFT JOIN unavailable_issues AS ui
-    ON ui.tenant_id = w.tenant_id
-    AND ui.source_id = w.source_id
-    AND ui.jira_id = w.jira_id
+LEFT JOIN issues AS i
+    ON i.tenant_id = w.tenant_id
+    AND i.source_id = w.source_id
+    AND i.jira_id = w.jira_id

@@ -228,16 +228,16 @@ Consumption policy (implemented):
   was re-fetched but the comment was not re-emitted (deleting a comment bumps
   the issue's `updated`, which re-syncs the issue's full comment list), or
   when its parent issue is `deleted`/`trashed`.
-- `class_task_worklogs.is_deleted` — real, from three OR-ed signals in
-  `jira__task_worklogs`: an authoritative tombstone from the
+- `class_task_worklogs.is_deleted` — real, from two OR-ed signals in
+  `jira__worklog_state`: an authoritative tombstone from the
   `jira_worklog_deleted` stream (`GET /rest/api/3/worklog/deleted` — the one
   Jira surface where deletions are first-class; the whole bounded tombstone
-  list is re-read every sync, census-style), the same re-fetch generation
-  diff as comments (editing or deleting a worklog bumps the issue's
-  `updated`, re-syncing its full worklog list), and a deleted/trashed parent
-  issue. *Updated* worklogs need no extra stream: the per-issue re-fetch
-  already re-emits them — the same `updated`-bump assumption the project
-  discovery gate has relied on all along.
+  list is re-read every sync, census-style), and a deleted/trashed parent
+  issue. Worklogs are collected from Jira's own change feed
+  (`GET /rest/api/3/worklog/updated`, then `POST /rest/api/3/worklog/list`),
+  not per issue, so absence from a re-read list is never evidence: nothing
+  re-reads an issue's worklogs as a whole. Comments have no such feed and
+  keep the re-fetch generation diff above.
 - `gold/task_worklog_flow.sql` — the in-progress side inherits the filter
   through its `task_issue_state` join; the worklog side filters
   `ifNull(is_deleted, 0) = 0` from the class contract.
