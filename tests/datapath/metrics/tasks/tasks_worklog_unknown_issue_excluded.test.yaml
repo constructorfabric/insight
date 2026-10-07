@@ -1,0 +1,70 @@
+spec_version: 1
+description: >
+  Task Delivery - tasks.worklog_accuracy counts only worklogs of issues the issue streams
+  collected (#3480): Jira's worklog feed is instance-wide, so a worklog on an issue outside
+  the collected projects must not reach the numerator.
+
+  bronze -> silver -> gold: identical to tasks_worklog_deleted_excluded — jira_issue (Closed) +
+  jira_issue_history (1-day In Progress interval = 86400 s denominator) + jira_worklogs
+  (logged seconds numerator), with NO tombstone. Dave's extra worklog names an issue absent
+  from jira_issue, so it is dropped before the class contract.
+
+  Department: 5 Engineering members alice..erin logging {20,40,60,80,100}% of the 86400 s
+  in-progress day. Dave's EXTRA 17280 s worklog (61001) on unknown issue 10999 would lift him
+  80 -> 100; it is excluded, so dave stays 80. Team {20,40,60,80,100} -> p25 40, median 60,
+  p75 80, range [20, 100]. Cases: dave IC (unknown-issue worklog excluded), erin IC + peer stats.
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: ../templates/people.yaml#/templates/alice
+    - $ref: ../templates/people.yaml#/templates/bob
+    - $ref: ../templates/people.yaml#/templates/carol
+    - $ref: ../templates/people.yaml#/templates/dave
+    - $ref: ../templates/people.yaml#/templates/erin
+
+  bronze_jira.jira_user:
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-alice-jira-acct, account_id: alice-jira-acct, email: alice@example.com, display_name: Alice Alpha}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-bob-jira-acct, account_id: bob-jira-acct, email: bob@example.com, display_name: Bob Beta}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-carol-jira-acct, account_id: carol-jira-acct, email: carol@example.com, display_name: Carol Gamma}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-dave-jira-acct, account_id: dave-jira-acct, email: dave@example.com, display_name: Dave Delta}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-erin-jira-acct, account_id: erin-jira-acct, email: erin@example.com, display_name: Erin Epsilon,}
+
+  bronze_jira.jira_statuses:
+    - $ref: ../templates/jira_task.yaml#/templates/status_open
+    - $ref: ../templates/jira_task.yaml#/templates/status_in_progress
+    - $ref: ../templates/jira_task.yaml#/templates/status_closed
+
+  bronze_jira.jira_fields:
+    - $ref: ../templates/jira_task.yaml#/templates/field_status
+    - $ref: ../templates/jira_task.yaml#/templates/field_assignee
+    - $ref: ../templates/jira_task.yaml#/templates/field_issuetype
+
+  config.field_value_defaults:
+    # Unmapped type ids are unclassified by decision, not by accident:
+    # `assert_task_field_value_defaults_exist` requires this row.
+    - $ref: ../templates/jira_task.yaml#/templates/jira_issue_type_default_unknown
+    - $ref: ../templates/jira_task.yaml#/templates/jira_resolution_default_unknown
+
+  bronze_jira.jira_issue:
+    # Each member: created In Progress 2026-03-25T00:00, Closed 2026-03-26T00:00 -> 86400 s in progress.
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_issue, id: "10178", jira_id: "10178", unique_key: jira-test-WDA-1, id_readable: WDA1, created: "2026-03-25T00:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_issue, id: "10179", jira_id: "10179", unique_key: jira-test-WDB-1, id_readable: WDB1, created: "2026-03-25T00:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"bob-jira-acct","displayName":"Bob Beta"}}'}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_issue, id: "10180", jira_id: "10180", unique_key: jira-test-WDC-1, id_readable: WDC1, created: "2026-03-25T00:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_issue, id: "10181", jira_id: "10181", unique_key: jira-test-WDD-1, id_readable: WDD1, created: "2026-03-25T00:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"dave-jira-acct","displayName":"Dave Delta"}}'}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_issue, id: "10182", jira_id: "10182", unique_key: jira-test-WDE-1, id_readable: WDE1, created: "2026-03-25T00:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}',}
+
+  bronze_jira.jira_issue_history:
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_history, id_readable: WDA1, jira_id: "10178", changelog_id: "58001", unique_key: jira-test-WDA1-58001, created_at: "2026-03-26T00:00:00.000+0000", author_account_id: alice-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_history, id_readable: WDB1, jira_id: "10179", changelog_id: "58002", unique_key: jira-test-WDB1-58002, created_at: "2026-03-26T00:00:00.000+0000", author_account_id: bob-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_history, id_readable: WDC1, jira_id: "10180", changelog_id: "58003", unique_key: jira-test-WDC1-58003, created_at: "2026-03-26T00:00:00.000+0000", author_account_id: carol-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_history, id_readable: WDD1, jira_id: "10181", changelog_id: "58004", unique_key: jira-test-WDD1-58004, created_at: "2026-03-26T00:00:00.000+0000", author_account_id: dave-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_history, id_readable: WDE1, jira_id: "10182", changelog_id: "58005", unique_key: jira-test-WDE1-58005, created_at: "2026-03-26T00:00:00.000+0000", author_account_id: erin-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]',}
+
+  # tenant_id stamped explicitly: the tombstone join is by tenant/source/worklog_id.
+  bronze_jira.jira_worklogs:
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_worklog, tenant_id: "{{ tenant }}", worklog_id: 11001, id_readable: WDA1, jira_id: "10178", unique_key: jira-test-worklog-WDA-1, author_account_id: alice-jira-acct, started: "2026-03-25T10:00:00.000+0000", time_spent_seconds: 17280, _airbyte_raw_id: "00000000-0000-0000-0000-000000000001"}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_worklog, tenant_id: "{{ tenant }}", worklog_id: 21001, id_readable: WDB1, jira_id: "10179", unique_key: jira-test-worklog-WDB-1, author_account_id: bob-jira-acct, started: "2026-03-25T10:00:00.000+0000", time_spent_seconds: 34560, _airbyte_raw_id: "00000000-0000-0000-0000-000000000002"}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_worklog, tenant_id: "{{ tenant }}", worklog_id: 31001, id_readable: WDC1, jira_id: "10180", unique_key: jira-test-worklog-WDC-1, author_account_id: carol-jira-acct, started: "2026-03-25T10:00:00.000+0000", time_spent_seconds: 51840, _airbyte_raw_id: "00000000-0000-0000-0000-000000000003"}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_worklog, tenant_id: "{{ tenant }}", worklog_id: 41001, id_readable: WDD1, jira_id: "10181", unique_key: jira-test-worklog-WDD-1, author_account_id: dave-jira-acct, started: "2026-03-25T10:00:00.000+0000", time_spent_seconds: 69120, _airbyte_raw_id: "00000000-0000-0000-0000-000000000004"}
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_worklog, tenant_id: "{{ tenant }}", worklog_id: 51001, id_readable: WDE1, jira_id: "10182", unique_key: jira-test-worklog-WDE-1, author_account_id: erin-jira-acct, started: "2026-03-25T10:00:00.000+0000", time_spent_seconds: 86400, _airbyte_raw_id: "00000000-0000-0000-0000-000000000005"}
+    # Dave's extra worklog — on an issue the issue streams never collected: excluded.
+    - {$ref: ../templates/jira_task.yaml#/templates/jira_worklog, tenant_id: "{{ tenant }}", worklog_id: 61001, id_readable: WDZ1, jira_id: "10999", unique_key: jira-test-worklog-WDD-2, author_account_id: dave-jira-acct, started: "2026-03-25T12:00:00.000+0000", time_spent_seconds: 17280, _airbyte_raw_id: "00000000-0000-0000-0000-000000000006",}

@@ -12,6 +12,8 @@
 -- is_deleted: an authoritative /worklog/deleted tombstone, or a deleted/trashed
 -- parent issue. Feeds both the class projection (jira__task_worklogs) and the
 -- lifecycle snapshot chain.
+-- The worklog feed is instance-wide; the INNER JOIN keeps a worklog only when the
+-- issue streams know its issue, so their project scope bounds the worklogs too.
 
 WITH worklogs AS (
     SELECT *
@@ -66,7 +68,7 @@ LEFT JOIN tombstones AS ts
     ON ts.tenant_id = w.tenant_id
     AND ts.source_id = w.source_id
     AND ts.worklog_id = toString(w.worklog_id)
-LEFT JOIN issues AS i
+INNER JOIN issues AS i
     ON i.tenant_id = w.tenant_id
     AND i.source_id = w.source_id
     AND i.jira_id = w.jira_id
