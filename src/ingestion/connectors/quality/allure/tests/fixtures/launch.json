@@ -14,5 +14,44 @@
       "id": 1,
       "name": "nightly"
     }
-  ]
+  ],
+  "issues": [
+    {
+      "id": 31,
+      "name": "EXP-7",
+      "displayName": "EXP-7",
+      "url": "https://tracker.example.test/EXP-7",
+      "summary": "Login page times out",
+      "status": "Open",
+      "closed": false,
+      "integrationId": 5,
+      "integrationType": "jira"
+    }
+  ],
+  "links": [
+    {
+      "name": "Pipeline",
+      "type": "ci",
+      "url": "https://ci.example.test/job/nightly-regression/9001"
+    }
+  ],
+  "releases": [
+    {
+      "id": 41,
+      "name": "2026.06",
+      "workflowId": 2,
+      "dueDate": 1782000000000,
+      "previousReleaseId": null,
+      "status": {
+        "id": 3,
+        "code": "draft",
+        "name": "Draft",
+        "category": "DRAFT"
+      }
+    }
+  ],
+  "chronology": {
+    "previousLaunchId": 100,
+    "comparisonLaunchId": 100
+  }
 }

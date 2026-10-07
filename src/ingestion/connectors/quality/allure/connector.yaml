@@ -407,6 +407,135 @@ streams:
                   type:
                     - string
                     - "null"
+          issues:
+            type:
+              - array
+              - "null"
+            items:
+              type:
+                - object
+                - "null"
+              properties:
+                id:
+                  type:
+                    - integer
+                    - "null"
+                name:
+                  type:
+                    - string
+                    - "null"
+                displayName:
+                  type:
+                    - string
+                    - "null"
+                url:
+                  type:
+                    - string
+                    - "null"
+                summary:
+                  type:
+                    - string
+                    - "null"
+                status:
+                  type:
+                    - string
+                    - "null"
+                closed:
+                  type:
+                    - boolean
+                    - "null"
+                integrationId:
+                  type:
+                    - integer
+                    - "null"
+                integrationType:
+                  type:
+                    - string
+                    - "null"
+          links:
+            type:
+              - array
+              - "null"
+            items:
+              type:
+                - object
+                - "null"
+              properties:
+                name:
+                  type:
+                    - string
+                    - "null"
+                type:
+                  type:
+                    - string
+                    - "null"
+                url:
+                  type:
+                    - string
+                    - "null"
+          releases:
+            type:
+              - array
+              - "null"
+            items:
+              type:
+                - object
+                - "null"
+              properties:
+                id:
+                  type:
+                    - integer
+                    - "null"
+                name:
+                  type:
+                    - string
+                    - "null"
+                workflowId:
+                  type:
+                    - integer
+                    - "null"
+                dueDate:
+                  type:
+                    - integer
+                    - "null"
+                previousReleaseId:
+                  type:
+                    - integer
+                    - "null"
+                status:
+                  type:
+                    - object
+                    - "null"
+                  properties:
+                    id:
+                      type:
+                        - integer
+                        - "null"
+                    code:
+                      type:
+                        - string
+                        - "null"
+                    name:
+                      type:
+                        - string
+                        - "null"
+                    category:
+                      type:
+                        - string
+                        - "null"
+          chronology:
+            type:
+              - object
+              - "null"
+            properties:
+              previousLaunchId:
+                type:
+                  - integer
+                  - "null"
+              comparisonLaunchId:
+                type:
+                  - integer
+                  - "null"
           tenant_id:
             type:
               - string
@@ -955,6 +1084,93 @@ streams:
                   type:
                     - boolean
                     - "null"
+          category:
+            type:
+              - object
+              - "null"
+            properties:
+              id:
+                type:
+                  - integer
+                  - "null"
+              name:
+                type:
+                  - string
+                  - "null"
+              color:
+                type:
+                  - string
+                  - "null"
+              description:
+                type:
+                  - string
+                  - "null"
+              projectId:
+                type:
+                  - integer
+                  - "null"
+              createdBy:
+                type:
+                  - string
+                  - "null"
+              createdDate:
+                type:
+                  - integer
+                  - "null"
+              lastModifiedBy:
+                type:
+                  - string
+                  - "null"
+              lastModifiedDate:
+                type:
+                  - integer
+                  - "null"
+          namedEnv:
+            type:
+              - object
+              - "null"
+            properties:
+              id:
+                type:
+                  - integer
+                  - "null"
+              externalId:
+                type:
+                  - string
+                  - "null"
+              name:
+                type:
+                  - string
+                  - "null"
+              launchId:
+                type:
+                  - integer
+                  - "null"
+              jobRunId:
+                type:
+                  - integer
+                  - "null"
+          retriedBy:
+            type:
+              - object
+              - "null"
+            properties:
+              id:
+                type:
+                  - integer
+                  - "null"
+              name:
+                type:
+                  - string
+                  - "null"
+          assignee:
+            type:
+              - string
+              - "null"
+          testedBy:
+            type:
+              - string
+              - "null"
           tenant_id:
             type:
               - string

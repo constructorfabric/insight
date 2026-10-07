@@ -59,6 +59,14 @@ models:
         description: "start (epoch ms) as UTC DateTime64(3)"
       - name: stopped_at
         description: "stop (epoch ms) as UTC DateTime64(3)"
+      - name: category_id
+        description: "Failure category the result was matched or resolved to; NULL when none"
+      - name: category_name
+        description: "Name of that failure category; empty when none"
+      - name: assignee
+        description: "Allure login the result is assigned to, not a person id"
+      - name: tested_by
+        description: "Allure login that ran a manual result, not a person id"
 
   - name: allure__test_cases
     description: "Allure TestOps test cases -> staging, one row per test case"
