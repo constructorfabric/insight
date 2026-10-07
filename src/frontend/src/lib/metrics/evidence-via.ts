@@ -6,7 +6,8 @@
  * are carried by commits, and those are the records a reader is asking for
  * when they click the tile. A key listed here drills into the metric named
  * beside it, carrying whatever the click narrowed to; anything absent drills
- * into itself.
+ * into itself. A commit spans several file categories, so a click narrowed by
+ * a dimension the carrier does not declare stays on the figure's own records.
  */
 const CARRIED_BY: Record<string, string> = {
   "git.code_lines": "git.commits",
@@ -21,8 +22,19 @@ const CARRIED_BY: Record<string, string> = {
 };
 
 /** The metric whose records explain `key` — `key` itself unless listed. */
-export function evidenceMetricFor(key: string): string {
-  return CARRIED_BY[key] ?? key;
+export function evidenceMetricFor(
+  key: string,
+  narrowedBy: readonly string[] = [],
+  declared: (metricKey: string) => readonly string[] | undefined = () =>
+    undefined
+): string {
+  const carrier = CARRIED_BY[key];
+  if (!carrier) return key;
+  if (narrowedBy.length === 0) return carrier;
+  const dimensions = declared(carrier);
+  return dimensions && narrowedBy.every((d) => dimensions.includes(d))
+    ? carrier
+    : key;
 }
 
 /** Every metric a lens must ask for so its figures stay drillable. */

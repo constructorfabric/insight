@@ -38,6 +38,29 @@ describe("evidenceMetricFor", () => {
       expect(evidenceMetricFor(key), key).toBe(carrier);
     }
   });
+
+  const catalogue: Record<string, readonly string[]> = {
+    "git.commits": ["branch_scope", "hour_block", "project", "repository", "source"],
+  };
+  const declared = (key: string) => catalogue[key];
+
+  it("carries a click to the commits when they declare every clicked dimension", () => {
+    expect(
+      evidenceMetricFor("git.lines_added", ["repository", "branch_scope"], declared)
+    ).toBe("git.commits");
+  });
+
+  it("keeps a click on a dimension the commits lack on the line count itself", () => {
+    expect(
+      evidenceMetricFor("git.lines_added", ["repository", "category"], declared)
+    ).toBe("git.lines_added");
+  });
+
+  it("keeps a narrowed click on the line count while the catalogue is unread", () => {
+    expect(
+      evidenceMetricFor("git.lines_added", ["repository"], () => undefined)
+    ).toBe("git.lines_added");
+  });
 });
 
 describe("evidenceCarriers", () => {
