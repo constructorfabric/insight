@@ -1,6 +1,6 @@
 {{ config(
     materialized='table',
-    engine='MergeTree',
+    engine=insight_engine('MergeTree'),
     order_by=['tenant_id', 'source_id', 'project_key', 'repo_slug', 'commit_hash'],
     schema=var('gold_database'),
     settings={'allow_nullable_key': 1},

@@ -1,4 +1,4 @@
-{{ config(materialized='table', engine='ReplacingMergeTree(_version)', order_by=['unique_key'], settings={'allow_nullable_key': 1}, schema='staging', tags=['youtrack', 'staging', 'silver:class_task_issuetypes']) }}
+{{ config(materialized='table', engine=insight_engine('ReplacingMergeTree', '_version'), order_by=['unique_key'], settings={'allow_nullable_key': 1}, schema='staging', tags=['youtrack', 'staging', 'silver:class_task_issuetypes']) }}
 
 SELECT CAST(concat(v.insight_source_id, '-youtrack-type-', v.value_id) AS Nullable(String)) AS unique_key,
     CAST(v.insight_source_id AS Nullable(String)) AS insight_source_id, 'youtrack' AS data_source,

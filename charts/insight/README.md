@@ -150,7 +150,7 @@ The same decision under a different name in each layer:
 | Chart helpers | `insight.clickhouse.clusterMode` / `insight.clickhouse.clusterName` | [`templates/_helpers.tpl`](./templates/_helpers.tpl) |
 | Toolbox jobs | `CLICKHOUSE_CLUSTER_MODE` / `CLICKHOUSE_CLUSTER_NAME` | the `<release>-platform` ConfigMap, the `clickhouse-migrate` Job, `apply-ch-migrations.sh` |
 | Reconcile | `RECONCILE_DEST_CLICKHOUSE_CLUSTER_MODE` / `RECONCILE_DEST_CLICKHOUSE_CLUSTER_NAME` | `reconcile-cron.yaml`, consumed by `compose_destination_config.py` as the destination's `use_replicated_engines` / `cluster_name` |
-| dbt | project vars `cluster_mode` / `cluster_name`, plus the adapter's `cluster:` profile key | `dbt_project.yml`, `dbt_profiles.py` |
+| dbt | project vars `cluster_mode` / `cluster_name`, read by the `insight_engine` macro every model's engine is declared through, plus the adapter's `cluster:` profile key | `dbt_project.yml`, `dbt/macros/insight_engine.sql`, `dbt_profiles.py` |
 | Rust | `insight_clickhouse::Topology` on `Config.topology`, from `clickhouse_cluster_mode` / `clickhouse_cluster_name` | `libs/insight-clickhouse`, `insight-v3-core` gear config |
 
 Tests that must know the topology read `CLICKHOUSE_CLUSTER_MODE` /

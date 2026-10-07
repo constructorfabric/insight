@@ -1,4 +1,4 @@
-{{ config(materialized='table', schema='staging', engine='MergeTree', order_by=['insight_source_id', 'issue_id', 'field_id', 'event_id'], tags=['youtrack', 'staging']) }}
+{{ config(materialized='table', schema='staging', engine=insight_engine('MergeTree'), order_by=['insight_source_id', 'issue_id', 'field_id', 'event_id'], tags=['youtrack', 'staging']) }}
 
 WITH raw AS (
     SELECT coalesce(source_id, '') AS insight_source_id, coalesce(id, '') AS event_id,

@@ -3,7 +3,7 @@
     incremental_strategy='append',
     alias='jira__catalogue_first_seen',
     schema='staging',
-    engine='MergeTree()',
+    engine=insight_engine('MergeTree'),
     order_by=['insight_source_id'],
     tags=['staging', 'jira']
 ) }}

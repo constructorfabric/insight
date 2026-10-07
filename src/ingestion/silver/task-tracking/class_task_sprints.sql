@@ -6,7 +6,7 @@
     incremental_strategy='delete+insert',
     unique_key='unique_key',
     schema='silver',
-    engine='ReplacingMergeTree(_version)',
+    engine=insight_engine('ReplacingMergeTree', '_version'),
     order_by=['unique_key'],
     settings={'allow_nullable_key': 1},
     tags=['silver']

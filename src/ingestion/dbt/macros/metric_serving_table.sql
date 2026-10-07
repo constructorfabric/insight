@@ -38,7 +38,7 @@
     {% endif %}
     {{ config(
         materialized='table',
-        engine='MergeTree',
+        engine=insight_engine('MergeTree'),
         order_by=order_by,
         partition_by='toYYYYMM(metric_date)',
         schema=var('gold_database'),
