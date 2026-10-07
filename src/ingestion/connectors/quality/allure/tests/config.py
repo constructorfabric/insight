@@ -9,6 +9,7 @@ PROJECTS_URL = f"{ALLURE_URL}/api/project"
 LAUNCHES_URL = f"{ALLURE_URL}/api/launch/__search"
 TEST_RESULTS_URL = f"{ALLURE_URL}/api/testresult"
 TEST_CASE_SEARCH_URL = f"{ALLURE_URL}/api/testcase/__search"
+LAUNCH_ERRORS_URL = f"{ALLURE_URL}/api/launch/error"
 
 FROZEN_NOW = "2026-07-01T00:00:00Z"
 NOW_MS = 1782864000000

@@ -12,6 +12,7 @@ sources:
       - name: launches
       - name: test_results
       - name: launch_environment
+      - name: launch_errors
       - name: custom_fields
       - name: test_cases
         freshness: null
@@ -142,5 +143,24 @@ models:
         description: "Environment variable name as Allure sends it, spaces included"
       - name: value
         description: "The variable's value in this launch"
+      - name: launch_last_modified_at
+        description: "The launch's lastModifiedDate (epoch ms) as UTC DateTime64(3), the cursor the stream syncs by"
+
+  - name: allure__launch_errors
+    description: "Errors Allure TestOps recorded against a launch itself, outside any test result -> staging, one row per error"
+    columns:
+      - name: tenant_id
+        data_tests:
+          - not_null
+      - name: source_id
+        data_tests:
+          - not_null
+      - name: unique_key
+        description: "{tenant}-{source}-{launch error id}"
+        data_tests:
+          - not_null
+          - unique
+      - name: error_hash
+        description: "Hash Allure groups identical errors by"
       - name: launch_last_modified_at
         description: "The launch's lastModifiedDate (epoch ms) as UTC DateTime64(3), the cursor the stream syncs by"

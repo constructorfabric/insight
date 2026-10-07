@@ -1,0 +1,8 @@
+{
+  "id": 81,
+  "launchId": 101,
+  "jobRunId": 4001,
+  "hash": "9f8e7d6c5b4a39281706f5e4d3c2b1a0",
+  "message": "Upload of results archive failed",
+  "trace": "java.io.IOException: archive truncated\n\tat com.example.upload.Uploader.send(Uploader.java:42)"
+}
