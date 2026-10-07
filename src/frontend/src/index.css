@@ -48,7 +48,9 @@
   --color-popover-foreground: var(--popover-foreground);
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
+  --color-card-hover: var(--card-hover);
   --color-card: var(--card);
+  --color-selection-subtle: var(--selection-subtle);
   --color-foreground: var(--foreground);
   --color-background: var(--background);
   --radius-xs: calc(var(--radius) - 4px);

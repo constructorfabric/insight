@@ -109,7 +109,7 @@ export function TeamMetricGroupCard({
           aria-label={`Open ${def.title} details`}
         />
       }
-      className={cn("text-left transition-colors hover:bg-accent/50")}
+      className={cn("text-left transition-colors hover:bg-card-hover")}
     >
       <CardHeader>
         <CardTitle className={TEXT_HEADING}>{def.title}</CardTitle>

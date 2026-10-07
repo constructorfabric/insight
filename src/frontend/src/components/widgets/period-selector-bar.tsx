@@ -66,6 +66,9 @@ const TABS: { value: PeriodValue; label: string; short: string }[] = [
   { value: "year", label: "Year", short: "Y" },
 ];
 
+const SEGMENT =
+  "bg-card text-muted-foreground aria-pressed:bg-selection-subtle aria-pressed:text-foreground";
+
 export interface PeriodSelectorBarProps {
   period: PeriodValue;
   customRange: CustomRange | null;
@@ -136,7 +139,7 @@ export function PeriodSelectorBar({
         size="default"
       >
         {TABS.map(({ value, label, short }) => (
-          <ToggleGroupItem key={value} value={value}>
+          <ToggleGroupItem key={value} value={value} className={SEGMENT}>
             <span className="hidden sm:inline">{label}</span>
             <span className="sm:hidden">{short}</span>
           </ToggleGroupItem>
@@ -146,7 +149,7 @@ export function PeriodSelectorBar({
             render={
               <ToggleGroupItem
                 value="custom"
-                className="gap-1.5"
+                className={`${SEGMENT} gap-1.5`}
                 // Below `sm` the label is hidden and only the icon remains, so
                 // without this the control has no accessible name at all.
                 aria-label={`Custom date range: ${activeRangeLabel}`}

@@ -41,7 +41,7 @@ export function ScopeSelect() {
           <button
             type="button"
             aria-label={`Scope: ${label}, ${scopeMemberCount} people`}
-            className="flex h-9 items-center gap-1.5 rounded-md border bg-background px-3 text-sm shadow-xs hover:bg-accent"
+            className="flex h-9 items-center gap-1.5 rounded-md border bg-card px-3 text-sm shadow-xs hover:bg-muted"
           >
             {/* Narrow screens keep only the identity of the scope: the word
                 "Scope" and the head-count are recoverable from the popover, and
@@ -71,8 +71,8 @@ export function ScopeSelect() {
                   setScope({ root: m.depth === 0 ? null : m.person_id })
                 }
                 className={cn(
-                  "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent",
-                  m.person_id === pivotPersonId && "bg-accent/60",
+                  "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-muted",
+                  m.person_id === pivotPersonId && "bg-selection-subtle",
                 )}
                 style={{ paddingLeft: `${0.5 + m.depth * 0.875}rem` }}
               >

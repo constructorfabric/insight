@@ -2741,7 +2741,7 @@ function DirectionCardsSection({
             key={c.id}
             type="button"
             onClick={() => go(c.id)}
-            className="rounded-xl border bg-card text-left transition-colors hover:bg-accent"
+            className="rounded-xl border bg-card text-left transition-colors hover:bg-card-hover"
           >
             <div className="flex flex-col gap-2 p-4">
               <div className="text-sm font-semibold">{c.name}</div>
