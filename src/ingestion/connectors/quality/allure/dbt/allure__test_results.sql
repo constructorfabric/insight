@@ -78,7 +78,7 @@ SELECT
     COALESCE(testedBy, '') AS tested_by,
     COALESCE(historyKey, '') AS history_key,
     COALESCE(message, '') AS message,
-    if(empty(env_json), '{}', env_json) AS launch_env,
+    ifNull(nullIf(env_json, ''), '{}') AS launch_env,
     arrayFilter(n -> n != '', arrayMap(t -> JSONExtractString(t, 'name'), JSONExtractArrayRaw(tags_json))) AS tag_names,
     fromUnixTimestamp64Milli(createdDate, 'UTC') AS created_at,
     fromUnixTimestamp64Milli(lastModifiedDate, 'UTC') AS last_modified_at,
