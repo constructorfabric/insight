@@ -451,6 +451,26 @@ heal_ai_assistant_staging claude_enterprise__ai_assistant_usage
 heal_ai_assistant_staging chatgpt_team__ai_assistant_usage
 heal_ai_invoice_staging claude_team__ai_invoice
 
+echo "=== Healing Allure staging test results ==="
+heal_allure_test_results_staging() {
+  ch_table_exists staging allure__test_results || return 0
+  echo "  staging.allure__test_results"
+  run_ch <<'SQL'
+ALTER TABLE staging.allure__test_results ADD COLUMN IF NOT EXISTS category_id Nullable(Int64) AFTER job_run_url;
+ALTER TABLE staging.allure__test_results MODIFY COLUMN category_id Nullable(Int64) AFTER job_run_url;
+ALTER TABLE staging.allure__test_results ADD COLUMN IF NOT EXISTS category_name String AFTER category_id;
+ALTER TABLE staging.allure__test_results MODIFY COLUMN category_name String AFTER category_id;
+ALTER TABLE staging.allure__test_results ADD COLUMN IF NOT EXISTS assignee String AFTER category_name;
+ALTER TABLE staging.allure__test_results MODIFY COLUMN assignee String AFTER category_name;
+ALTER TABLE staging.allure__test_results ADD COLUMN IF NOT EXISTS tested_by String AFTER assignee;
+ALTER TABLE staging.allure__test_results MODIFY COLUMN tested_by String AFTER assignee;
+ALTER TABLE staging.allure__test_results ADD COLUMN IF NOT EXISTS launch_env String DEFAULT '{}' AFTER message;
+ALTER TABLE staging.allure__test_results MODIFY COLUMN launch_env String DEFAULT '{}' AFTER message;
+SQL
+}
+
+heal_allure_test_results_staging
+
 echo "=== Healing task field-history staging arms ==="
 run_ch <<'SQL'
 DROP TABLE IF EXISTS staging.jira__task_field_history;
