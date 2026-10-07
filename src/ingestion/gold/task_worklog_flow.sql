@@ -49,7 +49,7 @@ in_progress_per_day AS (
 -- in_progress_per_day inherits the availability filter through its
 -- task_issue_state join; worklogs aggregate per person without touching
 -- issues, so deletion awareness comes from the class contract's is_deleted
--- (worklog tombstones + issue re-fetch diff + deleted parent issue).
+-- (worklog tombstones + deleted parent issue).
 worklog_per_day AS (
     SELECT
         u.tenant_id                                                          AS tenant_id,
