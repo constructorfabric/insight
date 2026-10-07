@@ -4054,3 +4054,9 @@ metadata:
     test_results: true
     test_cases: true
     custom_fields: true
+    launch_environment: true
+    launch_errors: true
+    categories: true
+    category_matchers: true
+    defects: true
+    defect_test_results: true

@@ -1,6 +1,6 @@
 # Allure TestOps Connector
 
-Allure TestOps projects, launches, test results, test cases and project custom fields, read with an API token.
+Allure TestOps projects, launches with their environment and errors, test results, test cases, project custom fields, failure categories and defects, read with an API token.
 
 ## Prerequisites
 
@@ -67,28 +67,43 @@ Each Allure TestOps instance needs its own Secret with a different `insight.cybe
 | `projects` | `GET /api/project`: every project the token can see, whatever `allure_project_ids` says. Also the connection check. | Full refresh |
 | `launches` | `GET /api/launch/__search` per synced project, filtered by RQL `lastModifiedDate >= <cursor>` with no upper bound | Incremental (`lastModifiedDate`) |
 | `test_results` | `GET /api/testresult?launchId=` per launch | Incremental (`lastModifiedDate`, through the launch cursor) |
+| `launch_environment` | `GET /api/launch/{id}/env` per launch: one record per environment variable value | Incremental (the launch's `lastModifiedDate`, through the launch cursor) |
+| `launch_errors` | `GET /api/launch/error?launchId=` per launch: errors recorded against the launch itself, outside any result | Incremental (the launch's `lastModifiedDate`, through the launch cursor) |
 | `test_cases` | `GET /api/testcase/{id}/overview` per test case that `GET /api/testcase/__search` finds per synced project. One record per test case, with its full `customFields` list | Incremental (`lastModifiedDate`, through the search cursor) |
 | `custom_fields` | `GET /api/project/{id}/cf` per synced project: every custom field the project defines | Full refresh |
+| `categories` | `GET /api/project/{id}/category` per synced project: the failure categories it uses | Full refresh |
+| `category_matchers` | `GET /api/project/{id}/categorymatcher` per synced project: the message and trace regexes that assign a category | Full refresh |
+| `defects` | `GET /api/defect/{id}` per defect that `GET /api/defect?projectId=` lists per synced project | Full refresh |
+| `defect_test_results` | `GET /api/defect/{id}/testresult` per listed defect: the results linked to it | Full refresh |
 
 The synced projects come from an inline `_projects` parent: `GET /api/project` on every sync, kept whole when `allure_project_ids` is empty or unset, filtered to those ids otherwise.
 
 `test_results` reads its launches from an inline `_launches` parent, identical to `launches`, and persists that parent's cursor (`incremental_dependency`). A sync therefore requests results only for launches whose `lastModifiedDate` is inside the window. The child's own `lastModifiedDate` cursor filters nothing: every result of a selected launch is emitted.
 
+`launch_environment` and `launch_errors` read the same `_launches` parent the same way. The parent passes each launch's `projectId` and `lastModifiedDate` down, and every record carries them as `project_id` and `lastModifiedDate`, plus the launch as `launch_id`.
+
 `test_cases` works the same way over an inline `_test_cases` search parent, but its first sync starts at 2000-01-01, so it reads the whole catalog. Later syncs re-read only test cases modified since the saved cursor minus 2 days. Custom field names are not fixed anywhere: each record carries whatever fields its project defines.
 
-Every endpoint pages with `page` and `size`, sorted `id,ASC`, until a response has `last: true`.
+`defects` and `defect_test_results` share an inline `_defects` parent: `GET /api/defect?projectId=` per synced project, which stamps each listed defect with its project. Both re-read every listed defect on each sync.
+
+`categories` and `category_matchers` are global objects a project opts into, so one id can appear under several projects. Their records carry the project they were read for as `project_id`, and `unique_key` includes it.
+
+Every list endpoint pages with `page` and `size`, sorted `id,ASC`, until a response has `last: true`. `GET /api/launch/{id}/env` and `GET /api/defect/{id}` answer in one response and do not page.
 
 Every request retries `429`, `500`, `502`, `503` and `504` up to 5 times. It waits `Retry-After` when the response sends one, and backs off exponentially otherwise.
+
+`categories`, `category_matchers` and the `_defects` parent skip a project that answers `403`. `defects` and `defect_test_results` skip a defect that answers `404`, as one deleted between the list and the read does.
 
 ### Caveats
 
 - A launch deleted mid-sync from a page already read moves the launches after it up one row, so the first launch of the next page is never returned. The 2-day lookback re-reads that launch only if its `lastModifiedDate` is within 2 days of the new cursor.
 - `launches` and the `_launches` parent page separately, so such a skip can hit one stream and not the other. Two `connector_quality` checks report it: `assert_allure_launches_reach_test_results` and `assert_allure_test_results_name_a_synced_launch`.
 - A custom field edit reaches `test_cases` only if Allure bumps the test case's `lastModifiedDate`. If it does not, the edit lands with the test case's next change.
+- `allure__test_results.launch_env` is built when the results are staged. A result staged before its launch's environment landed — `launch_environment` failed in a sync where `test_results` succeeded — keeps `{}` until the launch is modified again or the model is fully refreshed. `assert_allure_launch_environment_names_a_synced_launch` reports environment rows whose launch `launches` never synced.
 
 ## Silver Targets
 
-None. `dbt/` holds five staging models tagged `allure` and nothing else. No silver class or gold model reads them.
+None. `dbt/` holds eleven staging models tagged `allure` and nothing else. No silver class or gold model reads them.
 
 | Model | Grain |
 |-------|-------|
@@ -97,8 +112,14 @@ None. `dbt/` holds five staging models tagged `allure` and nothing else. No silv
 | `allure__test_cases` | One row per test case; `custom_fields` maps each field name to its values |
 | `allure__test_case_custom_fields` | One row per test case × custom field value, rebuilt each run so removed values drop out |
 | `allure__custom_fields` | One row per custom field a project defines |
+| `allure__launch_environment` | One row per launch × environment variable value |
+| `allure__launch_errors` | One row per launch error |
+| `allure__categories` | One row per project × failure category |
+| `allure__category_matchers` | One row per project × category matcher |
+| `allure__defects` | One row per defect |
+| `allure__defect_test_results` | One row per defect × linked test result |
 
-`allure__test_results.test_case_id` joins `allure__test_cases.test_case_id`.
+`allure__test_results.test_case_id` joins `allure__test_cases.test_case_id`; `category_id` joins `allure__categories.category_id`. `allure__test_results.launch_env` holds the launch's environment as a JSON object, variable name → value, so a single-table metric can filter on a key. `allure__defect_test_results.test_result_id` joins `allure__test_results.test_result_id`.
 
 No identity inputs: the connector syncs no user directory. `createdBy` and `lastModifiedBy` are Allure logins, and nothing resolves them to a person.
 
