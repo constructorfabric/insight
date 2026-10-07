@@ -120,19 +120,21 @@ FROM merged
 -- boundary that only rises would strand it forever. Anchoring on the build
 -- rather than on bronze's newest extract keeps the window honest when dbt
 -- skips a few nightly runs. Every selected date is rebuilt from ALL of its
--- contributions, so a partial row is impossible.
+-- contributions, so a partial row is impossible. Scoped to the (tenant,
+-- source) whose extract touched the date, so one instance's late sync does
+-- not rebuild every other instance's rows for that day.
 -- SAFETY: the count() guard is load-bearing. The target exists but is empty
 -- on every fresh install (the snapshot creates it as a placeholder before the
 -- first sync); max() over it is 1970-01-01, and DateTime minus an interval
 -- wraps past 2106, which would select no date and keep the table empty forever.
 WHERE (
     (SELECT count() FROM {{ this }}) = 0
-    OR date IN (
-        SELECT toDate(parseDateTimeBestEffortOrNull(created_at))
+    OR (tenant_id, source_id, date) IN (
+        SELECT tenant_id, source_id, toDate(parseDateTimeBestEffortOrNull(created_at))
         FROM {{ source('bronze_zendesk', 'support_ticket_events') }}
         WHERE _airbyte_extracted_at > (SELECT max(collected_at) FROM {{ this }}) - INTERVAL 3 DAY
         UNION DISTINCT
-        SELECT toDate(parseDateTimeBestEffortOrNull(created_at))
+        SELECT tenant_id, source_id, toDate(parseDateTimeBestEffortOrNull(created_at))
         FROM {{ source('bronze_zendesk', 'zendesk_satisfaction_ratings') }}
         WHERE _airbyte_extracted_at > (SELECT max(collected_at) FROM {{ this }}) - INTERVAL 3 DAY
     )
