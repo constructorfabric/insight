@@ -27,6 +27,27 @@ WITH bronze AS (
         ON w.tenant_id = b.tenant_id AND w.source_id = b.source_id
     WHERE b._airbyte_extracted_at > coalesce(w.watermark, toDateTime64(0, 3))
     {% endif %}
+),
+
+env_values AS (
+    SELECT
+        tenant_id,
+        source_id,
+        toInt64(COALESCE(launch_id, 0)) AS launch_id,
+        JSONExtractString(if(JSONType(coalesce(toString(variable), 'null')) = 'String', JSONExtractString(coalesce(toString(variable), 'null')), coalesce(toString(variable), 'null')), 'name') AS variable_name,
+        argMax(COALESCE(name, ''), id) AS value
+    FROM {{ source('bronze_allure', 'launch_environment') }} FINAL
+    GROUP BY tenant_id, source_id, launch_id, variable_name
+),
+
+env AS (
+    SELECT
+        tenant_id AS env_tenant_id,
+        source_id AS env_source_id,
+        launch_id AS env_launch_id,
+        toJSONString(mapFromArrays(groupArray(variable_name), groupArray(value))) AS env_json
+    FROM env_values
+    GROUP BY tenant_id, source_id, launch_id
 )
 
 SELECT
@@ -57,6 +78,7 @@ SELECT
     COALESCE(testedBy, '') AS tested_by,
     COALESCE(historyKey, '') AS history_key,
     COALESCE(message, '') AS message,
+    if(empty(env_json), '{}', env_json) AS launch_env,
     arrayFilter(n -> n != '', arrayMap(t -> JSONExtractString(t, 'name'), JSONExtractArrayRaw(tags_json))) AS tag_names,
     fromUnixTimestamp64Milli(createdDate, 'UTC') AS created_at,
     fromUnixTimestamp64Milli(lastModifiedDate, 'UTC') AS last_modified_at,
@@ -64,3 +86,7 @@ SELECT
     toUnixTimestamp64Milli(now64()) AS _version,
     _airbyte_extracted_at
 FROM bronze
+LEFT JOIN env
+    ON env.env_tenant_id = bronze.tenant_id
+    AND env.env_source_id = bronze.source_id
+    AND env.env_launch_id = toInt64(COALESCE(bronze.launchId, 0))

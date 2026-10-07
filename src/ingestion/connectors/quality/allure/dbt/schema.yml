@@ -11,6 +11,7 @@ sources:
       - name: projects
       - name: launches
       - name: test_results
+      - name: launch_environment
       - name: custom_fields
       - name: test_cases
         freshness: null
@@ -67,6 +68,8 @@ models:
         description: "Allure login the result is assigned to, not a person id"
       - name: tested_by
         description: "Allure login that ran a manual result, not a person id"
+      - name: launch_env
+        description: "The launch's environment variables as a JSON object, name -> value; when a name has several values, the one with the highest value id. '{}' when the launch has none"
 
   - name: allure__test_cases
     description: "Allure TestOps test cases -> staging, one row per test case"
@@ -120,3 +123,24 @@ models:
         data_tests:
           - not_null
           - unique
+
+  - name: allure__launch_environment
+    description: "Allure TestOps launch environment -> staging, one row per launch and variable value"
+    columns:
+      - name: tenant_id
+        data_tests:
+          - not_null
+      - name: source_id
+        data_tests:
+          - not_null
+      - name: unique_key
+        description: "{tenant}-{source}-{launch id}-{value id}"
+        data_tests:
+          - not_null
+          - unique
+      - name: variable_name
+        description: "Environment variable name as Allure sends it, spaces included"
+      - name: value
+        description: "The variable's value in this launch"
+      - name: launch_last_modified_at
+        description: "The launch's lastModifiedDate (epoch ms) as UTC DateTime64(3), the cursor the stream syncs by"
