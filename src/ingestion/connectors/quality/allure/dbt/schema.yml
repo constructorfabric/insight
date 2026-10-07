@@ -12,7 +12,12 @@ sources:
       - name: launches
       - name: test_results
       - name: launch_environment
+      - name: categories
+        freshness: null
+      - name: category_matchers
+        freshness: null
       - name: launch_errors
+        freshness: null
       - name: custom_fields
       - name: test_cases
         freshness: null
@@ -164,3 +169,37 @@ models:
         description: "Hash Allure groups identical errors by"
       - name: launch_last_modified_at
         description: "The launch's lastModifiedDate (epoch ms) as UTC DateTime64(3), the cursor the stream syncs by"
+
+  - name: allure__categories
+    description: "Failure categories each synced project uses -> staging, one row per project and category"
+    columns:
+      - name: tenant_id
+        data_tests:
+          - not_null
+      - name: source_id
+        data_tests:
+          - not_null
+      - name: unique_key
+        description: "{tenant}-{source}-{project id}-{category id}: a category is global and can serve several projects"
+        data_tests:
+          - not_null
+          - unique
+
+  - name: allure__category_matchers
+    description: "Rules that assign a failed result to a failure category by regex on its message or trace -> staging, one row per project and matcher"
+    columns:
+      - name: tenant_id
+        data_tests:
+          - not_null
+      - name: source_id
+        data_tests:
+          - not_null
+      - name: unique_key
+        description: "{tenant}-{source}-{project id}-{matcher id}: a matcher is global and can serve several projects"
+        data_tests:
+          - not_null
+          - unique
+      - name: message_regex
+        description: "Regex the result's message must match; empty when the matcher checks the trace only"
+      - name: trace_regex
+        description: "Regex the result's trace must match; empty when the matcher checks the message only"
